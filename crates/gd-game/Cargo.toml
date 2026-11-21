@@ -1,0 +1,34 @@
+[package]
+name = "gd-game"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Headless gameplay state and systems (Bevy ECS without rendering, windows or input)"
+
+[dependencies]
+anyhow = "1.0.104"
+bevy = {
+  version = "0.20",
+  default-features = false,
+  features = [
+    "async_executor",
+    "bevy_log",
+    "multi_threaded",
+    "std",
+  ]
+}
+fastrand = "2.5.0"
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
+
+[features]
+# Set by grimdawn's `dev`: `Hooks::from_env` (the only environment read of the hooks). Tests need no feature: they
+# build hooks with `Hooks::from_vars`.
+dev = []
+# The test harness (`testing`), for this crate's and dependents' tests.
+testing = ["gd-formats/testdata"]
+
+[dev-dependencies]
+gd-game = { path = ".", features = ["testing"] }

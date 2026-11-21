@@ -1,0 +1,46 @@
+[package]
+name = "gd-render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Grim Dawn's look on Bevy: the game's shading, lighting and post chain, models, textures, characters, effects and the drawing halves of water / weather over gd-game"
+
+[dependencies]
+anyhow = "1.0.104"
+# Only what the port uses (no glTF, animation, gizmos, picking, scenes, UI widgets, sprites or Bevy's default
+# font: the game draws its own models, animation, cursor and fonts). grimdawn adds audio.
+bevy = {
+  version = "0.20",
+  default-features = false,
+  features = [
+    "default_app",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_image",
+    "bevy_light",
+    "bevy_material",
+    "bevy_mesh",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_shader",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_window",
+    "bevy_winit",
+    "hdr",
+    "multi_threaded",
+    "png",
+    "std",
+    "wayland",
+  ]
+}
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-game = { path = "../gd-game", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }
+
+[features]
+# Dev builds: the dev-gated render code (the `GD_FPS` effect counters, fx/mod.rs). grimdawn's `dev`
+# forwards here; the hooks themselves are gd-game's.
+dev = []

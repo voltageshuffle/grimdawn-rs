@@ -1,0 +1,198 @@
+//! The item-slot panels' input (Runekeeper, crafter dismantle / reroll / salvage / convert tabs).
+use super::*;
+
+/// The item-slot windows (Runekeeper, crafter dismantle / reroll tabs): tab
+/// buttons, the slot, kind buttons, the action button and the dismantle prompt.
+/// The slot (`ItemBox_HandleMouseEvent` @0x1401AE6F0 -> `AscensionItemBox_HandleClick` @0x1401B15C0,
+/// the Inventor boxes' sub_1401B0750 / B0060 / AFAB0 / B0BD0): with an item
+/// on the cursor that the slot accepts, ANY press swaps (the old item onto the cursor, `InvRequest::Exchange`);
+/// empty cursor: left takes the item onto the cursor, Shift + left gives it back to the player
+/// (`ItemBox_ReturnItemToPlayer` @0x1401AEB20, `InvRequest::Stow`: equip-empty, bags, else the ground), right
+/// does nothing. Closing the window or switching tab gives it back the same way (each tab's / the window's
+/// show(false)). The slot state stays here (UI); the give rules are gd-game's (`InvRequest::Stow`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn panel_clicks(
+    hooks: Res<gd_game::hooks::Hooks>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<TradeLayout>,
+    mut trade: ResMut<Trade>,
+    inv: Option<Res<Inventory>>,
+    data: Res<crate::data::GameData>,
+    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    mut notify: MessageWriter<gd_game::story::Notify>,
+    mut capture: ResMut<UiCapture>,
+    mut sound: MessageWriter<gd_game::visuals::PlaySound>,
+    mut requests: MessageWriter<crate::inventory::InvRequest>,
+    (confirm, stack): (
+        Res<crate::ui::apply::InvConfirm>,
+        Res<crate::ui::stack::StackWindow>,
+    ),
+) {
+    let Some(inv) = inv else { return };
+    // Which tabs the story tokens unlock (a changed answer rebuilds the UI).
+    if matches!(trade.open, Some(TradeOpen::Inventor { .. })) {
+        let reroll = hooks.items.reroll.is_some()
+            || gd_game::crafting::reroll_unlocked(&data, rt.as_deref());
+        let unlocked = [
+            crate::crafting::dismantle_unlocked(&data, rt.as_deref()),
+            crate::crafting::convert_unlocked(&data, rt.as_deref()),
+            reroll,
+        ];
+        if trade.tabs_unlocked != unlocked {
+            trade.tabs_unlocked = unlocked;
+            trade.version += 1;
+        }
+    }
+    if !trade.slot_panel() {
+        for it in trade.take_boxes() {
+            requests.write(crate::inventory::InvRequest::Stow(it));
+        }
+        trade.kind = None;
+        trade.confirm = false;
+        trade.go = false;
+        return;
+    }
+    // The hovered box is found again below; off the window (or with no cursor) nothing is.
+    if trade.hover.is_some() {
+        trade.hover = None;
+    }
+    let Ok(win) = window.single() else { return };
+    let Some(p) = crate::ui::cursor_px(&hooks, win) else {
+        return;
+    };
+    // The dismantle warning (the dialog manager's Yes / No box) takes every click while up.
+    if trade.confirm
+        && let Some(rects) = layout.confirm
+    {
+        capture.0 = true;
+        let look = rects.look(Some(p), buttons.pressed(MouseButton::Left));
+        if trade.confirm_look != look {
+            trade.confirm_look = look;
+            trade.version += 1;
+        }
+        if buttons.just_pressed(MouseButton::Left)
+            && let Some(hit) = rects.hit(p)
+        {
+            use crate::ui::confirm::Hit;
+            if hit == Hit::Close
+                && let Some(pak) = crate::ui::confirm::close_sound(&data)
+            {
+                sound.write(gd_game::visuals::PlaySound { pak, at: None });
+            }
+            trade.confirm = false;
+            trade.go = hit == Hit::Yes;
+            trade.confirm_look = Default::default();
+            trade.version += 1;
+        }
+        return;
+    }
+    // The stack window takes its own clicks (`ui/stack.rs`); a modal question (`inventory::question_up`) takes
+    // every click: none reaches the window under it (as `trade_clicks`).
+    if stack.covers(p) || crate::inventory::question_up(&inv, &trade, &confirm) {
+        return;
+    }
+    let Some(wr) = layout.window.filter(|w| contains(w, p)) else {
+        return;
+    };
+    let _ = wr;
+    capture.0 = true;
+    trade.hover = layout
+        .boxes
+        .iter()
+        .find(|(_, r)| contains(r, p))
+        .map(|(it, _)| (it.clone(), None));
+    if layout.slot.is_some_and(|r| contains(&r, p))
+        && let Some(it) = &trade.slot
+    {
+        trade.hover = Some((it.clone(), None));
+    }
+    let result = layout
+        .results
+        .iter()
+        .find(|(_, r)| contains(r, p))
+        .map(|(i, _)| *i);
+    if let Some(it) = result.and_then(|i| trade.results[i].as_ref()) {
+        trade.hover = Some((it.clone(), None));
+    }
+    let left = buttons.just_pressed(MouseButton::Left);
+    if !left && !buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+    if left && let Some((b, _)) = layout.buttons.iter().find(|(_, r)| contains(r, p)) {
+        match *b {
+            Button::Tab(t) => {
+                for it in trade.take_boxes() {
+                    requests.write(crate::inventory::InvRequest::Stow(it));
+                }
+                trade.panel = t;
+                trade.kind = None;
+                trade.confirm = false;
+            }
+            Button::Kind(k) => trade.kind = Some(k),
+            Button::ConvertMode(r) => trade.random_set = r,
+            Button::KeepItem | Button::KeepAddon | Button::RemoveAugment => {
+                trade.salvage = Some(*b);
+                trade.go = true;
+            }
+            Button::Go => match (&trade.panel, &trade.slot) {
+                (Panel::Dismantle, Some(it))
+                    if matches!(trade.open, Some(TradeOpen::Inventor { .. }))
+                        && gd_game::crafting::dismantle_warns(&data.item_db(), it) =>
+                {
+                    trade.confirm = true
+                }
+                _ => trade.go = true,
+            },
+            Button::IllusionSlot(_)
+            | Button::IllusionPick(_)
+            | Button::IllusionPage(_)
+            | Button::IllusionSwap
+            | Button::Close => {}
+        }
+        trade.version += 1;
+        return;
+    }
+    // A result box (`ResultItemBox_HandleClick` @0x1401b0510): take only. A held item is refused;
+    // empty cursor, left: Shift gives it back to the player (`ItemBox_ReturnItemToPlayer`), else it goes onto
+    // the cursor; right does nothing.
+    if let Some(i) = result
+        && !trade.confirm
+    {
+        if inv.held.is_some() {
+            info!("trade: a dismantle result box takes no item");
+        } else if left && let Some(it) = trade.results[i].take() {
+            if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+                requests.write(crate::inventory::InvRequest::Stow(it));
+            } else {
+                requests.write(crate::inventory::InvRequest::Exchange(Some(it)));
+            }
+            trade.version += 1;
+        }
+        return;
+    }
+    if layout.slot.is_some_and(|r| contains(&r, p)) && !trade.confirm {
+        // The cursor item and the slot's exchange (`InvRequest::Exchange`; the
+        // old cursor item comes back as a `SlotReturn`).
+        if let Some(h) = &inv.held {
+            if let Err(why) = trade.accepts(h, &data) {
+                info!("trade: {why}");
+                notify.write(gd_game::story::Notify(why));
+                return;
+            }
+            trade.kind = None;
+            requests.write(crate::inventory::InvRequest::Exchange(trade.slot.take()));
+        } else if left && trade.slot.is_some() {
+            let it = trade.slot.take();
+            if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+                requests.write(crate::inventory::InvRequest::Stow(it.unwrap()));
+            } else {
+                requests.write(crate::inventory::InvRequest::Exchange(it));
+            }
+        } else {
+            return;
+        }
+        trade.version += 1;
+    }
+}

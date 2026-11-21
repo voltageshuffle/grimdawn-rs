@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs a command with the machine-local settings of `local.env` (repo root, gitignored; template: local.env.example).
+# Usage: scripts/with-env cargo dev | scripts/with-env cargo test --workspace
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+if [ ! -f "$root/local.env" ]; then
+  echo "missing $root/local.env: copy local.env.example and set GD_ROOT" >&2
+  exit 1
+fi
+set -a
+# shellcheck source=/dev/null
+. "$root/local.env"
+set +a
+[ $# -gt 0 ] || { echo "usage: scripts/with-env <command> [args...]" >&2; exit 2; }
+exec "$@"

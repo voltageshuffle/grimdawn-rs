@@ -1,0 +1,28 @@
+[alias]
+dev = "run -p grimdawn --features dev"
+dev-build = "build -p grimdawn --features dev"
+
+[profile.dev.package.gd-formats]
+opt-level = 3
+codegen-backend = "llvm"
+
+[profile.dev.package.gd-sim]
+opt-level = 3
+codegen-backend = "llvm"
+
+[profile.dev.package.tracing]
+debug-assertions = true
+
+[profile.dev.package.log]
+debug-assertions = true
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
+
+[profile.profiling.package.tracing]
+debug-assertions = true
+
+[profile.profiling.package.log]
+debug-assertions = true

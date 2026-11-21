@@ -1,0 +1,19 @@
+[package]
+name = "gd-sim"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Grim Dawn game rules, independent of rendering and Bevy: equations, stats, combat, items, story"
+
+[dependencies]
+anyhow = "1.0.104"
+gd-formats = { version = "0.1.0", path = "../gd-formats" }
+mlua = { version = "0.12", features = ["lua51", "vendored"] }
+rustc-hash = "2.1"
+
+[features]
+# Data-test fixtures (`testdata`), for this crate's and dependents' tests.
+testdata = ["gd-formats/testdata"]
+
+[dev-dependencies]
+gd-sim = { path = ".", features = ["testdata"] }

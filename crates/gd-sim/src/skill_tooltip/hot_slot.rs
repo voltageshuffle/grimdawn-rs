@@ -1,0 +1,214 @@
+//! The HUD hot slot's and the skill pick list's rollovers, and the hot slot status.
+use super::*;
+
+/// What a hot-bar skill is waiting for (`Skill` +176, read by `GameEngine::GenerateUISkillInfo`): 1 its
+/// cooldown, 2 energy, 4 its weapon configuration; anything else is ready ([`hot_state`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotState {
+    Ready,
+    Cooldown,
+    LowMana,
+    Configuration,
+}
+
+/// The state `Skill::SetAvailability` @0x1804924f0 stores at skill+176 (`Skill::Update` calls it
+/// every frame with its +504 byte and `false`): not enough energy ([`energy_cost`] above the current
+/// energy, `Skill::IsManaAvailable`) → 2 `LowMana`, unless the +504 byte skips the check; else the
+/// cooldown running (+484 > 0) or no charge left (`GetCooldownCharges` < 1) → 1 `Cooldown`; else the
+/// worn weapons not suiting it (`QualifyingWeapon` / `QualifyingHandState`) → 4 `Configuration`; else 0
+/// ready, 5 for level 0 and 7 outside the skill's shapeshift form (both read as ready by
+/// `GenerateUISkillInfo`, whose not-learned line comes first). `energy_ok` is the caller's: the +504 byte
+/// ([`ignores_energy`]) or the energy check.
+pub fn hot_state(energy_ok: bool, cooling: bool, weapons_ok: bool) -> HotState {
+    if !energy_ok {
+        HotState::LowMana
+    } else if cooling {
+        HotState::Cooldown
+    } else if !weapons_ok {
+        HotState::Configuration
+    } else {
+        HotState::Ready
+    }
+}
+
+/// The +504 byte (`Skill::SetIgnoreMana`, nothing calls it): the energy check of [`hot_state`] is skipped.
+/// the writes of +504 in Game.dll: set by the `Skill_Passive` constructor (so its kin
+/// `Skill_PassiveDualWieldWeapon`, `Skill_PassiveShield`, `Skill_Mastery`), by `Skill_PlayAttackAnimation`'s
+/// and `SkillBuff`'s; the toggles `Skill_BuffSelfToggled`, `Skill_BuffAttackRadiusToggled`,
+/// `Skill_OnHitAttackRadius`, `Skill_OnHitBuffSelf` copy their on byte into it in `ActivateNow` (so it is set
+/// while one is on; `Skill_Shapeshift` calls the `Skill_BuffSelfToggled` one; their `…Duration` / `BuffSelfShield`
+/// kin have their own `ActivateNow` and keep it clear). `active` = the skill is on.
+pub fn ignores_energy(class: &str, active: bool) -> bool {
+    match class {
+        "Skill_Passive"
+        | "Skill_PassiveDualWieldWeapon"
+        | "Skill_PassiveShield"
+        | "Skill_Mastery"
+        | "Skill_PlayAttackAnimation" => true,
+        "Skill_BuffSelfToggled"
+        | "Skill_BuffAttackRadiusToggled"
+        | "Skill_OnHitAttackRadius"
+        | "Skill_OnHitBuffSelf"
+        | "Skill_Shapeshift" => active,
+        c => c.starts_with("SkillBuff"),
+    }
+}
+
+/// The energy `Skill::IsManaAvailable` @0x180492350 asks for: `skillManaCost` of
+/// `GetSkillModifierData` at the current level (the profile plus its learned modifiers) × (1 −
+/// `GetTotalSkillAttribute(2)` %, `skillManaCostReduction`: the skill's own record and modifiers, value plus
+/// |value| × `…Modifier` %, plus the player's), floored at 0; an item skill (+761, here `item_skill`)
+/// or a potion (+764, `Skill_ChargePotion`) takes the cost unreduced. A reduction with a
+/// `skillManaCostReductionChance` inside (0, 100) never counts: `GetTotalSkillAttribute` rolls it
+/// (`SkillAttribute::GetTotalValue` @0x18051e380, a Park–Miller draw × 100 ≤ the chance) into the
+/// accumulator's chance part, and `IsManaAvailable` asks without it (its third argument 0 in the
+/// disassembly; a chance of 0 or 100 and above is a plain value). No stock record has such a chance. PORT:
+/// the player's part is the profile total, which has no chance part of its own.
+/// [`crate::actor::skill_energy_cost`] computes it with a roll that always fails (the plain value).
+pub fn energy_cost(ctx: &SkillTipCtx, skill: &str, item_skill: bool) -> f32 {
+    let (Some(rec), Some(prof)) = (ctx.db.get(skill), profile_record(ctx.db, skill)) else {
+        return 0.0;
+    };
+    let disp = display_record(ctx.db, skill).unwrap_or_else(|| rec.clone());
+    let (_, _, cur, _) = levels(ctx, skill, &disp);
+    // Level 0 is all zero (`GetSkillModifierData(0)`); the cost function's
+    // index 0 is level 1, so an unlearned skill never reaches it.
+    if cur == 0 {
+        return 0.0;
+    }
+    let mods = learned_mods(ctx, skill, rec);
+    let mods: Vec<(&Record, usize)> = mods.iter().map(|(m, ml)| (m, *ml)).collect();
+    let char_reduction = ctx
+        .player
+        .map_or(0.0, |(_, p)| p.skill_attribute("skillManaCostReduction"));
+    crate::actor::skill_energy_cost(
+        &prof,
+        cur as usize - 1,
+        &mods,
+        item_skill || rec.class == "Skill_ChargePotion",
+        char_reduction,
+        |_| false,
+    )
+}
+
+/// Whether a skill attribute with chance `chance` (%) is a plain value, not rolled (
+/// `SkillAttribute::GetTotalValue` @0x18051e380: a chance inside (0, 100) is rolled).
+pub fn plain_value(chance: f32) -> bool {
+    chance <= 0.0 || chance >= 100.0
+}
+
+/// The rollover of the evade and potion hot slots: [`hot_slot_lines`] of their default skill at level 1.
+/// `PlayerHotSlotCtrl::CreateHotSlotOption` @0x1803eaee0: slot types 2 / 3 are
+/// `HotSlotOptionPotionSkill`, 5 `HotSlotOptionEvade`, and both keep `HotSlotOptionSkill::GetRolloverText`
+/// (the one-line `HotSlotOptionPotion::GetRolloverText` belongs to a class nothing creates);
+/// `SkillManager::LoadDefaultPlayerSkills` loads `defaulthealthpotion` / `defaultmanapotion` /
+/// `defaultevade` and sets them to level 1. The potion's own parameter text is
+/// `charge_potion_restores`' rule; neither prints a level header ([`current_block`]).
+pub fn default_hot_slot_lines(ctx: &SkillTipCtx, skill: &str, state: HotState) -> Vec<TextLine> {
+    let mut book = ctx.book.clone();
+    if book.level(skill) == 0 {
+        book.skills.push((skill.to_string(), 1));
+    }
+    let ctx = SkillTipCtx {
+        book: &book,
+        ..*ctx
+    };
+    hot_slot_lines(&ctx, skill, state, None)
+}
+
+/// The HUD hot slot's rollover. `HotSlotOptionSkill::GetRolloverText` @0x18031c490: it sets the
+/// skill's hot bar view (+766) and, without the slot's simple-text byte (+29, `SetSimpleText`, set only
+/// by the skill pick list `sub_1401D6520`, [`pick_list_lines`]), prints `GameEngine::GenerateUISkillInfo`
+/// @0x1802e6670: the heading (name 46, description 47), `tagExclusiveSkill` (47) for an exclusive skill,
+/// a blank, the current level's block when learned ([`current_block`]: no next level) and a blank, then
+/// one status line: `tagSkillUnusableNotLearned` (52) for an unlearned non-item skill, else by `state`
+/// `tagSkillUnusableCooldown` / `LowMana` / `Configuration` (52) or `tagSkillUsableReady` (51; an
+/// unlearned item skill: `Configuration`). `granted`: the level of a skill that comes from gear (skill+761,
+/// `SkillManager::AddItemSkills` sets it at the item's `itemSkillLevel`) or is granted for a while (a form's,
+/// `SetAsGrantedSkillAuto`); both set skill+765 (`SetAsItemSkill[Auto]`),
+/// so their block has no level header ([`current_block`]).
+pub fn hot_slot_lines(
+    ctx: &SkillTipCtx,
+    skill: &str,
+    state: HotState,
+    granted: Option<u32>,
+) -> Vec<TextLine> {
+    let Some(rec) = ctx.db.get(skill) else {
+        return Vec::new();
+    };
+    let item_skill = granted.is_some();
+    let mut book = ctx.book.clone();
+    if let Some(l) = granted {
+        book.skills.retain(|(n, _)| !n.eq_ignore_ascii_case(skill));
+        book.skills.push((skill.to_string(), l));
+    }
+    let ctx = &SkillTipCtx {
+        book: &book,
+        ..*ctx
+    };
+    let disp = display_record(ctx.db, skill).unwrap_or_else(|| rec.clone());
+    let mut out = heading_lines(ctx, &disp);
+    if rec.i32("exclusiveSkill").unwrap_or(0) != 0 || disp.i32("exclusiveSkill").unwrap_or(0) != 0 {
+        out.push(line(class::SKILL_DESCRIPTION, ctx.tag("tagExclusiveSkill")));
+    }
+    out.push(line(0, ""));
+    let (_, _, cur, _) = levels(ctx, skill, &disp);
+    out.extend(current_block(ctx, skill, rec, &disp, true, item_skill));
+    let (cls, tag) = if !item_skill && cur == 0 {
+        (
+            class::SKILL_REQUIREMENTS_NOT_MET,
+            "tagSkillUnusableNotLearned",
+        )
+    } else {
+        match state {
+            HotState::Cooldown => (
+                class::SKILL_REQUIREMENTS_NOT_MET,
+                "tagSkillUnusableCooldown",
+            ),
+            HotState::LowMana => (class::SKILL_REQUIREMENTS_NOT_MET, "tagSkillUnusableLowMana"),
+            HotState::Configuration => (
+                class::SKILL_REQUIREMENTS_NOT_MET,
+                "tagSkillUnusableConfiguration",
+            ),
+            HotState::Ready if !item_skill || cur != 0 => {
+                (class::SKILL_REQUIREMENTS, "tagSkillUsableReady")
+            }
+            HotState::Ready => (
+                class::SKILL_REQUIREMENTS_NOT_MET,
+                "tagSkillUnusableConfiguration",
+            ),
+        }
+    };
+    out.push(line(cls, ctx.tag(tag)));
+    collapse_blanks(out)
+}
+
+/// A skill pick list entry's rollover (the simple-text path of `HotSlotOptionSkill::GetRolloverText`,
+/// see [`hot_slot_lines`]): the heading (name 46, description 47), a blank, then
+/// `CreateUIParameterText` (49, hot bar view) of a learned skill or `CreateUINextParameterText(-1)` (the
+/// next level's block: `tagNextLevel` and its lines) of an unlearned one.
+pub fn pick_list_lines(ctx: &SkillTipCtx, skill: &str) -> Vec<TextLine> {
+    let Some(rec) = ctx.db.get(skill) else {
+        return Vec::new();
+    };
+    let disp = display_record(ctx.db, skill).unwrap_or_else(|| rec.clone());
+    let mut out = heading_lines(ctx, &disp);
+    out.push(line(0, ""));
+    let (base, _, cur, _) = levels(ctx, skill, &disp);
+    if cur > 0 {
+        out.extend(current_block(ctx, skill, rec, &disp, true, false));
+    } else {
+        out.push(line(
+            class::SKILL_LEVEL_TITLES,
+            ctx.fmt("tagNextLevel", &[Arg::Num((base + 1) as f32)]),
+        ));
+        out.extend(stat_lines_next(
+            ctx,
+            skill,
+            cur,
+            cur + 1,
+            class::SKILL_STATS_NEXT,
+        ));
+    }
+    collapse_blanks(out)
+}

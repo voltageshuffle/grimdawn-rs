@@ -1,0 +1,29 @@
+[package]
+name = "grimdawn"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Grim Dawn reimplementation on Bevy: UI, input, audio and world streaming over gd-game and gd-render"
+
+[dependencies]
+anyhow = "1.0.104"
+# The render feature set is gd-render's; this adds audio (the game's sounds are WAV and Ogg Vorbis).
+bevy = { version = "0.20", default-features = false, features = ["bevy_audio", "vorbis", "wav", "custom_cursor"] }
+# The output device's rate for the sound mixer (`audio::start_bus`); the cpal bevy_audio already plays through.
+cpal = "0.17"
+fastrand = "2.5.0"
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-game = { path = "../gd-game", version = "0.1.0" }
+gd-render = { path = "../gd-render", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }
+libc = "0.2"
+
+[features]
+# Dev builds (`cargo dev` / `cargo dev-build`): the `GD_*` hooks are read from the environment and the dev tools
+# (`src/dev/`: screenshots, test scenes, census, exit cycles, frame-time log) and scripted test systems exist.
+# A build without it reads no hook and has none of them.
+dev = ["gd-game/dev", "gd-render/dev"]
+# `cargo dev --features profile`: Chrome-trace system spans; `GD_FPS` for frame times (docs/running.md).
+profile = ["dev", "bevy/trace_chrome"]
+# `cargo dev --features audit`: component / resource names for the session audit (`GD_CENSUS`, src/dev/audit.rs).
+audit = ["dev", "bevy/debug"]

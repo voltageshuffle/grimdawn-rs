@@ -1,0 +1,60 @@
+[package]
+name = "gd-tools"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Command-line tools to list, extract and inspect Grim Dawn archives, records, maps, meshes and saves"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+gd-formats = { version = "0.1.0", path = "../gd-formats", features = ["testdata"] }
+gd-sim = { version = "0.1.0", path = "../gd-sim" }
+png = "0.18.1"
+
+# The CLIs have no tests: `test = false` keeps `cargo test` from building an
+# empty test binary for each.
+[[bin]]
+name = "gd-tools"
+path = "src/main.rs"
+test = false
+
+[[bin]]
+name = "gd-map"
+path = "src/bin/gd-map.rs"
+test = false
+
+[[bin]]
+name = "gd-mesh"
+path = "src/bin/gd-mesh.rs"
+test = false
+
+[[bin]]
+name = "gd-nav"
+path = "src/bin/gd-nav.rs"
+test = false
+
+[[bin]]
+name = "gd-pfx"
+path = "src/bin/gd-pfx.rs"
+test = false
+
+[[bin]]
+name = "gd-save"
+path = "src/bin/gd-save.rs"
+test = false
+
+[[bin]]
+name = "gd-rec"
+path = "src/bin/gd-rec.rs"
+test = false
+
+[[bin]]
+name = "gd-story"
+path = "src/bin/gd-story.rs"
+test = false
+
+[[bin]]
+name = "gd-tex"
+path = "src/bin/gd-tex.rs"
+test = false
