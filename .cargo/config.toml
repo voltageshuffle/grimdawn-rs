@@ -19,6 +19,12 @@ opt-level = 3
 [profile.dev.package.gd-sim]
 opt-level = 3
 
+[profile.dev.package.gd-rules]
+opt-level = 3
+
+[profile.dev.package.gd-audio]
+opt-level = 3
+
 [profile.dev.package.log]
 debug-assertions = true
 
