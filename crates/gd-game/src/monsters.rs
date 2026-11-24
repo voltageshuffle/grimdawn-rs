@@ -74,8 +74,8 @@ pub struct UnifiedPools(pub HashMap<String, usize>);
 #[derive(Resource, Default)]
 pub struct ProxyStates(pub HashMap<(usize, u32), Vec<MonsterState>>);
 
-/// The session's hero-boss registry (`GameEngine::RegisterProxyHeroBoss` / `IsProxyHeroBossInGame`,
-/// Game.dll `0x1802e7720` / `0x1802e7880`): the lowercased record paths of the Hero / Boss / SuperBoss
+/// The session's hero-boss registry (`GameEngine::RegisterProxyHeroBoss` / `GameEngine::IsProxyHeroBossInGame`,
+/// Game.dll): the lowercased record paths of the Hero / Boss / SuperBoss
 /// monsters the proxies spawned. A pool entry whose record is in it never spawns again this session
 /// (`gd_sim::proxy::run_pool`); a proxy that ignores the restriction (`Proxy.Create`'s bool,
 /// `ProxyEndless`) spawns its bosses without registering them. Nothing unregisters
@@ -1672,7 +1672,7 @@ impl Plugin for MonstersPlugin {
 /// quest) at `position` and spawns its monsters; `id` is the story object, so
 /// they are story monsters (slot level `usize::MAX`) left to the story to
 /// despawn. Same rules as level proxies, without the per-session memory.
-/// `limits_at` is `Proxy.Create`'s vec (`Proxy::SetLimitsLocation`, exe `0x14006b610`): the area limits
+/// `limits_at` is `Proxy.Create`'s vec (`LuaProxy::CreateAt` → `Proxy::SetLimitsLocation`): the area limits
 /// are read there, the monsters still place at `position`; `ignore_boss` its bool
 /// (`CreateAtIgnoreBoss`, byte +1612): the bosses spawn without registering in [`HeroBosses`].
 #[allow(clippy::too_many_arguments)]

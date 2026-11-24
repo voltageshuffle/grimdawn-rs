@@ -993,7 +993,7 @@ pub fn story_rewards(
                 items.extend(rolled);
             }
             // `Player:TakeItem(record, count, bool)` (engine `QuestCommandTakeItem` → SP
-            // `TakeItemFromStashes`, Game.dll `0x1803e41b0`): the bool is the relic filter
+            // `Player::TakeItemFromStashes`, Game.dll): the bool is the relic filter
             // ([`take_item_filtered`]).
             Effect::TakeItem {
                 record,
@@ -1010,7 +1010,7 @@ pub fn story_rewards(
                 );
                 info!("story: took {n} x {record} (relic filter {extra})");
             }
-            // `Player:GiveAffixItem(record, prefix, suffix)` (exe `0x140050cf0`): `Item::CreateItem` of a
+            // `Player:GiveAffixItem(record, prefix, suffix)` (`LuaPlayer::GiveAffixItem`): `Item::CreateItem` of a
             // replica with the named affixes and a fresh engine seed; the affixes resolve through the same
             // seeded path as any loot item (`gd_sim::items::resolve`), the player's level gating the equip
             // requirements.
@@ -1036,10 +1036,10 @@ pub fn story_rewards(
     }
 }
 
-/// `Player::TakeItemFromStashes` (Game.dll `0x1803e41b0`): the character's items first (the bags;
+/// `Player::TakeItemFromStashes` (Game.dll): the character's items first (the bags;
 /// equipped gear is skipped, `TakeItemFromCharacter`'s a7), then the materials storage, the private and
-/// the transfer stash. The forwarded bool (a4) picks the relic mode (`Character::TakeItemFromCharacter`
-/// `0x180061000`): true takes only COMPLETE relics / components (`IsComplete`), counting their stack
+/// the transfer stash. The forwarded bool (a4) picks the relic mode
+/// (`Character::TakeItemFromCharacter`): true takes only COMPLETE relics / components (`IsComplete`), counting their stack
 /// (`GetStackSize`) and lowering it on a partial take (`SetStackSize`); false counts a relic's shards
 /// (`GetRelicLevel`, `var1`) and lowers the shard count (`SetRelicLevel`) on a partial take, incomplete
 /// ones included. A whole stack taken removes the item; non-relics take the plain stack count either way.

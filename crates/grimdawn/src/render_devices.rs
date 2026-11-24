@@ -5,8 +5,8 @@
 //!
 //! PORT: the engine lists the D3D adapters (`OptionsWindow::Load` fills the render-device dropdown from the
 //! graphics engine's adapter list); the port lists wgpu's adapters instead. The choice is applied at the NEXT
-//! launch only — `main` reads `device` before `DefaultPlugins` and sets `WgpuSettings.adapter_name` /
-//! `backends` — there is no hot-swap. A stale index (the adapter disappeared) falls back to Bevy's default
+//! launch only — `main` reads `device` before `DefaultPlugins` and sets the `bevy::render::settings::WgpuSettings`
+//! `adapter_name` / `backends` — there is no hot-swap. A stale index (the adapter disappeared) falls back to Bevy's default
 //! adapter selection.
 use bevy::prelude::*;
 
@@ -105,7 +105,7 @@ fn backend_rank(b: wgpu::Backend) -> u8 {
 }
 
 /// The `wgpu::Backend` a listed backend string names (the `Debug` spelling [`enumerate`] stores); None
-/// for an unknown string. `main` restricts `WgpuSettings.backends` to it so a substring name match
+/// for an unknown string. `main` restricts `bevy::render::settings::WgpuSettings::backends` to it so a substring name match
 /// cannot pick an adapter of another backend.
 pub fn backend_of(backend: &str) -> Option<wgpu::Backend> {
     match backend {

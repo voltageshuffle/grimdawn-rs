@@ -1085,8 +1085,8 @@ pub struct QuestUseSkill {
     pub point: Vec3,
 }
 
-/// `Character:ToggleSkills(false)` (engine `QuestCommandEnableMonsterSkills`, Game.dll
-/// `0x1802f2960` → `Monster::EnableSkills`, gated in `ChooseBestSkill` `0x180137310`): the monster
+/// `Character:ToggleSkills(false)` (engine `GameEngine::QuestCommandEnableMonsterSkills`, Game.dll
+/// → `Monster::EnableSkills`, gated in `ControllerMonster::ChooseBestSkill`): the monster
 /// chooses no skill — it only swings. Removed by `ToggleSkills(true)`; absent by default (enabled).
 #[derive(Component)]
 pub struct SkillsDisabled;

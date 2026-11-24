@@ -595,7 +595,7 @@ impl NewCharacter {
     }
 }
 
-/// The menu's Create Character Accept (the difficulty window's Accept, `DifficultyWindow::Accept`):
+/// The menu's Create Character Accept (the Accept branch of the difficulty window's `DifficultyWindow::HandleButton`):
 /// rolls the character ([`NewCharacter::roll`]), sets its difficulty byte exactly as [`crate::session::begin`]
 /// does for a session, and writes `player.gdc` into the character's folder ([`gd_game_core::session::Choice::player_folder`])
 /// with the same atomic [`write`] as every save. The player then starts it like any saved character.

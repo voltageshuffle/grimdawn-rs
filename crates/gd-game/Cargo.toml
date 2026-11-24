@@ -32,9 +32,9 @@ gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
 gd-rules = { path = "../gd-rules", version = "0.1.0" }
 gd-sim = { path = "../gd-sim", version = "0.1.0" }
 gd-story = { path = "../gd-story", version = "0.1.0" }
-log = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
+log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 parking_lot = "0.12"
-tracing = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
+tracing = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 
 [dev-dependencies]
 gd-game = { path = ".", features = ["testing"] }

@@ -160,7 +160,7 @@ impl UserData for Obj {
         // script is still running) and the Destructible overload
         // Destroy(Vec3 direction, float force, bool) (`LuaDestructible::Destroy`
         // → `QuestCommandDestroyDestructible` → `Destructible::BreakApart`,
-        // Game.dll `0x18025e650`): the object breaks but stays valid and in
+        // Game.dll): the object breaks but stays valid and in
         // the world (broken mesh + debris; the bool arms a ~1000 ms despawn,
         // host-side); `onBroken` is only fired by `Destructible::TakeAttack`.
         m.add_method("Destroy", |_, o, args: MultiValue| {
@@ -255,7 +255,7 @@ impl UserData for Obj {
                 .is_some_and(|e| e.open))
         });
         // SetAutoClose(bool) (`LuaDoor::SetAutoClose` → `FixedDoor::SetAutoClose`,
-        // Game.dll `0x1802a6790` / `LuaLever::SetAutoClose` `FixedLever::SetAutoClose`):
+        // `LuaLever::SetAutoClose` → `FixedLever::SetAutoClose`):
         // the flag plus a close countdown while the door is open; the host
         // ticks it (`Effect::SetAutoClose`).
         m.add_method("SetAutoClose", |_, o, on: bool| {
@@ -454,7 +454,7 @@ impl UserData for Obj {
         });
         // TakeItem(record, count, bool) (`LuaPlayer::TakeItem` →
         // `QuestCommandTakeItem(id, record, count, bool)` → SP
-        // `Player::TakeItemFromStashes`, Game.dll `0x1803e41b0`: the bool IS
+        // `Player::TakeItemFromStashes` (Game.dll): the bool IS
         // forwarded — `Effect::TakeItem.extra`, its filter semantics applied
         // host-side) and Player.DestroyItem(record)
         // (`LuaPlayer::DestroyItem`: the same virtual with count 1, bool false).
@@ -815,7 +815,7 @@ impl UserData for Obj {
             Ok(())
         });
         // Character.Move(WorldVec3) (`LuaCharacter::Move` →
-        // `Character::RequestMove`, Game.dll `0x18006dc50`): the controller's
+        // `Character::RequestMove`, Game.dll): the controller's
         // plain "Move" state — a walk with no quest interruptions
         // (`Effect::Move`; the quest `MoveAction` is a different command).
         m.add_method("Move", |_, o, args: MultiValue| {
@@ -829,7 +829,7 @@ impl UserData for Obj {
             Ok(())
         });
         // Character.Attack(uint target) (`LuaCharacter::Attack` →
-        // `Character::RequestAttack`, Game.dll `0x18006dbb0`): the controller's
+        // `Character::RequestAttack`, Game.dll): the controller's
         // "Pursue" state — the host engages only a faction-hostile target
         // (`Effect::Attack`).
         m.add_method("Attack", |_, o, args: MultiValue| {
@@ -841,10 +841,10 @@ impl UserData for Obj {
             Ok(())
         });
         // Character.Turn(Vec3) (`LuaCharacter::Turn`): the engine glue passes
-        // ms=0 to `Character::RotateTowards` (exe `0x1400510c9`), a zero-dt
+        // ms=0 to `Character::RotateTowards`, a zero-dt
         // turn — a no-op in the engine too. Preserved: accept and do nothing.
         m.add_method("Turn", |_, _, _: MultiValue| Ok(()));
-        // Character.Say(tag) (`LuaCharacter::Say`, exe `0x1400513d0`): the
+        // Character.Say(tag) (`LuaCharacter::Say`, Grim Dawn.exe): the
         // localised tag goes to a UI speech bubble over the object — no
         // sound, no gameplay. Presentational `Effect::Say`; headless no-op.
         m.add_method("Say", |_, o, args: MultiValue| {
@@ -857,8 +857,8 @@ impl UserData for Obj {
             Ok(())
         });
         // Character.ToggleSkills(bool) (`LuaCharacter::ToggleSkills` →
-        // `QuestCommandEnableMonsterSkills`, Game.dll `0x1802f2960` →
-        // `Monster::EnableSkills`, gated in `ChooseBestSkill`): off = only
+        // `GameEngine::QuestCommandEnableMonsterSkills` (Game.dll) →
+        // `Monster::EnableSkills`, gated in `ControllerMonster::ChooseBestSkill`): off = only
         // basic attacks.
         m.add_method("ToggleSkills", |_, o, on: bool| {
             let mut s = o.ctx.story.borrow_mut();
@@ -868,7 +868,7 @@ impl UserData for Obj {
             Ok(())
         });
         // Character.ToggleInvincible(bool) (`LuaCharacter::ToggleInvincible` →
-        // `QuestCommandToggleInvincible`, Game.dll `0x1802f2b20`): the
+        // `GameEngine::QuestCommandToggleInvincible`, Game.dll): the
         // Character's invincible byte — damage, debuffs and targeting skip it.
         m.add_method("ToggleInvincible", |_, o, on: bool| {
             let mut s = o.ctx.story.borrow_mut();
@@ -878,7 +878,7 @@ impl UserData for Obj {
             Ok(())
         });
         // Player.GiveAffixItem(record, prefix, suffix)
-        // (`LuaPlayer::GiveAffixItem`, exe `0x140050cf0`): `Item::CreateItem`
+        // (`LuaPlayer::GiveAffixItem`, Grim Dawn.exe): `Item::CreateItem`
         // of an `ItemReplicaInfo` with the named affixes, given to the player;
         // the host resolves them at the player's level (`Effect::GiveAffixItem`).
         m.add_method("GiveAffixItem", |_, o, args: MultiValue| {

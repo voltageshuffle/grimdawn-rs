@@ -45,7 +45,7 @@ pub struct GamePause {
     /// The window lost the focus (set on focus changes only).
     pub unfocused: bool,
     /// A video plays (`Game::LoadModMap` queues the intro: the engine pauses game time and the sounds while one
-    /// does, `sub_14000F860` / `SoundManager::Pause`, but not the video's own stream); `grimdawn::video` sets it.
+    /// does, `Game::UpdateVideo` / `SoundManager::Pause`, but not the video's own stream); `grimdawn::video` sets it.
     /// The soundtrack's voice is `gd_audio`'s `PlaysWhilePaused`, so it keeps playing.
     pub video: bool,
 }

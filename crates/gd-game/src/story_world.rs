@@ -1206,7 +1206,7 @@ pub fn world_effects(
                     }
                 }
             }
-            // `Character:Move(vec)` (engine `RequestMove`, Game.dll `0x18006dc50`): a plain walk to the
+            // `Character:Move(vec)` (engine `Character::RequestMove`, Game.dll): a plain walk to the
             // coords, not interruptible (`QuestMove` as `MoveAction` with the bool false).
             Effect::Move { id, coords } => {
                 let dest = Vec3::from(coords.origin);
@@ -1233,7 +1233,7 @@ pub fn world_effects(
                     }
                 }
             }
-            // `Character:Attack(target)` (engine `RequestAttack`, Game.dll `0x18006dbb0`): engage the
+            // `Character:Attack(target)` (engine `Character::RequestAttack`, Game.dll): engage the
             // target when the factions are hostile (`IsEnemyValid`); the existing pursuit / swing takes
             // the enemy up (`MonsterAi.enemy` / `aggro` / anger).
             Effect::Attack { id, target } => {

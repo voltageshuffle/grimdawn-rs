@@ -597,7 +597,7 @@ pub fn story_doors(
                     }
                 }
             }
-            // `Door:SetAutoClose(bool)` (`FixedDoor::SetAutoClose`, Game.dll `0x1802a6790`): the flag
+            // `Door:SetAutoClose(bool)` (`FixedDoor::SetAutoClose`, Game.dll): the flag
             // with the record's `autoClosePeriod`; an open door arms its countdown at once (the
             // [`auto_close`] tick closes it). PORT: the port's item doors share the flag (the engine's
             // `FixedItemDoorBase` auto-close is another rule, not traced).

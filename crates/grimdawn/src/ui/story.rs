@@ -4,10 +4,10 @@
 //! inserts the bubble / sets the shake; nothing here mutates gameplay state.
 //!
 //! ## Speech bubble (`Character:Say`, LUA-14)
-//! Grim Dawn.exe `LuaCharacter::Say` (`0x1400513d0`): localises the tag
+//! Grim Dawn.exe `LuaCharacter::Say`: localises the tag
 //! (`LocalizationManager::LocalizeWithoutParams`) and hands it to the UI vcall `GameUIInterface+24`,
-//! which spawns a speech window (`sub_14024C400`) — a `UITextBox` loaded from
-//! `records/sandbox/paul/speechwindow.dbr` with a 5000 ms life. Its update (`sub_14024C660`): the life
+//! which spawns a speech window (`SpeechWindow::SpeechWindow`) — a `UITextBox` loaded from
+//! `records/sandbox/paul/speechwindow.dbr` with a 5000 ms life. Its update (`SpeechWindow::Update`): the life
 //! counts down by the frame ms; under 1000 ms left the alpha is `left / 1000` (a one-second fade out);
 //! the speaker's speech coords are projected to the screen and the box is centred on them with its top
 //! `2 × height` above the point; a speaker that went clamps the life to ≤ 1000 ms (fades out).

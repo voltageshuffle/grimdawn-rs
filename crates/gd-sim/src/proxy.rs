@@ -32,7 +32,7 @@
 //! `difficultyLimitsFile` (only the main menu's) from that record. Pool
 //! entries are still filtered by the raw player level.
 //!
-//! The hero/boss restriction (`ProxyPool::Load`'s entry loader, Game.dll `sub_18041DF10`): an entry whose
+//! The hero/boss restriction (`ProxyPool::LoadEntries`, `ProxyPool::Load`'s entry loader): an entry whose
 //! record's `monsterClassification` resolves to Hero, Boss or SuperBoss (`ResolveMonsterClassificationEnum`
 //! 2 / 3 / 5) is a boss entry. One already in the game (`GameEngine::IsProxyHeroBossInGame`, the session's
 //! hero-boss registry) has its limit zeroed — it never spawns again this session; a new one is marked, and

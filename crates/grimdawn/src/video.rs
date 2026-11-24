@@ -1,4 +1,4 @@
-//! Video playback (Engine.dll `TheoraVideoPlayer`, exe `Game::LoadModMap` / `sub_14000F860`): the new character's intro
+//! Video playback (Engine.dll `TheoraVideoPlayer`, exe `Game::LoadModMap` / `Game::UpdateVideo`): the new character's intro
 //! and the quest action `PlayVideo` (the expansion intros).
 //!
 //! The engine keeps a FIFO of video paths. `Game::LoadModMap` queues `video/intro.ogg` for a character that has not
@@ -170,7 +170,7 @@ fn skip(
 
 /// The subtitle file's text for the video at the engine path `video`: `text_<language>/<name>.txt` of the archives
 /// when the language is not the default and has one, else `<video>.txt` beside it (found ignoring case, like the
-/// video: the install has `Intro.ogg` and `intro.txt`).
+/// video: the install has `video/Intro.ogg` and `video/intro.txt`).
 fn subtitle_text(data: &GameData, video: &str) -> String {
     let txt = std::path::Path::new(video).with_extension("txt");
     let txt = txt.to_string_lossy().replace('\\', "/");

@@ -934,7 +934,7 @@ pub fn arm_story_characters(
             continue;
         }
         let player = progress.as_ref().map_or(1, |p| p.progress.level);
-        // `Character.Create(record, level, origin)` (exe `0x140051540`): the origin's area limits
+        // `Character.Create(record, level, origin)` (`LuaCharacter::CreateAtLevel`): the origin's area limits
         // (`GetLevelLimits`, sector layer 9): level≠0 → clamp(level+offset, min, max); level 0 →
         // roll within them; nil origin → (level, level, 0), the level as given. PORT: the binding
         // stores only non-zero levels, so an origin with no stored level is the 3-arg form's level 0.
@@ -1135,7 +1135,7 @@ pub struct ScreenShake {
     pub secs_left: f32,
 }
 
-/// `Character:Say(tag)` (exe `0x1400513d0`: the localized tag goes to the UI speech-bubble vcall; no
+/// `Character:Say(tag)` (`LuaCharacter::Say`: the localized tag goes to the UI speech-bubble vcall; no
 /// sound, no gameplay): a [`SayBubble`] over the entity for ~3 s. The expiry is the host's (the UI only
 /// reads); headless nothing draws it.
 pub fn say_bubbles(
