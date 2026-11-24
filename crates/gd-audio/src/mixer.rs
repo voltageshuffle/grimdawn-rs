@@ -31,24 +31,18 @@ pub(super) fn attach_voice(commands: &mut Commands, e: Entity, voice: Voice3d) {
             let s = w.resource::<Sounds>();
             (s.bus.clone(), s.bus_hz)
         };
-        // Started while the menu / pause key holds the game: a UI sound (module doc), it plays through the pause.
-        let held = w
-            .get_resource::<GamePause>()
-            .is_some_and(|p| p.menu || p.key);
         let Ok(mut entity) = w.get_entity_mut(e) else {
             return;
         };
         let Some(start) = entity.get::<VoiceStart>().copied() else {
             return;
         };
-        let through_pause = held && entity.get::<SoundClass>() != Some(&SoundClass::Music);
         let ctl = Arc::new(VoiceCtl::default());
         let (bus_voice, spare) = voice.start(ctl.clone(), start.speed, hz);
         entity.insert(Voice {
             ctl: ctl.clone(),
             end: start.end,
             spare,
-            through_pause,
         });
         if !tx.is_some_and(|tx| tx.try_send(bus_voice).is_ok()) {
             ctl.done.store(true, Ordering::Relaxed);
@@ -147,6 +141,8 @@ pub struct Voice3d {
     pcm: Option<Pcm>,
     looped: bool,
     ears: Option<EarGains>,
+    /// Samples the game pushes as it makes them ([`LiveAudio`]); the other fields are then unused.
+    live: Option<LiveAudio>,
 }
 
 impl Voice3d {
@@ -156,12 +152,26 @@ impl Voice3d {
             pcm: file.pcm,
             looped,
             ears,
+            live: None,
         }
     }
 
     /// The mixer's side of the voice, played at `speed` (the file's rate × `speed`) on a bus at `hz`; a looped stream
     /// also gets the decoder of its next pass ([`Spare`]).
     fn start(self, ctl: Arc<VoiceCtl>, speed: f32, hz: u32) -> (BusVoice, Option<Arc<Spare>>) {
+        if let Some(live) = self.live {
+            let rate = live.0.rate;
+            let voice = BusVoice {
+                ctl,
+                src: Src::Live(LiveSrc::new(live.0)),
+                channels: 2,
+                step: rate as f64 * speed as f64 / hz as f64,
+                looped: false,
+                ears: None,
+                gain: None,
+            };
+            return (voice, None);
+        }
         let mut spare = None;
         let (src, channels, rate) = match self.pcm {
             Some(p) => (
@@ -268,9 +278,14 @@ pub struct Voice {
     end: OnEnd,
     /// A looped stream's next-pass decoder, kept filled by [`refill_spares`].
     spare: Option<Arc<Spare>>,
-    /// Started while the game was held: a UI sound, not paused by the pause (module doc).
-    through_pause: bool,
 }
+
+/// A sound the game's pause does not hold: an interface sound (a button's, an item moved in a window, a spoken
+/// refusal) or the soundtrack of a video, which sets the pause itself. [`mix`] pauses every other voice while
+/// `GamePause::paused()`, whenever it started; the marker is set where the sound is requested
+/// (`pak::start_named` for an unpositioned pak, [`spawn_live`]), never inferred from the moment it starts.
+#[derive(Component)]
+pub struct PlaysWhilePaused;
 
 impl Voice {
     pub(super) fn set_volume(&self, v: f32) {
@@ -407,6 +422,7 @@ enum Src {
         at: f64,
     },
     Stream(Box<Stream>),
+    Live(LiveSrc),
 }
 
 impl BusVoice {
@@ -444,8 +460,177 @@ impl BusVoice {
                 ramp,
             ),
             Src::Stream(s) => s.mix(self.channels, self.step, self.looped, out, ramp),
+            Src::Live(l) => l.mix(self.step, out, ramp),
         }
     }
+}
+
+/// Interleaved stereo samples the game pushes while a voice plays them (the video's soundtrack, decoded as the
+/// file is read): [`spawn_live`]. The voice ends once [`LiveAudio::close`] was called and the queue ran dry; an
+/// empty queue before that is silence that holds the position. [`LiveAudio::played`] is the clock a video follows
+/// (`SoundManager::GetExternalStreamTime`): it only advances while the voice is mixed, so the game's pause stops it.
+#[derive(Clone)]
+pub struct LiveAudio(Arc<Live>);
+
+struct Live {
+    queue: Mutex<std::collections::VecDeque<f32>>,
+    closed: AtomicBool,
+    /// Frames taken from the queue.
+    pulled: std::sync::atomic::AtomicU64,
+    rate: u32,
+}
+
+impl LiveAudio {
+    pub fn new(rate: u32) -> Self {
+        LiveAudio(Arc::new(Live {
+            queue: Mutex::new(Default::default()),
+            closed: AtomicBool::new(false),
+            pulled: Default::default(),
+            rate,
+        }))
+    }
+
+    /// Queues interleaved stereo samples.
+    pub fn push(&self, samples: &[f32]) {
+        self.0.queue.lock().extend(samples);
+    }
+
+    /// No more samples will come.
+    pub fn close(&self) {
+        self.0.closed.store(true, Ordering::Relaxed);
+    }
+
+    /// The seconds of sound mixed so far.
+    pub fn played(&self) -> f32 {
+        self.0.pulled.load(Ordering::Relaxed) as f32 / self.0.rate as f32
+    }
+
+    /// Seconds queued and not yet mixed.
+    pub fn queued(&self) -> f32 {
+        self.0.queue.lock().len() as f32 / 2.0 / self.0.rate as f32
+    }
+}
+
+/// A [`LiveAudio`] voice: [`Stream::mix`]'s interpolation over the queue.
+pub struct LiveSrc {
+    live: Arc<Live>,
+    cur: [f32; 2],
+    next: [f32; 2],
+    at: f64,
+    /// Frames loaded into `cur` / `next` (0 to 2).
+    have: u8,
+    last: bool,
+}
+
+enum Pulled {
+    Frame([f32; 2]),
+    /// Nothing queued yet.
+    Wait,
+    End,
+}
+
+impl LiveSrc {
+    fn new(live: Arc<Live>) -> Self {
+        LiveSrc {
+            live,
+            cur: [0.0; 2],
+            next: [0.0; 2],
+            at: 0.0,
+            have: 0,
+            last: false,
+        }
+    }
+
+    fn pull(&self) -> Pulled {
+        let mut q = self.live.queue.lock();
+        match (q.pop_front(), q.pop_front()) {
+            (Some(l), Some(r)) => {
+                self.live.pulled.fetch_add(1, Ordering::Relaxed);
+                Pulled::Frame([l, r])
+            }
+            _ if self.live.closed.load(Ordering::Relaxed) => Pulled::End,
+            // A lone sample (the decoder pushes whole frames) stays unplayed.
+            _ => Pulled::Wait,
+        }
+    }
+
+    fn mix(&mut self, step: f64, out: &mut [f32], ramp: Ramp) -> bool {
+        let [mut gl, mut gr] = ramp.gain;
+        let [dl, dr] = ramp.step;
+        let mut f = 0;
+        while f < out.len() {
+            if self.have < 2 {
+                match self.pull() {
+                    Pulled::Frame(fr) => {
+                        self.cur = self.next;
+                        self.next = fr;
+                        self.have += 1;
+                        continue;
+                    }
+                    Pulled::Wait => return true,
+                    Pulled::End => return false,
+                }
+            }
+            let t = self.at as f32;
+            gl += dl;
+            gr += dr;
+            out[f] += (self.cur[0] + (self.next[0] - self.cur[0]) * t) * gl;
+            out[f + 1] += (self.cur[1] + (self.next[1] - self.cur[1]) * t) * gr;
+            f += 2;
+            self.at += step;
+            while self.at >= 1.0 {
+                if self.last {
+                    return false;
+                }
+                match self.pull() {
+                    Pulled::Frame(fr) => {
+                        self.cur = self.next;
+                        self.next = fr;
+                        self.at -= 1.0;
+                    }
+                    Pulled::Wait => {
+                        // Hold the last frame until the decoder catches up.
+                        self.at = 1.0;
+                        return true;
+                    }
+                    Pulled::End => {
+                        self.cur = self.next;
+                        self.last = true;
+                        self.at -= 1.0;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+/// A 2D voice of pushed samples ([`LiveAudio`]), kept when it ends like [`spawn_2d`]'s. It plays while the game is
+/// paused ([`PlaysWhilePaused`]): the video it belongs to is what pauses the game.
+pub fn spawn_live(
+    commands: &mut Commands,
+    class: SoundClass,
+    volume: f32,
+    live: LiveAudio,
+) -> Entity {
+    let e = commands
+        .spawn((sound(class, volume, OnEnd::Keep, 1.0), PlaysWhilePaused))
+        .id();
+    let mut voice = Voice3d::of(
+        Loaded {
+            file: AudioSource {
+                bytes: Arc::from([]),
+            },
+            pcm: None,
+            rate: None,
+            mono: false,
+        },
+        false,
+        None,
+    );
+    voice.live = Some(live);
+    attach_voice(commands, e, voice);
+    e
 }
 
 /// A block's left / right gains: `gain` before the first frame, + `step` each frame.
@@ -753,11 +938,18 @@ pub(super) fn focus_pause(
 /// Volumes from the options, the game pause and the window focus (module docs). In `Last`, after every system that
 /// starts a sound, so a sound started this frame plays from this frame's mix on. A voice's volume is written when it
 /// starts, its [`BaseVolume`] changes or the options change; its pause when it starts or the pause / focus changes.
+/// While the game is held every voice is paused (it resumes where it stopped) except those marked
+/// [`PlaysWhilePaused`]; an unfocused window pauses them all.
 pub(super) fn mix(
     options: Res<GameOptions>,
     pause: Res<GamePause>,
     mut sounds: ResMut<Sounds>,
-    q: Query<(Ref<Voice>, &SoundClass, Option<Ref<BaseVolume>>)>,
+    q: Query<(
+        Ref<Voice>,
+        &SoundClass,
+        Option<Ref<BaseVolume>>,
+        Has<PlaysWhilePaused>,
+    )>,
     mut held: Local<Option<(bool, bool)>>,
 ) {
     let reread = options.is_changed();
@@ -768,14 +960,14 @@ pub(super) fn mix(
     let state = (pause.unfocused, pause.paused());
     let repause = *held != Some(state);
     *held = Some(state);
-    for (voice, class, base) in &q {
+    for (voice, class, base, exempt) in &q {
         if let Some(b) = base
             && (reread || voice.is_changed() || b.is_changed())
         {
             voice.set_volume(b.0 * l.gain_final(*class));
         }
         if repause || voice.is_changed() {
-            let play = !pause.unfocused && (voice.through_pause || !pause.paused());
+            let play = !pause.unfocused && (exempt || !pause.paused());
             voice.set_paused(!play);
         }
     }

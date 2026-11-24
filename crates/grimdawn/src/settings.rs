@@ -9,9 +9,8 @@
 //! The `language` option ([`apply_language`]) selects the localisation tags and fonts live
 //! (`gd_game_core::data::GameData::set_language`); the story snapshots its tags, the quest / dialog text
 //! overrides (`text_<code>/<basename>.txt`) and the `language.def` paging separators per session
-//! (`gd_game::story::setup_story`), so they follow on the next session. PORT: `intro.txt` cinematic
-//! subtitles (the port plays no videos) and CJK font word-wrap (`language.def` `wordmode`) are out
-//! of scope.
+//! (`gd_game::story::setup_story`), so they follow on the next session. The `intro.txt` video subtitles are
+//! `video.rs`'s. PORT: CJK font word-wrap (`language.def` `wordmode`) is out of scope.
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use gd_ui_kit::state::settings::{UiScaleOption, path};

@@ -15,9 +15,10 @@
 //! Pause: Engine.dll `SoundManager::Pause` (the game menu, its options window and the pause key
 //! pause with sound) pauses every playing stream and every sound not flagged by `SoundPak::EnablePauseHack`, and starts
 //! later unflagged ones at volume 0; the UI's widgets flag their sounds, so a click plays during the pause. PORT: a
-//! sound started while the menu or the pause key holds the game is taken to be such a UI sound and plays through the
-//! pause. The session timers and fades run on virtual [`Time`], so they freeze too. While the window is not focused
-//! every sound is paused (`mixer::unfocused_mute`).
+//! pak played without a position is such an interface sound ([`mixer::PlaysWhilePaused`], set where it is requested,
+//! never inferred from when it starts), and so is a video's soundtrack; every other voice, a world loop or ambience
+//! that starts during the pause included, is held and resumes in place. The session timers and fades run on virtual
+//! [`Time`], so they freeze too. While the window is not focused every sound is paused (`mixer::unfocused_mute`).
 //!
 //! Devices (`devices`): the options Audio tab lists the host's output / input devices by name (index 0 = system
 //! default, i >= 1 = entry i - 1). bevy_audio 0.20 opens only the default sink (`AudioOutput` is pub(crate), no
@@ -40,7 +41,7 @@ mod sessions;
 
 pub use emitters::{spawn_emitter, spawn_loop};
 pub use listener::{BaseVolume, SoundClass};
-pub use mixer::{Fade, spawn_2d};
+pub use mixer::{Fade, LiveAudio, spawn_2d, spawn_live};
 pub use pak::{ENGINE_HZ, play_pak};
 pub use sessions::Ambience;
 

@@ -52,6 +52,7 @@ mod sheet_dps;
 mod story;
 mod trade;
 mod ui;
+mod video;
 mod weather;
 
 use bevy::prelude::*;
@@ -195,6 +196,7 @@ fn main() {
             record_facts::RecordFactsPlugin,
             doll::DollPlugin,
             gd_render::chaos_beam::ChaosBeamPlugin,
+            video::VideoPlugin,
         ))
         .add_plugins((
             evade::EvadeInputPlugin,

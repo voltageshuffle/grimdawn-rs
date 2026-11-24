@@ -52,6 +52,9 @@ pub struct SessionHooks {
     pub name: Option<String>,
     pub female: bool,
     pub hardcore: bool,
+    /// `GD_VIDEO=<engine path>` (`video/intro.ogg`): plays that video when the player enters the game, whatever the
+    /// character. Without it a session that skips the menu (the hooks above) plays no intro.
+    pub video: Option<String>,
     /// `GD_DIFFICULTY` (0..=2) and `GD_VETERAN` (`0` = off) override the save's.
     pub difficulty: Option<usize>,
     pub veteran: Option<bool>,
@@ -471,6 +474,7 @@ impl Hooks {
                     .filter_map(|x| x.trim().parse::<f32>().ok())
                     .collect()
             }),
+            video: s("GD_VIDEO"),
             save_dir: s("GD_SAVE_DIR"),
             autosave_secs: f("GD_AUTOSAVE_SECS"),
             map: s("GD_MAP").or_else(|| {

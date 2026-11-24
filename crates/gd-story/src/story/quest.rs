@@ -1196,7 +1196,12 @@ impl Story {
                 caster: entity,
             }),
             Action::UnlockTutorial { page } => self.effects.push(Effect::UnlockTutorial(*page)),
-            // PORT: `ScriptableAction_PlayVideo` (the expansion intros): the port plays no videos.
+            // `ScriptableAction_PlayVideo::Execute`: nothing without a path.
+            Action::PlayVideo { video, .. } if !video.is_empty() => {
+                self.effects.push(Effect::PlayVideo {
+                    video: video.clone(),
+                })
+            }
             Action::PlayVideo { .. } => {}
         }
     }

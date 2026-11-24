@@ -128,6 +128,9 @@ fn end_session(world: &mut World) {
     reset::<gd_audio::Ambience>(world);
     reset::<crate::weather::WeatherRuntime>(world);
     reset::<gd_render::render::weather::WeatherState>(world);
+    // The videos waiting, and the one playing (its decoder thread stops when the resource drops).
+    reset::<crate::video::VideoQueue>(world);
+    remove::<crate::video::Playing>(world);
     remove::<gd_render::render::backdrop::MenuBackdrop>(world);
     // The particle decals' ring holds the despawned decals' entities.
     reset::<crate::casting::DropDecals>(world);

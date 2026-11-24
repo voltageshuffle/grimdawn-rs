@@ -35,6 +35,9 @@ rotation, the `PlayAnimation` flag, `HasAffix`'s record→instance bridge) are l
 list, with syntax, is the field docs of `crates/gd-game-core/src/hooks.rs`.
 
 Recipes:
+- Intro video: a new character from the menu plays `video/intro.ogg` (any key or click skips it); test sessions
+  skip it, `GD_NO_MENU=1 GD_VIDEO=video/intro.ogg` plays it at the player's entry (add `GD_SHOT=<png>
+  GD_SHOT_FRAMES=1500` for a frame around 15 s in).
 - Crucible from the menu: `GD_MENU=1 GD_MENU_CRUCIBLE=1 GD_MENU_PICK=0`. Direct: `GD_SURVIVAL=a` (arena a..j).
   Full run: add `GD_GOD=1 GD_LUA='@3:Game.GetLocalPlayer():AdjustTribute(40)'
   GD_STORY_TALK=powerups,defensesite_01.,npc_event GD_DIALOG_CLICK=0,0,1,1@3 GD_AUTO_FIGHT GD_KILL_ALL=12

@@ -1,5 +1,6 @@
 //! `SoundPak` one-shots: gameplay requests, story sounds, periodic decoration sounds and the characters' animation
-//! callbacks, all started by [`play_pak`].
+//! callbacks, all started by [`play_pak`]. A pak played without a position (or entity) is an interface sound and
+//! plays through the game's pause ([`PlaysWhilePaused`]); a placed one is held by it.
 //!
 //! 3D sounds: [`Positioned`] holds every mono sound the engine would make a 3D buffer; its voice is mixed to the two
 //! ears with the gains of [`gd_sim::sound3d`], kept current every frame ([`positioned_sounds`], `emitters::emitters`).
@@ -11,7 +12,7 @@
 use super::Sounds;
 use super::cache::Loaded;
 use super::listener::{BaseVolume, Listener, SoundClass, VOICES, sound};
-use super::mixer::{EarGains, OnEnd, Voice3d, attach_voice};
+use super::mixer::{EarGains, OnEnd, PlaysWhilePaused, Voice3d, attach_voice};
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_game_core::data::GameData;
@@ -225,7 +226,7 @@ fn start_named(
     let speed = file.speed(info.pitch(positional, fastrand::u32(..)));
     debug!("start {pak} at speed {speed:.3}");
     sounds.listener.voices += 1;
-    Some(start_voice(
+    let e = start_voice(
         commands,
         &sounds.listener,
         file,
@@ -234,7 +235,13 @@ fn start_named(
         OnEnd::Despawn,
         speed,
         place,
-    ))
+    );
+    // A sound with no place in the world is the interface's (a button, an item moved in a window, a spoken refusal:
+    // the engine's `EnablePauseHack` ones): it plays while the game is paused, every other pak sound is held.
+    if at.is_none() && on.is_none() {
+        commands.entity(e).insert(PlaysWhilePaused);
+    }
+    Some(e)
 }
 
 /// Starts the one-shots that waited for their file ([`start_named`]) once `cache::collect_preload` has it: a few

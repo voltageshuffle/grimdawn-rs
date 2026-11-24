@@ -20,4 +20,5 @@ pub mod text;
 pub mod ui;
 pub mod util;
 pub mod vfs;
+pub mod video;
 pub mod wav;

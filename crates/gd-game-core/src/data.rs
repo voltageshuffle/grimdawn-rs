@@ -7,8 +7,8 @@
 //! `text_<code>/` archive ([`GameData::tags`]); the UI follows it live, while the story snapshots its
 //! tags, the quest / dialog text overrides (`text_<code>/<basename>.txt`) and the `language.def`
 //! paging separators once per session (`gd_game::story::setup_story`), so they follow on the next
-//! session. PORT: `intro.txt` cinematic subtitles (the port plays no videos) and CJK font word-wrap
-//! (`language.def` `wordmode`) are out of scope.
+//! session. The `intro.txt` video subtitles are `grimdawn::video`'s. PORT: CJK font word-wrap
+//! (`language.def` `wordmode`) is out of scope.
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::text::{LANGUAGES, Language, TagTable};

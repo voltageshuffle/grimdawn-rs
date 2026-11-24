@@ -6,8 +6,8 @@
 //! [`gd_game_core::day_clock::DayClock::set`]); a port save is written with `has_been_in_game` set
 //! (`crate::save::new_character`), as the engine's after this. The time of day is [`crate::day_clock`]'s.
 //!
-//! PORT: the engine also queues its intro video `video/intro.ogg` here (without a mod), and story scripts play
-//! videos (`ScriptableAction_PlayVideo`). The port plays no videos.
+//! The engine also queues its intro video `video/intro.ogg` here (without a mod): `grimdawn::video` plays it for
+//! the same first entry (`first_time_in_game`), and the story's `PlayVideo` action.
 use bevy::prelude::*;
 use gd_game_core::entry::EnteredGame;
 use gd_game_core::player::Player;

@@ -2587,9 +2587,11 @@ dependencies = [
  "anyhow",
  "foldhash 0.2.0",
  "gd-formats",
+ "lewton",
  "lz4_flex",
  "parking_lot",
  "texture2ddecoder",
+ "theora_nrp",
 ]
 
 [[package]]
@@ -2798,6 +2800,7 @@ dependencies = [
  "gd-ui-kit",
  "gd-world",
  "libc",
+ "parking_lot",
  "wgpu",
 ]
 
@@ -4085,6 +4088,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogg_nrp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0290dbcd52b9a5c181daa5e701592843be9b147dcb813a1af606b5cc5da59d6e"
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4922,6 +4931,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "427ae8ec7f2f0fdd3146b77cfa44bea880caf066f7e55398a8467afe2645c832"
 dependencies = [
  "paste",
+]
+
+[[package]]
+name = "theora_nrp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a395be0dc4ca0de4f05ec8ed6da225eaaf9e3c272e9296fee254d2bb88e9bf2c"
+dependencies = [
+ "ogg_nrp",
 ]
 
 [[package]]

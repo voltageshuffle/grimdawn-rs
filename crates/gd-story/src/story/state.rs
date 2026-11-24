@@ -794,6 +794,12 @@ pub enum Effect {
         /// `None`: a bare animation play with no controller state (quest action 14).
         quest: Option<bool>,
     },
+    /// Quest action 28 (`ScriptableAction_PlayVideo`, Execute → `GameEngine::PlayVideoRequest(path, flag)`): the
+    /// video at the engine path `video` (`video/GDX1_intro.ogg`) joins the playing queue (`grimdawn::video`). The
+    /// flag is not read in single player.
+    PlayVideo {
+        video: String,
+    },
     /// Quest action 22 (`ScriptableAction_CastSkill`): `caster` (the action's owner, a conversation's NPC) casts
     /// `skill` on the main player; None (a quest's action, no owner) does nothing (`gd_game::story::cast_story_skills`).
     CastSkill {

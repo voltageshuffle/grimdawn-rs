@@ -33,6 +33,7 @@ gd-ui = { path = "../gd-ui", version = "0.1.0" }
 gd-ui-kit = { path = "../gd-ui-kit", version = "0.1.0" }
 gd-world = { path = "../gd-world", version = "0.1.0" }
 libc = "0.2"
+parking_lot = "0.12"
 # The render adapters the options Video tab lists (`render_devices`) and the launch adapter choice in `main`;
 # features unify with bevy_render's wgpu (already locked 30.0.2).
 wgpu = { version = "30", default-features = false }
