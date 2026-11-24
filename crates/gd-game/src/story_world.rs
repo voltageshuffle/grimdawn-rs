@@ -1,4 +1,4 @@
-//! The story's objects in the world (the host side of `gd_sim::story`'s object list).
+//! The story's objects in the world (the host side of `gd_story::story`'s object list).
 //!
 //! - Streaming ([`stream_story_objects`]): the story objects of the levels within [`LOAD_RADIUS`] of
 //!   [`StreamFocus`] are scanned off-thread ([`scan_level`]: records with a Lua hook, triggers, NPCs with a
@@ -10,21 +10,21 @@
 //!   which re-creates the entities saved (so not the ones destroyed meanwhile) and marks them restored
 //!   (`Entity::IsRestored`, Lua `IsReloaded`, `HostFacts::restored_objects`). An object a script created
 //!   (`Entity.Create`, `Character.Create`, `Proxy.Create`) leaves the story when the region it stands in streams out
-//!   and is not restored: Engine.dll `Entity::Entity` @0x18007d020 clears the save flag (+440, read by
-//!   `Entity::ShouldSaveState` @0x18007f170) that `Level::SaveState` keeps entities by (the Shattered Realm's
+//!   and is not restored: Engine.dll `Entity::Entity` clears the save flag (`Entity.saveState`, read by
+//!   `Entity::ShouldSaveState`) that `Level::SaveState` keeps entities by (the Shattered Realm's
 //!   boss-room NPCs, the latched ambient fighter proxies: their scripts do not spawn them again).
 //! - Spawning ([`sync_actors`]): an object present in the story gets its entity, [`StoryActor`]: doors and levers,
 //!   chests, a proxy's monsters ([`StoryProxyChild`]), nav blockers, effects, breakables
-//!   ([`crate::breakables::spawn_breakable`]), plain entities (a [`crate::visuals::DecorationRequest`] the
+//!   ([`crate::breakables::spawn_breakable`]), plain entities (a [`gd_game_core::visuals::DecorationRequest`] the
 //!   presentation dresses, with their path obstacles) and characters. Deaths run `onDie`, broken breakables
 //!   `onBroken`, opened chests `onOpen` / `onOpenServer`; `Proxy:AllKilled` follows the proxy's monsters.
 //! - Effects ([`world_effects`]): `Kill`, `TeleportPlayer`, the character commands (`UseSkillAction`,
 //!   `MoveAction`, `TeleportHome`) and `DestroyItems`.
 //! - Record hooks ([`hooked_characters`], [`record_hooks`]):
 //!   every spawned character whose record has hooks becomes a story object whatever spawned it (a level proxy, a
-//!   death spawn, a story proxy; `Character::Load` @0x180054e70 loads the character hook pack from the
+//!   death spawn, a story proxy; `Character::Load` loads the character hook pack from the
 //!   character's own record for every character), as does a story proxy's monster when its proxy has `onSpawn`
-//!   (its `onAddToWorld`, then the proxy's `onSpawn` with its id: `Proxy::PlaceObjects` @0x1804161f0;
+//!   (its `onAddToWorld`, then the proxy's `onSpawn` with its id: `Proxy::PlaceObjects`;
 //!   `onRemoveFromWorld` / `onDestroy` when it goes); `onCallbackDie` on the death animation's `OnDie` callback
 //!   of a `registerCallbackToDie` record (`DefaultDeathHandler::AnimationCallback` →
 //!   `Character::OnCallbackDie`), `onCallbackSkill` on a `SkillScript` callback (`SkillManager::
@@ -32,23 +32,25 @@
 //!   restored, the item hooks `onPickUp` / `onDrop`.
 //!
 //! Placed characters spawn at their map coordinates whatever the navmesh: the engine loads them there without a
-//! nav query (`Character::Load` @0x180054e70; the Loghorrean platforms of the Shattered Realm's
+//! nav query (`Character::Load`; the Loghorrean platforms of the Shattered Realm's
 //! `specialfloor_06` carry no nav cells). [`sync_actors`] snaps a character onto a walkable cell within 3 m when
 //! there is one (placed coordinates can sit below a raised floor) and otherwise keeps the placed position once the
 //! object's level has loaded ([`actor_ground`]); until then the spawn waits.
 //!
 //! A script-placed `delayedRun` proxy spawns nothing until `Proxy:Run()` (`Story::is_present`); its `AllKilled()`
-//! answers true meanwhile, as the engine's does for an empty spawned list (sub_14006abd0).
-use crate::data::GameData;
-use crate::levels::{
-    LOAD_RADIUS, Levels, StreamFocus, UNLOAD_RADIUS, region_distance, region_origin,
-};
-use crate::story::{PLAYER_ID, StoryActor, StoryEffect, StoryProxyChild, StoryRuntime, StoryStage};
+//! answers true meanwhile, as the engine's does for an empty spawned list (`LuaProxy::AllKilled`).
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
-use gd_sim::story::state::ObjClass;
-use gd_sim::story::{Coords, Effect};
-use std::collections::{HashMap, HashSet};
+use gd_formats::collections::{HashMap, HashSet};
+use gd_game_core::data::GameData;
+use gd_game_core::levels::{
+    LOAD_RADIUS, Levels, StreamFocus, UNLOAD_RADIUS, region_distance, region_origin,
+};
+use gd_game_core::story::{
+    PLAYER_ID, StoryActor, StoryEffect, StoryProxyChild, StoryRuntime, StoryStage,
+};
+use gd_story::story::state::ObjClass;
+use gd_story::story::{Coords, Effect};
 
 /// The record fields that make a record a story object ([`is_story_record`]): the hooks of the entity pack
 /// (`onAddToWorld`, `onRemoveFromWorld`, `onDestroy`), the character pack (`onSpawn`, `onDie`, `onCallbackDie`,
@@ -82,7 +84,7 @@ impl Plugin for StoryWorldPlugin {
                     stream_story_objects
                         .after(StoryStage::Sync)
                         .before(StoryStage::Tick)
-                        .run_if(resource_exists::<crate::save::MapLayout>)
+                        .run_if(resource_exists::<gd_game_core::save::MapLayout>)
                         .run_if(resource_exists::<StreamFocus>),
                     (
                         sync_actors.before(StoryStage::Arm),
@@ -163,10 +165,10 @@ fn has_hooks(rec: &gd_formats::arz::Record) -> bool {
 }
 
 /// The names a `Monsters` / `AnyEntity` trigger detects: every value of the multi-value `detectableNames` field —
-/// `AreaTrigger::Load` @0x180027970 hashes each value whole (FNV-1a) into its detectable list; the stock
+/// `AreaTrigger::Load` hashes each value whole (FNV-1a) into its detectable list; the stock
 /// Loghorrean room's three boss triggers each name all three bosses as three separate values, and reading only the
 /// first loses the bosses placed in `TrippleBoss_A02`. Parsed like the runtime's `AreaTrigger::from_record`
-/// (`gd_sim::story::trigger`): ';' splits, backslashes become slashes, case-insensitive.
+/// (`gd_story::story::trigger`): ';' splits, backslashes become slashes, case-insensitive.
 fn detected_names(rec: &gd_formats::arz::Record) -> Vec<String> {
     rec.strs_iter("detectableNames")
         .flat_map(|s| s.split(';'))
@@ -183,9 +185,9 @@ fn scan_level(map: &gd_formats::map::MapFile, data: &GameData, index: usize) -> 
     let origin = region_origin(&map.regions[index]);
     // The monsters a `Monsters` / `AnyEntity` area trigger of the level detects by name are script objects too: the
     // trigger hands their object id to its hooks (the Shattered Realm's Loghorrean room: three placed bosses
-    // whose ids `specialfloors.lua` keeps for its `Character.IsAlive` checks; `gd_sim::story::trigger`).
-    let mut detected: HashSet<String> = HashSet::new();
-    let mut seen: HashSet<u32> = HashSet::new();
+    // whose ids `specialfloors.lua` keeps for its `Character.IsAlive` checks; `gd_story::story::trigger`).
+    let mut detected: HashSet<String> = HashSet::default();
+    let mut seen: HashSet<u32> = HashSet::default();
     for e in &level.entities {
         if seen.insert(e.record)
             && let Some(r) = data.db.get(level.record_of(e))
@@ -195,7 +197,7 @@ fn scan_level(map: &gd_formats::map::MapFile, data: &GameData, index: usize) -> 
             detected.extend(detected_names(r));
         }
     }
-    let mut cache: HashMap<u32, bool> = HashMap::new();
+    let mut cache: HashMap<u32, bool> = HashMap::default();
     let mut out = Vec::new();
     for (i, e) in level.entities.iter().enumerate() {
         let keep = *cache.entry(e.record).or_insert_with(|| {
@@ -230,7 +232,7 @@ fn scan_level(map: &gd_formats::map::MapFile, data: &GameData, index: usize) -> 
 pub fn stream_story_objects(
     rt: Option<NonSendMut<StoryRuntime>>,
     mut sw: NonSendMut<StoryWorld>,
-    layout: Res<crate::save::MapLayout>,
+    layout: Res<gd_game_core::save::MapLayout>,
     focus: Res<StreamFocus>,
     data: Res<GameData>,
     devotion: Option<Res<crate::devotion::DevotionState>>,
@@ -299,7 +301,7 @@ pub fn stream_story_objects(
 fn scan_regions(
     rt: &StoryRuntime,
     sw: &mut StoryWorld,
-    layout: &crate::save::MapLayout,
+    layout: &gd_game_core::save::MapLayout,
     data: &GameData,
     p: Vec3,
 ) {
@@ -379,7 +381,7 @@ fn scan_regions(
 
 /// Where a placed story character stands ([`sync_actors`]): a walkable cell within 3 m of 2 m over the placed
 /// position wins (placed coordinates can sit below a raised floor); off-nav, the engine still loads the character
-/// at its map coordinates — `Character::Load` @0x180054e70 does no nav query, and the Loghorrean
+/// at its map coordinates — `Character::Load` does no nav query, and the Loghorrean
 /// platforms of the Shattered Realm's `specialfloor_06` have no nav cells at all. The placed position is used once
 /// the object's level has loaded (its nav data is in by then: the world streamer adds the nav layers before
 /// `Levels::add`); until then the spawn waits (`None`). Placed ids encode their region ([`scan_level`]);
@@ -395,7 +397,8 @@ pub fn actor_ground(
         p.y = nav.pos(cell)[1];
         return Some(p);
     }
-    if id < gd_sim::story::state::Entities::SCRIPT_ID_BASE && !levels.is_loaded((id >> 16) as usize)
+    if id < gd_story::story::state::Entities::SCRIPT_ID_BASE
+        && !levels.is_loaded((id >> 16) as usize)
     {
         return None;
     }
@@ -419,30 +422,45 @@ pub fn sync_actors(
     mut commands: Commands,
     (rt, sw): (Option<NonSendMut<StoryRuntime>>, NonSend<StoryWorld>),
     mut spawned_actors: ResMut<SpawnedActors>,
-    actors: Query<(Entity, &StoryActor, Option<&crate::world::Breakable>)>,
-    died: Query<&StoryActor, (Added<crate::combat::Dead>, Without<crate::world::Breakable>)>,
+    actors: Query<(Entity, &StoryActor, Option<&gd_game_core::world::Breakable>)>,
+    died: Query<
+        &StoryActor,
+        (
+            Added<gd_game_core::combat::Dead>,
+            Without<gd_game_core::world::Breakable>,
+        ),
+    >,
     proxy_children: Query<(Entity, &StoryProxyChild)>,
     live_children: Query<
         &StoryProxyChild,
-        (With<crate::monsters::Monster>, Without<crate::combat::Dead>),
+        (
+            With<gd_game_core::monsters::Monster>,
+            Without<gd_game_core::combat::Dead>,
+        ),
     >,
-    (chest_states, mut broken): (Res<crate::world::ChestStates>, ResMut<crate::world::Broken>),
+    (chest_states, mut broken): (
+        Res<gd_game_core::world::ChestStates>,
+        ResMut<gd_game_core::world::Broken>,
+    ),
     mut chests_opened: MessageReader<crate::chests::ChestOpened>,
     (session, factions): (
         crate::session::Session,
         Option<Res<crate::factions::PlayerFactions>>,
     ),
     levels: Res<Levels>,
-    rules: Option<Res<crate::rules::CombatRules>>,
+    rules: Option<Res<gd_game_core::rules::CombatRules>>,
     (progress, patrol_groups): (
-        Option<Res<crate::progress::PlayerProgress>>,
+        Option<Res<gd_game_core::progress::PlayerProgress>>,
         Res<crate::patrol::PatrolGroups>,
     ),
-    (nav, mut anims): (Res<crate::nav::Nav>, ResMut<crate::character::AnimCache>),
+    (nav, mut anims): (
+        Res<crate::nav::Nav>,
+        ResMut<gd_game_core::character::AnimCache>,
+    ),
     mut spawner: crate::creature::Spawner,
     (mut clips, mut new): (
         Local<crate::creature::ClipLists>,
-        crate::session::NewSession,
+        gd_game_core::session::NewSession,
     ),
 ) {
     if new.begun() {
@@ -469,12 +487,12 @@ pub fn sync_actors(
                 (spawnable(o.class) && st.is_present(o)) || (in_spawned && o.in_world && !o.alive)
             })
         };
-        // Despawned in `Last` (`crate::levels::Unload`): this frame's other systems may still command them.
+        // Despawned in `Last` (`gd_game_core::levels::Unload`): this frame's other systems may still command them.
         for (e, a, b) in &actors {
             if keeps(a.0, spawned.contains_key(&a.0)) {
                 continue;
             }
-            commands.entity(e).try_insert(crate::levels::Unload);
+            commands.entity(e).try_insert(gd_game_core::levels::Unload);
             spawned.remove(&a.0);
             // A breakable a script broke (`Destructible:Destroy(dir, force, b)`, `BreakApart`) stays broken.
             if let Some(b) = b
@@ -485,7 +503,7 @@ pub fn sync_actors(
         }
         for (e, c) in &proxy_children {
             if !keeps(c.0, spawned.contains_key(&c.0)) {
-                commands.entity(e).try_insert(crate::levels::Unload);
+                commands.entity(e).try_insert(gd_game_core::levels::Unload);
                 spawned.remove(&c.0);
             }
         }
@@ -500,7 +518,7 @@ pub fn sync_actors(
             .collect()
     };
     // Proxies whose monsters spawned this frame (their entities are not in the queries yet).
-    let mut fresh: HashSet<u32> = HashSet::new();
+    let mut fresh: HashSet<u32> = HashSet::default();
     let deadline = std::time::Instant::now() + crate::creature::CLIPS_BUDGET;
     for (id, record, c, class) in want {
         if spawned.contains_key(&id) {
@@ -542,7 +560,7 @@ pub fn sync_actors(
             continue;
         }
         if class == ObjClass::Chest {
-            let key = crate::world::ChestKey::Story(id);
+            let key = gd_game_core::world::ChestKey::Story(id);
             let opened = chest_states.opened.contains(&key);
             let e = crate::chests::spawn_chest(
                 &mut commands,
@@ -620,7 +638,7 @@ pub fn sync_actors(
             .is_some_and(|r| matches!(r.class.as_str(), "FxPak" | "EffectEntity"));
         if class == ObjClass::Entity && fx_record {
             info!("story: effect {record} at {:?}", c.origin);
-            crate::visuals::spawn_fx(&mut commands, &spawner.data, &record, placed(&c));
+            gd_game_core::visuals::spawn_fx(&mut commands, &spawner.data, &record, placed(&c));
             spawned.insert(id, Entity::PLACEHOLDER);
             continue;
         }
@@ -629,7 +647,7 @@ pub fn sync_actors(
         // `onBroken` hook (above). A script-created one keys on its object id.
         if class == ObjClass::Destructible {
             let Some(rules) = &rules else { continue };
-            let key = if id < gd_sim::story::state::Entities::SCRIPT_ID_BASE {
+            let key = if id < gd_story::story::state::Entities::SCRIPT_ID_BASE {
                 ((id >> 16) as usize, (id & 0xFFFF).saturating_sub(1))
             } else {
                 (usize::MAX, id)
@@ -652,7 +670,7 @@ pub fn sync_actors(
                 commands
                     .entity(e)
                     .insert(StoryActor(id))
-                    .remove::<crate::levels::LevelMember>();
+                    .remove::<gd_game_core::levels::LevelMember>();
             }
             spawned.insert(id, e);
             continue;
@@ -675,7 +693,7 @@ pub fn sync_actors(
                     tf,
                     StoryActor(id),
                     Name::new(format!("story object {id}")),
-                    crate::visuals::DecorationRequest {
+                    gd_game_core::visuals::DecorationRequest {
                         record: record.clone(),
                         mesh,
                     },
@@ -733,7 +751,7 @@ pub fn sync_actors(
         debug!("story actor {id} {record} at {:?} -> y {}", c.origin, p.y);
         spawned.insert(id, e);
     }
-    // `Proxy:AllKilled` (`Proxy::AllKilled`): false while a Monster the proxy spawned lives. A run proxy
+    // `Proxy:AllKilled` (`LuaProxy::AllKilled`): false while a Monster the proxy spawned lives. A run proxy
     // stays "active" in the story until its monsters have spawned and all died; one removed from the world has no
     // spawned list.
     let mut st = rt.story.borrow_mut();
@@ -770,7 +788,7 @@ fn spawnable(class: ObjClass) -> bool {
 /// Chests read no files; a proxy's monsters are rolled when it runs.
 fn object_ready(
     s: &mut crate::creature::Spawner,
-    anims: &mut crate::character::AnimCache,
+    anims: &mut gd_game_core::character::AnimCache,
     clips: &mut crate::creature::ClipLists,
     record: &str,
     class: ObjClass,
@@ -781,7 +799,7 @@ fn object_ready(
     let Some(rec) = data.db.get(record) else {
         return true;
     };
-    let mesh_ready = |bodies: &mut crate::creature::BodyCache| {
+    let mesh_ready = |bodies: &mut gd_game_core::creature::BodyCache| {
         rec.str("mesh").is_none_or(|m| bodies.ready(data, m))
     };
     match class {
@@ -794,15 +812,15 @@ fn object_ready(
 }
 
 /// A spawned character as a story object (module doc): one whose record has hooks ([`is_story_record`]), whatever
-/// spawned it — `Character::Load` @0x180054e70 loads the character hook pack (`onSpawn`, `onDie`,
+/// spawned it — `Character::Load` loads the character hook pack (`onSpawn`, `onDie`,
 /// `onCallbackDie`, ...) of every character from its own record (or from the record its `characterHooks` field names;
 /// no stock record sets one), so a level proxy's or a death spawn's monster (Korvaak's last phase,
 /// `dp_finalbossp2`) runs its hooks like a script-created one — or a story proxy's monster when its proxy has
 /// `onSpawn`. It gets a script object id and [`StoryActor`], runs its `onAddToWorld`, then, for a story proxy's
-/// monster, the proxy's `onSpawn` with that id (`Proxy::PlaceObjects` @0x1804161f0: per spawned entity,
+/// monster, the proxy's `onSpawn` with that id (`Proxy::PlaceObjects`: per spawned entity,
 /// right after `World::AddEntity`, the spawned entity's object id; the stock Black Lodge chasers'
 /// `Proxy.Get(id):LinkPatrolPointGroup` then finds no Proxy and does nothing, as the engine's Proxy fetch
-/// sub_14006BB60 does). Characters the story spawned itself already carry [`StoryActor`]. When the character goes
+/// `LuaProxy::Get` does). Characters the story spawned itself already carry [`StoryActor`]. When the character goes
 /// (its level streamed out, its proxy left the world, its corpse faded, a script destroyed it; [`HookedChild`]), its
 /// object leaves the story: `onRemoveFromWorld`, `onDestroy` (`ScriptHost::remove_object`).
 #[allow(clippy::type_complexity)]
@@ -815,11 +833,14 @@ pub fn hooked_characters(
     new: Query<
         (
             Entity,
-            &crate::character::Character,
+            &gd_game_core::character::Character,
             Option<&StoryProxyChild>,
             &Transform,
         ),
-        (Added<crate::character::Character>, Without<StoryActor>),
+        (
+            Added<gd_game_core::character::Character>,
+            Without<StoryActor>,
+        ),
     >,
 ) {
     let Some(rt) = rt else { return };
@@ -870,8 +891,8 @@ pub fn hooked_characters(
 }
 
 /// The record hooks fired by breaks, animations, shrines and items (module doc):
-/// - `onBroken`: a story breakable broke ([`crate::breakables::Broke`]; `Destructible::TakeAttack`
-///   @0x180262b0d runs it with the object id right after `BreakApart`, the destructible hook pack's only event;
+/// - `onBroken`: a story breakable broke ([`crate::breakables::Broke`]; `Destructible::TakeAttack` runs it with the
+///   object id right after `BreakApart`, the destructible hook pack's only event;
 ///   a breakable has no `onDie`).
 /// - `onCallbackDie`: the death animation's `OnDie` callback of a story character whose record has
 ///   `registerCallbackToDie` (`DefaultDeathHandler::AnimationCallback` → `Character::OnCallbackDie`; after
@@ -892,7 +913,7 @@ pub fn record_hooks(
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<GameData>,
     actors: Query<&StoryActor>,
-    mut anims: MessageReader<crate::character::AnimCallback>,
+    mut anims: MessageReader<gd_game_core::character::AnimCallback>,
     mut picked: MessageReader<crate::loot::ItemPickedUp>,
     mut broke: MessageReader<crate::breakables::Broke>,
     // A restored item was not dropped now (`crate::loot::Restored`).
@@ -904,7 +925,7 @@ pub fn record_hooks(
         ),
     >,
     devotion: Option<Res<crate::devotion::DevotionState>>,
-    (mut restored_seen, mut fresh): (Local<Option<usize>>, crate::session::NewSession),
+    (mut restored_seen, mut fresh): (Local<Option<usize>>, gd_game_core::session::NewSession),
 ) {
     if fresh.begun() {
         *restored_seen = None;
@@ -986,7 +1007,7 @@ type PlayerMove<'w, 's> = Query<
         &'static mut Transform,
         &'static mut crate::movement::MovePath,
     ),
-    (With<crate::player::Player>, Without<StoryActor>),
+    (With<gd_game_core::player::Player>, Without<StoryActor>),
 >;
 
 /// Story effects on the world: `Kill` (a script kills one of its objects; counts as a normal death),
@@ -1001,24 +1022,30 @@ pub fn world_effects(
             Entity,
             &StoryActor,
             &Transform,
-            &mut crate::character::Character,
-            &mut crate::combat::Combatant,
-            Option<&crate::monsters::Monster>,
+            &mut gd_game_core::character::Character,
+            &mut gd_game_core::combat::Combatant,
+            Option<&gd_game_core::monsters::Monster>,
         ),
-        (Without<crate::combat::Dead>, Without<crate::player::Player>),
+        (
+            Without<gd_game_core::combat::Dead>,
+            Without<gd_game_core::player::Player>,
+        ),
     >,
     mut player: PlayerMove,
     mut ais: Query<&mut crate::combat::MonsterAi>,
     positions: Query<
         (Entity, &StoryActor, &Transform),
-        (Without<crate::player::Player>, Without<crate::combat::Dead>),
+        (
+            Without<gd_game_core::player::Player>,
+            Without<gd_game_core::combat::Dead>,
+        ),
     >,
     items: Query<(Entity, &GlobalTransform, &crate::loot::GroundItem)>,
     rt: Option<NonSend<StoryRuntime>>,
     nav: Res<crate::nav::Nav>,
     mut states: ResMut<crate::monsters::ProxyStates>,
     mut killed: MessageWriter<crate::combat::MonsterKilled>,
-    chars: Query<(), With<crate::character::Character>>,
+    chars: Query<(), With<gd_game_core::character::Character>>,
 ) {
     // A command's target object: the player or a story object (entity, position).
     let target_of = |id: u32, player: &PlayerMove| -> Option<(Entity, Vec3)> {
@@ -1068,10 +1095,10 @@ pub fn world_effects(
                     let home = ai.home;
                     ai.go_idle();
                     cb.target = None;
-                    ch.state = crate::character::CharState::Idle;
+                    ch.state = gd_game_core::character::CharState::Idle;
                     commands
                         .entity(e)
-                        .remove::<(crate::combat::QuestMove, crate::casting::Casting)>();
+                        .remove::<(crate::combat::QuestMove, gd_game_core::casting::Casting)>();
                     commands.queue(move |w: &mut World| {
                         if let Some(mut tf) = w.get_mut::<Transform>(e) {
                             tf.translation = home;
@@ -1115,7 +1142,7 @@ pub fn world_effects(
                     if a.0 != *id || monster.is_none() {
                         continue;
                     }
-                    // `ControllerMonsterStateQuestUseSkill::OnBegin` @0x18014c750: a target that is a
+                    // `ControllerMonsterStateQuestUseSkill::OnBegin`: a target that is a
                     // Character is used at its position; any other id (missing, or another kind of object) makes
                     // the monster use the skill on itself, at its own position (the zero position the command
                     // carries is never read).

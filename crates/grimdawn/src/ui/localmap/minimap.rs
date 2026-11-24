@@ -88,10 +88,10 @@ pub(super) struct CompassGeometry {
 
 /// The minimap per compass mode on a `w` px wide screen at UI scale `s`; `compass` is the top-left corner of the
 /// HUD table's `hudCompass` window (`hudwindow_compass.dbr`, its loaded screen rect).
-/// `UIPlayerHud::ToggleCompass` 0x140209DB0 (positions right-aligned: x = W − value), the HUD draw sub_14020A9D0
+/// `UIPlayerHud::ToggleCompass` (positions right-aligned: x = W − value), the HUD draw `UIPlayerHud::Render`
 /// (frame per mode: 0 `hud_compasssmall`, 1 `hud_compasslarge`, 2 `hud_compassclosed`, 3 `hud_compassfloating`,
-/// 4 `hud_compassfloatinglarge`, drawn at the map's corner; the two floating ones centred on it by sub_140174E10)
-/// and the widget's update sub_140174FE0 (zoom 30 in mode 4, else 20):
+/// 4 `hud_compassfloatinglarge`, drawn at the map's corner; the two floating ones centred on it by
+/// `UIMinimap::SetSize`) and the widget's update `DetailMapWidget::Update` (zoom 30 in mode 4, else 20):
 /// - mode 3: a 160·s px map at (W − (160·s + 20), 50·s), mode 4: 246·s px at (W − (246·s + 25), 50·s), both in
 ///   the floating alphas;
 /// - with (X, Y) the window's corner, the five values 110, 160, 246, X + 5 and Y + 9 are each scaled by s (the
@@ -137,16 +137,14 @@ pub(super) fn compass_geometry(mode: u8, w: f32, s: f32, compass: Vec2) -> Optio
 /// The top-left corner of the HUD table's `hudCompass` window ([`compass_geometry`]), (0, 0) without one.
 pub(super) fn compass_window(
     data: &GameData,
-    options: &gd_game::options::GameOptions,
+    options: &gd_game_core::options::GameOptions,
     w: f32,
     h: f32,
     s: f32,
 ) -> Vec2 {
     let rec = data
         .db
-        .get(crate::ui::hud::master(crate::ui::hud::classic(Some(
-            options,
-        ))))
+        .get(gd_ui_kit::master(gd_ui_kit::classic(Some(options))))
         .and_then(|t| t.str("hudCompass").and_then(|p| data.db.get(p)));
     rec.map_or(Vec2::ZERO, |r| {
         let rc = WindowDef::from_record(r).screen_rect(w, h, s);
@@ -162,25 +160,25 @@ pub(super) fn compass_window(
 /// pool node is added when a frame has more icons than any before it, the name when the hovered icon changes).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn minimap(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
     world: Option<Res<crate::world::StreamedMap>>,
     fog: Option<Res<gd_game::fog::FogOfWar>>,
-    rt: Option<NonSend<gd_game::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     (cams, player, mut src): Scene,
-    pause: Res<gd_game::pause::GamePause>,
+    pause: Res<gd_game_core::pause::GamePause>,
     mut nodes: MiniNodes,
-    panels: Res<crate::ui::UiPanels>,
+    panels: Res<gd_ui::UiPanels>,
     mut tiles: ResMut<MapTiles>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
     (mut map, mut built, mut fresh, options, compass): (
         // The map image's cache and the offset / image the shown disc was cut for.
         Local<(Option<MapCache>, Option<(UVec2, AssetId<Image>)>)>,
         Local<Option<MiniLayout>>,
-        gd_game::session::NewSession,
-        Res<gd_game::options::GameOptions>,
+        gd_game_core::session::NewSession,
+        Res<gd_game_core::options::GameOptions>,
         // Option: created once the player is in (`gd_game::compass::init_compass`); mode 3 until then.
         Option<Res<gd_game::compass::CompassMode>>,
     ),
@@ -202,7 +200,7 @@ pub(super) fn minimap(
     let geometry = compass_geometry(mode, w, s, compass_window(&data, &options, w, h, s));
     // Hidden under the full-screen devotion window (real reference shot), and closed in compass mode 2.
     let Some(geometry) = geometry.filter(|_| !panels.devotion) else {
-        crate::ui::window::despawn_all(&mut commands, &nodes.roots);
+        gd_ui::window::despawn_all(&mut commands, &nodes.roots);
         *built = None;
         return;
     };
@@ -280,14 +278,14 @@ pub(super) fn minimap(
             let q = shown.screen([i.at.x + f.x, i.at.z + f.z]);
             angle_of(Vec2::new(q[0], q[1]) - Vec2::new(sp[0], sp[1]))
         });
-        // A Custom quad's offset: px × widget width / 120 (sub_140177010).
+        // A Custom quad's offset: px × widget width / 120 (`DetailMapWidget::RenderMinimapIcons`).
         let off = i.screen_offset(angle, side / 120.0);
         placed.push((p + off + Vec2::new(rect.x + r, rect.y + r), i, angle));
     }
     // Custom quads go under the other icons (their own pass).
     placed.sort_by_key(|(_, i, _)| i.kind != 14);
     // The game menu / Options holds the cursor: no icon name under it.
-    let cursor = crate::ui::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let cursor = gd_ui_kit::cursor_px(&hooks, win).filter(|_| !pause.menu);
     let isz = (16.0 * s).round();
     let hover = cursor
         .and_then(|c| {
@@ -320,8 +318,8 @@ pub(super) fn minimap(
     let root = match kept {
         Some(root) => root,
         None => {
-            crate::ui::window::despawn_all(&mut commands, &nodes.roots);
-            crate::ui::spawn_hud_overlay(&mut commands, MiniRoot)
+            gd_ui::window::despawn_all(&mut commands, &nodes.roots);
+            gd_ui_kit::spawn_hud_overlay(&mut commands, MiniRoot)
         }
     };
     *built = Some(layout);

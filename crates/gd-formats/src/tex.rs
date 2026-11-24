@@ -3,8 +3,8 @@
 //! whose magic is either `"DDS "` (mips largest-first, standard) or `"DDSR"`
 //! (same header, mip chain stored smallest-first so it can be streamed).
 //!
-//! Loader: `GAME::GraphicsTexture::Initialize` (Engine.dll 0x1800ea600) splits
-//! frames; `Direct3DTexture` ctor (Direct3D11.dll 0x1800100e0) maps the pixel
+//! Loader: `GraphicsTexture::Initialize` (Engine.dll) splits
+//! frames; `Direct3DTexture` ctor (Direct3D11.dll) maps the pixel
 //! format. All formats are created as UNORM/SNORM, never `_SRGB`.
 use crate::util::Reader;
 use anyhow::{Result, bail, ensure};
@@ -177,34 +177,7 @@ impl Dds {
             "DDS dimensions {width}x{height}"
         );
         ensure!(flags & 0x1000 != 0, "DDSD_PIXELFORMAT not set");
-        let mut p = Reader::at(b, 80);
-        let pf_flags = p.u32()?;
-        let fourcc = p.bytes(4)?;
-        let bits = p.u32()?;
-        let format = if pf_flags & 0x40 != 0 {
-            match bits {
-                24 => PixelFormat::Bgrx8,
-                32 => PixelFormat::Bgra8,
-                n => bail!("unsupported RGB bit count {n}"),
-            }
-        } else if pf_flags & 0x4 != 0 {
-            match fourcc {
-                b"DXT1" => PixelFormat::Bc1,
-                b"DXT3" => PixelFormat::Bc2,
-                b"DXT5" => PixelFormat::Bc3,
-                f => bail!("unsupported FourCC {f:?}"),
-            }
-        } else if pf_flags & 0x80000 != 0 {
-            match bits {
-                32 => PixelFormat::Rgba8Snorm,
-                16 => PixelFormat::Rg8Snorm,
-                n => bail!("unsupported BUMPDUDV bit count {n}"),
-            }
-        } else if pf_flags & 0x2 != 0 {
-            PixelFormat::A8
-        } else {
-            bail!("unsupported pixel format flags {pf_flags:#x}");
-        };
+        let format = Self::pixel_format(b)?;
         let caps2 = u32::from_le_bytes(b[112..116].try_into().unwrap());
         let cube = caps2 & 0x200 != 0;
         if cube {
@@ -278,6 +251,38 @@ impl Dds {
         ))
     }
 
+    /// The pixel format from the DDS header's pixel-format block (offset 80).
+    fn pixel_format(b: &[u8]) -> Result<PixelFormat> {
+        let mut p = Reader::at(b, 80);
+        let pf_flags = p.u32()?;
+        let fourcc = p.bytes(4)?;
+        let bits = p.u32()?;
+        Ok(if pf_flags & 0x40 != 0 {
+            match bits {
+                24 => PixelFormat::Bgrx8,
+                32 => PixelFormat::Bgra8,
+                n => bail!("unsupported RGB bit count {n}"),
+            }
+        } else if pf_flags & 0x4 != 0 {
+            match fourcc {
+                b"DXT1" => PixelFormat::Bc1,
+                b"DXT3" => PixelFormat::Bc2,
+                b"DXT5" => PixelFormat::Bc3,
+                f => bail!("unsupported FourCC {f:?}"),
+            }
+        } else if pf_flags & 0x80000 != 0 {
+            match bits {
+                32 => PixelFormat::Rgba8Snorm,
+                16 => PixelFormat::Rg8Snorm,
+                n => bail!("unsupported BUMPDUDV bit count {n}"),
+            }
+        } else if pf_flags & 0x2 != 0 {
+            PixelFormat::A8
+        } else {
+            bail!("unsupported pixel format flags {pf_flags:#x}");
+        })
+    }
+
     /// The upload payload copied from the kept level slices (24-bit RGB
     /// expanded to BGRA with A=255).
     fn copy_levels(dds: &Self, levels: &[Vec<&[u8]>]) -> Vec<u8> {
@@ -313,21 +318,13 @@ impl Dds {
         let mut out = vec![0u8; n * 4];
         match self.format {
             PixelFormat::Bc1 | PixelFormat::Bc2 | PixelFormat::Bc3 => {
-                let mut px = vec![0u32; n];
-                let res = match self.format {
-                    PixelFormat::Bc1 => {
-                        texture2ddecoder::decode_bc1a(src, w as usize, h as usize, &mut px)
-                    }
-                    PixelFormat::Bc2 => {
-                        texture2ddecoder::decode_bc2(src, w as usize, h as usize, &mut px)
-                    }
-                    _ => texture2ddecoder::decode_bc3(src, w as usize, h as usize, &mut px),
+                let (block_bytes, decode): (_, BlockDecoder) = match self.format {
+                    PixelFormat::Bc1 => (8, texture2ddecoder::decode_bc1a_block),
+                    PixelFormat::Bc2 => (16, texture2ddecoder::decode_bc2_block),
+                    _ => (16, texture2ddecoder::decode_bc3_block),
                 };
-                res.map_err(|e| anyhow::anyhow!("BC decode: {e}"))?;
-                for (o, p) in out.as_chunks_mut::<4>().0.iter_mut().zip(px) {
-                    let [b, g, r, a] = p.to_le_bytes();
-                    o.copy_from_slice(&[r, g, b, a]);
-                }
+                bc_rgba8_into(src, w as usize, h as usize, block_bytes, decode, &mut out)
+                    .map_err(|e| anyhow::anyhow!("BC decode: {e}"))?;
             }
             PixelFormat::Bgra8 | PixelFormat::Bgrx8 => {
                 for (o, p) in out
@@ -374,6 +371,50 @@ impl Dds {
         }
         Ok(out)
     }
+}
+
+pub(crate) type BlockDecoder = fn(&[u8], &mut [u32]);
+
+/// Decode one BC level to straight RGBA8 into `out` (`w * h * 4` bytes, rows top to
+/// bottom): each 4×4 block is decoded into a stack buffer and swizzled BGRA→RGBA straight
+/// into the output — one heap buffer, one pass, where the bulk decoders write a `u32`
+/// image that needs a second buffer and pass to swizzle. Same block decoders and edge
+/// clipping as `texture2ddecoder`'s bulk calls, so the bytes are identical.
+pub(crate) fn bc_rgba8_into(
+    src: &[u8],
+    w: usize,
+    h: usize,
+    block_bytes: usize,
+    decode_block: BlockDecoder,
+    out: &mut [u8],
+) -> Result<(), &'static str> {
+    let (bx, by) = (w.div_ceil(4), h.div_ceil(4));
+    if src.len() < bx * by * block_bytes {
+        return Err("Not enough data to decode image!");
+    }
+    if out.len() < w * h * 4 {
+        return Err("Image buffer is too small!");
+    }
+    let mut block = [0u32; 16];
+    let mut at = 0;
+    for y in 0..by {
+        for x in 0..bx {
+            decode_block(&src[at..], &mut block);
+            at += block_bytes;
+            for r in 0..4 {
+                let py = y * 4 + r;
+                if py >= h {
+                    break;
+                }
+                let row = &mut out[(py * w + x * 4) * 4..][..(w - x * 4).min(4) * 4];
+                for (o, p) in row.as_chunks_mut::<4>().0.iter_mut().zip(&block[r * 4..]) {
+                    let [b, g, r, a] = p.to_le_bytes();
+                    o.copy_from_slice(&[r, g, b, a]);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A parsed `.tex` file.
@@ -436,5 +477,50 @@ impl Tex {
             }
         }
         Self::parse(&b)
+    }
+
+    /// The pixel dims of frame 0 from a header prefix alone — `hdr`: the file's first
+    /// bytes (≥ 140 for TEX, ≥ 128 for a bare DDS), `file_len`: the whole entry's size —
+    /// when they are provably what [`parse`](Self::parse) returns: a plain `DDS ` frame
+    /// (not `DDSR`), one face, a supported format, and the top mip inside the frame's
+    /// payload. `None` when the answer needs the payload (reversed mips, cubemap,
+    /// multi-frame TEX) or the header is malformed: parse the whole file then.
+    pub fn header_dims(hdr: &[u8], file_len: u64) -> Option<(u32, u32)> {
+        let (hdr_len, dds) = if hdr.starts_with(b"DDS ") {
+            (0, hdr)
+        } else {
+            // TEX: only a single-frame file, whose frame 0 is the whole payload.
+            if hdr.get(..3)? != b"TEX" {
+                return None;
+            }
+            let n = u32::from_le_bytes(hdr.get(8..12)?.try_into().ok()?) as u64;
+            if file_len != 12 + n {
+                return None;
+            }
+            (12, hdr.get(12..)?)
+        };
+        if dds.len() < 128 || !dds.starts_with(b"DDS ") {
+            return None;
+        }
+        let mut r = Reader::at(dds, 8);
+        let flags = r.u32().ok()?;
+        let height = r.u32().ok()?;
+        let width = r.u32().ok()?;
+        r.skip(8).ok()?; // pitch, depth
+        let mip_count = r.u32().ok()?;
+        if mip_count > 32 || width > 16384 || height > 16384 || flags & 0x1000 == 0 {
+            return None;
+        }
+        let format = Dds::pixel_format(dds).ok()?;
+        let caps2 = u32::from_le_bytes(dds[112..116].try_into().ok()?);
+        if caps2 & 0x200 != 0 {
+            return None; // cubemap: the kept levels depend on the payload
+        }
+        // A plain chain keeps the header dims iff its top mip fits (`gather`'s `have > 0`).
+        let payload = file_len.checked_sub(hdr_len + 128)?;
+        if payload < format.file_level_size(width, height) as u64 {
+            return None;
+        }
+        Some((width, height))
     }
 }

@@ -1,46 +1,5 @@
 use super::*;
 
-/// The charge potions (`Skill_ChargePotion`): keys R (health) and E
-/// (energy) — the default keybindings bind scan codes 19/18 to
-/// actions 30/29 (GrimDawn.exe sub_1401F68B0 names action 29
-/// DrinkManaPotion and 30 DrinkHealthPotion).
-///
-/// `Skill_ChargePotion::TargetResult` @0x1804eff40: the potion's
-/// own fields go to `Character::TakeBonus` as a slow bonus, so
-/// (`CharacterBio::TakeBonus`) `skillLifePercent` % of max life (× the
-/// healing bonuses) and `skillManaBonus` + `skillManaPercent` % of max energy
-/// land at once, while `skillLifeBonus` and `skillLifePercentSlow` % (× the
-/// healing increase) and `skillManaPercentSlow` % fill a restore pool. Each
-/// learned `Skill_PotionModifier` adds its own fields the same way, scaled by
-/// the potency 1 + (`modifierPotency` + `potionTransfusion`) % summed over the
-/// potion and its containers / modifiers (`SkillProfile_Modifiers`,
-/// `GetSkillModifierData`). `potionInfusion` % moves the potion's instant
-/// parts into the pool, raised by that %; `potionTransfusion` drops the
-/// potion's own restore. `absorbShieldPercentHealth` % × potency of max life
-/// is a damage-absorbing shield (a combat filter for the potion's qualifying
-/// damage types, none listed = every type: `Skill_ChargePotion::ModifyDamage`
-/// @0x1804ef4e0) that lasts until used up (`Update` drops the filter once
-/// spent), a new potion refilling it. The pools drain at max life /
-/// `healthFeedRate` s and (max − reserved) energy / `manaFeedRate` s, held to
-/// `…OverStorageLimit` × that max (`playerresourcebehavior.dbr`, read by
-/// `CharacterBio::Load`, drained in `CharacterBio::Update`).
-/// `cooldownCharges` uses are the shared [`Cooldowns`] charge rule
-/// (`Skill::StartCooldown`, `SetChargeCooldown`, `UpdateCooldownCharges`):
-/// a drink spends a charge, the cooldown starts only while none
-/// runs, each finished one returns a charge and starts the next. Secondary potion modifiers
-/// (explosive, electrified, buffs) fire on use (`secondary.rs`). Hook
-/// `GD_POTION` (hooks.rs).
-pub const HEALTH_POTION: &str = "records/skills/default/defaulthealthpotion.dbr";
-pub const ENERGY_POTION: &str = "records/skills/default/defaultmanapotion.dbr";
-
-/// The potion restore pools (life, energy) still to drain into the
-/// character (`CharacterBio` slow life / energy).
-#[derive(Component, Default)]
-pub struct PotionOverTime {
-    pub life: f32,
-    pub energy: f32,
-}
-
 /// `Character::TakeBonus` of a `OneShot_*` item's bonus fields (same path as
 /// the charge potion's own fields, see the module docs): `life_pts` + `life_pct` % of max
 /// life and `mana_pct` % of max energy at once, `life_slow` % of max life
@@ -72,30 +31,10 @@ pub fn take_bonus(
     }
 }
 
-/// `playerresourcebehavior.dbr`: (`healthFeedRate`, `healthOverStorageLimit`,
-/// `manaFeedRate`, `manaOverStorageLimit`).
-pub(super) fn resource_behavior(data: &GameData) -> (f32, f32, f32, f32) {
-    let r = data.db.get("records/game/playerresourcebehavior.dbr");
-    let f = |k: &str, d: f32| r.as_ref().and_then(|r| r.f32(k)).unwrap_or(d);
-    (
-        f("healthFeedRate", 10.0).max(0.01),
-        f("healthOverStorageLimit", 1.0),
-        f("manaFeedRate", 10.0).max(0.01),
-        f("manaOverStorageLimit", 1.0),
-    )
-}
-
-/// Drink a potion (the game sends it for the R / E keys).
-#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UsePotion {
-    Health,
-    Energy,
-}
-
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn potions(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut requests: MessageReader<UsePotion>,
     data: Res<GameData>,
     mut q: Query<
@@ -104,7 +43,7 @@ pub fn potions(
             &mut Caster,
             &mut Combatant,
             &Transform,
-            Option<&crate::weapon_pool::SkillLinks>,
+            Option<&gd_game_core::weapon_pool::SkillLinks>,
             Option<&PotionOverTime>,
         ),
         (With<Player>, Without<Dead>),
@@ -115,7 +54,7 @@ pub fn potions(
     // The `GD_POTION` schedule left to run and the session's play time it is measured on: session state,
     // restarted with each session.
     mut scripted: Local<Option<(f32, Vec<(f32, bool)>)>>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     if fresh.begun() {
         *scripted = None;
@@ -158,7 +97,7 @@ pub fn potions(
             "potion cooling down ({:.1} s)",
             caster.cooldowns.get(skill).copied().unwrap_or(0.0)
         );
-        // `HotSlotOptionPotion::Activate` @0x18031a4e0: an undrinkable potion says so while its bar is not full
+        // `HotSlotOptionPotion::Activate`: an undrinkable potion says so while its bar is not full
         // (energy: max − reserved; `error_vox`).
         let sheet = &cb.profile.sheet;
         let (id, short) = if skill == HEALTH_POTION {
@@ -305,7 +244,7 @@ pub(super) fn potion_over_time(
 
 /// `GD_FX_TEST` (hooks.rs).
 pub(super) fn fx_test(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
     mut t: Local<f32>,
@@ -327,5 +266,3 @@ pub(super) fn fx_test(
         );
     }
 }
-
-pub use crate::visuals::{BuffFx, PendingDecal, ProjectileMesh, ProjectileModelOf, spawn_fx};

@@ -29,6 +29,7 @@ pub fn xz(p: Vec3) -> [f32; 2] {
 /// The world boxes of the bodies a system scans ([`Combatant::body_box`] under their transform, in its query's
 /// order), indexed by their centres. A box test (`meets_sphere`, `ray_entry`) can only pass within its half extent
 /// of the centre: [`BodyGrid::near`] adds the largest one.
+#[derive(Default)]
 pub struct BodyGrid {
     grid: Grid,
     boxes: Vec<Aabb>,
@@ -38,15 +39,23 @@ pub struct BodyGrid {
 
 impl BodyGrid {
     pub fn new(boxes: Vec<Aabb>) -> Self {
-        let reach = boxes
+        let mut g = Self::default();
+        g.rebuild(boxes);
+        g
+    }
+
+    /// Replaces the bodies and re-indexes them ([`Self::new`]'s result for the same boxes), reusing both
+    /// allocations: a per-frame reader keeps its grid in a `Local` and rebuilds it in place.
+    pub fn rebuild(&mut self, boxes: impl IntoIterator<Item = Aabb>) {
+        self.boxes.clear();
+        self.boxes.extend(boxes);
+        self.reach = self
+            .boxes
             .iter()
             .map(|b| b.half[0].max(b.half[2]))
             .fold(0.0, f32::max);
-        Self {
-            grid: Grid::new(CELL, boxes.iter().map(|b| [b.center[0], b.center[2]])),
-            boxes,
-            reach,
-        }
+        self.grid
+            .rebuild(CELL, self.boxes.iter().map(|b| [b.center[0], b.center[2]]));
     }
 
     /// The world box of body `i`.

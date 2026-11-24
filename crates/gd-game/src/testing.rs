@@ -13,7 +13,7 @@
 //! each app's resources ([`crate::session::begin`]), so tests in one binary
 //! do not affect each other; the read-only [`GameData`] is opened once per
 //! binary ([`data`]). Each game saves into its own temp
-//! [`session::SaveDir`] ([`TestGame::save_dir`]); no test sets environment
+//! [`SaveDir`] ([`TestGame::save_dir`]); no test sets environment
 //! variables.
 //!
 //! The only outside input is the game install: a test's character is a new
@@ -21,16 +21,17 @@
 //! save folder ([`TestGame::save_now`], loaded with [`TestGame::with_save`]).
 //! Without the game the constructors panic, or return None under
 //! `GD_SKIP_DATA_TESTS=1` ([`gd_formats::testdata`]). Temp folders: [`TempDir`].
-use crate::character::{Character, character_for};
-use crate::data::GameData;
-use crate::player::Player;
-use crate::progress::PlayerProgress;
-use crate::rules::CombatRules;
-use crate::session::{self, Choice, LoadedCharacter};
+use crate::session;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use gd_formats::msh::Mesh as Msh;
 use gd_formats::save::gdc::Gdc;
+use gd_game_core::character::{Character, character_for};
+use gd_game_core::data::GameData;
+use gd_game_core::player::Player;
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::rules::CombatRules;
+use gd_game_core::session::{Choice, LoadedCharacter, SaveDir, mode_for};
 use gd_sim::equip::WeaponType;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -47,18 +48,18 @@ pub const SEED: u64 = 1;
 /// renderer or input; every `update()` advances time by [`FRAME`].
 ///
 /// Deterministic: the schedules run single-threaded on the calling thread, in
-/// a fixed order, so the gameplay's random draws ([`crate::rng`], a
+/// a fixed order, so the gameplay's random draws ([`gd_game_core::rng`], a
 /// thread-local generator nothing else draws from) all come from this
 /// thread's generator, seeded with `seed` (each test runs on its own thread).
 pub fn headless_app(data: GameData, seed: u64) -> App {
     use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel, SingleThreadedExecutor};
-    crate::rng::seed(seed);
+    gd_game_core::rng::seed(seed);
     let mut app = App::new();
-    app.insert_resource(crate::hooks::Hooks::default());
+    app.insert_resource(gd_game_core::hooks::Hooks::default());
     // Each game saves into its own temp folder (removed with the app), never
     // the player's save folder and never one shared by parallel tests.
     let save = TempDir::new("gd-game-save");
-    app.insert_resource(session::SaveDir(save.path().to_owned()))
+    app.insert_resource(SaveDir(save.path().to_owned()))
         .insert_resource(SaveDirGuard(save));
     app.add_plugins((
         MinimalPlugins,
@@ -216,7 +217,7 @@ impl TestGame {
             hardcore,
         } = start;
         let saved_mode = gdc.as_ref().map_or((0, false), |gdc| {
-            session::mode_for(&crate::hooks::SessionHooks::default(), gdc)
+            mode_for(&gd_game_core::hooks::SessionHooks::default(), gdc)
         });
         let mut app = headless_app(data, seed);
         let (difficulty, veteran) = mode.unwrap_or(saved_mode);
@@ -252,10 +253,10 @@ impl TestGame {
         Some(game)
     }
 
-    /// This game's own save folder ([`session::SaveDir`]): where a
+    /// This game's own save folder ([`SaveDir`]): where a
     /// `SaveRequest` writes, empty at the start.
     pub fn save_dir(&self) -> PathBuf {
-        self.app.world().resource::<session::SaveDir>().0.clone()
+        self.app.world().resource::<SaveDir>().0.clone()
     }
 
     /// Saves the character now (a `SaveRequest`, one frame; the player must be spawned, [`Self::spawn_player`])
@@ -350,24 +351,26 @@ impl TestGame {
             pending: false,
             scale: None,
         };
-        let e = world.resource_scope(|world, mut bodies: Mut<crate::creature::BodyCache>| {
-            world.resource_scope(|world, mut profiles: Mut<crate::monsters::ProfileCache>| {
-                let mut commands = world.commands();
-                let e = crate::monsters::spawn_state(
-                    &mut commands,
-                    &data,
-                    &mut bodies,
-                    &rules,
-                    factions.as_ref(),
-                    &mut profiles,
-                    &m,
-                    (usize::MAX, 0, 0),
-                    &[],
-                );
-                world.flush();
-                e
-            })
-        });
+        let e = world.resource_scope(
+            |world, mut bodies: Mut<gd_game_core::creature::BodyCache>| {
+                world.resource_scope(|world, mut profiles: Mut<crate::monsters::ProfileCache>| {
+                    let mut commands = world.commands();
+                    let e = crate::monsters::spawn_state(
+                        &mut commands,
+                        &data,
+                        &mut bodies,
+                        &rules,
+                        factions.as_ref(),
+                        &mut profiles,
+                        &m,
+                        (usize::MAX, 0, 0),
+                        &[],
+                    );
+                    world.flush();
+                    e
+                })
+            },
+        );
         let e = e.expect("monster spawns");
         self.step();
         e
@@ -447,7 +450,7 @@ impl Default for Start {
 /// The player's animation state as the game builds it: the player record's
 /// body mesh and the hand state of the save's active weapon set.
 fn player_character(data: &GameData, gdc: Option<&Gdc>, female: bool) -> Character {
-    let record = crate::player::player_record(female);
+    let record = gd_game_core::player::player_record(female);
     let rec = data.db.get(record).expect("player record");
     let mesh = rec.str("mesh").expect("player mesh");
     let body = std::sync::Arc::new(
@@ -467,7 +470,7 @@ fn player_character(data: &GameData, gdc: Option<&Gdc>, female: bool) -> Charact
             .get(&item.base_name)
             .and_then(|r| WeaponType::from_class(&r.class))
     };
-    let scale = crate::creature::record_scale(rec);
+    let scale = gd_game_core::creature::record_scale(rec);
     character_for(
         data,
         record,

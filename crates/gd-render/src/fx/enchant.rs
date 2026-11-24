@@ -1,14 +1,14 @@
 //! Skill effects drawn on characters: the weapon enchantment
-//! (`gd_game::skill_fx::WeaponEnchantments`) on each held weapon, weapon
+//! (`gd_game_core::skill_fx::WeaponEnchantments`) on each held weapon, weapon
 //! trails during swings, and the `toggledAurasSelf` option on the player's
 //! toggled-skill effects.
 //!
-//! Game.dll `Weapon::SetWeaponEnchantment` @0x18058b330: it first
-//! clears the old pak (`ClearWeaponEnchantment` @0x18058b760: tint back to
+//! Game.dll `Weapon::SetWeaponEnchantment`: it first
+//! clears the old pak (`Weapon::ClearWeaponEnchantment`: tint back to
 //! white, the trail back to the weapon's own (its transmute's when it has
 //! one), the effect stopped and detached where it is so its particles
-//! finish), then loads the new `WeaponEnchantmentPak` (loader sub_18058D560,
-//! only for a weapon whose kind (+5720) is set: 1 melee (`Weapon`'s
+//! finish), then loads the new `WeaponEnchantmentPak` (loader `WeaponEnchantmentPak::Load`,
+//! only for a weapon whose kind (`Weapon.kind`) is set: 1 melee (`Weapon`'s
 //! constructor), 2 `Ranged1h`, 3 `Ranged2h`, 4 `Staff`; `WeaponArmor_Offhand`
 //! and `WeaponArmor_Shield` are 0 and get nothing): `weaponTrail`,
 //! `weaponEffect`, `weaponActiveEffect`, `useWeaponTint` with
@@ -20,8 +20,8 @@
 //! emits only while the weapon trail is on (`EnableWeaponTrail` /
 //! `DisableWeaponTrail`; no stock pak has one).
 //!
-//! Weapon trails (`Weapon::SwitchWeaponTrail` @0x1805892a0,
-//! `SkillActivatedWeapon::SwipeAction` @0x18051aa60 region): a weapon's
+//! Weapon trails (`Weapon::SwitchWeaponTrail`,
+//! `SkillActivatedWeapon::SwipeAction`): a weapon's
 //! trail (`weaponTrail` of its record) is a `TrailEffect` attached to it;
 //! an attack animation's `SwipeRight` / `SwipeLeft` / `SwipeBoth` callback
 //! calls `EnableWeaponTrail` on the right / left / both weapons (`Start`),
@@ -37,21 +37,24 @@
 //! The tint is drawn by [`tint_weapons`]. A trail switched mid-swing finishes it ([`dress_weapons`]). PORT:
 //! `weaponActiveEffect` and the swipe / hit sounds are not loaded; the trail stops when the animation the swipe
 //! started in stops playing (the attack action's end); swipes count in the Attack slot and in a weapon skill's cast
-//! (`gd_game::char_sounds::weapon_swipe`).
+//! (`gd_game_core::char_sounds::weapon_swipe`).
 use super::items::{Anchor, ItemFx};
 use super::{Effect, StopEmitting, spawn_effect_record};
-use crate::character::{AnimCallback, Body, Character};
-use crate::data::GameData;
+use crate::character::Body;
 use crate::model::{attach_frame, coords_to_affine};
 use crate::render::material::GdMaterial;
 use crate::trails::Trail;
 use bevy::prelude::*;
-use gd_game::casting::BuffFx;
-use gd_game::options::GameOptions;
-use gd_game::player::Player;
-use gd_game::skill_fx::{WeaponEnchantments, enchantment_visible, toggle_fx_visible};
+use gd_formats::msh::AttachPoint;
+use gd_game_core::character::{AnimCallback, Character};
+use gd_game_core::data::GameData;
+use gd_game_core::options::GameOptions;
+use gd_game_core::player::Player;
+use gd_game_core::skill_fx::{WeaponEnchantments, enchantment_visible, toggle_fx_visible};
+use gd_game_core::visuals::BuffFx;
 use gd_sim::anim::AnimType;
 use gd_sim::equip::WeaponType;
+use std::sync::Arc;
 
 pub struct EnchantPlugin;
 
@@ -91,7 +94,7 @@ pub struct WeaponDress {
     effect: Option<Entity>,
     /// The trail record and entity.
     trail: Option<(String, Entity)>,
-    /// A switched trail finishing its swing (`Weapon` +1444).
+    /// A switched trail finishing its swing (`Weapon.finishingTrail`).
     finishing: Option<Entity>,
     /// The animation a swipe started the trail in.
     swing: Option<AnimType>,
@@ -107,7 +110,7 @@ struct WeaponTinted {
     saved: Vec<(Entity, Handle<GdMaterial>)>,
 }
 
-/// `Weapon` +5720: 0 for an off-hand or shield (no pak loads).
+/// `Weapon.kind`: 0 for an off-hand or shield (no pak loads).
 fn takes_pak(class: &str) -> bool {
     !matches!(
         WeaponType::from_class(class),
@@ -189,7 +192,7 @@ fn dress_weapons(
                 .and_then(|p| p.str("weaponTrail"))
                 .or(rec.str("weaponTrail"))
                 .map(str::to_owned);
-            let anchors = gd_game::visuals::anchors_of(&w.msh, false);
+            let anchors = gd_game_core::visuals::anchors_of(&w.msh, false);
             let old_finishing = dress.as_ref().and_then(|d| d.finishing);
             let mut finishing = old_finishing;
             let trail = match (old_trail, want, anchors) {
@@ -258,10 +261,10 @@ fn dress_weapons(
 
 /// The weapon enchantment's tint on the weapon's meshes.
 ///
-/// `Actor::SetTintColor` @0x1800289a0 (Engine.dll) stores the colour
-/// at Actor +1124; `Actor::AddToScene` @0x18002aeb0 copies it to the mesh
-/// instance (+556, `GraphicsMeshInstance::SetDiffuseColor`) and
-/// `GraphicsMeshInstance::SetShaderParameters` @0x1800c2590 sends the shader
+/// `Actor::SetTintColor` (Engine.dll) stores the colour
+/// in `Actor.tintColor`; `Actor::AddToScene` copies it to the mesh
+/// instance (`GraphicsMeshInstance.diffuseColor`, `GraphicsMeshInstance::SetDiffuseColor`) and
+/// `GraphicsMeshInstance::SetShaderParameters` sends the shader
 /// parameter `diffuseColor` = (instance colour rgb x 0.5, ambient add): the
 /// default white is the 0.5 every [`GdMaterial`] carries. The tint alpha is
 /// not used there. PORT: a tinted weapon's parts get a copy of their material
@@ -315,32 +318,49 @@ fn tint_weapons(
 }
 
 /// Moves each [`BuffFx`] with an attach point onto it: the point's frame on
-/// the posed bone, in the owner's frame (`PFxManager::StartParticleEffect`
-/// @0x1803ca680: `Attach` to the attach point by name; the parent bone is
+/// the posed bone, in the owner's frame (`PFxManager::StartParticleEffect`:
+/// `Attach` to the attach point by name; the parent bone is
 /// followed as for [`super::items`] armour effects). A mesh effect with
 /// `stationaryAttachment` ([`super::mesh::Stationary`]) keeps its position on
 /// the owner but not the owner's turn: Engine.dll
-/// `Entity::UpdateAttachedEntities` @0x18007e8ff / `Actor::FastUpdate`: each
-/// update its attach offset (+324, `SetAttachOffset`) becomes the parent's
+/// `Entity::UpdateAttachedEntities` / `Actor::FastUpdate`: each
+/// update its attach offset (`Entity.attachOffset`, `SetAttachOffset`) becomes the parent's
 /// rotation transposed, applied after the attach frame.
 fn follow_points(
+    mut commands: Commands,
     owners: Query<(&GlobalTransform, &Character), Without<BuffFx>>,
     mut fx: Query<(
+        Entity,
         &BuffFx,
         &Transform,
         &mut GlobalTransform,
         Option<&Children>,
         Has<super::mesh::Stationary>,
+        Option<&FollowPoint>,
     )>,
     mut parts: Query<(&Transform, &mut GlobalTransform), (Without<BuffFx>, Without<Character>)>,
 ) {
-    for (b, tf, mut g, children, stationary) in &mut fx {
+    for (e, b, tf, mut g, children, stationary, cached) in &mut fx {
         let Ok((root, c)) = owners.get(b.owner) else {
             continue;
         };
         let frame = match &b.point {
             Some(point) => {
-                let Some(ap) = c.body.attach_point(point) else {
+                // The point resolved on the body mesh once (no per-frame name
+                // scan); a form swap that replaces the mesh re-resolves it.
+                let fresh;
+                let ap = match cached {
+                    Some(f) if Arc::ptr_eq(&f.body, &c.body) => f.point.as_ref(),
+                    _ => {
+                        fresh = c.body.attach_point(point).cloned();
+                        commands.entity(e).try_insert(FollowPoint {
+                            body: c.body.clone(),
+                            point: fresh.clone(),
+                        });
+                        fresh.as_ref()
+                    }
+                };
+                let Some(ap) = ap else {
                     continue;
                 };
                 coords_to_affine(&ap.coords_in(c.posed()))
@@ -360,12 +380,21 @@ fn follow_points(
     }
 }
 
-/// A character's unarmed weapon trails (`Character::SetUnarmedWeaponTrail`
-/// @0x18006d850): the form's `attackTrail` (`Character::form_records`)
-/// twice, attached to the character: the right hand's (+9856,
+/// A [`BuffFx`]'s attach point resolved on its owner's body mesh (its parent
+/// bone resolved at load, the cached-[`AttachPoint`] convention); re-resolved
+/// when a form swap replaces the mesh. `None`: the mesh lacks the name.
+#[derive(Component)]
+struct FollowPoint {
+    body: Arc<gd_formats::msh::Mesh>,
+    point: Option<AttachPoint>,
+}
+
+/// A character's unarmed weapon trails (`Character::SetUnarmedWeaponTrail`):
+/// the form's `attackTrail` (`Character::form_records`)
+/// twice, attached to the character: the right hand's (`Character.unarmedTrailRight`,
 /// `GetUnarmedWeaponTrailRH`) with point set 1, i.e. between the body's
-/// `Anchor3` / `Anchor4`, the left hand's (+9848) with set 0, `Anchor1` /
-/// `Anchor2` (`WeaponTrail::GetAnchorPoints`, Engine.dll 0x18020d710; on the
+/// `Anchor3` / `Anchor4`, the left hand's (`Character.unarmedTrailLeft`) with set 0, `Anchor1` /
+/// `Anchor2` (Engine.dll `WeaponTrail::GetAnchorPoints`; on the
 /// forms' meshes `Anchor1` / `2` sit on `Wrist_R`, `3` / `4` on `Wrist_L`).
 /// Setting a new one destroys the old; coming out of the form sets none.
 /// PORT: no trail for a mesh without the first anchor of the set (the
@@ -407,7 +436,9 @@ fn form_trails(
             has(a).then(|| {
                 commands
                     .spawn((
-                        Trail::new(e, record, 0.0).with_points(a, b).stopped(),
+                        Trail::new(e, record, 0.0)
+                            .with_points(&c.body, a, b)
+                            .stopped(),
                         Visibility::default(),
                     ))
                     .id()
@@ -430,19 +461,19 @@ fn form_trails(
 
 /// `SwipeRight` / `SwipeLeft` / `SwipeBoth` start the hand's weapon trail;
 /// it stops when that animation stops playing. A shifted character
-/// (`SkillActivatedWeapon::SwipeAction` @0x18051aa00: the active
-/// skill set +797 is not 0; PORT: a worn form) starts its unarmed trails
+/// (`SkillActivatedWeapon::SwipeAction`: the active
+/// skill set (`Character.activeSkillSet`) is not 0; PORT: a worn form) starts its unarmed trails
 /// instead ([`UnarmedTrails`]: right for `SwipeRight` / `SwipeBoth`, left
 /// for `SwipeLeft` / `SwipeBoth`), never the (hidden) weapons'; its
 /// `SwipeRightOff` / `SwipeLeftOff` / `SwipeBothOff` stop them
-/// (`Skill::DisableWeaponTrails` @0x18049ee10).
+/// (`Skill::DisableWeaponTrails`).
 fn swipe_trails(
     mut callbacks: MessageReader<AnimCallback>,
     mut chars: Query<(
         &Character,
         &Body,
         Option<&mut UnarmedTrails>,
-        Option<&gd_game::casting::Casting>,
+        Option<&gd_game_core::casting::Casting>,
     )>,
     mut weapons: Query<&mut WeaponDress>,
     mut trails: Query<&mut Trail>,
@@ -463,7 +494,7 @@ fn swipe_trails(
         let Ok((c, body, unarmed, cast)) = chars.get_mut(cb.entity) else {
             continue;
         };
-        if !gd_game::char_sounds::weapon_swipe(cb.anim, cast) {
+        if !gd_game_core::char_sounds::weapon_swipe(cb.anim, cast) {
             continue;
         }
         if c.form_mesh().is_some() {
@@ -474,7 +505,7 @@ fn swipe_trails(
             {
                 if let Ok(mut t) = trails.get_mut(t) {
                     if on {
-                        gd_game::visuals::notify(&mut commands, &u.record);
+                        gd_game_core::visuals::notify(&mut commands, &u.record);
                         debug!("{}: unarmed trail starts ({})", cb.entity, cb.name);
                         t.start();
                     } else {
@@ -503,7 +534,7 @@ fn swipe_trails(
             };
             if let Ok(mut t) = trails.get_mut(t) {
                 // `GD_SHOT_ON=<trail record>` shoots a swing.
-                gd_game::visuals::notify(&mut commands, &rec);
+                gd_game_core::visuals::notify(&mut commands, &rec);
                 debug!(
                     "{}: trail {} starts",
                     cb.entity,

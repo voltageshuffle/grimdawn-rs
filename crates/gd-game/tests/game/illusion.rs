@@ -2,8 +2,8 @@
 //! `transmutes.gst`, and they survive a save and a load.
 use bevy::prelude::*;
 use gd_game::illusion::Illusions;
-use gd_game::inventory::Inventory;
 use gd_game::testing::TestGame;
+use gd_game_core::inventory::Inventory;
 
 /// A transmute set (`ItemTransmuterSet::Use`, `gd_game::illusion` module doc): a right click uses it up, unlocks
 /// every look of `transmuteDbrs`, writes `transmutes.gst` at once and sends the type-8 cinematic text; the looks
@@ -12,8 +12,8 @@ use gd_game::testing::TestGame;
 fn transmute_set_unlocks_saves_and_reloads() {
     use bevy::ecs::message::Messages;
     use gd_formats::save::item::Item;
-    use gd_game::inventory::InvRequest;
-    use gd_game::story::CinematicText;
+    use gd_game_core::inventory::InvRequest;
+    use gd_game_core::story::CinematicText;
     const SET: &str = "records/items/transmutes/transmute_blackknight_set.dbr";
     const LOOK: &str = "records/items/transmutes/knight/dlc_blackknight_head.dbr";
     let Some(mut g) = TestGame::new_character("Illusionist", false, false) else {

@@ -3,34 +3,35 @@
 //! their effects (the loadout, unspent points, the profile) live here.
 //!
 //! Skills window undo (`UISkillPane` in GrimDawn.exe: click callback
-//! vtable slot 30 @0x140248510, undo = slot 29 @0x140249660, `OnHide`
-//! @0x140249890, enable flag in sub_140247890): every point spent in the window
-//! is recorded per skill ([`SkillUndo`], the entry's `+16` delta; the window's
-//! `+7749` "something to undo" flag = a non-empty record). The button is enabled
+//! `UISkillPane::OnButtonClick`, undo = `UISkillPane::Undo`, `UISkillPane::OnHide`,
+//! enable flag in `UISkillPane::Update`): every point spent in the window
+//! is recorded per skill ([`SkillUndo`], the entry's `SkillUndoEntry.delta`; the window's
+//! `UISkillPane.undoPending` "something to undo" flag = a non-empty record). The button is enabled
 //! only while that flag is set; undo takes every recorded level back, returns the
 //! points and empties the record (it is all-or-nothing, not a stack). Hiding the
 //! window ([`CommitSkillUndo`]) clears the record, making the spending permanent.
 //! Only skill points: attributes and devotion have their own buttons.
 //! In reclamation mode (`crate::reclamation`) a click refunds a point instead;
 //! the record keeps it as a negative entry and counts the refunds (the window's
-//! `+7744`): undo levels those skills back up, takes the points again and pays
+//! `UISkillPane.refundCount`): undo levels those skills back up, takes the points again and pays
 //! the price back (`UseReclamationPoints(-refunds)`,
-//! `gd_sim::reclamation::payback`). The `vtable+1176` call when a level falls
+//! `gd_sim::reclamation::payback`). The `StopSkill` call when a level falls
 //! to 0 (a no-op on the base `Skill`) is not mirrored beyond the level.
 //!
 //! Attribute reset (Tonic of Reshaping, [`ResetAttributes`] from `consumables`):
-//! `ItemAttributeReset::Use` @0x180335b00 → `ControllerCharacter::ResetAttributePoints` → the
-//! `ResetAttributePointsConfigCmd::Execute` @0x1800e6400 → `CharacterBio::ResetAttributePoints` @0x18008b2f0: each
+//! `ItemAttributeReset::Use` → `ControllerCharacter::ResetAttributePoints` → the
+//! `ResetAttributePointsConfigCmd::Execute` → `CharacterBio::ResetAttributePoints`: each
 //! attribute's base goes back to its initial value, the points spent ((current − initial) / increment, summed)
 //! are added to the unspent attribute points. Refused unless some point is spent (`HasModifierPointsInUse`).
 //! The points spent are [`Loadout::allocated`], the save's included: the load splits them off the saved bio
-//! (`crate::player::split_bio`), so earlier sessions' points are refunded too.
-use crate::data::GameData;
-use crate::inventory::{InventorySet, init_inventory, sync_equipment};
-use crate::player::{Loadout, Player, ProfileDirty};
-use crate::progress::PlayerProgress;
-use crate::session::MessageDrain;
+//! (`gd_game_core::player::split_bio`), so earlier sessions' points are refunded too.
+use crate::inventory::{init_inventory, sync_equipment};
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
+use gd_game_core::inventory::InventorySet;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::session::MessageDrain;
 
 pub struct PointsPlugin;
 
@@ -90,7 +91,7 @@ pub struct SpendAttribute(pub Attribute);
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetAttributes;
 
-/// `CharacterBio::HasModifierPointsInUse` @0x18008a4c0: some physique, cunning or spirit above its
+/// `CharacterBio::HasModifierPointsInUse`: some physique, cunning or spirit above its
 /// initial value.
 pub fn attributes_spent(loadout: &Loadout) -> bool {
     loadout.allocated != Default::default()

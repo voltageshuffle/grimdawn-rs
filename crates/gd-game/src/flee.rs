@@ -1,25 +1,25 @@
 //! The monsters' Flee state (`ControllerMonsterStateFlee`:
-//! ctor @0x180144180, `OnBegin` @0x180144400, `DoFlee` @0x1801441b0,
-//! `PickFleePoint` @0x180144790, `OnUpdate` @0x1801446f0, `OnEnd`
-//! @0x180144610, `EndOfPathReached`).
+//! the constructor, `OnBegin`, `DoFlee`,
+//! `PickFleePoint`, `OnUpdate`, `OnEnd`,
+//! `EndOfPathReached`).
 //!
-//! The controller record (`ControllerMonster::Load` @0x180135e60):
+//! The controller record (`ControllerMonster::Load`):
 //! `FleeBehavior` (NeverFlee default / FleeOnLowHealth / FleeOnDamage /
 //! FleeWhenEnemyClose), `FleeTarget` (AwayFromEnemy default / TowardsAllies /
 //! TowardsHome), `maxFleeCount` (3), `FleeTime` ms (3000), `FleeDelay` ms
 //! (2000), `FleeChance` % (100), `fleeDistance`, `ClearAngerWhenFleeing`,
-//! `ResetOriginAfterFleeing`, `enemyTooClose`. `ControllerMonster::CanFlee`
-//! @0x180135de0: fewer flees than `maxFleeCount` so far, the delay since the
+//! `ResetOriginAfterFleeing`, `enemyTooClose`. `ControllerMonster::CanFlee`:
+//! fewer flees than `maxFleeCount` so far, the delay since the
 //! last one over (`ResetFleeTimer`, counted down in `Update`) and
 //! `rand() % 100 < FleeChance`. Nothing in the controller code resets the
 //! flee count: it is per lifetime.
 //!
 //! Triggers (each asks `CanFlee` and enters Flee with the enemy as state
-//! data): `DefaultLowHealthResponse` @0x18014d670 (FleeOnLowHealth, instead
-//! of berserk), `DefaultAttackedResponse` @0x18014d1b0 and
-//! `ControllerMonsterStateAttack::Attacked` @0x180141970 (FleeOnDamage),
-//! `DefaultClosestEnemyFoundResponse` @0x18014d0d0 (FleeWhenEnemyClose),
-//! raised by `FindEnemyUpdate` @0x18013c0f0: every 200 ms a monster with
+//! data): `DefaultLowHealthResponse` (FleeOnLowHealth, instead
+//! of berserk), `DefaultAttackedResponse` and
+//! `ControllerMonsterStateAttack::Attacked` (FleeOnDamage),
+//! `DefaultClosestEnemyFoundResponse` (FleeWhenEnemyClose),
+//! raised by `FindEnemyUpdate`: every 200 ms a monster with
 //! `enemyTooClose` > 0 and that behavior asks `CanFlee`, then looks for the
 //! closest foe nearer than `enemyTooClose` (+0.1).
 //!
@@ -45,7 +45,7 @@
 //! "End") is queued and the `fleeSound` pak plays, with no sound roll; if
 //! the slot is empty nothing plays and the flee goes on. Otherwise `rand() %
 //! 100 < fleeSoundChance` plays `fleeSound` alone. While the roar plays
-//! (`ControllerMonsterStateFlee+37`) `DoFlee` is not called: the state's
+//! (`ControllerMonsterStateFlee.roarPlaying`) `DoFlee` is not called: the state's
 //! `HandleEvent` calls it on "End" (so the point is picked, the run speed
 //! and the `FleeTime` timer armed when the roar ends) and `OnUpdate` does not
 //! count the timer.
@@ -57,8 +57,8 @@
 //! triggers (its `Attacked` / `LowHealth` handlers are empty).
 //!
 //! The fear influence's Scared state (`ControllerMonster::ScareMe`
-//! @0x180135cb0 → `ControllerMonsterStateScared`) reuses the flee point
-//! pick: [`Flee::scare_point`] is its `PickRunToPoint` @0x18014b090 — always
+//! → `ControllerMonsterStateScared`) reuses the flee point
+//! pick: [`Flee::scare_point`] is its `PickRunToPoint` — always
 //! away from the enemy (no `FleeTarget` variants), `max(fleeDistance, 5)` m
 //! in 3D with ±1 m of horizontal jitter, re-picked every 1–2 s and on the
 //! path's end / failure; no roar, no flee count. [`crate::combat::cc_states`] drives
@@ -198,7 +198,7 @@ impl Flee {
     fn can_flee(&self) -> bool {
         self.count < self.max_count
             && self.delay_left <= 0.0
-            && (crate::rng::u32(..32768) % 100) < self.chance
+            && (gd_game_core::rng::u32(..32768) % 100) < self.chance
     }
 
     /// A trigger of `behavior` fired with `enemy`: enter Flee if it is
@@ -217,10 +217,13 @@ impl Flee {
     /// plays; the roar is `run.roar`.
     pub fn enter(&mut self, enemy: Entity, can_play: bool) -> bool {
         self.count += 1;
-        let (roar, sound) = if (crate::rng::u32(..32768) % 100) < self.anim_chance {
+        let (roar, sound) = if (gd_game_core::rng::u32(..32768) % 100) < self.anim_chance {
             (can_play, can_play)
         } else {
-            (false, (crate::rng::u32(..32768) % 100) < self.sound_chance)
+            (
+                false,
+                (gd_game_core::rng::u32(..32768) % 100) < self.sound_chance,
+            )
         };
         self.run = Some(Run {
             enemy,
@@ -259,7 +262,7 @@ impl Flee {
         roam: f32,
         friends: &[(Vec3, f32)],
     ) -> Vec3 {
-        let jitter = || crate::rng::u32(..32768) as f32 * 0.000_030_518_51 * 2.0 - 1.0;
+        let jitter = || gd_game_core::rng::u32(..32768) as f32 * 0.000_030_518_51 * 2.0 - 1.0;
         if self.target == Target::Home {
             return home;
         }
@@ -272,7 +275,7 @@ impl Flee {
                 let to = (*p - me).with_y(0.0);
                 if to.dot(away) > 0.0 && to.length() > 3.0 {
                     let lo = my_radius + r;
-                    let c = lo + crate::rng::u32(..32768) as f32 * 0.000_030_518_51 * lo;
+                    let c = lo + gd_game_core::rng::u32(..32768) as f32 * 0.000_030_518_51 * lo;
                     return me + to + to.normalize_or_zero() * c;
                 }
             }
@@ -280,7 +283,7 @@ impl Flee {
         me + away * self.distance + Vec3::new(jitter(), 0.0, jitter())
     }
 
-    /// `ControllerMonsterStateScared::PickRunToPoint` @0x18014b090:
+    /// `ControllerMonsterStateScared::PickRunToPoint`:
     /// the fear flee's point — `max(fleeDistance, 5)` m directly
     /// away from the enemy in 3D, ±1 m of jitter on each horizontal axis
     /// (the Flee state's pick is horizontal and honors `FleeTarget`; the
@@ -288,7 +291,7 @@ impl Flee {
     pub fn scare_point(&self, me: Vec3, enemy: Vec3) -> Vec3 {
         let away = (me - enemy).normalize_or_zero();
         let dist = self.distance.max(5.0);
-        let jitter = || crate::rng::u32(..32768) as f32 * 0.000_030_518_51 * 2.0 - 1.0;
+        let jitter = || gd_game_core::rng::u32(..32768) as f32 * 0.000_030_518_51 * 2.0 - 1.0;
         me + away * dist + Vec3::new(jitter(), 0.0, jitter())
     }
 }

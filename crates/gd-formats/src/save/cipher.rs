@@ -184,7 +184,7 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 
-    /// `CheckedReader::BeginBlock` (Game.dll 0x1805944e0). Returns the end offset.
+    /// `CheckedReader::BeginBlock` (Game.dll). Returns the end offset.
     pub fn begin_block(&mut self, expected: Option<u32>) -> Result<(u32, usize)> {
         let at = self.pos;
         let id = self.u32()?;
@@ -201,7 +201,7 @@ impl<'a> Decoder<'a> {
         Ok((id, end))
     }
 
-    /// `CheckedReader::EndBlock` (0x1805945a0): payload must be fully consumed,
+    /// `CheckedReader::EndBlock`: payload must be fully consumed,
     /// then a raw word equal to the key.
     pub fn end_block(&mut self, id: u32, end: usize) -> Result<()> {
         if self.pos != end {
@@ -309,7 +309,7 @@ impl Encoder {
         self.key_word();
     }
 
-    /// `CheckedWriter::EndBlock` (0x180594d30): patch `len` into the placeholder
+    /// `CheckedWriter::EndBlock`: patch `len` into the placeholder
     /// (which holds the key), then append the key.
     pub fn end_block(&mut self) -> Result<()> {
         let Some(at) = self.stack.pop() else {

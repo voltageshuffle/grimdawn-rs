@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Keeps the doc comments free of build-specific reverse-engineering references (docs/reverse-engineering.md,
+# "Citing the game"): fails on addresses and IDA auto-names in crates/, and, when `$GD_RE_DIR/symbols.tsv`
+# exists, lists the backticked game names cited in comments that the symbol table does not know.
+# Usage: scripts/with-env scripts/check-re-refs
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+status=0
+
+if rg -n -g '*.rs' -g '*.wesl' -g '*.wgsl' \
+  -e '@0x[0-9a-fA-F]+' \
+  -e '\b(sub|loc|off|unk|dword|qword|xmmword|byte|word|stru|nullsub|j)_[0-9A-Fa-f]{6,}\b' \
+  -e '\b0x1[48][0-9a-fA-F]{7}\b' \
+  crates; then
+  echo "error: addresses or IDA auto-names above; cite the function by name and add it to symbols.tsv" >&2
+  status=1
+fi
+
+table="${GD_RE_DIR:-}/symbols.tsv"
+if [ -n "${GD_RE_DIR:-}" ] && [ -f "$table" ]; then
+  # Cited game names: `Class::Method` (method capitalised or a destructor) and `Class.member`, in comments.
+  # `Type::…` of a workspace Rust type and `Self::…` are ours; snake_case methods are Rust.
+  rust_types=$(rg -o --no-filename -N --type rust -r '$1' '\b(?:struct|enum|trait|type|mod|union) ([A-Z]\w*)' crates |
+    sort -u)
+  missing=$(
+    rg --no-filename -N --type rust '^\s*//' crates |
+      grep -oP '`\K([A-Z]\w*(?:<[^`]*?>)?(?:::[A-Z~]\w*)+|[A-Z]\w*\.[a-z]\w*)(?=`)' |
+      grep -vE '^(Self|GAME)(::|\.)|\.(dll|exe|rs|dbr|arz|arc)$' |
+      sort -u |
+      awk -F'[:.]' 'NR == FNR { rust[$0] = 1; next } !($1 in rust)' <(echo "$rust_types") - |
+      comm -23 - <(cut -f1 "$table" | sort -u)
+  )
+  if [ -n "$missing" ]; then
+    echo "error: game names cited in comments but missing from $table:" >&2
+    echo "$missing" >&2
+    status=1
+  fi
+fi
+exit $status

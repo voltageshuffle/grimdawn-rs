@@ -1,12 +1,12 @@
-//! Right click on a bag item through its secondary handler (`CreateSecondaryCursorHandler`, Item vt+1000):
+//! Right click on a bag item through its secondary handler (`Item::CreateSecondaryCursorHandler`):
 //! a potion is drunk at once (with the record's cooldown).
 use bevy::prelude::*;
+use gd_formats::inventory::Sack;
 use gd_formats::save::item::Item;
-use gd_game::casting::Caster;
-use gd_game::combat::Combatant;
-use gd_game::inventory::{InvRequest, Inventory};
 use gd_game::testing::TestGame;
-use gd_sim::items::inventory::Sack;
+use gd_game_core::casting::Caster;
+use gd_game_core::combat::Combatant;
+use gd_game_core::inventory::{InvRequest, Inventory};
 
 const POTION: &str = "records/items/misc/potions/_oldpotion_healtha01.dbr";
 

@@ -1,7 +1,7 @@
 //! `ChaosBeam` tendrils (Engine.dll `GAME::ChaosBeam`: the synergy beams `synergyChaosBeam`, drain, Telekinesis, ...):
 //! wobbling ribbons between two points.
 //!
-//! `ChaosBeam::UpdateSelf` @0x1800468d0: `N = floor(length *
+//! `ChaosBeam::UpdateSelf`: `N = floor(length *
 //! TotalSegments)` points (at most 500) at `a + i * length / N`, i in 0..N (the last one a step short of `b`); a common
 //! sway `w[i] = ramp(i) * 2 * TotalAmplitude * (sin(0.04347826 i - T/3) + cos(0.032258064 i + 2T)) * perp1`
 //! (`ramp = min(0.05 i, 0.05 (N - i), 1)`, `T` seconds), and each tendril adds `WaveAmplitude * scale * (perp1 cos(0.1 i /
@@ -10,16 +10,16 @@
 //! `d * StartScale` within 1 m of `a` and `(1 - e) * EndScale + 1` within `e` < 1 m of `b` (the tendrils fan out at the
 //! far end); with it `d / p1 * StartScale` up to `p1 = ScaleLengthPercent1 %` of the length, then a linear blend to
 //! `EndScale` at `p2 = ScaleLengthPercent2 %`, then down to 0 at `b` (each scale capped at 2 when its part is under
-//! 3 m). Record defaults (`ChaosBeam::ChaosBeam` @0x1800460d0 / `Load` @0x180046530): `WaveSpeed` 1, `TotalAmplitude` 1,
+//! 3 m). Record defaults (`ChaosBeam::ChaosBeam` / `Load`): `WaveSpeed` 1, `TotalAmplitude` 1,
 //! `WaveAmplitude` 0.3, `StartScale` 1, `EndScale` 1.5, `TotalSegments` 5, `EndAlpha` 0, colour `Red255` .. `Alpha255`.
-//! `LineEffect::RenderPass` @0x180139fb0 (a ChaosBeam's points drawn between the `SetTopBottomPercent`
+//! `LineEffect::RenderPass` (a ChaosBeam's points drawn between the `SetTopBottomPercent`
 //! fractions): one quad strip per tendril, `Width` wide, its side the same for every point: perpendicular to the whole
 //! beam's on-screen direction (`atan2` of the start - end vector in the view's right / up axes), so the strip does
 //! not turn with the wiggles; texture u 0 / 1 across, v = the path length up to the next point / `TextureStretch`; the
 //! vertex colour is the record's × a ramp over the first and last 5 points (fade count 5, set by the ChaosBeam
 //! constructor; `(i + 1) / 5` and `(n - i) / 5`) × `EndAlpha` at the first and last drawn point; `Shader` additive or
 //! alpha ([`crate::beams::ribbon_material`]).
-//! Synergy (`ControllerMonsterSynergy::Update` @0x18014ec00): one beam per member to the leader's `Target` point,
+//! Synergy (`ControllerMonsterSynergy::Update`): one beam per member to the leader's `Target` point,
 //! `synergyNumBeams` tendrils, `WaveSpeed = 40 .. 89.5` (random per beam), `TotalAmplitude = 0.02`, drawn to the leader's
 //! charge (`SetTopBottomPercent`: the first part of the way from the member). Drain beams keep the record's values.
 //! Drain beams: [`draw_drain`]; the chaos skills' beams: [`draw_chaos`]. The end points are the posed bodies' attach
@@ -31,7 +31,7 @@
 //! tendril mesh is rewritten in place.
 use crate::beams::{VisualOf, Visuals};
 use bevy::prelude::*;
-use gd_game::synergy::{Mode, Synergy};
+use gd_game_core::synergy::{Mode, Synergy};
 
 pub struct ChaosBeamPlugin;
 
@@ -86,7 +86,7 @@ impl Beam {
                         .id(),
                     mesh: None,
                     cap: 0,
-                    period: 0.5 + gd_game::rng::f32(),
+                    period: 0.5 + gd_game_core::rng::f32(),
                 })
                 .collect(),
         }
@@ -118,15 +118,15 @@ struct SynergyBeam(Beam);
 fn draw_synergy(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     members: Query<(
         Entity,
         &Synergy,
-        &gd_game::monsters::Monster,
+        &gd_game_core::monsters::Monster,
         &GlobalTransform,
-        Option<&gd_game::character::Character>,
-        Has<gd_game::combat::Dead>,
+        Option<&gd_game_core::character::Character>,
+        Has<gd_game_core::combat::Dead>,
     )>,
     mut drawn: Query<(Entity, &mut SynergyBeam, Option<&VisualOf>)>,
     mut assets: crate::character::CharAssets,
@@ -208,10 +208,10 @@ fn draw_synergy(
             continue;
         };
         let n = controller.i32("synergyNumBeams").unwrap_or(1).max(1) as usize;
-        gd_game::visuals::notify(&mut commands, &rec.name);
+        gd_game_core::visuals::notify(&mut commands, &rec.name);
         let root = spawn_root(&mut commands, "synergy beam");
         let mut beam = Beam::spawn(&mut commands, &mut assets, root, rec, n, "synergy beam");
-        beam.shape.wave_speed = 40.0 + (gd_game::rng::f32() * 100.0).floor() * 0.5;
+        beam.shape.wave_speed = 40.0 + (gd_game_core::rng::f32() * 100.0).floor() * 0.5;
         beam.shape.total_amp = 0.02;
         update_beam(
             &mut commands,
@@ -497,7 +497,7 @@ fn write_strip(
     }
 }
 
-/// `Skill_AttackSpellDrain` beams (G `Update` @0x1804d04c0, `TargetResult` @0x1804d1820, `Load` @0x1804cf590):
+/// `Skill_AttackSpellDrain` beams (Game.dll `Update`, `TargetResult`, `Load`):
 /// each drain keeps a list of ChaosBeams, each from its target's `Target` point to the caster's
 /// `emitPointName` (default `L Hand`), both re-read every frame while the drain runs. A new target gets a beam at
 /// once; a beam's head travels from the target at `travelSpeed` (default 3) of the way per second, its tail follows at
@@ -507,26 +507,26 @@ fn write_strip(
 /// their way where they were. The beam record is `chaosBeamName` for the primary target, `secondaryBeamName` for the
 /// extra ones (`FindNewTargets`' `beamNumber`, 1 in every stock drain and modifier, so the port's one target is the
 /// primary); tendrils: the beam record's `BeamCount`. `TargetResult` / `Update`: an `fxChanges` list
-/// (`gd_game::skill_fx::fx_changes`) of four or more replaces them by entries 0 / 1 (and the caster / target
+/// (`gd_game_core::skill_fx::fx_changes`) of four or more replaces them by entries 0 / 1 (and the caster / target
 /// effects by 2 / 3, which the port does not draw for any drain), e.g. Drain Essence's elemental tendrils.
 #[allow(clippy::too_many_arguments)]
 fn draw_drain(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     casters: Query<(
         Entity,
-        &gd_game::casting::Channel,
+        &gd_game_core::casting::Channel,
         &GlobalTransform,
-        &gd_game::character::Character,
-        Option<&gd_game::weapon_pool::SkillLinks>,
-        Option<&gd_game::player::Loadout>,
+        &gd_game_core::character::Character,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
+        Option<&gd_game_core::player::Loadout>,
     )>,
     points: Query<(
         &GlobalTransform,
-        Option<&gd_game::character::Character>,
-        Has<gd_game::combat::Dead>,
+        Option<&gd_game_core::character::Character>,
+        Has<gd_game_core::combat::Dead>,
     )>,
     mut groups: Query<(Entity, &mut DrainGroup)>,
     mut assets: crate::character::CharAssets,
@@ -567,13 +567,13 @@ fn draw_drain(
         else {
             continue;
         };
-        let mods = gd_game::skill_fx::override_mods(
+        let mods = gd_game_core::skill_fx::override_mods(
             &data.db,
             links,
             loadout.map(|l| &l.skills),
             &ch.skill,
         );
-        let beam = gd_game::skill_fx::fx_changes(&mods)
+        let beam = gd_game_core::skill_fx::fx_changes(&mods)
             .filter(|v| v.len() >= 4)
             .map(|mut v| v.swap_remove(0))
             .or_else(|| rec.str("chaosBeamName").map(str::to_owned));
@@ -622,7 +622,7 @@ fn draw_drain(
             if b.step(dt, g.travel, g.trail, alive(b.target)) {
                 born.push(DrainBeam::new(
                     b.target,
-                    g.delay + gd_game::rng::u32(0..500) as f32,
+                    g.delay + gd_game_core::rng::u32(0..500) as f32,
                 ));
             }
             if b.state == DrainState::Dead {
@@ -780,11 +780,11 @@ impl DrainBeam {
     }
 }
 
-/// `Skill_AttackSpellChaos` beams (Reap Spirit; `Update` @0x1804dc590): each
-/// [`gd_game::casting::ChaosBeam`] drawn from its caster's `R Hand` to its far end between its `bottom` and `top`
+/// `Skill_AttackSpellChaos` beams (Reap Spirit; `Update`): each
+/// [`gd_game_core::casting::ChaosBeam`] drawn from its caster's `R Hand` to its far end between its `bottom` and `top`
 /// fractions (`SetTopBottomPercent`), all of which gd-game moves (`casting::chaos`, which also lands the hit when the
 /// head arrives); its tendrils (the beam record's `BeamCount`) go with it (`ChaosBeam::Liberate`).
-/// A [`gd_game::casting::ChaosBeam`]'s drawing.
+/// A [`gd_game_core::casting::ChaosBeam`]'s drawing.
 #[derive(Component)]
 struct ChaosDrawn(Beam);
 
@@ -792,9 +792,9 @@ struct ChaosDrawn(Beam);
 fn draw_chaos(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
-    beams: Query<(Entity, &gd_game::casting::ChaosBeam, Has<Visuals>)>,
+    beams: Query<(Entity, &gd_game_core::casting::ChaosBeam, Has<Visuals>)>,
     mut drawn: Query<(Entity, &mut ChaosDrawn, Option<&VisualOf>)>,
     mut assets: crate::character::CharAssets,
     mut scratch: Local<Scratch>,

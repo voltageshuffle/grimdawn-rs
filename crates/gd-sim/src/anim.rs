@@ -1,31 +1,31 @@
 //! Character animation sets and the engine's animation channel, Bevy-free.
 //!
 //! Reverse-engineered from Game.dll / Engine.dll:
-//! - `Character::LoadAnimations` (0x1800585d0) reads the record named by
+//! - `Character::LoadAnimations` reads the record named by
 //!   `charAnimationTableName` (falls back to the character record itself) and
 //!   fills 16 `AnimationSet`s, one per weapon prefix, with 16 near-identical
-//!   loaders (0x180090460 ...) that call `sub_1800CA860(type, animKey,
+//!   loaders (`Character::LoadUnarmedAnimations` ...) that call `AnimationSet::AddAnimation(type, animKey,
 //!   speedKey, weight, refKey)`. [`set_keys`] reproduces that key table.
 //! - `AnimationSet` holds 52 slots (`AnimationSet_Type`, names from
-//!   `GetAnimTypeAsText` table 0x180616540). Slots with variants pick one by
-//!   `rand()/32767 * totalWeight` (sub_1800217F0); `Special` maps a reference
+//!   `GetAnimTypeAsText` table `AnimTypeNames`). Slots with variants pick one by
+//!   `rand()/32767 * totalWeight` (`AnimationSet::PickVariant`); `Special` maps a reference
 //!   name to its own weighted list.
 //! - A played animation's channel speed is `callerSpeed * recordSpeed`; the
 //!   default blend (cross-fade) time is 200 ms (`AnimationBase` ctor).
-//! - `AnimChannel::Update` (Engine 0x180038790): time advances in ms by
+//! - `AnimChannel::Update` (Engine.dll): time advances in ms by
 //!   `dt * speed`; the frame is `fps * t / 1000`; the previous animations keep
 //!   playing and fade out linearly over their blend time
 //!   (`pose = Blend(pose, old, 1 - elapsed/blend)` per bone). Callback points
 //!   and entity events (`CreateEntity` / `RemoveEntity`) are crossed in the
 //!   same interval ([`ChannelEvents`]) and emitted inside the advance (the
-//!   engine dispatches them inline, `SkillManager::HandleSkillAnimationCallback`
-//!   @0x180533700); a step spanning several loops reports each one's points
+//!   engine dispatches them inline, `SkillManager::HandleSkillAnimationCallback`);
+//!   a step spanning several loops reports each one's points
 //!   and "End", and a finished one-shot's overshoot carries into the next
 //!   clip's start ([`AnimChannel::play`]).
-//! - Root motion (sub_180037360): the root-motion bone's key translation is
+//! - Root motion (`AnimChannel::Advance`): the root-motion bone's key translation is
 //!   removed from the pose and its per-tick delta becomes the actor's
 //!   velocity, transformed by the bone's bind matrix, the mesh scale and the
-//!   entity orientation (`Actor::UpdateSelf` 0x18002a260).
+//!   entity orientation (`Actor::UpdateSelf`).
 //!
 //! PORT: the pose is one key per skeleton bone (the engine's `SkeletalPose` is a bone-name
 //! map): a clip's tracks are mapped to bones once per (clip, skeleton), and a track for a
@@ -33,9 +33,10 @@
 use crate::equip::HandState;
 use gd_formats::anm::{self, Animation, IDENTITY_KEY, Key};
 use gd_formats::arz::Record;
+use gd_formats::collections::HashMap;
 use gd_formats::msh::{BoneSet, Coords, Mesh};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use parking_lot::Mutex;
+use std::sync::{Arc, Weak};
 
 /// `GAME::AnimationSet_Type`, in engine order (one name per [`AnimType::ALL`]
 /// entry; the length is checked by the type).
@@ -238,7 +239,7 @@ pub enum WeightSrc {
     Key(String),
 }
 
-/// One `sub_1800CA860` call: animation key, speed key, weight, reference key.
+/// One `AnimationSet::AddAnimation` call: animation key, speed key, weight, reference key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeySpec {
     pub ty: AnimType,
@@ -517,7 +518,7 @@ pub struct AnimSlot {
 }
 
 impl AnimSlot {
-    /// `sub_1800217F0`: `r = rand()/32767 * total`, first entry whose
+    /// `AnimationSet::PickVariant`: `r = rand()/32767 * total`, first entry whose
     /// running weight sum reaches `r`; `None` if it runs off the end.
     pub fn pick(&self, r01: f32) -> Option<&AnimEntry> {
         let r = r01 * self.total_weight;
@@ -531,7 +532,7 @@ impl AnimSlot {
         None
     }
 
-    /// `GetAnimSpeed` (+80): mean of `numFrames/fps / recordSpeed` over the
+    /// `AnimationBase::GetAnimSpeed`: mean of `numFrames/fps / recordSpeed` over the
     /// variants, i.e. the effective duration in seconds at caller speed 1
     /// (1.0 when empty). Needs the frame counts, so the caller supplies them.
     pub fn mean_duration(&self, frames_fps: impl Fn(&str) -> Option<(u32, u32)>) -> f32 {
@@ -551,8 +552,8 @@ impl AnimSlot {
 }
 
 /// Animation types whose slot holds weighted variants (`AnimationBase`
-/// subclass vtable 0x1806D4E68 in the `AnimationSet` ctor). `Special` uses a
-/// per-reference map of variant lists (vtable 0x1806D4EF0).
+/// subclass vtable `AnimationVariants_vftable` in the `AnimationSet` ctor). `Special` uses a
+/// per-reference map of variant lists (vtable `AnimationSpecial_vftable`).
 pub fn is_variant_slot(t: AnimType) -> bool {
     use AnimType as T;
     matches!(
@@ -592,7 +593,7 @@ impl AnimSet {
             };
             52
         ];
-        let mut specials: HashMap<String, AnimSlot> = HashMap::new();
+        let mut specials: HashMap<String, AnimSlot> = HashMap::default();
         for k in set_keys(hand) {
             let Some(path) = rec.str(&k.anim) else {
                 continue;
@@ -600,7 +601,7 @@ impl AnimSet {
             if !exists(path) {
                 continue;
             }
-            // sub_1800CA860 reads the speed with default 1.0 (flt_1807A8054);
+            // AnimationSet::AddAnimation reads the speed with default 1.0;
             // the loaders read weights with default 0.
             let speed = rec.f32(&k.speed).unwrap_or(1.0);
             let weight = match &k.weight {
@@ -680,7 +681,7 @@ impl<'a> RecordIndex<'a> {
     }
     pub fn str(&self, key: &str) -> Option<&'a str> {
         match self.map.get(&key.to_ascii_lowercase())?.first()? {
-            gd_formats::arz::RawValue::Str(s) if !s.is_empty() => Some(s.as_str()),
+            gd_formats::arz::RawValue::Str(s) if !s.is_empty() => Some(s),
             _ => None,
         }
     }
@@ -689,7 +690,7 @@ impl<'a> RecordIndex<'a> {
     }
 }
 
-/// Blend time for a transition, `Player::PlayAnimation` (0x1803e2900) rules
+/// Blend time for a transition, `Player::PlayAnimation` rules
 /// applied to the slot default: starting Attack/Special/AttTurn*/Spin/Evade/
 /// Transform cuts (0 ms); Attack or AttTurn* → AttackIdle cuts; leaving Spin
 /// blends 75 ms. Non-player characters use the slot time unchanged.
@@ -771,7 +772,7 @@ impl Pose {
         self.keys.clear();
         self.keys.resize(mesh.bones.len(), IDENTITY_KEY);
         self.mesh = Some(mesh.clone());
-        self.maps.get_mut().unwrap().clear();
+        self.maps.get_mut().clear();
     }
 }
 
@@ -810,8 +811,8 @@ fn foreign_map<'a>(
 /// Which profile speed a playing clip runs at — the debuff slow that scales
 /// it: run for moves and charges, attack for weapon swings, kicks and weapon
 /// specials, cast for spells and buffs (`Character::GetAttackSpeed`
-/// @0x1800692e0 / `GetSpellCastSpeed` @0x1800693a0 fold the slow in before the
-/// cap, and `AnimEntry_Play` @0x180020db0 plays at that value). Carried with
+/// / `GetSpellCastSpeed` fold the slow in before the
+/// cap, and `AnimEntry::Play` plays at that value). Carried with
 /// the clip instead of inferred from its [`AnimType`]: a `Special` may be a
 /// weapon-pool proc (attack slow) or a spell (cast slow).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -941,7 +942,7 @@ impl AnimChannel {
     /// animation moves to the fade list; blend 0 also drops all fades.
     /// A finished one-shot's overshoot (the time played past its final frame)
     /// carries into the new clip's start: the engine chains the next action in
-    /// the same handler pass (`CharacterActionHandler::Execute` @0x180089ac0),
+    /// the same handler pass (`CharacterActionHandler::Execute`),
     /// so the cadence is the clip's own length, not whole frames. The carry is
     /// at most the new clip's length, and its first advance reports what it
     /// crosses from frame 0 (the callbacks in the carried time, its "End" when
@@ -1048,7 +1049,7 @@ impl AnimChannel {
     }
 }
 
-/// sub_180037360: sample at `t + dt*speed` into `pose`, extract root motion,
+/// `AnimChannel::Advance`: sample at `t + dt*speed` into `pose`, extract root motion,
 /// report the callback points and entity events crossed in
 /// `[prevFrame, newFrame)` (with loop wrap) and "End". `root` is the skeleton's
 /// root-motion bone index.
@@ -1144,7 +1145,7 @@ fn report_advance(c: &mut ChannelAnim, t_new: f32, ev: &mut ChannelEvents) {
 
 /// The trailer's `CallbackPoint` / `CreateEntity` / `RemoveEntity` blocks
 /// crossed in `[lo, hi)` (frames), in trailer order — the one interval both
-/// the callbacks and the entity events fire from (sub_180037360; read in
+/// the callbacks and the entity events fire from (`AnimChannel::Advance`; read in
 /// place, `Animation::callback_points` / `create_entities` decode copies).
 fn report_span(ev: &mut ChannelEvents, anim: &Animation, lo: f32, hi: f32) {
     for b in &anim.trailer {
@@ -1188,17 +1189,17 @@ pub fn pose_abs_into(mesh: &Arc<Mesh>, pose: &Pose, abs: &mut Vec<Coords>) {
         pose_abs_from(mesh, &pose.keys, None, |_| None, abs);
         return;
     }
-    let mut maps = pose.maps.lock().unwrap();
+    let mut maps = pose.maps.lock();
     let map = foreign_map(&mut maps, mesh, pose.mesh.as_deref());
     pose_abs_from(mesh, &pose.keys, Some(&map.bones), |_| None, abs);
 }
 
 /// Mesh-space bone transforms of a mesh attached to an actor, an armour piece
-/// on its wearer, written into `abs`. `Actor::UpdateSelf` @0x18002a260 (Engine.dll): the
+/// on its wearer, written into `abs`. `Actor::UpdateSelf` (Engine.dll): the
 /// attached actor copies the parent mesh instance's `SkeletalPose` (keys by
-/// bone name, `Actor::Attach` @0x18002d020 seeds it) and calls
-/// `GraphicsMeshInstance::UpdatePose` @0x1800c30f0 with the parent, which is
-/// `GraphicsMesh::GetAbsCoords` @0x1800b7f20: a root bone found by name in
+/// bone name, `Actor::Attach` seeds it) and calls
+/// `GraphicsMeshInstance::UpdatePose` with the parent, which is
+/// `GraphicsMesh::GetAbsCoords`: a root bone found by name in
 /// `parent` takes the parent bone's absolute transform (`parent_abs`, no own
 /// bind or key), any other root runs from the identity as in [`pose_abs`];
 /// the bones below go on with their own bind and the pose's key, the identity
@@ -1214,7 +1215,7 @@ pub fn pose_abs_attached_into(
     abs: &mut Vec<Coords>,
 ) {
     let home = pose.mesh.as_ref().is_some_and(|m| Arc::ptr_eq(m, mesh));
-    let mut maps = pose.maps.lock().unwrap();
+    let mut maps = pose.maps.lock();
     let map = foreign_map(&mut maps, mesh, pose.mesh.as_deref());
     let roots_stale = map
         .roots
@@ -1298,14 +1299,14 @@ fn pose_abs_from(
     }
 }
 
-/// Root-motion bone of a mesh: first bone without a parent (sub_1800B4490).
+/// Root-motion bone of a mesh: first bone without a parent (`GraphicsMesh::GetRootMotionBone`).
 pub fn root_motion_bone(mesh: &Mesh) -> Option<&str> {
     mesh.root_motion_bone().map(|b| b.name.as_str())
 }
 
 /// Object-space root velocity: the key-space delta transformed by the root
 /// bone's bind matrix and the mesh (actor) scale (`GraphicsMeshInstance::
-/// Update` 0x1800bffd0).
+/// Update`).
 pub fn root_velocity_object(mesh: &Mesh, key_vel: [f32; 3], scale: f32) -> [f32; 3] {
     let Some(b) = mesh.bones.iter().find(|b| b.parent.is_none()) else {
         return [0.0; 3];
@@ -1317,8 +1318,8 @@ pub fn root_velocity_object(mesh: &Mesh, key_vel: [f32; 3], scale: f32) -> [f32;
 /// applies (`StartAction` of its engine class, Game.dll):
 /// - `SkillActivatedBuffSelf` family (self/radius buffs, toggles, teleport,
 ///   charge potion, …) → `BuffSelf`;
-/// - `Skill_Shapeshift` → `Transform` (`Skill_Shapeshift::StartAction`
-///   @0x180507c50: the special animation, else `StartNormalAnimation(49)` at
+/// - `Skill_Shapeshift` → `Transform` (`Skill_Shapeshift::StartAction`:
+///   the special animation, else `StartNormalAnimation(49)` at
 ///   the spell-cast speed, in the set worn then: the human's going in, the
 ///   form's coming out);
 /// - `SkillActivatedBuffOther` (`Skill_BuffOther`, `Skill_ChargedBuffOther`)
@@ -1326,14 +1327,14 @@ pub fn root_velocity_object(mesh: &Mesh, key_vel: [f32; 3], scale: f32) -> [f32;
 /// - `SkillActivatedWeapon` family, weapon pools and
 ///   `Skill_PlayAttackAnimation` → `Attack` at attack speed; the classes of
 ///   [`attack_turns`] first try an `AttTurn*` slot ([`attack_turn`]);
-/// - `Skill_Kick` → `Kick` (`Skill_Kick::StartAction` @0x1804f8a10:
+/// - `Skill_Kick` → `Kick` (`Skill_Kick::StartAction`:
 ///   the kick special animation, a player without the clip falls back to
 ///   `StartNormalAnimation(47)`); PORT: at the attack speed;
 /// - every other activated skill (`SkillActivatedSpell`: projectiles, radius
 ///   attacks, summons, …) → `SpellCast`.
 ///
-/// Buffs and spells run at the spell-cast speed (character vtable +184),
-/// weapon skills at the attack speed (+176). `None` for passive classes.
+/// Buffs and spells run at the spell-cast speed (`Character::GetSpellCastSpeed`),
+/// weapon skills at the attack speed (`Character::GetAttackSpeed`). `None` for passive classes.
 pub fn skill_animation(class: &str) -> Option<(AnimType, bool)> {
     use AnimType as T;
     let c = class;
@@ -1386,8 +1387,8 @@ pub fn skill_animation(class: &str) -> Option<(AnimType, bool)> {
     Some((T::SpellCast, false))
 }
 
-/// Whether a skill of record class `class` animates through `SkillActivatedWeapon::StartAction` @0x18051a690
-/// (the classes whose vtable slot 208 is it: `SkillActivatedWeapon`, `Skill_AttackWeapon`,
+/// Whether a skill of record class `class` animates through `SkillActivatedWeapon::StartAction`
+/// (the classes whose `StartAction` virtual is it: `SkillActivatedWeapon`, `Skill_AttackWeapon`,
 /// `…WeaponBlink`, `…WeaponCharge`, `…WeaponRangedSpread`, `Skill_AttackInherent`, `Skill_AttackPathCharge`,
 /// `Skill_WPAttack`, `…BasicAttack`, `…RadialCrit`), the one that may turn into the attack ([`attack_turn`]);
 /// `Skill_PlayAttackAnimation`, `Skill_WPAttack_Radius` / `AttackWave` / `ProjectileBurst` and the weapon pools
@@ -1409,7 +1410,7 @@ pub fn attack_turns(class: &str) -> bool {
 }
 
 /// The `AttTurn*` slots an [`attack_turns`] attack tries before `Attack`:
-/// `SkillActivatedWeapon::StartAction` @0x18051a690 (after the special animation): `angle` is the one between the
+/// `SkillActivatedWeapon::StartAction` (after the special animation): `angle` is the one between the
 /// caster's facing (local +Z) and the direction to the target (the target entity's position, else the cast point,
 /// flattened), taken as the attack starts (before any turn); `right` = the target lies on the local -X side.
 /// A player turning ≥ 45° plays `AttTurnRight90` / `AttTurnLeft90` and nothing else (the engine's attack fails

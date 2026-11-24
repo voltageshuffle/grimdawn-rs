@@ -2,9 +2,9 @@
 //! `transfer.gst` (shared stash), `transmutes.gst`, `reagents.gst`.
 //! (`formulas.gst` is a tagged IOStream file, see [`super::tagged`].)
 //!
-//! Game.dll `GameEngine::WritePlayerTransfer` (0x1802ddf30) /
-//! `ReadPlayerTransfer` (0x1802dd0f0), `WritePlayerTransmutes` (0x1802e0670),
-//! `WritePlayerReagents` (0x1802e2040). Each file is
+//! Game.dll `GameEngine::WritePlayerTransfer` /
+//! `ReadPlayerTransfer`, `WritePlayerTransmutes`,
+//! `WritePlayerReagents`. Each file is
 //! `u32 file_version; block <id> { u32 version; raw u32 == key; string mod_name; ... }`.
 use super::cipher::{Decoder, Encoder};
 use super::item::StashSack;
@@ -122,7 +122,7 @@ pub struct Transmutes {
     pub version: u32,
     pub mod_name: String,
     pub expansion_status: u8,
-    /// Count field written by the game (`this+56170`); normally == entries.len().
+    /// Count field written by the game (`TransferStash.sackCount`); normally == entries.len().
     pub count: u32,
     pub entries: Vec<TransmuteEntry>,
 }
@@ -184,7 +184,7 @@ impl Transmutes {
 pub struct Reagent {
     pub block_id: u32,
     pub record: String,
-    /// Stack count (`Item` vfunc 195 when the item object exists).
+    /// Stack count (`Item::GetStackSize` when the item object exists).
     pub count: u32,
 }
 

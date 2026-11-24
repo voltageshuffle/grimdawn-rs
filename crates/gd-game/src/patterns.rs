@@ -8,21 +8,21 @@
 //! `weapon_pool::SkillLinks::of_list`).
 //!
 //! Game.dll (the placement rules: `gd_sim::pattern`):
-//! - `ActivateNow` @0x1804bbf60 (Fangs of Asterkarn loaded, the skill's
+//! - `ActivateNow` (Fangs of Asterkarn loaded, the skill's
 //!   launcher present): the centre is the caster with `selfTarget`, else the
 //!   target object if there is one, else the skill's point; only the
 //!   position changes, the orientation stays the caster's (the lines' arms
 //!   follow its facing). The pattern's spots (`Pick…Points`), each put on the
 //!   floor (`PutOnFloor`), get one new object id each and go through the
-//!   services' spawn (vtable +80) to `SkillSpawnObject`.
-//! - `SkillSpawnObject` @0x1804bc570: with any spot, the mana cost is paid
+//!   services' spawn (`SkillServices::SendSpawnObject`) to `SkillSpawnObject`.
+//! - `SkillSpawnObject`: with any spot, the mana cost is paid
 //!   and the cooldown started; per spot the `groundEffect` entity (cached by
 //!   `Load`) is created there and starts emitting, with a delay of
 //!   `minDelay + r % (maxDelay − minDelay + 1)` ms (at least 1), r the
 //!   Park–Miller stream of the spawn's seed, stepped once per spot.
-//! - `Update` @0x1804bc860: every spot's delay runs down by the frame; at
+//! - `Update`: every spot's delay runs down by the frame; at
 //!   ≤ 0 its effect entity, if still in the world, runs the skill's
-//!   `ActivateSecondarySkills` (vtable +1336) with no target and an empty
+//!   `ActivateSecondarySkills` with no target and an empty
 //!   list at the effect's coordinates, then stops emitting and removes
 //!   itself (gone from the world: just destroyed).
 //!
@@ -33,9 +33,9 @@
 //! `needPath` / sector tests are not made; the walkable-ground probe is the
 //! port's nav grid height. The mana cost / cooldown are paid by the cast as
 //! for any skill (`casting.rs`).
-use crate::data::GameData;
 use crate::nav::Nav;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
 use gd_sim::pattern::{NavBlock, Params, Request};
 
 pub struct PatternsPlugin;
@@ -47,7 +47,7 @@ impl Plugin for PatternsPlugin {
             (fire, run_spots)
                 .chain()
                 .after(crate::casting::CastingSet)
-                .before(crate::combat::CombatSet),
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -91,14 +91,14 @@ fn fire(
                 .and_then(|t| at.get(t).ok())
                 .map_or(m.point, |t| t.translation)
         };
-        let fwd = crate::character::facing_flat(ctf);
+        let fwd = gd_game_core::character::facing_flat(ctf);
         let p = Params::from_record(rec, m.level_index + 1);
         let ground = |x: f32, z: f32, y: f32| nav.0.ground([x, y + 1.0, z]).unwrap_or(y);
         // One activation's blocked circles (`NavManager`), emptied when the
         // picking finishes (here: dropped).
         let mut block = NavBlock::default();
         let mut gnd = |x: f32, z: f32| nav.0.ground([x, centre.y + 1.0, z]);
-        let mut rand = crate::rng::f32;
+        let mut rand = gd_game_core::rng::f32;
         let c = (centre.x, centre.z);
         let offsets = gd_sim::pattern::spots(
             &p,
@@ -107,7 +107,7 @@ fn fire(
                 if hi <= lo {
                     lo
                 } else {
-                    crate::rng::i32(lo..=hi)
+                    gd_game_core::rng::i32(lo..=hi)
                 }
             },
             |r| {
@@ -132,7 +132,7 @@ fn fire(
         } else {
             (max - min + 1) as u32
         };
-        let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+        let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
         rng.next();
         let fx = rec
             .str("groundEffect")

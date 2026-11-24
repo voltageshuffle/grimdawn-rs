@@ -1,7 +1,7 @@
 //! The options window (the game menu's "Options Menu"): tabs Gameplay,
 //! Interface, Health Bars, Key Bindings, Audio, Video (and the inert
 //! Network tab), Default / Apply / Close. It edits a draft of
-//! [`gd_game::options::GameOptions`]; Apply replaces the session's options
+//! [`gd_game_core::options::GameOptions`]; Apply replaces the session's options
 //! and writes the port's own `options.txt` (`crate::settings`).
 //!
 //! Records: `records/ui/mainmenu/mainmenu_constants.dbr`
@@ -21,44 +21,50 @@
 //! `optionsKeyBindingHeaderColor` (0.7, 0.55, 0.4, 0.25) and
 //! `optionsKeyBindingHeaderFontName` for the bindings' header.
 //!
-//! Key bindings (Grim Dawn.exe): the list (sub_1400AF8F0) has the
+//! Key bindings (Grim Dawn.exe): the list (`KeyBindingList::Build`) has the
 //! columns `tagKeybindingTitle02..04` (Function / Primary / Secondary) 370 /
-//! 170 / 170 × UI scale wide, rows in the order of sub_1400B0380 (the
+//! 170 / 170 × UI scale wide, rows in the order of `KeyBindingList::AddRows` (the
 //! move-forward / back / left / right rows only for the WASD movement type),
-//! each action's tag from sub_1401F6310; the defaults are sub_1401F54E0's
+//! each action's tag from `KeyBindings::GetActionTag`; the defaults are `KeyMap::SetDefaultBindings`'s
 //! (`keybindings.txt` "action: primary secondary" in the engine's key codes:
 //! DirectInput scan codes, 107 / 118 right Ctrl / Alt, 145+ mouse wheel /
 //! buttons and gamepad, named by `InputDevice::GetDefaultButtonName`,
-//! Engine.dll @0x1801234a0). PORT: keyboard names are Wine's for the
+//! Engine.dll). PORT: keyboard names are Wine's for the
 //! scan code (the real list asks the OS). Clicking a Primary / Secondary
 //! cell waits for a key (Esc cancels) and binds it; Apply stores the
-//! bindings (`super::keys`, which also says which the port honours). The list's scroll bar
-//! (its input sub_1400DB910): a press on the thumb grabs it, a move places it at the cursor less the grab
+//! bindings (`super::keys`, which also says which the port honours). The list's scroll bar (its input
+//! `MenuScrollBar::HandleMouseEvent`): a press on the thumb grabs it, a move places it at the cursor less the grab
 //! offset, the release lets go. PORT: the list scrolls by whole rows (the row nearest the thumb's place); a press on
 //! the track does not page.
 //!
 //! Sounds (`ui/widgets.rs`): the tabs and Default / Apply / Close are `menubutton`s (their `soundNameOver` /
 //! `soundNameDown`, Apply only while enabled); the check boxes play the constants' `gemButtonRolloverSound` /
-//! `gemButtonClickSound` (sub_1400A0F70). The sliders and dropdowns are silent: their constructors (slider
-//! sub_1400EAC40 from sub_1400C4DD0, dropdown sub_1400AA480 from the page builders) take a copy of the options window's
-//! `SoundDescriptor` +320 / +432, which its constructor sub_1400EFEE0 default-builds and nothing loads (no
+//! `gemButtonClickSound` (`MenuCheckBox::MenuCheckBox`). The sliders and dropdowns are silent: their constructors
+//! (`MenuSlider::MenuSlider` from `OptionsWindow::AddSlider`, `MenuDropBox::MenuDropBox` from the page builders) take
+//! a copy of the options window's `OptionsWindow.sliderSound` / `OptionsWindow.dropBoxSound`, which its constructor
+//! default-builds (`SoundDescriptor::SoundDescriptor`) and nothing loads (no
 //! `SoundManager::Load` or assignment reaches them), and `mainmenu_constants.dbr` has no slider / dropbox sound field.
 //!
-//! Page layouts: page builder sub_1400C8E60, see
+//! Page layouts: page builder `OptionsWindow::Load`, see
 //! [`Page`]: each page lays its controls down a row cursor from the page origin (`options_mastertable.dbr` `pageX`
 //! / `pageY` 15 / 114 in the window). PORT: the drawn widgets' insides (label offsets, the dropdown box drawn
 //! `width - 3` wide with its arrow outside, the anti-aliasing box in the value column) are the port's own; a
 //! dropdown opens a list of its
 //! values under the box ([`choices`]); a slider is set by dragging its knob ([`knob_bitmap`], `input`); the
 //! controls' rollovers: [`rollover`]; Default
-//! resets the open page's options. Video dropdown lists (sub_1400C5190 jump table @0x1400C59B0, pick handler
-//! sub_1400C4720, page builder sub_1400C8E60): textureQuality Low..High, fxQuality / lightingQuality Low..Very High,
+//! resets the open page's options to the factory defaults plus `Options::SetToDefaults`'s group overrides
+//! (Gameplay corpsePersistence 0.0, Audio musicVolume 0.6). The device / resolution / window-mode lists are the
+//! engine's (`OptionsWindow::Load`, `OptionsWindow::AddResolutionDropBox`, `OptionsWindow::AddWindowModeDropBox`);
+//! the monitor they read is the effective primary ([`crate::settings::primary_monitor`]: Wayland reports none).
+//! Video dropdown lists (`OptionsWindow::AddQualityDropBox`'s jump table, pick
+//! handler `OptionsWindow::HandleVideoPick`, page builder `OptionsWindow::Load`): textureQuality Low..High, fxQuality /
+//! lightingQuality Low..Very High,
 //! detailLevel Low..Ultra, weather Off + Low..Very High (Off = `weatherEnabled` false), shadows Off + Low..Ultra (Off =
 //! `shadows` false); the shown item is the stored quality clamped to the entries (a file's "ultra" texture quality shows
 //! High and stays stored until a pick). The `reflectionQuality` row (tagVideoOption04) is a Low..Very High
 //! dropdown driving the water's planar reflection (gd-render `render/reflection.rs`). PORT: the Video rows of
 //! options the port does not use (`tripleBuffer`, `alphatocoverage`, `deferredrendering`) are not shown (their
-//! rows stay empty); the options file keeps their lines (`gd_game::options`).
+//! rows stay empty); the options file keeps their lines (`gd_game_core::options`).
 //!
 //! Performance (PORT, `docs/architecture.md`): the rebuild signature holds only
 //! layout state (size, open, tab, dropdown, rebind, movement type, keys
@@ -68,7 +74,9 @@
 //! ([`DropText`]) in place. So the hits of what moves (knobs, the list rows, the key list's thumb) are stored at
 //! value / scroll 0 and [`hit_at`] places them where [`live`] draws them. The controls' rollovers are the menu manager's
 //! shared box (`super::rollover::menu_tip`) with its 500 ms one-shot delay
-//! ([`rollover`]).
+//! ([`rollover`]). PORT: the dropdown value and the open list's rows are ellipsised to their box's inner width
+//! (`UITextBox::TruncateLine`; the rows clear the scroll column when it shows); the layout keeps the rows' full
+//! labels (`drop_rows`) and a hovered row shows its label in that box (`super::rollover::menu_tip_text`).
 mod bindings;
 mod build;
 mod input;
@@ -76,10 +84,11 @@ mod live;
 mod pages;
 
 use super::contains;
+use gd_ui::state::options::{OptionsInputSet, OptionsWindow, Tab};
 use super::keys::{KeyBindings, action_tag, key_name};
-use super::window::Rebuild;
-use super::{LiveText, TextAt, Ui, text::FontCache};
-use crate::data::GameData;
+use gd_ui::window::Rebuild;
+use super::{LiveText, TextAt, Ui};
+use super::text::FontCache;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -88,14 +97,16 @@ use build::*;
 use gd_formats::arz::Record;
 use gd_formats::options::Value;
 use gd_formats::ui::{Rect as URect, TextAlign, WindowDef};
-use gd_game::options::GameOptions;
+use gd_game_core::data::GameData;
+use gd_game_core::options::GameOptions;
 pub use input::input;
 use live::*;
 use pages::*;
 
 pub const RECORD: &str = "records/ui/mainmenu/optionswindow/options_mastertable.dbr";
 const CONSTANTS: &str = "records/ui/mainmenu/mainmenu_constants.dbr";
-/// The slider knob's bitmaps: up, held (dragged), hovered (the slider constructor sub_1400EAC40, hard-coded).
+/// The slider knob's bitmaps: up, held (dragged), hovered (the slider constructor `MenuSlider::MenuSlider`,
+/// hard-coded).
 const KNOB: [&str; 3] = [
     "ui/mainmenu/buttongemup.tex",
     "ui/mainmenu/buttongemdown.tex",
@@ -127,7 +138,7 @@ impl Plugin for OptionsUiPlugin {
                 input
                     .in_set(OptionsInputSet)
                     .after(bevy::input::InputSystems)
-                    .after(super::gamemenu::GameMenuInputSet),
+                    .after(gd_ui::gamemenu::GameMenuInputSet),
             )
             .add_systems(
                 Update,
@@ -141,7 +152,7 @@ impl Plugin for OptionsUiPlugin {
 
 /// `GD_OPTIONS_OPEN` (hooks.rs) opens the window at start.
 #[cfg(feature = "dev")]
-fn open_window(mut commands: Commands, hooks: Res<crate::hooks::Hooks>) {
+fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let Some(tab) = hooks.ui.options_open.clone().and_then(|t| Tab::parse(&t)) else {
         return;
     };
@@ -165,83 +176,9 @@ fn open_window(mut commands: Commands, hooks: Res<crate::hooks::Hooks>) {
     });
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Tab {
-    #[default]
-    Gameplay,
-    Interface,
-    HealthBars,
-    KeyBindings,
-    Audio,
-    Video,
-    Network,
-}
 
-impl Tab {
-    const ALL: [Tab; 7] = [
-        Tab::Gameplay,
-        Tab::Interface,
-        Tab::HealthBars,
-        Tab::KeyBindings,
-        Tab::Audio,
-        Tab::Video,
-        Tab::Network,
-    ];
 
-    /// `GD_OPTIONS_OPEN`'s tab names.
-    #[cfg(feature = "dev")]
-    fn parse(s: &str) -> Option<Tab> {
-        Some(match s {
-            "gameplay" => Tab::Gameplay,
-            "interface" => Tab::Interface,
-            "healthbars" => Tab::HealthBars,
-            "keybindings" => Tab::KeyBindings,
-            "audio" => Tab::Audio,
-            "video" => Tab::Video,
-            "network" => Tab::Network,
-            _ => return None,
-        })
-    }
-}
 
-/// The window's state: open, tab, the edited draft, the bindings' scroll.
-#[derive(Resource, Default, Clone, PartialEq)]
-pub struct OptionsWindow {
-    pub open: bool,
-    pub tab: Tab,
-    draft: Option<GameOptions>,
-    scroll: usize,
-    /// The slider being dragged (option name).
-    drag: Option<&'static str>,
-    /// The key-binding list's thumb being dragged: the press's offset from the thumb's top (physical px).
-    key_grab: Option<f32>,
-    /// The open dropdown (its control's index in the page).
-    dropdown: Option<usize>,
-    /// The open list's first row shown ([`DROP_ROWS`] at a time).
-    drop_top: usize,
-    /// The edited key bindings, and the cell waiting for a key (action, 0
-    /// primary / 1 secondary).
-    keys: Option<KeyBindings>,
-    rebind: Option<(u32, usize)>,
-    /// Bumped whenever the keys draft is replaced or bound: the key list's
-    /// layout version in the rebuild signature (the draft's values are live).
-    keys_ver: u64,
-}
-
-impl OptionsWindow {
-    /// The shared Esc dispatcher's close (`ui::esc_dispatcher`): the waiting rebind cell first,
-    /// then an open list, then the window itself. Whether something closed.
-    pub fn escape(&mut self) -> bool {
-        if !self.open {
-            return false;
-        }
-        if self.rebind.take().is_some() || self.dropdown.take().is_some() {
-            return true;
-        }
-        self.open = false;
-        true
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Hit {
@@ -286,6 +223,9 @@ pub struct OptionsLayout {
     /// The open dropdown list's row height and visible box (physical px).
     drop_row_h: f32,
     drop_clip: URect,
+    /// The open dropdown list's full row labels (row index): a hovered row's rollover
+    /// shows its whole label ([`rollover`]; the drawn rows are ellipsised).
+    drop_rows: Vec<String>,
 }
 
 /// The key-binding list's scroll after `lines` wheel lines (up is positive), kept in `0..=max`.
@@ -340,20 +280,20 @@ fn hit_at(
     None
 }
 
-/// The rows a dropdown list shows at a time (draw sub_1400ABF70 / input sub_1400AB4B0).
+/// The rows a dropdown list shows at a time (draw `MenuDropBox::Draw` / input `MenuDropBox::HandleMouseEvent`).
 const DROP_ROWS: usize = 16;
 
-/// The first row a dropdown list shows when it opens (sub_1400AB4B0): with more than [`DROP_ROWS`] rows the
-/// selected one, kept within the last page; else the first.
-fn drop_first_row(shown: Shown, o: &GameOptions, screen: Vec2) -> usize {
-    let rows = choices(shown, o, screen);
-    let current = shown_text(shown, o, screen);
+/// The first row a dropdown list shows when it opens (`MenuDropBox::HandleMouseEvent`): with more than
+/// [`DROP_ROWS`] rows the selected one, kept within the last page; else the first.
+fn drop_first_row(shown: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> usize {
+    let rows = choices(shown, o, ctx);
+    let current = shown_text(shown, o, ctx);
     let selected = rows.iter().position(|(t, _)| *t == current).unwrap_or(0);
     selected.min(rows.len().saturating_sub(DROP_ROWS))
 }
 
-/// The first row after a press at `y` in a list's scroll column (sub_1400AB4B0): the press's place between
-/// `top + 5` and `top + height - 5` (UI-scaled) as a fraction of the scroll range, truncated.
+/// The first row after a press at `y` in a list's scroll column (`MenuDropBox::HandleMouseEvent`): the press's place
+/// between `top + 5` and `top + height - 5` (UI-scaled) as a fraction of the scroll range, truncated.
 fn drop_bar_row(y: f32, top: f32, height: f32, s: f32, rows: usize) -> usize {
     let f = ((y - (s * 5.0 + top)) / (height - s * 10.0)).clamp(0.0, 1.0);
     (f * rows.saturating_sub(DROP_ROWS) as f32) as usize
@@ -389,7 +329,7 @@ enum Shown {
 }
 
 /// Whether a checkbox can be changed: "Evade To Cursor" (`tagGameplayOption36`) is greyed out exactly when the
-/// movement type is Keyboard Only (options window `sub_1400C8E60`: enabled = `GetInt(13) != 2`; the
+/// movement type is Keyboard Only (options window `OptionsWindow::Load`: enabled = `movementType != 2`; the
 /// option is then ignored by `HotSlotOptionEvade::Activate`, see `gd_game::evade`).
 fn check_enabled(key: &str, draft: &GameOptions) -> bool {
     !(key == "evadeFollowCursor" && draft.int("movementType") == 2)
@@ -410,6 +350,3 @@ fn check_state(on: bool, enabled: bool, hovered: bool) -> usize {
     }
 }
 
-/// The options window's keyboard / mouse input.
-#[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OptionsInputSet;

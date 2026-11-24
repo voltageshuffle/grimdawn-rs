@@ -6,19 +6,19 @@
 //! gd_terrain.wesl).
 //!
 //! Engine.dll:
-//! - Map size by `shadowQuality` (sub_180093410 @0x180093410): low 1024,
+//! - Map size by `shadowQuality` (`GraphicsEngine::GetShadowMapSizes`): low 1024,
 //!   medium 1536, high / very high 2048, ultra 4096
 //!   ([`map_size`]). `shadows = false` (`GraphicsEngine::EnableShadows`)
 //!   turns the sun shadow off.
-//! - `GraphicsMTRenderer::BuildShadowDirectional` @0x1800c93a0, mode 1 of
-//!   renderer +160 (LiSPSM): the receiver body is the camera frustum cut at
-//!   `GraphicsEngine::GetMaxShadowDistance` (+344, 80 m from the
+//! - `GraphicsMTRenderer::BuildShadowDirectional`, mode 1 of
+//!   `GraphicsMTRenderer.shadowMode` (LiSPSM): the receiver body is the camera frustum cut at
+//!   `GraphicsEngine::GetMaxShadowDistance` (`GraphicsEngine.maxShadowDistance`, 80 m from the
 //!   `GraphicsEngine` ctor; `Camera::GetSubFrustum` far plane) below ultra
-//!   quality, clipped by the scene bounds (`GraphicsScene::CalculateSceneBounds`
-//!   @0x1800e46c0: the AABB of everything drawn in the view) and extruded
-//!   toward the sun (sub_1801AF350: the planes facing away from the sun plus
+//!   quality, clipped by the scene bounds (`GraphicsScene::CalculateSceneBounds`:
+//!   the AABB of everything drawn in the view) and extruded
+//!   toward the sun (`ConvexBody::ExtrudeTowardLight`: the planes facing away from the sun plus
 //!   silhouette planes). The casters are the actors in that volume
-//!   (`Actor::GetVisibility` 1 or 3, `castsShadows` set: Actor +584, 1 from the
+//!   (`Actor::GetVisibility` 1 or 3, `castsShadows` set: `Actor.castsShadows`, 1 from the
 //!   `Actor` ctor; Game.dll clears it only for `PhysicsDecoration` and `Rubble`
 //!   (their ctors) and a `Destructible`'s pieces (its record's
 //!   `brokenCastShadows`, default 0: breakables.rs); gibs (`Gib`, a plain
@@ -27,7 +27,7 @@
 //!   sun; the nearest of them (`L·c − |h|·|L|`) caps the volume on the sun
 //!   side (else the scene box does): the volume is clipped at that plane, so
 //!   body vertices above the highest caster's top are not in the fit.
-//! - `LightSpacePerspectiveShadowMapMatrix` @0x1800d11b0 ([`lispsm`]): light
+//! - `LightSpacePerspectiveShadowMapMatrix` ([`lispsm`]): light
 //!   frame with z = the view direction made perpendicular to the light, y =
 //!   toward the sun; sinγ = √(1 − (D·L)²), d = the body's depth along z,
 //!   n = (1/sinγ + √(1/sinγ · (1/sinγ + d·sinγ))) / sinγ, f = n + d; the
@@ -36,7 +36,7 @@
 //!   post-projection bounds are fitted: x → [−1, 1], z → clip y, and the
 //!   light axis becomes the depth, (y_max − y/z) / (y_max − y_min) ∈ [0, 1].
 //! - The receiver test (deferred.ssh `directionalPS`, set up by
-//!   `GraphicsDeferredRenderer::RenderDeferredDirectionalLight` @0x1800ab032):
+//!   `GraphicsDeferredRenderer::RenderDeferredDirectionalLight`):
 //!   4 point taps at ±½·`shadowBluriness` (= softness 1.5 (World ctor, never
 //!   set) / map size, so ±0.75 texel) in a plus pattern, each lit (¼) unless
 //!   the stored depth < receiver depth + `shadowBias`
@@ -48,17 +48,18 @@
 //!   plain depth of the casters with the base-alpha test at 0.5.
 //!
 //! - The scene bounds are the union of the scene's renderable boxes
-//!   (`GraphicsScene::AddRenderable` @0x1800e3c20; `CalculateSceneBounds`
+//!   (`GraphicsScene::AddRenderable`; `CalculateSceneBounds`
 //!   skips entries whose box is not finite, as here); the terrain's renderable
 //!   is one batch over its 9×9-cell blocks inside the view frustum
 //!   (render/terrain.rs `terrain_blocks`), not the level's whole terrain;
-//!   water likewise (`WaterRenderInterface::AddToScene` @0x180203300: its
+//!   water likewise (`WaterRenderInterface::AddToScene`: its
 //!   9-unit blocks in the frustum, one batch per water type, water.rs).
-//! - `RenderDebug` @0x1800cc540 (`SetShadowDebugging`) draws, at (10, 64)
+//! - `RenderDebug` (`SetShadowDebugging`) draws, at (10, 64)
 //!   and 256² each with UV 0..1 through shaders/debug/shadowmap.ssh (a plain
-//!   copy), renderer +568 = a 16² target cleared to 1 that `BuildShadows`
+//!   copy), `GraphicsMTRenderer.dummyShadowTarget` = a 16² target cleared to 1 that `BuildShadows`
 //!   never renders (uniform), then, when a directional map was built this
-//!   frame (+660), renderer +576 = the whole sun map (its depth view, red),
+//!   frame (`GraphicsMTRenderer.sunShadowBuilt`), `GraphicsMTRenderer.sunShadowTarget` = the whole sun map (its
+//!   depth view, red),
 //!   then the point-light maps; the text is the point-map counts.
 //!
 //! PORT: Bevy needs a power-of-two map, so the matrix squeezes the engine's
@@ -81,7 +82,7 @@ use bevy::light::{
 use bevy::prelude::*;
 use std::any::TypeId;
 
-/// `GraphicsEngine` max shadow distance (+344): the receiver body's far plane.
+/// `GraphicsEngine` max shadow distance (`GraphicsEngine.maxShadowDistance`): the receiver body's far plane.
 pub const MAX_SHADOW_DISTANCE: f32 = 80.0;
 /// `World` shadow softness: the tap spread in texels.
 pub const SHADOW_SOFTNESS: f32 = 1.5;
@@ -160,8 +161,8 @@ fn drop_unlit_cascades(
     }
 }
 
-/// Engine shadow quality index of the option text (`Options` parser
-/// sub_1801821B0: low 0, medium 1 (anything else), high 2, very high 3,
+/// Engine shadow quality index of the option text (`Options` file reader
+/// `Options::LoadFile`: low 0, medium 1 (anything else), high 2, very high 3,
 /// ultra 4).
 pub fn quality_index(text: &str) -> u32 {
     match text {
@@ -173,7 +174,7 @@ pub fn quality_index(text: &str) -> u32 {
     }
 }
 
-/// Directional shadow map size of a quality (sub_180093410).
+/// Directional shadow map size of a quality (`GraphicsEngine::GetShadowMapSizes`).
 pub fn map_size(quality: u32) -> u32 {
     match quality {
         0 => 1024,
@@ -200,11 +201,11 @@ impl Default for SunShadowSettings {
 }
 
 fn apply_options(
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     settings: Option<Res<SunShadowSettings>>,
     mut commands: Commands,
     mut map: ResMut<DirectionalLightShadowMap>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if settings.is_some() && !options.is_changed() {
         return;
@@ -337,7 +338,7 @@ pub fn polytope_vertices(planes: &[Plane]) -> Vec<Vec3> {
 }
 
 /// The body's planes extruded toward the sun (`light` = the direction the
-/// light travels), sub_1801AF350: the planes the sweep does not cross plus,
+/// light travels), `ConvexBody::ExtrudeTowardLight`: the planes the sweep does not cross plus,
 /// for each of them and each plane it does cross, the plane through their
 /// intersection line parallel to the light (oriented to keep `inside`).
 pub fn extrude_toward_light(planes: &[Plane], light: Vec3, inside: Vec3) -> Vec<Plane> {
@@ -628,7 +629,7 @@ fn sun_shadow_cascade(
             }
         }
     }
-    // One box per actor (`Actor` +68 centre, +80 half extents): the union of
+    // One box per actor (`Actor.boundsCenter`, `Actor.boundsHalfExtents`): the union of
     // its meshes' boxes (the meshes of a model are children of its root).
     // Rebuilt every frame in one pass over the casters: every animated
     // character's skinned boxes change each frame, so tracking changes costs

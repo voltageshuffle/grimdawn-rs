@@ -1,7 +1,8 @@
 //! Stats and combat against the installed game database
 //! ([`gd_sim::testdata`]).
+use gd_rules::Rng;
 use gd_sim::attributes::{AttrFamily, lookup};
-use gd_sim::combat::{self, AttackerScaling, DamageScale, ReductionInfo, Rng, WeaponDamage};
+use gd_sim::combat::{self, AttackerScaling, DamageScale, ReductionInfo, WeaponDamage};
 use gd_sim::stats::*;
 
 use gd_sim::testdata::db;

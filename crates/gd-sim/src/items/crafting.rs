@@ -1,38 +1,37 @@
 //! Blacksmith crafting (`ItemArtifactFormula` blueprints at an `NpcCrafter`).
 //!
 //! (Game.dll / Grim Dawn.exe):
-//! - `ItemArtifactFormula::Load` @0x18032d4a0: `reagentBaseBaseName` +
+//! - `ItemArtifactFormula::Load`: `reagentBaseBaseName` +
 //!   `reagent1..6BaseName` (string arrays: any listed record counts) with
 //!   `...Quantity`; `artifactName` (what is made), `artifactCreateQuantity`,
-//!   `artifactCreationCost` (an equation; `GetCreationCost` @0x180331720 =
+//!   `artifactCreationCost` (an equation; `GetCreationCost` =
 //!   `(u32)(max(eval, 1) + 0.5)` with the player level), `forcedRelicCompletion`.
-//! - The crafting tab's craft handler (exe 0x14019e3d0): `artifactName` is a
+//! - The crafting tab's craft handler (exe `UICraftingTab::Craft`): `artifactName` is a
 //!   `LootItemTable_DynWeight`, a `LootMasterTable` or a plain item record,
 //!   rolled at the player's level and difficulty; then, if the crafter has an
 //!   `enhancementTable` (a `LootRandomizerTable`), one entry of it becomes the
 //!   item's `modifierName` (the crafting bonus).
-//! - `CreateArtifactConfigCmd::Execute` @0x1800e7eb0: money -= cost, each
-//!   reagent is taken (`TakeReagents` @0x1800e7d80: from the character's bags
+//! - `CreateArtifactConfigCmd::Execute`: money -= cost, each
+//!   reagent is taken (`TakeReagents`: from the character's bags
 //!   first, then the blacksmith's material storage (`reagents.gst`), the
 //!   personal stash, the transfer stash), then `artifactCreateQuantity` items
 //!   are given.
-//! - Recipes offered (exe 0x14019da70, `NpcCrafter::Load` @0x1803bc920): the
+//! - Recipes offered (exe `CraftList::LoadCrafter`, `NpcCrafter::Load`): the
 //!   crafter's `defaultRecipes`; with `awakenedRecipes` the game's awakened
 //!   list (`GameEngine::GetAwakenedRecipes`, `awakenedRecipes` of the
 //!   ascendant game record); unless it `restrictRecipes`, the blueprints the
 //!   player learned (`formulas.gst`) and the window's `craftingDefaultRecipes`
-//!   (merge order, exe 0x14019a1d0; the window then groups and sorts
+//!   (merge order, exe `CraftList::Build`; the window then groups and sorts
 //!   the list for display).
-//! - [`formula_valid`] = `IsBluePrintValid` (Item vt+1696): an invalid formula is
-//!   refused on use (`ItemArtifactFormula::AllowUse` @0x180333300: "cannot" sound, kept), dropped when
-//!   `formulas.gst` is read (`GameEngine::StreamPlayerFormulas` @0x1802dc180) and from a crafter's list (exe
-//!   sub_14019da70 / sub_14019c5a0). Only sandbox / test records fail in stock data.
+//! - [`formula_valid`] = `Item::IsBluePrintValid` (virtual): an invalid formula is
+//!   refused on use (`ItemArtifactFormula::AllowUse`: "cannot" sound, kept), dropped when
+//!   `formulas.gst` is read (`GameEngine::StreamPlayerFormulas`) and from a crafter's list (exe
+//!   `CraftList::LoadCrafter`). Only sandbox / test records fail in stock data.
 use super::ItemDb;
 use super::loot::{LootParams, randomizer_pick, roll_table};
-use crate::combat::Rng;
-use crate::expr::Expr;
 use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
+use gd_rules::Rng;
 
 /// One blueprint.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,11 +79,7 @@ impl Blueprint {
 
     /// Iron bits it costs at `player_level`.
     pub fn cost(&self, player_level: u32) -> u64 {
-        let l = player_level as f32;
-        let v = Expr::parse(&self.cost)
-            .map(|e| e.eval(&|n| n.eq_ignore_ascii_case("playerLevel").then_some(l)))
-            .unwrap_or(0.0);
-        (v.max(1.0) + 0.5) as u64
+        super::cost_at(&self.cost, player_level)
     }
 
     /// Makes the items: `artifact` rolled with `p` (at its `parent_level`),
@@ -115,7 +110,7 @@ pub fn recipes(crafter: &Record, window_defaults: &[&str], learned: &[&str]) -> 
     recipes_with_awakened(crafter, &[], window_defaults, learned)
 }
 
-/// The recipes a crafter offers, in the game's merge order (exe 0x14019a1d0):
+/// The recipes a crafter offers, in the game's merge order (exe `CraftList::Build`):
 /// its `defaultRecipes`, `awakened` (the ascendant game record's
 /// `awakenedRecipes`) when the crafter has `awakenedRecipes`, then unless it
 /// `restrictRecipes` the learned blueprints and the window defaults.
@@ -145,7 +140,7 @@ pub fn recipes_with_awakened(
     out
 }
 
-/// The item a blueprint makes and shows (`ItemArtifactFormula::LoadArtifact` @0x180331ad0:
+/// The item a blueprint makes and shows (`ItemArtifactFormula::LoadArtifact`:
 /// `Item::CreateItem` of `forcedRandomArtifactName`, else `artifactName`): the faction blueprints' `artifactName` is
 /// a loot table (Devil's Cord: `tdyn_craft_waist_f01a`) and their item the forced one. None without `artifactName`.
 pub fn made_item(rec: &Record) -> Option<&str> {
@@ -158,12 +153,13 @@ pub fn made_item(rec: &Record) -> Option<&str> {
 }
 
 /// `IsBluePrintValid` (module doc), per formula class. Game.dll:
-/// - `ItemArtifactFormula` @0x180332e00: some `reagent1..6Quantity` list non-empty or `reagentBaseQuantity` != 0,
-///   and the made item exists (`LoadArtifact` @0x180331ad0: `artifactName` non-empty; `Item::CreateItem` of
+/// - `ItemArtifactFormula::IsBluePrintValid`: some `reagent1..6Quantity` list non-empty or `reagentBaseQuantity` != 0,
+///   and the made item exists (`LoadArtifact`: `artifactName` non-empty; `Item::CreateItem` of
 ///   `forcedRandomArtifactName`, else `artifactName`, returns an item).
-/// - `ItemSetFormula` / `ItemAscensionFormula` (folded @0x180333bb0): some reagent list non-empty or base != 0.
-/// - `ItemRerollFormula` @0x1803340a0: some `reagent1..6Quantity` list non-empty (base ignored).
-/// - `AscendantAltarFormula` @0x18003a800: `reagentBaseQuantity` != 0.
+/// - `ItemSetFormula` / `ItemAscensionFormula` (folded into `ItemSetFormula::IsBluePrintValid`): some reagent list
+///   non-empty or base != 0.
+/// - `ItemRerollFormula::IsBluePrintValid`: some `reagent1..6Quantity` list non-empty (base ignored).
+/// - `AscendantAltarFormula::IsBluePrintValid`: `reagentBaseQuantity` != 0.
 ///
 /// PORT: `ItemRandomSetFormula` (not traced) takes the set formula rule; "an item" is [`is_item_class`].
 pub fn formula_valid(db: &(impl super::RecordSource + ?Sized), rec: &Record) -> bool {

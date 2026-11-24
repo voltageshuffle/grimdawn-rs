@@ -2,23 +2,23 @@
 //! (`level art/setdress/barrel_metal01_reactive.dbr`) and the four wood pieces
 //! (`level art/woodpiece1..4.dbr`) — the only 5 stock records of the class.
 //!
-//! Game.dll: `TakeAttack` @0x1803cb850 accepts an attack from any
-//! `Entity`, switches the prop to physics simulation (vtable +272, arg 2) and
-//! stores the direction of the attack's `PhysicsMotion` (`ParametersCombat`
-//! +120, what `Skill::InitRagDollData` set: `crate::ragdoll`) — no life is
-//! subtracted, the prop is not killed. `PhysicsSetup` @0x1803cb920 builds its
+//! Game.dll: `TakeAttack` accepts an attack from any
+//! `Entity`, switches the prop to physics simulation (`SetPhysicsSimulation`, arg 2) and
+//! stores the direction of the attack's `PhysicsMotion` (`ParametersCombat.physicsMotion`,
+//! what `Skill::InitRagDollData` set: `crate::ragdoll`) — no life is
+//! subtracted, the prop is not killed. `PhysicsSetup` builds its
 //! rigid body in `PhysicsSystem2` at the entity's coords (+ the region offset):
 //! its collision box, the record's `physicsMass` (default 1),
-//! `physicsFriction`, `physicsRestitution`. `PhysicsSync` @0x1803cbb10 applies
+//! `physicsFriction`, `physicsRestitution`. `PhysicsSync` applies
 //! the stored direction × rand(0.4..0.6) as an impulse plus a random angular
 //! impulse (rand(−1..1) × rand(0.4..0.6) × 0.025 on each axis), then zeroes it.
-//! `UpdateSelf` @0x1803cb780: once hit, a 5000 ms countdown (the ctor's +333)
+//! `UpdateSelf`: once hit, a 5000 ms countdown (`PhysicsDecoration.fadeCountdown`, set by the ctor)
 //! runs, then `GraphicsMeshInstance::BeginFade(255, 255, 255, 3 s)`; when the
 //! fade completes the entity is removed and destroyed. The ctor calls
 //! `SetCastsShadows(false)` (the record's `castsShadows` is overridden).
 //!
 //! The props come with their level ([`LevelPhysicsProps`], bucketed by
-//! grimdawn `world.rs`) and go with it (`crate::levels::LevelMember`; no saved state; the engine recreates
+//! grimdawn `world.rs`) and go with it (`gd_game_core::levels::LevelMember`; no saved state; the engine recreates
 //! them when the level reloads).
 //!
 //! PORT: the prop is a life-1 [`Combatant`] — the first hit "kills" it, which
@@ -31,12 +31,12 @@
 //! crowd pushing — the prop stands until hit). The dressing
 //! (`grimdawn::physics_decoration`) draws the prop and tumbles the tossed
 //! mesh on the ragdolls' floor ([`crate::ragdoll::floor`]), then fades it.
-use crate::combat::{Combatant, Dead};
-use crate::creature::BodyCache;
-use crate::data::GameData;
 use crate::ragdoll::RagdollMotion;
-use crate::rules::CombatRules;
 use bevy::prelude::*;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::creature::BodyCache;
+use gd_game_core::data::GameData;
+use gd_game_core::rules::CombatRules;
 
 pub struct PhysicsDecorationPlugin;
 
@@ -49,7 +49,7 @@ impl Plugin for PhysicsDecorationPlugin {
                 // The killing hit's motion is stored first.
                 toss_objects
                     .in_set(PhysicsDecorationStage::Toss)
-                    .after(crate::combat::CombatSet)
+                    .after(gd_game_core::combat::CombatSet)
                     .after(crate::ragdoll::RagdollStage::Motion),
             ),
         );
@@ -119,12 +119,12 @@ pub fn spawn_physics_decoration(
                     record: record.to_owned(),
                     half,
                 },
-                crate::levels::LevelMember(level),
+                gd_game_core::levels::LevelMember(level),
                 Combatant {
                     bounds: gd_sim::bounds::Aabb::object(&msh, 1.0),
                     ..Combatant::new(
                         std::sync::Arc::new(p),
-                        crate::combat::get_radius(Some(rec), 0.4),
+                        gd_game_core::combat::get_radius(Some(rec), 0.4),
                     )
                 },
                 Name::new(format!(
@@ -160,8 +160,7 @@ fn spawn_level_props(
     }
 }
 
-/// The first hit tosses the prop with its impulse (module doc, `PhysicsSync`
-/// @0x1803cbb10); the combat systems forget it.
+/// The first hit tosses the prop with its impulse (module doc, `PhysicsSync`); the combat systems forget it.
 fn toss_objects(
     mut commands: Commands,
     data: Res<GameData>,
@@ -176,7 +175,7 @@ fn toss_objects(
     >,
     mut tossed: MessageWriter<PropTossed>,
 ) {
-    let r = |a: f32, b: f32| a + crate::rng::f32() * (b - a);
+    let r = |a: f32, b: f32| a + gd_game_core::rng::f32() * (b - a);
     for (e, tf, p, motion) in &q {
         let mass = data
             .db

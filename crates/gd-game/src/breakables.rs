@@ -5,12 +5,12 @@
 //! (`Destructible::InitialUpdate` → `SetBlocked(true)` unless
 //! `PassabilityFromString` gives Intact/Always; "Never" is unrecognised there, so
 //! it blocks like ""): `SetBlocked` → `Entity::SetDynamicObstacle(true)`
-//! (Engine.dll @0x18007d8c0) takes, with `useBoundingBoxesForDynamicObstacles`,
+//! (Engine.dll) takes, with `useBoundingBoxesForDynamicObstacles`,
 //! the mesh hit boxes (`Destructible::CreatePathObstacles`), else
-//! `NavManager::AddDynamicObstacle(Entity, 0)` (@0x180150da0): for an `Actor`, a
+//! `NavManager::AddDynamicObstacle(Entity, 0)`: for an `Actor`, a
 //! cylinder of radius max(`GetExtents` = `actorRadius`, 0.5) × |scale vector|
 //! (sqrt(3) × scale for a uniform scale) and height `GetHeight` = `actorHeight`
-//! × scale y, which the tile cache (sub_18010B340) makes h = max(height, 3)
+//! × scale y, which the tile cache (`NavMesh::AddObstacleCylinder`) makes h = max(height, 3)
 //! from 0.5 h below the origin, 1.5 h tall. So a wooden door (`actorRadius`
 //! 0.8) blocks 1.39 m around its centre, its whole doorway. Broken, they vanish at once: the
 //! `brokenMesh` pieces (one root bone each) fly apart, lie for `rubbleLife`
@@ -18,22 +18,22 @@
 //! `lootChance` % they drop their `lootTable` and gold like a container
 //! (`gd_sim::items::loot`). Broken objects stay broken for the session. A
 //! story object's breakable (`crate::story_world`) runs its `onBroken` hook and
-//! goes with its story object; a level's goes with its level (`crate::levels::LevelMember`).
+//! goes with its story object; a level's goes with its level (`gd_game_core::levels::LevelMember`).
 //!
 //! `Destructible::TakeAttack`: no defensive ability, dodge or
 //! armour; the hit's damage values are summed raw off the life.
 //! Loot at the container level (`Destructible::InitialUpdate`
-//! runs the same loot generator `sub_1803585F0` as chests). The broken
+//! runs the same loot generator `LootContainer::GetItemLevel` as chests). The broken
 //! pieces' launch, physics and fade are the dressing's ([`Broke`]; grimdawn
 //! `breakables.rs`).
-use crate::combat::{Combatant, Dead};
-use crate::creature::BodyCache;
-use crate::data::GameData;
 use crate::nav::Nav;
-use crate::rules::CombatRules;
-use crate::world::{Breakable, Broken};
 use bevy::prelude::*;
-use gd_sim::combat::Rng;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::creature::BodyCache;
+use gd_game_core::data::GameData;
+use gd_game_core::rules::CombatRules;
+use gd_game_core::world::{Breakable, Broken};
+use gd_rules::Rng;
 
 pub struct BreakablesPlugin;
 
@@ -94,11 +94,13 @@ pub fn spawn_breakable(
         .id();
     // (`usize::MAX`: an on-death drop or script object stays; a story object's leaves `crate::story_world`'s way.)
     if key.0 != usize::MAX {
-        commands.entity(e).insert(crate::levels::LevelMember(key.0));
+        commands
+            .entity(e)
+            .insert(gd_game_core::levels::LevelMember(key.0));
     }
     let life = rec
         .str("maxLifeEquation")
-        .and_then(|eq| gd_sim::expr::Expr::parse(eq).ok())
+        .and_then(|eq| gd_rules::expr::Expr::parse(eq).ok())
         .map(|e| {
             e.eval(&|n| {
                 n.eq_ignore_ascii_case("charLevel")
@@ -118,10 +120,10 @@ pub fn spawn_breakable(
     } else if rec.bool("useBoundingBoxesForDynamicObstacles") {
         crate::obstacles::hit_box_obstacles(&msh, &tf)
     } else {
-        // `NavManager::AddDynamicObstacle(Entity)` / sub_18010B340 (module doc).
+        // `NavManager::AddDynamicObstacle(Entity)` / `NavMesh::AddObstacleCylinder` (module doc).
         let radius = rec
             .f32("actorRadius")
-            .unwrap_or(crate::combat::ACTOR_RADIUS)
+            .unwrap_or(gd_game_core::combat::ACTOR_RADIUS)
             .max(0.5)
             * tf.scale.length();
         let h = (rec.f32("actorHeight").unwrap_or(0.0) * tf.scale.y).max(3.0);
@@ -152,7 +154,7 @@ pub fn spawn_breakable(
                 bounds: gd_sim::bounds::Aabb::object(&msh, 1.0),
                 ..Combatant::new(
                     std::sync::Arc::new(p),
-                    crate::combat::get_radius(Some(rec), crate::combat::ACTOR_RADIUS),
+                    gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS),
                 )
             },
         ));
@@ -169,19 +171,19 @@ pub fn break_objects(
             &Transform,
             &Breakable,
             Option<&crate::combat::KilledBy>,
-            Option<&crate::story::StoryActor>,
+            Option<&gd_game_core::story::StoryActor>,
         ),
         Added<Dead>,
     >,
     places: Query<&Transform, Without<Breakable>>,
     mut broken: ResMut<Broken>,
     // Option: level 1 when absent.
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    world: Res<crate::levels::Levels>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    world: Res<gd_game_core::levels::Levels>,
     nav: Res<Nav>,
     data: Res<GameData>,
     mut broke: MessageWriter<Broke>,
-    players: Query<&Transform, With<crate::player::Player>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
     mut loot: crate::loot::ContainerLoot,
     mut bodies: ResMut<BodyCache>,
 ) {
@@ -206,7 +208,7 @@ pub fn break_objects(
             attacker,
             story: story.map(|a| a.0),
         });
-        let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+        let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
         let player_level = progress.as_ref().map_or(1, |p| p.progress.level);
         let difficulty = loot.session.mode().difficulty;
         let at = tf.translation;
@@ -253,7 +255,7 @@ pub fn break_objects(
             &gold,
             crate::loot::Dropper::all_at_once(
                 rec.f32("actorRadius")
-                    .unwrap_or(crate::combat::ACTOR_RADIUS),
+                    .unwrap_or(gd_game_core::combat::ACTOR_RADIUS),
             ),
         );
     }
@@ -261,7 +263,7 @@ pub fn break_objects(
 
 /// `GD_BREAK` (hooks.rs).
 pub fn test_break(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
     mut timer: Local<f32>,
@@ -271,7 +273,7 @@ pub fn test_break(
             &mut Combatant,
             &mut crate::player_orders::PrimaryUse,
         ),
-        (With<crate::player::Player>, Without<Breakable>),
+        (With<gd_game_core::player::Player>, Without<Breakable>),
     >,
     q: Query<(Entity, &GlobalTransform), (With<Breakable>, With<Combatant>, Without<Dead>)>,
 ) {

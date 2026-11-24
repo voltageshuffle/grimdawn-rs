@@ -5,11 +5,11 @@
 //! - the play menu is `records/ui/mainmenu/playmenu/playmenu_mastertable.dbr`
 //!   (`playMenu` of `mainmenu_constants.dbr`); each widget record places its
 //!   bitmap by `bitmapAlignmentX/Y` and `bitmapPosition` against the screen
-//!   (or its window) with `GAME::GraphicsAlign` (Engine.dll 0x180094F80):
+//!   (or its window) with `GraphicsAlign` (Engine.dll):
 //!   Left x, Right W − x, Center W / 2 + x; Top y, Bottom H − y, Center
 //!   H / 2 + y; the bitmap's top-left corner goes there (e.g. Start at
 //!   (W / 2 − 141, H − 144) in the reference shot);
-//! - the character list (`characterPicker`, draw sub_1400892E0): a
+//! - the character list (`characterPicker`, draw `CharacterList::Draw`): a
 //!   `backgroundColor` rect with the ragged border; rows `characterHeight`
 //!   apart from `scrollSize` down, each the name (`nameFont`, the selected
 //!   row `selectNameFont`, a dead hardcore one `hardcoreDeadNameFont`)
@@ -20,9 +20,9 @@
 //!   `hardcoreNameTexture`) additive around the name's text rect padded by
 //!   `nameTexturePadding`; a dead one's `hardcoreSlashTexture` across it; the
 //!   selected row's `selectTexture` over the row. The scroll buttons are
-//!   enabled while there is a row above / below the selection (0x140088F10);
-//! - the difficulty window (`difficultyWindow`, picks 0x14008F220, enables
-//!   0x14008F360, text sub_14008F5B0): the picked option's title and
+//!   enabled while there is a row above / below the selection (`CharacterList::Update`);
+//! - the difficulty window (`difficultyWindow`, picks `DifficultyWindow::ApplySelection`, enables
+//!   `DifficultyWindow::UpdateEnabled`, text `DifficultyWindow::UpdateText`): the picked option's title and
 //!   description tags, its large image, its button's `…ButtonSelect`
 //!   overlay; the bonus lines `LootTag`, `DamageTag`, `HealthTag`,
 //!   `ResistsTag`, `ExpTag` with the constants' `difficultyRegularLoot`,
@@ -30,20 +30,20 @@
 //!   Veteran 1, Elite 2, Ultimate 3, Ultimate Veteran 4), each shown only when
 //!   its value is non-zero;
 //! - the main difficulty button's text is the option's `button_tag`
-//!   (sub_1400BE8D0).
+//!   (`MainMenu::GetDifficultyButtonText`).
 //! - Create, Delete and the difficulty button are toggle buttons
 //!   (`toggleButton`): held down while their window is open (seen in the
 //!   reference shots, not decompiled).
 //!
 //! Behind the screens: the menu record's 3D scene with the selected character
-//! standing in it (`render/menu.rs`, `crate::doll::menu_character`), the
+//! standing in it (`render/menu.rs`, `gd_ui::doll::menu_character`), the
 //! record's vignette frame (`mmVignetteBitmap`, e.g.
 //! `mainmenu_vignetteframe_gdx3.tex`, a black shade) and its logo record
 //! (`mmLogo`, e.g. `gdx3_menulogo.dbr`: `x`, `y`, `width`, `height` as screen
 //! fractions, additive). PORT: the logo is a flat quad (no particles);
 //! the tutorial tip is `ui/quicktip.rs`.
 //! Sounds: each enabled `menubutton` / `menucheckbutton` registers its `soundNameOver` / `soundNameDown`
-//! (`ui/widgets.rs`, sub_1400A01D0).
+//! (`ui/widgets.rs`, `MenuButton::HandleMouseEvent`).
 //!
 //! Hover looks move in place: every hover-driven widget is drawn in its base
 //! state with its state bitmaps resolved once ([`HoverLook`]); [`live`] swaps
@@ -55,14 +55,15 @@
 //! text 2 px right of its bitmap, disabled-text alpha 0.5, a refused name's
 //! error line under the name box (the real one is a message box) are
 //! taken from the reference shots, not decompiled.
-use super::{Ui, text::FontCache};
-use crate::data::GameData;
+use super::Ui;
+use super::text::FontCache;
 use crate::menu::{CONSTANTS, DifficultyOption as D, Hit, MainMenu, MenuLayout, MenuWindow};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::arz::Record;
 use gd_formats::ui::{Rect as URect, WindowDef};
-use gd_game::session::is_dead;
+use gd_game_core::data::GameData;
+use gd_game_core::session::is_dead;
 
 const PLAY: &str = "records/ui/mainmenu/playmenu/playmenu_mastertable.dbr";
 
@@ -214,7 +215,7 @@ fn button(
     let (img, size) = rec.str(key).map(str::to_owned).and_then(|p| ui.image(&p))?;
     let p = place(ui, rec, c, "bitmap");
     let r = URect::new(p.x, p.y, ui.sc(size.x as f32), ui.sc(size.y as f32));
-    // sub_1400A06B0 (menubutton draw): a disabled button without a
+    // `MenuButton::Draw` (menubutton draw): a disabled button without a
     // `bitmapNameDisabled` draws its up bitmap multiplied by (0.6, 0.6, 0.6, 1).
     let disabled_up = state == State::Disabled && key == "bitmapNameUp";
     let e = ui.quad(
@@ -246,7 +247,7 @@ fn button(
     if let (Some(style), Some(t)) = (rec.str("textFont").map(str::to_owned), text) {
         let h = ui.line_height(&style);
         let dy = ui.sc(rec.f32("textOffsetY").unwrap_or(0.0));
-        // sub_1400A06B0: a disabled button's text colour and shadow
+        // `MenuButton::Draw`: a disabled button's text colour and shadow
         // are replaced by (0.5, 0.5, 0.5, 0.5), i.e. grey at half opacity
         // (PORT: multiplied into the style's colour, which is white-ish).
         let tint = if state == State::Disabled {
@@ -456,15 +457,15 @@ fn build(
     mut layout: ResMut<MenuLayout>,
     roots: Query<Entity, With<MenuRoot>>,
     (options, credits): (
-        Res<super::options::OptionsWindow>,
+        Res<gd_ui::state::options::OptionsWindow>,
         Res<super::credits::Credits>,
     ),
-    save_dir: Res<gd_game::session::SaveDir>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
     scene: Option<Res<crate::menu_scene::MenuScene>>,
-    mut fresh: gd_game::session::NewSession,
-    mut built: Local<Option<(UVec2, u32, MenuWindow, bool, bool, Option<usize>)>>,
+    mut fresh: gd_game_core::session::NewSession,
+    mut built: Local<Option<(UVec2, u32, MenuWindow, bool, bool, Option<usize>, u64)>>,
     mut lists: Local<Option<GameTypeLists>>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
         *built = Default::default();
@@ -483,6 +484,7 @@ fn build(
         options.open,
         credits.open,
         view.map(|v| v.index),
+        assets.fonts.generation,
     );
     if built.as_ref() == Some(&sig) {
         return;
@@ -492,7 +494,7 @@ fn build(
         commands.entity(e).try_despawn();
     }
     let s = assets.scale(size);
-    let root = crate::ui::spawn_root(&mut commands, MenuRoot, MENU_Z);
+    let root = gd_ui_kit::spawn_root(&mut commands, MenuRoot, MENU_Z);
     let (w, h) = (size.x as f32, size.y as f32);
     let mut ui = assets.ui(
         &mut commands,
@@ -548,7 +550,7 @@ fn build(
             menu.option.button_tag()
         },
     );
-    // The Game Type button names the mode (sub_1400BEA30:
+    // The Game Type button names the mode (`MainMenu::GetGameTypeTag`:
     // tagPlayGameModeCampaign / Survival / Custom).
     let mode_text = localize(
         ui.fonts,
@@ -630,7 +632,7 @@ fn build(
                     .ok()
                     .and_then(|b| gd_formats::save::survival::Leaderboard::parse(&b).ok())
                     .unwrap_or_default(),
-                arenas: gd_game::session::available_arenas(data.root()),
+                arenas: gd_game_core::session::available_arenas(data.root()),
             });
             gametype_window(&mut ui, g, lists, &mut hits)
         }
@@ -668,10 +670,10 @@ fn build(
 /// cannot be hovered through it). Writes only on a change.
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<MenuLayout>,
     (options, credits): (
-        Res<super::options::OptionsWindow>,
+        Res<gd_ui::state::options::OptionsWindow>,
         Res<super::credits::Credits>,
     ),
     mut looks: Query<(&HoverLook, &mut ImageNode, &mut Node)>,
@@ -717,16 +719,16 @@ fn live(
 fn preview(ui: &mut Ui, menu: &MainMenu) {
     let Some(e) = menu.current() else { return };
     let female = e.gdc.header.sex == 0;
-    let looks = gd_game::player::equipped_items(&e.gdc)
+    let looks = gd_game_core::player::equipped_items(&e.gdc)
         .iter()
         .map(|i| gd_sim::items::illusion::look_record(i).to_owned())
         .collect();
-    crate::doll::menu_character(ui, (female, looks));
+    gd_ui::doll::menu_character(ui, (female, looks));
 }
 
-/// The engine version in the bottom-right corner. sub_1400BEAD0 (menu
-/// constructor): a label with `GAME::Engine::GetVersion()` ("v1.3.1.1 (x64)",
-/// Engine.dll 0x180079CD0), anchored 10 px from the right edge and 15 px above
+/// The engine version in the bottom-right corner. `MainMenu::Initialize` (menu
+/// constructor): a label with `Engine::GetVersion()` ("v1.3.1.1 (x64)",
+/// Engine.dll), anchored 10 px from the right edge and 15 px above
 /// the bottom (reference shot); a second label at the top-left is created
 /// empty. PORT: the label's style name is an empty global in the exe, so the
 /// style is `style_defaultwhite_sizen`.
@@ -1184,10 +1186,10 @@ fn difficulty_window(
 }
 
 /// The game-mode window (`GameModeWindow`, `gamemode_mastertable.dbr`, 610x570 centred;
-/// `sub_140091630` / load `sub_140091820`): the Campaign and Crucible
+/// `GameModeWindow::HandleEvent` / load `GameModeWindow::Load`): the Campaign and Crucible
 /// toggles, with the Crucible the map drop-down ("Random" and the offered arenas) and the local
-/// leaderboard (character, difficulty icon, score); with Custom (`sub_140090950`) the `mapLabel` heading,
-/// the selected map's file name (`modText`) and the custom maps' list (`modList`) instead, and no
+/// leaderboard (character, difficulty icon, score); with Custom (`GameModeWindow::ShowCustomView`) the `mapLabel`
+/// heading, the selected map's file name (`modText`) and the custom maps' list (`modList`) instead, and no
 /// campaign image. PORT: the drop-down's and the lists' looks are taken from the records only (no
 /// scroll bar: the 15 entries fit in about 8 rows).
 fn gametype_window(
@@ -1258,7 +1260,7 @@ fn gametype_window(
 
 /// The selected custom map's file name (`gamemode_modtext.dbr`, a `menutextbox`: `textBoxXSize` ×
 /// `textBoxYSize` at `textPosition` from the window's `alignment` point, the thick border, the text
-/// centred; empty with no map, sub_140090D20 / sub_1400913D0).
+/// centred; empty with no map, `GameModeWindow::ClearModText` / `GameModeWindow::UpdateModText`).
 fn mod_text(ui: &mut Ui, window: &Record, c: URect, text: &str) {
     let Some(rec) = child(ui, window, "modText") else {
         return;
@@ -1480,9 +1482,9 @@ fn arena_drop(
     let name = |ui: &Ui, i: usize| {
         let tag = match i {
             0 => "tagSurvivalArenaRandom",
-            n => offered
-                .get(n - 1)
-                .map_or("tagSurvivalArenaRandom", |a| gd_game::session::ARENAS[*a].0),
+            n => offered.get(n - 1).map_or("tagSurvivalArenaRandom", |a| {
+                gd_game_core::session::ARENAS[*a].0
+            }),
         };
         localize(ui.fonts, tag)
     };
@@ -1581,7 +1583,7 @@ fn create_window(ui: &mut Ui, new: &crate::menu::NewCharacter, hits: &mut Vec<(U
     }
     let mut name_box = None;
     if let Some(tb) = child(ui, &rec, "playerName") {
-        // The caret while typing: `sub_140193800` (1 px white after the text, blinking every 600 ms
+        // The caret while typing: `UIEditBox::Draw` (1 px white after the text, blinking every 600 ms
         // as the market / devotion search boxes: `trade::animate_search`).
         let r = text_box(ui, &tb, c, &new.name);
         if let Some(style) = tb.str("textFont") {
@@ -1593,7 +1595,7 @@ fn create_window(ui: &mut Ui, new: &crate::menu::NewCharacter, hits: &mut Vec<(U
                 h,
             );
             let e = ui.solid(caret, Color::WHITE);
-            ui.commands.entity(e).insert(super::trade::SearchCaret);
+            ui.commands.entity(e).insert(gd_ui::trade::SearchCaret);
         }
         name_box = Some(r);
     }

@@ -1,11 +1,11 @@
 //! Headless checks of equipment changes: the worn items are the player's
 //! loadout, and an equipment change keeps the player entity (and its other
 //! state) while the stats and skills follow.
-use gd_game::combat::Combatant;
-use gd_game::inventory::{EquipmentChanged, Inventory, Requirements, slot_index};
-use gd_game::player::{EffectiveSkills, Loadout, Player};
+use gd_formats::inventory::EquipSlot;
 use gd_game::testing::TestGame;
-use gd_sim::items::inventory::EquipSlot;
+use gd_game_core::combat::Combatant;
+use gd_game_core::inventory::{EquipmentChanged, Inventory, Requirements, slot_index};
+use gd_game_core::player::{EffectiveSkills, Loadout, Player};
 
 /// A new character wearing a common amulet it can use, put on through `Inventory::give` (an empty slot takes it).
 fn game() -> Option<(TestGame, bevy::prelude::Entity)> {
@@ -37,7 +37,7 @@ fn game() -> Option<(TestGame, bevy::prelude::Entity)> {
             }) && inv.usable(it, &req)
         })
         .expect("a usable amulet");
-    assert!(inv.give(amulet, false, &req).is_ok());
+    inv.give(amulet, false, &req).unwrap();
     g.step();
     Some((g, p))
 }

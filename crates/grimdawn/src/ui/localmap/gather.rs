@@ -30,7 +30,7 @@ impl MapIcon {
 
     /// A Custom quad's screen offset: `offset` × `k` px along the screen
     /// direction of its facing (`angle`, [`angle_of`]) and across it
-    /// (sub_140177010 / sub_1401786D0: x·d + y·(−d.y, d.x)).
+    /// (`DetailMapWidget::RenderMinimapIcons` / `DetailMapWidget::RenderLocalMapIcons`: x·d + y·(−d.y, d.x)).
     pub(super) fn screen_offset(&self, angle: f32, k: f32) -> Vec2 {
         let d = Vec2::new(angle.sin(), -angle.cos());
         (d * self.offset.x + Vec2::new(-d.y, d.x) * self.offset.y) * k
@@ -43,7 +43,7 @@ pub struct MapPoint {
     pub record: String,
 }
 
-/// `Actor::Load`'s `mapNuggetType` (Engine.dll sub_1800239D0; `None` / unknown: no icon).
+/// `Actor::Load`'s `mapNuggetType` (Engine.dll; `None` / unknown: no icon).
 pub(super) fn nugget_type(name: &str) -> Option<u8> {
     Some(match name {
         "Hero" => 0,
@@ -69,7 +69,7 @@ pub(super) fn nugget_type(name: &str) -> Option<u8> {
     })
 }
 
-/// `Actor::AppendDetailMapData` (Engine.dll 0x18002a730): the record's
+/// `Actor::AppendDetailMapData` (Engine.dll): the record's
 /// `mapNuggetType` with `mapNuggetCustom` as its bitmap; a Custom one needs
 /// the bitmap and draws at 0.75.
 pub(super) fn actor_icon(
@@ -94,7 +94,7 @@ pub(super) fn actor_icon(
     })
 }
 
-/// A quest marker's area quad (sub_180428780 load, sub_180428A00 push): the
+/// A quest marker's area quad (`QuestMarkerArea::Load` load, `QuestMarkerArea::Test` push): the
 /// record's `areaBitmap` as a Custom nugget (scale 1) at the entity, facing
 /// `areaRotation` degrees (world (cos r, 0, sin r)) when `areaRotate` is set,
 /// else the entity's facing, offset by `areaOffsetX` / `areaOffsetY` (ints).
@@ -161,10 +161,10 @@ pub(super) fn npc_kind(rec: &gd_formats::arz::Record) -> Option<u8> {
 }
 
 /// The quest names of the record's map marker while one of its tasks is in
-/// progress (Game.dll sub_180428780 load, sub_180428A00 test).
+/// progress (Game.dll `QuestMarkerArea::Load` load, `QuestMarkerArea::Test` test).
 pub(super) fn quest_marker(
     rec: &gd_formats::arz::Record,
-    story: &gd_sim::story::Story,
+    story: &gd_story::story::Story,
     at: Vec3,
     player: Vec3,
 ) -> Option<String> {
@@ -185,7 +185,7 @@ pub(super) fn quest_marker(
         let Some(ti) = log.task_index(qi, uid) else {
             continue;
         };
-        if log.task_state(qi, ti) == gd_sim::story::quest::STATE_IN_PROGRESS {
+        if log.task_state(qi, ti) == gd_story::story::quest::STATE_IN_PROGRESS {
             let name = gd_formats::text::strip_markup(log.defs.list[qi].quest.name());
             if !names.contains(&name) {
                 names.push(name);
@@ -215,13 +215,13 @@ pub(super) type Friends<'w, 's> = Query<
     (
         &'static GlobalTransform,
         &'static gd_render::character::Character,
-        Option<&'static gd_game::story::StoryActor>,
+        Option<&'static gd_game_core::story::StoryActor>,
         Option<&'static Visibility>,
     ),
     (
-        Without<gd_game::monsters::Monster>,
-        Without<crate::player::Player>,
-        Without<crate::combat::Dead>,
+        Without<gd_game_core::monsters::Monster>,
+        Without<gd_game_core::player::Player>,
+        Without<gd_game_core::combat::Dead>,
     ),
 >;
 
@@ -244,14 +244,20 @@ pub struct MapSources<'w, 's> {
         's,
         (
             &'static GlobalTransform,
-            &'static gd_game::monsters::Monster,
+            &'static gd_game_core::monsters::Monster,
             Option<&'static Visibility>,
             Has<crate::combat::Allied>,
         ),
-        Without<crate::combat::Dead>,
+        Without<gd_game_core::combat::Dead>,
     >,
-    pub(super) breakables:
-        Query<'w, 's, (&'static GlobalTransform, &'static gd_game::world::Breakable)>,
+    pub(super) breakables: Query<
+        'w,
+        's,
+        (
+            &'static GlobalTransform,
+            &'static gd_game_core::world::Breakable,
+        ),
+    >,
     pub(super) chests: Query<'w, 's, (&'static GlobalTransform, &'static gd_game::chests::Chest)>,
     pub(super) endless_shrines: Query<
         'w,
@@ -267,18 +273,18 @@ pub struct MapSources<'w, 's> {
     pub(super) graves: Query<'w, 's, &'static GlobalTransform, With<gd_game::death::Gravestone>>,
     pub(super) points: Query<'w, 's, (&'static GlobalTransform, &'static MapPoint)>,
     pub(super) devotion: Option<Res<'w, gd_game::devotion::DevotionState>>,
-    pub(super) inv: Option<Res<'w, crate::inventory::Inventory>>,
+    pub(super) inv: Option<Res<'w, gd_game_core::inventory::Inventory>>,
     pub(super) filter: Option<Res<'w, gd_game::loot_filter::LootFilter>>,
     pub(super) loadout:
-        Query<'w, 's, &'static gd_game::player::Loadout, With<crate::player::Player>>,
-    pub(super) values: Res<'w, crate::ui::HudValues>,
+        Query<'w, 's, &'static gd_game_core::player::Loadout, With<gd_game_core::player::Player>>,
+    pub(super) values: Res<'w, gd_ui::HudValues>,
 }
 
-/// The quest marker of an entity (`sub_180428A00`: its area quad, then the
+/// The quest marker of an entity (`QuestMarkerArea::Test`: its area quad, then the
 /// star), else its own icon.
 pub(super) fn marker_or(
     rec: &gd_formats::arz::Record,
-    story: Option<&gd_sim::story::Story>,
+    story: Option<&gd_story::story::Story>,
     at: Vec3,
     facing: Vec3,
     player: Vec3,
@@ -298,7 +304,7 @@ pub(super) fn marker_or(
 pub(super) fn gather(
     data: &GameData,
     fonts: &FontCache,
-    story: Option<&gd_sim::story::Story>,
+    story: Option<&gd_story::story::Story>,
     player: Option<(Vec3, Vec3)>,
     src: &mut MapSources,
     centre: Vec2,
@@ -341,9 +347,9 @@ pub(super) fn gather(
         }
     }
     // Monsters and the player's pets (`Monster::AppendDetailMapData`, the
-    // campaign branch: alive, not hiding). Game.dll @0x180375810 (the dungeon branch, a monster in
+    // campaign branch: alive, not hiding). Game.dll `Monster::AppendDetailMapData` (the dungeon branch, a monster in
     // the running Shattered Realm dungeon): its own icon (no quest marker) until the generator reveals the
-    // monsters (`gd_sim::endless::Dungeon::reveal_monsters`); then a live foe is a star (type 8) or, with a
+    // monsters (`gd_story::endless::Dungeon::reveal_monsters`); then a live foe is a star (type 8) or, with a
     // classification of Boss and up, the boss icon (17), named by its description, and others get none.
     // PORT: the dungeon's monsters are those of its activated proxies (the engine: in any of its regions).
     let dungeon = story.and_then(|s| s.endless.dungeon.as_ref().map(|d| (s, d)));
@@ -369,7 +375,7 @@ pub(super) fn gather(
         } else if !reveal {
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         } else if !allied {
-            let boss = gd_sim::story::quest::monster_classification(
+            let boss = gd_story::story::quest::monster_classification(
                 rec.str("monsterClassification").unwrap_or(""),
             ) >= 3;
             out.push(MapIcon::new(
@@ -408,8 +414,9 @@ pub(super) fn gather(
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         }
     }
-    // The Shattered Realm's exit gates: the record's `mapsymbol_exit` (`FixedItemDungeonTeleport::AppendDetailMapData`
-    // @0x180274CF0), named by its `textTag` ("Next Floor").
+    // The Shattered Realm's exit gates: the record's `mapsymbol_exit`
+    // (`FixedItemDungeonTeleport::AppendDetailMapData`),
+    // named by its `textTag` ("Next Floor").
     if let Some(rec) = data.db.get(gd_game::endless::EXIT_GATE_RECORD) {
         let name = fonts.tag(rec.str("textTag").unwrap_or("")).to_owned();
         for t in &src.exit_gates {
@@ -436,7 +443,7 @@ pub(super) fn gather(
         };
         let Some(info) = inv.info(item) else { continue };
         let name = gd_sim::items::naming::item_name(&fonts.tags, &info.resolved);
-        let bitmap = crate::ui::character::rarity_key(info.resolved.display_color_index())
+        let bitmap = gd_ui::character::rarity_key(info.resolved.display_color_index())
             .and_then(|k| {
                 info_rec
                     .as_ref()?
@@ -527,7 +534,7 @@ pub(super) fn gather(
             continue;
         }
         if let Some(kind) = npc_kind(rec) {
-            // NPCs turn with their facing (sub_140177010 cases 0–2).
+            // NPCs turn with their facing (`DetailMapWidget::RenderMinimapIcons` cases 0–2).
             out.push(MapIcon {
                 facing: (kind == 2).then(|| forward(t)),
                 ..MapIcon::new(p, kind, npc_name(rec, fonts))

@@ -26,9 +26,9 @@ pub mod tagged;
 use anyhow::{Result, bail};
 use std::path::Path;
 
-/// The account-wide save files (`GameEngine::SharedSave` 0, 1, 4, 5, 6). Per
-/// `GameEngine::GetSharedSavePath` @0x1802c7fb0: `save\[<mod>\]<name>`, the extension `.gst`, or `.gsh` when the
-/// main player is hardcore (`Player+19413`, `Player::IsHardcore`), so hardcore and softcore characters never
+/// The account-wide save files (`GameEngine::GetSharedSavePath` kinds 0, 1, 4, 5, 6). Per
+/// `GameEngine::GetSharedSavePath`: `save\[<mod>\]<name>`, the extension `.gst`, or `.gsh` when the
+/// main player is hardcore (`Player::IsHardcore`), so hardcore and softcore characters never
 /// share a transfer stash, blueprints, illusions, reagents or potion unlocks. (Its `.bst` / `.cst` / `.dst`
 /// variants are backup / cloud copies; case 2 `playmenu.cpn` and case 3 `leaderboard.brd` have no
 /// hardcore twin.)

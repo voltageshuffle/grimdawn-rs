@@ -1,77 +1,9 @@
 use super::*;
 
-/// The controller record's `Class` (the RTTI class `Monster::Load`
-/// creates; Game.dll classInfo chain). Every class reads
-/// `ControllerMonster::Load`'s fields; they differ in their states.
-///
-/// * `ControllerStationaryMonster` (classInfo 0x180A58610, vtable
-///   0x1807472D0): `CanMove` (vtable slot 63) returns false, and its
-///   `RegisterStates` @0x180170ad0 has no Patrol, Roam, Wander,
-///   WaitToAttack, RepositionForAttack, NavigateObstacle, DodgeAttack or
-///   QuestMove state; Flee, Return, FollowLeader, DefendLeader and Move are a
-///   stub whose `OnBegin` @0x1801709d0 goes "Idle" (`SetState` of a missing
-///   state only logs "State %s is trying to be set, but not found." and
-///   stays). Its Pursue `OnBegin` @0x1801706d0: a valid enemy that is
-///   `CloseEnoughToUseSkill` → "Attack", else "Idle". Idle's roaming
-///   (`ControllerMonsterStateIdle::StartedRoaming`) and Attack's
-///   `randomRepositionChance` need `CanMove`, so the monster never moves: it
-///   turns to and attacks what comes in reach (the record's run speed is
-///   not used by its AI).
-/// * `ControllerTotem` (classInfo 0x180A58670, parent Stationary; ctor
-///   0x1801752c0): a stationary monster whose `AngerManager` comparator is
-///   the distance one (`SetDistanceAngerComparator`, sub_18001F0D0: the
-///   entry's distance, set by `AngerManager::Update` @0x18001dbb0): it goes
-///   for the nearest foe on its anger list, not the angriest.
-/// * `ControllerMonsterHidden` (create sub_180103CB0): `appearDistance`
-///   (+0x870, default 5, `Load` sub_18013DD90) and the monster's states with
-///   "Startup" replaced by `ControllerMonsterStateHidden` (`RegisterStates`
-///   sub_18013DDD0), see [`Hidden`].
-/// * `ControllerGraeae` and `ControllerMonsterSynergy`: the monster's states
-///   plus their own (`crate::graeae`, `crate::synergy`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ControllerClass {
-    #[default]
-    Monster,
-    Stationary,
-    Totem,
-    Hidden,
-    /// `ControllerGraeae` (`crate::graeae`).
-    Graeae,
-    /// `ControllerMonsterSynergy` (`crate::synergy`).
-    Synergy,
-    /// `ControllerSpirit` (`crate::spirit`).
-    Spirit,
-    /// `ControllerSpiritHost` (`crate::spirit`).
-    SpiritHost,
-}
-
-impl ControllerClass {
-    /// PORT: the other classes run as `ControllerMonster`.
-    pub fn of(class: Option<&str>) -> Self {
-        match class {
-            Some("ControllerStationaryMonster") => Self::Stationary,
-            Some("ControllerTotem") => Self::Totem,
-            Some("ControllerMonsterHidden") => Self::Hidden,
-            Some("ControllerGraeae") => Self::Graeae,
-            Some("ControllerMonsterSynergy") => Self::Synergy,
-            Some("ControllerSpirit") => Self::Spirit,
-            Some("ControllerSpiritHost") => Self::SpiritHost,
-            _ => Self::Monster,
-        }
-    }
-
-    /// `ControllerMonster::CanMove` as far as the class decides it (the
-    /// stationary classes: never; the port's `movement::Rooted` stands in for
-    /// the rest of `ControllerMonster::CanMove` @0x18013b6e0).
-    pub fn can_move(self) -> bool {
-        !matches!(self, Self::Stationary | Self::Totem)
-    }
-}
-
 /// `ControllerMonsterStateHidden` (the hidden monster's "Startup"):
-/// `OnBegin` @0x18013dea0 plays a `LongIdleAction` (a monster that has
-/// popped out, `Monster` +20889 `GetPoppedOut`, goes "Idle"). Every
-/// `OnUpdate` @0x18013df90 until it has a target gathers its foes within
+/// `OnBegin` plays a `LongIdleAction` (a monster that has
+/// popped out, `Monster.poppedOut` (`GetPoppedOut`), goes "Idle"). Every
+/// `OnUpdate` until it has a target gathers its foes within
 /// `ViewDistance` (a sphere), takes the closest, and when that one is nearer
 /// than `appearDistance` (3D) makes it the target, plays the Spawn animation
 /// (type 19, speed 1), marks the monster popped out and, when the monster's
@@ -79,24 +11,24 @@ impl ControllerClass {
 /// actor ([`AmbushDissolve`]). `HandleEvent` "End" (the animation's end) with a
 /// target: "Pursue" it with `ChooseBestSkill`. Every other event (enemy
 /// found, attacked, ally attacked, projectiles, low health) is the empty
-/// base handler (`HandleEvent` @0x18013e5f0 reacts to "End" only): until
+/// base handler (`HandleEvent` reacts to "End" only): until
 /// then the monster ignores hits and calls.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Hidden {
     pub appear: f32,
     /// The foe it appears for (its Spawn animation is playing).
     pub target: Option<Entity>,
-    /// The monster record's `ambushDissolveTime` (`Monster::Load` @0x180373810: an int read as ms,
+    /// The monster record's `ambushDissolveTime` (`Monster::Load`: an int read as ms,
     /// default 0; the texture `ambushDissolveTexture`, default `System/Textures/Cloud.tex`).
     pub dissolve_ms: i32,
 }
 
 /// The mesh un-dissolve a hidden monster starts when it appears ([`Hidden`]); the renderer draws it
 /// (grimdawn `monsters.rs`, the `standarddissolve*` shaders) and the component goes when it is done.
-/// Engine.dll `GraphicsMeshInstance::BeginUnDissolve` @0x1800bfce0 (called with colour 0, 0, 0,
+/// Engine.dll `GraphicsMeshInstance::BeginUnDissolve` (called with colour 0, 0, 0,
 /// `ambushDissolveTime × 0.001` s, the ambush texture, override shader on): value 1, duration
 /// `(int)(s × 1000)` ms, the instance's shader replaced by `standarddissolve{skinned,static}.ssh`
-/// (`GraphicsMeshInstance::Update` @0x1800bffd0). Every mesh update with `dt` ms (sub_1800C67F0):
+/// (`GraphicsMeshInstance::Update`). Every mesh update with `dt` ms (`GraphicsMeshInstance::UpdateUnDissolve`):
 /// `value -= dt / duration`; at `<= 0` the value is 0, the un-dissolve ends and the override shader is
 /// unloaded. Stock times are 0, 2 or 3 (ms: the designers' "seconds" read as an int), so the mesh is
 /// whole after the first update.
@@ -136,7 +68,7 @@ pub fn ambush_dissolve(
     mut carry: Local<f32>,
     mut q: Query<(Entity, &mut AmbushDissolve)>,
 ) {
-    let dt = crate::session::frame_ms(&mut carry, &time) as f32;
+    let dt = gd_game_core::session::frame_ms(&mut carry, &time) as f32;
     for (e, mut d) in &mut q {
         if d.is_added() {
             continue;
@@ -148,9 +80,9 @@ pub fn ambush_dissolve(
 }
 
 /// `ControllerMonsterStateStartup` for a monster whose Spawn animation was enabled
-/// (`Monster::EnableSpawnAnimation` @0x18037e820 sets the controller's +1542; who: [`MonsterAi::enable_spawn_animation`],
-/// the player's pets: `pets::Pet::startup`; `ProxyMenu`'s main-menu scene creatures are not ported). `OnBegin` @0x18013ead0: when the current animation set has a
-/// Spawn (type 19) animation it plays it once (speed 1) and stays; `HandleEvent` @0x18013edc0 reacts to "End"
+/// (`Monster::EnableSpawnAnimation` sets `ControllerMonster.spawnAnimation`; who: [`MonsterAi::enable_spawn_animation`],
+/// the player's pets: `pets::Pet::startup`; `ProxyMenu`'s main-menu scene creatures are not ported). `OnBegin`: when the current animation set has a
+/// Spawn (type 19) animation it plays it once (speed 1) and stays; `HandleEvent` reacts to "End"
 /// only (then "Idle"); without one it goes "Idle" at once. Meanwhile the monster takes no enemy, ignores
 /// hits and calls and does not move (`RequestAttack` / `RequestMove` are overridden).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -167,13 +99,14 @@ pub enum SpawnStartup {
 /// A monster that is not the player's foe (a Crucible defense turret, a town guard: `factions` Survivors; who gets it:
 /// `monsters::is_fighter`; a reputation change turns it, `factions::turn_creatures`): it cannot be targeted by the
 /// player and does not fight him. Every monster, allied or not, fights the monsters that are its foes by faction
-/// (`FactionPack::is_foe`; `ControllerMonster::AngerUpdate` @0x18013bd20 asks `FactionManager::IsFoe`
-/// @0x18028f870 of every character in its view sphere: there is no monster-vs-monster table nor ally flag, two
+/// (`FactionPack::is_foe`; `ControllerMonster::AngerUpdate` asks `FactionManager::IsFoe`
+/// of every character in its view sphere: there is no monster-vs-monster table nor ally flag, two
 /// monster factions are foes by the same pack rule as the player), seeing the ones with `causesAnger` and taking as
 /// enemies the `targetable` ones ([`MonsterAi::as_target`]: a guard; a turret has neither), see [`FoeLists`].
 /// PORT: a monster's relation to the player is this mark, `IsFoe(player, it)`; the engine's monster asks
-/// `IsFoe(it, player)` (`FactionManager::IsFoe(Character*, Character*, bool)` @0x18028f870 and the pack
-/// rule @0x18028f960: its own `factionPlayer` first, then the player's value for its faction), which differs only
+/// `IsFoe(it, player)` (`FactionManager::IsFoe(Character*, Character*, bool)` and the pack
+/// rule `IsFoe(FactionPack, FactionType, FactionPack)`: its own `factionPlayer` first, then the player's value for
+/// its faction), which differs only
 /// when the pack's `factionPlayer` is non-zero and the player's value for its faction has the other sign. Stock
 /// data never gets there for a fighter: every faction the player gains or loses
 /// standing with (Survivors, `User0`/`4`/`5`/`7`-`11`/`13`-`15`/`17`/`21`) has `factionPlayer` 0; the packs with a
@@ -185,7 +118,7 @@ pub enum SpawnStartup {
 pub struct Allied;
 
 /// Whose foe a skill effect's caster is: the victim rule of every skill hit (radius, cone, ray, projectile, aura,
-/// area, debuff). `GameEngine::FilterInvalidTargets` @0x1802eca00 (behind `GetTargetsInRadius` /
+/// area, debuff). `GameEngine::FilterInvalidTargets` (behind `GetTargetsInRadius` /
 /// `AlongRay` / `AroundRay` / `InCone` / `InFrustum` / `GetAllTargetsInRadius`): a non-character entity that is
 /// alive or intact always passes (breakables); a character passes when it is alive (`IsAlive`), not hiding (unless
 /// the caller allows it), not an `Npc`, not the excluded id, and `FactionManager::IsFoe(caster, it)` (the friend
@@ -205,7 +138,7 @@ pub enum Side {
     #[default]
     Player,
     Monster {
-        pack: Option<std::sync::Arc<crate::monsters::FactionPack>>,
+        pack: Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
         allied: bool,
     },
 }
@@ -215,7 +148,7 @@ pub enum Side {
 pub enum SideRef<'a> {
     Player,
     Monster {
-        pack: &'a Option<std::sync::Arc<crate::monsters::FactionPack>>,
+        pack: &'a Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
         allied: bool,
     },
 }
@@ -225,7 +158,7 @@ pub enum SideRef<'a> {
 /// pet's AI follows it; the owner is [`crate::combat::Converted::leader`], its leader again at the end).
 #[derive(Component, Debug, Clone)]
 pub struct JoinedPack {
-    pub pack: Option<std::sync::Arc<crate::monsters::FactionPack>>,
+    pub pack: Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
     pub allied: bool,
     pub leader: Entity,
 }
@@ -271,17 +204,17 @@ impl SideDataItem<'_, '_> {
 #[derive(bevy::ecs::query::QueryData)]
 pub struct VictimSide {
     pub side: SideData,
-    pub breakable: Has<crate::world::Breakable>,
+    pub breakable: Has<gd_game_core::world::Breakable>,
     prop: Has<crate::physics_decoration::PhysicsDecoration>,
     hidden_from_combat: Has<HiddenFromCombat>,
-    invisible: Has<crate::visuals::Hidden>,
+    invisible: Has<gd_game_core::visuals::Hidden>,
 }
 
 impl VictimSideItem<'_, '_> {
-    /// `Character::IsHiding` @0x18005bba0 (vtable +0x468; no override in `Monster` / `Player`):
-    /// `!Entity::IsVisible()` (Engine.dll @0x18007f7c0: the visibility +392 is 1 or 3, so an actor
-    /// `SetVisibility(false)` hid, [`crate::visuals::Hidden`]) or `hiddenFromCombat` (+0x24B8,
-    /// [`HiddenFromCombat`]) or the life state +9392 `Unknown` (0, before `Character` set-up: no port
+    /// `Character::IsHiding` (no override in `Monster` / `Player`):
+    /// `!Entity::IsVisible()` (Engine.dll: the visibility `Entity.visibility` is 1 or 3, so an actor
+    /// `SetVisibility(false)` hid, [`gd_game_core::visuals::Hidden`]) or `hiddenFromCombat` (`Character.hiddenFromCombat`,
+    /// [`HiddenFromCombat`]) or the life state `Character.lifeState` `Unknown` (0, before `Character` set-up: no port
     /// counterpart).
     pub fn hiding(&self) -> bool {
         self.hidden_from_combat || self.invisible
@@ -297,7 +230,10 @@ impl VictimSideItem<'_, '_> {
 
 /// The skill target queries' filter for the player's own foe queries that take no [`VictimSide`]
 /// (`FilterInvalidTargets` drops hiding characters, [`Side::hits`]).
-pub type NotHiding = (Without<HiddenFromCombat>, Without<crate::visuals::Hidden>);
+pub type NotHiding = (
+    Without<HiddenFromCombat>,
+    Without<gd_game_core::visuals::Hidden>,
+);
 
 impl Side {
     /// A cast's side when its caster is gone (`hostile`: a monster's).
@@ -364,21 +300,21 @@ impl Side {
             (Self::Player, SideRef::Monster { allied, .. }) => !allied,
             (Self::Monster { allied: a, .. }, SideRef::Player) => !a,
             (Self::Monster { pack, .. }, SideRef::Monster { pack: v, .. }) => {
-                crate::monsters::FactionPack::foes(pack, v)
+                gd_game_core::monsters::FactionPack::foes(pack, v)
             }
         }
     }
 
     /// Whether a skill of this side hits an entity ([`VictimSide`]): every breakable and physics prop and its
-    /// foes that are not hiding. `GameEngine::FilterInvalidTargets` @0x1802eca00, run by every skill
-    /// target query (`GetTargetsInRadius` @0x1802ebe50, `…AroundRay` @0x1802ec0b0, `…AlongRay`, `…InCone`
-    /// @0x1802ec2a0, `…InFrustum`, `GetAllTargetsInRadius`): a non-character that is alive / intact always
-    /// passes (`PhysicsDecoration::TakeAttack` @0x1803cb850 takes an attack from anyone); a
+    /// foes that are not hiding. `GameEngine::FilterInvalidTargets`, run by every skill
+    /// target query (`GetTargetsInRadius`, `…AroundRay`, `…AlongRay`, `…InCone`
+    ///, `…InFrustum`, `GetAllTargetsInRadius`): a non-character that is alive / intact always
+    /// passes (`PhysicsDecoration::TakeAttack` takes an attack from anyone); a
     /// character must be alive, not an `Npc`, not hiding ([`VictimSideItem::hiding`]; only
-    /// `Skill_TurretFireControl::ActivateNow` @0x18050c370 asks for hiding ones: the caster's own turrets,
-    /// `casting::Kind::TurretFire`) and a foe. The test is at query time: the attack itself (`Character::AttackTarget` @0x180067460,
-    /// `CombatManager::TakeAttack` @0x18011d950) does not ask, nor does a melee swing at its chosen target
-    /// (`SkillActivated::ExecuteMeleeAttack` @0x180518320 without a cone only checks `IsTargetInRange`).
+    /// `Skill_TurretFireControl::ActivateNow` asks for hiding ones: the caster's own turrets,
+    /// `casting::Kind::TurretFire`) and a foe. The test is at query time: the attack itself (`Character::AttackTarget`,
+    /// `CombatManager::TakeAttack`) does not ask, nor does a melee swing at its chosen target
+    /// (`SkillActivated::ExecuteMeleeAttack` without a cone only checks `IsTargetInRange`).
     /// A pick of one target among these (an autocast's nearest foe) takes [`VictimSideItem::character`]s only.
     pub fn hits(&self, v: &VictimSideItem) -> bool {
         !v.character() || (!v.hiding() && self.foe(v.side.side_ref()))
@@ -387,25 +323,28 @@ impl Side {
 
 /// What the player may aim a click or the controller at: a targetable breakable, else a character
 /// [`Side::Player`] calls a foe (a monster without `Allied`, a pet a monster's convert joined).
-pub fn player_target(breakable: Option<&crate::world::Breakable>, side: &SideDataItem) -> bool {
+pub fn player_target(
+    breakable: Option<&gd_game_core::world::Breakable>,
+    side: &SideDataItem,
+) -> bool {
     breakable.map_or_else(|| Side::Player.foe(side.side_ref()), |b| b.targetable)
 }
 
-/// The characters each monster may take as its enemy this frame (`ControllerMonster::IsEnemyValid` @0x18013b270:
-/// alive, `targetable` (Character +8026), `FactionManager::IsFoe(me, it)`; the pursuit range is checked by
+/// The characters each monster may take as its enemy this frame (`ControllerMonster::IsEnemyValid`:
+/// alive, `targetable` (`Character.targetable`), `FactionManager::IsFoe(me, it)`; the pursuit range is checked by
 /// the caller): the player and their pets for a hostile monster, and the living `targetable` monsters whose pack is a
-/// foe of its own (`IsFoe(FactionPack, FactionType, FactionPack)` @0x18028f960: its value for their faction when
+/// foe of its own (`IsFoe(FactionPack, FactionType, FactionPack)`: its value for their faction when
 /// non-zero, else theirs for its faction; `FactionPack::foes`). The answer only depends on the monster's pack and
 /// whether it is `Allied`, so the list is built once per side present (a handful of packs), not per monster. Each
 /// side's list is indexed ([`Foes`]): a monster's per-frame lookups of its enemy do not walk it.
 pub(super) struct FoeLists<'a> {
     players: &'a [(Entity, Vec3, f32)],
     /// The distinct packs of the targetable monsters (only those are cloned).
-    packs: Vec<Option<std::sync::Arc<crate::monsters::FactionPack>>>,
+    packs: Vec<Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>>,
     /// (entity, position, radius, index into `packs`) of the targetable monsters.
     rivals: Vec<(Entity, Vec3, f32, Option<usize>)>,
     sides: Vec<(
-        Option<std::sync::Arc<crate::monsters::FactionPack>>,
+        Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
         bool,
         Foes,
     )>,
@@ -414,7 +353,7 @@ pub(super) struct FoeLists<'a> {
 impl<'a> FoeLists<'a> {
     pub(super) fn new(
         players: &'a [(Entity, Vec3, f32)],
-        packs: Vec<Option<std::sync::Arc<crate::monsters::FactionPack>>>,
+        packs: Vec<Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>>,
         rivals: Vec<(Entity, Vec3, f32, Option<usize>)>,
     ) -> Self {
         Self {
@@ -428,13 +367,13 @@ impl<'a> FoeLists<'a> {
     /// The index of the side of a monster of `pack` (`allied`: `Allied`), built on first use.
     pub(super) fn side(
         &mut self,
-        pack: &Option<std::sync::Arc<crate::monsters::FactionPack>>,
+        pack: &Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
         allied: bool,
     ) -> usize {
         if let Some(i) = self
             .sides
             .iter()
-            .position(|s| s.1 == allied && crate::monsters::FactionPack::same(&s.0, pack))
+            .position(|s| s.1 == allied && gd_game_core::monsters::FactionPack::same(&s.0, pack))
         {
             return i;
         }
@@ -449,7 +388,7 @@ impl<'a> FoeLists<'a> {
                     .iter()
                     .filter(|r| {
                         r.3.is_some_and(|i| {
-                            crate::monsters::FactionPack::foes(pack, &self.packs[i])
+                            gd_game_core::monsters::FactionPack::foes(pack, &self.packs[i])
                         })
                     })
                     .map(|r| (r.0, r.1, r.2)),
@@ -521,13 +460,13 @@ impl Foes {
 /// The index of `faction` in a table of the distinct packs, adding it (one `Arc` clone) when new. The rivals
 /// of [`FoeLists`] name their pack by index, so only the distinct packs are cloned, not one per monster.
 pub(super) fn pack_index(
-    packs: &mut Vec<Option<std::sync::Arc<crate::monsters::FactionPack>>>,
-    faction: &Option<std::sync::Arc<crate::monsters::FactionPack>>,
+    packs: &mut Vec<Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>>,
+    faction: &Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
 ) -> Option<usize> {
     faction.is_some().then(|| {
         packs
             .iter()
-            .position(|p| crate::monsters::FactionPack::same(p, faction))
+            .position(|p| gd_game_core::monsters::FactionPack::same(p, faction))
             .unwrap_or_else(|| {
                 packs.push(faction.clone());
                 packs.len() - 1
@@ -546,12 +485,13 @@ pub struct AsTarget {
 /// Monster behaviour state and its controller record's settings.
 ///
 /// By design, no Emote state: the controller's `randomEmoteChance` / `randomEmoteMinTime` / `randomEmoteMaxTime`
-/// (+0x64C / +0x650 / +0x654) drive `ControllerMonster::Update` @0x180134ec0 (in any state but Dying / Dead):
+/// (`ControllerMonster.randomEmoteChance` / `.randomEmoteMinTime` / `.randomEmoteMaxTime`) drive
+/// `ControllerMonster::Update` (in any state but Dying / Dead):
 /// every `IGenerate(min, max)` ms a `rand() % 100 < chance` adds the temporary state "Emote"
-/// (`ControllerMonsterStateEmote`: `OnBegin` @0x18014bb70 plays animation type 36 `Emote`, `HandleEvent`
-/// @0x18014bbb0 on "End" idles and pops it; `AddTemporaryState` @0x180123fb0 suspends the current state and
+/// (`ControllerMonsterStateEmote`: `OnBegin` plays animation type 36 `Emote`, `HandleEvent`
+/// on "End" idles and pops it; `AddTemporaryState` suspends the current state and
 /// releases its attack slot) only when `Character::CanPlayAnimation(Emote)` holds (the inlined test: the
-/// animation set's slot 36, `AnimSlotRandom_IsEmpty` @0x180021920, is not empty). No stock record
+/// animation set's slot 36, `AnimSlotRandom_IsEmpty`, is not empty). No stock record
 /// sets a `*EmoteAnim1..3` file (`gd_sim::anim`), so the state is never entered.
 #[derive(Component)]
 pub struct MonsterAi {
@@ -586,17 +526,18 @@ pub struct MonsterAi {
     pub(super) forgive: f32,
     /// `UnderAttack` re-arm timer (500 ms).
     pub(super) anger_timer: f32,
-    /// Each anger entry as `AngerManager::Update` @0x18001dbb0 left it at the last `AngerUpdate` tick, before
-    /// forgiving (the entry's +36): [`MonsterAi::anger_diff`].
+    /// Each anger entry as `AngerManager::Update` left it at the last `AngerUpdate` tick, before
+    /// forgiving (the entry's `AngerEntry.forgiveness`): [`MonsterAi::anger_diff`].
     pub(super) anger_base: Vec<(Entity, f32)>,
     /// The alert before a pursuit ([`Alert`]).
     pub(super) alert: Alert,
     /// `AngerTolerance`: least anger a target needs (`GetNewTarget`).
     pub(super) tolerance: f32,
-    /// Controller `ignoreSleepingEnemies` (+0x605, default 0; `ControllerMonster::Load`): a foe that is
+    /// Controller `ignoreSleepingEnemies` (`ControllerMonster.ignoreSleepingEnemies`, default 0;
+    /// `ControllerMonster::Load`): a foe that is
     /// not a player and sleeps ([`crate::afflictions::Afflictions::asleep`], action state 11) is skipped by
-    /// `GetNewTarget` @0x18001e1c0 ([`find_enemy`]), by `FindEnemyUpdate` @0x18013c0f0's too-close (flee) check, and
-    /// dropped from the anger list by `AngerManager::Update` @0x18001dbb0 (`ShouldRemoveEnemy` @0x18001eec0) at each
+    /// `GetNewTarget` ([`find_enemy`]), by `FindEnemyUpdate`'s too-close (flee) check, and
+    /// dropped from the anger list by `AngerManager::Update` (`ShouldRemoveEnemy`) at each
     /// `AngerUpdate` tick (`sight_anger`).
     pub(super) ignore_sleeping: bool,
     /// `AllyAttackedAnger`, `ChanceToRespondToDistressCall` and
@@ -619,10 +560,12 @@ pub struct MonsterAi {
     /// The controller's patrol points and "Patrol" state.
     pub patrol: crate::patrol::PatrolState,
     /// The record's faction pack (`FactionManager::IsFriend`).
-    pub faction: Option<std::sync::Arc<crate::monsters::FactionPack>>,
-    /// How its foes see it (`Character::Load` @0x180054e70): `causesAnger` (Character +8376, default 1:
-    /// it enters a foe's sight sphere, `GetCharactersInSphere`), `targetable` (+8026, default 1: `IsEnemyValid` /
-    /// `GetNewTarget` accept it) and `angerMultiplier` (+8388: `AngerManager::AddAnger` scales anger for it).
+    pub faction: Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
+    /// How its foes see it (`Character::Load`): `causesAnger` (`Character.causesAnger`, default 1:
+    /// it enters a foe's sight sphere, `GetCharactersInSphere`), `targetable` (`Character.targetable`, default 1:
+    /// `IsEnemyValid` /
+    /// `GetNewTarget` accept it) and `angerMultiplier` (`Character.angerMultiplier`: `AngerManager::AddAnger`
+    /// scales anger for it).
     /// Read by the monsters whose faction is its foe ([`FoeLists`], `sight_anger`).
     pub as_target: AsTarget,
     /// The Flee state's settings and bookkeeping (flee.rs).
@@ -643,16 +586,17 @@ pub struct MonsterAi {
     pub walk: crate::melee::Walk,
 }
 
-/// The alert before a pursuit. The `Monster` record's `alertAnimChance` (+18636, int %, default 0),
-/// `alertSoundChance` (+18632, %) and `alertSound` (+2328), `Monster::Load` @0x180373810; `once` is the
-/// controller's +920 (`ShouldPlayRallyOrAlert` @0x180139790: 1 from the constructor, cleared by the first alert
-/// sound, set by nothing else). `ControllerMonsterState::DefaultEnemyFoundResponse` @0x18014cab0, once
+/// The alert before a pursuit. The `Monster` record's `alertAnimChance` (int %, default 0),
+/// `alertSoundChance` (`Monster.alertSoundChance`, %) and `alertSound`, `Monster::Load`; `once` is the
+/// controller's `ControllerMonster.alertOnce` (`ShouldPlayRallyOrAlert`: 1 from the constructor, cleared by the
+/// first alert
+/// sound, set by nothing else). `ControllerMonsterState::DefaultEnemyFoundResponse`, once
 /// the response made "Pursue" the state and the executing state is "Pursue" (no self buff pushed over it):
 /// `rand() % 100 < alertAnimChance`, the animation set has the Alert slot (33), the enemy is farther than
-/// `gameengine.dbr` `alertDistance` ([`crate::rules::GameEngineRules::alert_distance`]) and `AngerManager::GetAngerDiff` @0x18001db60 of the
+/// `gameengine.dbr` `alertDistance` ([`gd_game_core::rules::GameEngineRules::alert_distance`]) and `AngerManager::GetAngerDiff` of the
 /// enemy is below 15 (spotted rather than just hit, [`MonsterAi::anger_diff`]): the temporary state
-/// "AlertBeforePursue" (`OnBegin` @0x18014b940 plays Alert once at speed 1, `OnUpdate` @0x18014b980 turns to the
-/// enemy, `HandleEvent` @0x18014bab0 pops itself on "End", the Pursue under it goes on; its event handlers are all
+/// "AlertBeforePursue" (`OnBegin` plays Alert once at speed 1, `OnUpdate` turns to the
+/// enemy, `HandleEvent` pops itself on "End", the Pursue under it goes on; its event handlers are all
 /// empty: hits and calls are ignored meanwhile) and `alertSound` plays. Else `rand() % 100 < alertSoundChance`
 /// and `once` play `alertSound` (and clear `once`).
 #[derive(Clone, Debug, Default)]
@@ -689,7 +633,7 @@ impl Alert {
         far: bool,
         diff: f32,
     ) -> (bool, Option<String>) {
-        if (crate::rng::u32(..32768) % 100) < self.anim_chance.max(0) as u32
+        if (gd_game_core::rng::u32(..32768) % 100) < self.anim_chance.max(0) as u32
             && can_play
             && far
             && diff < 15.0
@@ -697,7 +641,7 @@ impl Alert {
             self.on = Some(enemy);
             return (true, self.sound.clone());
         }
-        if (crate::rng::u32(..32768) % 100) < self.sound_chance.max(0) as u32 && self.once {
+        if (gd_game_core::rng::u32(..32768) % 100) < self.sound_chance.max(0) as u32 && self.once {
             self.once = false;
             return (false, self.sound.clone());
         }
@@ -714,7 +658,7 @@ impl Alert {
 ///
 /// `interruptible` is `MoveAction`'s bool, the controller's
 /// `AllowQuestInterruptions` (`ControllerAI::QuestCommandMove` stores it at
-/// +812): the state looks for enemies (`ShouldFindEnemy`) and
+/// `ControllerAI.allowQuestInterruptions`): the state looks for enemies (`ShouldFindEnemy`) and
 /// answers `EnemyFound` / `Attacked` / `LowHealth` / ... with the default
 /// responses (the monster leaves the move to fight) only when it is set; else
 /// it ignores them all. [`quest_interrupt`] is that.
@@ -836,7 +780,7 @@ pub(super) fn asleep(q: &Sleepers, e: Entity) -> bool {
 }
 
 /// An interruptible `MoveAction` ends when its monster gets an enemy; like
-/// every end of the "QuestMove" state (`OnEnd` @0x18014be50) the spot becomes
+/// every end of the "QuestMove" state (`OnEnd`) the spot becomes
 /// its spawn point. Its enemies are the ones `FindEnemyUpdate` /
 /// `IsEnemyValid` takes in every state ([`FoeLists`]: the player's side for a
 /// hostile monster, the `targetable` monsters of foe factions for all).
@@ -881,7 +825,7 @@ pub fn quest_interrupt(
         .map(|(e, t, c, _)| (e, t.translation, c.radius))
         .collect();
     let pets: Vec<Entity> = players.iter().filter(|p| p.3).map(|p| p.0).collect();
-    let mut packs: Vec<Option<std::sync::Arc<crate::monsters::FactionPack>>> = Vec::new();
+    let mut packs: Vec<Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>> = Vec::new();
     let mut rivals: Vec<_> = q
         .iter()
         .filter(|(.., ai, _)| ai.as_target.targetable)
@@ -940,7 +884,7 @@ pub fn quest_walk(
             Option<&mut MonsterAi>,
             Option<&mut crate::movement::CrowdAgent>,
         ),
-        (Without<Dead>, Without<crate::casting::Casting>),
+        (Without<Dead>, Without<gd_game_core::casting::Casting>),
     >,
 ) {
     let dt = time.delta_secs();
@@ -987,13 +931,13 @@ pub fn quest_walk(
 }
 
 impl MonsterAi {
-    /// `Monster::EnableSpawnAnimation` @0x18037e820 (Monster vtable +0x630) on a monster about to be added to
+    /// `Monster::EnableSpawnAnimation` on a monster about to be added to
     /// the world ([`SpawnStartup`]). Callers, each right before `World::AddEntity` / `FastSpawnEntity`
     /// and on every spawned monster: `ProxyAmbush::PlaceNextObject`, `ProxyMenu::PlaceNextObject`,
-    /// `Skill_SpawnPet::SpawnPet` @0x180509450 and the `Skill_TargetedSpawnPet` / `SkillSecondary_TargetedSpawnPet`
+    /// `Skill_SpawnPet::SpawnPet` and the `Skill_TargetedSpawnPet` / `SkillSecondary_TargetedSpawnPet`
     /// / `Skill_AttackRadiusLightningSpawnPet` / `Skill_AttackSpellChaosSpawnPet` overrides,
-    /// `Skill_MonsterGenerator::SkillSpawnObject` @0x1804fd560, `FactionPack::IncrementNemesisSpawnCounter`
-    /// @0x1802a5630 (a nemesis) and `GameEngine::OnCreatureDeath` @0x1802eff40 (the Dread). A hidden monster's
+    /// `Skill_MonsterGenerator::SkillSpawnObject`, `FactionPack::IncrementNemesisSpawnCounter`
+    /// (a nemesis) and `GameEngine::OnCreatureDeath` (the Dread). A hidden monster's
     /// Startup is its Hidden state instead ([`Hidden`]), so it keeps that.
     pub fn enable_spawn_animation(&mut self) {
         if self.hidden.is_none() {
@@ -1010,7 +954,7 @@ impl MonsterAi {
         self.path.clear();
     }
 
-    /// `Character::TeleportHome` (sub_140051960): the controller's
+    /// `LuaCharacter::TeleportHome`: the controller's
     /// anger list is cleared and it returns to the idle state.
     pub fn go_idle(&mut self) {
         self.anger.clear();
@@ -1037,7 +981,7 @@ impl MonsterAi {
         self.path.last().copied()
     }
 
-    /// `AngerManager::GetAngerDiff` @0x18001db60: `e`'s anger now less its value at the last
+    /// `AngerManager::GetAngerDiff`: `e`'s anger now less its value at the last
     /// `AngerManager::Update` before forgiving ([`MonsterAi::anger_base`]; an entry added since: all of it), i.e.
     /// the anger gained since the last `AngerUpdate` tick less that tick's forgiving.
     pub(super) fn anger_diff(&self, e: Entity) -> f32 {
@@ -1058,7 +1002,7 @@ impl MonsterAi {
         self.alert.on.is_some()
     }
 
-    /// `AngerManager::AddAnger` @0x18001dfa0: capped at 100; the
+    /// `AngerManager::AddAnger`: capped at 100; the
     /// other entries lose 70% of the amount split among the list. The
     /// amount already includes the foe's `angerMultiplier` (its record; 1
     /// for players, pets keep theirs in [`crate::pets::Pet`]).
@@ -1066,11 +1010,11 @@ impl MonsterAi {
         add_anger(&mut self.anger, who, amount);
     }
 
-    /// `ControllerMonster::InPursuitRange` @0x18013b910: |Δy| ≤
+    /// `ControllerMonster::InPursuitRange`: |Δy| ≤
     /// `MaxYViewDistance` from the monster (`me`) when set, and closer than
     /// `MaxPursuitDistance` to the monster's home when that is set.
     pub fn in_pursuit(&self, me: Vec3, p: Vec3) -> bool {
-        // `GetHomePosition` @0x180137da0: the Patrol state's
+        // `GetHomePosition`: the Patrol state's
         // `UsePathPositionAsHome` makes the monster's own position its home;
         // a monster with a leader (`JoinMe`) has the leader's spot.
         let home = if self.patrol.active() && !self.aggro {
@@ -1091,8 +1035,8 @@ impl MonsterAi {
         let rf = |k: &str, d: f32| rec.as_ref().and_then(|r| r.f32(k)).unwrap_or(d);
         // A record bool defaulting to 1.
         let rb = |k: &str| rec.as_ref().is_none_or(|r| r.get(k).is_none() || r.bool(k));
-        // `ControllerMonster::Load` @0x180135e60 and `Character::Load`
-        // @0x180054e70 defaults (the defaults the loader passes the
+        // `ControllerMonster::Load` and `Character::Load`
+        // defaults (the defaults the loader passes the
         // record getters, e.g. `SightAngerRate` / `InnerSightAngerRate` /
         // `ProjectileAnger` 20, `InnerViewDistance` 5, `AttackedAnger` 100,
         // `AllyAttackedAnger` 1, `ForgiveRate` 50, `AngerTolerance` 10,
@@ -1179,10 +1123,10 @@ impl MonsterAi {
                 timer: 0.0,
             },
             // `ControllerMonster::ControllerMonster`: `rand() % 251` ms.
-            anger_tick: crate::rng::u32(..251) as f32 / 1000.0,
+            anger_tick: gd_game_core::rng::u32(..251) as f32 / 1000.0,
             find_timer: 0.0,
             enemy: None,
-            faction: crate::monsters::FactionPack::shared(data, record),
+            faction: gd_game_core::monsters::FactionPack::shared(data, record),
             as_target: AsTarget {
                 causes_anger: rb("causesAnger"),
                 targetable: rb("targetable"),
@@ -1308,7 +1252,7 @@ fn advance(
     path: &mut Vec<Vec3>,
     speed: f32,
     dt: f32,
-    turn: &mut crate::turning::Turn,
+    turn: &mut gd_game_core::turning::Turn,
 ) -> bool {
     let mut moved = false;
     let mut budget = speed * dt;
@@ -1336,8 +1280,9 @@ fn advance(
     moved
 }
 
-/// A crowd agent's move along `path` this frame (Engine.dll crowd update sub_18025C440): the desired
-/// velocity (toward the path's next corner × `speed`, the agent's top speed, params +8) plus the separation
+/// A crowd agent's move along `path` this frame (Engine.dll crowd update `Crowd::Update`): the desired
+/// velocity (toward the path's next corner × `speed`, the agent's top speed, `dtCrowdAgentParams.maxSpeed`)
+/// plus the separation
 /// [`crate::movement::crowd_begin`] computed for it from where its neighbours stood, clamped to `speed`
 /// (`gd_sim::crowd::clamp_len`), integrated over `dt`: the AI and the crowd agree on one displacement. Without a
 /// separation, or once the corner is within this frame's step (the arrival), it follows the path exactly
@@ -1349,7 +1294,7 @@ pub fn advance_steered(
     path: &mut Vec<Vec3>,
     speed: f32,
     dt: f32,
-    turn: &mut crate::turning::Turn,
+    turn: &mut gd_game_core::turning::Turn,
     agent: Option<&mut crate::movement::CrowdAgent>,
 ) -> bool {
     if let Some(a) = agent {
@@ -1375,7 +1320,7 @@ pub fn advance_steered(
 }
 
 /// The one run speed of every mover (the player's path, the monsters', pets' and spirits' AI moves): the
-/// character's root motion while its Run clip carries it (`Character::CrowdAgentUpdate` @0x180066d60:
+/// character's root motion while its Run clip carries it (`Character::CrowdAgentUpdate`:
 /// the crowd's top speed is `Entity::GetMotion`, the playing animation's root velocity, blended as the clip fades
 /// in), and before it does (the state just set, the clip not advanced yet) the Run slot's own root-motion speed
 /// ([`Character::move_motion`]) at the run speed and run slow it plays at; 0 while frozen. No fixed base speed.
@@ -1390,12 +1335,12 @@ pub fn walk_speed(ch: &Character) -> f32 {
 }
 
 /// A charge's move: its speed, state and clip caller speed ([`Character::move_rate`]). The move starts its clip
-/// (`state`) at speed factor 1 (`Character::MoveTo` @0x18005f870 with factor 1.0 from
-/// `ControllerPlayerStateChargeToUseSkill::OnBegin` @0x180167ef0 and from `ControllerMonsterStatePursue::OnBegin`
-/// @0x18013f6d0 for move type 2: the Charge animation 7). A warmed-up one (`warm`: the skill's
+/// (`state`) at speed factor 1 (`Character::MoveTo` with factor 1.0 from
+/// `ControllerPlayerStateChargeToUseSkill::OnBegin` and from `ControllerMonsterStatePursue::OnBegin`
+/// for move type 2: the Charge animation 7). A warmed-up one (`warm`: the skill's
 /// `characterRunSpeedModifier` % and `absoluteRunSpeedCapMax` %) moves at the warmed-up run speed: the skill's
-/// `WarmUpStart` on the move (`MoveToAction::Execute` @0x180082c00, the move carrying the skill: vtable 214) sets
-/// the warm-up flag (Character +9907) and `Character::ForceSpeedUpdate` @0x180068ca0 re-adjusts the moving clip to
+/// `WarmUpStart` on the move (`MoveToAction::Execute`, the move carrying the skill: `Action::GetSkill`) sets
+/// the warm-up flag (`Character.warmUp`) and `Character::ForceSpeedUpdate` re-adjusts the moving clip to
 /// `GetRunSpeed`, which now counts the skill's bonus (`Skill_AttackWeapon::CollectPassiveCharAttributes` adds the
 /// profile's stats while the flag is on) under `absoluteRunSpeedCapMax` instead of the player cap
 /// (`CapAbsoluteRunSpeed`; `gd_sim::skills::warmup_run_multiplier`). The clip is the one the move
@@ -1405,7 +1350,7 @@ pub fn walk_speed(ch: &Character) -> f32 {
 /// slot does not move (`Character::MoveTo`: `PlayAnimationIfAvailable` fails, the move stops; Idle). PORT: Run and
 /// Walk stand in for each other, as everywhere the port plays them (`Character::enter_state`, [`move_speed`]): only
 /// a set with neither does not move. The warm-up
-/// ends with the move (`MoveToAction::Finish` @0x180082ef0: the skill's `WarmUpEnd`, the flag off,
+/// ends with the move (`MoveToAction::Finish`: the skill's `WarmUpEnd`, the flag off,
 /// `ForceSpeedUpdate`).
 pub fn charge_move(
     ch: &Character,
@@ -1440,10 +1385,10 @@ fn move_speed(ch: &Character, state: CharState, rate: f32) -> f32 {
 }
 
 /// The speed, state and clip caller speed ([`Character::move_rate`], `None`: the run speed) of a
-/// `ControllerAI::MoveTo` at a [`Pace`] (`Pursue::OnBegin`): the Run animation at the run speed
-/// (`GetRunSpeed`) or at unit speed (the speed factor 1), the Charge animation at 1, or the Walk animation
+/// `ControllerAI::MoveTo` at a [`Pace`] (`ControllerMonsterStatePursue::OnBegin`): the Run animation at the
+/// run speed (`GetRunSpeed`) or at unit speed (the speed factor 1), the Charge animation at 1, or the Walk animation
 /// (the Run one with `walkUsesRun`, animation type 6 - flag) at `walkSpeed` × the run speed. `Character::MoveTo`
-/// @0x18005f870 plays the clip at that factor and the clip's root motion carries the character, so the
+/// plays the clip at that factor and the clip's root motion carries the character, so the
 /// speed is that clip's motion at that factor ([`move_speed`]): the feet keep pace with the ground.
 pub fn pace_speed(
     ch: &Character,
@@ -1476,7 +1421,7 @@ pub fn pace_speed(
     }
 }
 
-/// `AngerManager::AddAnger` @0x18001dfa0 on an anger list: capped at 100; the other entries lose 70%
+/// `AngerManager::AddAnger` on an anger list: capped at 100; the other entries lose 70%
 /// of the amount split among the list (monsters, [`MonsterAi::add_anger`], and pets).
 pub fn add_anger(list: &mut Vec<(Entity, f32)>, who: Entity, amount: f32) {
     if amount <= 0.0 {

@@ -13,8 +13,8 @@
 //! Chthonic rifts ([`DynamicRift`], rules in `gd_game::riftgates`, their groups in `gd_game::unique`):
 //! their look ([`rift_effects`]); a click interacts with an active one.
 //!
-//! Portal looks, Game.dll `FixedItemTeleport::SetOperation`
-//! @0x1802b6210 / `Load` @0x1802b5af0: a new portal plays `openAnimation`
+//! Portal looks, Game.dll `FixedItemTeleport::SetOperation` / `Load`: a new
+//! portal plays `openAnimation`
 //! once (not looped) with `openSound`, a closing one `closedAnimation` with
 //! `closedSound` (`openFxPakName` / `closedFxPakName` would be spawned too;
 //! empty for this record). The mesh `personalriftgate01.msh` is a reused
@@ -25,11 +25,11 @@
 //! frame 10: `records/fx/ui/riftgatepersonal_active_fx01.dbr` at the
 //! `FXCentered` attach point (2.27 m up; `model::anim_entities`), whose
 //! looping emitters run until the portal goes: then
-//! `FixedItemTeleport::UpdateSelf` @0x1802b5f90 detaches the effect,
+//! `FixedItemTeleport::UpdateSelf` detaches the effect,
 //! `StopEmitting`, and it fades out ([`gd_render::model::DetachEffects`]).
 //!
-//! Gate state sounds, `StaticTeleporter::SetActive` @0x18056a8e0 /
-//! `Load` @0x18056b1c9: each state change stops the old effect and sound and
+//! Gate state sounds, `StaticTeleporter::SetActive` /
+//! `Load`: each state change stops the old effect and sound and
 //! spawns a `SoundEntity` with the state's pak (`lockedSound` while locked,
 //! else `activeSound` once discovered, else `dormatSound`, spelled so in the
 //! loader: stock gate records name it `dormantSound`, so gates are silent while
@@ -40,18 +40,18 @@
 //! puts the player on the floor at the destination (`gd_game::doors::run_teleport`,
 //! `gd_game::nav::teleport_landing`).
 #[cfg(feature = "dev")]
-use crate::player::{MovePath, Player};
-#[cfg(feature = "dev")]
-use crate::world::Nav;
+use crate::player::MovePath;
 use bevy::prelude::*;
+use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::map::{RegionInfo, Uid};
+#[cfg(feature = "dev")]
+use gd_game::nav::Nav;
 #[cfg(feature = "dev")]
 use gd_game::riftgates::use_gate;
 pub use gd_game::riftgates::{
     DynamicRift, GateTravel, IndexedPoint, PersonalPortal, Portal, TravelState, Waypoint,
     WaypointIndex, WaypointKind, waypoint_kind,
 };
-use std::collections::{HashMap, HashSet};
 
 pub struct RiftgatesPlugin;
 
@@ -80,7 +80,7 @@ impl Plugin for RiftgatesPlugin {
                 dress_exit_gates,
             )
                 .chain()
-                .after(crate::player::PlayerSet),
+                .after(gd_game_core::player::PlayerSet),
         );
     }
 }
@@ -94,9 +94,9 @@ struct GateFx(Option<Entity>, Option<Entity>, &'static str);
 /// opens its own map before `SessionReady`, and the campaign world behind the menu needs no index.
 fn build_index(
     mut commands: Commands,
-    ready: Option<Res<gd_game::session::SessionReady>>,
+    ready: Option<Res<gd_game_core::session::SessionReady>>,
     world: Option<Res<crate::world::StreamedMap>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     index: Option<Res<WaypointIndex>>,
 ) {
     if index.is_some() || ready.is_none() {
@@ -106,8 +106,8 @@ fn build_index(
     let map = &world.map;
     let regions: HashMap<Uid, &RegionInfo> = map.regions.iter().map(|r| (r.id, r)).collect();
     // Record → Some(is a shrine) for gates / respawn points / shrines.
-    let mut kinds: HashMap<&str, Option<bool>> = HashMap::new();
-    let mut seen: HashSet<Uid> = HashSet::new();
+    let mut kinds: HashMap<&str, Option<bool>> = HashMap::default();
+    let mut seen: HashSet<Uid> = HashSet::default();
     let mut idx = WaypointIndex::default();
     for e in map.instance_groups.iter().flat_map(|g| &g.entries) {
         // A member's data is its first entry (`InstanceGroups::entity_data`).
@@ -164,7 +164,7 @@ fn build_index(
 fn gate_effects(
     mut commands: Commands,
     state: Option<Res<TravelState>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     q: Query<(Entity, &Waypoint, Option<&GateFx>)>,
 ) {
     let Some(state) = state else { return };
@@ -254,7 +254,7 @@ fn dress_portals(
     >,
     new: Query<(), Added<Portal>>,
     mut a: gd_render::character::CharAssets,
-    mut sound: MessageWriter<gd_game::visuals::PlaySound>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
     if q.is_empty() {
         return;
@@ -285,7 +285,7 @@ fn dress_portals(
             });
         }
         if let Some(pak) = rec.str(snd).filter(|s| !s.is_empty()) {
-            sound.write(gd_game::visuals::PlaySound {
+            sound.write(gd_game_core::visuals::PlaySound {
                 pak: pak.to_owned(),
                 at: Some(gt.translation()),
             });
@@ -300,8 +300,8 @@ struct PortalClosed;
 /// A Shattered Realm exit gate as it appears: its record model (`CharAssets::spawn_record_model`): the mesh
 /// `ugdoorobj_endlessdungeonentrance_01.msh` under `invisible.tex`, whose MIF `CreateEntity` puts
 /// `records/fx/ui/riftgate_endless_fx01.dbr` (the small Shattered Realm rift, `pfx_endlessrift.pfx`, with its
-/// decal) at its `DoorFX` point; and the `openSound` loop. `FixedItemTeleport::InitialUpdate`
-/// @0x1802b5da0 → `SetOperation(0)` @0x1802b6210 (not locked): `openAnimation` (none in this record),
+/// decal) at its `DoorFX` point; and the `openSound` loop. `FixedItemTeleport::InitialUpdate` → `SetOperation(0)`
+/// (not locked): `openAnimation` (none in this record),
 /// `openSound` at the gate, `openFxPakName` (none).
 fn dress_exit_gates(
     mut commands: Commands,
@@ -334,7 +334,7 @@ fn dress_exit_gates(
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_portal(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut out: MessageWriter<gd_game::riftgates::OpenPortal>,
@@ -346,7 +346,7 @@ fn test_portal(
             &mut MovePath,
             &mut gd_game::player_orders::InteractTarget,
         ),
-        With<Player>,
+        With<gd_game_core::player::Player>,
     >,
     nav: Res<Nav>,
 ) {
@@ -403,7 +403,7 @@ fn test_portal(
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_riftgate(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     gates: Query<(Entity, &GlobalTransform, &Waypoint)>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     rifts: Query<(Entity, &GlobalTransform, &DynamicRift)>,
@@ -413,7 +413,7 @@ fn test_riftgate(
             &mut MovePath,
             &mut gd_game::player_orders::InteractTarget,
         ),
-        With<Player>,
+        With<gd_game_core::player::Player>,
     >,
     nav: Res<Nav>,
     mut tested: Local<bool>,
@@ -452,12 +452,12 @@ fn test_riftgate(
     }
 }
 
-/// A Chthonic rift's look (`DynamicTeleporter::SetActive` @0x180282070): active, its `activeEffect` and a
+/// A Chthonic rift's look (`DynamicTeleporter::SetActive`): active, its `activeEffect` and a
 /// looping `activeSound`; dormant, `dormantEffect` and the `dormatSound` the loader asks for (stock records
 /// have `dormantSound`: silent); unselected (state 1), nothing (`gd_game::riftgates::DynamicRift`).
 fn rift_effects(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     rifts: Query<(Entity, &DynamicRift), Changed<DynamicRift>>,
 ) {
     for (e, r) in &rifts {

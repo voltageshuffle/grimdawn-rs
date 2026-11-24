@@ -3,10 +3,11 @@
 //! resources created, resources that existed before and were mutated, and the entity kinds spawned
 //! (archetype census). It is the checklist for an in-process session teardown. Component and resource
 //! names need Bevy's `debug` feature: `cargo dev-build --features audit`.
-use crate::session::AppState;
+use gd_ui::state::session::AppState;
 use bevy::ecs::component::ComponentId;
 use bevy::prelude::*;
-use std::collections::{BTreeMap, HashSet};
+use gd_formats::collections::HashSet;
+use std::collections::BTreeMap;
 
 pub struct AuditPlugin;
 
@@ -15,7 +16,7 @@ impl Plugin for AuditPlugin {
         // A plugin `build` decides which systems exist (`main` inserts the hooks before the plugins).
         if app
             .world()
-            .resource::<crate::hooks::Hooks>()
+            .resource::<gd_game_core::hooks::Hooks>()
             .audit
             .census
             .is_some()
@@ -55,7 +56,7 @@ fn report(world: &mut World) {
     if b.reported {
         return;
     }
-    let audit = world.resource::<crate::hooks::Hooks>().audit.clone();
+    let audit = world.resource::<gd_game_core::hooks::Hooks>().audit.clone();
     let Some(b) = world.get_resource::<Baseline>() else {
         return;
     };

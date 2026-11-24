@@ -13,8 +13,7 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
    performance for parity. If our version looks better, that's fine.
 
 ## Rules
-- **Layering:** `gd-formats` → `gd-sim` → `gd-game` → `gd-render` → `grimdawn`. A lower crate never uses a
-  higher one. Gameplay goes in gd-game, pure maths and rules in gd-sim.
+- **Layering:** `gd-formats` → `gd-rules` → {`gd-sim` ∥ `gd-story`} → `gd-game-core` → {`gd-game` ∥ `gd-render` ∥ `gd-ui-kit`} → `gd-ui` → `grimdawn`. A lower crate never uses a higher one. Gameplay goes in gd-game, pure maths and rules in gd-sim / gd-rules.
 - **One source per value.** Raw state lives once. Each derived value comes from one function or system.
   Never cache a copy.
 - **The UI only reads.** `ui::view::collect` → `HudValues` and the gameplay components. UI and input send
@@ -36,11 +35,16 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
 ## Layout
 | Crate | Holds |
 |---|---|
-| `gd-formats` | File formats (ARC, ARZ, maps, meshes, textures, saves, ...); `vfs` merges base + expansions + mods |
-| `gd-sim` | Engine rules without Bevy: expressions, stats, combat, skills, items, nav, story / Lua host, Shattered Realm generation |
-| `gd-game` | Headless gameplay ECS (`GameLogicPlugin`); `testing::TestGame` harness |
-| `gd-render` | The look: deferred render chain, models, characters, FX, decals, water, camera |
-| `grimdawn` | The binary: world streaming, UI, input, audio, dressing gameplay entities with models / effects |
+| `gd-formats` | File formats (ARC, ARZ, maps, meshes, textures, saves, ...); `vfs` merges base + expansions + mods; the inventory grid types |
+| `gd-rules` | Bevy-free primitives shared by gd-sim and gd-story: `expr` (equations), `mode`, `faction`, `Rng` |
+| `gd-sim` | Engine rules without Bevy: stats, combat, actor profiles, skills, items, nav, equip, proxy / setpiece |
+| `gd-story` | Story / Lua host (quests, dialogs) and Shattered Realm (`endless`) generation; vendored mlua |
+| `gd-game-core` | Gameplay data: components, resources, messages, pure resolvers, SystemSets (no systems) |
+| `gd-game` | Headless gameplay ECS systems (`GameLogicPlugin`); `testing::TestGame` harness |
+| `gd-render` | The look over gd-game-core: deferred render chain, models, characters, FX, decals, water, camera |
+| `gd-ui-kit` | Shared UI kit over gd-game-core + gd-render: the record-driven widget builder, fonts, chrome, confirm boxes, key bindings, additive / masked UI materials |
+| `gd-ui` | The in-game UI windows and HUD over gd-ui-kit + gd-game + gd-render: the movable window clusters, the rebuild hub, the Esc dispatcher, the paper-doll builders, and the presentation state (`state`) the binary's input systems share |
+| `grimdawn` | The binary: world streaming, input, audio, the audio / world / menu-scene-coupled windows (options, localmap, survival, credits, mainmenu, ...), dressing gameplay entities with models / effects |
 | `gd-tools` | CLIs: `gd-tools` (arc / arz), `gd-map`, `gd-mesh`, `gd-nav`, `gd-pfx`, `gd-rec` (merged records), `gd-save`, `gd-story`, `gd-tex` |
 
 Module doc comments are the reference for formats and rules: read them before re-deriving anything.
@@ -52,6 +56,7 @@ Module doc comments are the reference for formats and rules: read them before re
 | New systems, states, gating, requests, session lifecycle, UI rebuilds | `docs/architecture.md` |
 | Running the game, tests, hooks, smoke runs | `docs/running.md` |
 | Decompiling the real game | `docs/reverse-engineering.md` |
+| Porting to a new game version | `docs/updating.md` |
 | Local, untracked notes (read if present) | `AGENTS.local.md` |
 
 Keep docs short and current: no changelogs or Done lists (commit messages carry the history). Engine detail

@@ -1,21 +1,5 @@
 use super::*;
 
-/// Nullification (`Skill_DispelMagic::TargetResult` @0x1804f64e0): foes in
-/// the radius take the skill (its debuff) and lose their
-/// self buffs (`SkillManager::DispelSkillBuffs` @0x18053ccf0), except skills
-/// flagged `notDispelable`; everyone on the caster's side in the radius
-/// (the caster too) loses their skill debuffs (`DispelSkillDeBuffs`
-/// @0x18053cf00) and, with `dispelDamageOverTime`, their damage over time
-/// (`crate::skill_buffs::DispelOn`). `skillActiveDuration` is unused.
-#[derive(Message, Clone)]
-pub struct Dispel {
-    pub caster: Entity,
-    pub at: Vec3,
-    pub radius: f32,
-    pub foes: Vec<Entity>,
-    pub dots: bool,
-}
-
 pub(super) fn dispels(
     mut events: MessageReader<Dispel>,
     sides: Query<(Entity, &GlobalTransform, crate::combat::VictimSide), Without<Dead>>,
@@ -50,54 +34,6 @@ pub(super) fn dispels(
     }
 }
 
-/// `Skill_AttackPathCharge` in flight (Vire's Might): runs straight to the
-/// point (`waveDistance` at most) and hits
-/// every foe within `skillTargetRadius` × `endRadiusMultiplier` there. On
-/// the way, every `timeBetweenAttacks` ms (default 100) it hits the foes
-/// within `skillTargetRadius` of the caster not hit yet, each once
-/// (`Skill_AttackPathCharge::Load` / `Update`). Walls: the move
-/// follows a nav path, and fails (the skill lands where the caster stands)
-/// when that path is longer than `maxMoveRatio` × the straight distance
-/// (`Character::GetMoveToPoint` @0x18005e970 passes `SkillProfile`'s
-/// `maxMoveRatio` to `CharacterMovementManager::FindPath`).
-/// The run: the skill moves nothing itself (`ActivateNow` @0x1804b8b50,
-/// `Update` @0x1804b9160, `WarmUpStart` @0x1804b9940: no move); its move
-/// is the controller's move type 2 one (ChargeToUseSkill, a monster's Pursue):
-/// the Charge clip at speed factor 1, at the warmed-up run speed when the
-/// warm-up started (`skillAllowsWarmUp`), `crate::combat::charge_move`. A set
-/// without the Charge slot does not move. PORT: the run follows the cast.
-#[derive(Component)]
-pub struct PathCharge {
-    /// Nav waypoints left to the end point.
-    pub(super) to: Vec<Vec3>,
-    /// Fixed speed (m/s, a teleport's), or `None`: the Charge clip's run (`crate::combat::charge_move`).
-    pub(super) speed: Option<f32>,
-    /// The warm-up started (`skillAllowsWarmUp`): the run is at the warmed-up run speed with this
-    /// `characterRunSpeedModifier` %.
-    pub(super) warm: bool,
-    pub(super) bonus: f32,
-    pub(super) skill: String,
-    pub(super) level_index: usize,
-    pub(super) radius: f32,
-    pub(super) hostile: bool,
-    pub(super) left: f32,
-    /// Where the caster stood when it started ([`ChargeStarts`]).
-    pub(super) start: Vec3,
-    /// Hits along the way (`Skill_AttackPathCharge` only): radius (0 =
-    /// none), seconds between, seconds to the next, foes already hit.
-    pub(super) path: (f32, f32, f32, Vec<Entity>),
-    /// `Skill_AttackPathCharge` only: `secondarySkillDistance` (`Load`,
-    /// +0x66C) and the spot the special secondaries last went off (+0x670,
-    /// the start: `WarmUpStart`). `Update` @0x1804b9160: each frame
-    /// of the run, once the caster is that far (flat) from the spot, the spot
-    /// moves to it and `SpecialActivateSecondarySkills` runs there with no
-    /// targets (a distance of 0: every frame).
-    pub(super) secondaries: Option<(f32, Vec3)>,
-    /// The arrival's radius effect, resolved at the cast (`crate::skill_fx::radius_effect`: `fxChanges`
-    /// over the level's `radiusEffectName`).
-    pub(super) radius_fx: Option<String>,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn path_charges(
     mut commands: Commands,
@@ -107,7 +43,7 @@ pub(super) fn path_charges(
     mut q: Query<(
         Entity,
         &mut Transform,
-        Option<&mut crate::character::Character>,
+        Option<&mut gd_game_core::character::Character>,
         &mut PathCharge,
     )>,
     all: Query<
@@ -269,10 +205,10 @@ pub(super) fn path_charges(
     }
 }
 
-/// Requests the weapon trails of projectile `owner`: one [`crate::visuals::TrailRequest`] between its mesh's
+/// Requests the weapon trails of projectile `owner`: one [`gd_game_core::visuals::TrailRequest`] between its mesh's
 /// `Anchor1` / `Anchor2` and, when there, one between `Anchor3` / `Anchor4` (`trails::anchors_of`; no
 /// `Anchor1`, no trail), the anchors scaled by the model's `scale`. The mesh comes from the one mesh loader
-/// ([`crate::creature::BodyCache`], emptied with the mounted mod by `session::set_mod_data`), read in a queued
+/// ([`gd_game_core::creature::BodyCache`], emptied with the mounted mod by `session::set_mod_data`), read in a queued
 /// command, so it applies with the caller's other commands.
 pub(super) fn weapon_trails(
     commands: &mut Commands,
@@ -285,17 +221,19 @@ pub(super) fn weapon_trails(
     let (mesh, record) = (mesh.to_owned(), record.to_owned());
     commands.queue(move |world: &mut World| {
         let msh = world
-            .try_resource_scope(|world, mut bodies: Mut<crate::creature::BodyCache>| {
-                bodies.get(world.get_resource::<GameData>()?, &mesh)
-            })
+            .try_resource_scope(
+                |world, mut bodies: Mut<gd_game_core::creature::BodyCache>| {
+                    bodies.get(world.get_resource::<GameData>()?, &mesh)
+                },
+            )
             .flatten();
         let Some(msh) = msh else { return };
         for second in [false, true] {
-            let Some((a, b)) = crate::visuals::anchors_of(&msh, second) else {
+            let Some((a, b)) = gd_game_core::visuals::anchors_of(&msh, second) else {
                 break;
             };
             world.spawn((
-                crate::visuals::TrailRequest {
+                gd_game_core::visuals::TrailRequest {
                     owner,
                     record: record.clone(),
                     width,
@@ -307,19 +245,10 @@ pub(super) fn weapon_trails(
     });
 }
 
-/// Leap classes: `Skill_AttackRadiusLeap` and `Skill_AttackRadiusDisengage`
-/// (derived from it).
-pub fn is_leap(class: &str) -> bool {
-    matches!(
-        class,
-        "Skill_AttackRadiusLeap" | "Skill_AttackRadiusDisengage"
-    )
-}
-
 /// Where a move skill goes: toward `point`, at most `waveDistance` (default
 /// 10), along the nav path, which is given up (no move) when longer than
-/// `maxMoveRatio` × the straight distance (`Character::GetMoveToPoint`
-/// @0x18005e970, see [`PathCharge`]). A teleport lands on the ground at the
+/// `maxMoveRatio` × the straight distance (`Character::GetMoveToPoint`,
+/// see [`PathCharge`]). A teleport lands on the ground at the
 /// end point.
 pub(super) fn move_route(
     nav: &Nav,
@@ -363,45 +292,6 @@ pub(super) fn move_route(
         route.clear();
     }
     route
-}
-
-/// A leap in progress (`Skill_AttackRadiusLeap` / `…Disengage`), per
-/// Game.dll / Engine.dll: the skill's action is a `JumpAttackAction`
-/// whose `Execute` (@0x1800849f0) calls `Character::JumpToUseSkill`
-/// (@0x18006b8e0). That stores the start and the target (both put on the
-/// floor) and sets the character's movement modifier to
-/// `d / |z|`: `d` the horizontal start→target distance, `z` the jump
-/// animation's total root-motion-bone translation (last key − first,
-/// `GraphicsAnim::GetBoneCoords`), through the bone's bind matrix, forward
-/// component (the frame-timing factor it also computes cancels out). The
-/// animation's `StartJump` callback starts a `CharacterMovementManager::
-/// MoveTo` to the target, `StopJump` stops it (`JumpAttackAction::
-/// AnimationCallback` @0x180084e00). While moving, the crowd agent's speed is
-/// the actor's motion — the root-motion velocity of the frame
-/// (`AnimChannel::Update` → `Actor::UpdateSelf`) — times that modifier
-/// (`Character::CrowdAgentUpdate` @0x180066d60), so the jump covers `d`
-/// over the animation's root-motion curve, at its pace. The hit is the
-/// animation's hit callback (`fire_casts`).
-#[derive(Component)]
-pub struct Leap {
-    /// Nav waypoints left to the target.
-    pub(super) to: Vec<Vec3>,
-    /// Horizontal start→target distance (`JumpToUseSkill`).
-    pub(super) dist: f32,
-    /// The movement modifier, set at `StartJump`; `None` before it.
-    pub(super) scale: Option<f32>,
-}
-
-impl Leap {
-    /// A jump along `to` covering `dist` (also used by the evade, which is
-    /// the same `JumpToUseSkill` movement, `evade.rs`).
-    pub fn new(to: Vec<Vec3>, dist: f32) -> Self {
-        Self {
-            to,
-            dist,
-            scale: None,
-        }
-    }
 }
 
 /// Starts, moves and ends [`Leap`]s. The route is fixed when the cast starts

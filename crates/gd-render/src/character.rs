@@ -2,7 +2,7 @@
 //! engine:
 //! - body: the record's `mesh` (for players the head, which also carries the
 //!   skeleton and attach points) with its `CreateEntity` effects on its bones
-//!   (Engine.dll `Actor::CreateAttachmentsFromMesh` @0x18002c4e0,
+//!   (Engine.dll `Actor::CreateAttachmentsFromMesh`,
 //!   every actor), `scale`, texture overrides
 //!   (`baseTexture`/`bumpTexture` for all materials, `baseTextures[i]` per
 //!   material index; players: `playerTextures[0]`; monsters: one of
@@ -15,35 +15,35 @@
 //!   `mesh` when set.
 //! - weapons: static meshes at the body's "R Hand"/"L Hand" attach points.
 //!   (Game.dll `EquipManager::AttachItemAction` -> `Item::AttachItem`
-//!   @0x1803269e0 -> `Actor::Attach` with the identity offset; Engine.dll
-//!   `Entity::GetCoords` @0x18007f070 = `Actor::GetAttachedCoordsInRegion`
-//!   @0x180027b10 * offset, which is the actor coords * scale * the point in
-//!   mesh space, `GraphicsMesh::GetAttachedCoords` @0x1800b8460 = parent
+//!   -> `Actor::Attach` with the identity offset; Engine.dll
+//!   `Entity::GetCoords` = `Actor::GetAttachedCoordsInRegion` times the
+//!   offset, which is the actor coords * scale * the point in
+//!   mesh space, `GraphicsMesh::GetAttachedCoords` = parent
 //!   bone's posed abs * the point): no grip or per-weapon-type correction, and
 //!   the hero's mirrored "R Hand" basis (x, -y, z) is kept; it cancels the
 //!   mirrored bind of `Weapon_R_Parent_Fix`, so the right weapon frame is a
 //!   proper rotation, the left one's mirror image (`AttachPoint::coords_in`, tests).
-//!   The parent bone's posed abs is `GraphicsMesh::GetAbsCoords` @0x1800b8320
+//!   The parent bone's posed abs is `GraphicsMesh::GetAbsCoords`
 //!   (`local * key` per bone up to the root, the skinning chain of
-//!   sub_1800b8710: `parent * local * key`; the key `SkeletalPose::CacheCoords`
+//!   `GraphicsMesh::GetSkinningCoords`: `parent * local * key`; the key `SkeletalPose::CacheCoords`
 //!   `T * R * S * SR`, one `AnimChannel` per mesh instance: no additive layer,
 //!   IK or per-bone override; `Actor::GetAttachedCoordsInRegion` scales it by
 //!   the mesh-instance scale, `mmPlayerScale` on the menu). The weapon's own
 //!   scale is the item's base scale times the wearer's `weaponScale`
-//!   (Game.dll `Weapon::AttachItem` @0x180589680,
-//!   `Character::GetWeaponScale` +0x1F74), the attach offset the identity
-//!   (sub_180591990, static `Coords` in .data).
+//!   (Game.dll `Weapon::AttachItem`,
+//!   `Character::GetWeaponScale`, `Character.weaponScale`), the attach offset the identity
+//!   (`Weapon::GetAttachOffset`, static `Coords` in .data).
 //! - animation: `gd_sim::anim` sets by hand state, one channel with 200 ms
 //!   cross-fades, root motion, callback points.
-//! - hidden (`gd_game::visuals::Hidden`, a blink's warm-up): the root and its
+//! - hidden (`gd_game_core::visuals::Hidden`, a blink's warm-up): the root and its
 //!   weapons are not drawn, with everything attached to them (armour, the
 //!   effects on the body and on the weapons) and their shadows ([`hide_actors`]).
-//! - shapeshift form (`gd_game::character::Character::form_mesh`, worn by
+//! - shapeshift form (`gd_game_core::character::Character::form_mesh`, worn by
 //!   `gd_game::shapeshift::wear_form`): [`wear_forms`] draws the form mesh
 //!   (its own materials, under the root so the character's scale applies)
 //!   instead of the body; armour and weapons are not drawn while it is on
-//!   (`Character::SetHideEquipment`, `AddAttachedEntitiesToScene`
-//!   @0x180072130: every attached `ItemEquipment` is skipped), their effects
+//!   (`Character::SetHideEquipment`, `Character::AddAttachedEntitiesToScene`:
+//!   every attached `ItemEquipment` is skipped), their effects
 //!   with them. The entity stays the same (hover, targeting, effect anchors).
 //!   The form mesh's own `CreateEntity` effects are made on its bones
 //!   (`Character::SetOverrideMesh`: the old mesh's attachments removed, the
@@ -53,7 +53,6 @@
 //!   it is in (the engine's `SetOverrideMesh` swaps at once).
 //! - equipment change: the player's body is rebuilt once every new part is
 //!   loaded ([`player_body_ready`]); the old body stays until then.
-use crate::data::GameData;
 use crate::model::{ExternalPose, ModelAsset, ModelCache, Skeleton, coords_to_affine};
 use crate::render::material::{MaterialAssets, PartMaterial};
 use crate::textures::Textures;
@@ -64,13 +63,14 @@ use bevy::math::Vec3A;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_formats::collections::HashMap;
 use gd_formats::msh::{AttachPoint, Coords};
+use gd_game_core::data::GameData;
 use gd_sim::anim::{self, AnimType};
 use gd_sim::equip::WeaponType;
-use std::collections::HashMap;
 use std::sync::Arc;
 
-pub use gd_game::character::{AnimCallback, CharState, Character};
+pub use gd_game_core::character::{AnimCallback, CharState, Character};
 
 pub struct CharacterPlugin;
 
@@ -85,7 +85,7 @@ impl Plugin for CharacterPlugin {
                     hide_actors,
                     wear_forms
                         .in_set(CharacterRenderStage::WearForms)
-                        .after(gd_game::shapeshift::ShapeshiftSet::Wear),
+                        .after(gd_game_core::shapeshift::ShapeshiftSet::Wear),
                 ),
             )
             // The animation advance dispatches in Update (`CharacterStage::Animate`); the pose
@@ -100,15 +100,15 @@ impl Plugin for CharacterPlugin {
     }
 }
 
-/// `gd_game::visuals::Hidden` on a character: its root and weapon roots are
+/// `gd_game_core::visuals::Hidden` on a character: its root and weapon roots are
 /// hidden while it is on (kept every frame: a re-dressed body's new weapons,
 /// a `ShowRightHand` callback), shown again when it goes, except a weapon
 /// whose hand the animation hid ([`AttachedWeapon::hand_hidden`]): the actor's
 /// visibility only decides whether its attached entities are drawn, each
-/// keeps its own (`Actor::AddToScene`, `gd_game::visuals::Hidden`).
+/// keeps its own (`Actor::AddToScene`, `gd_game_core::visuals::Hidden`).
 fn hide_actors(
-    hidden: Query<(Entity, &Body), With<gd_game::visuals::Hidden>>,
-    mut shown: RemovedComponents<gd_game::visuals::Hidden>,
+    hidden: Query<(Entity, &Body), With<gd_game_core::visuals::Hidden>>,
+    mut shown: RemovedComponents<gd_game_core::visuals::Hidden>,
     bodies: Query<&Body>,
     mut vis: Query<&mut Visibility>,
 ) {
@@ -220,7 +220,7 @@ pub struct FormPart {
 }
 
 /// The attach point a slot's piece goes on, `Paperdoll::GetAttachPointName`
-/// @0x1803c4520 (Game.dll). Stock player meshes have only `Head`
+/// (Game.dll). Stock player meshes have only `Head`
 /// and `R Hand` / `L Hand` of these (`Head` at the origin), so on the player's
 /// own mesh an armour piece's frame is the actor's.
 fn slot_point(slot: Slot) -> &'static str {
@@ -278,7 +278,7 @@ pub(crate) fn wear_forms(
         }
         // `Entity::GetCoords` asks the parent for the attach point by name
         // each frame; a name the mesh lacks is the identity
-        // (`GraphicsMesh::GetAttachedCoords` @0x1800b8460). The port resolves
+        // (`GraphicsMesh::GetAttachedCoords`). The port resolves
         // the point and its parent bone here, when the form changes.
         if doll {
             for w in &mut body.weapons {
@@ -359,7 +359,7 @@ pub struct AttachedWeapon {
     pub msh: Arc<gd_formats::msh::Mesh>,
     /// The animation hid the hand (Game.dll `Character::
     /// AnimationCallback`: `HideRightHand` / `HideLeftHand` set the weapon
-    /// item's own visibility to 0 and the character's +18104 / +18105, the
+    /// item's own visibility to 0 and the character's `Character.rightHandHidden` / `leftHandHidden`, the
     /// `Show…` callbacks undo both): the weapon stays hidden whatever the
     /// actor's visibility does until the animation shows it.
     pub hand_hidden: bool,
@@ -382,7 +382,7 @@ pub struct CharAssets<'w> {
     pub mats: MaterialAssets<'w>,
     pub bindposes: ResMut<'w, Assets<SkinnedMeshInverseBindposes>>,
     pub images: ResMut<'w, Assets<Image>>,
-    pub bodies: ResMut<'w, gd_game::creature::BodyCache>,
+    pub bodies: ResMut<'w, gd_game_core::creature::BodyCache>,
 }
 
 impl CharAssets<'_> {
@@ -458,7 +458,7 @@ impl CharAssets<'_> {
         let model = self.model(mesh)?;
         let tex = TexOverride::from_record(rec);
         let bumps = texture_list(rec, "bumpTextures");
-        let mut mats: HashMap<u32, PartMaterial> = HashMap::new();
+        let mut mats: HashMap<u32, PartMaterial> = HashMap::default();
         for (mi, (_, def)) in model.part_materials.iter().zip(&model.parts) {
             let i = *mi as usize;
             let base = tex
@@ -522,7 +522,7 @@ impl CharAssets<'_> {
         // The record's own textures and shader (`MaterialAssets`), so the override renders (and outlines)
         // like the mesh's own.
         let bump = tex.bump.clone().filter(|s| !s.is_empty());
-        let mut made: HashMap<u32, PartMaterial> = HashMap::new();
+        let mut made: HashMap<u32, PartMaterial> = HashMap::default();
         let (data, textures, images, mats) = (
             &self.data,
             &mut self.textures,
@@ -620,7 +620,7 @@ impl TexOverride {
     }
 }
 
-pub use gd_game::creature::{Slot, slot_of};
+pub use gd_game_core::creature::{Slot, slot_of};
 
 /// Item mesh + textures for a gender (`Armor::SetArmorGender` →
 /// `ChangeArmorMesh`): the gendered mesh with its textures, each texture
@@ -650,7 +650,7 @@ fn item_visual(r: &Record, female: bool) -> Option<(String, TexOverride)> {
     Some((r.str("mesh")?.to_owned(), rec_tex))
 }
 
-pub use gd_game::player::player_record;
+pub use gd_game_core::player::player_record;
 
 /// Spawns a player character (`female` selects femalepc01) wearing
 /// `equipment` (item record paths) over the record's default pieces.
@@ -786,7 +786,7 @@ fn player_look<'d>(
     }
     let mesh = rec.str("mesh")?.to_owned();
     // EquipManager::Load: default pieces, hidden while a real item occupies the slot.
-    let mut by_slot: HashMap<Slot, String> = HashMap::new();
+    let mut by_slot: HashMap<Slot, String> = HashMap::default();
     for (key, slot) in [
         ("defaultHeadPiece", Slot::Head),
         ("defaultShouldersPiece", Slot::Shoulders),
@@ -841,18 +841,18 @@ fn player_body(
     )
 }
 
-/// Dresses new creatures (`gd_game::creature::BodyRequest`) with their
+/// Dresses new creatures (`gd_game_core::creature::BodyRequest`) with their
 /// body, armour and weapon meshes, once every one of them and every override texture they name is loaded: what is
 /// not yet loads in the background ([`CharAssets::model_ready`], [`crate::textures::Textures::ready_held`]) and the
 /// creature is dressed on a later frame (it is drawn a few frames after it appears instead of stalling the frame).
 /// While it waits the creature holds what is already in ([`Waiting`]): the caches only keep their last
-/// [`gd_game::weak_cache::RECENT`] values warm, and a crowd (the Conclave of the Three: ~40 NPCs with a dozen parts
+/// [`gd_game_core::weak_cache::RECENT`] values warm, and a crowd (the Conclave of the Three: ~40 NPCs with a dozen parts
 /// each, beside level streaming) would otherwise evict one creature's early parts before its last one arrives and
 /// load them again, so it never had everything at once and stayed bodiless.
 fn dress_bodies(
     mut commands: Commands,
     mut a: CharAssets,
-    new: Query<(Entity, &gd_game::creature::BodyRequest, &Character)>,
+    new: Query<(Entity, &gd_game_core::creature::BodyRequest, &Character)>,
     mut waiting: Local<HashMap<Entity, Waiting>>,
     mut taken: Local<Waiting>,
 ) {
@@ -862,7 +862,7 @@ fn dress_bodies(
         let Some(rec) = db.get(&req.record) else {
             commands
                 .entity(e)
-                .remove::<gd_game::creature::BodyRequest>();
+                .remove::<gd_game_core::creature::BodyRequest>();
             continue;
         };
         let mut tex = TexOverride::from_record(rec);
@@ -919,7 +919,7 @@ fn dress_bodies(
         }
         commands
             .entity(e)
-            .remove::<gd_game::creature::BodyRequest>();
+            .remove::<gd_game_core::creature::BodyRequest>();
         let body = dress(
             &mut commands,
             &mut a,
@@ -964,7 +964,7 @@ fn spawn_character(
     is_player: bool,
 ) -> Option<Entity> {
     let body = a.model(mesh)?;
-    let scale = gd_game::creature::record_scale(rec);
+    let scale = gd_game_core::creature::record_scale(rec);
     // An explicit GlobalTransform: the camera follows the player before
     // transform propagation, and a default one would put a respawned body
     // (equipment change) at the world origin for a frame.
@@ -990,7 +990,7 @@ fn spawn_character(
             .and_then(|p| a.data.db.get(p))
             .and_then(|r| WeaponType::from_class(&r.class))
     };
-    let character = gd_game::character::character_for(
+    let character = gd_game_core::character::character_for(
         &a.data,
         path,
         rec,
@@ -1135,8 +1135,8 @@ pub(crate) fn pose_bodies(
         &Character,
         &mut Body,
         Has<DollBody>,
-        Has<gd_game::player::Player>,
-        Has<gd_game::visuals::Hidden>,
+        Has<gd_game_core::player::Player>,
+        Has<gd_game_core::visuals::Hidden>,
     )>,
     cameras: Query<(&Camera, &Frustum)>,
     skels: Query<&Skeleton>,

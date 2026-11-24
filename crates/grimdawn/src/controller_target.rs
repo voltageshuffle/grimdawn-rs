@@ -3,7 +3,8 @@
 //! target, `hover.rs`; the ground label selection, `loot.rs`) and gd-game gets the controller's cursor record
 //! (`ControllerTarget`: the picked enemy or NPC and its coordinates, else an empty record).
 //!
-//! Candidates (`sub_1400318C0`): foes (`gd_game::combat::Side::Player`'s foes: characters that are targetable
+//! Candidates (`InGameUI::CollectEnemyCandidates`): foes (`gd_game::combat::Side::Player`'s foes: characters
+//! that are targetable
 //! (`Monster::IsTargetable`: the record's `targetable`, and not invincible unless the record is), not hiding
 //! (`Character::IsHiding`: an invisible or
 //! `hiddenFromCombat` character, a hidden monster's Startup) and, for the combat flag, `causesAnger`; a monster's
@@ -15,11 +16,12 @@
 //! `FixedItemBlastContainer` records with the shrines), doors and levers of interest, devotion shrines and monster
 //! totems, riftgates, the Ascendant Altar, the player's gravestone, open personal portals, the Shattered Realm's exit
 //! gates and unused buff shrines; each within the camera's view (`GameEngine::GetFrustumForPlayer`). "Interactable"
-//! is `Object` vfunc +992 = `IsOfInterest` (Game.dll vtables: `false` for a plain `FixedActor` / `FixedItem`
+//! is `Object::IsOfInterest` (Game.dll vtables: `false` for a plain `FixedActor` / `FixedItem`
 //! / `FixedItemWell` / `StaticRespawner`; the classes' own rules are on their port types). The cauldron
 //! (`NpcCauldron`) is an `Npc`: the NPC candidates.
 //!
-//! The marker (`Grim Dawn.exe` sub_140110410 / sub_1401101B0 / sub_14010FC50, drawn by sub_14010FEF0 when
+//! The marker (`Grim Dawn.exe` `GamepadTargetMarker::Update` / `GamepadTargetMarker::Position` /
+//! `GamepadTargetMarker::Load`, drawn by `GamepadTargetMarker::Render` when
 //! `movementType` is 2): over the picked enemy `records/ui/gamepadhud/gamepad_enemytargetbitmap.dbr`, over a picked
 //! NPC or fixed actor `gamepad_friendlytargetbitmap.dbr`, its size the texture's x the zoom scale
 //! (1.2 − 0.4 x (camera distance − min) / (max − min)), centred on the object's position raised by its mesh top
@@ -27,21 +29,21 @@
 //! 70 for a breakable or other object, 0 for a riftgate) x the zoom scale and bobbing by
 //! `sin(ms x 0.004) x 5` x the zoom scale. No marker over a ground item (its label is selected).
 //!
-//! PORT: the windows that stop the targeting (sub_14021A290: any window or dialog) are the riftgate map, a
+//! PORT: the windows that stop the targeting (`Ui::IsAnyWindowOpen`: any window or dialog) are the riftgate map, a
 //! conversation and the altar menu; a picked NPC is sent as an empty-target record at its coordinates (the
 //! engine's combat ally; the port's skills take only pets as friends); the frustum is the camera's view volume;
 //! the mesh top is the record's mesh bounds x its `scale`.
-use crate::data::GameData;
-use crate::player::Player;
 use crate::record_facts::RecordFacts;
-use crate::ui::text::FontCache;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use gd_formats::collections::HashMap;
 use gd_formats::ui::{Rect as URect, Widget};
 use gd_game::controller_target::{
     Candidate, ControllerTarget, FixedKind, Kind, Pick, SCAN_RADIUS, Targeting, pick,
 };
-use std::collections::HashMap;
+use gd_game_core::data::GameData;
+use gd_game_core::player::Player;
+use gd_ui_kit::text::FontCache;
 
 pub struct ControllerTargetPlugin;
 
@@ -51,14 +53,14 @@ impl Plugin for ControllerTargetPlugin {
             .add_systems(
                 Update,
                 (targeting, interact_key)
-                    .in_set(crate::casting::CastInputStage::Cursor)
-                    .after(crate::inventory::InventorySet),
+                    .in_set(gd_ui::state::casting::CastInputStage::Cursor)
+                    .after(gd_game_core::inventory::InventorySet),
             )
             .add_systems(
                 PostUpdate,
                 marker
                     .after(bevy::transform::TransformSystems::Propagate)
-                    .in_set(crate::ui::UiPlaySet),
+                    .in_set(gd_ui_kit::UiPlaySet),
             );
     }
 }
@@ -115,7 +117,7 @@ type Foes<'w, 's> = Query<
         gd_game::combat::VictimSide,
         Has<gd_game::combat::Invincible>,
     ),
-    (Without<crate::combat::Dead>, Without<Player>),
+    (Without<gd_game_core::combat::Dead>, Without<Player>),
 >;
 type Npcs<'w, 's> = Query<
     'w,
@@ -124,14 +126,14 @@ type Npcs<'w, 's> = Query<
         Entity,
         &'static GlobalTransform,
         &'static gd_render::character::Character,
-        Option<&'static gd_game::story::StoryActor>,
+        Option<&'static gd_game_core::story::StoryActor>,
         Option<&'static Visibility>,
     ),
     (
-        Without<gd_game::monsters::Monster>,
+        Without<gd_game_core::monsters::Monster>,
         Without<gd_game::pets::Pet>,
         Without<Player>,
-        Without<crate::combat::Dead>,
+        Without<gd_game_core::combat::Dead>,
         Without<crate::doll::DollBody>,
     ),
 >;
@@ -206,28 +208,31 @@ type Fixed<'w, 's> = (
 /// The controller targeting of the frame (module docs).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn targeting(
-    mut fresh: gd_game::session::NewSession,
-    options: Res<gd_game::options::GameOptions>,
+    mut fresh: gd_game_core::session::NewSession,
+    options: Res<gd_game_core::options::GameOptions>,
     time: Res<Time>,
     data: Res<GameData>,
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
     players: Query<
         (
             &GlobalTransform,
-            &crate::combat::Combatant,
-            &gd_game::player::ControllerDirection,
+            &gd_game_core::combat::Combatant,
+            &gd_game_core::player::ControllerDirection,
         ),
-        (With<Player>, Without<crate::combat::Dead>),
+        (With<Player>, Without<gd_game_core::combat::Dead>),
     >,
     (foes, breakables, items, npcs): (
         Foes,
-        Query<(Entity, &GlobalTransform, &gd_game::world::Breakable), Without<crate::combat::Dead>>,
+        Query<
+            (Entity, &GlobalTransform, &gd_game_core::world::Breakable),
+            Without<gd_game_core::combat::Dead>,
+        >,
         Query<
             (Entity, &GlobalTransform),
             (
                 With<crate::loot::GroundItem>,
                 Without<crate::loot::Unpickable>,
-                Without<crate::loot::FilteredOut>,
+                Without<gd_ui::state::loot::FilteredOut>,
             ),
         >,
         Npcs,
@@ -237,9 +242,9 @@ fn targeting(
     (rift_map, dialog, altar): (
         Res<gd_game::riftgates::RiftgateMap>,
         Res<gd_game::conversation::Conversation>,
-        Res<crate::ascendant::AltarMenu>,
+        Res<gd_ui::state::ascendant::AltarMenu>,
     ),
-    rt: Option<NonSend<gd_game::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut state: Local<Targeting>,
     (mut facts, fonts): (ResMut<RecordFacts>, Res<FontCache>),
     mut current: ResMut<ControllerPick>,
@@ -252,7 +257,7 @@ fn targeting(
         current.set_if_neq(ControllerPick::default());
         return;
     }
-    // A window or dialog stops the targeting; the record stays (sub_14021A290).
+    // A window or dialog stops the targeting; the record stays (`Ui::IsAnyWindowOpen`).
     if rift_map.open || dialog.view.is_some() || altar.open {
         return;
     }
@@ -269,7 +274,7 @@ fn targeting(
     };
     let mut fact = |rec: &str| rec_facts(&data, &fonts, &mut facts, rec);
     let story = rt.as_ref().map(|rt| rt.story.borrow());
-    let available = |a: Option<&gd_game::story::StoryActor>| {
+    let available = |a: Option<&gd_game_core::story::StoryActor>| {
         a.and_then(|a| story.as_ref()?.entities.get(a.0))
             .is_none_or(|o| o.in_world && o.available_for_conversation)
     };
@@ -349,7 +354,8 @@ fn targeting(
     current.set_if_neq(ControllerPick(p, marker));
 }
 
-/// A character's foe candidate (sub_1400318C0, module docs): a foe of the player that is targetable and not
+/// A character's foe candidate (`InGameUI::CollectEnemyCandidates`, module docs): a foe of the player that is
+/// targetable and not
 /// hiding, with its `causesAnger`; `record_invincible` (the record's `invincible`) is asked only for one that is
 /// invincible now.
 fn foe_kind(
@@ -370,15 +376,15 @@ fn foe_kind(
         (None, Some(p)) => (p.targetable, p.causes_anger),
         (None, None) => return None,
     };
-    // `Monster::IsTargetable` @0x18037ec40: `targetable` (+8026) and, unless the record is `invincible`
-    // (+8049), not invincible now (+8048, `SetInvincible`).
+    // `Monster::IsTargetable`: `targetable` (`Monster.targetable`) and, unless the record is `invincible`
+    // (`Monster.recordInvincible`), not invincible now (`Character.invincible`, `SetInvincible`).
     let targetable = targetable && (!invincible || record_invincible());
-    // `Character::IsHiding` @0x18005bba0 (`VictimSide::hiding`), and a hidden monster's Startup.
+    // `Character::IsHiding` (`VictimSide::hiding`), and a hidden monster's Startup.
     let hidden = hiding || ai.is_some_and(|ai| ai.hidden.is_some());
     (targetable && !hidden).then_some(Kind::Foe { causes_anger })
 }
 
-/// The interactable fixed actors (`FixedActor` vfunc +992, module docs) as candidates with their usable range
+/// The interactable fixed actors (`Object::IsOfInterest`, module docs) as candidates with their usable range
 /// (`r`: the player's radius), their record and marker lift.
 fn fixed_candidates<'a>(
     (chests, doors, shrines, gates, altars, graves, portals, exits, buffs): &'a Fixed,
@@ -438,8 +444,8 @@ fn fixed_candidates<'a>(
             add(e, gt, FixedKind::Other, usable, &w.record, 0.0);
         }
     }
-    // `AscendantAltar::IsOfInterest` @0x180036a40: dormant (1, 2) or activated (4) and not +1352 (PORT: always,
-    // +1352 not traced; `crate::ascendant` decides what a use does).
+    // `AscendantAltar::IsOfInterest`: dormant (1, 2) or activated (4) and not `AscendantAltar.blocked` (PORT:
+    // always, that flag not traced; `crate::ascendant` decides what a use does).
     for (e, gt, a) in altars.iter() {
         let f = fact(&a.record);
         add(
@@ -451,7 +457,7 @@ fn fixed_candidates<'a>(
             70.0,
         );
     }
-    // `FixedItemGravestone::IsOfInterest` @0x1802b0ca0: the main player's grave (the port's only kind).
+    // `FixedItemGravestone::IsOfInterest`: the main player's grave (the port's only kind).
     let grave = gd_game::death::GRAVE;
     for (e, gt) in graves.iter() {
         let f = fact(grave);
@@ -464,7 +470,7 @@ fn fixed_candidates<'a>(
             70.0,
         );
     }
-    // `FixedItemTeleport::IsOfInterest` @0x1802b61d0 (personal portals and, as `FixedItemDungeonTeleport`, the
+    // `FixedItemTeleport::IsOfInterest` (personal portals and, as `FixedItemDungeonTeleport`, the
     // Shattered Realm's exit gates): not closing.
     let portal = gd_game::riftgates::PORTAL_RECORD;
     for (e, gt, p) in portals.iter() {
@@ -500,12 +506,12 @@ fn fixed_candidates<'a>(
 #[allow(clippy::too_many_arguments)]
 fn interact_key(
     keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
-    capture: Res<crate::inventory::UiCapture>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
+    capture: Res<gd_ui::state::inventory::UiCapture>,
     data: Res<GameData>,
     players: Query<
-        (&GlobalTransform, &crate::combat::Combatant),
-        (With<Player>, Without<crate::combat::Dead>),
+        (&GlobalTransform, &gd_game_core::combat::Combatant),
+        (With<Player>, Without<gd_game_core::combat::Dead>),
     >,
     npcs: Npcs,
     fixed: Fixed,
@@ -513,7 +519,7 @@ fn interact_key(
     (mut facts, fonts): (ResMut<RecordFacts>, Res<FontCache>),
     mut out: MessageWriter<gd_game::controller_target::UseObject>,
 ) {
-    if capture.0 || !bindings.just_pressed(crate::ui::keys::INTERACT, &keys) {
+    if capture.0 || !bindings.just_pressed(gd_ui_kit::keys::INTERACT, &keys) {
         return;
     }
     let Ok((pgt, pcb)) = players.single() else {
@@ -548,7 +554,7 @@ struct MarkerRoot;
 /// The marker over the pick (module docs).
 #[allow(clippy::too_many_arguments)]
 fn marker(
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
     current: Res<ControllerPick>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -559,7 +565,7 @@ fn marker(
     mut tops: Local<HashMap<String, (f32, f32, f32)>>,
     mut shown: Local<Option<(bool, UVec2)>>,
     real: Res<Time<Real>>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
         *shown = None;

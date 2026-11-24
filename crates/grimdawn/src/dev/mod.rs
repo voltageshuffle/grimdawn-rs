@@ -1,5 +1,5 @@
 //! Dev tools, compiled only with the `dev` feature (`cargo dev`, docs/running.md): the `GD_*` hooks are read
-//! from the environment ([`crate::hooks`]) and these exist: screenshots ([`autoshot`]), the session census
+//! from the environment ([`gd_game_core::hooks`]) and these exist: screenshots ([`autoshot`]), the session census
 //! ([`audit`]), exit cycles ([`exit_cycles`]), the memory audit ([`memory`]), the test arena ([`testworld`]), the character scene
 //! ([`chars`]), the effect checks ([`fx`], registered here unless `GD_NO_FX`), the model viewer (`GD_MODELS`), the
 //! frame-time log (`GD_FPS`), the path test (`GD_PATH_TEST`) and the scripted mouse ([`mouse`], `GD_MOUSE`). A build without `dev` inserts `Hooks::default()`:
@@ -14,10 +14,10 @@ pub mod memory;
 pub mod mouse;
 pub mod testworld;
 
-use crate::data::GameData;
-use crate::hooks::Hooks;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
+use gd_game_core::hooks::Hooks;
 use gd_render::model::{Animator, ModelCache};
 use gd_render::textures::Textures;
 
@@ -59,7 +59,7 @@ fn models(
     mut commands: Commands,
     data: Res<GameData>,
     mut cache: ResMut<ModelCache>,
-    mut bodies: ResMut<gd_game::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut textures: ResMut<Textures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -122,9 +122,9 @@ fn fps_log(
     time: Res<Time>,
     mut acc: Local<(f32, f32, u32)>,
     all: Query<Entity>,
-    chars: Query<(), With<gd_game::character::Character>>,
+    chars: Query<(), With<gd_game_core::character::Character>>,
     levels: Res<crate::world::Levels>,
-    player: Query<&Transform, With<crate::player::Player>>,
+    player: Query<&Transform, With<gd_game_core::player::Player>>,
 ) {
     let dt = time.delta_secs();
     acc.0 += dt;
@@ -150,10 +150,10 @@ fn fps_log(
 /// `GD_PATH_TEST` (hooks.rs): every 5 s logs the nav obstacle count and whether the player can path to (x, z).
 fn path_test(
     hooks: Res<Hooks>,
-    nav: Res<crate::world::Nav>,
+    nav: Res<gd_game::nav::Nav>,
     time: Res<Time>,
     mut t: Local<f32>,
-    players: Query<&Transform, With<crate::player::Player>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
     q: Query<&gd_game::nav::NavObstacle>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
 ) {

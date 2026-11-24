@@ -1,10 +1,11 @@
-//! The engine edit box's editing behaviour (`editbox.tpl`, GrimDawn.exe class with vtable @0x140316028;
+//! The engine edit box's editing behaviour (`editbox.tpl`, GrimDawn.exe class `EditBox`;
 //! used by the vendor search box). Pure state: the caller feeds key presses / releases / elapsed time and
 //! owns the text (`&mut String`), the clipboard and the width limit (`fits`).
 //!
-//! Key handler `sub_140194A60`, repeat tick `sub_140195270`, delete selection `sub_140195150`,
-//! character filter `sub_140194990`:
-//! * State: caret (+288), selection start / end (+292 / +296, start <= end) with a flag (+300).
+//! Key handler `EditBox::HandleKey`, repeat tick `EditBox::RepeatTick`, delete selection
+//! `EditBox::DeleteSelection`, character filter `EditBox::RejectsText`:
+//! * State: caret (`EditBox.caret`), selection start / end (`EditBox.selectionStart` / `EditBox.selectionEnd`,
+//!   start <= end) with a flag (`EditBox.hasSelection`).
 //! * A key press with a selection and no Shift clears the selection first for Left / Right / Home / End.
 //! * Left / Right (and every typed character, Backspace, Delete, Ctrl+V) arm the key repeat: the action
 //!   runs at once, then after 220 ms, then every 30 ms; any key release stops it (the release event of
@@ -20,10 +21,11 @@
 //!   Ctrl+V deletes the selection and inserts the clipboard text unless it holds a character outside
 //!   blank / alpha / digit / punct (or a tab).
 //! * Inserting deletes the selection, clamps the caret into the text, inserts at the caret and moves it
-//!   after the inserted text; the width limit then cuts the text (`sub_140194F80`).
+//!   after the inserted text; the width limit then cuts the text (`EditBox::ClipText`).
 //!
-//! PORT: the maximum character count (+72) and the read-only flag (+76) are not modelled; the width
-//! cut trims the end until `fits`; the gamepad input mode (caret forced to the end) is not ported.
+//! PORT: the maximum character count (`EditBox.maxChars`) and the read-only flag (`EditBox.readOnly`) are not
+//! modelled; the width cut trims the end until `fits`; the gamepad input mode (caret forced to the end) is not
+//! ported.
 
 /// A key the edit box reacts to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +75,7 @@ enum Step {
     Insert,
 }
 
-/// `sub_140194990`: a character the box accepts (blank / alpha / digit / punct, no tab).
+/// What `EditBox::RejectsText` lets through: a character the box accepts (blank / alpha / digit / punct, no tab).
 pub fn accepts(s: &str) -> bool {
     s.chars().all(|c| {
         c != '\t'
@@ -179,7 +181,7 @@ impl EditState {
         None
     }
 
-    /// Any key release stops the repeat (`sub_140194A60`: release event).
+    /// Any key release stops the repeat (`EditBox::HandleKey`: release event).
     pub fn release(&mut self) {
         self.repeat = None;
     }
@@ -208,7 +210,7 @@ impl EditState {
         });
     }
 
-    /// One repeat step (`sub_140195270`).
+    /// One repeat step (`EditBox::RepeatTick`).
     fn step(&mut self, text: &mut String, key: Step, ins: &str, fits: &dyn Fn(&str) -> bool) {
         let len = text.chars().count();
         match key {
@@ -259,7 +261,7 @@ impl EditState {
                 let at = byte(text, self.caret);
                 text.insert_str(at, ins);
                 self.caret += ins.chars().count();
-                // The width cut (`sub_140194F80`).
+                // The width cut (`EditBox::ClipText`).
                 while !text.is_empty() && !fits(text) {
                     text.pop();
                 }
@@ -269,7 +271,7 @@ impl EditState {
         }
     }
 
-    /// `sub_140195150`: remove the selection, caret to its start.
+    /// `EditBox::DeleteSelection`: remove the selection, caret to its start.
     fn delete_selection(&mut self, text: &mut String) {
         if let Some((s, e)) = self.sel.take() {
             let (a, b) = (byte(text, s), byte(text, e.max(s)));

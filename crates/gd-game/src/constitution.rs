@@ -1,5 +1,5 @@
-//! Constitution: the pool behind accelerated out-of-combat life regeneration (`CharacterBio::Update` @0x18008aa70,
-//! `CharacterBio::TakeBonus` @0x18008c5d0, `GetConstitutionLimit` @0x18008a460).
+//! Constitution: the pool behind accelerated out-of-combat life regeneration (`CharacterBio::Update`,
+//! `CharacterBio::TakeBonus`, `GetConstitutionLimit`).
 //! The HUD's `hudConstitutionBar` shows it (`ui::view::collect`); nothing else reads it.
 //! - Limit = `characterConstitution` attribute 10 through the accumulator (`CharacterSheet::constitution`; stock
 //!   300, `characterConstitutionModifier` percent on top). Current is refilled to the limit when the player
@@ -15,12 +15,13 @@
 //!   non-breakable ([`crate::combat::AttackMade`], `Player::OnAttack`) and by any life loss since the last tick
 //!   (`TakeAttack` / `OnDurationDamage` / terrain damage stand-in), and counted down per tick (the engine's countdown in
 //!   `CombatManager::Update` is not decompiled). `Player::CancelAcceleratedLifeRegen` has no caller here.
-use crate::combat::{AttackMade, CombatSet, Combatant, Dead};
-use crate::data::GameData;
-use crate::player::{Loadout, Player, player_record};
+use crate::combat::AttackMade;
 use bevy::prelude::*;
+use gd_game_core::combat::{CombatSet, Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player, player_record};
 
-/// The player's constitution (engine `CharacterBio` +56) and the bookkeeping the drain needs.
+/// The player's constitution (engine `CharacterBio.constitution`) and the bookkeeping the drain needs.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Constitution {
     /// Current constitution, in the sheet limit's units.
@@ -53,7 +54,7 @@ impl Constitution {
         self.current = (c + points).min(limit);
     }
 
-    /// Whether the player is out of combat (`CharacterBio` +52).
+    /// Whether the player is out of combat (`CharacterBio.outOfCombat`).
     pub fn out_of_combat(&self) -> bool {
         self.combat_left <= 0.0
     }
@@ -107,7 +108,7 @@ fn constitution_tick(
     time: Res<Time>,
     data: Res<GameData>,
     mut attacks: MessageReader<AttackMade>,
-    breakables: Query<(), With<crate::world::Breakable>>,
+    breakables: Query<(), With<gd_game_core::world::Breakable>>,
     mut q: Query<
         (
             Entity,
@@ -118,7 +119,7 @@ fn constitution_tick(
         ),
         With<Player>,
     >,
-    (mut cached, mut fresh): (Local<Option<Rates>>, crate::session::NewSession),
+    (mut cached, mut fresh): (Local<Option<Rates>>, gd_game_core::session::NewSession),
     mut attacked: Local<Vec<Entity>>,
 ) {
     // A new session may run another mod's records.

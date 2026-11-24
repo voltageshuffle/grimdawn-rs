@@ -2,13 +2,13 @@
 //! (`save.rs`), a load keeps an item whose saved cell is taken or outside the grid (`inventory::place_saved`),
 //! and an unreadable shared file is set aside instead of written over (`stash::read_shared`).
 use bevy::prelude::*;
+use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::gdc::{Gdc, SackItem};
 use gd_formats::save::item::Item;
-use gd_game::inventory::Inventory;
 use gd_game::save::{BoxedItems, SaveRequest};
-use gd_game::stash::{STASH_H, STASH_W, Stash};
 use gd_game::testing::TestGame;
-use gd_sim::items::inventory::{Footprint, Sack};
+use gd_game_core::inventory::Inventory;
+use gd_game_core::stash::{STASH_H, STASH_W, Stash};
 use std::path::PathBuf;
 
 const SWORD: &str = "records/items/gearweapons/swords1h/a01_sword001.dbr";

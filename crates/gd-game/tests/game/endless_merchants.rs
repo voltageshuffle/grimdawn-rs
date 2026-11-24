@@ -1,8 +1,8 @@
 //! The Splendors of the Shattered Realm merchants (`merchant_reward_02..05`) on Ultimate, headless: what each sells
-//! (`NpcMerchant::Load` @0x1803bd830: `marketFileName[GameInfo::GetDifficulty()]`, `gd_sim::items::market`).
+//! (`NpcMerchant::Load`: `marketFileName[GameInfo::GetDifficulty()]`, `gd_sim::items::market`).
 use bevy::prelude::*;
-use gd_game::session::{GameMode, LoadedCharacter};
 use gd_game::testing::TestGame;
+use gd_game_core::session::{GameMode, LoadedCharacter};
 
 const ED: &str = "records/endlessdungeon/";
 
@@ -39,8 +39,8 @@ fn expected_stock(db: &gd_formats::vfs::Database, market: &str) -> Vec<String> {
 /// Normal / Elite the shared `_01` / `_01e` tables sell nothing.
 #[test]
 fn the_splendor_merchants_sell_their_ultimate_tables() {
-    use gd_game::inventory::Inventory;
     use gd_game::trade::{MarketTimers, Markets, stock_market};
+    use gd_game_core::inventory::Inventory;
     use gd_sim::items::market::market_file;
     // An Ultimate session (the menu's Ultimate choice) of a character the port saved.
     let Some(mut new) = TestGame::new_character("Tester", false, false) else {
@@ -71,7 +71,7 @@ fn the_splendor_merchants_sell_their_ultimate_tables() {
     let altar = g
         .app
         .world()
-        .resource::<gd_game::ascendant::AltarState>()
+        .resource::<gd_game_core::ascendant::AltarState>()
         .formulas
         .clone();
     let params =

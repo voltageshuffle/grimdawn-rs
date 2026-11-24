@@ -1,8 +1,8 @@
 //! The life of a channelled beam (`Skill_AttackSpellBeam`: Aether Ray): one `BeamInfo` node of the skill's list, a
 //! fan of `beamNumber` rays sharing one state.
 //!
-//! Game.dll `Skill_AttackSpellBeam::Update` @0x1804da5a0, `UpdateBeams` @0x1804db2a0, `StartEndEffects`
-//! @0x1804db0a0, `StopEmitting` @0x1804dbeb0, `ActivateNow` @0x1804d98f0, `GetTargets` @0x1804dbaa0. States: 0
+//! Game.dll `Skill_AttackSpellBeam::Update`, `UpdateBeams`, `StartEndEffects`, `StopEmitting`, `ActivateNow`,
+//! `GetTargets`. States: 0
 //! place (the start effect goes to the emit point and starts, the end and ground
 //! effects are placed idle), 1 delay (`beamDelay`, the main player only), 2 active, 3 stopping, 4 retract, 5
 //! destroy. After the delay the ribbons are added to the world (state 2, or 3 when the stop came during the delay).
@@ -13,8 +13,9 @@
 //! effects stop and remove themselves). The ground effect emits while the ray meets a surface (the caller's test).
 //!
 //! The fan (`UpdateBeams`): the ray count and spread are the skill profile's `beamNumber` (0 = 1) and `beamAngle`
-//! (degrees), each plus the learned modifiers' (`Skill::GetSkillModifierData`; the profile loader `sub_18054A660`
-//! reads both per level; stock: Aether Ray's 1 ray, the gdx `*_aetherray` item modifiers +1 ray, +25 degrees). Ray
+//! (degrees), each plus the learned modifiers' (`Skill::GetSkillModifierData`; the profile loader
+//! `SkillProfile_Modifiers::Load` reads both per level; stock: Aether Ray's 1 ray, the gdx `*_aetherray` item modifiers
+//! +1 ray, +25 degrees). Ray
 //! k turns about the up axis by `-spread / 2 + k * step`, `step = spread / (n - 1)` (`spread / n` from 360 degrees
 //! on), so the fan is symmetric about the heading and a lone ray points straight ([`fan_angles`]).
 //!
@@ -24,7 +25,7 @@
 //! so the hits reach only as far as the drawn beam has grown ([`SpellBeam::attack_due`]); the held cast's node then
 //! pays the energy.
 
-/// `BeamInfo` state (+47*4 of the node).
+/// `BeamInfo` state (`BeamInfo.state`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Delay,
@@ -38,7 +39,7 @@ pub enum State {
 pub struct SpellBeam {
     pub state: State,
     delay: f32,
-    /// The stop was asked (node +228).
+    /// The stop was asked (`BeamInfo.stopRequested`).
     ending: bool,
     /// Per ray: metres from the emit point to the far end.
     pub lens: Vec<f32>,
@@ -46,7 +47,7 @@ pub struct SpellBeam {
     pub retract: f32,
     /// Per ray: the end effect is emitting (the "end effect started" bits).
     pub end_on: Vec<bool>,
-    /// Seconds to the next attack (node +136).
+    /// Seconds to the next attack (`BeamInfo.attackTimer`).
     attack: f32,
 }
 

@@ -13,7 +13,7 @@
 //! wind-up pays nothing. A weapon charge's warm-up is the exception (it
 //! pays at `WarmUpStart`, [`WarmPaid`]). A request arriving
 //! mid-swing / mid-cast is remembered in the character's one pending-action slot
-//! ([`crate::character::QueuedAction`], last wins) and runs at the clip's
+//! ([`gd_game_core::character::QueuedAction`], last wins) and runs at the clip's
 //! `AllowInterrupt` point or its "End"; `instantCast` skills (activation mode 2)
 //! bypass the queue and the animation entirely (`ActivateSkillConfigCmd`, fired
 //! through [`ProcCast`]). Kinds by record class:
@@ -48,15 +48,15 @@
 //! Submodules: `potions`, `areas`, `ranged`, `leaps`, `auras`, `charges`, `caster`, `requests`,
 //! `spell_beams`, `warmup`, `fire`, `projectiles`, `projectile_classes`, `attack_line`, `effects`,
 //! `class_fx`, `chaos`.
-use crate::character::{AnimCallback, CharState, Character};
-use crate::combat::{Combatant, Dead, MonsterAi};
-use crate::data::GameData;
+use crate::combat::MonsterAi;
 use crate::movement::MovePath;
 use crate::nav::Nav;
-use crate::player::{Loadout, Player, ProfileDirty};
 use bevy::prelude::*;
 use gd_formats::arz::Record;
-use std::collections::HashMap;
+use gd_game_core::character::{AnimCallback, CharState, Character};
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
 
 pub struct CastingPlugin;
 
@@ -80,7 +80,7 @@ impl Plugin for CastingPlugin {
                 (
                     dispels.after(CastingSet),
                     (shields, potion_over_time, self_buff_heals)
-                        .before(crate::afflictions::AfflictionStage::Tick),
+                        .before(gd_game_core::afflictions::AfflictionStage::Tick),
                 ),
             )
             .add_systems(
@@ -88,8 +88,8 @@ impl Plugin for CastingPlugin {
                 (player_damage_toggles, damage_auras)
                     .chain()
                     .in_set(CastingSet)
-                    .after(crate::player::PlayerSet)
-                    .before(crate::combat::CombatSet),
+                    .after(gd_game_core::player::PlayerSet)
+                    .before(gd_game_core::combat::CombatSet),
             )
             .add_systems(
                 Update,
@@ -97,7 +97,7 @@ impl Plugin for CastingPlugin {
                     stop_skills,
                     init_caster,
                     sync_spell_attacker,
-                    sync_ranged.run_if(resource_exists::<crate::inventory::Inventory>),
+                    sync_ranged.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                     regen_and_cooldowns,
                     potions,
                     fx_test,
@@ -117,8 +117,8 @@ impl Plugin for CastingPlugin {
                 )
                     .chain()
                     .in_set(CastingSet)
-                    .after(crate::player::PlayerSet)
-                    .before(crate::combat::CombatSet),
+                    .after(gd_game_core::player::PlayerSet)
+                    .before(gd_game_core::combat::CombatSet),
             );
         // The procs the frame's combat / trigger writers sent after
         // `fire_casts` ran (autocast triggers, secondaries, monster casts,
@@ -137,38 +137,23 @@ impl Plugin for CastingPlugin {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CastingSet;
 
-/// Hotbar slots of a save bar (`slots_per_bar` 47): 0–9 keys 1–0, 10 left
-/// mouse, 12 right mouse, 11 / 13 the left / right mouse of the alternate
-/// weapon set, 24 / 25 the health / energy potions, 46 evade
-/// (`PlayerHotSlotCtrl::GetPrimarySlot` / `GetSecondarySlot` /
-/// `GetHealthPotionSlot` / `GetManaPotionSlot` / `GetEvadeSlot`);
-/// 14–23 the second row's keys. Keys 1–0 (keybinding actions 9–18) fire
-/// whichever row the HUD shows, flipped by ToggleHotSlotBar (action 43)
-/// (GrimDawn.exe sub_1402110D0 / sub_140210DB0, names mapped by
-/// sub_1401F68B0; grimdawn
-/// `ui::hud::HotbarRow`).
-pub const SLOT_LEFT: usize = 10;
-pub const SLOT_RIGHT: usize = 12;
-pub const SLOT_ROW2: usize = 14;
-pub const SLOTS: usize = 24;
-pub const DEFAULT_ATTACK: &str = "records/skills/default/defaultweaponattack.dbr";
 /// The kick (`SkillManager::GetDefaultSkillId(2)`, `Skill_Kick`): the primary
 /// action on a `Destructible` whose `attackAnimation` is "Kick" uses it
 /// whatever the left slot holds (`crate::hotbar::kicks_breakable`).
 pub const DEFAULT_KICK: &str = "records/skills/default/defaultkickattack.dbr";
-/// `Skill_GiveBonus::ActivateNow` @0x1804f7f90 gives its bonus to a target
+/// `Skill_GiveBonus::ActivateNow` gives its bonus to a target
 /// within this many metres, edge to edge (`IsTargetInRange(…, 20.0)`).
 const GIVE_BONUS_REACH: f32 = 20.0;
 /// Projectile distance for a record that lacks `projectileDistance` (a data
 /// fallback, not a range rule).
 const MAX_RANGE: f32 = 20.0;
 
-/// `Skill::GetCooldownTime` @0x1804917e0: the profile's
+/// `Skill::GetCooldownTime`: the profile's
 /// `skillCooldownTime` at the level × (1 − total `skillCooldownReduction`
 /// %): the skill's own part (its record + modifiers, chance-gated,
 /// [`own_skill_attribute`]) plus the character's (gear, passives:
 /// `char_cdr`, already summed). Item skills and potions take no character
-/// part (pass 0.0; `Skill` +761 / +764). The one cooldown rule every store
+/// part (pass 0.0; `Skill.isItemSkill` / `Skill.isPotion`). The one cooldown rule every store
 /// starts through (`Cooldowns::start` skips a result of 0.1 s or less).
 pub(crate) fn cooldown_for(
     rec: &Record,
@@ -192,9 +177,9 @@ pub(crate) struct ProcCursor(pub(crate) bevy::ecs::message::MessageCursor<ProcCa
 /// A skill's range (m): its `distanceProfile` → gameengine.dbr
 /// `meleeRange` / `shortRange` / `moderateRange` / `longRange` /
 /// `maximumRange` / `bossRange`, Melee when missing (`Skill::LoadResources`,
-/// `Skill::GetRange` @0x180490ed0, `GameEngine::LoadFromDatabase`).
+/// `Skill::GetRange`, `GameEngine::LoadFromDatabase`).
 /// The usable distance adds both radii
-/// (`Character::GetTargetDistance` @0x18005de60) and 0.5.
+/// (`Character::GetTargetDistance`) and 0.5.
 pub fn skill_range(data: &GameData, rec: &Record) -> f32 {
     data.engine()
         .profile_range(rec.str("distanceProfile").unwrap_or("Melee"))
@@ -210,9 +195,9 @@ pub fn gamepad_range(data: &GameData, rec: &Record) -> f32 {
 }
 
 /// `CloseEnoughToUseSkill`: usable distance = range + both radii
-/// (`Character::GetTargetDistance` @0x18005de60) + the state's
+/// (`Character::GetTargetDistance`) + the state's
 /// `GetSkillUseTolerance` (0.5 at rest, `ControllerAIStateT::
-/// GetSkillUseTolerance` @0x180077bc0).
+/// GetSkillUseTolerance`).
 pub const MOVE_TOLERANCE: f32 = 0.5;
 
 /// A skill's usable distance: [`skill_range`] + both radii + [`MOVE_TOLERANCE`] —
@@ -220,19 +205,6 @@ pub const MOVE_TOLERANCE: f32 = 0.5;
 /// (`try_cast`, `move_to_use_skill`).
 pub fn usable_range(data: &GameData, rec: &Record, radii: f32) -> f32 {
     skill_range(data, rec) + radii + MOVE_TOLERANCE
-}
-
-/// The player's main hand holds a ranged weapon: weapon attacks fire its
-/// `basicProjectileName` (a projectile record: `projectileVelocity`,
-/// `projectileDistance`) at the target instead of hitting in melee reach.
-#[derive(Component, Clone, Debug)]
-pub struct RangedWeapon {
-    pub projectile: String,
-    /// Attack range: ranged weapons use the Long profile
-    /// (`SkillManager::Update` @0x180532420 via `GetWeaponRangeProfile`)
-    /// — `longRange` + the 0.5 tolerance; the game adds both
-    /// radii on top (`Character::GetTargetDistance`).
-    pub reach: f32,
 }
 
 /// Where a Shift-held (stationary) attack aims.
@@ -245,18 +217,18 @@ pub struct KeyboardAim {
     /// The `movementType` option (0 Classic, 1 Keyboard, 2 Keyboard Only).
     pub movement_type: i32,
     pub move_type: gd_sim::skills::MoveType,
-    pub controller: crate::player::ControllerDirection,
+    pub controller: gd_game_core::player::ControllerDirection,
     /// The player's position and facing (+Z).
     pub pos: Vec3,
     pub facing: Vec3,
     /// [`gamepad_range`].
     pub range: f32,
-    /// The `gamepadTargetLock` option (bool 38).
+    /// The `gamepadTargetLock` option.
     pub gamepad_lock: bool,
 }
 
 /// The keyboard movement modes' skill aim, `ControllerPlayerState::DefaultRequestSkillAction`
-/// @0x180163c30 (InputMode 0): from the request's `target` (the combat
+/// (InputMode 0): from the request's `target` (the combat
 /// enemy / ally) and `point`, the target and point the skill is used at, and whether the point is then cut to the
 /// straight walkable line from the player (`NavManager::FindStraightMovePointOnSlopes`). With `movementType` above 0:
 /// - the direction is the controller direction while a movement key is held (its length above 0), else the facing;
@@ -307,7 +279,7 @@ pub use self::areas::*;
 mod ranged;
 pub use self::ranged::*;
 mod leaps;
-pub use self::leaps::*;
+use self::leaps::*;
 mod auras;
 pub use self::auras::*;
 mod charges;
@@ -327,10 +299,23 @@ pub(crate) use self::projectile_classes::*;
 mod attack_line;
 pub use self::attack_line::*;
 mod effects;
-pub use self::effects::*;
+pub(crate) use self::effects::*;
+use gd_game_core::casting::attach_point_bind;
+use gd_game_core::casting::{
+    BeamNode, CastCooldownKey, CastOnAlly, CastRequest, CastWrapper, Caster, Casting, Channel,
+    ChannelFx, ChaosBeam, Charge, ChargeFx, ChargeStarts, ConeFx, Cooldowns, DEFAULT_ATTACK,
+    DamageAura, DamageAuras, Dispel, ENERGY_POTION, ExpandingRadius, HEALTH_POTION,
+    IMMOBILIZE_HOLD_SECS, IMMOBILIZE_PERIOD_SECS, ImmobilizeRefresh, Kind, LastCast, Leap,
+    MESH_PREFIX, PathCharge, PotionOverTime, ProcCast, ProjMods, RangedWeapon, SLOT_LEFT, SLOTS,
+    SelfBuffHeals, SelfBuffToggles, Shield, ShieldKind, Shields, SkillHit, SkillNotReady, SpawnPet,
+    SpellAttacker, SpellBeams, Storm, Use, UsePotion, Walk, WarmPaid, WarmUp, bonus_life,
+    char_pak_sounds, charges_to_range, cone_rotation, cone_slope, fan, grow_radius, is_leap,
+    is_self_buff_class, kind_of, level_f, own_skill_attribute, pak_effects, qualifying_types,
+    ranged_weapon, resource_behavior, spawn_on, spell_left, start_char_pak_sounds, storm_landing,
+    walks_into_range, warms_up,
+};
+use gd_game_core::visuals::{BuffFx, ProjectileMesh, ProjectileModelOf, spawn_fx};
 mod spell_beams;
 pub use self::spell_beams::*;
-mod class_fx;
-pub use self::class_fx::{ChannelFx, ChargeFx, ConeFx};
 mod chaos;
-pub use self::chaos::ChaosBeam;
+mod class_fx;

@@ -2,114 +2,9 @@
 //! faction pack, worn gear, what each proxy spawned this session, and what a
 //! dying monster leaves ([`death_actors`], `Skill_OnDeathSpawnActor`).
 use bevy::prelude::*;
-use gd_sim::combat::Rng;
-use std::collections::HashMap;
-
-#[derive(Component, Clone, Debug)]
-pub struct Monster {
-    pub record: String,
-    pub level: i32,
-    /// (level, proxy entity, index in its spawn list) — for [`ProxyStates`].
-    pub slot: (usize, u32, usize),
-}
-
-/// A monster's faction pack (`Character::Load`: the record's `factions`
-/// pack, `FactionPack::Load` @0x1802a2190): its own faction (`myFaction`,
-/// the pack's +668) and its value for each of the 47 factions (the pack's
-/// +8…, keyed like [`gd_sim::faction::KEYS`]).
-#[derive(Debug, Clone, PartialEq)]
-pub struct FactionPack {
-    pub mine: usize,
-    pub values: Vec<f32>,
-}
-
-impl FactionPack {
-    /// The pack of a creature record; `None` without one.
-    pub fn of(db: &gd_formats::vfs::Database, record: &str) -> Option<Self> {
-        let pack = db
-            .get(record)?
-            .str("factions")
-            .filter(|p| !p.is_empty())
-            .and_then(|p| db.get(p))?;
-        let mine = pack
-            .str("myFaction")
-            .and_then(crate::factions::index_of_name)?;
-        Some(Self {
-            mine,
-            values: gd_sim::faction::KEYS
-                .iter()
-                .map(|k| pack.f32(k).unwrap_or(0.0))
-                .collect(),
-        })
-    }
-
-    /// [`Self::of`] sharing one `Arc` per `factions` record, so [`Self::same`] meets `Arc::ptr_eq`.
-    pub fn shared(data: &crate::data::GameData, record: &str) -> Option<std::sync::Arc<Self>> {
-        let key = data
-            .db
-            .get(record)?
-            .str("factions")
-            .filter(|p| !p.is_empty())?
-            .to_ascii_lowercase();
-        data.packs()
-            .lock()
-            .unwrap()
-            .entry(key)
-            .or_insert_with(|| Self::of(&data.db, record).map(std::sync::Arc::new))
-            .clone()
-    }
-
-    /// `FactionManager::IsFriend(FactionPack const&, FactionType, FactionPack
-    /// const&)` @0x18028f550, `self` being the asking character's
-    /// pack and `other` the other character's: friends when the other's
-    /// faction is its own; for a faction index above 46 (the invisible
-    /// faction) always; else its value for the other's faction decides when
-    /// it is non-zero (friend from 0 up), else the other's value for its
-    /// faction does (friend unless below 0).
-    pub fn is_friend(&self, other: &FactionPack) -> bool {
-        let t = other.mine;
-        if t == self.mine {
-            return true;
-        }
-        if t <= 0x2E {
-            let v = self.values.get(t).copied().unwrap_or(0.0);
-            if v != 0.0 {
-                return v >= 0.0;
-            }
-            if other.values.get(self.mine).copied().unwrap_or(0.0) < 0.0 {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-impl FactionPack {
-    /// `FactionManager::IsFoe` @0x18028f870 / @0x18028f960: the complement of
-    /// [`Self::is_friend`] between two packs: the asker's own value for the other's faction decides when it is
-    /// non-zero (foe below 0), else the other's value for the asker's faction.
-    pub fn is_foe(&self, other: &FactionPack) -> bool {
-        !self.is_friend(other)
-    }
-
-    /// `IsFoe(me, other)` between two creatures' packs: one without a pack is nobody's foe (PORT: the engine's
-    /// pack of a record without `factions` is not traced).
-    pub fn foes(me: &Option<std::sync::Arc<Self>>, other: &Option<std::sync::Arc<Self>>) -> bool {
-        match (me, other) {
-            (Some(a), Some(b)) => a.is_foe(b),
-            _ => false,
-        }
-    }
-
-    /// Whether two creatures stand on the same side of every faction relation (same pack contents).
-    pub fn same(a: &Option<std::sync::Arc<Self>>, b: &Option<std::sync::Arc<Self>>) -> bool {
-        match (a, b) {
-            (None, None) => true,
-            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b) || **a == **b,
-            _ => false,
-        }
-    }
-}
+use gd_formats::collections::HashMap;
+use gd_game_core::monsters::{FactionPack, Monster};
+use gd_rules::Rng;
 
 /// Items a monster wears (`Character::LoadLoot`, rolled when it is created):
 /// they count in its combat profile and drop on death unless Broken.
@@ -120,14 +15,16 @@ pub struct Worn {
 }
 
 /// The `charLevel` of a character placed straight in a level file (a `Turret`, a town guard),
-/// `Character::Load` @0x180054e70: its experience level control (Character +5864) loads the record's `charLevel`
-/// equation, `minLevel` (default 1) and `maxLevel` (default 1) (`sub_18028E1D0`), then `sub_18028ED10` sets the
-/// level (+5984, the constructor leaves 0) to `min(max(trunc(charLevel), minLevel), maxLevel)`, or `minLevel`
-/// without an equation. The equation's `charLevel` variable (`sub_18028EC00`) is the players' average level
-/// (`PlayerManagerClient::GetPlayerInfo`: the rounded mean of the players' +5984; one player: his level). The level
+/// `Character::Load`: its experience level control (`Character.levelControl`) loads the record's `charLevel`
+/// equation, `minLevel` (default 1) and `maxLevel` (default 1) (`ExperienceLevelControl::Load`), then
+/// `ExperienceLevelControl::ApplyLevel` sets the level (`Character.level`, the constructor leaves 0) to
+/// `min(max(trunc(charLevel), minLevel), maxLevel)`, or `minLevel` without an equation. The equation's `charLevel`
+/// variable (`ExperienceLevelControl::GetCharLevelVariable`) is the players' average level
+/// (`PlayerManagerClient::GetPlayerInfo`: the rounded mean of the players' `Character.level`; one player: his level).
+/// The level
 /// entity factory sets no level after it, and `Monster::RestoreState` keeps it when
 /// the region reloads (here: [`ProxyStates`]). A proxy's monsters get the proxy's level instead.
-/// PORT: the equation's `playerLevel` variable (the control's +40) resolves to 0.
+/// PORT: the equation's `playerLevel` variable (`ExperienceLevelControl.playerLevel`) resolves to 0.
 pub fn placed_char_level(db: &gd_formats::vfs::Database, record: &str, player_level: i32) -> i32 {
     let Some(r) = db.get(record) else {
         return 1;
@@ -137,7 +34,7 @@ pub fn placed_char_level(db: &gd_formats::vfs::Database, record: &str, player_le
     let Some(eq) = r
         .str("charLevel")
         .filter(|e| !e.is_empty())
-        .and_then(|e| gd_sim::expr::Expr::parse(e).ok())
+        .and_then(|e| gd_rules::expr::Expr::parse(e).ok())
     else {
         return min;
     };
@@ -167,7 +64,8 @@ pub struct MonsterState {
 }
 
 /// The pool each "Unified Entities" group chose this session (group name -> index into its members'
-/// candidate pools; `GameEngine` +6584, cleared in `ExitPlayingMode`): its proxies and set pieces share
+/// candidate pools; `GameEngine.unifiedEntityChoices`, cleared in `ExitPlayingMode`): its proxies and set pieces
+/// share
 /// the choice.
 #[derive(Resource, Default)]
 pub struct UnifiedPools(pub HashMap<String, usize>);
@@ -185,7 +83,7 @@ pub struct ProfileCache(
 pub const PLAYER_PACK: &str = "records/controllers/factions/faction_player.dbr";
 
 /// Whether the player treats `record` as a foe (`FactionManager::
-/// IsFoe` @0x18028f960 / @0x18028f6c0 with the player's pack): the
+/// IsFoe` (both overloads) with the player's pack): the
 /// creature's faction is its `factions` pack's `myFaction` (none, e.g. no
 /// pack: never a foe); the player's own value for that faction decides when
 /// it is non-zero (foe below 0), else the creature pack's value for the
@@ -206,7 +104,7 @@ pub fn is_foe(
     };
     let Some(t) = pack
         .str("myFaction")
-        .and_then(crate::factions::index_of_name)
+        .and_then(gd_game_core::factions::index_of_name)
     else {
         return false;
     };
@@ -225,13 +123,14 @@ pub fn player_value(
 ) -> f32 {
     let saved = factions.and_then(|f| f.list.get(t).map(|x| x.value));
     saved.unwrap_or_else(|| {
-        let key = gd_sim::faction::KEYS.get(t).copied().unwrap_or_default();
+        let key = gd_rules::faction::KEYS.get(t).copied().unwrap_or_default();
         db.get(PLAYER_PACK).and_then(|p| p.f32(key)).unwrap_or(0.0)
     })
 }
 
-/// The player's faction pack as `Monster::JoinMe` @0x180375e40 copies it onto a monster joining him (the
-/// joiner's pack +6640 becomes the leader's): the player record pack's `myFaction` (`faction_player.dbr`, the
+/// The player's faction pack as `Monster::JoinMe` copies it onto a monster joining him (the
+/// joiner's pack `Character.factionPack` becomes the leader's): the player record pack's `myFaction`
+/// (`faction_player.dbr`, the
 /// player faction 0) and the player's values ([`player_value`]).
 pub fn player_pack(
     db: &gd_formats::vfs::Database,
@@ -240,9 +139,12 @@ pub fn player_pack(
     FactionPack {
         mine: db
             .get(PLAYER_PACK)
-            .and_then(|p| p.str("myFaction").and_then(crate::factions::index_of_name))
+            .and_then(|p| {
+                p.str("myFaction")
+                    .and_then(gd_game_core::factions::index_of_name)
+            })
             .unwrap_or(0),
-        values: (0..gd_sim::faction::FACTION_COUNT)
+        values: (0..gd_rules::faction::FACTION_COUNT)
             .map(|t| player_value(db, factions, t))
             .collect(),
     }
@@ -263,8 +165,8 @@ pub fn is_friendly(
 /// Devil's Crossing guard spawned by the story, a town guard placed straight in a level
 /// ([`LevelProxies::npcs`]), a friendly creature a proxy rolled. The
 /// engine has no ally flag nor team table: every `Monster` runs its `ControllerMonster`, whose
-/// `AngerUpdate` @0x18013bd20 takes as targets the characters in its view sphere that `FactionManager::IsFoe`
-/// @0x18028f870 calls foes, so a placed guard (`factions` Survivors, a `ControllerMonster` /
+/// `AngerUpdate` takes as targets the characters in its view sphere that `FactionManager::IsFoe`
+/// calls foes, so a placed guard (`factions` Survivors, a `ControllerMonster` /
 /// `ControllerStationaryMonster`) engages the monsters its faction pack is hostile to, like any monster engages
 /// the player. Other friendly records (`Npc*` classes, or no controller) are plain NPCs.
 pub fn is_fighter(db: &gd_formats::vfs::Database, record: &str) -> bool {
@@ -274,9 +176,9 @@ pub fn is_fighter(db: &gd_formats::vfs::Database, record: &str) -> bool {
 
 /// Whether a creature record is of the engine's `Npc` class family (`Npc`, `NpcMerchant`, `NpcCrafter`, ...:
 /// every `Npc*` creature class, by their RTTI parents in Game.dll). Such a character never fights nor
-/// takes a skill hit, whatever its faction: `Npc::Load` @0x1803b9ab0 gives it a `ControllerNpc2` (default
+/// takes a skill hit, whatever its faction: `Npc::Load` gives it a `ControllerNpc2` (default
 /// `ai_npcdefault02`: wander / idle / chat / quest states, no anger nor attack state) and
-/// `GameEngine::FilterInvalidTargets` @0x1802eca00 drops every `Npc`. So a Kurn or Bysmiel NPC stays a plain NPC
+/// `GameEngine::FilterInvalidTargets` drops every `Npc`. So a Kurn or Bysmiel NPC stays a plain NPC
 /// when the player's standing with its faction is hostile, and a reputation change never turns it.
 pub fn is_npc(db: &gd_formats::vfs::Database, record: &str) -> bool {
     db.get(record).is_some_and(|r| r.class.starts_with("Npc"))
@@ -298,9 +200,9 @@ pub fn stands_as_npc(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_state(
     commands: &mut Commands,
-    data: &crate::data::GameData,
-    bodies: &mut crate::creature::BodyCache,
-    rules: &crate::rules::CombatRules,
+    data: &gd_game_core::data::GameData,
+    bodies: &mut gd_game_core::creature::BodyCache,
+    rules: &gd_game_core::rules::CombatRules,
     factions: Option<&crate::factions::PlayerFactions>,
     profiles: &mut ProfileCache,
     m: &MonsterState,
@@ -322,7 +224,7 @@ pub fn spawn_state(
                 m.level,
                 gd_sim::actor::Side::Monster,
             )?;
-            let radius = crate::combat::get_radius(data.db.get(&m.record), 0.5);
+            let radius = gd_game_core::combat::get_radius(data.db.get(&m.record), 0.5);
             Some((std::sync::Arc::new(p), radius))
         })
         .clone();
@@ -342,7 +244,7 @@ pub fn spawn_state(
         ai.patrol.replace(patrol.to_vec());
         commands
             .entity(e)
-            .insert((crate::combat::Combatant::new(p, radius), ai));
+            .insert((gd_game_core::combat::Combatant::new(p, radius), ai));
     }
     Some(e)
 }
@@ -419,7 +321,7 @@ pub struct SetObject {
 pub struct SetPieceStates(pub HashMap<(usize, u32), Vec<SetObject>>);
 
 /// The engine's "request and block" points while one set piece is placed
-/// (Engine `NavManager` 0x18010d070 & co: each accepted point is kept with its
+/// (Engine `NavManager::RequestBlockedPoint` & co: each accepted point is kept with its
 /// clearance; a point is blocked when its xz distance to a kept one is at most
 /// the two clearances; `SetPiece::Place` clears them afterwards).
 struct Blocks<'a> {
@@ -456,8 +358,8 @@ impl Blocks<'_> {
     fn in_radius(&mut self, c: Vec3, radius: f32, r: f32) -> Option<Vec3> {
         for _ in 0..100 {
             let (a, d) = (
-                crate::rng::f32() * std::f32::consts::TAU,
-                crate::rng::f32() * radius,
+                gd_game_core::rng::f32() * std::f32::consts::TAU,
+                gd_game_core::rng::f32() * radius,
             );
             if let Some(p) = self
                 .on_mesh(c.x + a.cos() * d, c.z + a.sin() * d)
@@ -472,7 +374,7 @@ impl Blocks<'_> {
     /// `RequestAndBlockRandomPointOnRadius`: 100 tries on the circle.
     fn on_radius(&mut self, c: Vec3, radius: f32, r: f32) -> Option<Vec3> {
         for _ in 0..100 {
-            let a = crate::rng::f32() * std::f32::consts::TAU;
+            let a = gd_game_core::rng::f32() * std::f32::consts::TAU;
             if let Some(p) = self
                 .on_mesh(c.x + a.cos() * radius, c.z + a.sin() * radius)
                 .filter(|p| !self.blocked(*p, r))
@@ -491,7 +393,7 @@ impl Blocks<'_> {
         }
         let step = 2.0 * r + 0.1;
         let (mut ring, mut n, mut da) = (0.0f32, 1i32, 0.0f32);
-        let mut a = crate::rng::f32() * std::f32::consts::TAU;
+        let mut a = gd_game_core::rng::f32() * std::f32::consts::TAU;
         loop {
             for _ in 0..n {
                 if let Some(p) = self
@@ -512,8 +414,8 @@ impl Blocks<'_> {
     }
 }
 
-/// An ambush proxy holding back monsters (`ProxyAmbush::UpdateSelf`
-/// @0x180417fb0): once the player is inside `alertArea`, after
+/// An ambush proxy holding back monsters (`ProxyAmbush::UpdateSelf`):
+/// once the player is inside `alertArea`, after
 /// `rand[minDelayTime, maxDelayTime]` it places `rand[minGroupSize,
 /// maxGroupSize]` of them every `rand[minSpawnTime, maxSpawnTime]` (ms),
 /// waiting `minSpawnTime` while more than `spawnThreshold` of its monsters
@@ -533,7 +435,7 @@ pub struct Ambush {
 }
 
 /// A Shattered Realm proxy (`ProxyEndless`): its monsters are held (`pending`) in [`ProxyStates`] until the
-/// generator activates the proxy ([`crate::endless`], `ProxyEndless::UpdateSelf` @0x18041a570: state
+/// generator activates the proxy ([`crate::endless`], `ProxyEndless::UpdateSelf`: state
 /// 1 = dormant never spawns, the generator flips it to 0 when the floor is active). `LevelProp` of its level.
 #[derive(Component)]
 pub struct EndlessProxy {
@@ -552,7 +454,7 @@ pub fn set_key(ei: u32, n: usize) -> u32 {
 }
 
 /// Positions for a set piece's objects (`SetPiece::Place`
-/// @0x18047a950 and its `Apply*Positioning`): parts stand at their offset
+/// and its `Apply*Positioning`): parts stand at their offset
 /// from the set piece (world axes, put on the floor when the offset has no
 /// height) and block their spot; Random puts each object at a free point
 /// within `placementRadius` (`GetFreeLocation`), Ring on the circle
@@ -647,7 +549,7 @@ pub fn place_set_piece(
                 placed[i] = forced(o, blocks.on_radius(centre, radius, clearance(o, o.scale.0)))
                     .map(|p| (p, o.scale.0));
             }
-            let mut anchors: HashMap<usize, Vec3> = HashMap::new();
+            let mut anchors: HashMap<usize, Vec3> = HashMap::default();
             for &i in &rest {
                 let o = &run.objects[i];
                 let c = clearance(o, o.scale.0);
@@ -711,7 +613,7 @@ pub fn place_set_piece(
                 let d = own.unit() * cell * 0.5;
                 // The game nudges the cell's x and its (discarded) height.
                 x += a.cos() * d;
-                let _ = a.sin();
+                let _height = a.sin();
                 let p = floor(centre + Vec3::new(x, 0.0, z));
                 let p = blocks.take(p, clearance(o, o.scale.0));
                 placed[i] = forced(o, p).map(|p| (p, o.scale.0));
@@ -721,7 +623,7 @@ pub fn place_set_piece(
     let mut out = Vec::new();
     for (o, at) in run.objects.iter().zip(placed) {
         let Some((p, s)) = at else { continue };
-        // `ApplyRotation` @0x1804766d0 (parts keep the set piece's frame).
+        // `ApplyRotation` (parts keep the set piece's frame).
         let rot = if o.offset.is_some() {
             Quat::from_rotation_y(yaw)
         } else {
@@ -741,7 +643,7 @@ pub fn place_set_piece(
     out
 }
 
-/// `SetPiece::ApplyRotation` @0x1804766d0 (forward = the model's +Z): None
+/// `SetPiece::ApplyRotation` (forward = the model's +Z): None
 /// keeps the set piece's facing; Y a random heading; XYZ a random up vector
 /// (three rolls in -1..1); Aligned along the line from the centre, turned a
 /// quarter at random (odd roll); FaceOut / FaceIn away from / towards the
@@ -798,7 +700,7 @@ pub fn irand(lo: i32, hi: i32) -> i32 {
     if hi <= lo {
         lo
     } else {
-        crate::rng::i32(lo..=hi)
+        gd_game_core::rng::i32(lo..=hi)
     }
 }
 
@@ -807,20 +709,20 @@ pub fn ambushes(
     mut commands: Commands,
     time: Res<Time>,
     mut q: Query<&mut Ambush>,
-    players: Query<&Transform, With<crate::player::Player>>,
-    monsters: Query<&Monster, Without<crate::combat::Dead>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
+    monsters: Query<&Monster, Without<gd_game_core::combat::Dead>>,
     mut states: ResMut<ProxyStates>,
     mut profiles: ResMut<ProfileCache>,
-    rules: Res<crate::combat::CombatRules>,
+    rules: Res<gd_game_core::rules::CombatRules>,
     mut assets: crate::creature::Spawner,
     // Option: factions are optional input to the spawn (`as_deref`).
     factions: Option<Res<crate::factions::PlayerFactions>>,
     // The fraction of a millisecond the whole-millisecond timers have not consumed yet.
     mut carry: Local<f32>,
     (mut anims, mut clips, mut new): (
-        ResMut<crate::character::AnimCache>,
+        ResMut<gd_game_core::character::AnimCache>,
         Local<crate::creature::ClipLists>,
-        crate::session::NewSession,
+        gd_game_core::session::NewSession,
     ),
 ) {
     if new.begun() {
@@ -829,7 +731,7 @@ pub fn ambushes(
     let Ok(ptf) = players.single() else {
         return;
     };
-    let dt = crate::session::frame_ms(&mut carry, &time);
+    let dt = gd_game_core::session::frame_ms(&mut carry, &time);
     let deadline = std::time::Instant::now() + crate::creature::CLIPS_BUDGET;
     for mut a in &mut q {
         if !a.alerted {
@@ -904,7 +806,7 @@ pub fn ambushes(
                     (key.0, key.1, i),
                     &[],
                 );
-                // `PlaceNextObject` @0x180418eb0: `EnableSpawnAnimation` on a monster before it is
+                // `PlaceNextObject`: `EnableSpawnAnimation` on a monster before it is
                 // spawned (`combat::SpawnStartup`; a hidden monster's Startup is its Hidden state instead).
                 if let Some(e) = placed {
                     commands.entity(e).queue_silenced(|mut w: EntityWorldMut| {
@@ -941,12 +843,12 @@ pub fn spawn_level_monsters(
     mut levels: Query<&mut PendingMonsters>,
     states: Res<ProxyStates>,
     mut profiles: ResMut<ProfileCache>,
-    rules: Res<crate::combat::CombatRules>,
+    rules: Res<gd_game_core::rules::CombatRules>,
     mut assets: crate::creature::Spawner,
     factions: Option<Res<crate::factions::PlayerFactions>>,
-    mut anims: ResMut<crate::character::AnimCache>,
+    mut anims: ResMut<gd_game_core::character::AnimCache>,
     mut clips: Local<crate::creature::ClipLists>,
-    mut new: crate::session::NewSession,
+    mut new: gd_game_core::session::NewSession,
 ) {
     if new.begun() {
         clips.clear();
@@ -1003,9 +905,9 @@ pub fn place(nav: &gd_sim::nav::NavWorld, center: Vec3, extents: f32, n: usize) 
             let r = extents.max(1.0) * (0.3 + 0.7 * (attempt as f32 / 24.0));
             let p = base
                 + Vec3::new(
-                    (crate::rng::f32() * 2.0 - 1.0) * r,
+                    (gd_game_core::rng::f32() * 2.0 - 1.0) * r,
                     2.0,
-                    (crate::rng::f32() * 2.0 - 1.0) * r,
+                    (gd_game_core::rng::f32() * 2.0 - 1.0) * r,
                 );
             let Some(c) = nav.nearest(p.to_array(), 1.5) else {
                 continue;
@@ -1023,12 +925,12 @@ pub fn place(nav: &gd_sim::nav::NavWorld, center: Vec3, extents: f32, n: usize) 
 
 /// Monsters are not parented to their level (streaming may despawn a level in
 /// the frame they are added); they go when their level is unloaded: marked
-/// [`crate::levels::Unload`], despawned in `Last` (other systems of this frame
+/// [`gd_game_core::levels::Unload`], despawned in `Last` (other systems of this frame
 /// may still command them). Only a change of the loaded levels, or an entity
 /// added since the last run (spawned for a level already gone), can need it.
 pub fn cull_monsters(
     mut commands: Commands,
-    world: Res<crate::levels::Levels>,
+    world: Res<gd_game_core::levels::Levels>,
     q: Query<(Entity, Ref<Monster>)>,
     npcs: Query<(Entity, Ref<LevelNpc>)>,
     // Ground items leave with their level through `crate::loot::stash_ground_items` (kept for its next load).
@@ -1039,33 +941,33 @@ pub fn cull_monsters(
     for (e, m) in &q {
         // Story monsters (slot level usize::MAX) are managed by the story.
         if (all || m.is_added()) && m.slot.0 != usize::MAX && gone(m.slot.0) {
-            commands.entity(e).try_insert(crate::levels::Unload);
+            commands.entity(e).try_insert(gd_game_core::levels::Unload);
         }
     }
     for (e, n) in &npcs {
         // A story monster's dropped NPC keeps its slot level usize::MAX: the story's too.
         if (all || n.is_added()) && n.0 != usize::MAX && gone(n.0) {
-            commands.entity(e).try_insert(crate::levels::Unload);
+            commands.entity(e).try_insert(gd_game_core::levels::Unload);
         }
     }
     for (e, n) in &props {
         if (all || n.is_added()) && gone(n.0) {
-            commands.entity(e).try_insert(crate::levels::Unload);
+            commands.entity(e).try_insert(gd_game_core::levels::Unload);
         }
     }
 }
 
-/// The player's level now, for what spawns: [`crate::progress::PlayerProgress`] (the one source of the level
+/// The player's level now, for what spawns: [`gd_game_core::progress::PlayerProgress`] (the one source of the level
 /// in a session). Before `init_progress` created it (the menu backdrop, the frames a session's first levels
 /// stream in ahead of the player) it is the level that resource starts from (`PlayerProgress::from_save`).
 fn current_player_level(
-    progress: Option<&crate::progress::PlayerProgress>,
-    loaded: Option<&crate::session::LoadedCharacter>,
+    progress: Option<&gd_game_core::progress::PlayerProgress>,
+    loaded: Option<&gd_game_core::session::LoadedCharacter>,
 ) -> i32 {
     progress
         .map_or_else(
             || {
-                crate::progress::PlayerProgress::from_save(loaded)
+                gd_game_core::progress::PlayerProgress::from_save(loaded)
                     .progress
                     .level
             },
@@ -1078,20 +980,20 @@ fn current_player_level(
 #[allow(clippy::too_many_arguments)]
 pub fn equip_monsters(
     mut commands: Commands,
-    mut q: Query<(Entity, &Monster, &mut crate::combat::Combatant), Added<Monster>>,
-    data: Res<crate::data::GameData>,
-    rules: Res<crate::combat::CombatRules>,
+    mut q: Query<(Entity, &Monster, &mut gd_game_core::combat::Combatant), Added<Monster>>,
+    data: Res<gd_game_core::data::GameData>,
+    rules: Res<gd_game_core::rules::CombatRules>,
     // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
     // a new character.
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     session: crate::session::Session,
 ) {
     let idb = &data.item_db();
     let player_level = current_player_level(progress.as_deref(), loaded.as_deref()) as u32;
     for (e, m, mut cb) in &mut q {
         let params = session.loot(m.level.max(1) as u32, player_level);
-        let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+        let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
         let (items, resolved): (Vec<_>, Vec<_>) =
             gd_sim::items::loot::monster_worn(idb, &m.record, &params, &mut rng)
                 .iter()
@@ -1145,14 +1047,14 @@ pub fn run_proxies(
     levels: Query<(Entity, &LevelProxies), Without<LevelPopulated>>,
     // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
     // a new character.
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<crate::nav::Nav>,
     mut states: ResMut<ProxyStates>,
-    mut chests: ResMut<crate::world::ChestStates>,
+    mut chests: ResMut<gd_game_core::world::ChestStates>,
     mut set_states: ResMut<SetPieceStates>,
     mut assets: crate::creature::Spawner,
-    world: Res<crate::levels::Levels>,
+    world: Res<gd_game_core::levels::Levels>,
     groups: Res<crate::patrol::PatrolGroups>,
     (session, mut unified, mut unique): (
         crate::session::Session,
@@ -1178,7 +1080,7 @@ pub fn run_proxies(
                     debug!("set piece {rec} {uid:?}: not chosen in its unique group");
                     return Vec::new();
                 }
-                let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+                let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
                 // Set pieces of one "Unified Entities" group share the pool
                 // choice (`SetPiece::Generate`, one store with the proxies,
                 // [`UnifiedPools`]); the engine stores the chosen index after
@@ -1234,7 +1136,7 @@ pub fn run_proxies(
                                 level,
                                 position: o.position,
                                 yaw: o.yaw,
-                                variant: crate::rng::u32(..),
+                                variant: gd_game_core::rng::u32(..),
                                 alive: true,
                                 pending: false,
                                 scale: None,
@@ -1284,7 +1186,7 @@ pub fn run_proxies(
                     );
                     return Vec::new();
                 }
-                let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+                let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
                 let limits = world.level_limits(Some(lp.level), p.position, difficulty);
                 let area = gd_sim::proxy::area_level(player_level, limits);
                 debug!("proxy {} limits {limits:?}: area level {area}", p.record);
@@ -1351,7 +1253,7 @@ pub fn run_proxies(
                     .accessories
                     .into_iter()
                     .zip(extra)
-                    .map(|(r, p)| (r, *p, crate::rng::f32() * std::f32::consts::TAU))
+                    .map(|(r, p)| (r, *p, gd_game_core::rng::f32() * std::f32::consts::TAU))
                     .collect();
                 chests.accessories.insert(key, acc);
                 let spawns = run.monsters;
@@ -1368,8 +1270,8 @@ pub fn run_proxies(
                         record: s.record,
                         level: s.level,
                         position: pos,
-                        yaw: crate::rng::f32() * std::f32::consts::TAU,
-                        variant: crate::rng::u32(..),
+                        yaw: gd_game_core::rng::f32() * std::f32::consts::TAU,
+                        variant: gd_game_core::rng::u32(..),
                         alive: true,
                         pending: ambush || endless,
                         scale: None,
@@ -1454,13 +1356,13 @@ pub fn run_proxies(
                 "Turret" => {
                     let key = (lp.level, *ei);
                     let list = states.0.entry(key).or_insert_with(|| {
-                        let z = crate::character::facing(tf);
+                        let z = gd_game_core::character::facing(tf);
                         vec![MonsterState {
                             record: rec.clone(),
                             level: placed_char_level(&assets.data.db, rec, player_level),
                             position: tf.translation,
                             yaw: z.x.atan2(z.z),
-                            variant: crate::rng::u32(..),
+                            variant: gd_game_core::rng::u32(..),
                             alive: true,
                             pending: false,
                             scale: None,
@@ -1516,7 +1418,7 @@ pub fn run_proxies(
             if is_fighter(&assets.data.db, rec) {
                 let key = (lp.level, *ei);
                 let list = states.0.entry(key).or_insert_with(|| {
-                    let z = crate::character::facing(&tf);
+                    let z = gd_game_core::character::facing(&tf);
                     vec![MonsterState {
                         record: rec.clone(),
                         level: placed_char_level(&assets.data.db, rec, player_level),
@@ -1560,9 +1462,9 @@ pub fn run_proxies(
 /// Things a dying monster leaves (`spawnObjects` of its on-death skills):
 /// a chest, a breakable or a creature.
 ///
-/// `Skill_OnDeathSpawnActor::ActivateOnDeathNow` @0x1804fdd10: its
+/// `Skill_OnDeathSpawnActor::ActivateOnDeathNow`: its
 /// `spawnObjects` actor appears where the monster died, on the floor (`WorldVec3::TranslateToFloor`; a
-/// nemesis's loot chest, a hero's loot orb). `SpawnActor` @0x1804fe150
+/// nemesis's loot chest, a hero's loot orb). `SpawnActor`
 /// creates whatever the record is and adds it to the world at the owner's
 /// level: containers, destructibles, monsters (Gilisten's
 /// rebirth) and NPCs (Direni, Edmund Doyle) all appear. The game dresses
@@ -1571,14 +1473,14 @@ pub fn run_proxies(
 pub fn death_actors(
     mut commands: Commands,
     mut spawner: crate::creature::Spawner,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut seq: Local<DropSeq>,
-    rules: Res<crate::rules::CombatRules>,
-    broken: Res<crate::world::Broken>,
+    rules: Res<gd_game_core::rules::CombatRules>,
+    broken: Res<gd_game_core::world::Broken>,
     nav: Res<crate::nav::Nav>,
     q: Query<
         (&Transform, &crate::monster_skills::MonsterSkills, &Monster),
-        Added<crate::combat::Dead>,
+        Added<gd_game_core::combat::Dead>,
     >,
 ) {
     if fresh.begun() {
@@ -1606,7 +1508,7 @@ pub fn death_actors(
                 .get(&obj)
                 .is_some_and(|r| r.class.contains("Container"))
             {
-                let key = crate::world::ChestKey::Accessory(usize::MAX, seq.next(), 0);
+                let key = gd_game_core::world::ChestKey::Accessory(usize::MAX, seq.next(), 0);
                 crate::chests::spawn_chest(
                     &mut commands,
                     &spawner.data.db,
@@ -1648,14 +1550,19 @@ pub fn death_actors(
                 .db
                 .get(&obj)
                 .filter(|r| r.class == "Monster" || r.class == "Npc")
-                .map(|r| (r.class == "Npc", crate::combat::get_radius(Some(r), 0.5)))
+                .map(|r| {
+                    (
+                        r.class == "Npc",
+                        gd_game_core::combat::get_radius(Some(r), 0.5),
+                    )
+                })
             {
                 let Some(ne) = crate::creature::spawn(
                     &mut commands,
                     &mut spawner,
                     t,
                     &obj,
-                    crate::rng::u32(..),
+                    gd_game_core::rng::u32(..),
                 ) else {
                     continue;
                 };
@@ -1676,7 +1583,7 @@ pub fn death_actors(
                             level: m.level,
                             slot: (m.slot.0, u32::MAX, usize::MAX),
                         },
-                        crate::combat::Combatant::new(std::sync::Arc::new(profile), radius),
+                        gd_game_core::combat::Combatant::new(std::sync::Arc::new(profile), radius),
                         crate::combat::MonsterAi::from_record(&spawner.data, &obj, t.translation),
                     ));
                 }
@@ -1711,33 +1618,33 @@ pub struct MonstersPlugin;
 impl Plugin for MonstersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SetPieceStates>()
-            .init_resource::<crate::world::ChestStates>()
+            .init_resource::<gd_game_core::world::ChestStates>()
             .add_systems(
                 Update,
                 (
                     run_proxies
                         .in_set(MonsterStage::Proxies)
-                        .run_if(resource_exists::<crate::rules::CombatRules>)
+                        .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .after(crate::factions::FactionStage::Story),
                     spawn_level_monsters
                         .in_set(MonsterStage::Proxies)
-                        .run_if(resource_exists::<crate::rules::CombatRules>)
+                        .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .after(run_proxies),
                     spawn_level_objects
                         .in_set(MonsterStage::LevelObjects)
-                        .run_if(resource_exists::<crate::rules::CombatRules>)
+                        .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .after(run_proxies),
-                    ambushes.run_if(resource_exists::<crate::rules::CombatRules>),
+                    ambushes.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     cull_monsters,
                     // Its fresh profile (no buffs) must land before the auras and the
                     // monster profile rebuild, or it wipes the buffs they added in
                     // the monster's first frame (the rebuild consumed the dirty flag).
                     equip_monsters
-                        .run_if(resource_exists::<crate::rules::CombatRules>)
+                        .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .before(crate::auras::AurasSet)
                         .before(crate::monster_skills::MonsterSkillStage::Rebuild),
                     death_actors
-                        .run_if(resource_exists::<crate::rules::CombatRules>)
+                        .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .after(crate::monster_skills::MonsterSkillStage::Dying)
                         .before(crate::monster_skills::MonsterSkillStage::Generators),
                 ),
@@ -1745,18 +1652,18 @@ impl Plugin for MonstersPlugin {
     }
 }
 
-/// Runs a script-placed proxy (`Proxy::Create` + `SetCoords` from Lua or a
+/// Runs a script-placed proxy (`LuaProxy::Create` + `SetCoords` from Lua or a
 /// quest) at `position` and spawns its monsters; `id` is the story object, so
 /// they are story monsters (slot level `usize::MAX`) left to the story to
 /// despawn. Same rules as level proxies, without the per-session memory.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_story_proxy(
     commands: &mut Commands,
-    data: &crate::data::GameData,
-    bodies: &mut crate::creature::BodyCache,
+    data: &gd_game_core::data::GameData,
+    bodies: &mut gd_game_core::creature::BodyCache,
     nav: &crate::nav::Nav,
-    rules: &crate::rules::CombatRules,
-    world: Option<&crate::levels::Levels>,
+    rules: &gd_game_core::rules::CombatRules,
+    world: Option<&gd_game_core::levels::Levels>,
     record: &str,
     position: Vec3,
     player_level: i32,
@@ -1765,7 +1672,7 @@ pub fn spawn_story_proxy(
     id: u32,
     patrol: &[[u32; 4]],
 ) -> Vec<Entity> {
-    let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let mode = session.mode();
     // PORT: a script-placed proxy has no region here (engine source not traced): position lookup.
     let limits = world.and_then(|w| w.level_limits(None, position, mode.difficulty));
@@ -1795,14 +1702,14 @@ pub fn spawn_story_proxy(
     let extra = points.split_off(spawns.len().min(points.len()));
     for (n, (rec, p)) in run.accessories.iter().zip(extra).enumerate() {
         let tf = Transform::from_translation(p).with_rotation(Quat::from_rotation_y(
-            crate::rng::f32() * std::f32::consts::TAU,
+            gd_game_core::rng::f32() * std::f32::consts::TAU,
         ));
         crate::chests::spawn_chest(
             commands,
             &data.db,
             tf,
             rec,
-            crate::world::ChestKey::Accessory(usize::MAX, id, n),
+            gd_game_core::world::ChestKey::Accessory(usize::MAX, id, n),
             player_level,
             false,
         );
@@ -1810,7 +1717,7 @@ pub fn spawn_story_proxy(
     let mut out = Vec::new();
     for (i, (m, pos)) in spawns.into_iter().zip(points).enumerate() {
         let tf = Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(
-            crate::rng::f32() * std::f32::consts::TAU,
+            gd_game_core::rng::f32() * std::f32::consts::TAU,
         ));
         let Some((e, _)) = crate::creature::spawn_creature(
             commands,
@@ -1818,7 +1725,7 @@ pub fn spawn_story_proxy(
             bodies,
             tf,
             &m.record,
-            crate::rng::u32(..),
+            gd_game_core::rng::u32(..),
             None,
         ) else {
             continue;
@@ -1842,11 +1749,11 @@ pub fn spawn_story_proxy(
             m.level,
             gd_sim::actor::Side::Monster,
         ) {
-            let radius = crate::combat::get_radius(data.db.get(&m.record), 0.5);
+            let radius = gd_game_core::combat::get_radius(data.db.get(&m.record), 0.5);
             let mut ai = crate::combat::MonsterAi::from_record(data, &m.record, pos);
             ai.patrol.replace(patrol.to_vec());
             commands.entity(e).insert((
-                crate::combat::Combatant::new(std::sync::Arc::new(p), radius),
+                gd_game_core::combat::Combatant::new(std::sync::Arc::new(p), radius),
                 ai,
             ));
         }
@@ -1866,8 +1773,8 @@ pub struct LevelObjectsSpawned;
 
 /// A newly populated level's gameplay objects, after [`run_proxies`]:
 /// set-piece breakables and chests, the nav obstacles of the other set-piece
-/// objects (a blocking one's mesh hit boxes, like `FixedItem::CreatePathObstacle`
-/// @0x1802a9cb0; a `NavBlocker` whose mesh fails to load its cylinder), proxy
+/// objects (a blocking one's mesh hit boxes, like `FixedItem::CreatePathObstacle`;
+/// a `NavBlocker` whose mesh fails to load its cylinder), proxy
 /// accessory chests, riftgates and respawn points, devotion shrines and the
 /// ascendant altar, breakables, doors and level chests. The game adds what it
 /// only shows (set-piece meshes, sound emitters), then drops the [`LevelProxies`].
@@ -1875,7 +1782,7 @@ pub struct LevelObjectsSpawned;
 /// PORT: a level's objects spawn once every mesh and door animation they read is parsed in the background
 /// ([`level_objects_ready`]), not in the frame the level is populated, so walking into a level does not parse them on
 /// the game thread. While it waits the level holds the meshes already parsed (`waiting`): `BodyCache` only keeps its
-/// last `crate::weak_cache::RECENT` meshes warm, so a level with many set pieces beside a crowd would otherwise lose
+/// last `gd_game_core::weak_cache::RECENT` meshes warm, so a level with many set pieces beside a crowd would otherwise lose
 /// its early meshes before the last one arrives.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_level_objects(
@@ -1883,20 +1790,20 @@ pub fn spawn_level_objects(
     levels: Query<(Entity, &LevelProxies), (With<LevelPopulated>, Without<LevelObjectsSpawned>)>,
     // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
     // a new character; the codex is optional input.
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<crate::nav::Nav>,
-    chests: Res<crate::world::ChestStates>,
+    chests: Res<gd_game_core::world::ChestStates>,
     codex: Option<Res<crate::lore::LoreCodex>>,
     set_states: Res<SetPieceStates>,
-    broken: Res<crate::world::Broken>,
+    broken: Res<gd_game_core::world::Broken>,
     (data, mut bodies, mut anims): (
-        Res<crate::data::GameData>,
-        ResMut<crate::creature::BodyCache>,
-        ResMut<crate::character::AnimCache>,
+        Res<gd_game_core::data::GameData>,
+        ResMut<gd_game_core::creature::BodyCache>,
+        ResMut<gd_game_core::character::AnimCache>,
     ),
-    rules: Res<crate::rules::CombatRules>,
-    mode: Res<crate::session::GameMode>,
+    rules: Res<gd_game_core::rules::CombatRules>,
+    mode: Res<gd_game_core::session::GameMode>,
     mut waiting: Local<HashMap<Entity, Vec<std::sync::Arc<gd_formats::msh::Mesh>>>>,
 ) {
     waiting.retain(|e, _| levels.contains(*e));
@@ -1935,7 +1842,7 @@ pub fn spawn_level_objects(
                         );
                     }
                     "FixedItemContainer" => {
-                        let ck = crate::world::ChestKey::Accessory(lp.level, key, 0);
+                        let ck = gd_game_core::world::ChestKey::Accessory(lp.level, key, 0);
                         crate::chests::spawn_chest(
                             &mut commands,
                             &data.db,
@@ -1961,7 +1868,12 @@ pub fn spawn_level_objects(
                         };
                         let Some(mesh) = r.str("mesh") else { continue };
                         let obstacles = match bodies.get(&data, mesh) {
-                            Some(msh) if o.block => crate::obstacles::hit_box_obstacles(&msh, &tf),
+                            Some(msh)
+                                if o.block
+                                    || (r.class == "Decoration" && !r.bool("allowPathing")) =>
+                            {
+                                crate::obstacles::hit_box_obstacles(&msh, &tf)
+                            }
                             Some(_) => Vec::new(),
                             None if o.class == "NavBlocker" => {
                                 vec![crate::obstacles::nav_blocker(r, o.position)]
@@ -2065,7 +1977,7 @@ pub fn spawn_level_objects(
             );
         }
         for (ei, rec, tf) in &lp.chests {
-            let key = crate::world::ChestKey::Level(lp.level, *ei);
+            let key = gd_game_core::world::ChestKey::Level(lp.level, *ei);
             if data.db.get(rec).is_some_and(|r| r.class == "ItemNote") {
                 let at = nav
                     .0
@@ -2106,7 +2018,7 @@ pub fn spawn_level_objects(
 fn spawn_accessories(
     commands: &mut Commands,
     db: &gd_formats::vfs::Database,
-    chests: &crate::world::ChestStates,
+    chests: &gd_game_core::world::ChestStates,
     (level, entity): (usize, u32),
     player_level: i32,
 ) {
@@ -2122,7 +2034,7 @@ fn spawn_accessories(
         if db.get(rec).is_some_and(|r| r.class == "EndlessBuffShrine") {
             continue;
         }
-        let key = crate::world::ChestKey::Accessory(level, entity, i);
+        let key = gd_game_core::world::ChestKey::Accessory(level, entity, i);
         let tf = Transform::from_translation(*pos).with_rotation(Quat::from_rotation_y(*yaw));
         crate::chests::spawn_chest(
             commands,
@@ -2137,17 +2049,17 @@ fn spawn_accessories(
 }
 
 /// Whether every mesh and door animation [`spawn_level_objects`] reads for the level is parsed (one not yet parsed
-/// starts its background load: [`crate::creature::BodyCache::ready`], [`crate::character::AnimCache::ready`]): the
+/// starts its background load: [`gd_game_core::creature::BodyCache::ready`], [`gd_game_core::character::AnimCache::ready`]): the
 /// set-piece objects', the breakables' and the doors'. The object meshes already parsed go into `held`.
 fn level_objects_ready(
-    data: &crate::data::GameData,
-    bodies: &mut crate::creature::BodyCache,
-    anims: &mut crate::character::AnimCache,
+    data: &gd_game_core::data::GameData,
+    bodies: &mut gd_game_core::creature::BodyCache,
+    anims: &mut gd_game_core::character::AnimCache,
     lp: &LevelProxies,
     set_states: &SetPieceStates,
     held: &mut Vec<std::sync::Arc<gd_formats::msh::Mesh>>,
 ) -> bool {
-    let mut mesh = |bodies: &mut crate::creature::BodyCache, rec: &str| {
+    let mut mesh = |bodies: &mut gd_game_core::creature::BodyCache, rec: &str| {
         let Some(m) = data.db.get(rec).and_then(|r| r.str("mesh")) else {
             return true;
         };

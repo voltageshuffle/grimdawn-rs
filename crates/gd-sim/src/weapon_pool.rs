@@ -2,10 +2,10 @@
 //! attack (the default attack, Fire Strike `Skill_WeaponPool_BasicAttack`,
 //! Cadence `…_ChargedFinale`, Righteous Fervor `…_ChargedScaling`).
 //!
-//! `SkillActivatedWeaponPool::StartAction` @0x18051bb90 asks
-//! `SkillManager::SelectWeaponPoolSkill` @0x180536b60 for a pool skill and
+//! `SkillActivatedWeaponPool::StartAction` asks
+//! `SkillManager::SelectWeaponPoolSkill` for a pool skill and
 //! runs that skill's action with the pool skill as its parent
-//! (`Skill_WPAttack` +386 = parent id); `Skill_WPAttack` adds the parent's
+//! (`Skill_WPAttack.parentSkillId`); `Skill_WPAttack` adds the parent's
 //! damage and multiplies its weapon % by the parent's (`actor::SkillUse`).
 //! The selection ([`select`]): learned, available pool skills with
 //! a chance weight (`Skill_WPAttack::GetChanceWeight`: `skillChanceWeight`
@@ -14,13 +14,13 @@
 //! the default attack, or, when there are skills weighing ≥ 100, to one of
 //! them picked by weight. Availability = `Skill::SetAvailability`'s
 //! weapon checks ([`qualifies`]).
-use crate::combat::Rng;
 use crate::equip::{HandState, WeaponType};
 use crate::stats::level_value;
 use gd_formats::arz::Record;
+use gd_rules::Rng;
 
 /// Dual-wield flags and their hand-state bits (
-/// `SkillProfile::LoadProfile` @0x180545880: `dualWieldOnly` 0x1 melee,
+/// `SkillProfile::LoadProfile`: `dualWieldOnly` 0x1 melee,
 /// `dualRangedOnly` 0x40, `dualRangedOrRanged2hOnly` 0x44,
 /// `dualRangedOrAllRangedOnly` 0xC4, `shieldNoRanged` 0x22).
 pub const DUAL_WIELD_FLAGS: [(&str, u32); 5] = [

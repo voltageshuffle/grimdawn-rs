@@ -4,7 +4,7 @@
 //!
 //! [`Arc::read`] decodes a whole entry; [`Arc::open_entry`] gives a seekable reader ([`EntryReader`]) that
 //! decodes only the parts a read touches, as the engine's `FileSystem` serves a map to `World::Load`
-//! @0x18021a4f0 (maps are read region by region as the world streams in, never whole).
+//! (maps are read region by region as the world streams in, never whole).
 use crate::util::{Reader, latin1, lz4_max_size};
 use anyhow::{Context, Result, bail};
 use std::fs::File;
@@ -224,14 +224,19 @@ impl Arc {
     }
 }
 
+/// One positional read (no cursor): the primitive behind [`read_exact_at`] and [`EntryReader`].
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    return std::os::unix::fs::FileExt::read_at(file, buf, offset);
+    #[cfg(windows)]
+    return std::os::windows::fs::FileExt::seek_read(file, buf, offset);
+}
+
 /// Reads exactly `buf.len()` bytes at `offset` without touching the file cursor, so concurrent
 /// readers share one handle without a lock.
 fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
-        #[cfg(unix)]
-        let n = std::os::unix::fs::FileExt::read_at(file, buf, offset)?;
-        #[cfg(windows)]
-        let n = std::os::windows::fs::FileExt::seek_read(file, buf, offset)?;
+        let n = read_at(file, buf, offset)?;
         if n == 0 {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
@@ -294,10 +299,7 @@ impl Read for EntryReader {
             return Ok(0);
         }
         let n = match &mut self.layout {
-            Layout::Stored { offset } => {
-                self.file.seek(SeekFrom::Start(*offset + self.pos))?;
-                self.file.read(&mut buf[..n])?
-            }
+            Layout::Stored { offset } => read_at(&self.file, &mut buf[..n], *offset + self.pos)?,
             Layout::Parts {
                 parts,
                 starts,
@@ -311,9 +313,7 @@ impl Read for EntryReader {
                 let n = n.min(p.size as usize - within);
                 let out = &mut buf[..n];
                 if p.compressed == p.size {
-                    self.file
-                        .seek(SeekFrom::Start(p.offset as u64 + within as u64))?;
-                    self.file.read_exact(out)?;
+                    read_exact_at(&self.file, out, p.offset as u64 + within as u64)?;
                 } else if let Some(k) = recent.iter().position(|(j, _)| *j == i) {
                     out.copy_from_slice(&recent[k].1[within..within + n]);
                 } else if n == p.size as usize {

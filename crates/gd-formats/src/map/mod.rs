@@ -1,7 +1,7 @@
 //! `.map` world container (`Levels/world001.map`, `mainmenu.map`) and the
 //! `.lvl` level blobs embedded in it.
 //!
-//! Layout (per `GAME::World::LoadMap` @0x18019xxxx in Engine.dll):
+//! Layout (per `World::LoadMap` in Engine.dll):
 //! ```text
 //! "MAP" u8 version (stock 9; loader needs >= 4)
 //! u32 header_bytes
@@ -101,15 +101,15 @@ pub struct RegionInfo {
     pub position: [i32; 3],
     /// GAME::RegionId (16-byte unique id).
     pub id: [u32; 4],
-    /// v>=5: string stored at Region+192, the region's riftgate map zone
-    /// (`Region::SetZoneRecord`, Engine.dll 0x180193870): a
+    /// v>=5: string stored in `Region.zoneRecord`, the region's riftgate map zone
+    /// (`Region::SetZoneRecord`, Engine.dll): a
     /// `records/ui/riftgatemap/locations/*.dbr`.
     pub location_record: String,
-    /// v>=7: string at Region+224, the region's riftgate map shrine icon
-    /// (`Region::SetShrineRecord` 0x1801938a0): a
+    /// v>=7: string in `Region.shrineRecord`, the region's riftgate map shrine icon
+    /// (`Region::SetShrineRecord`): a
     /// `records/ui/riftgatemap/devotionshrines/*.dbr`, usually empty.
     pub shrine_record: String,
-    /// v>=8: string at Region+376 (purpose unknown; usually empty).
+    /// v>=8: string in `Region.extraRecord` (purpose unknown; usually empty).
     pub extra2: String,
     /// Absolute file offset / size of the embedded `.lvl` blob (0 = load from
     /// a loose file `name`).
@@ -155,7 +155,7 @@ pub struct MapFile {
     pub other_chunks: Vec<RawChunk>,
     /// Offset/len of the 0x1A minimap blob, if present.
     pub minimap_blob: Option<(u64, u32)>,
-    file: std::sync::Mutex<Box<dyn Source>>,
+    file: parking_lot::Mutex<Box<dyn Source>>,
 }
 
 impl MapFile {
@@ -166,7 +166,7 @@ impl MapFile {
         Self::from_source(path.display().to_string(), file)
     }
 
-    /// A map resource of the mounted install / mod (`World::Load` @0x18021a4f0 opens it through the
+    /// A map resource of the mounted install / mod (`World::Load` opens it through the
     /// engine's `FileSystem`), read from its archive entry.
     pub fn open_resource(vfs: &crate::vfs::Vfs, res: &str) -> Result<Self> {
         Self::from_source(res.to_owned(), vfs.open_entry(res)?).with_context(|| res.to_owned())
@@ -202,7 +202,7 @@ impl MapFile {
             sector_data: Default::default(),
             other_chunks: vec![],
             minimap_blob: None,
-            file: std::sync::Mutex::new(Box::new(file)),
+            file: parking_lot::Mutex::new(Box::new(file)),
         };
         let mut minimaps: Vec<(u32, u32)> = vec![];
         let mut groups = vec![];
@@ -260,7 +260,7 @@ impl MapFile {
                 bail!("{}: {} bytes left over", ctx(), c.remaining());
             }
         }
-        let origins: std::collections::HashMap<[u32; 4], [i32; 3]> =
+        let origins: crate::collections::HashMap<[u32; 4], [i32; 3]> =
             m.regions.iter().map(|r| (r.id, r.position)).collect();
         for e in groups.iter_mut().flat_map(|g| &mut g.entries) {
             e.world = origins
@@ -283,10 +283,7 @@ impl MapFile {
         // Optional 0x1A minimap blob right after the header.
         let after = 8 + hsize as u64;
         if after + 8 <= file_len {
-            let f = m
-                .file
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let f = m.file.get_mut();
             f.seek(SeekFrom::Start(after))?;
             let mut b = [0u8; 8];
             f.read_exact(&mut b)?;
@@ -323,10 +320,7 @@ impl MapFile {
     }
 
     fn read_at(&self, off: u64, len: usize) -> Result<Vec<u8>> {
-        let mut f = self
-            .file
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut f = self.file.lock();
         f.seek(SeekFrom::Start(off))?;
         let mut v = vec![0u8; len];
         f.read_exact(&mut v)?;

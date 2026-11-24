@@ -1,24 +1,24 @@
 //! The character sheet's Damage Per Second: the per-skill DPS formulas of
-//! `Player::CalculateSkillDps` @0x1803e06d0 and the `CalculateDPS` of the
-//! skill classes (`SkillActivatedWeapon::CalculateDPS` @0x18051af10, the
-//! shared `SkillActivatedSpell` one @0x1804a5bd0). The damage
+//! `Player::CalculateSkillDps` and the `CalculateDPS` of the
+//! skill classes (`SkillActivatedWeapon::CalculateDPS`, the
+//! shared `SkillActivatedSpell` one). The damage
 //! min / max come from [`crate::actor::display_damage`].
 
 /// The `SkillAttackInfo` fields the formulas read.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Info {
     /// Damage min / max of the main (right) hand accumulator and the second
-    /// (left hand) one (`info+16/20`, `info+24/28`).
+    /// (left hand) one (`SkillAttackInfo.minDamage` / `SkillAttackInfo.maxDamage`, two each).
     pub min: [f32; 2],
     pub max: [f32; 2],
-    /// `info+40`: a second weapon (not a shield or off-hand) is worn.
+    /// `SkillAttackInfo.dualWield`: a second weapon (not a shield or off-hand) is worn.
     pub dual: bool,
-    /// `info+44`: uses per second ([`weapon_rate`], [`spell_rate`]).
+    /// `SkillAttackInfo.usesPerSecond`: uses per second ([`weapon_rate`], [`spell_rate`]).
     pub rate: f32,
-    /// `info+52`: the skill's total cooldown reduction as a fraction
+    /// `SkillAttackInfo.cooldownReduction`: the skill's total cooldown reduction as a fraction
     /// (`GetTotalSkillAttribute` × 0.01).
     pub cooldown_reduction: f32,
-    /// `info+56`: `skillCooldownTime` of the skill with its modifiers.
+    /// `SkillAttackInfo.cooldownTime`: `skillCooldownTime` of the skill with its modifiers.
     pub cooldown: f32,
     /// `skillActiveDuration` of the skill with its modifiers (spell formula).
     pub active_duration: f32,
@@ -77,7 +77,7 @@ pub fn finish(dps: f32, cooldown: f32, cooldown_reduction: f32) -> f32 {
     }
 }
 
-/// Weapon skills' uses per second (`info+44` `CalculateSkillDps` +
+/// Weapon skills' uses per second (`SkillAttackInfo.usesPerSecond`, `CalculateSkillDps` +
 /// `Player::CalculateAttackSpeed(1)`): the attack speed over the character's
 /// base attack speed, over the current weapon set's attack animation
 /// duration (`GetAnimSpeed` of its Attack slot: frames / fps / record speed,
@@ -92,7 +92,7 @@ pub fn weapon_rate(attack_speed: f32, base_attack_speed: f32, attack_duration: f
     attack_speed / base_attack_speed / attack_duration
 }
 
-/// Spells' uses per second (`info+44` `CalculateSkillDps`): the
+/// Spells' uses per second (`SkillAttackInfo.usesPerSecond`, `CalculateSkillDps`): the
 /// spell cast speed × the frame rate over the length of the cast animation
 /// (`GetHitCallbackPoint` returns `GetLength` and `GetFrameRate`); `None`
 /// when the animation is missing (the rate then stays what it was).

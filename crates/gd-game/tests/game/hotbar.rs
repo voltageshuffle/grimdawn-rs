@@ -4,11 +4,12 @@
 use crate::common::BLITZ;
 use gd_formats::save::gdc::{Gdc, HotSlot};
 use gd_formats::save::item::Item;
-use gd_game::casting::{CastRequest, Caster, DEFAULT_ATTACK, HEALTH_POTION, SLOT_LEFT};
 use gd_game::hotbar::{BindSlot, DEFAULT_SKILLS, choices};
-use gd_game::inventory::Inventory;
-use gd_game::player::{EffectiveSkills, Loadout};
 use gd_game::testing::TestGame;
+use gd_game_core::casting::{CastRequest, HEALTH_POTION};
+use gd_game_core::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT};
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::{EffectiveSkills, Loadout};
 
 const OIL: &str = "records/items/crafting/consumables/oil_stoneheart.dbr";
 

@@ -1,21 +1,21 @@
 //! What a character stands on: the `PhysicsSurface` of a level's terrain and
 //! water at a point (the world's ray: `gd_game::collision::WorldCollision::surface_below`).
 //!
-//! (Engine.dll): `TerrainType::Load` @0x1801e1940 reads the terrain
+//! (Engine.dll): `TerrainType::Load` reads the terrain
 //! record's `surfaceType` by exact name ([`surface_type`]; anything else,
-//! also nothing, 100). `Terrain::GetIntersection` of a block (`sub_1801D1330`,
+//! also nothing, 100). `Terrain::GetIntersection` of a block (`TerrainBlock::GetIntersection`,
 //! 9 x 9 cell blocks) finds the cell the ray hits and walks the block's layers
 //! from the top ([`Ground::terrain_surface`]). Those layers are every layer
-//! with its bit set at any vertex of the block (`sub_1801DEB80`, the block's
-//! +200 list; the mask's bit i + 1 is layer i, bit 0 the cell's visibility).
+//! with its bit set at any vertex of the block (`TerrainRT::GetBlockLayers`, the block's
+//! `TerrainBlock.layers` list; the mask's bit i + 1 is layer i, bit 0 the cell's visibility).
 //! A layer's opacity at a cell is its weight byte, layer 0 is always 255
-//! (`sub_1801DE850`).
+//! (`TerrainBlock::GetLayerOpacity`).
 //!
-//! Water: `Water::GetIntersection` @0x1801f9bd0 tries every layer and path,
+//! Water: `Water::GetIntersection` tries every layer and path,
 //! the type's own surface does not matter: any hit is surface 7, a lava river
-//! too. `WaterLayer::RayIntersection` @0x1801ff950 meets the layer's plane
+//! too. `WaterLayer::RayIntersection` meets the layer's plane
 //! and `IsPointInLayer` wants that point in a block whose coverage byte is not
-//! 0 (10 x 10 over the 9 m block). `WaterPath::RayIntersection` @0x1802013d0
+//! 0 (10 x 10 over the 9 m block). `WaterPath::RayIntersection`
 //! meets the plane at the path's height and looks for a segment holding the
 //! point ([`in_path_segment`]).
 use gd_formats::map::terrain::Terrain;
@@ -231,10 +231,10 @@ fn in_path(p: &WaterPath, x: f32, z: f32) -> bool {
         .any(|s| in_path_segment([x, z], &s[0], &s[1]))
 }
 
-/// `sub_1802059E0`: a control point is [x, z, tangent x, tangent z,
+/// `WaterPath::IsPointInSegment`: a control point is [x, z, tangent x, tangent z,
 /// _, _, half width]. The point must lie between the two ends' planes across
 /// their tangents, and within the half width, lerped along the curve, of the
-/// Bézier (p0, p0 + t0, p1 − t1, p1) at the nearest parameter (`sub_180205C30`:
+/// Bézier (p0, p0 + t0, p1 − t1, p1) at the nearest parameter (`WaterPath::FindNearestParameter`:
 /// bisected to 0.05, the curve's direction over a step of 0.025 telling which
 /// way).
 pub fn in_path_segment(q: [f32; 2], a: &[f32; 16], b: &[f32; 16]) -> bool {

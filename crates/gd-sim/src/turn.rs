@@ -1,6 +1,6 @@
 //! How a character turns toward a direction, Bevy-free.
 //!
-//! Game.dll `Character::RotateTowards(dtMs, dir, pos)` @0x18005e160: a direction shorter than 0.2 (or
+//! Game.dll `Character::RotateTowards(dtMs, dir, pos)`: a direction shorter than 0.2 (or
 //! zero) changes nothing and is not "reached"; a character whose record sets `disallowRotation` keeps its facing and
 //! counts as reached; otherwise the direction is flattened (y dropped, renormalised), `c` = the cosine between it
 //! and the facing (local +Z, clamped to [-1, 1]) and the turn this tick is
@@ -8,7 +8,7 @@
 //! direction is behind, `minRotationSpeed` when it is ahead. An angle `acos(c)` under the step snaps the facing onto
 //! the direction (reached); else the facing turns by the step about the world up, toward the side the direction is
 //! on (positive when it lies on the local +X side or straight behind). The speeds are rad/s, read by
-//! `Character::Load` @0x180054e70 from the character's own record (`minRotationSpeed` default 9,
+//! `Character::Load` from the character's own record (`minRotationSpeed` default 9,
 //! `maxRotationSpeed` default 12; the player's `malepc01` / `femalepc01`: 10 and 40); the multiplier is
 //! `Character::SetRotationSpeedMultiplier` (1 by default, [`speed_multiplier`]). The game engine record's
 //! `min/maxRotationSpeed` and `min/maxPlayerRotationSpeed` are read (`GameEngine::LoadFromDatabase`) but their
@@ -106,9 +106,9 @@ pub fn wrap(yaw: f32) -> f32 {
 }
 
 /// The record classes whose `ActivateNow` sets the caster's rotation-speed multiplier to the skill's
-/// `rotationSpeedMultiplier` (default 1, their `Load`) `Skill_AttackSpellBeam` @0x1804da375,
-/// `Skill_AttackSpellCone` @0x1804cd844, `Skill_AttackSpellDrain` @0x1804cfa0f, `Skill_AttackRadiusSpin`
-/// @0x1804ca122, `Skill_AttackRadiusGrow` @0x1804c7056; their `StopSkill` (and the cone's / drain's `OnMoved`) puts
+/// `rotationSpeedMultiplier` (default 1, their `Load`) `Skill_AttackSpellBeam`,
+/// `Skill_AttackSpellCone`, `Skill_AttackSpellDrain`, `Skill_AttackRadiusSpin`,
+/// `Skill_AttackRadiusGrow`; their `StopSkill` (and the cone's / drain's `OnMoved`) puts
 /// it back to 1.
 pub fn speed_multiplier(class: &str, field: Option<f32>) -> Option<f32> {
     matches!(

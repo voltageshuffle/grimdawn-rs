@@ -3,7 +3,7 @@
 //!
 //! Values of the page II / III lists (`tab2ListBox`, `tab3ListBox`; row
 //! order and layout are in the game's `ui/character.rs`), from the
-//! exe's update functions (`sub_14014CEC0` page II, `sub_14015C5D0` page III).
+//! exe's update functions (`CharacterWindow::UpdatePage2`, `CharacterWindow::UpdatePage3`).
 //! Every row comes from the source the combat uses:
 //! - damage rows: `Player::CalculateDamageValues(true)` +
 //!   `CollectDamageValues(type, duration)` = [`actor::sheet_damage`] (the
@@ -70,7 +70,7 @@ fn dash(min: f32, max: f32, unit: &str) -> String {
     }
 }
 
-/// `sub_140153230`: a damage row from the left hand's and the
+/// `CharacterWindow::CombineHandDamage`: a damage row from the left hand's and the
 /// right hand's (min, max) (`Player::CollectDamageValues`: the two
 /// accumulators); `dual` = `SkillManager::IsLeftHandWeapon` (a weapon, not a
 /// shield or off-hand, in the left hand). Without it the right hand's;
@@ -106,13 +106,12 @@ const DAMAGE_ROWS: &[(&str, T, Option<f32>)] = &[
 ];
 
 /// The sheet's retaliation accumulator `Player::
-/// CalculateRetaliationValues` @0x1803cde50: the character's retaliation
+/// CalculateRetaliationValues`: the character's retaliation
 /// attributes (scale 1) in a `CombatDisplayAccumulator` (each min / max ×
 /// the attribute's chance / 100 when strictly between 0 and 100, else in
 /// full, nothing rolled: `RetaliationAttributeAbs{,_Physical,
-/// _ElementalDamage}::AddDamageToAccumulator` / `RetaliationAttributeDurBonus`
-/// @0x18042e9c0 / 0x18042ec40 / 0x18042f520 / 0x18042f800 with
-/// `GetChanceMultiplier` @0x18011ba10; elemental in thirds, a DoT's duration
+/// _ElementalDamage}::AddDamageToAccumulator` / `RetaliationAttributeDurBonus` with
+/// `CombatDisplayAccumulator::GetChanceMultiplier`; elemental in thirds, a DoT's duration
 /// its minimum), physical merged into base physical, then the character's
 /// conversions (`Weigh` + `ConvertDamage`, [`crate::combat::convert_damage`]),
 /// then `ModifyDamage`: the retaliation modifiers of each part's type after
@@ -239,7 +238,7 @@ pub fn retaliation_damage(p: &Profile, rules: &Rules) -> Vec<crate::combat::Dama
     v
 }
 
-/// `Player::CollectRetaliationValues(type, duration)` @0x1803ce010:
+/// `Player::CollectRetaliationValues(type, duration)`:
 /// `GetMinMaxDamage` summed over the accumulator (hits with
 /// duration 0, DoTs whose duration is the row's), both `floor(x + 0.5)` by
 /// [`dash`].
@@ -268,7 +267,7 @@ fn list_values(
         m.insert(format!("list.{k}"), v);
     };
     // Page II, "Character" section.
-    // `sub_14014CEC0`: the speed rows are the capped speed over the
+    // `CharacterWindow::UpdatePage2`: the speed rows are the capped speed over the
     // bio's base speed (`CalculateAttackSpeed(0)`, `GetRunSpeed(1)`/GetValue(14),
     // `GetSpellCastSpeed`/GetValue(16)), rounded `floor(x + 0.5)`.
     let rel = |n: usize| ((p.speeds[n] / p.base_speeds[n].max(f32::EPSILON)) * 100.0 + 0.5).floor();
@@ -278,7 +277,7 @@ fn list_values(
     put("RunSpeed", pct(rel(0)));
     put("CritDmg", plus_pct(tot("offensiveCritDamageModifier")));
     put("HealIncrease", plus_pct(s.heal_increase));
-    // `sub_14014CEC0`: the regen less the active skills' cost,
+    // `CharacterWindow::UpdatePage2`: the regen less the active skills' cost,
     // `Float2Format` or `NegativeFloat2Format` ("- 1.25") below 0.
     let net = |v: f32| {
         if v >= 0.0 {
@@ -319,7 +318,7 @@ fn list_values(
         ),
     );
     // Damage rows (module docs). A dual wielder's left hand has its own
-    // accumulator (`Player::CalculateDamageValues`); `sub_140153230`
+    // accumulator (`Player::CalculateDamageValues`); `CharacterWindow::CombineHandDamage`
     // combines the two hands.
     let sum = |ty: T, dot: Option<f32>| hd.row(ty, dot);
     let mods = actor::DisplayModifiers::new(p);
@@ -341,7 +340,7 @@ fn list_values(
     put("PercentHealthDamage", dash(lo, hi, "%"));
     // Page III, "Retaliation": `CollectRetaliationValues(type, duration)`
     // over [`retaliation_damage`] and `CollectRetaliationModifiers`
-    // ([`actor::retaliation_modifier`]) `sub_14015C5D0`.
+    // ([`actor::retaliation_modifier`]) `CharacterWindow::UpdatePage3`.
     let ret = retaliation_damage(p, rules);
     for &(stem, ty, dot) in DAMAGE_ROWS {
         let (lo, hi) = retaliation_values(&ret, ty, dot);
@@ -349,7 +348,7 @@ fn list_values(
         let m = actor::retaliation_modifier(p, ty, dot.is_some());
         put(&format!("{stem}PercentRet"), plus_pct_f(m));
     }
-    // Page III, "Defense" (`sub_14015C5D0`): with a shield in the
+    // Page III, "Defense" (`CharacterWindow::UpdatePage3`): with a shield in the
     // left hand, Chance to Block = `DesignerCalculateMeleeBlockChance(shield
     // chance, defense type 55, pth 100)` (the `meleeBlockEquation`, capped at
     // 100, shown ≥ 0, `tagFormatPercent`), Damage Blocked = the shield's
@@ -384,9 +383,9 @@ fn list_values(
     // dodge and deflect are character attributes 27 / 28.
     put("DodgeChance", pct(s.dodge));
     put("ProjDeflectChance", pct(s.deflect));
-    // Crowd-control resists: the capped total of the defence type (`sub_14015FA00`:
-    // min(total, 100)). `DefenseAttributeAbs_CrowdControl::AddToAccumulator`
-    // @0x180200490: `defensiveCrowdControl` expands to stun, freeze, petrify and
+    // Crowd-control resists: the capped total of the defence type (`CharacterWindow::GetCappedDefense`:
+    // min(total, 100)). `DefenseAttributeAbs_CrowdControl::AddToAccumulator`:
+    // `defensiveCrowdControl` expands to stun, freeze, petrify and
     // trap only (not sleep, not slow).
     let cc = tot("defensiveCrowdControl");
     let sum = |t: T| {
@@ -459,10 +458,10 @@ pub fn resistance_reduction(debuffs: &actor::Debuffs) -> ReductionInfo {
 /// The maximum-resistance bonus of a resistance type: its own
 /// `defensive<X>MaxResist` plus the expansions of `defensiveAllMaxResist`
 /// (types 2, 4, 5, 6, 7, 8, 9, 10, 11, 15 = `ALL_RESISTANCES`,
-/// `DefenseAttributeDefenseCap_All::AddToAccumulator` @0x180203340) and
+/// `DefenseAttributeDefenseCap_All::AddToAccumulator`) and
 /// `defensiveCrowdControlMaxResist` (stun, freeze, petrify, trap,
-/// `..._CrowdControl::AddToAccumulator` @0x180203650).
-/// `ProcessDefense` @0x18011ab40 applies every cap entry to the matching
+/// `DefenseAttributeDefenseCap_CrowdControl::AddToAccumulator`).
+/// `CombatAttributeAccumulator::ProcessDefense` applies every cap entry to the matching
 /// defenses (`ModifyDefenseCap` adds it to the cap bonus) before they
 /// process — combat and the sheet take the same bonus.
 pub fn resistance_cap_bonus(p: &Profile, ty: T) -> f32 {
@@ -531,12 +530,12 @@ pub struct ResistanceRow {
     pub reduced: bool,
 }
 
-/// A resistance row `sub_14013D9D0` + `sub_14015FA00`: three
+/// A resistance row `CharacterWindow::UpdatePage1` + `CharacterWindow::GetCappedDefense`: three
 /// copies of `GetAllDefenseAttributes`: A raw, B `ProcessDefense` without
 /// reduction, C `ProcessDefense` with the character's resistance reduction
 /// ([`resistance_reduction`]; `CombatAttributeAbsDefense::Process`
-/// @0x180115370 = [`Defense::process`], which keeps what it took off,
-/// `GetTotalReduction` @0x18011aa10). Shown = C at most 100; over the cap =
+/// = [`Defense::process`], which keeps what it took off,
+/// `CombatAttributeAccumulator::GetTotalReduction`). Shown = C at most 100; over the cap =
 /// max(A − C's reduction − B, 0) while B ≤ C (no reduction pulled the value
 /// under the cap), else 0. The value is red when the reduction's total abs +
 /// % is > 0, plus the elemental ones for fire / cold / lightning and the
@@ -548,17 +547,17 @@ pub fn resistance(p: &Profile, rules: &Rules, reduction: &ReductionInfo, t: T) -
         .filter(|(ty, _)| *ty == t)
         .map(|x| x.1)
         .sum();
-    // `GetDefenseAttributeCap` (Character vf 1640), as `TakeAttack` takes it.
+    // `Character::GetDefenseAttributeCap`, as `TakeAttack` takes it.
     let cap = rules.caps.player_defense_cap[(rules.balance / 4).min(2)];
     // One attribute per type: `CombatAttributeAccumulator::AddDefense`
-    // @0x18011aa80 merges a defense into one already held (vf+256).
+    // merges a defense into one already held (`CombatAttribute::MergeDefense`).
     let process = |red: &ReductionInfo| {
         let mut d = resistance_defense(p, t, raw);
         d.process(cap, red, DamageScale::default(), 0.0);
         let Defense::Resistance { value, .. } = d else {
             unreachable!()
         };
-        // What `Process` took off (+36): |v| × % + abs, before the cap.
+        // What `Process` took off (`CombatAttributeAbsDefense.reduction`): |v| × % + abs, before the cap.
         let (mut abs, mut pct) = (red.total_abs, red.total_pct);
         if t == T::Physical {
             abs = red.physical_abs.max(abs);
@@ -615,7 +614,7 @@ pub fn numbers_and_rollovers(
 /// (80 + `defensive<X>MaxResist`) and the character's resistance reduction
 /// ([`resistance`]), at most 100.
 /// Stats shown as `(int)` casts (truncated): the character window
-/// builder in Grim Dawn.exe (`sub_14013D9D0`, `sub_14014CEC0`).
+/// builder in Grim Dawn.exe (`CharacterWindow::UpdatePage1`, `CharacterWindow::UpdatePage2`).
 fn numbers(
     p: &Profile,
     rules: &Rules,
@@ -656,7 +655,7 @@ fn numbers(
     put("DPSNumber", dps);
     for (k, t) in RESISTANCE_ROWS {
         let r = resistance(p, rules, reduction, t);
-        // Floored: `(int)v - (v < 0)` in `sub_14013D9D0` (79.6 shows 79).
+        // Floored: `(int)v - (v < 0)` in `CharacterWindow::UpdatePage1` (79.6 shows 79).
         let red = if r.reduced { "^r" } else { "" };
         put(k, format!("{red}{}%", r.shown.floor() as i32));
         put(&format!("over.{k}"), format!("{}", r.over));
@@ -666,7 +665,7 @@ fn numbers(
 }
 
 /// The skill bonus rows (`BonusAllSkills`, then the ten classes' rows):
-/// "0" when ≤ 0, else `tagFormatPlus` (`sub_14014CEC0`).
+/// "0" when ≤ 0, else `tagFormatPlus` (`CharacterWindow::UpdatePage2`).
 pub fn augment_rows(all: u32, masteries: [u32; 10]) -> BTreeMap<String, String> {
     const ROWS: [&str; 10] = [
         "Soldier",
@@ -695,7 +694,7 @@ pub fn augment_rows(all: u32, masteries: [u32; 10]) -> BTreeMap<String, String> 
     m
 }
 
-/// The Pet Bonuses rows (`sub_14014CEC0`): the owner's pet bonus
+/// The Pet Bonuses rows (`CharacterWindow::UpdatePage2`): the owner's pet bonus
 /// records (`Player::CalculatePetCharAttributeBonus` /
 /// `CalculatePetDamageBonus` over the `GameEngine` pet bonus list: each
 /// record at its level) — life, attack / cast / run speed: the modifier
@@ -705,12 +704,12 @@ pub fn augment_rows(all: u32, masteries: [u32; 10]) -> BTreeMap<String, String> 
 /// `offensiveCritDamageModifier` — plus, for the first living pet, its
 /// resistances (`GetTotalDefenseType` of its defence accumulator, `pet`).
 /// The first living pet's buff skills (`SkillManager::GetBuffSkill` list:
-/// toggles, timed buffs, aura buffs on it; per buff the vtable +1032 char
-/// attributes and +1056 damage attributes) add their character attribute
+/// toggles, timed buffs, aura buffs on it; per buff the `Skill::CollectPassiveCharAttributes`
+/// char attributes and `Skill::CollectPassiveDamageAttributes` damage attributes) add their character attribute
 /// modifiers / values and damage modifiers on top of the owner's bonuses
 /// (`pet_buffs`: each buff record and its level index).
-/// PORT: the pet character's own attribute / damage accumulators (vtable
-/// +1808 / +1840) are not added; the pet bonus potion scale is 1.
+/// PORT: the pet character's own attribute / damage accumulators (`Character::GetCharAttributeAccumulator` /
+/// `Character::GetDamageAttributeAccumulator`) are not added; the pet bonus potion scale is 1.
 pub fn pet_rows(
     bonuses: &[(Record, usize)],
     pet_buffs: &[(Record, usize)],
@@ -785,8 +784,8 @@ pub struct SheetStats {
     pub item_levels: Vec<f32>,
 }
 
-/// The Stats rows (`sub_14015C5D0`): `Player::GetItemLevel`
-/// (@0x1803e2690: mean of the equipped items' levels, `floor(x + 0.5)`),
+/// The Stats rows (`CharacterWindow::UpdatePage3`): `Player::GetItemLevel`
+/// (mean of the equipped items' levels, `floor(x + 0.5)`),
 /// `tagTimePlayedNumber` of days : hours : minutes
 /// (`GetPlayTimeInMinutes` = seconds / 60), `numberOfKills`,
 /// `numberOfChampionKills`, `greatestDamageInflicted` / `Received`
@@ -838,12 +837,12 @@ pub fn stat_rows(st: &SheetStats) -> BTreeMap<String, String> {
 
 /// The values of one stats row's rollover, as the page updates store them
 /// in the rollover objects (Grim Dawn.exe): `lines[0]` = line 1's
-/// two values (+240 / +248), `lines[k]` = line k + 1's (+1088 + 8(k − 1) /
-/// +4). The text classes (`ui/rollover.rs`) pick a line's `LineNFormatTag`
+/// two values (`StatRollover.line1Values`), `lines[k]` = line k + 1's (`StatRollover.lineValues[k − 1]`).
+/// The text classes (`ui/rollover.rs`) pick a line's `LineNFormatTag`
 /// when its second value is non-zero, else `LineNFormatTag2` with the first
 /// only. `name`: line 2's text instead of its values (the Offensive /
-/// Defensive Ability rollovers' last foe, `sub_14013A010` sets the flag at
-/// +1144 and the string at +1152); a tag, or a name when it is not one.
+/// Defensive Ability rollovers' last foe, `CharacterWindow::SetLastFoeRollover` sets the flag
+/// `StatRollover.hasName` and the string `StatRollover.name`); a tag, or a name when it is not one.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RollValues {
     pub lines: [(f32, f32); 8],
@@ -852,7 +851,7 @@ pub struct RollValues {
     /// names, which no record holds).
     pub labels: [Option<String>; 8],
     /// Line 1's format tag instead of the record's `Line1FormatTag`
-    /// (`sub_140142420`).
+    /// (`CharacterWindow::SetRolloverFormat`).
     pub format: Option<String>,
 }
 
@@ -860,7 +859,7 @@ pub struct RollValues {
 /// (`PlayStats::GetLastMonsterHit` / `GetLastMonsterHitBy` of the current
 /// difficulty): the monster's description tag (empty: none) and, recorded
 /// with it, its Defensive Ability resp. the attack's Offensive Ability
-/// (`CombatManager::RecordHit` @0x180122000, `gd_game::death`).
+/// (`CombatManager::RecordHit`, `gd_game::death`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LastFoes {
     pub hit: (String, f32),
@@ -916,7 +915,7 @@ impl HandDamage {
 }
 
 /// A damage row's rollover lines 2 / 3 (main hand, off-hand): a hand's
-/// max is dropped (0) when it equals its min (`sub_14014CEC0`).
+/// max is dropped (0) when it equals its min (`CharacterWindow::UpdatePage2`).
 fn hand_lines(right: (f32, f32), left: (f32, f32)) -> RollValues {
     let one = |(a, b): (f32, f32)| (a, if a == b { 0.0 } else { b });
     let mut r = RollValues::default();
@@ -929,7 +928,7 @@ fn hand_lines(right: (f32, f32), left: (f32, f32)) -> RollValues {
 /// rollover only shows the row's own number are not here (`ui/rollover.rs`
 /// reads those from the row). `weapon_hands`: the weapon attack's main /
 /// off-hand damage per hit (`gd_game::sheet_dps`). Grim Dawn.exe
-/// `sub_14013D9D0` (page I) and `sub_14014CEC0` (page II):
+/// `CharacterWindow::UpdatePage1` (page I) and `CharacterWindow::UpdatePage2` (page II):
 /// - Life / Energy: (base, `trunc(total)` − base) resp. (base, total − base);
 /// - Physique / Cunning / Spirit: line 1 (base, total − base); line 2
 ///   `GetPointsSpent` = `(int)((base − original) / increment)`; line 3 the life
@@ -951,7 +950,7 @@ fn hand_lines(right: (f32, f32), left: (f32, f32)) -> RollValues {
 /// - Health / Energy Regeneration (page II): (the regen equation of the bio's
 ///   base attribute, |total − that − the active skills' cost|
 ///   ([`Profile::active_costs`])); with a negative bonus the line uses
-///   `tagRollFormat16` (`sub_140142420`);
+///   `tagRollFormat16` (`CharacterWindow::SetRolloverFormat`);
 /// - Attack / Cast Speed: line 1 the row's percentage, line 2 the cap
 ///   (`player*SpeedCapMax` + the bio's max modifier; the attack one
 ///   rounded); Run Speed line 1 (min(cap, uncapped %), max(uncapped % − cap,
@@ -994,7 +993,8 @@ fn rollovers(
     attr("StrengthNumber", 0);
     attr("DexterityNumber", 1);
     attr("IntelligenceNumber", 2);
-    let eq = |e: &Option<crate::expr::Expr>, v: CombatVars| e.as_ref().map_or(1.0, |e| v.eval(e));
+    let eq =
+        |e: &Option<gd_rules::expr::Expr>, v: CombatVars| e.as_ref().map_or(1.0, |e| v.eval(e));
     let vars = CombatVars {
         strength: s.physique,
         dexterity: s.cunning,
@@ -1084,7 +1084,7 @@ fn rollovers(
     );
     // Offensive / Defensive Ability against the last foes.
     let pth_line = |pth: f32| (pth.clamp(0.0, 100.0), 0.0);
-    // `Character::DesignerCalculateCriticalChance` @0x1800686d0.
+    // `Character::DesignerCalculateCriticalChance`.
     let crit_line = |pth: f32| {
         (
             (crate::combat::critical_chance(f, pth) * 100.0).min(100.0),
@@ -1204,7 +1204,7 @@ pub struct ArmorRow {
 }
 
 /// The sheet's Armor row and its breakdown window Grim Dawn.exe
-/// `sub_14013D9D0` (page I update, every 500 ms):
+/// `CharacterWindow::UpdatePage1` (page I update, every 500 ms):
 /// - per worn slot the item's defence accumulator (`GetTotalDefenseType`
 ///   38 armour, 39 absorption): head (slot 7), chest (8), hands (10), legs
 ///   (11), feet (12) and shoulders (9) give their region's armour and
@@ -1215,15 +1215,15 @@ pub struct ArmorRow {
 ///   `min(a + |a| × defensiveAbsorptionModifier %, 100)`;
 /// - a region's armour = `floor(general + region + 0.5)`, its chance
 ///   `(int)GetCombatRegionChance(region)`, its absorption `floor(abs + 0.5)`
-///   (`sub_140269D40` / `sub_140269EC0` write them, 0 in the window's
+///   (`ArmorWindow::SetRegionArmor` / `ArmorWindow::SetRegionAbsorption` write them, 0 in the window's
 ///   `unprotectedColor`);
 /// - the row's total = `floor(general + Σ chance % × region + 0.5)`.
 ///
 /// An armour piece's absorption is its `BaseProtectionAbsorption` attribute's
-/// (`AddToAccumulator` @0x180204bf0: only when its protection > 0):
-/// `DefenseAttribute_BaseProtectionAbsorption::LoadFromTable` @0x180204420
+/// (`DefenseAttribute_BaseProtectionAbsorption::AddToAccumulator`: only when its protection > 0):
+/// `DefenseAttribute_BaseProtectionAbsorption::LoadFromTable`
 /// gives every piece the game balance `armorDefensiveAbsorption`
-/// (`GameEngine` +4904, [`crate::stats::EngineConstants::armor_absorption`]);
+/// (`GameEngine.armorDefensiveAbsorption`, [`crate::stats::EngineConstants::armor_absorption`]);
 /// no record field changes it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ArmorBreakdown {

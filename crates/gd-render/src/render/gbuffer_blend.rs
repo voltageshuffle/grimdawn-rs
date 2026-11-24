@@ -1,7 +1,7 @@
 //! The blended draws the engine makes into its G-buffer: the terrain patches, the decals' base layer and the grass
 //! fringe.
 //!
-//! Engine.dll `GraphicsDeferredRenderer::RenderFinalScene` @0x1800adeb0: the `deferred` technique of
+//! Engine.dll `GraphicsDeferredRenderer::RenderFinalScene`: the `deferred` technique of
 //! every shader is drawn into the G-buffer before the lights and `ApplySSAO`, so its pixels are lit and occluded like
 //! the ground under them. Blended ones among them: terrainpatch*.ssh `deferred` (sort 1050, a `TerrainDecoration`'s
 //! painted terrain over its mesh, render/terrain.rs; SrcAlpha / OneMinusSrcAlpha, DepthWrite false, DepthFunc
@@ -21,6 +21,13 @@
 //! keeps them in its transparent pass (no SSAO there). PORT: the port lights each patch / decal / fringe pixel itself
 //! and blends the lit colour (linear, equivalent to blending the albedo for the same light; a patch's own normals
 //! are lit before the blend instead of blended).
+//!
+//! PERF-27: the hold/restore reuses its scratch (the taken item map, the picked `Vec` and each held
+//! phase's map) across frames instead of reallocating, but keeps the extract/reinsert structure: a
+//! dedicated `SortedRenderPhase` queued by a custom queue system would have to re-implement Bevy's
+//! transparent mesh queue and suppress it for these entities, which cannot be verified without a
+//! runtime screenshot check of the transparency order (water 0 / ripple 500 / particles 1000+
+//! `depth_bias`). Deferred pending that gate; the draw order here is unchanged.
 use super::post::{GammaOut, SsaoSet};
 use bevy::camera::{MainPassResolutionOverride, Viewport};
 use bevy::core_pipeline::core_3d::{Transparent3d, main_opaque_pass_3d};
@@ -28,12 +35,12 @@ use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
-use bevy::render::render_phase::{SortedRenderPhase, ViewSortedRenderPhases};
+use bevy::render::render_phase::{PhaseItem, SortedRenderPhase, ViewSortedRenderPhases};
 use bevy::render::render_resource::{RenderPassDescriptor, StoreOp};
 use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilTexture, ViewTarget};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
 
 /// A blended mesh drawn with the G-buffer (module doc), in this order.
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -100,6 +107,8 @@ fn hold_gbuffer_blend(
     mut held: ResMut<HeldGBufferBlend>,
     kinds: Res<GBufferBlendEntities>,
     views: Query<&ExtractedView, With<GammaOut>>,
+    mut take: Local<SortedRenderPhase<Transparent3d>>,
+    mut picked: Local<Vec<(GBufferBlend, Transparent3d)>>,
 ) {
     if kinds.0.is_empty() {
         return;
@@ -112,21 +121,26 @@ fn hold_gbuffer_blend(
             continue;
         }
         // One pass: the rest goes back in its order, the held ones leave in theirs.
-        let items = std::mem::take(&mut phase.items);
-        phase.items.reserve(items.len());
-        let mut picked = Vec::new();
-        for (k, item) in items {
+        // PERF-27: the taken map, the picked scratch and the held phase's map are reused
+        // across frames — swap the phase's items out, then drain them back in place.
+        let out = held.0.entry(view.retained_view_entity).or_default();
+        out.items.clear();
+        std::mem::swap(&mut phase.items, &mut take.items);
+        picked.clear();
+        for (k, item) in take.items.drain(..) {
             match kinds.0.get(&k.1.id()) {
-                Some(kind) => picked.push((*kind, k, item)),
+                Some(kind) => picked.push((*kind, item)),
                 None => {
                     phase.items.insert(k, item);
                 }
             }
         }
-        picked.sort_by_key(|(kind, ..)| *kind); // stable: the back-to-front order within a kind
-        let mut out = SortedRenderPhase::<Transparent3d>::default();
-        (out.items).extend(picked.into_iter().map(|(_, k, item)| (k, item)));
-        held.0.insert(view.retained_view_entity, out);
+        picked.sort_by_key(|(kind, _)| *kind); // stable: the back-to-front order within a kind
+        out.items.extend(
+            picked
+                .drain(..)
+                .map(|(_, item)| ((item.entity(), item.main_entity()), item)),
+        );
     }
 }
 
@@ -134,12 +148,16 @@ fn restore_gbuffer_blend(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldGBufferBlend>,
 ) {
-    for (view, out) in held.0.drain() {
-        if let Some(p) = phases.get_mut(&view) {
-            p.items.extend(out.items);
-            p.transient_items.extend(out.transient_items);
-        }
-    }
+    // Put the held items back for the next frame's queue and batching; keep the now-empty
+    // maps for reuse, dropping only views that are gone.
+    held.0.retain(|view, out| {
+        let Some(p) = phases.get_mut(view) else {
+            return false;
+        };
+        p.items.extend(out.items.drain(..));
+        p.transient_items.append(&mut out.transient_items);
+        true
+    });
 }
 
 /// The held items over the opaque pass's frame and depth, before `ApplySSAO`.

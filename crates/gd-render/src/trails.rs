@@ -3,9 +3,8 @@
 //! `Texture` (additive `trailadditive.ssh`: texture × vertex colour, nothing
 //! more, per its ps_1_1 code), coloured by `Red/Green/Blue/Alpha256`.
 //!
-//! Engine.dll `TrailEffect` (`Load` 0x1801eee50, `InternalUpdate`
-//! 0x1801f12f0, `ScaleSegments` 0x1801f0760, `DecrementAlpha` 0x1801f0980,
-//! `CleanSegmentList` 0x1801f0bc0, `RenderPass` 0x1801efd40):
+//! Engine.dll `TrailEffect` (`Load`, `InternalUpdate`, `ScaleSegments`, `DecrementAlpha`,
+//! `CleanSegmentList`, `RenderPass`):
 //! - record defaults: `TextureRepeat`, `DragUVs` and `FadeAlpha` true,
 //!   `MSFadeTime` 500, colours 0, `Texture` `System/Textures/White.tex`;
 //! - a segment (both anchor positions, a texture u, colour and alpha) is
@@ -23,35 +22,37 @@
 //! The anchors are the projectile mesh's `Anchor1`/`Anchor2` attach points
 //! (`Anchor3`/`Anchor4` for a second trail): `ProjectileBase::CountWeaponTrails`
 //! (Game.dll) makes no trail without `Anchor1`, `WeaponTrail::GetAnchorPoints`
-//! (Engine.dll 0x18020d710) reads them every update ([`Trail::with_anchors`],
-//! `gd_game::visuals::anchors_of`); a mesh with `Anchor3` gets a second trail between
+//! (Engine.dll) reads them every update ([`Trail::with_anchors`],
+//! `gd_game_core::visuals::anchors_of`); a mesh with `Anchor3` gets a second trail between
 //! `Anchor3`/`Anchor4`. The projectile spawner (`casting.rs`) gives every
 //! trail its mesh's anchors and makes none without `Anchor1`. PORT: a trail
 //! created without anchors (no caller does) falls back to a camera-facing
 //! ribbon `width` wide through the owner's position.
 //!
-//! `TrailEffect::StartFade` @0x1801f0970 sets the fade flag (+617, the
-//! record's `FadeAlpha`), `Liberate` @0x1801eeb70 stops new segments (+778):
+//! `TrailEffect::StartFade` sets the fade flag (`TrailEffect.fading`, the
+//! record's `FadeAlpha`), `Liberate` stops new segments (`TrailEffect.liberated`):
 //! gameplay asks for both with `StopEmitting` on the trail entity
 //! (`gd_game::line_fan`). A let-go trail destroys itself once it has fewer
-//! than two segments (`TrailEffect::UpdateSelf` @0x1801f1110: +778 and
+//! than two segments (`TrailEffect::UpdateSelf`: `TrailEffect.liberated` and
 //! segment count < 2 → `ObjectManager::DestroyObjectEx` on itself). A trail
 //! that was not let go is an attached entity of its owner (`Entity::Attach`
-//! in `ProjectileBase::SwitchWeaponTrail` @0x180406650 and the weapon's),
-//! and `ObjectManager::DestroyObjectEx` @0x18017e650 detaches and
+//! in `ProjectileBase::SwitchWeaponTrail` and the weapon's),
+//! and `ObjectManager::DestroyObjectEx` detaches and
 //! destroys every attached entity with the entity itself
-//! (`ProjectileBase::DeleteProjectile` @0x180406e60 ends there; no code
+//! (`ProjectileBase::DeleteProjectile` ends there; no code
 //! stops or fades the projectile's trails first): it goes at once with its
-//! owner, segments and all ([`ended`]). `StartPulse` @0x1801f0a40 starts the alpha pulse
+//! owner, segments and all ([`ended`]). `StartPulse` starts the alpha pulse
 //! (`pulseAlphaMin` / `…Max` / `…CycleTime`, `PulseAlpha` in the update; the
 //! `StartPulse` component, a line fan's line at the end of its travel).
 //!
-//! Weapon trails (`Weapon::SwitchWeaponTrail` @0x1805892a0, Game.dll): the
+//! Weapon trails (`Weapon::SwitchWeaponTrail`, Game.dll): the
 //! weapon record's `weaponTrail` (or its weapon enchantment's), attached to
 //! the weapon with its mesh's `Anchor1`/`Anchor2`; it adds segments only
 //! between `Start` and `Stop` ([`Trail::start`], driven by `fx::enchant`).
 use bevy::prelude::*;
+use gd_formats::msh::AttachPoint;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub struct TrailsPlugin;
 
@@ -89,13 +90,25 @@ pub struct Trail {
     pub anchors: Option<(Vec3, Vec3)>,
     /// Attach points of the owner character's body, posed each update
     /// instead of fixed `anchors` (a character's unarmed trail, `fx::enchant`).
+    /// The names, kept to re-resolve when a form swap replaces the body mesh.
     pub points: Option<(String, String)>,
+    /// `points` resolved on the body mesh they were read from (at spawn,
+    /// [`Trail::with_points`]): no per-frame attach-point name scan.
+    resolved: Option<ResolvedPoints>,
     /// Adding segments (`TrailEffect::Start` / `Stop`): a weapon's trail
     /// runs only during a swing (`fx::enchant`); a projectile's always.
     active: bool,
     /// Newest first.
     segments: VecDeque<Segment>,
     state: Option<TrailState>,
+}
+
+/// A trail's [`Trail::points`] on the body mesh they were resolved from;
+/// re-read (by name) when a form swap replaces the mesh.
+struct ResolvedPoints {
+    body: Arc<gd_formats::msh::Mesh>,
+    a: Option<AttachPoint>,
+    b: Option<AttachPoint>,
 }
 
 struct TrailState {
@@ -137,13 +150,15 @@ impl Trail {
             width,
             anchors: None,
             points: None,
+            resolved: None,
             active: true,
             segments: VecDeque::new(),
             state: None,
         }
     }
-    /// Starts adding segments again. `TrailEffect::Start` @0x1801eede0 (Engine.dll) only refreshes the
-    /// bounding box and sets the emitting flag (+548): the previous swing's segments stay, still fading, and the
+    /// Starts adding segments again. `TrailEffect::Start` (Engine.dll) only refreshes the
+    /// bounding box and sets the emitting flag (`TrailEffect.emitting`): the previous swing's segments stay, still
+    /// fading, and the
     /// new ribbon joins on to them.
     pub fn start(&mut self) {
         self.active = true;
@@ -152,7 +167,7 @@ impl Trail {
     pub fn stop(&mut self) {
         self.active = false;
     }
-    /// `TrailEffect::IsActive` @0x1801eee10: it has segments (emitting or not).
+    /// `TrailEffect::IsActive`: it has segments (emitting or not).
     pub fn has_segments(&self) -> bool {
         !self.segments.is_empty()
     }
@@ -168,8 +183,14 @@ impl Trail {
     }
     /// Use these attach points of the owner character's posed body as the
     /// ribbon's edges (`WeaponTrail::GetAnchorPoints` reads the actor's attach
-    /// point coords every update).
-    pub fn with_points(mut self, a: &str, b: &str) -> Self {
+    /// point coords every update). Resolved on `body` once here; a form swap
+    /// that replaces the mesh re-resolves the names.
+    pub fn with_points(mut self, body: &Arc<gd_formats::msh::Mesh>, a: &str, b: &str) -> Self {
+        self.resolved = Some(ResolvedPoints {
+            body: body.clone(),
+            a: body.attach_point(a).cloned(),
+            b: body.attach_point(b).cloned(),
+        });
         self.points = Some((a.to_owned(), b.to_owned()));
         self
     }
@@ -191,11 +212,11 @@ fn update_trails(
     mut trails: Query<(
         Entity,
         &mut Trail,
-        Has<gd_game::visuals::StopEmitting>,
-        Has<gd_game::visuals::StartPulse>,
+        Has<gd_game_core::visuals::StopEmitting>,
+        Has<gd_game_core::visuals::StartPulse>,
     )>,
     owners: Query<&GlobalTransform>,
-    chars: Query<&crate::character::Character>,
+    chars: Query<&gd_game_core::character::Character>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     mut assets: crate::character::CharAssets,
     mut scratch: Local<TrailScratch>,
@@ -265,7 +286,7 @@ fn update_trails(
         // Gameplay ended it (`StopEmitting`: a line fan's line,
         // `TrailEffect::StartFade` + `Liberate`): no more segments, and the
         // ones there fade whatever `FadeAlpha` says (`StartFade` sets the
-        // fade flag +617 that `DecrementAlpha` / `CleanSegmentList` test).
+        // fade flag `TrailEffect.fading` that `DecrementAlpha` / `CleanSegmentList` test).
         if stopped {
             t.active = false;
             if let Some(s) = &mut t.state {
@@ -294,7 +315,7 @@ fn update_trails(
                 g.alpha = (g.alpha - d).max(0.0);
             }
         }
-        // `TrailEffect::PulseAlpha` @0x1801f0a60, after `DecrementAlpha`, while not fading: the
+        // `TrailEffect::PulseAlpha`, after `DecrementAlpha`, while not fading: the
         // cycle counts down; every segment's alpha = min + (max − min) × left / cycle (clamped 0..1; 1 − that
         // on a backwards cycle), ≥ 0; at 0 the cycle restarts the other way.
         let fading = s.fade_alpha;
@@ -339,7 +360,22 @@ fn update_trails(
             Ok(g) => 'add: {
                 let posed = t.points.as_ref().and_then(|(a, b)| {
                     let c = chars.get(t.owner).ok()?;
-                    Some((c.posed_point(a)?, c.posed_point(b).unwrap_or(Vec3::ZERO)))
+                    if t.resolved
+                        .as_ref()
+                        .is_none_or(|r| !Arc::ptr_eq(&r.body, &c.body))
+                    {
+                        t.resolved = Some(ResolvedPoints {
+                            body: c.body.clone(),
+                            a: c.body.attach_point(a).cloned(),
+                            b: c.body.attach_point(b).cloned(),
+                        });
+                    }
+                    let r = t.resolved.as_ref()?;
+                    let upper = Vec3::from(r.a.as_ref()?.coords_in(c.posed()).origin);
+                    let lower =
+                        r.b.as_ref()
+                            .map_or(Vec3::ZERO, |p| Vec3::from(p.coords_in(c.posed()).origin));
+                    Some((upper, lower))
                 });
                 let (upper, lower) = match posed.or(t.anchors) {
                     Some((a, b)) => (g.transform_point(a), g.transform_point(b)),
@@ -481,7 +517,10 @@ fn update_trails(
 /// Gameplay's trail requests become trails.
 fn dress_trails(
     mut commands: Commands,
-    new: Query<(Entity, &gd_game::visuals::TrailRequest), Added<gd_game::visuals::TrailRequest>>,
+    new: Query<
+        (Entity, &gd_game_core::visuals::TrailRequest),
+        Added<gd_game_core::visuals::TrailRequest>,
+    >,
 ) {
     for (e, r) in &new {
         let mut t = Trail::new(r.owner, &r.record, r.width);
@@ -491,6 +530,6 @@ fn dress_trails(
         commands
             .entity(e)
             .insert((t, Visibility::default()))
-            .remove::<gd_game::visuals::TrailRequest>();
+            .remove::<gd_game_core::visuals::TrailRequest>();
     }
 }

@@ -31,9 +31,9 @@ impl Plugin for GibsPlugin {
 }
 
 /// A flying gib (`Gib`, an `Actor` on free rigid-body physics; `GibEffectEntity::InitialUpdate` /
-/// `Gib::UpdateSelf` @0x1803182a0): it lives `clamp(scale, 0.5, 2) * 10` s, then fades for 3 s.
+/// `Gib::UpdateSelf`): it lives `clamp(scale, 0.5, 2) * 10` s, then fades for 3 s.
 /// Each floor contact plays `impactGroundSound` and drops the gib's `ragdollDecal` (`Gib::CollisionCallback`
-/// @0x1803183f0 / `Actor::CollisionCallback`: world contact only, `impactCooldown` and the decal's per-body cooldown
+/// / `Actor::CollisionCallback`: world contact only, `impactCooldown` and the decal's per-body cooldown
 /// both 1000 ms; the sound only while `lifetime > 0`; `World::PlaceDecal` is gated by the `decals` option, here
 /// `detailObjects` in `casting::drop_decals`, which also keeps the 256-decal ring; the decal grows in, flag 0x40000).
 /// PORT: ballistic motion with a bounce off the floor (no rigid-body physics: a contact is a descending hit on the
@@ -89,7 +89,7 @@ pub fn launch(
     gib: &Record,
     at: Vec3,
 ) {
-    use gd_game::rng;
+    use gd_game_core::rng;
     // `GibEffectEntity::Load`: the count and the names.
     let mut names: Vec<String> = gib.strs("gibNames").iter().map(|s| s.to_string()).collect();
     let (lo, hi) = (
@@ -202,7 +202,7 @@ fn move_gibs(
     mut parts: Query<&mut MeshMaterial3d<gd_render::render::material::GdMaterial>>,
     mut materials: ResMut<Assets<gd_render::render::material::GdMaterial>>,
 ) {
-    use gd_game::rng;
+    use gd_game_core::rng;
     const GRAVITY: f32 = 9.8;
     let dt = time.delta_secs();
     for (e, mut tf, mut g) in &mut q {
@@ -235,14 +235,14 @@ fn move_gibs(
                     * Quat::from_rotation_y(rng::f32() * std::f32::consts::TAU);
                 if let Some(d) = g.decal.clone() {
                     commands.spawn((
-                        gd_render::fx::DropDecal(d),
+                        gd_render::fx::DropDecal(d.into()),
                         // `Actor::CollisionCallback`'s flag 0x40000: it grows in.
                         gd_render::decal::GrowIn::default(),
                         Transform::from_translation(decal_spot(p, floor)).with_rotation(yaw),
                     ));
                 }
                 if let (Some(pak), true) = (g.sound.clone(), g.life > 0.0) {
-                    commands.write_message(gd_game::visuals::PlaySound { pak, at: Some(p) });
+                    commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(p) });
                 }
             }
             // Floor friction is per-contact in the engine; scale it by dt so

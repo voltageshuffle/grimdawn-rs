@@ -41,8 +41,9 @@ pub fn flat_layers(center: Vec3, half: f32) -> Vec<NavLayer> {
 
 /// Where a teleport (`GameEngine::InstallTeleportActivity`: dungeon entrances, riftgates, portals, the Shattered
 /// Realm's doors and gates) puts the player: the caller passes the destination's world position cast to
-/// integers (`(int)` per axis, toward zero: `FixedDoor` use @0x180277ce0, `InitiatePlayerTeleport`); the activity
-/// (init sub_180581640, placement sub_1805820F0) makes it region-local, `WorldVec3::TranslateToFloor(0)` →
+/// integers (`(int)` per axis, toward zero: `DungeonEntrance::RequestToUse`, `InitiatePlayerTeleport`); the activity
+/// (init `TeleportActivity::Initialize`, placement `TeleportLocalClientActivity::PlacePlayer`) makes it region-local,
+/// `WorldVec3::TranslateToFloor(0)` →
 /// `World::PutOnFloor` drops it onto the first floor a ray from 2.5 m above meets (terrain, grids, water, pathable
 /// actors; [`NavWorld::floor_below`] here) and `World::SetCoords` puts the player there, unrotated. No offset, no
 /// search for room around it. `None` while the nav there is not loaded. PORT: a point with no walkable cell
@@ -85,14 +86,14 @@ pub fn straight_move_point(nav: &gd_sim::nav::NavWorld, from: Vec3, to: Vec3) ->
 }
 
 /// World-space obstacles of this entity: it blocks pathing while it exists. Sources: closed doors and
-/// gates and blocking set-piece objects (their mesh hit boxes, like `FixedItem::CreatePathObstacle`
-/// @0x1802a9cb0), `NavBlocker` entities (cylinders: `radius`, `height`; e.g. the repairable bridges'
+/// gates and blocking set-piece objects (their mesh hit boxes, like `FixedItem::CreatePathObstacle`),
+/// `NavBlocker` entities (cylinders: `radius`, `height`; e.g. the repairable bridges'
 /// blockers).
 #[derive(Component, Clone)]
 pub struct NavObstacle(pub Vec<Obstacle>);
 
 pub fn sync_obstacles(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut nav: ResMut<Nav>,
     added: Query<(Entity, &NavObstacle), Changed<NavObstacle>>,
     mut removed: RemovedComponents<NavObstacle>,

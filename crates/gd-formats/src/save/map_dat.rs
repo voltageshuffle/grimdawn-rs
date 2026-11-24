@@ -4,7 +4,7 @@
 //! It is not fog (that is `map.fow`) and holds no level state: only which map
 //! and mod the save belongs to and where the character starts.
 //!
-//! Grim Dawn.exe sub_140014CD0 (write; path from sub_140015350):
+//! Grim Dawn.exe `Game::SaveCharacter` (write; path from `Ui::GetMapDatPath`):
 //! an `IOStreamWrite` property file (key = u32 len + bytes, value raw, see
 //! [`super::tagged`]) with, in order:
 //! - `mapVersion` int = 2;
@@ -13,17 +13,17 @@
 //! - `modName` string (empty for the campaign, `survivalmode` for the Crucible);
 //! - `streamSpawnCoords` bool (4 bytes) = the spawn point has a region;
 //! - `spawnCoords` `WorldCoords`, only when that bool is set: 64 bytes,
-//!   `WorldCoords::Write` (Engine.dll 0x18022ad70) = the 3x3 rotation (three
-//!   Vec3, this+24/+36/+48), the region-local position (this+8), the 16-byte
+//!   `WorldCoords::Write` (Engine.dll) = the 3x3 rotation (three
+//!   Vec3), the region-local position, the 16-byte
 //!   `RegionId` (zero when there is no region).
 //!
-//! The spawn is `Player::GetClosestRespawnPoint` (Game.dll 0x1803d34f0): the
+//! The spawn is `Player::GetClosestRespawnPoint` (Game.dll): the
 //! player's own coordinates, whose position and region are replaced by the
 //! current respawn point's (the difficulty's `respawns.current` uid looked up
 //! in the instance groups) when that entity and its region exist; the
 //! rotation stays the player's.
 //!
-//! sub_140015530 (load): reads `mapVersion`, `mapPath`, `modName`
+//! `Game::LoadModMap` (load): reads `mapVersion`, `mapPath`, `modName`
 //! (only when the version is > 1), `streamSpawnCoords`; loads the world
 //! `mapPath` (as a mod map when the session has a mod); then, if the bool is
 //! set, reads `spawnCoords` into the character's spawn point
@@ -188,6 +188,6 @@ mod tests {
         let m = MapDat::new("levels/world001.map", "", Some(s));
         let b = m.encode().unwrap();
         assert_eq!(MapDat::parse(&b).unwrap(), m);
-        assert!(MapDat::parse(&b[..b.len() - 1]).is_err());
+        MapDat::parse(&b[..b.len() - 1]).unwrap_err();
     }
 }

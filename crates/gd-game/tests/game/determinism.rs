@@ -4,8 +4,8 @@
 //! A mismatch that does not reproduce points at hash-map iteration order in
 //! the combat inputs (`docs/architecture.md`).
 use bevy::prelude::*;
-use gd_game::combat::Combatant;
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
 
 use crate::common::ZOMBIE;
 

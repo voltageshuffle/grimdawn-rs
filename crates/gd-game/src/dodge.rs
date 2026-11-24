@@ -2,13 +2,13 @@
 //!
 //! Game.dll:
 //! * `ProjectileBase::UpdateSelf`: a flying projectile's notify timer
-//!   (+0xDE0, 0 at launch) runs down and, once below 0, is set to 200 ms
-//!   (+0xDE4) and `ProjectileBase::NotifyMonsters` @0x180409e10 runs: every
+//!   (`ProjectileBase.notifyTimer`, 0 at launch) runs down and, once below 0, is set to 200 ms
+//!   (`ProjectileBase.notifyInterval`) and `ProjectileBase::NotifyMonsters` runs: every
 //!   foe of the projectile's owner within the record's `notificationRadius`
 //!   (default 5, `ProjectileBase::Load`) of it gets
 //!   `Character::ProjectileNotification` → its controller's.
-//! * `ControllerMonster::ProjectileNotification` @0x18013b3d0: while the
-//!   monster's dodge timer (+0x644, counted down by `ControllerMonster::Update`)
+//! * `ControllerMonster::ProjectileNotification`: while the
+//!   monster's dodge timer (`ControllerMonster.dodgeTimer`, counted down by `ControllerMonster::Update`)
 //!   runs, the notification only sets it to `DodgeDelay` again (so a stream of
 //!   projectiles keeps it from dodging). Else the current state's
 //!   `ProjectileNotification` runs, the owner gets `ProjectileAnger`
@@ -16,9 +16,9 @@
 //!   to `DodgeDelay` (ms, default 5000).
 //! * The state handler of Idle, Patrol, Roam, Wander, FollowLeader,
 //!   DefendLeader, Pursue, WaitToAttack, Attack, RepositionForAttack and Return
-//!   is `DefaultProjectileNotificationResponse` @0x18014e080: `rand() % 100 <
+//!   is `DefaultProjectileNotificationResponse`: `rand() % 100 <
 //!   DodgeChance`, the projectile at least the monster's radius +
-//!   `MinDodgeDistance` away (3D), and a dodge point found (sub_18013E7A0,
+//!   `MinDodgeDistance` away (3D), and a dodge point found (`ControllerMonster::FindRandomPoint`,
 //!   `patrol::pick_spot`: five tries at `DodgeDistance` (default 4) from the
 //!   monster at a random angle, on the floor, |Δy| < `MaxYViewDistance`, more
 //!   than `DodgeDistance` − 0.1 away, reachable): "DodgeAttack", at once: a
@@ -26,12 +26,12 @@
 //!   states (Startup / Hidden, AlertBeforePursue, Flee, Stunned, QuestMove,
 //!   NavigateObstacle, DodgeAttack itself, Dying) have the empty handler; the
 //!   stationary classes have no DodgeAttack state (`combat::ControllerClass`).
-//! * `ControllerMonsterStateDodgeAttack` (`OnBegin` @0x1801493f0): runs to the
+//! * `ControllerMonsterStateDodgeAttack` (`OnBegin`): runs to the
 //!   point at its run speed (unreachable: "Return"), ignoring every event;
 //!   `EndOfPathReached` / `PathFailed`: "Return".
 //!
 //! * The player's controller states have no handler (`ControllerAI::
-//!   ProjectileNotification` @0x180123930 forwards to the state's slot, empty
+//!   ProjectileNotification` forwards to the state's slot, empty
 //!   in every `ControllerPlayerState*`), so only pets react to a monster's
 //!   projectile: a pet is a `ControllerMonster` (`pets.rs`), same rules and
 //!   its controller record's `DodgeChance` (`Pet::projectile_notified`).
@@ -39,14 +39,15 @@
 //! PORT: a pet does not release its attack slot when it dodges and "Return"
 //! is its idle (nor does a pet dodge mid-swing); the sphere test is centre to
 //! centre.
-use crate::character::{CharState, Character};
-use crate::combat::{Combatant, Dead, MonsterAi, QuestMove};
-use crate::data::GameData;
+use crate::combat::{MonsterAi, QuestMove};
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
 
-/// The controller's dodge fields (`ControllerMonster::Load` @0x180135e60)
+/// The controller's dodge fields (`ControllerMonster::Load`)
 /// and its dodge timer and state.
 #[derive(Clone, Debug, Default)]
 pub struct Dodge {
@@ -196,7 +197,7 @@ pub fn notify_monsters(
                 && ai.melee.st != crate::melee::St::Navigate
                 && ch.state != CharState::Death;
             if responds
-                && crate::rng::i32(0..100) < ai.dodge.chance
+                && gd_game_core::rng::i32(0..100) < ai.dodge.chance
                 && me.distance(at) >= cb.radius + ai.dodge.min
             {
                 let d = ai.dodge.distance;

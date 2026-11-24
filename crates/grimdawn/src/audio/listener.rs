@@ -2,13 +2,12 @@
 use super::Sounds;
 use super::mixer::{OnEnd, Voice, VoiceStart};
 use bevy::prelude::*;
-use gd_game::options::GameOptions;
+use gd_game_core::options::GameOptions;
 use gd_render::camera::CameraFocus;
 use gd_sim::sound3d::ear_gains;
 
-/// Concurrent sounds the engine plays: `SoundManager` has 128 playing slots (`GetEmptyCurrentPlayingIndex`
-/// @0x1801b6e80); a stream takes one too (`StartStream` @0x1801b7820), so the port's slots are every playing sound
-/// entity, the music included.
+/// Concurrent sounds the engine plays: `SoundManager` has 128 playing slots (`GetEmptyCurrentPlayingIndex`); a
+/// stream takes one too (`StartStream`), so the port's slots are every playing sound entity, the music included.
 pub const VOICES: usize = 128;
 
 /// What `pak::play_pak` knows of the listener this frame (refreshed by [`listen`] before the sounds of the frame
@@ -60,15 +59,16 @@ impl Listener {
     }
 }
 
-/// The engine's camera target (`GameCamera::GetTarget`, Game.dll @0x1802be6e0): the followed point 1 m
-/// higher (plus the debug offset +1372, zero from `ResetToDefaults`, and the camera offset while +312 > 0, not
-/// ported). The followed point is the player's `Camera` attach point; no stock PC mesh has one, PORT: taken as the
-/// player's own position, the port camera's [`GameCamera::target`](gd_render::camera::GameCamera).
+/// The engine's camera target (`GameCamera::GetTarget`, Game.dll): the followed point 1 m
+/// higher (plus the debug offset `GameCamera.debugOffset`, zero from `ResetToDefaults`, and the camera offset while
+/// `GameCamera.offsetTimeLeft` > 0, not ported). The followed point is the player's `Camera` attach point; no stock
+/// PC mesh has one, PORT: taken as the player's own position, the port camera's
+/// [`GameCamera::target`](gd_render::camera::GameCamera).
 pub fn camera_target(followed: Vec3) -> Vec3 {
     followed + Vec3::Y
 }
 
-/// The listener: `WorldCamera::SetListenerPosition` @0x180229420 (Engine.dll) puts
+/// The listener: `WorldCamera::SetListenerPosition` (Engine.dll) puts
 /// `SoundManager::SetEarsPosition` at the camera's target ([`camera_target`]) 1 m lower, every frame.
 pub fn ears(camera_target: Vec3) -> Vec3 {
     camera_target - Vec3::Y

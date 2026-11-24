@@ -1,7 +1,7 @@
 //! Tagged `IOStream` files: `formulas.gst`, read with its typed schema
 //! ([`Tagged::parse`]; `map.dat` has its own, [`super::map_dat`]).
 //!
-//! Per Engine.dll `IOStreamWrite::*` (0x1800edb80..0x1800ee490): every
+//! Per Engine.dll `IOStreamWrite::*`: every
 //! property is `u32 len + key bytes` (`HandlePropertyTag`) followed by the raw
 //! little-endian value; `begin_block`/`end_block` are properties with the u32
 //! values 0xB01DFACE / 0xDEADC0DE. Value widths depend on the C++ type passed
@@ -10,12 +10,12 @@
 //! Coords = 48, WorldCoords = 64) and are not stored in the file.
 //!
 //! PORT: the game never has to guess a width: its readers (`IOStreamRead::
-//! StreamPropertyEx`, Engine.dll 0x1800ecc60 and siblings) are called by each
+//! StreamPropertyEx`, Engine.dll, and siblings) are called by each
 //! object's `StreamProperties` in a fixed order with typed arguments; each
-//! checks that the next key is the expected one (`HandlePropertyTag`, virtual
-//! +168) and reads the width its C++ type implies. `formulas.gst` has that
-//! schema (`GameEngine::StreamPlayerFormulas`, Game.dll
-//! 0x1802dc180) and is read with it. For a file without one, the generic
+//! checks that the next key is the expected one (virtual `HandlePropertyTag`)
+//! and reads the width its C++ type implies. `formulas.gst` has that
+//! schema (`GameEngine::StreamPlayerFormulas`, Game.dll)
+//! and is read with it. For a file without one, the generic
 //! decoder picks the first candidate width (string, then 4/1/2/16/12/48/64
 //! bytes) after which the next key (or EOF) parses. Encoding writes the same
 //! bytes back, so the round trip is exact independent of the guess.
@@ -172,7 +172,7 @@ impl Tagged {
         Ok(Self { entries })
     }
 
-    /// Per `GameEngine::StreamPlayerFormulas` (Game.dll 0x1802dc180):
+    /// Per `GameEngine::StreamPlayerFormulas` (Game.dll):
     /// `begin_block`, `formulasVersion` int, `numEntries` int, `expansionStatus`
     /// byte (version >= 3), then `numEntries` pairs of `itemName` string and
     /// `formulaRead` int (version >= 2), `end_block`. The widths are the C++

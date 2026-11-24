@@ -1,7 +1,9 @@
 //! Print merged database records: `cargo run -p gd-tools --bin gd-rec -- <game dir> <record>...`
 //! (`<game dir>` defaults to `GD_ROOT` when no argument is given).
 //! `--classes <prefix>` counts the classes of records under a path prefix;
-//! `--with <field> <prefix>` lists records there with a non-empty `field`.
+//! `--with <field> <prefix>` lists records there with a non-empty `field`;
+//! `--diff <old game dir> [prefix]` lists the records added, removed and changed (field by field, old → new)
+//! from the old install to this one: the record side of a game update.
 use anyhow::Context;
 use gd_formats::arz::RawValue;
 use gd_formats::testdata::game_dir;
@@ -34,6 +36,54 @@ fn main() -> anyhow::Result<()> {
         }
         for (c, (n, example)) in counts {
             println!("{n:6} {c:32} {example}");
+        }
+        return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "--diff") {
+        let old = Database::open(args.get(1).context("--diff needs the old game dir")?)?;
+        let prefix = args
+            .get(2)
+            .map(|p| p.to_ascii_lowercase())
+            .unwrap_or_default();
+        let under = |n: &&str| n.to_ascii_lowercase().starts_with(&prefix);
+        let mut names: Vec<&str> = db.names().filter(under).collect();
+        names.extend(old.names().filter(under).filter(|n| db.get(n).is_none()));
+        names.sort_unstable_by_key(|n| n.to_ascii_lowercase());
+        let field = |rec: &gd_formats::arz::Record, k: &str| {
+            rec.fields
+                .iter()
+                .find(|(f, _)| f.eq_ignore_ascii_case(k))
+                .map(|(_, v)| v.clone())
+        };
+        for n in names {
+            match (old.get(n), db.get(n)) {
+                (None, Some(r)) => println!("+ {n} ({})", r.class),
+                (Some(r), None) => println!("- {n} ({})", r.class),
+                (Some(o), Some(r)) => {
+                    let mut changes = Vec::new();
+                    if o.class != r.class {
+                        changes.push(format!("  class: {} -> {}", o.class, r.class));
+                    }
+                    for (k, v) in r.fields.iter() {
+                        match field(o, k) {
+                            Some(ov) if ov == *v => {}
+                            ov => changes.push(format!("  {k}: {ov:?} -> {v:?}")),
+                        }
+                    }
+                    for (k, v) in o.fields.iter() {
+                        if field(r, k).is_none() {
+                            changes.push(format!("  {k}: {v:?} -> None"));
+                        }
+                    }
+                    if !changes.is_empty() {
+                        println!("~ {n}");
+                        for c in changes {
+                            println!("{c}");
+                        }
+                    }
+                }
+                (None, None) => {}
+            }
         }
         return Ok(());
     }

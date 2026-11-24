@@ -140,7 +140,7 @@ pub fn safe_join(base: &Path, name: &str) -> Result<PathBuf> {
     Ok(base.join(p))
 }
 
-/// MD5 (RFC 1321); the engine's `MD5Digest` (Game.dll sub_180599240 update / sub_1805988e0 transform).
+/// MD5 (RFC 1321); the engine's `MD5Digest` (Game.dll `MD5Digest::Update` / `MD5Digest::Transform`).
 /// Quest, task and conversation uids.
 pub fn md5(data: &[u8]) -> [u8; 16] {
     const S: [u32; 64] = [

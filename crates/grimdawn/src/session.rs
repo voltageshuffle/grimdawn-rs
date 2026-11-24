@@ -2,21 +2,11 @@
 //! respawn point, a uid resolved through the map's instance groups as the engine does. The session
 //! state itself (character choice, [`LoadedCharacter`]) is `gd_game::session`.
 use crate::world::StreamedMap;
+use gd_ui::state::session::AppState;
 use bevy::prelude::*;
 pub use gd_game::session::*; // incl. `in_game`, which `AppState` mirrors
+pub use gd_game_core::session::*;
 
-/// The app's phase. PORT: the engine switches modes in `GameEngine::EnableGameEngine`;
-/// here the state mirrors the session resources:
-/// `Menu` until the session is chosen (`SessionReady`), `Loading` while its player
-/// is spawned and the save applied, `InGame` once [`in_game`] holds. Every HUD /
-/// window / tooltip system is in `ui::UiPlaySet`, which runs under `in_state(AppState::InGame)`.
-#[derive(States, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AppState {
-    #[default]
-    Menu,
-    Loading,
-    InGame,
-}
 
 /// `AppState` follows the session resources (PreUpdate, so the transition applies the same frame).
 // The area-ready gate reads StreamedMap/Levels/PlayerStart alongside the state mirrors.
@@ -29,7 +19,7 @@ fn sync_state(
     world: Option<Res<StreamedMap>>,
     levels: Option<Res<crate::world::Levels>>,
     start: Option<Res<PlayerStart>>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let want = if playing.0 {
         // Lift the cover only once the spawn area is fully streamed in, like a
@@ -81,8 +71,8 @@ fn resolve_start(
     character: Option<Res<LoadedCharacter>>,
     start: Option<Res<PlayerStart>>,
     ready: Option<Res<SessionReady>>,
-    hooks: Res<gd_game::hooks::Hooks>,
-    choice: Res<gd_game::session::Choice>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    choice: Res<gd_game_core::session::Choice>,
 ) {
     if start.is_some() || ready.is_none() {
         return;

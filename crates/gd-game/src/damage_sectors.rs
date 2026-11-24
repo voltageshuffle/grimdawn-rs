@@ -3,8 +3,8 @@
 //! (aether, poison, fire, chaos, cold, physical; 1 % to 30 %), such as the aether fields north of Homestead, which the
 //! Shattered Realm's floors reuse.
 //!
-//! Game.dll `TickManager` (engine-wide, ctor @0x180583e80: 1000 ms period, factor 1.0; `Update`
-//! @0x180583ea0 counts the frame time down and runs `Tick` @0x180583ee0 every 1000 ms, not while the engine is
+//! Game.dll `TickManager` (engine-wide, ctor: 1000 ms period, factor 1.0; `Update`
+//! counts the frame time down and runs `Tick` every 1000 ms, not while the engine is
 //! paused): for each player, the layer-7 id of its cell in its own region's level (`SectorLayers::GetTargetId`);
 //! with an entry whose damage × factor is above 0, a player that is not invincible (`Player::IsInvincible`) and
 //! without an active purity skill (`SkillManager::IsPurityActive`: one of `gameengine.dbr` `puritySkillCheck`
@@ -16,11 +16,12 @@
 //!   emitting at the player's centre of mass (placed, not attached). PORT: the `FxPak` branch of a record that is
 //!   no `EffectEntity` is not ported (no stock use).
 use crate::afflictions::Afflictions;
-use crate::combat::{Combatant, Dead, Invincible};
-use crate::data::GameData;
-use crate::levels::Levels;
-use crate::player::Player;
+use crate::combat::Invincible;
 use bevy::prelude::*;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::levels::Levels;
+use gd_game_core::player::Player;
 
 /// The sector layer of the damage sectors.
 const DAMAGE_LAYER: usize = 7;
@@ -44,7 +45,7 @@ impl Plugin for DamageSectorsPlugin {
             damage_tick
                 .run_if(resource_exists::<Levels>)
                 .run_if(resource_exists::<GameData>)
-                .before(crate::afflictions::AfflictionStage::Tick),
+                .before(gd_game_core::afflictions::AfflictionStage::Tick),
         );
     }
 }
@@ -56,19 +57,19 @@ fn damage_tick(
     data: Res<GameData>,
     levels: Res<Levels>,
     mut ticks: ResMut<TickManager>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut players: Query<
         (
             &Transform,
             &Combatant,
-            &crate::character::Character,
+            &gd_game_core::character::Character,
             &mut Afflictions,
             Has<Invincible>,
         ),
         (With<Player>, Without<Dead>),
     >,
 ) {
-    ticks.0 -= crate::session::frame_ms(&mut carry, &time);
+    ticks.0 -= gd_game_core::session::frame_ms(&mut carry, &time);
     if ticks.0 >= 0 {
         return;
     }
@@ -78,7 +79,7 @@ fn damage_tick(
         ticks.0 += 1000;
         n += 1;
     }
-    let region = crate::riftgates::player_region(rt.as_deref());
+    let region = gd_game_core::riftgates::player_region(rt.as_deref());
     for (tf, cb, ch, mut afflictions, invincible) in &mut players {
         let Some(sector) = sector_at(&levels, region, tf.translation) else {
             continue;
@@ -97,11 +98,11 @@ fn damage_tick(
         for _ in 0..n {
             afflictions.apply_damage(ty, cb.profile.sheet.life * sector.damage);
             if !sector.record.is_empty() {
-                crate::visuals::notify(&mut commands, &sector.record);
+                gd_game_core::visuals::notify(&mut commands, &sector.record);
                 commands.spawn((
-                    crate::visuals::EffectSpec {
+                    gd_game_core::visuals::EffectSpec {
                         despawn_when_complete: true,
-                        ..crate::visuals::EffectSpec::record(sector.record.clone())
+                        ..gd_game_core::visuals::EffectSpec::record(sector.record.clone())
                     },
                     Transform::from_translation(at),
                 ));

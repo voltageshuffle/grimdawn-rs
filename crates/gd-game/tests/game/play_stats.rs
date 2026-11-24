@@ -1,16 +1,16 @@
 //! Headless checks of the session's play stats (`gd_game::play_stats`): a boss kill, a one-shot chest and a
 //! health potion count, and the counts are in the save the next session loads.
 use bevy::prelude::*;
+use gd_formats::inventory::Sack;
 use gd_formats::save::gdc::Gdc;
 use gd_formats::save::item::Item;
 use gd_game::chests::spawn_chest;
 use gd_game::combat::MonsterKilled;
-use gd_game::inventory::{InvRequest, Inventory};
 use gd_game::play_stats::PlayCounts;
-use gd_game::session::{GameMode, LoadedCharacter};
 use gd_game::testing::{TempDir, TestGame};
-use gd_game::world::ChestKey;
-use gd_sim::items::inventory::Sack;
+use gd_game_core::inventory::{InvRequest, Inventory};
+use gd_game_core::session::{GameMode, LoadedCharacter};
+use gd_game_core::world::ChestKey;
 
 const ONE_SHOT_CHEST: &str = "records/items/lootchests/oneshotchests/d01_oneshotchest_warden.dbr";
 const POTION: &str = "records/items/misc/potions/_oldpotion_healtha01.dbr";
@@ -29,7 +29,7 @@ fn game(tmp: &TempDir) -> Option<(TestGame, Entity)> {
     let root = g.app.world_mut().spawn_empty().id();
     g.app
         .world_mut()
-        .resource_mut::<gd_game::levels::Levels>()
+        .resource_mut::<gd_game_core::levels::Levels>()
         .add(2, root, Vec3::ZERO, None);
     g.steps(3);
     Some((g, p))

@@ -1,18 +1,18 @@
 use super::*;
 
-/// `Skill_AttackProjectileDebuf` (Game.dll): `Load` @0x1804c0540
+/// `Skill_AttackProjectileDebuf` (Game.dll): `Load`
 /// reads `projectileNames` and `buffSkillName` and loads the skill's profile
 /// from the `buffSkillName` table (duration, radius, cost are the buff
-/// record's); `GetProjectileName` @0x1804c0910 = `projectileNames[min(level
-/// − 1, n − 1)]` (none at level 0). `TargetResult` @0x1804c0650 makes no
+/// record's); `GetProjectileName` = `projectileNames[min(level
+/// − 1, n − 1)]` (none at level 0). `TargetResult` makes no
 /// attack and runs no secondaries: per target hit (the impact and its
 /// explosion radius) `CreateTargetFx`, then `ApplyBuffOnTarget(buff, level =
 /// GetCurrentLevel, duration = (int)(skillActiveDuration with the modifiers'
-/// (`GetSkillModifierData`, vtable +744) × 1000), debuff)` — the curse's
+/// (`GetSkillModifierData`) × 1000), debuff)` — the curse's
 /// landing (`crate::skill_buffs`). It runs at the impact on the caster's live
 /// skill (the projectile sends `SkillTargetResultConfigCmd`, whose `Execute`
-/// @0x1800e54f0 finds the caster by id, a corpse too, and calls
-/// `SkillManager::SkillTargetResult` @0x180535af0 → the skill's `TargetResult`), so the
+/// finds the caster by id, a corpse too, and calls
+/// `SkillManager::SkillTargetResult` → the skill's `TargetResult`), so the
 /// modifiers, the devotion level and the duration are the caster's at the impact,
 /// and a caster that is gone lands nothing ([`fly_projectiles`]). The level is
 /// the caster's `GetCurrentLevel` at the impact ([`impact_level_index`]), as for
@@ -35,7 +35,7 @@ pub(super) fn projectile_debuf_wrapper(
     if rec.class == CLASS {
         return Some(rec.clone());
     }
-    if !crate::skill_buffs::is_debuff(rec) {
+    if !gd_game_core::skill_buffs::is_debuff(rec) {
         return None;
     }
     loadout?
@@ -59,11 +59,11 @@ pub(super) fn projectile_debuf_name(wrapper: &Record, level_index: usize) -> Opt
         .map(|n| n.to_string())
 }
 
-/// `kGravity` (Engine.dll 0x180312814).
+/// `kGravity` (Engine.dll).
 const GRENADE_GRAVITY: f32 = 14.0;
 
-/// `ProjectileGrenade` (Game.dll `ProjectileGo` @0x18040e080, `CollisionCallback` @0x18040e8e0, `UpdateSelf`
-/// @0x18040e6b0): a ballistic body, gravity 14 m/s², launched at the angle
+/// `ProjectileGrenade` (Game.dll `ProjectileGo`, `CollisionCallback`, `UpdateSelf`):
+/// a ballistic body, gravity 14 m/s², launched at the angle
 /// `launchAngle` (clamped 10 to 80 degrees) with the speed that reaches the target distance (at most `projectileVelocity`,
 /// at least 5). The first ground contact (water ignored) plays `projectileBounceSound` once and starts the countdown (the
 /// record's miss TTL, a uniform draw of `projectileMissTTLMin` / `Max`); the second contact freezes it. A grenade
@@ -87,7 +87,7 @@ pub(crate) struct Grenade {
     frozen: bool,
 }
 
-/// `ProjectileBase::GetTargetsAlongPath` @0x1804082d0: `GetTargetsAroundRay` from the last position
+/// `ProjectileBase::GetTargetsAlongPath`: `GetTargetsAroundRay` from the last position
 /// `prev` along this frame's `step`, max(|step|, 1) m long, with the projectile's `touch` as the thickness; a zero
 /// step (a lying grenade) finds what it lies inside (the engine's direction is NaN then: only the inside test passes).
 /// `body` is the target's world box ([`Combatant::body_box`]). Its candidates are the bodies within
@@ -103,7 +103,7 @@ fn path_reach(step: Vec3, touch: f32) -> f32 {
     step.length().max(1.0) + touch
 }
 
-/// Where a projectile cast at a target aims. `SkillActivated::ExecuteRangedAttack` @0x180517ae0: at the
+/// Where a projectile cast at a target aims. `SkillActivated::ExecuteRangedAttack`: at the
 /// request point, the target's `Entity::GetCoords` (its feet), so a shot descends onto low breakables.
 /// PORT: a target whose body floats clear above its coords (a hero's loot orb: `chestsphere02.msh` sits 2.4 to
 /// 3.1 m up) is aimed at its body's centre instead, or the shot would pass under it.
@@ -115,7 +115,7 @@ pub(crate) fn aim_point(point: Vec3, body: Option<&gd_sim::bounds::Aabb>) -> Vec
 }
 
 /// The cast's launch coordinates (`Skill::GetCoordsFromCallback`,
-/// `Skill_AttackProjectile::ActivateNow` @0x1804bcb30): the callback's attach
+/// `Skill_AttackProjectile::ActivateNow`): the callback's attach
 /// point in the pose (`R Hand` / `L Hand`), the profile's
 /// `launchAttachPointName` when the mesh has no such hand point, else the
 /// body-box centre (`monster_skills::character_center`); a caster without a
@@ -191,7 +191,7 @@ pub(crate) fn spawn_projectile(
         .as_ref()
         .and_then(|f| inverse_start(f, start))
         .unwrap_or(start);
-    // An entity's forward is its local +Z ([`crate::character::facing`]), the
+    // An entity's forward is its local +Z ([`gd_game_core::character::facing`]), the
     // way its mesh is built (an arrow's tip, Dreeg's eye's iris): `looking_to`
     // aims −Z, so it is given the reverse direction.
     let tf = Transform::from_translation(at).looking_to(-vel.normalize_or(Vec3::Z), Vec3::Y);
@@ -213,7 +213,7 @@ pub(crate) fn spawn_projectile(
     let proj = commands.spawn_empty().id();
     // `PlaySwipeSound` as it is made, tracked with it (`crate::combat_sounds`).
     if let Some(pak) = crate::combat_sounds::projectile_launch(data, &prec.name) {
-        commands.write_message(crate::visuals::PlaySoundOn {
+        commands.write_message(gd_game_core::visuals::PlaySoundOn {
             pak,
             on: proj,
             at: start,
@@ -308,7 +308,7 @@ pub(crate) fn spawn_projectile(
     if grenade {
         let draw = |lo: &str, hi: &str| {
             let (a, b) = (prec.f32(lo).unwrap_or(0.0), prec.f32(hi).unwrap_or(0.0));
-            a.min(b) + (a.max(b) - a.min(b)) * crate::rng::f32()
+            a.min(b) + (a.max(b) - a.min(b)) * gd_game_core::rng::f32()
         };
         commands.entity(proj).insert(Grenade {
             harmless: prec.bool("harmlessInFlight"),
@@ -328,7 +328,7 @@ pub(crate) fn spawn_projectile(
             frozen: false,
         });
     }
-    // `inflightGroundFxPakName` / `inflightGroundFxDropTime` (`ProjectileFireballLike::Load` @0x18040ce20): an effect
+    // `inflightGroundFxPakName` / `inflightGroundFxDropTime` (`ProjectileFireballLike::Load`): an effect
     // dropped on the floor under the projectile every interval while it flies.
     if let Some(pak) = prec
         .str("inflightGroundFxPakName")
@@ -345,7 +345,7 @@ pub(crate) fn spawn_projectile(
     }
     // Its trails run between the mesh's `Anchor1`/`Anchor2` and, when
     // there, `Anchor3`/`Anchor4`; no `Anchor1`, no trail
-    // (`ProjectileBase::CountWeaponTrails` @0x180406450). The
+    // (`ProjectileBase::CountWeaponTrails`). The
     // anchors scale with the model (`scale`).
     if let Some(trail) = prec.str("projectileWeaponTrail").filter(|t| !t.is_empty())
         && let Some(m) = prec.str("mesh")
@@ -387,8 +387,8 @@ pub(crate) fn spawn_fx_looping(
 ) -> Option<Entity> {
     let rec = data.db.get(record)?;
     let rec_name = if rec.class == "FxPak" || rec.get("particleEffectNames").is_some() {
-        if let Some(pak) = crate::combat_sounds::fx_pak_sound(rec) {
-            commands.write_message(crate::visuals::PlaySound {
+        if let Some(pak) = gd_game_core::combat_sounds::fx_pak_sound(rec) {
+            commands.write_message(gd_game_core::visuals::PlaySound {
                 pak,
                 at: Some(tf.translation),
             });
@@ -401,16 +401,16 @@ pub(crate) fn spawn_fx_looping(
     };
     Some(
         commands
-            .spawn((crate::visuals::EffectSpec::record(rec_name), tf))
+            .spawn((gd_game_core::visuals::EffectSpec::record(rec_name), tf))
             .id(),
     )
 }
 
-/// A projectile's ground effect drops (`inflightGroundFxPakName`; `ProjectileFireballLike::UpdateSelf`
-/// @0x18040d1a0): the first one interval after launch, then every interval, at the projectile's
+/// A projectile's ground effect drops (`inflightGroundFxPakName`; `ProjectileFireballLike::UpdateSelf`):
+/// the first one interval after launch, then every interval, at the projectile's
 /// position snapped to the floor with its heading; ownerless, never stopped (the pak runs its own life); one drop per
 /// frame at most. The Boomerang / Spark / Inverse classes run that `UpdateSelf` after their own and
-/// `ProjectileFragmenting::UpdateSelf` @0x18040d9d0 repeats the drop (`projectile_classes`). PORT: every
+/// `ProjectileFragmenting::UpdateSelf` repeats the drop (`projectile_classes`). PORT: every
 /// other record class with the field drops too (the engine's Orbiting / Homing classes were assumed to inherit it).
 #[derive(Component)]
 pub(crate) struct GroundDrops {
@@ -440,7 +440,7 @@ pub(super) fn drop_ground_fx(
             .or_else(|| world_coll.terrain_ground(p))
             .unwrap_or(p.y);
         let at = Transform::from_translation(Vec3::new(p.x, y, p.z)).with_rotation(tf.rotation);
-        crate::visuals::spawn_fx(&mut commands, &data, &d.pak, at);
+        gd_game_core::visuals::spawn_fx(&mut commands, &data, &d.pak, at);
     }
 }
 
@@ -448,7 +448,7 @@ pub(super) fn drop_ground_fx(
 /// contact, handled apart).
 fn grenade_wall(
     world: &crate::collision::WorldCollision,
-    doors: &Query<&crate::nav::NavObstacle, With<crate::world::DoorMarker>>,
+    doors: &Query<&crate::nav::NavObstacle, With<gd_game_core::world::DoorMarker>>,
     a: Vec3,
     b: Vec3,
 ) -> Option<Vec3> {
@@ -472,18 +472,18 @@ fn grenade_wall(
 }
 
 /// The caster's skill level at the impact (Game.dll: the projectile sends
-/// `SkillTargetResultConfigCmd`, whose `Execute` @0x1800e54f0 finds the caster by id
-/// and runs `SkillManager::SkillTargetResult` @0x180535af0 on its live skill object;
-/// `SkillActivatedSpell::TargetResult` → `Skill::CollectCombatParameters` @0x180499e40
-/// and `Skill_AttackProjectileDebuf::TargetResult` @0x1804c0650 read `GetCurrentLevel`
-/// @0x1804909c0 there): the player's current level of the skill the cast ran as — a
+/// `SkillTargetResultConfigCmd`, whose `Execute` finds the caster by id
+/// and runs `SkillManager::SkillTargetResult` on its live skill object;
+/// `SkillActivatedSpell::TargetResult` → `Skill::CollectCombatParameters`
+/// and `Skill_AttackProjectileDebuf::TargetResult` read `GetCurrentLevel`
+/// there): the player's current level of the skill the cast ran as — a
 /// wrapper cast's `skill` is its `buffSkillName` record, the level is the learned
 /// wrapper's ([`projectile_debuf_wrapper`] the same scan). Monsters' and pets' skill
 /// levels are fixed at their spawn: the cast's level index is still the current one.
 pub(crate) fn impact_level_index(
     db: &gd_formats::vfs::Database,
     p: &Projectile,
-    caster: Option<(&Loadout, &crate::player::EffectiveSkills)>,
+    caster: Option<(&Loadout, &gd_game_core::player::EffectiveSkills)>,
 ) -> usize {
     let Some((loadout, effective)) = caster else {
         return p.level_index;
@@ -514,7 +514,7 @@ pub(super) fn fly_projectiles(
     data: Res<GameData>,
     nav: Res<Nav>,
     world_coll: Res<crate::collision::WorldCollision>,
-    doors: Query<&crate::nav::NavObstacle, With<crate::world::DoorMarker>>,
+    doors: Query<&crate::nav::NavObstacle, With<gd_game_core::world::DoorMarker>>,
     mut q: Query<
         (
             Entity,
@@ -541,9 +541,9 @@ pub(super) fn fly_projectiles(
     // whether it is the player (devotion).
     (attackers, devotion): (
         Query<(
-            Option<&crate::weapon_pool::SkillLinks>,
+            Option<&gd_game_core::weapon_pool::SkillLinks>,
             Has<Player>,
-            Option<(&Loadout, &crate::player::EffectiveSkills)>,
+            Option<(&Loadout, &gd_game_core::player::EffectiveSkills)>,
         )>,
         Option<Res<crate::devotion::DevotionState>>,
     ),
@@ -620,7 +620,7 @@ pub(super) fn fly_projectiles(
             }
             tf.translation += p.vel * dt;
         }
-        // `ProjectileTerrainFollowing::UpdateSelf` @0x180413020:
+        // `ProjectileTerrainFollowing::UpdateSelf`:
         // re-seat y to the floor + the projectile's height, eased (past
         // 1.25 × height it moves 0.75 of the excess); off the nav mesh it
         // stops (`NavManager::IsPointOnPathMesh`).
@@ -683,7 +683,7 @@ pub(super) fn fly_projectiles(
                 tf.translation = hit - step.normalize_or_zero() * 0.05;
                 if g.contacts == 1 {
                     if let Some(pak) = &g.bounce_sound {
-                        commands.write_message(crate::visuals::PlaySoundOn {
+                        commands.write_message(gd_game_core::visuals::PlaySoundOn {
                             pak: pak.clone(),
                             on: e,
                             at: tf.translation,
@@ -709,7 +709,7 @@ pub(super) fn fly_projectiles(
                 g.contacts += 1;
                 if g.contacts == 1 {
                     if let Some(pak) = &g.bounce_sound {
-                        commands.write_message(crate::visuals::PlaySoundOn {
+                        commands.write_message(gd_game_core::visuals::PlaySoundOn {
                             pak: pak.clone(),
                             on: e,
                             at: tf.translation,
@@ -857,7 +857,7 @@ pub(super) fn fly_projectiles(
                 None => (Ev::Destruct, tf.translation),
             };
             if let Some(pak) = crate::combat_sounds::projectile_hit(&data, &p.record, ev) {
-                commands.write_message(crate::visuals::PlaySound { pak, at: Some(at) });
+                commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
             }
         }
         let mut targets: Vec<Entity> = hit_monster.into_iter().collect();
@@ -981,7 +981,7 @@ pub(super) fn fly_projectiles(
                 tf.translation,
             ));
         }
-        // `Skill_AttackProjectileSpawnPet::TargetInformation` @0x1804c3650: its
+        // `Skill_AttackProjectileSpawnPet::TargetInformation`: its
         // end summons at the impact / the foe hit (`pets::placement::hit_spots`).
         if p.spawns_pet {
             commands.write_message(SpawnPet {
@@ -1002,7 +1002,7 @@ pub(super) fn fly_projectiles(
                 Transform::from_translation(tf.translation),
             );
         }
-        // `ProjectileStop` @0x18040e220: a grenade's `aeProjectileName` area goes down where it ended, with the
+        // `ProjectileGrenade::ProjectileStop`: a grenade's `aeProjectileName` area goes down where it ended, with the
         // skill's duration and radius (`Skill_AttackProjectileAreaEffect` values).
         if grenade_boom
             && let Some(ae) = data
@@ -1042,7 +1042,7 @@ pub(super) fn fly_projectiles(
         if let Some(m) = hit_monster
             && p.left > 0.0
             && p.pierce > 0.0
-            && crate::rng::f32() * 100.0 < p.pierce
+            && gd_game_core::rng::f32() * 100.0 < p.pierce
         {
             if orbiting.is_none() {
                 p.passed.push(m);
@@ -1055,10 +1055,10 @@ pub(super) fn fly_projectiles(
             split(&mut commands, &data, p, tf.translation, None);
         }
         // The projectile ends: its skill's special secondaries run at its
-        // position with no targets (`ProjectileBase::SpecialSecondaryActivation`
-        // @0x180409670). Its only callers are `ProjectileHoming`'s
-        // `ProjectileHit` (sub_18040F3C0, state 2) and `ProjectileStop`
-        // (sub_18040F380, state 3), which `ProjectileChain` inherits: the same
+        // position with no targets (`ProjectileBase::SpecialSecondaryActivation`).
+        // Its only callers are `ProjectileHoming`'s
+        // `ProjectileHit` (state 2) and `ProjectileStop`
+        // (state 3), which `ProjectileChain` inherits: the same
         // activation on a hit and at the end of the flight (the state only
         // decides `UpdateSelf`'s `explodeOnMiss` explosion); no other projectile
         // class runs the special pair.
@@ -1096,7 +1096,7 @@ fn split(
             continue;
         };
         let n = if hi > lo {
-            crate::rng::u32(*lo..=*hi)
+            gd_game_core::rng::u32(*lo..=*hi)
         } else {
             *lo
         };
@@ -1116,7 +1116,7 @@ fn split(
         };
         let mut a = 0.0f32;
         for _ in 0..n {
-            a += (360 / n.max(1)) as f32 + crate::rng::i32(-30..=30) as f32;
+            a += (360 / n.max(1)) as f32 + gd_game_core::rng::i32(-30..=30) as f32;
             let dir = Vec3::new(a.to_radians().sin(), 0.0, a.to_radians().cos());
             spawn_projectile(
                 commands,

@@ -1,20 +1,9 @@
 use super::*;
 
-/// The [`RangedWeapon`] of a weapon record, if it is a ranged one.
-pub fn ranged_weapon(data: &GameData, weapon: &str) -> Option<RangedWeapon> {
-    let r = data.db.get(weapon).filter(|r| r.class.contains("Ranged"))?;
-    let p = r.str("basicProjectileName")?.to_owned();
-    let long = data.engine().long_range();
-    Some(RangedWeapon {
-        projectile: p,
-        reach: long + 0.5,
-    })
-}
-
 pub(super) fn sync_ranged(
     mut commands: Commands,
     data: Res<GameData>,
-    inv: Res<crate::inventory::Inventory>,
+    inv: Res<gd_game_core::inventory::Inventory>,
     players: Query<(Entity, Option<&RangedWeapon>), With<Player>>,
 ) {
     let Ok((e, cur)) = players.single() else {
@@ -54,15 +43,15 @@ pub(super) fn ranged_swings(
             Option<&AimPoint>,
             Has<MonsterAi>,
             Option<&crate::weapon_pool::PoolPick>,
-            Option<&crate::skill_fx::WeaponEnchantments>,
+            Option<&gd_game_core::skill_fx::WeaponEnchantments>,
             Has<Player>,
-            Option<&crate::character::Character>,
+            Option<&gd_game_core::character::Character>,
         ),
         Without<Casting>,
     >,
     targets: Query<&Transform, Without<Dead>>,
     mut procs: MessageWriter<ProcCast>,
-    options: Res<crate::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     holdings: crate::combat_sounds::Holdings,
 ) {
     for ev in events.read() {
@@ -91,7 +80,7 @@ pub(super) fn ranged_swings(
             });
             continue;
         }
-        let Some(prec) = data.db.get(&crate::skill_fx::weapon_projectile(
+        let Some(prec) = data.db.get(&gd_game_core::skill_fx::weapon_projectile(
             &data.db,
             &rw.projectile,
             ench,
@@ -118,7 +107,7 @@ pub(super) fn ranged_swings(
             effects: data
                 .db
                 .get(DEFAULT_ATTACK)
-                .and_then(|r| crate::skill_fx::projectile_fx(r, &[]))
+                .and_then(|r| gd_game_core::skill_fx::projectile_fx(r, &[]))
                 .into_iter()
                 .collect(),
             ..default()
@@ -163,7 +152,7 @@ pub(crate) fn skill_launch_sound(commands: &mut Commands, data: &GameData, skill
     if let Some(pak) =
         crate::combat_sounds::spell_hit(data, skill, crate::combat_sounds::HitAt::Launch)
     {
-        commands.write_message(crate::visuals::PlaySound { pak, at: Some(at) });
+        commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
     }
 }
 
@@ -185,7 +174,7 @@ pub(super) fn fire_weapon_projectile(
     hand: &str,
 ) {
     if let Some(pak) = crate::combat_sounds::shot(data, held) {
-        commands.write_message(crate::visuals::PlaySound {
+        commands.write_message(gd_game_core::visuals::PlaySound {
             pak,
             at: Some(tf.translation),
         });
@@ -194,10 +183,10 @@ pub(super) fn fire_weapon_projectile(
     let dist = prec.f32("projectileDistance").unwrap_or(MAX_RANGE).max(1.0);
     let start = launch_coords(data, tf, ch, prec, hand);
     // The request point itself, no height lift
-    // (`SkillActivated::ExecuteRangedAttack` @0x180517ae0: direction = point − launch
+    // (`SkillActivated::ExecuteRangedAttack`: direction = point − launch
     // coords; the point is the clicked object's `Entity::GetCoords`): the shot descends
     // onto low breakables instead of flying over them.
-    let aim = (cast.point - start).normalize_or(crate::character::facing(tf));
+    let aim = (cast.point - start).normalize_or(gd_game_core::character::facing(tf));
     skill_launch_sound(commands, data, &cast.skill, tf.translation);
     spawn_projectile(
         commands,

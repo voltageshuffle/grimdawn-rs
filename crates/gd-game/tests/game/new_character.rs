@@ -4,8 +4,8 @@
 //! when (written at creation).
 use gd_formats::save::gdc::{Gdc, HotSlot};
 use gd_formats::save::gst::Transfer;
-use gd_game::casting::{DEFAULT_ATTACK, SLOT_LEFT};
 use gd_game::testing::TestGame;
+use gd_game_core::casting::{DEFAULT_ATTACK, SLOT_LEFT};
 
 fn read_gdc(path: &std::path::Path) -> Gdc {
     Gdc::parse(&std::fs::read(path).expect("player.gdc written")).expect("parses")
@@ -72,7 +72,7 @@ fn created_character_saves_and_loads() {
     let loaded = &again
         .app
         .world()
-        .resource::<gd_game::session::LoadedCharacter>()
+        .resource::<gd_game_core::session::LoadedCharacter>()
         .0;
     assert_eq!(loaded.header.name, "Menu Test");
 }
@@ -89,4 +89,44 @@ fn new_character_round_trips() {
         g.tokens.lists[1] = vec!["SURVIVALMODE_X".into(), "Y".into()];
         assert_eq!(Gdc::parse(&g.encode().unwrap()).unwrap(), g);
     }
+}
+
+/// A new character's stash sack is written 0×0 (as the engine writes it) and loads back as a full-size
+/// first personal page, not the 1×1 the bug persisted (BUG-2); an already-corrupted 1×1 personal page is
+/// healed to the fixed personal size on load.
+#[test]
+fn new_character_stash_page_is_full_size() {
+    use gd_game::testing::TempDir;
+    use gd_game_core::stash::{STASH_H, STASH_W, Stash};
+    let tmp = TempDir::new("stash_page");
+    let mut gdc = gd_game::save::new_character("Stash Size", false, false, [3; 16], 99);
+    assert_eq!(
+        (gdc.stash.sacks[0].width, gdc.stash.sacks[0].height),
+        (0, 0),
+        "the engine writes a fresh stash sack 0×0"
+    );
+    let path = tmp.path().join("player.gdc");
+    std::fs::write(&path, gdc.encode().unwrap()).unwrap();
+    let page = |g: &TestGame| {
+        let s = g.app.world().resource::<Stash>();
+        (s.pages[0].width, s.pages[0].height)
+    };
+    // Loading the 0×0 sack gives the default page size.
+    let Some(mut g) = TestGame::with_save(&path) else {
+        return;
+    };
+    g.spawn_player();
+    g.steps(2);
+    assert_eq!(page(&g), (STASH_W, STASH_H));
+    // An already-corrupted 1×1 personal page (what the bug persisted) is healed on load.
+    gdc.stash.sacks[0].width = 1;
+    gdc.stash.sacks[0].height = 1;
+    let bad = tmp.path().join("bad.gdc");
+    std::fs::write(&bad, gdc.encode().unwrap()).unwrap();
+    let Some(mut g2) = TestGame::with_save(&bad) else {
+        return;
+    };
+    g2.spawn_player();
+    g2.steps(2);
+    assert_eq!(page(&g2), (STASH_W, STASH_H));
 }

@@ -6,17 +6,17 @@
 //! pick reads the same) + `usableRange` (`combat::fixed_usable_range`: 1 m for the many chests without one),
 //! +1 m at the walk's end, 3D).
 //!
-//! `FixedItemContainer::Open` @0x1802acda0 (fields from
-//! `FixedItemContainer::Load` @0x1802ac190): opening plays the record's
+//! `FixedItemContainer::Open` (fields from
+//! `FixedItemContainer::Load`): opening plays the record's
 //! `openSound` pak at the chest's coords, starts `openAnimation`, and, when
 //! `openFxPakName` is set, creates that object (cached at load) and adds it
 //! to the world at the chest's coords (`World::AddEntity`, not attached);
 //! then the loot is generated. Here: [`PlaySound`] and
-//! [`crate::visuals::spawn_fx`] at the chest's transform. The loot is thrown
+//! [`gd_game_core::visuals::spawn_fx`] at the chest's transform. The loot is thrown
 //! one item at a time from `FixedItem::GetLootDropCoords` with the record's
 //! `actorRadius` (`crate::loot::fixed_drop_point`, `Dropper::one_by_one`).
 //!
-//! The radius lock (`FixedItemContainer::UpdateSelf` @0x1802acab0, `CheckRadiusClear` @0x1802ac910,
+//! The radius lock (`FixedItemContainer::UpdateSelf`, `CheckRadiusClear`,
 //! fields from `Load`): a container with `LockedRadius` (> 0.0001) that was not opened yet sets its `locked`
 //! flag every 500 ms: locked while a live `Monster` (`World::GetEntitiesInSphere` of that radius around it)
 //! has a classification (`ResolveMonsterClassificationEnum`) at or above its `LockedClassification`, a whole
@@ -28,18 +28,18 @@
 //! Food crates (`FixedItemShrine`: `interactive/constitution_foodcrate{a,b}01`, 19 placed in levels and 29 from
 //! the `pool_constitution_foodcratea01` accessory pool) are used like chests ([`Chest::shrine`]).
 //! Game.dll:
-//! - `FixedItemShrineController::LoadFromDatabase` @0x1802b3fa0: `oneTimeUse`, `shrineActiveTime` /
-//!   `shrineDormantTime` / `shrineSampleTime` (s → ms), `shrineRadius`. `TouchedByActor` @0x1802b4380 (idle
+//! - `FixedItemShrineController::LoadFromDatabase`: `oneTimeUse`, `shrineActiveTime` /
+//!   `shrineDormantTime` / `shrineSampleTime` (s → ms), `shrineRadius`. `TouchedByActor` (idle
 //!   only): the crate goes idle → active (state 5) with the sample timer at 0 and the active timer at
-//!   `shrineActiveTime`; `Update` @0x1802b40e0 samples while active: `GetTargetsInRadius` of `shrineRadius`
+//!   `shrineActiveTime`; `Update` samples while active: `GetTargetsInRadius` of `shrineRadius`
 //!   around the crate for the user's side (its flags not decoded) → `FixedItemTargetConfigCmd` → `FixedItem::UseOnTarget`
-//!   @0x1802a9810 → `GiveBonusToTargets` @0x1802a98f0: `Character::TakeBonus` with the record's bonus block
+//!   → `GiveBonusToTargets`: `Character::TakeBonus` with the record's bonus block
 //!   (constitution: `crate::constitution`). The sample timer restarts at `shrineSampleTime` and both timers
 //!   count down together, so with the stock 1 s / 1 s the active timer runs out first: one bonus per use.
 //!   Then dormant for `shrineDormantTime`, back to idle only without `oneTimeUse` (1 in both records).
-//! - `SetFixedItemState` @0x1802b3610: idle → `idleAnimation`, `StartIdleEffect` (`IdleLoopingEffect`
-//!   attached at `IdleLoopingAttachment`); use → `GoIdleToActive` @0x1802b3b70 (`idleToActiveAnimation`,
-//!   `idleToActiveSound` at the crate, `idleToActiveFxPakName`) and `StartActiveEffect` @0x1802b3570: the idle
+//! - `SetFixedItemState`: idle → `idleAnimation`, `StartIdleEffect` (`IdleLoopingEffect`
+//!   attached at `IdleLoopingAttachment`); use → `GoIdleToActive` (`idleToActiveAnimation`,
+//!   `idleToActiveSound` at the crate, `idleToActiveFxPakName`) and `StartActiveEffect`: the idle
 //!   effects stop emitting and stay in the world (`PlaceEffectsInWorld`), `ActiveOneShotEffect` starts, with
 //!   `ActiveMeshFX`. The stock crates have no active / dormant animations, so the crate rests opened.
 //!
@@ -51,11 +51,11 @@
 //! (`TouchedByActor` → `LoadDropLoot`: the stock crates have no loot table).
 use crate::movement::MovePath;
 use crate::nav::Nav;
-use crate::player::Player;
-use crate::visuals::PlaySound;
-use crate::world::{ChestKey, ChestStates};
 use bevy::prelude::*;
-use gd_sim::combat::Rng;
+use gd_game_core::player::Player;
+use gd_game_core::visuals::PlaySound;
+use gd_game_core::world::{ChestKey, ChestStates};
+use gd_rules::Rng;
 
 #[derive(Component)]
 pub struct Chest {
@@ -75,7 +75,7 @@ pub struct Chest {
 }
 
 impl Chest {
-    /// `FixedItemContainer::IsOfInterest` (@0x1802ad0f0): its state
+    /// `FixedItemContainer::IsOfInterest`: its state
     /// is 1 (closed; `SetFixedItemState` → 3 opens it). A locked chest is
     /// still of interest (a click tells it is locked).
     pub fn is_of_interest(&self) -> bool {
@@ -124,17 +124,17 @@ pub fn open_chests(
             &Transform,
             &mut MovePath,
             &mut crate::player_orders::InteractTarget,
-            Option<&crate::combat::Combatant>,
-            &crate::character::Character,
+            Option<&gd_game_core::combat::Combatant>,
+            &gd_game_core::character::Character,
             Option<&mut crate::constitution::Constitution>,
         ),
         With<Player>,
     >,
     // Option: level 1 when absent.
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    world: Res<crate::levels::Levels>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    world: Res<gd_game_core::levels::Levels>,
     nav: Res<Nav>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     (mut opened_out, mut stats): (
         MessageWriter<ChestOpened>,
         MessageWriter<crate::play_stats::PlayStat>,
@@ -142,7 +142,7 @@ pub fn open_chests(
     mut locked_out: MessageWriter<LockedUse>,
     mut sound: MessageWriter<PlaySound>,
     mut loot: crate::loot::ContainerLoot,
-    mut bodies: ResMut<crate::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
 ) {
     let Ok((ptf, mut path, mut interact, pcb, ch, constitution)) = players.single_mut() else {
         return;
@@ -156,10 +156,10 @@ pub fn open_chests(
     };
     let at = gt.translation();
     // Use range (`player_orders::usable_range`): +1 m only once the walk has ended.
-    let range = crate::player_orders::usable_range(
+    let range = gd_game_core::player_orders::usable_range(
         pcb.map_or(0.5, |c| c.radius),
         chest.radius,
-        crate::combat::fixed_usable_range(Some(rec)),
+        gd_game_core::combat::fixed_usable_range(Some(rec)),
         path.points.is_empty(),
     );
     if chest.opened || ptf.translation.distance(at) > range {
@@ -201,7 +201,7 @@ pub fn open_chests(
         }
         if let Some(fx) = rec.str("ActiveOneShotEffect") {
             let (_, rot, pos) = gt.to_scale_rotation_translation();
-            crate::visuals::spawn_fx(
+            gd_game_core::visuals::spawn_fx(
                 &mut commands,
                 &data,
                 fx,
@@ -235,7 +235,7 @@ pub fn open_chests(
     }
     if let Some(fx) = rec.str("openFxPakName").filter(|s| !s.is_empty()) {
         let (_, rot, pos) = gt.to_scale_rotation_translation();
-        crate::visuals::spawn_fx(
+        gd_game_core::visuals::spawn_fx(
             &mut commands,
             &data,
             fx,
@@ -261,7 +261,7 @@ pub fn open_chests(
         chest.proxy_level,
     );
     let idb = &data.item_db();
-    let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let drops = loot.drops(
         idb,
         &chest.record,
@@ -308,7 +308,7 @@ pub fn open_chests(
         &gold,
         crate::loot::Dropper::one_by_one(
             rec.f32("actorRadius")
-                .unwrap_or(crate::combat::ACTOR_RADIUS),
+                .unwrap_or(gd_game_core::combat::ACTOR_RADIUS),
         ),
     );
     if let ChestKey::Story(id) = chest.key {
@@ -318,7 +318,7 @@ pub fn open_chests(
 
 /// `GD_OPEN_CHESTS` (hooks.rs).
 pub fn test_open(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut timer: Local<f32>,
     time: Res<Time>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
@@ -366,16 +366,16 @@ pub fn test_open(
 
 /// Script `SetLocked` on story chests (remembered for chests spawned later).
 pub fn story_locks(
-    mut fresh: crate::session::NewSession,
-    mut events: MessageReader<crate::story::StoryEffect>,
+    mut fresh: gd_game_core::session::NewSession,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
     mut chests: Query<&mut Chest>,
-    mut locks: Local<std::collections::HashMap<u32, bool>>,
+    mut locks: Local<gd_formats::collections::HashMap<u32, bool>>,
 ) {
     if fresh.begun() {
         *locks = Default::default();
     }
     for ev in events.read() {
-        if let gd_sim::story::Effect::SetLocked { id, locked } = ev.0 {
+        if let gd_story::story::Effect::SetLocked { id, locked } = ev.0 {
             locks.insert(id, locked);
         }
     }
@@ -393,9 +393,12 @@ pub fn story_locks(
 pub fn radius_locks(
     time: Res<Time>,
     mut timer: Local<f32>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut chests: Query<(&GlobalTransform, &mut Chest)>,
-    monsters: Query<(&GlobalTransform, &crate::monsters::Monster), Without<crate::combat::Dead>>,
+    monsters: Query<
+        (&GlobalTransform, &gd_game_core::monsters::Monster),
+        Without<gd_game_core::combat::Dead>,
+    >,
 ) {
     *timer -= time.delta_secs();
     if *timer > 0.0 {
@@ -411,7 +414,7 @@ pub fn radius_locks(
             m.translation().distance(at) <= radius
                 && data.db.get(&monster.record).is_some_and(|r| {
                     let c = r.str("monsterClassification").unwrap_or("");
-                    gd_sim::story::quest::monster_classification(c) >= class
+                    gd_story::story::quest::monster_classification(c) >= class
                 })
         });
         if chest.locked != locked {
@@ -441,7 +444,7 @@ impl Plugin for ChestsPlugin {
                 Update,
                 (test_open, open_chests)
                     .chain()
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::player::PlayerSet),
             )
             .add_systems(Update, (story_locks, radius_locks).chain());
     }
@@ -466,7 +469,7 @@ pub fn spawn_chest(
         key,
         opened,
         proxy_level,
-        radius: crate::combat::get_radius(Some(rec), crate::combat::ACTOR_RADIUS),
+        radius: gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS),
         locked: rec.bool("locked"),
         lock_radius: rec.f32("LockedRadius").filter(|r| *r > 0.0001).map(|r| {
             let class = match rec.str("LockedClassification").unwrap_or("") {
@@ -494,7 +497,7 @@ pub fn spawn_chest(
     if let ChestKey::Level(l, _) | ChestKey::Accessory(l, _, _) = key
         && l != usize::MAX
     {
-        e.insert(crate::levels::LevelMember(l));
+        e.insert(gd_game_core::levels::LevelMember(l));
     }
     Some(e.id())
 }

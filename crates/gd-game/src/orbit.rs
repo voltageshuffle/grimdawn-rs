@@ -9,50 +9,50 @@
 //! records.
 //!
 //! Game.dll:
-//! - `Skill_AttackProjectileOrbiting::Load` @0x1804c14e0: `projectilePeriod`
-//!   × 1000 → int ms; `projectileDirection` (sub_1804c1340): `Clockwise` 0,
+//! - `Skill_AttackProjectileOrbiting::Load`: `projectilePeriod`
+//!   × 1000 → int ms; `projectileDirection` (`ResolveEnum_ProjectileDirection`): `Clockwise` 0,
 //!   `Counterclockwise` 1, `Alternate` 2, `Randomize` 3, anything else 0
 //!   (the Eye of Dreeg's `Random` is clockwise); `projectileStart`
-//!   (`ResolveEnum_ProjectileStart` @0x1800f5130): `Front` 0, `Randomize` 1,
+//!   (`ResolveEnum_ProjectileStart`): `Front` 0, `Randomize` 1,
 //!   anything else 0 (the template's `Front;Randomize` is Front). The
-//!   secondary's `Load` @0x1804a5160 reads the same.
-//! - `ActivateNow` @0x1804c15c0 starts a burst only while none runs (the
+//!   secondary's `Load` reads the same.
+//! - `ActivateNow` starts a burst only while none runs (the
 //!   count left is 0 and the launch timer has run out, `<= 0`; a cast during
 //!   one is still paid, the activation is ignored): the count is
 //!   `SkillProfile::GetNumberOfProjectiles(level)` (`skillProjectileNumber`
 //!   at the level, no modifiers; 1 without the list), the timer 100 ms, the
 //!   direction its enum (`Alternate` starting at 1), and with `Randomize`
 //!   start one angle `rand()` in [0, 2π] for the whole burst.
-//!   `SkillSecondary_AttackProjectileOrbiting::ActivateNow` @0x1804a5280
+//!   `SkillSecondary_AttackProjectileOrbiting::ActivateNow`
 //!   (Ashes of Malmouth content) does the same and keeps the caster's
 //!   coordinates with the activation point as their position for the burst.
-//! - `Update` @0x1804c16c0 (the secondary's @0x1804a5980): the timer counts
+//! - `Update` (and the secondary's): the timer counts
 //!   down while `>= 0`; when it goes below 0 with projectiles left: the
 //!   launch coordinates are the caster's now (the secondary: the kept ones),
 //!   `Alternate` flips the direction (so launches go 0, 1, 0, …),
 //!   `Randomize` turns the coordinates to face (cos a, 0, sin a); then
-//!   `ProjectileLimit` @0x1804a27d0: `skillProjectileMaximumNumber`
-//!   (`SkillProfile` +1468, 0 = none) live projectiles of this skill end the
+//!   `ProjectileLimit`: `skillProjectileMaximumNumber`
+//!   (`SkillProfile.maxProjectiles`, 0 = none) live projectiles of this skill end the
 //!   whole burst (count 0); else one projectile is created there with the
 //!   direction, the timer becomes the period, the count drops by one. A
 //!   period of 0 launches one per frame.
-//! - `Skill_AttackProjectileRing::ActivateNow` @0x1804c1fd0 creates its ring
+//! - `Skill_AttackProjectileRing::ActivateNow` creates its ring
 //!   with direction 0, each projectile's coordinates turned to its ring
 //!   heading.
-//! - `ProjectileOrbiting::Load` (sub_18040ff40, after
+//! - `ProjectileOrbiting::Load` (after
 //!   `ProjectileFireballLike::Load`): `projectileStartDistance`,
 //!   `projectileOrbitRate` (° → rad/s), `projectileFollow`,
 //!   `projectileDuration` (× 1000 ms), `disableCollision` (read, never
 //!   used), `inverse`; the re-hit time π / rate (int ms). Missing fields
 //!   are 0 (no follow, no duration: it ends on its first update).
-//! - `ProjectileGo` (sub_1804103b0): direction 3 is a random bit (the
+//! - `ProjectileOrbiting::ProjectileGo`: direction 3 is a random bit (the
 //!   projectile's Park–Miller seed). The centre is the launch position, for
 //!   a character owner the owner's position, 1 m up; the launch facing made
 //!   level (when not ~zero, `LookIn`) times the start distance is the
 //!   offset; it starts at centre + offset. The radial speed is
 //!   `GetTotalSpeed` (`projectileVelocity` × (1 + speed modifier %),
 //!   [`crate::casting::proj_speed`]; negative spirals in).
-//! - `UpdateSelf` (sub_180410030), each frame while in the world: the
+//! - `ProjectileOrbiting::UpdateSelf`, each frame while in the world: the
 //!   duration counts down; at 0 `ProjectileStop` (a miss). Else the offset
 //!   grows by its unit vector × radial speed × dt and turns by rate × dt
 //!   about +Y (x' = x cos θ − z sin θ, z' = z cos θ + x sin θ; direction 1
@@ -60,9 +60,9 @@
 //!   moves the centre to the living owner + 1 m (owner gone or dead:
 //!   `ProjectileStop`); `inverse` stops it once it is within 1 m of the
 //!   centre (horizontally); then it is put at centre + offset. Then
-//!   `ProjectileFireballLike::UpdateSelf` @0x18040d1a0 as for any flight:
+//!   `ProjectileFireballLike::UpdateSelf` as for any flight:
 //!   the 0.1–100 pierce roll against the pierce chance, the path targets
-//!   (`ProcessPathTargets`, overridden by sub_180410b70 to first forget hits
+//!   (`ProcessPathTargets`, overridden by `ProjectileOrbiting::ProcessPathTargets` to first forget hits
 //!   older than the re-hit time, so a foe is hit again each half orbit),
 //!   each one's `ProcessExplosion` around it (its own known-target list, never
 //!   forgotten: once per projectile), no pierce and a hit: `ProjectileHit`
@@ -71,8 +71,8 @@
 //!   `explodeOnMiss`). World contact is `ProjectileFireballLike::
 //!   CollisionCallback`, as for other flights (`crate::collision`).
 //!
-//! - Explosions (`ProjectileBase::ProcessExplosion` @0x1804089e0, `FilterAndAddKnownTargets`
-//!   @0x1804080d0, `GameEngine::GetTargetsInRadius` @0x1802ebe50): a sphere
+//! - Explosions (`ProjectileBase::ProcessExplosion`, `FilterAndAddKnownTargets`,
+//!   `GameEngine::GetTargetsInRadius`): a sphere
 //!   query (heights count) at the hit foe's coordinates; a foe passes only if
 //!   it is in neither the explosion's own list (never forgotten) nor the
 //!   projectile's hit map (the path hits, and earlier explosion victims until
@@ -82,9 +82,9 @@
 //! - A ring's orbiter is created at the ring coordinates
 //!   (`Skill_AttackProjectileRing::ActivateNow`: caster + 1 m up + heading ×
 //!   `GetRadius`), which is the `projectileDistance` origin (`ProjectileGo`
-//!   places the entity at +1736).
+//!   places the entity at `Projectile.launchCoords`).
 //!
-//! - `GameEngine::FilterInvalidTargets` @0x1802eca00 drops hiding characters
+//! - `GameEngine::FilterInvalidTargets` drops hiding characters
 //!   (`combat::VictimSideItem::hiding`) from every target query, so an
 //!   orbiter neither hits nor stops on one (`combat::Side::hits`).
 //!
@@ -95,11 +95,13 @@
 //! projectile's hits only. The flight / hit / explosion path is the shared `casting::fly_projectiles` (the
 //! engine's `ProjectileOrbiting::UpdateSelf` ends in `ProjectileFireballLike::UpdateSelf`); only the steering
 //! lives here ([`steer`]), with the re-hit map and the explosion's known-target list on [`Orbiting`].
-use crate::casting::{Casting, ProjMods, Projectile};
-use crate::combat::{Combatant, Dead};
-use crate::data::GameData;
+use crate::casting::Projectile;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::casting::Casting;
+use gd_game_core::casting::ProjMods;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
 
 pub struct OrbitPlugin;
 
@@ -110,8 +112,8 @@ impl Plugin for OrbitPlugin {
             (launches, bursts)
                 .chain()
                 .in_set(crate::casting::CastingSet)
-                .after(crate::player::PlayerSet)
-                .before(crate::combat::CombatSet),
+                .after(gd_game_core::player::PlayerSet)
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -119,7 +121,7 @@ impl Plugin for OrbitPlugin {
 /// The projectile class that orbits.
 pub const PROJECTILE_CLASS: &str = "ProjectileOrbiting";
 
-/// `projectileDirection` (sub_1804c1340).
+/// `projectileDirection` (`Skill_AttackProjectileOrbiting::ResolveEnum_ProjectileDirection`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     Clockwise,
@@ -164,7 +166,7 @@ impl BurstSpec {
             "SkillSecondary_AttackProjectileOrbiting" => true,
             _ => return None,
         };
-        let lv = |k: &str| crate::casting::level_f(rec, k, li);
+        let lv = |k: &str| gd_game_core::casting::level_f(rec, k, li);
         Some(Self {
             number: if rec.get("skillProjectileNumber").is_some() {
                 lv("skillProjectileNumber").max(0.0) as u32
@@ -265,7 +267,7 @@ fn launches(
                     Direction::Randomize => 3,
                 };
                 let angle = if spec.randomize {
-                    crate::rng::f32() * std::f32::consts::TAU
+                    gd_game_core::rng::f32() * std::f32::consts::TAU
                 } else {
                     0.0
                 };
@@ -319,7 +321,7 @@ fn bursts(
                 let mut forward = b
                     .spec
                     .fixed
-                    .map_or_else(|| crate::character::facing_flat(tf), |(_, f)| f);
+                    .map_or_else(|| gd_game_core::character::facing_flat(tf), |(_, f)| f);
                 if b.spec.direction == Direction::Alternate {
                     b.dir = (b.dir != 1) as u8;
                 }
@@ -377,7 +379,7 @@ fn spawn_one(
     } * f("projectileStartDistance");
     let rate = f("projectileOrbitRate").to_radians();
     let counter = match dir {
-        3 => crate::rng::f32() < 0.5,
+        3 => gd_game_core::rng::f32() < 0.5,
         d => d == 1,
     };
     let start = center + offset;
@@ -424,7 +426,7 @@ pub fn step_offset(offset: Vec3, radial: f32, rate: f32, counter: bool, dt: f32)
     Vec3::new(c * o.x - s * o.z, o.y, c * o.z + s * o.x)
 }
 
-/// One frame of `ProjectileOrbiting::UpdateSelf`'s steering (sub_180410030):
+/// One frame of `ProjectileOrbiting::UpdateSelf`'s steering:
 /// the duration counts down; the offset grows by its unit vector
 /// × radial speed × dt and turns by rate × dt about +Y; `projectileFollow`
 /// moves the centre to the living owner + 1 m (owner gone or dead: stop);

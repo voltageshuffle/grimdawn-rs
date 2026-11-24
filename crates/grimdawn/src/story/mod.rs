@@ -1,16 +1,16 @@
 //! Story glue: the app side of the story runtime (`gd_game::story`, its world objects
 //! `gd_game::story_world`). Talking to NPCs (clicks / the Interact key, requests to
 //! `gd_game::conversation`) and the models of plain story objects
-//! (`gd_game::visuals::DecorationRequest`, [`dress_story_objects`]). The conversation window is
+//! (`gd_game_core::visuals::DecorationRequest`, [`dress_story_objects`]). The conversation window is
 //! `ui::dialog`, the quest tracker and journal `ui::quests`, the notifications `ui::notify`.
 //!
 //! Clicking a story NPC (or the Interact key) is the player's interact order (`gd_game::player_orders`), which
 //! walks to it and talks ([`talk_input`]). Dev builds: `GD_STORY_AUTOTALK` plays conversations automatically
 //! (first Accept, else first response), `GD_STORY_TALK` walks to talkable NPCs and opens them (`test_talk`).
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
 
-use gd_sim::story::Story;
+use gd_story::story::Story;
 
 pub struct StoryPlugin;
 
@@ -20,7 +20,7 @@ impl Plugin for StoryPlugin {
             .add_systems(
                 Update,
                 talk_input
-                    .after(crate::player::PlayerSet)
+                    .after(gd_game_core::player::PlayerSet)
                     .before(gd_game::conversation::ConversationStage::Run),
             )
             .add_systems(
@@ -30,15 +30,16 @@ impl Plugin for StoryPlugin {
         #[cfg(feature = "dev")]
         app.add_systems(
             Update,
-            test_talk.after(crate::player::PlayerSet).before(talk_input),
+            test_talk
+                .after(gd_game_core::player::PlayerSet)
+                .before(talk_input),
         );
     }
 }
 
-pub use gd_game::story::StoryEffect;
-pub use gd_game::story::{StoryActor, StoryRuntime};
 pub use gd_game::story_world::is_story_record;
-use gd_game::visuals::DecorationRequest;
+pub use gd_game_core::story::{StoryActor, StoryRuntime};
+use gd_game_core::visuals::DecorationRequest;
 
 /// Plain story objects get their record's model, the mesh's `CreateEntity` effects and lights (Engine.dll
 /// `Actor::CreateAttachmentsFromMesh`, every actor: the Devil's Crossing forge's flames and coal light, the cook's
@@ -107,18 +108,18 @@ fn has_speech(story: &Story, id: u32) -> bool {
         .is_some_and(|c| story.has_speech(c))
 }
 
-/// A story NPC's `Actor::GetRadius` (`gd_game::combat::get_radius`: `actorRadius` x the record's `scale` x
+/// A story NPC's `Actor::GetRadius` (`gd_game_core::combat::get_radius`: `actorRadius` x the record's `scale` x
 /// sqrt(3), the engine's default `actorRadius` when absent), the radius `NearTarget` and the walk use.
 fn npc_radius(data: &GameData, story: &Story, id: u32) -> f32 {
     let rec = story.entities.get(id).and_then(|o| data.db.get(&o.record));
-    gd_game::combat::get_radius(rec, gd_game::combat::ACTOR_RADIUS)
+    gd_game_core::combat::get_radius(rec, gd_game_core::combat::ACTOR_RADIUS)
 }
 
 /// Talking: a click on a story NPC (or the Interact key) is the player's interact order
 /// (`gd_game::player_orders::InteractTarget`), which walks to it; this talks when it is in talk range
 /// ([`gd_game::conversation::in_talk_range`]) or the walk has ended (`DefaultRequestNpcAction` /
-/// `MoveToNpc::EndOfPathReached`). Answers: the window (`ui::dialog`), keys `1`–`9`; Esc closes it via the UI
-/// dispatcher.
+/// `ControllerPlayerStateMoveToNpc::EndOfPathReached`). Answers: the window (`ui::dialog`), keys `1`–`9`; Esc
+/// closes it via the UI dispatcher.
 fn talk_input(
     rt: Option<NonSend<StoryRuntime>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -128,10 +129,10 @@ fn talk_input(
         (
             &Transform,
             &mut crate::player::MovePath,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
             &mut gd_game::player_orders::InteractTarget,
         ),
-        With<crate::player::Player>,
+        With<gd_game_core::player::Player>,
     >,
     data: Res<GameData>,
     mut out: MessageWriter<gd_game::conversation::ConversationRequest>,
@@ -199,27 +200,27 @@ fn talk_input(
 #[cfg(feature = "dev")]
 #[allow(clippy::too_many_arguments)]
 fn test_talk(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     rt: Option<NonSend<StoryRuntime>>,
     actors: Query<(Entity, &StoryActor, &GlobalTransform)>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     (conv, mut autotalked, mut test_talk, time, mut fresh): (
         Res<gd_game::conversation::Conversation>,
-        Local<std::collections::HashSet<u32>>,
-        Local<(std::collections::HashSet<u32>, Option<(u32, f32)>)>,
+        Local<gd_formats::collections::HashSet<u32>>,
+        Local<(gd_formats::collections::HashSet<u32>, Option<(u32, f32)>)>,
         Res<Time>,
-        gd_game::session::NewSession,
+        gd_game_core::session::NewSession,
     ),
     mut players: Query<
         (
             &Transform,
             &mut crate::player::MovePath,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
             &mut gd_game::player_orders::InteractTarget,
         ),
-        With<crate::player::Player>,
+        With<gd_game_core::player::Player>,
     >,
-    (data, nav): (Res<GameData>, Res<crate::world::Nav>),
+    (data, nav): (Res<GameData>, Res<gd_game::nav::Nav>),
     mut out: MessageWriter<gd_game::conversation::ConversationRequest>,
 ) {
     use gd_game::conversation::{ConversationRequest as Req, in_talk_range};

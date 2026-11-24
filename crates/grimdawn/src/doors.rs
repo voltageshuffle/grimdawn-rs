@@ -8,22 +8,22 @@
 //! hub portal's swirl, its floor runes and their lights): the record's
 //! `openEffect` / `openEffect2` are created at load at `openEffect[2]AttachPoint`
 //! (a mesh attach point, following its bone), not emitting; `Open`
-//! (sub_180277320) starts each after its `openEffect[2]Delay` ms (or at once
-//! when 0), `Close` (sub_1802773D0) stops both emitting; a door that is open
+//! (`DungeonEntrance::Open`) starts each after its `openEffect[2]Delay` ms (or at once
+//! when 0), `Close` (`DungeonEntrance::Close`) stops both emitting; a door that is open
 //! at load emits from its `InitialUpdate`. Here each start spawns the effect
 //! and a stop lets it finish and go ([`open_effects`]).
 //!
 //! Landing: the game hands the destination (cast to integers) to
-//! `GameEngine::InstallTeleportActivity` (0x1802d6a30), whose activity puts
+//! `GameEngine::InstallTeleportActivity`, whose activity puts
 //! the player on the floor under it ([`gd_game::nav::teleport_landing`], all
 //! travels: riftgates, portals, the Shattered Realm's doors and gates).
 #[cfg(feature = "dev")]
-use crate::player::{MovePath, Player};
-#[cfg(feature = "dev")]
-use crate::world::Nav;
+use crate::player::MovePath;
 use bevy::prelude::*;
 pub use gd_game::chests::LockedUse;
 pub use gd_game::doors::Door;
+#[cfg(feature = "dev")]
+use gd_game::nav::Nav;
 pub use gd_game::teleport::PendingTravel;
 use gd_render::character::CharAssets;
 use gd_render::model::Animator;
@@ -32,14 +32,14 @@ pub struct DoorsPlugin;
 
 impl Plugin for DoorsPlugin {
     fn build(&self, app: &mut App) {
-        app.register_required_components::<Door, gd_game::world::DoorMarker>()
+        app.register_required_components::<Door, gd_game_core::world::DoorMarker>()
             .register_required_components::<Door, Visibility>()
             .add_systems(
                 Update,
                 (
                     #[cfg(feature = "dev")]
                     test_use
-                        .after(crate::player::PlayerSet)
+                        .after(gd_game_core::player::PlayerSet)
                         .before(gd_game::doors::DoorStage::Use),
                     report_destination.before(gd_game::doors::run_teleport),
                     travel_screen.after(gd_game::doors::run_teleport),
@@ -61,9 +61,9 @@ impl Plugin for DoorsPlugin {
 fn locked_feedback(
     mut commands: Commands,
     mut events: MessageReader<LockedUse>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut sounds: ResMut<crate::audio::Sounds>,
-    mut notify: MessageWriter<gd_game::story::Notify>,
+    mut notify: MessageWriter<gd_game_core::story::Notify>,
 ) {
     for ev in events.read() {
         let Some(rec) = data.db.get(&ev.record) else {
@@ -78,7 +78,7 @@ fn locked_feedback(
             .or(rec.str("lockedTextTag"))
             .filter(|s| !s.is_empty())
         {
-            notify.write(gd_game::story::Notify(tag.to_owned()));
+            notify.write(gd_game_core::story::Notify(tag.to_owned()));
         }
     }
 }
@@ -94,7 +94,7 @@ fn report_destination(
     pending: Res<PendingTravel>,
     world: Option<Res<crate::world::StreamedMap>>,
     levels: Option<Res<crate::world::Levels>>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut ready: MessageWriter<gd_game::doors::DestinationReady>,
 ) {
     let Some(dest) = pending.0 else { return };
@@ -137,10 +137,10 @@ fn travel_screen(
     }
     let a = activity.cover_alpha();
     if covers.is_empty() {
-        let e = crate::ui::loading::spawn_cover(&mut commands);
+        let e = gd_ui::loading::spawn_cover(&mut commands);
         commands
             .entity(e)
-            .insert((TravelCover, DespawnOnExit(crate::session::AppState::InGame)));
+            .insert((TravelCover, DespawnOnExit(gd_ui::state::session::AppState::InGame)));
         return;
     }
     for (_, mut bg, children) in &mut covers {
@@ -161,7 +161,7 @@ fn travel_screen(
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_use(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut done: Local<usize>,
@@ -174,7 +174,7 @@ fn test_use(
             &mut MovePath,
             &mut gd_game::player_orders::InteractTarget,
         ),
-        With<Player>,
+        With<gd_game_core::player::Player>,
     >,
 ) {
     let Some(list) = &hooks.gameplay.use_door else {
@@ -283,6 +283,11 @@ struct OpenFx {
     pending: Vec<(usize, f32)>,
 }
 
+/// A door whose record has no open effect ([`open_effects`]): marked on first sight so its record is not
+/// re-read every frame.
+#[derive(Component)]
+struct NoOpenFx;
+
 /// An open effect following its door's attach point.
 #[derive(Component)]
 struct DoorFx {
@@ -301,26 +306,30 @@ const OPEN_FX: [(&str, &str, &str); 2] = [
 fn open_effects(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
-    mut doors: Query<(
-        Entity,
-        &Door,
-        Option<&mut OpenFx>,
-        Option<&gd_render::model::Skeleton>,
-    )>,
+    data: Res<gd_game_core::data::GameData>,
+    mut doors: Query<
+        (
+            Entity,
+            &Door,
+            Option<&mut OpenFx>,
+            Option<&gd_render::model::Skeleton>,
+        ),
+        Without<NoOpenFx>,
+    >,
     frames: Query<&GlobalTransform>,
 ) {
     for (e, door, state, skel) in &mut doors {
         let Some(mut state) = state else {
             // First sight: only doors with open effects are tracked; one
-            // open at load starts them at once (`InitialUpdate`).
-            let Some(rec) = data.db.get(&door.record) else {
-                continue;
-            };
-            if OPEN_FX
-                .iter()
-                .all(|(k, _, _)| rec.str(k).is_none_or(str::is_empty))
-            {
+            // open at load starts them at once (`InitialUpdate`). An effect-less
+            // door is marked ([`NoOpenFx`]) so its record is read only once.
+            let has_fx = data.db.get(&door.record).is_some_and(|rec| {
+                OPEN_FX
+                    .iter()
+                    .any(|(k, _, _)| rec.str(k).is_some_and(|s| !s.is_empty()))
+            });
+            if !has_fx {
+                commands.entity(e).try_insert(NoOpenFx);
                 continue;
             }
             commands.entity(e).try_insert(OpenFx {
@@ -349,7 +358,7 @@ fn open_effects(
                 for fx in state.live.drain(..) {
                     commands
                         .entity(fx)
-                        .try_insert(gd_game::visuals::StopEmitting);
+                        .try_insert(gd_game_core::visuals::StopEmitting);
                 }
             }
         }
@@ -398,7 +407,7 @@ fn open_effects(
                 }
                 None => (Transform::IDENTITY, None),
             };
-            let mut spec = gd_game::visuals::EffectSpec::record(record.to_owned());
+            let mut spec = gd_game_core::visuals::EffectSpec::record(record.to_owned());
             spec.despawn_when_complete = true;
             let at = joint
                 .or(Some(e))

@@ -62,8 +62,8 @@ fn unchanged_character_round_trips() {
 /// arenas), keeps the arena's `quests.gdd` token-free, and a campaign session leaves the vectors alone.
 #[test]
 fn crucible_tokens_go_to_the_character() {
-    use gd_game::session::{Choice, LoadedCharacter};
-    use gd_game::story::StoryRuntime;
+    use gd_game_core::session::{Choice, LoadedCharacter};
+    use gd_game_core::story::StoryRuntime;
     let tmp = TempDir::new("save_crucible_tokens");
     let Some(path) = saved_character(&tmp) else {
         return;
@@ -130,7 +130,7 @@ fn saves_write_map_dat() {
         let c = &g
             .app
             .world()
-            .resource::<gd_game::session::LoadedCharacter>()
+            .resource::<gd_game_core::session::LoadedCharacter>()
             .0;
         (c.header.name.clone(), c.info.difficulty())
     };
@@ -141,7 +141,7 @@ fn saves_write_map_dat() {
             .join("main")
             .join(format!("_{name}"))
             .join(folder)
-            .join(gd_game::save::DIFFICULTY_DIRS[d])
+            .join(gd_game_core::save::DIFFICULTY_DIRS[d])
             .join("map.dat");
         MapDat::parse(&std::fs::read(p).expect("map.dat written")).unwrap()
     };
@@ -152,11 +152,78 @@ fn saves_write_map_dat() {
     );
     g.app
         .world_mut()
-        .resource_mut::<gd_game::session::Choice>()
+        .resource_mut::<gd_game_core::session::Choice>()
         .survival = Some("maps/survivalworld_c.map".into());
     let m = read(&mut g, "maps_survivalworld_c.map");
     assert_eq!(
         (m.map_path.as_str(), m.mod_name.as_str()),
         ("maps/survivalworld_c.map", "survivalmode")
     );
+}
+
+/// A `quests.gdd` / `map.fow` the load cannot read is set aside to `.bak` and never rewritten from the
+/// empty runtime (BUG-1). The session's save folder IS the loaded character's here, so an unguarded save
+/// would overwrite the corrupt files in place; the guard keeps their bytes in `.bak` and writes fresh,
+/// parseable files beside them.
+#[test]
+fn unreadable_map_files_are_set_aside_not_overwritten() {
+    use gd_game::session;
+    use gd_game::testing::{SEED, headless_app};
+    use gd_game_core::session::Choice;
+    let Some(mut g) = TestGame::new_character("Map Guard", false, false) else {
+        return;
+    };
+    g.spawn_player();
+    g.steps(2);
+    let src = g.save_now();
+    let map_dir = src
+        .parent()
+        .unwrap()
+        .join("levels_world001.map")
+        .join("Normal");
+    let quests = map_dir.join("quests.gdd");
+    let fow = map_dir.join("map.fow");
+    // Truncate both so the load's parse fails (the formats are fail-closed).
+    let corrupt = |p: &std::path::Path| {
+        let b = std::fs::read(p).expect("map file written");
+        let cut = b[..b.len() / 2].to_vec();
+        std::fs::write(p, &cut).unwrap();
+        cut
+    };
+    let bad_q = corrupt(&quests);
+    let bad_f = corrupt(&fow);
+    // A session whose save folder is this one: the map files' read path and write target coincide.
+    let gdc = Gdc::parse(&std::fs::read(&src).unwrap()).unwrap();
+    let choice = Choice {
+        save: Some(src.clone()),
+        name: gdc.header.name.clone(),
+        female: false,
+        hardcore: false,
+        survival: None,
+        custom: None,
+    };
+    let mut app = headless_app(g.data(), SEED);
+    app.world_mut()
+        .insert_resource(gd_game_core::session::SaveDir(g.save_dir()));
+    session::begin(&mut app.world_mut().commands(), choice, Some(gdc), 0, false);
+    app.world_mut().flush();
+    let mut g2 = TestGame { app };
+    g2.step(); // the story / fog load runs here, under the guard
+    g2.spawn_player();
+    g2.steps(2);
+    // The corrupt bytes survive in `.bak`; nothing overwrote them in place.
+    assert_eq!(
+        std::fs::read(map_dir.join("quests.gdd.bak")).unwrap(),
+        bad_q,
+        "quests.gdd kept as .bak"
+    );
+    assert_eq!(
+        std::fs::read(map_dir.join("map.fow.bak")).unwrap(),
+        bad_f,
+        "map.fow kept as .bak"
+    );
+    // The save writes fresh, parseable files beside the kept `.bak`s.
+    g2.save_now();
+    gd_formats::save::gdd::Quests::parse(&std::fs::read(&quests).unwrap()).unwrap();
+    gd_formats::save::fow::Fow::parse(&std::fs::read(&fow).unwrap()).unwrap();
 }

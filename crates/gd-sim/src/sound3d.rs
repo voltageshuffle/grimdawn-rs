@@ -4,23 +4,23 @@
 //! The engine only hands positions to the sound system; DirectSound does the
 //! mixing:
 //!
-//! - `WorldCamera::SetListenerPosition` @0x180229420 (Engine.dll):
-//!   the listener's front is the camera's z axis (`sub_180273CA0`: target -
+//! - `WorldCamera::SetListenerPosition` (Engine.dll):
+//!   the listener's front is the camera's z axis (`Math::LookAtMatrix`: target -
 //!   eye) flattened and normalised, its top (0, 1, 0). The ears' position:
 //!   `grimdawn::audio::ears`. The camera's x axis (up x z) is the image's
-//!   left (`Camera::GetImagePoint` @0x180044a10), so screen right = front x up
+//!   left (`Camera::GetImagePoint`), so screen right = front x up
 //!   in the game's right-handed coordinates.
-//! - DS8Sound.dll negates z in every buffer position (@0x180002200),
-//!   the listener position (@0x180004670) and the front / top
-//!   (`SetListenerOrientation` @0x180004710), going to DirectSound's
+//! - DS8Sound.dll negates z in every buffer position (`DS8SoundBuffer::SetPosition`),
+//!   the listener position (`DS8SoundSystem::SetListenerPosition`) and the front / top
+//!   (`DS8SoundSystem::SetListenerOrientation`), going to DirectSound's
 //!   left-handed space, so left and right are the screen's. All deferred,
-//!   committed once a frame (`DS8SoundSystem::Update` @0x1800041e0): gain and
+//!   committed once a frame (`DS8SoundSystem::Update`): gain and
 //!   pan follow the listener for sounds already playing, and the camera's
 //!   turning pans them.
-//! - `SoundManager::Play3D` @0x1801b7540 sets min distance `fallOff`,
-//!   max 100 (`SetMinDistance` / `SetMaxDistance` @0x180002230, rolloff factor
+//! - `SoundManager::Play3D` sets min distance `fallOff`,
+//!   max 100 (`DS8SoundBuffer::SetMinDistance` / `SetMaxDistance`, rolloff factor
 //!   and algorithm left default); the sample buffers are made with
-//!   `DSBCAPS_CTRL3D | DSBCAPS_MUTE3DATMAXDISTANCE` (@0x180001ed0, flags
+//!   `DSBCAPS_CTRL3D | DSBCAPS_MUTE3DATMAXDISTANCE` (`DS8SoundSample::LoadWave`, flags
 //!   0x200B2).
 //!
 //! PORT: the distance and pan laws below are not in the game's binaries.

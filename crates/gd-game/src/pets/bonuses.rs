@@ -2,7 +2,7 @@ use super::*;
 
 /// The owner's pet bonus records with their level index (see the module docs).
 pub fn pet_bonuses(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     loadout: &Loadout,
 ) -> Vec<(gd_formats::arz::Record, usize)> {
     pet_bonuses_with(data, loadout, None)
@@ -11,9 +11,9 @@ pub fn pet_bonuses(
 /// [`pet_bonuses`] plus the bonuses of the buffs other sources keep on the
 /// owner (`owner_buffs`: a Crucible power-up's buff).
 pub fn pet_bonuses_with(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     loadout: &Loadout,
-    owner_buffs: Option<&crate::skill_buffs::ReceivedBuffs>,
+    owner_buffs: Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
 ) -> Vec<(gd_formats::arz::Record, usize)> {
     pet_bonus_sources(data, loadout, owner_buffs)
         .into_iter()
@@ -24,16 +24,16 @@ pub fn pet_bonuses_with(
 /// [`pet_bonuses`] with the skill or buff record each comes from (`None`:
 /// an item's, which the engine installs with skill id 0).
 pub(super) fn pet_bonus_sources(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     loadout: &Loadout,
-    owner_buffs: Option<&crate::skill_buffs::ReceivedBuffs>,
+    owner_buffs: Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
 ) -> Vec<(Option<String>, gd_formats::arz::Record, usize)> {
     let db = &data.db;
     let mut out = Vec::new();
-    // Which learned skills have their bonus installed (`Skill::InstallPetBonus`
-    // @0x18049f2d0): a `Skill_Passive` on every
+    // Which learned skills have their bonus installed (`Skill::InstallPetBonus`):
+    // a `Skill_Passive` on every
     // level change, a toggle (`Skill_BuffSelfToggled::SkillLevelChange` /
-    // `InitializeBuff`) while it is on (+220); the skill's modifiers install
+    // `InitializeBuff`) while it is on (`Skill.active`); the skill's modifiers install
     // with it. The level is `GetCurrentLevel` (the learned level with the
     // gear's bonus). Duration buffs: from the running buffs below.
     let trees = data.skill_trees();
@@ -68,13 +68,13 @@ pub(super) fn pet_bonus_sources(
         }
     }
     // Running buffs: a `Skill_BuffSelfDuration` is a
-    // `Skill_BuffSelfToggled` whose `ActivateNow` @0x1804eab10 sends the
-    // active state for `skillActiveDuration` and whose `Update` @0x1804eaa70
+    // `Skill_BuffSelfToggled` whose `ActivateNow` sends the
+    // active state for `skillActiveDuration` and whose `Update`
     // sends the inactive one when it runs out; `ReceiveActiveUpdate`
-    // @0x1804ebb50 → `InitializeBuff` @0x1804ec020 installs the pet bonus
-    // while on (+220) and removes it (`Skill::RemovePetBonus` @0x18049f860)
+    // → `InitializeBuff` installs the pet bonus
+    // while on (`Skill.active`) and removes it (`Skill::RemovePetBonus`)
     // when off. A buff record on a character (`SkillBuff::Install`
-    // @0x1805265f0 / `UnInstall` @0x1805267b0: a secondary's or celestial
+    // / `UnInstall`: a secondary's or celestial
     // power's buff, a radius buff on the caster) installs its own
     // `petBonusName` for the character it is on and removes it with the
     // buff. The bonus goes to the owner's list (`GameEngine::SetPetBonus`),
@@ -121,7 +121,7 @@ pub(super) fn pet_bonus_sources(
         let li = loadout.skill_level(db, &eff, name).max(1) as usize - 1;
         if let Some(e) = crate::auras::emission(db, name, li, Vec::new(), true).filter(|e| !e.debuf)
         {
-            running.push((e.buff, li));
+            running.push((e.buff.to_string(), li));
         }
     }
     for (name, li) in running {
@@ -156,7 +156,8 @@ pub(super) fn pet_bonus_sources(
     // Item sets (`ItemSet::PetBonusInstall`): the set's
     // `petBonusName` (level 0) with n pieces worn when `petBonusLevel[n - 1]`
     // (clamped to the last) is non-zero, or always when that list is empty.
-    let mut worn: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut worn: gd_formats::collections::HashMap<String, usize> =
+        gd_formats::collections::HashMap::default();
     for it in &loadout.items {
         if let Some(set) = db.get(&it.base_name).and_then(|r| {
             r.str("itemSetName")
@@ -194,11 +195,11 @@ pub(super) fn bonus_applies(bonus: &gd_formats::arz::Record, pet_types: &[String
 /// The pet bonus character effects a pet wears: (the skill or buff record
 /// whose bonus it is, its `charFxPakPetNames` pak), in bonus order (module
 /// docs). Derived from [`pet_bonuses`]' sources by [`sync_pet_bonus_fx`],
-/// which also starts their [`crate::casting::BuffFx`] effects.
+/// which also starts their [`gd_game_core::visuals::BuffFx`] effects.
 #[derive(Component, Default, Debug, PartialEq)]
 pub struct PetBonusFx(pub Vec<(String, String)>);
 
-/// The [`crate::casting::BuffFx::skill`] key of a pet bonus effect: the
+/// The [`gd_game_core::visuals::BuffFx::skill`] key of a pet bonus effect: the
 /// engine keys it by the source skill's object id, apart from the buffs and
 /// toggles on the pet itself.
 pub fn pet_bonus_fx_key(source: &str) -> String {
@@ -218,7 +219,7 @@ pub(super) fn bonus_fx(
         if !bonus_applies(b, pet_types) {
             continue;
         }
-        if let Some(pak) = crate::skill_fx::level_str(b, "charFxPakPetNames", *li)
+        if let Some(pak) = gd_game_core::skill_fx::level_str(b, "charFxPakPetNames", *li)
             && !out.iter().any(|(s, _)| s == src)
         {
             out.push((src.clone(), pak));
@@ -235,7 +236,7 @@ pub(super) fn sync_pet_bonus_fx(
     data: Res<GameData>,
     owners: Query<(Entity, Ref<Loadout>)>,
     mut pets: Query<(Entity, &Pet, Option<&mut PetBonusFx>, Has<Dead>)>,
-    fx: Query<(Entity, &crate::casting::BuffFx)>,
+    fx: Query<(Entity, &gd_game_core::visuals::BuffFx)>,
 ) {
     for (owner, loadout) in &owners {
         let mut sources = None;

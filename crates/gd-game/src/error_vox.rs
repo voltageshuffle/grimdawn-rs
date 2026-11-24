@@ -1,32 +1,34 @@
 //! The player's spoken error lines ("I need more energy", "Not yet", "My bags are full"), the one thing the
-//! `errorSpeech` option (bool 36) gates.
+//! `errorSpeech` option gates.
 //!
-//! Game.dll `Player::PlayNotEnoughManaVox` @0x1803e5d80, `PlaySkillCooldownVox` @0x1803e5ea0,
-//! `PlayItemCooldownVox` @0x1803e5f40, `PlayInventoryFullSound` @0x1803e2510 (the only `Options::GetBool(36)` calls
+//! Game.dll `Player::PlayNotEnoughManaVox`, `PlaySkillCooldownVox`,
+//! `PlayItemCooldownVox`, `PlayInventoryFullSound` (the only `errorSpeech` reads
 //! in Game.dll and Grim Dawn.exe): each plays its `CharacterSounds` entry (`notEnoughManaSound`,
 //! `skillCooldownSound`, `itemCooldownSound`, `inventoryFullSound`: the form's override entry first, else the
 //! character's own, [`crate::char_sounds::sound`]) with `SoundPak::Play2D` (unpositioned). The first three also need the
-//! controlling (local) player and share two timers: nothing plays while the "any line" timer (+18232) runs, and the
-//! same kind with the same id (skill or potion) is skipped while the "repeat" timer (+18228) runs; a played line sets
-//! them to 9000 / 15000 ms (`Player::Player` +18192 / +18188) and remembers its id per kind. `Player::UpdateSelf`
+//! controlling (local) player and share two timers: nothing plays while the "any line" timer (`Player.anyVoxTimer`)
+//! runs, and the same kind with the same id (skill or potion) is skipped while the "repeat" timer
+//! (`Player.repeatVoxTimer`) runs; a played line sets them to 9000 / 15000 ms (`Player::Player`) and remembers its id
+//! per kind. `Player::UpdateSelf`
 //! counts both down by the frame's ms. The inventory-full line has no timer.
 //!
 //! Callers ([`ErrorVox`] writers): `ControllerPlayerState::DefaultRequestSkillAction` (a requested skill short of
 //! energy, skill status 2: `casting::requests`), `HotSlotOptionSkill::PlayCooldownVox` (a pressed skill cooling down),
-//! `HotSlotOptionPotion::Activate` @0x18031a4e0 (a potion that cannot be drunk while that bar is not full: id 1
+//! `HotSlotOptionPotion::Activate` (a potion that cannot be drunk while that bar is not full: id 1
 //! health, 2 energy; `casting::potions`), `Player::GiveItemToCharacter` and the other `Give*ToCharacter` (an item
-//! that does not fit is dropped by the player: `loot::story_items`) and the merchants' buy (`sub_18029A460`, no room:
-//! `trade`). Picking up a ground item with full bags says nothing (no other caller).
+//! that does not fit is dropped by the player: `loot::story_items`) and the merchants' buy (`MarketMiniMart::Purchase`,
+//! `MarketFaction::Purchase`; no room: `trade`). Picking up a ground item with full bags says nothing (no other
+//! caller).
 //! PORT: `Skill::UseDefaultWhenUnavailable` (a skill that falls back to the default attack stays silent when short of
 //! energy) is not checked.
-use crate::data::GameData;
-use crate::options::GameOptions;
-use crate::player::Player;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
+use gd_game_core::options::GameOptions;
+use gd_game_core::player::Player;
 
-/// "Repeat" timer set by a played line (ms, `Player::Player` +18188).
+/// "Repeat" timer set by a played line (ms, `Player.repeatVoxTimer`).
 pub const REPEAT_MS: i32 = 15_000;
-/// "Any line" timer set by a played line (ms, +18192).
+/// "Any line" timer set by a played line (ms, `Player.anyVoxTimer`).
 pub const ANY_MS: i32 = 9_000;
 
 /// Which line.
@@ -67,8 +69,9 @@ impl ErrorVox {
     }
 }
 
-/// The player's two timers and the last id of each throttled kind (`Player` +18228 / +18232, +18200 / +18220 /
-/// +18224). A component of the player, so a new session starts clear.
+/// The player's two timers and the last id of each throttled kind (`Player.repeatVoxTimer` / `Player.anyVoxTimer`,
+/// `Player.lastManaVoxId` / `Player.lastSkillCooldownVoxId` / `Player.lastItemCooldownVoxId`). A component of the
+/// player, so a new session starts clear.
 #[derive(Component, Clone, Debug, Default)]
 pub struct VoxTimers {
     pub repeat: i32,
@@ -121,10 +124,14 @@ fn speak(
     options: Res<GameOptions>,
     time: Res<Time>,
     mut players: Query<
-        (Entity, &crate::character::Character, Option<&mut VoxTimers>),
+        (
+            Entity,
+            &gd_game_core::character::Character,
+            Option<&mut VoxTimers>,
+        ),
         With<Player>,
     >,
-    mut out: MessageWriter<crate::visuals::PlaySound>,
+    mut out: MessageWriter<gd_game_core::visuals::PlaySound>,
     mut carry: Local<f32>,
 ) {
     let Ok((e, ch, timers)) = players.single_mut() else {
@@ -136,14 +143,14 @@ fn speak(
         commands.entity(e).try_insert(VoxTimers::default());
         return;
     };
-    timers.tick(crate::session::frame_ms(&mut carry, &time));
+    timers.tick(gd_game_core::session::frame_ms(&mut carry, &time));
     let on = options.flag("errorSpeech");
     for r in requests.read() {
         if !on || !timers.admit(r.kind, &r.id) {
             continue;
         }
         if let Some(pak) = crate::char_sounds::sound(&data, ch, r.kind.slot()) {
-            out.write(crate::visuals::PlaySound { pak, at: None });
+            out.write(gd_game_core::visuals::PlaySound { pak, at: None });
         }
     }
 }

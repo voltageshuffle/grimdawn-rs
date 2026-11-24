@@ -1,23 +1,32 @@
 //! The game's settings files: `options.txt` ([`Options`]) and `keybindings.txt` /
 //! `alternate_keybindings.txt` ([`parse_keybindings`]).
 //!
-//! Engine.dll `Options::Options` @0x1801808d0: the option table
+//! Engine.dll `Options::Options`: the option table
 //! (name → index in the bool / int / float / quality / vector / string
-//! arrays, [`table`]) and the defaults: the bool array is a 77-bit
-//! `vector<bool>` resized with `true` (sub_1801837C0 → `resize(77, true)`),
-//! then the constructor clears or sets single bits, so a bool it does not
-//! touch defaults to on; ints and floats default to 0 unless set (master /
-//! music / effects / ambient / dialog / voice volume 1, corpse persistence
-//! 0, auto loot radius 0.5, network MTU 1400, anti-aliasing 1,
-//! anisotropic filtering 1, speaker type 1, max resource threads 1).
-//! PORT: the defaults of the floats and qualities the constructor leaves to
-//! the array set-up (UI scale 0.5, map zoom, qualities) are the values of a real `options.txt`.
+//! arrays, [`table`]) and the defaults. The constructor fills the arrays
+//! first — floats all 0.5, ints all 1, int2 all (0, 0), qualities all 1
+//! (Medium; the enum is 0 Low, 1 Medium, 2 High, 3 Very High, 4 Ultra), bools
+//! a 77-bit `vector<bool>` resized with `true` (`Options::ResizeBools` →
+//! `resize(77, true)`) — then writes single entries: the six volumes 1.0,
+//! corpse persistence 0.5, inactive update rate 0.0, auto loot radius 0.5,
+//! network MTU 1400, anti-aliasing / anisotropic filtering / max resource
+//! threads 1, screen mode / device / colorblind / sound device / capture
+//! device / main menu / movement type 0, speaker type 1, and clears or sets
+//! single bool bits (a bool it does not touch stays on; `rockOn` is cleared,
+//! `blood` is int 4, left at the fill's 1). So map zoom, brightness, contrast,
+//! gamma and UI scale are 0.5, resolution (0, 0), and all seven qualities
+//! Medium, straight from the fills.
+//! PORT: `mapZoom` is stored as the engine's 0.5; the local map reads it in
+//! its own 40..135 zoom units (`ui::localmap` clamps on read). The Default
+//! button's per-group overrides (`Options::SetToDefaults`: corpse persistence
+//! 0.0 on Gameplay, music volume 0.6 on Audio) live in the options window, not
+//! in these factory defaults.
 //!
 //! `options.txt` lines are `name = value`, names padded to 26 columns, bools `true` / `false`, vectors as two
 //! numbers, strings quoted. [`table`] holds every option the engine's constructor sets (including some the port
 //! does not act on, e.g. `networkAdapter`, `UPnPEnable`); every other line of a read file (the game's
-//! `antiAliasing`, `tripleBuffer`, `alphatocoverage`, `deferredrendering`, `refreshRate`, `windowPosition`,
-//! `device`, ...) is kept verbatim and written back, so a shared `options.txt` loses nothing.
+//! `antiAliasing`, `tripleBuffer`, `alphatocoverage`, `deferredrendering`, `refreshRate`,
+//! `windowPosition`, ...) is kept verbatim and written back, so a shared `options.txt` loses nothing.
 //!
 //! The key binding files map an action to two key codes: lines `action: primary secondary` (0 = none).
 use std::collections::BTreeMap;
@@ -85,14 +94,14 @@ fn build_table() -> Vec<(&'static str, Value)> {
     vec![
         ("quickBuy", B(true)),                   // bool 0
         ("lockItemPickup", B(true)),             // bool 17
-        ("mapZoom", F(65.0)),                    // float 5
+        ("mapZoom", F(0.5)),                     // float 5
         ("importedCharacters", B(false)),        // bool 18
         ("lockMapRotation", B(false)),           // bool 23
         ("cameraShake", B(true)),                // bool 8
         ("gore", B(true)),                       // bool 24
         ("questwidgetopen", B(true)),            // bool 25
-        ("corpsePersistence", F(0.0)),           // float 9
-        ("blood", I(0)),                         // int 4
+        ("corpsePersistence", F(0.5)),           // float 9
+        ("blood", I(1)),                         // int 4
         ("reportStats", I(0)),                   // int 6
         ("targetLock", B(false)),                // bool 27
         ("inactiveUpdateRate", F(0.0)),          // float 10
@@ -140,22 +149,23 @@ fn build_table() -> Vec<(&'static str, Value)> {
         ("bossBarsLarge", B(false)),             // bool 56
         ("healthBarsPercent", B(false)),         // bool 57
         ("monsterBarsDebuffs", B(false)),        // bool 58
-        ("textureQuality", q("high")),
+        ("textureQuality", q("medium")),
         ("shadowQuality", q("medium")),
-        ("reflectionQuality", q("high")),
+        ("reflectionQuality", q("medium")),
         ("shadows", B(true)), // bool 16
-        ("weatherQuality", q("low")),
+        ("weatherQuality", q("medium")),
         ("weatherEnabled", B(true)), // bool 21
         ("depthOfField", B(true)),   // bool 19
         ("softParticles", B(true)),  // bool 20
         ("hdrLighting", B(false)),   // bool 70
-        ("detailLevel", q("high")),
-        ("resolution", Value::Vec2(1920, 1080)),
-        ("anisotropicFiltering", I(1)), // int 2
-        ("screenMode", I(0)),           // int 5
-        ("syncToRefresh", B(true)),     // bool 6
-        ("detailObjects", B(true)),     // bool 9
-        ("advancedEffects", B(true)),   // bool 10
+        ("detailLevel", q("medium")),
+        ("resolution", Value::Vec2(0, 0)), // int2 0; (0, 0) auto-detects the monitor size
+        ("anisotropicFiltering", I(1)),    // int 2
+        ("screenMode", I(0)),              // int 5
+        ("device", I(0)), // int 7; the wgpu adapter index (grimdawn `render_devices`), applied at next launch
+        ("syncToRefresh", B(true)), // bool 6
+        ("detailObjects", B(true)), // bool 9
+        ("advancedEffects", B(true)), // bool 10
         ("fxQuality", q("medium")),
         ("lightingQuality", q("medium")),
         ("uiScale", F(0.5)),    // float 11
@@ -171,7 +181,7 @@ fn build_table() -> Vec<(&'static str, Value)> {
         ("effectsVolume", F(1.0)),     // float 2
         ("ambientVolume", F(1.0)),     // float 3
         ("dialogVolume", F(1.0)),      // float 4
-        ("rockOn", B(true)),           // bool 13
+        ("rockOn", B(false)),          // bool 13 (cleared by the ctor)
         ("speakerType", I(1)),         // int 9
         ("soundDevice", I(0)),
         ("errorSpeech", B(true)), // bool 36
@@ -242,7 +252,7 @@ impl Options {
         let mut s = String::new();
         for (name, _) in table() {
             if let Some(v) = self.values.get(name) {
-                let _ = writeln!(s, "{name:<26}= {}", v.write());
+                writeln!(s, "{name:<26}= {}", v.write()).unwrap();
             }
         }
         // PORT: the real game's options this port neither uses nor shows stay in the file as they were read.

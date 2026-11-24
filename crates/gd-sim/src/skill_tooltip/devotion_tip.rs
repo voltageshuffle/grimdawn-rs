@@ -20,7 +20,8 @@ pub enum DevStatus {
 }
 
 /// The devotion window's reclaim mode line of a star (`GenerateUIDevotionText` `a6`, flags
-/// from GrimDawn.exe `sub_14017DF80` / `sub_140188870`, first that holds): untaken, the price above
+/// from GrimDawn.exe `DevotionWindow::GetStarReclaimState` / `DevotionWindow::Update` (the aether flag),
+/// first that holds): untaken, the price above
 /// the money, the aether cost above the crystals held, the constellation's affinity needed by
 /// constellations (itself: self locked), a star that a taken star needs, else the price.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,17 +59,17 @@ pub struct DevotionTip {
     pub reclaim: Option<(DevReclaim, u64, u32)>,
 }
 
-/// The tooltip of a devotion star's skill (`GameEngine::GenerateUIDevotionText`
-/// @0x1802e4d40: heading, exclusive, "Bound To", current level
+/// The tooltip of a devotion star's skill (`GameEngine::GenerateUIDevotionText`:
+/// heading, exclusive, "Bound To", current level
 /// (`tagDevotionSkillRank`), experience (`tagDevotionExperienceFormat`, the
 /// next level's `skillExperienceLevels` entry via `Skill::GetRequiredExperience`),
 /// next level, `ActiveDevotion` / the reason, the constellation bonus with
 /// `GetAffinityBitmap` icons). In the reclaim mode (`a6`, [`DevotionTip::reclaim`]): no
 /// `MaxSkillLevelReached` stop, no next level, and the reclaim line ([`DevReclaim`], class 52, the
 /// price line 51) ends the tooltip instead of the status and the bonus. PORT: a celestial power is a skill with an
-/// auto-cast controller (`this+296 == 3` / `+763`); the blank lines follow the
+/// auto-cast controller (`SkillAutoCastController.kind == 3` / `Skill.isAutoCastChild`); the blank lines follow the
 /// real tooltip; the chance is not reduced by cooldown reduction
-/// (`CalculateNewChanceToRun` only runs for `+1184 == 3` item skills).
+/// (`CalculateNewChanceToRun` only runs for item skills with `Skill.autoCastKind == 3`).
 pub fn devotion_lines(ctx: &SkillTipCtx, skill: &str, tip: &DevotionTip) -> Vec<TextLine> {
     // The profile record (a wrapper's `buffSkillName`): levels, controller,
     // pet bonus.
@@ -275,7 +276,7 @@ pub fn devotion_lines(ctx: &SkillTipCtx, skill: &str, tip: &DevotionTip) -> Vec<
     collapse_blanks(out)
 }
 
-/// The pet bonus block of the devotion tooltip: `sub_1803C8D30` adds a blank
+/// The pet bonus block of the devotion tooltip: `Skill::CreateUIPetBonusText` adds a blank
 /// line before the title (`a6 == 0`).
 fn devotion_pet_lines(ctx: &SkillTipCtx, rec: &Record, level: u32, next: bool) -> Vec<TextLine> {
     let mut v = pet_bonus_lines(ctx, rec, level, next);

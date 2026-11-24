@@ -1,18 +1,22 @@
+lints.workspace = true
+
 [package]
 name = "gd-formats"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
 description = "Readers for Grim Dawn data formats"
-
-[dependencies]
-anyhow = "1.0.104"
-lz4_flex = "0.14.0"
-texture2ddecoder = "0.1.2"
+license = "MIT"
 
 [features]
 # Test support (`testdata`): data-test paths and temp dirs; never in a runtime build.
 testdata = []
+
+[dependencies]
+anyhow = "1.0.104"
+foldhash = "0.2"
+lz4_flex = "0.14.0"
+parking_lot = "0.12"
+texture2ddecoder = "0.1.2"
 
 [dev-dependencies]
 gd-formats = { path = ".", features = ["testdata"] }

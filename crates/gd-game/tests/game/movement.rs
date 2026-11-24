@@ -1,9 +1,9 @@
 //! Headless checks of player movement along a nav path.
 use bevy::prelude::*;
-use gd_game::character::{CharState, Character};
 use gd_game::movement::MovePath;
 use gd_game::nav::Nav;
 use gd_game::testing::{FRAME, TestGame};
+use gd_game_core::character::{CharState, Character};
 
 fn game() -> Option<(TestGame, Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;

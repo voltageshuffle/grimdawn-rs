@@ -5,10 +5,10 @@
 //! zombie curses the player.
 use crate::common::ZOMBIE;
 use bevy::prelude::*;
-use gd_game::casting::{Casting, Kind, ProcCast};
-use gd_game::combat::Combatant;
-use gd_game::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 use gd_game::testing::TestGame;
+use gd_game_core::casting::{Casting, Kind, ProcCast};
+use gd_game_core::combat::Combatant;
+use gd_game_core::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 
 /// The Necromancer's Curse of Vitality: `skillActiveDuration` 5, radius 10,
 /// `characterLifeModifier` -12 (-25 from level 13), vitality damage,

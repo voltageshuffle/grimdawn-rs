@@ -14,14 +14,15 @@
 //!   `factionValueN`. No Crucible gate: its own `gamefactions.dbr` applies.
 //! - Story scripts: `GiveFaction` / `SetFaction` / `UnlockFaction`; `GetFaction` reads these values by the
 //!   script's upper-case name ([`sync_story`] mirrors them into the story runtime).
-//! - Writs / bounties ([`gd_sim::faction::Booster`], [`BoosterUsed`]): refused unless allowed; a writ sets the
+//! - Writs / bounties ([`gd_rules::faction::Booster`], [`BoosterUsed`]): refused unless allowed; a writ sets the
 //!   positive boost (clamped to `maxBoosterValue`) and clears the negative one, a bounty the reverse.
 use crate::combat::MonsterKilled;
-use crate::session::MessageDrain;
-use crate::story::StoryEffect;
 use bevy::prelude::*;
 use gd_formats::save::gdc::Faction;
-use gd_sim::story::state::Effect;
+use gd_game_core::factions::index_of_name;
+use gd_game_core::session::MessageDrain;
+use gd_game_core::story::StoryEffect;
+use gd_story::story::state::Effect;
 
 pub struct FactionsPlugin;
 
@@ -61,11 +62,11 @@ pub struct PlayerFactions {
 }
 
 impl PlayerFactions {
-    /// `AllowUse` of a writ / bounty ([`gd_sim::faction::Booster::allowed`]).
+    /// `AllowUse` of a writ / bounty ([`gd_rules::faction::Booster::allowed`]).
     pub fn booster_allowed(
         &self,
-        data: &crate::data::GameData,
-        b: &gd_sim::faction::Booster,
+        data: &gd_game_core::data::GameData,
+        b: &gd_rules::faction::Booster,
     ) -> bool {
         let Some(f) = self.list.get(b.faction) else {
             return false;
@@ -78,7 +79,7 @@ impl PlayerFactions {
         b.allowed(f.value, current, rules(data).limits)
     }
 
-    /// `GameEngine::IsFactionPositiveBoosted` @0x1802f4240 / `IsFactionNegativeBoosted` @0x1802f4280:
+    /// `GameEngine::IsFactionPositiveBoosted` / `IsFactionNegativeBoosted`:
     /// the boost is not 0.
     pub fn boosted(&self, i: usize, negative: bool) -> bool {
         self.list.get(i).is_some_and(|f| {
@@ -124,16 +125,9 @@ impl PlayerFactions {
     }
 }
 
-/// Save index of a faction by the name scripts and records use (`Survivors`, `Outlaws`, `USER4`, `User0`, ...): the
-/// engine's type names, case-insensitive ([`gd_sim::faction::type_of`], `FactionPack::GetFactionTag`
-/// @0x1802a07b0; type 6 is `User0`, not the `factionDrifters` key's name).
-pub fn index_of_name(name: &str) -> Option<usize> {
-    gd_sim::faction::type_of(name)
-}
-
 /// The script name of a faction index (`SURVIVORS`, `USER4`).
 pub fn script_name(i: usize) -> Option<String> {
-    gd_sim::faction::KEYS
+    gd_rules::faction::KEYS
         .get(i)
         .map(|k| k.trim_start_matches("faction").to_ascii_uppercase())
 }
@@ -150,20 +144,20 @@ pub fn my_faction(db: &gd_formats::vfs::Database, record: &str) -> Option<String
 
 /// The faction icon a creature record's character shows (the conversation
 /// window's name line). Game.dll `Character::GetVisibleFaction`
-/// @0x18005c7a0 (the override at +8016 unless -1000, else the character's
-/// own faction at +7308) and `GameEngine::GetFactionIcon` @0x1802f4c70 (the
+/// (the override `Character.visibleFaction` unless -1000, else the character's
+/// own faction `Character.faction`) and `GameEngine::GetFactionIcon` (the
 /// engine's faction pack of that type, `FactionPack::GetFactionIcon` = the
 /// pack's `factionIcon`; empty past the list). The engine's packs are
 /// `gamefactions.dbr`'s `faction*` records; the type is the creature's
 /// `factions` pack's `myFaction`, so the icon is the `factionIcon` of the
 /// `gamefactions.dbr` record with that `myFaction` (`User1` = the neutral
 /// NPCs' `faction_neutral_npc.dbr`). None without a pack (-1000).
-/// PORT: the +8016 override (set by `Character::SetVisibleFaction`) is not
+/// PORT: the `Character.visibleFaction` override (set by `Character::SetVisibleFaction`) is not
 /// modelled.
 pub fn faction_icon(db: &gd_formats::vfs::Database, record: &str) -> Option<String> {
     let mine = my_faction(db, record)?;
-    let gf = db.get(gd_sim::faction::GAME_FACTIONS)?;
-    gd_sim::faction::KEYS
+    let gf = db.get(gd_rules::faction::GAME_FACTIONS)?;
+    gd_rules::faction::KEYS
         .iter()
         .filter_map(|k| gf.str(k).and_then(|p| db.get(p)))
         .find(|r| {
@@ -177,9 +171,9 @@ pub fn faction_icon(db: &gd_formats::vfs::Database, record: &str) -> Option<Stri
         })
 }
 
-/// The conversation window's faction icon tooltip (Grim Dawn.exe `sub_1401727E0`): the
+/// The conversation window's faction icon tooltip (Grim Dawn.exe `ConversationWindow::GetFactionRollover`): the
 /// NPC's visible faction's name tag and the player's standing rank tag (`GameEngine::GetFactionLevelName` = the
-/// `factionTagN` of the player's level, its alternate neutral tag below 0: [`gd_sim::faction::Levels::tag`]). The window localises them into `tagFaction` and
+/// `factionTagN` of the player's level, its alternate neutral tag below 0: [`gd_rules::faction::Levels::tag`]). The window localises them into `tagFaction` and
 /// `tagFactionStanding`; `quest_req` is the locked quest's missing standing (`tagFactionQuestReq`, `Story::
 /// locked_quest_faction`'s deficit; the engine's value is -1000 when nothing is locked).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -192,8 +186,8 @@ pub struct FactionTip {
 /// The save index of the faction a creature record shows (its pack's `myFaction`, as [`faction_icon`]).
 pub fn visible_faction(db: &gd_formats::vfs::Database, record: &str) -> Option<usize> {
     let mine = my_faction(db, record)?;
-    let gf = db.get(gd_sim::faction::GAME_FACTIONS)?;
-    gd_sim::faction::KEYS.iter().position(|k| {
+    let gf = db.get(gd_rules::faction::GAME_FACTIONS)?;
+    gd_rules::faction::KEYS.iter().position(|k| {
         gf.str(k).and_then(|p| db.get(p)).is_some_and(|r| {
             r.str("myFaction")
                 .is_some_and(|m| m.trim().eq_ignore_ascii_case(&mine))
@@ -209,8 +203,8 @@ pub fn faction_tip(
     value: f32,
     quest_req: Option<i32>,
 ) -> Option<FactionTip> {
-    let rank_tag = gd_sim::faction::Levels::from_record(gf).tag(value);
-    let name_tag = gd_sim::faction::tag(faction)?;
+    let rank_tag = gd_rules::faction::Levels::from_record(gf).tag(value);
+    let name_tag = gd_rules::faction::tag(faction)?;
     (!rank_tag.is_empty()).then_some(FactionTip {
         name_tag,
         rank_tag,
@@ -227,8 +221,8 @@ pub(crate) struct Rules {
     starting: Vec<usize>,
 }
 
-fn rules(data: &crate::data::GameData) -> Rules {
-    let gf = data.db.get(gd_sim::faction::GAME_FACTIONS);
+fn rules(data: &gd_game_core::data::GameData) -> Rules {
+    let gf = data.db.get(gd_rules::faction::GAME_FACTIONS);
     let v = |n: u32| gf.as_ref().and_then(|g| g.f32(&format!("factionValue{n}")));
     let list = |key: &str| -> Vec<usize> {
         gf.as_ref()
@@ -255,16 +249,16 @@ pub struct BoosterUsed(pub String);
 
 /// `ItemFactionBooster::Use` / `ItemFactionWarrant::Use` (module doc).
 fn use_boosters(
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut used: MessageReader<BoosterUsed>,
     mut factions: ResMut<PlayerFactions>,
-    mut sound: MessageWriter<crate::visuals::PlaySound>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
     for BoosterUsed(record) in used.read() {
         let Some(rec) = data.db.get(record) else {
             continue;
         };
-        let Some(b) = gd_sim::faction::Booster::from_record(rec) else {
+        let Some(b) = gd_rules::faction::Booster::from_record(rec) else {
             continue;
         };
         if !factions.booster_allowed(&data, &b) {
@@ -273,10 +267,10 @@ fn use_boosters(
         }
         let max = data
             .db
-            .get(gd_sim::faction::GAME_FACTIONS)
+            .get(gd_rules::faction::GAME_FACTIONS)
             .and_then(|g| g.f32("maxBoosterValue"))
             .unwrap_or(0.0);
-        let boost = gd_sim::faction::booster_clamp(b.multiplier, max);
+        let boost = gd_rules::faction::booster_clamp(b.multiplier, max);
         let Some(f) = factions.list.get_mut(b.faction) else {
             continue;
         };
@@ -292,7 +286,7 @@ fn use_boosters(
             if b.negative { "losses" } else { "gains" }
         );
         if let Some(pak) = rec.str("useSound").filter(|p| !p.is_empty()) {
-            sound.write(crate::visuals::PlaySound {
+            sound.write(gd_game_core::visuals::PlaySound {
                 pak: pak.to_owned(),
                 at: None,
             });
@@ -300,11 +294,11 @@ fn use_boosters(
     }
 }
 
-/// Value where a rank starts (`GameEngine::GetFactionLevelValue`
-/// @0x1802f3d40): the names Nemesis, Hated, Despised, Tolerated, Friendly,
+/// Value where a rank starts (`GameEngine::GetFactionLevelValue`):
+/// the names Nemesis, Hated, Despised, Tolerated, Friendly,
 /// Respected, Honored, Revered (any case) pick `factionValue1..8` in that
 /// order; anything else has no start.
-fn rank_start(data: &crate::data::GameData, rank: &str) -> Option<f32> {
+fn rank_start(data: &gd_game_core::data::GameData, rank: &str) -> Option<f32> {
     const RANKS: [&str; 8] = [
         "nemesis",
         "hated",
@@ -320,7 +314,7 @@ fn rank_start(data: &crate::data::GameData, rank: &str) -> Option<f32> {
         .position(|r| r.eq_ignore_ascii_case(rank.trim()))?
         + 1;
     data.db
-        .get(gd_sim::faction::GAME_FACTIONS)?
+        .get(gd_rules::faction::GAME_FACTIONS)?
         .f32(&format!("factionValue{n}"))
 }
 
@@ -343,13 +337,13 @@ fn reduce(delta: f32, value: f32, start: f32, reduction: f32) -> f32 {
 }
 
 pub fn init_factions(
-    hooks: Res<crate::hooks::Hooks>,
-    epoch: Res<crate::session::SessionEpoch>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    epoch: Res<gd_game_core::session::SessionEpoch>,
     mut commands: Commands,
     // Option: `have` is the existence check (this system creates it); `loaded` is absent for a new character.
     have: Option<Res<PlayerFactions>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    players: Query<(), With<crate::player::Player>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    players: Query<(), With<gd_game_core::player::Player>>,
 ) {
     if have.is_some() || players.is_empty() {
         return;
@@ -358,12 +352,24 @@ pub fn init_factions(
         .as_ref()
         .map(|c| c.0.factions.factions.clone())
         .unwrap_or_default();
-    let n = gd_sim::faction::FACTION_COUNT;
+    let n = gd_rules::faction::FACTION_COUNT;
+    // A new character (no loaded file: the `GD_NAME` / failed-`GD_SAVE` hook path) starts at the menu's
+    // fresh-character values (`save::NEW_FACTION_VALUES`), not all zero; a loaded file's missing slots
+    // stay zero (the engine loads what the file holds).
+    let fresh = loaded.is_none();
     while list.len() < n {
+        let value = if fresh {
+            crate::save::NEW_FACTION_VALUES
+                .get(list.len())
+                .copied()
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
         list.push(Faction {
             modified: 0,
             unlocked: 0,
-            value: 0.0,
+            value,
             positive_boost: 0.0,
             negative_boost: 0.0,
         });
@@ -387,16 +393,16 @@ pub fn init_factions(
 pub(crate) fn kill_reputation(
     mut killed: MessageReader<MonsterKilled>,
     mut f: ResMut<PlayerFactions>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     session: crate::session::Session,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
     credit: crate::combat::KillCredit,
     (rt, monsters, progress): (
-        Option<NonSend<crate::story::StoryRuntime>>,
-        Query<&crate::monsters::Monster>,
-        Option<Res<crate::progress::PlayerProgress>>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        Query<&gd_game_core::monsters::Monster>,
+        Option<Res<gd_game_core::progress::PlayerProgress>>,
     ),
-    (mut cached, mut fresh): (Local<Option<Rules>>, crate::session::NewSession),
+    (mut cached, mut fresh): (Local<Option<Rules>>, gd_game_core::session::NewSession),
 ) {
     // A new session may run another mod's `gamefactions.dbr`.
     if fresh.begun() {
@@ -499,19 +505,19 @@ pub(crate) fn kill_reputation(
                 );
             }
             let d = f.adjust(i, b, rep, rules);
-            // `FactionPack::AdjustValue` @0x1802a32e0: a bonus of at least 1
+            // `FactionPack::AdjustValue`: a bonus of at least 1
             // from a Hero or higher kill shows `tagReputationBonus` over `tagRepAwarded(amount, faction)` (type 3).
             if d >= 1.0
                 && class != "Common"
                 && class != "Champion"
-                && let Some(tag_name) = gd_sim::faction::tag(i)
+                && let Some(tag_name) = gd_rules::faction::tag(i)
             {
-                cinematic.write(crate::story::CinematicText {
+                cinematic.write(gd_game_core::story::CinematicText {
                     head: "tagReputationBonus".into(),
                     sub: "tagRepAwarded".into(),
                     sub_args: vec![
-                        crate::floating::TextArg::Num(d.round()),
-                        crate::floating::TextArg::Tag(tag_name.clone()),
+                        gd_game_core::floating::TextArg::Num(d.round()),
+                        gd_game_core::floating::TextArg::Tag(tag_name.clone()),
                     ],
                     kind: 3,
                     front: false,
@@ -521,31 +527,31 @@ pub(crate) fn kill_reputation(
     }
 }
 
-/// `FactionPack::SetValue` @0x1802a39e0: when a faction's rank (its level tag)
+/// `FactionPack::SetValue`: when a faction's rank (its level tag)
 /// changes, `tagFactionUpdated` over `tagFactionStatusChange(rank, faction)` (`tagFactionNegativeStatusChange` below 0), type 3.
 /// PORT: seen from the values when they change (kills and scripts alike); the first sight only records the ranks; the
 /// rank name's colour code is not inserted; hidden factions are not checked.
 pub fn rank_changes(
     f: Res<PlayerFactions>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     // The level table (built once a session) and each faction's level and sign (a negative value in the neutral
     // level shows the alternate tag).
     (mut levels, mut ranks): (
-        Local<Option<gd_sim::faction::Levels>>,
+        Local<Option<gd_rules::faction::Levels>>,
         Local<Vec<(Option<usize>, bool)>>,
     ),
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
-    mut fresh: crate::session::NewSession,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     if fresh.begun() {
         ranks.clear();
         *levels = None;
     }
     if levels.is_none() {
-        let Some(gf) = data.db.get(gd_sim::faction::GAME_FACTIONS) else {
+        let Some(gf) = data.db.get(gd_rules::faction::GAME_FACTIONS) else {
             return;
         };
-        *levels = Some(gd_sim::faction::Levels::from_record(gf));
+        *levels = Some(gd_rules::faction::Levels::from_record(gf));
     }
     let Some(levels) = levels.as_ref() else {
         return;
@@ -557,11 +563,11 @@ pub fn rank_changes(
         let now = (levels.level_of(v), v < 0.0);
         if !first
             && now != *old
-            && let Some(tag_name) = gd_sim::faction::tag(i)
+            && let Some(tag_name) = gd_rules::faction::tag(i)
         {
             let tag = levels.tag(v);
             if !tag.is_empty() {
-                cinematic.write(crate::story::CinematicText {
+                cinematic.write(gd_game_core::story::CinematicText {
                     head: "tagFactionUpdated".into(),
                     sub: if v < 0.0 {
                         "tagFactionNegativeStatusChange"
@@ -570,8 +576,8 @@ pub fn rank_changes(
                     }
                     .into(),
                     sub_args: vec![
-                        crate::floating::TextArg::Tag(tag),
-                        crate::floating::TextArg::Tag(tag_name),
+                        gd_game_core::floating::TextArg::Tag(tag),
+                        gd_game_core::floating::TextArg::Tag(tag_name),
                     ],
                     kind: 3,
                     front: false,
@@ -583,7 +589,7 @@ pub fn rank_changes(
 }
 
 /// A reputation change turns the creatures of that faction at once: the engine keeps no friend / foe state, every
-/// `FactionManager::IsFoe` @0x18028f870 (sight, `IsEnemyValid`, the player's targeting) reads the packs as they are
+/// `FactionManager::IsFoe` (sight, `IsEnemyValid`, the player's targeting) reads the packs as they are
 /// now. The port's player-side mark, `combat::Allied`
 /// ([`crate::monsters::is_friendly`] and [`crate::monsters::is_fighter`], set at spawn), is re-decided for the
 /// fighting monsters of each faction whose player value changed sign (below 0, 0, above 0: the only changes that
@@ -595,19 +601,19 @@ pub fn rank_changes(
 /// `Monster` has a controller), which never fights nor takes a hit whatever its faction.
 pub fn turn_creatures(
     f: Res<PlayerFactions>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut signs: Local<Vec<i8>>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     monsters: Query<
         (
             Entity,
-            &crate::monsters::Monster,
+            &gd_game_core::monsters::Monster,
             &crate::combat::MonsterAi,
             Has<crate::combat::Allied>,
         ),
         // A converted monster stands on its leader's side until `combat::unjoin_converted` puts it back.
         (
-            Without<crate::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
             Without<crate::combat::Converted>,
         ),
     >,
@@ -616,7 +622,7 @@ pub fn turn_creatures(
     if fresh.begun() {
         signs.clear();
     }
-    let now: Vec<i8> = (0..gd_sim::faction::FACTION_COUNT)
+    let now: Vec<i8> = (0..gd_rules::faction::FACTION_COUNT)
         .map(|t| {
             let v = crate::monsters::player_value(&data.db, Some(&f), t);
             (v > 0.0) as i8 - (v < 0.0) as i8
@@ -647,8 +653,8 @@ pub fn turn_creatures(
 /// Mirrors the values into the story's `GetFaction` (module doc) when they changed.
 pub fn sync_story(
     factions: Res<PlayerFactions>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    mut fresh: crate::session::NewSession,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    mut fresh: gd_game_core::session::NewSession,
     mut seen: Local<u64>,
 ) {
     if fresh.begun() {
@@ -670,8 +676,8 @@ pub fn sync_story(
 fn story_factions(
     mut events: MessageReader<StoryEffect>,
     mut f: ResMut<PlayerFactions>,
-    data: Res<crate::data::GameData>,
-    (mut cached, mut fresh): (Local<Option<Rules>>, crate::session::NewSession),
+    data: Res<gd_game_core::data::GameData>,
+    (mut cached, mut fresh): (Local<Option<Rules>>, gd_game_core::session::NewSession),
 ) {
     // A new session may run another mod's `gamefactions.dbr`.
     if fresh.begun() {

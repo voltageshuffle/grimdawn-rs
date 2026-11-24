@@ -52,7 +52,6 @@ pub mod floating;
 pub mod fog;
 pub mod geysers;
 pub mod graeae;
-pub mod hooks;
 pub mod hotbar;
 pub mod illusion;
 pub mod inventory;
@@ -73,7 +72,6 @@ pub mod notify;
 pub mod npc_controller;
 pub mod npc_marks;
 pub mod obstacles;
-pub mod options;
 pub mod orbit;
 pub mod patrol;
 pub mod patterns;
@@ -92,7 +90,6 @@ pub mod reflect_link;
 pub mod refresh;
 pub mod reroll;
 pub mod riftgates;
-pub mod rng;
 pub mod rules;
 pub mod save;
 pub mod secondary;
@@ -118,34 +115,32 @@ pub mod tutorials;
 pub mod unique;
 pub mod visuals;
 pub mod waves;
-pub mod weak_cache;
 pub mod weapon_pool;
 pub mod weapon_sets;
-pub mod world;
 
 use bevy::prelude::*;
 
-/// All headless gameplay systems. Expects a [`data::GameData`] resource
+/// All headless gameplay systems. Expects a [`gd_game_core::data::GameData`] resource
 /// (the game adds [`data::DataPlugin`]; tests insert one).
 pub struct GameLogicPlugin;
 
 impl Plugin for GameLogicPlugin {
     fn build(&self, app: &mut App) {
         // `Hooks` first: `SaveDir` (`FromWorld`) reads it; the game inserts the process's before this plugin.
-        app.init_resource::<hooks::Hooks>()
-            .init_resource::<session::SessionEpoch>()
-            .init_resource::<session::SaveDir>()
+        app.init_resource::<gd_game_core::hooks::Hooks>()
+            .init_resource::<gd_game_core::session::SessionEpoch>()
+            .init_resource::<gd_game_core::session::SaveDir>()
             .init_resource::<nav::Nav>()
-            .init_resource::<session::Choice>()
-            .init_resource::<session::GameMode>()
+            .init_resource::<gd_game_core::session::Choice>()
+            .init_resource::<gd_game_core::session::GameMode>()
             .init_resource::<loot::DroppedEpics>()
-            .init_resource::<levels::Levels>()
-            .init_resource::<creature::BodyCache>()
+            .init_resource::<gd_game_core::levels::Levels>()
+            .init_resource::<gd_game_core::creature::BodyCache>()
             .init_resource::<monsters::ProxyStates>()
             .init_resource::<monsters::UnifiedPools>()
             .init_resource::<monsters::ProfileCache>()
             .init_resource::<collision::WorldCollision>()
-            .init_resource::<options::GameOptions>()
+            .init_resource::<gd_game_core::options::GameOptions>()
             .add_systems(First, creature::collect_body_loads)
             .add_systems(Update, nav::sync_obstacles)
             .add_systems(

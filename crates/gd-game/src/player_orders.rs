@@ -4,9 +4,10 @@
 //! the cursor ray and the hovered object and writes [`PlayerOrder`]s; [`apply_orders`] applies them in order in
 //! the same frame, before the walk advances (`MovementStage::Follow`). An order is one of the engine's controller
 //! requests:
-//! - the held button's repeat timer (`MovePath::repath`, sub_140021000 `a1+292`, [`command_wait`]);
+//! - the held button's repeat timer (`MovePath::repath`, `InGameUI::HandleMouseEvent`'s
+//!   `InGameUI.commandWait`, [`command_wait`]);
 //! - a walk to an object the player interacts with ([`PlayerOrder::Interact`], `MoveToNpc` / `MoveToFixedItem` /
-//!   `MoveAndPickUpItem`), an attack on a foe (`SelectPrimaryAction` @0x180161d00): one
+//!   `MoveAndPickUpItem`), an attack on a foe (`SelectPrimaryAction`): one
 //!   use of the primary attack ([`PrimaryUse`]), repeated only while the button is held;
 //! - a plain move ([`crate::movement::request_move`]): to the object's coordinates when there is one, else the
 //!   ground point under the cursor. PORT: the engine moves to the object's coordinates only; a request the rules
@@ -18,24 +19,26 @@
 //! object with a single path search; the object's own use system (chests, doors, shrines, riftgates, the altar,
 //! the gravestone, NPCs, ground items) takes it once in reach, routing by the entity's component. Every new order
 //! (Clear / Move / Attack / Interact, the keyboard's move and hop) drops it, as a new primary action replaces the
-//! controller state (sub_140021000 `SelectPrimaryAction`); a started attack / cast / evade drops it too
-//! (`follow_path`), and a target that left the world expires. The session's end despawns the player with it.
+//! controller state (`InGameUI::HandleMouseEvent`'s `SelectPrimaryAction`); a started attack / cast /
+//! evade drops it too (`follow_path`), and a target that left the world expires. The session's end despawns the
+//! player with it.
 //!
 //! A move requested mid-swing / mid-cast / mid-evade is remembered in the character's pending-action slot
-//! ([`crate::character::QueuedAction`], last request wins) and runs at the clip's `AllowInterrupt` point or its
-//! "End" (`follow_path`); the engine's one-slot action queue, `CharacterHandlerUpdate` @0x1801279f0.
+//! ([`gd_game_core::character::QueuedAction`], last request wins) and runs at the clip's `AllowInterrupt` point or its
+//! "End" (`follow_path`); the engine's one-slot action queue, `CharacterHandlerUpdate`.
 //!
-//! - the keyboard movement (`sub_14002BC00`): the controller direction ([`ControllerDirection`]), a turn
+//! - the keyboard movement (`InGameUI::Update`): the controller direction
+//!   ([`ControllerDirection`]), a turn
 //!   toward a look-at point (`RequestRotateAction`) and a hop 1.25 m ahead. PORT: the engine reaches the hop with
 //!   a short plain move; here a strict nav path.
-use crate::character::Character;
-use crate::combat::{Combatant, Dead};
-use crate::data::GameData;
 use crate::movement::{MovePath, MovementStage, apply_move_order};
 use crate::nav::Nav;
-use crate::player::{ControllerDirection, Player, PlayerSet};
 use bevy::ecs::entity::Entities;
 use bevy::prelude::*;
+use gd_game_core::character::Character;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::player::{ControllerDirection, Player, PlayerSet};
 
 /// The input systems that write [`PlayerOrder`]s (the game's mouse and keyboard handlers).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -75,7 +78,8 @@ pub enum PlayerOrder {
 }
 
 /// The wait before a held button (or the held Move key) issues its next command, in seconds.
-/// sub_140021000: the timer `a1+292` is 10 ms when the command was taken (`HandleActionFromMouse` true) or the player
+/// `InGameUI::HandleMouseEvent`: the timer `InGameUI.commandWait` is 10 ms when the command was
+/// taken (`HandleActionFromMouse` true) or the player
 /// is moving (`ControllerAI::IsMoving`), else 50 ms.
 pub fn command_wait(taken: bool, moving: bool) -> f32 {
     if taken || moving { 0.010 } else { 0.050 }
@@ -93,17 +97,9 @@ pub struct InteractTarget(pub Option<Entity>);
 /// any skill request that runs (a hot slot key, the right button: `casting::cast_requests`), as a new controller
 /// state replaces the UseSkill one. The target stays the running swing's (its hit lands on it) and is dropped when the
 /// action ends unarmed. A skill queued meanwhile goes before the next primary use (the action queue's pending slot,
-/// [`crate::character::QueuedAction`]): between two held attacks.
+/// [`gd_game_core::character::QueuedAction`]): between two held attacks.
 #[derive(Component, Default)]
 pub struct PrimaryUse(pub bool);
-
-/// The use range of a fixed item (`ControllerPlayerState::DefaultRequestInteractableAction`
-/// @0x180163080, `gd_game::doors` module doc): the 3D distance between the player's and the object's origins is at
-/// most player radius + object radius (`actorRadius` × scale) + `usableRange` (0 when absent), 1 m more once the
-/// walk to it has ended (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`, `path_end`).
-pub fn usable_range(player_radius: f32, object_radius: f32, usable: f32, path_end: bool) -> f32 {
-    player_radius + object_radius + usable + if path_end { 1.0 } else { 0.0 }
-}
 
 pub struct PlayerOrdersPlugin;
 
@@ -182,7 +178,10 @@ fn character_interactable(
     if ch.is_player {
         return;
     }
-    let radius = crate::combat::get_radius(data.db.get(&ch.record), crate::combat::ACTOR_RADIUS);
+    let radius = gd_game_core::combat::get_radius(
+        data.db.get(&ch.record),
+        gd_game_core::combat::ACTOR_RADIUS,
+    );
     commands.entity(ev.entity).insert(Interactable {
         radius,
         kind: InteractKind::Npc,
@@ -296,34 +295,35 @@ pub fn apply_orders(
                 // attack ([`PrimaryUse`]), as the action queue drops a primary attack request while a skill waits
                 // (`AttackAction::QueryActionPermission`, `casting::cast_requests`).
                 ch.queued
-                    .take_if(|q| matches!(q, crate::character::QueuedAction::Move(_)));
+                    .take_if(|q| matches!(q, gd_game_core::character::QueuedAction::Move(_)));
             }
             PlayerOrder::Move { to, ground, camera } => {
                 interact.0 = None;
-                let order = crate::character::MoveOrder { to, ground, camera };
+                let order = gd_game_core::character::MoveOrder { to, ground, camera };
                 let busy = matches!(
                     ch.state,
-                    crate::character::CharState::Attack
-                        | crate::character::CharState::Cast
-                        | crate::character::CharState::Evade
-                        | crate::character::CharState::Pickup
+                    gd_game_core::character::CharState::Attack
+                        | gd_game_core::character::CharState::Cast
+                        | gd_game_core::character::CharState::Evade
+                        | gd_game_core::character::CharState::Pickup
                 );
                 if busy && !ch.can_act() {
                     // Remembered, not dropped: it runs at the clip's `AllowInterrupt`
                     // point or its "End" (`follow_path`, the action queue).
-                    ch.queued = Some(crate::character::QueuedAction::Move(order));
+                    ch.queued = Some(gd_game_core::character::QueuedAction::Move(order));
                 } else {
                     if busy {
                         // Recovery cancel: the cancelled remainder becomes the attack-delay
-                        // (`AttackAction::QueryActionPermission` @0x180084380); the evade's
+                        // (`AttackAction::QueryActionPermission`); the evade's
                         // components go with its state (`evade::evading`).
                         if matches!(
                             ch.state,
-                            crate::character::CharState::Attack | crate::character::CharState::Cast
+                            gd_game_core::character::CharState::Attack
+                                | gd_game_core::character::CharState::Cast
                         ) {
                             ch.attack_delay = ch.attack_delay.max(ch.remaining_ms());
                         }
-                        ch.state = crate::character::CharState::Run;
+                        ch.state = gd_game_core::character::CharState::Run;
                     }
                     apply_move_order(
                         &mut path,

@@ -7,47 +7,53 @@
 //!
 //! Difficulties ([`DifficultyOption`]): Normal, Elite, Ultimate up to the
 //! character's `greatest_difficulty` (3 counts as 0, as
-//! `GameEngine::CompleteDifficulty` @0x1802f9bf0 reads it). Beating the game
-//! on Normal unlocks both Elite and Ultimate (`GameEngine::GameWon`
-//! @0x1802f9aa0; Lua `Game.UnlockNextDifficulty`).
+//! `GameEngine::CompleteDifficulty` reads it). Beating the game
+//! on Normal unlocks both Elite and Ultimate (`GameEngine::GameWon`;
+//! Lua `Game.UnlockNextDifficulty`).
 //! `greatest_difficulty` in the save is that unlocked level and new
 //! characters start on Normal: the byte is
-//! `Player::GetGreatestDifficultyCompleted` (+19408, raised by
+//! `Player::GetGreatestDifficultyCompleted` (`Player.greatestDifficultyCompleted`, raised by
 //! `CompleteDifficulty`) and the exe's new-character path sets it to 0. The
-//! difficulty window's picks (0x14008f220) and enables (0x14008f360) are in
-//! [`DifficultyOption::enabled`].
+//! difficulty window's picks (`DifficultyWindow::ApplySelection`) and enables (`DifficultyWindow::UpdateEnabled`)
+//! are in [`DifficultyOption::enabled`].
 //!
 //! Character list (`playmenu_characterlist.dbr`, `Grim Dawn.exe`
-//! 0x140088f10 / draw 0x1400892e0): at most `maxCharacters` rows from the
+//! `CharacterList::Update` / draw `CharacterList::Draw`): at most `maxCharacters` rows from the
 //! first visible one; an unset selection becomes the last entry. PORT: the
 //! list is sorted by name ignoring case (the reference shot's order; the
-//! engine's list builder sub_1400076B0 is not decompiled) and the most
+//! engine's list builder `CharacterList::Build` is not decompiled) and the most
 //! recently written character is selected (the game remembers the last
 //! played one).
 //!
-//! Create Character (sub_14008BE30): an empty name says
+//! Create Character (`CreateCharacterWindow::HandleEvent`): an empty name says
 //! `tagMenuError07`, a name an existing character has (ignoring case) says
 //! `tagMenuError38`; otherwise the male / female radio and the hardcore box
 //! set the new character; Next (`tagMenuButton12`) opens the difficulty
-//! window (`difficultyWindow`, the same record as the play menu's) and its Accept creates the character
-//! and starts the game with the picked option; Cancel goes back to the name step. Names are at most
+//! window (`difficultyWindow`, the same record as the play menu's) and its Accept writes the character's
+//! save (`gd_game::save::create_character`) with the picked option, then returns to the list with the new
+//! character selected — the player presses Start themselves; a failed write stays in the window. Cancel
+//! goes back to the name step. Names are at most
 //! `maxPlayerNameLength`
-//! (mainmenu_constants.dbr, 20) characters. Delete Character asks to type
+//! (mainmenu_constants.dbr, 20) characters. PORT: with no characters (at startup, or after deleting the
+//! last one) the Create window opens by itself — the game shows an empty play menu; Cancel / Esc still
+//! close it. Delete Character asks to type
 //! `tagMenuDeleteConfirm` ("DELETE"; PORT: compared ignoring case) and removes
 //! the folder, only inside the port's save folder.
 //!
 //! Keys (PORT: the port's; the main menu's key handling is not decompiled): Up/Down choose, Enter play (or accept a
 //! window), Esc closes a window, Delete opens the delete window, N the create window. Clicks activate on the left
-//! press, the `menubutton` class's rule as every button's (`ui::widgets::button_pressed`, sub_1400A01D0:
-//! mouse event 1 dispatches the listeners' event 0; the release only sets the up look). While the
+//! press, the `menubutton` class's rule as every button's (`ui::widgets::button_pressed`,
+//! `MenuButton::HandleMouseEvent`: mouse event 1 dispatches the listeners' event 0; the release only sets the up
+//! look). While the
 //! menu is open no input reaches the game. Out of scope (single player
 //! only): Multiplayer, Game Guide, Community, DLC are drawn disabled; Credits is the roll of `ui/credits.rs`.
-//! The Crucible (`sub_140091630`, `sub_140091210`): the window sets the
+//! The Crucible (`GameModeWindow::HandleEvent`, `GameModeWindow::Accept`): the window sets the
 //! mode and the arena (Random or one offered by the installed packs), the difficulty window then lists
 //! Aspirant / Challenger / Gladiator and Start mounts the Crucible data and opens the arena
 //! (`world::open_session_map`).
-//! Custom (mode 2, `sub_140091820` / toggles `sub_1400927A0` / view `sub_140090950` / Accept
-//! `sub_140090770`): the toggle is always offered; it shows the map list of
+//! Custom (mode 2, `GameModeWindow::Load` / toggles `GameModeWindow::HandleToggle` / view
+//! `GameModeWindow::ShowCustomView` / Accept `GameModeWindow::AcceptCustom`): the toggle is always offered; it
+//! shows the map list of
 //! the user mods ([`custom_maps`], read again each time) with the selected map's file name above it; Accept
 //! with an empty list falls back to the Main Campaign, else the mode is 2 with the selected mod and map
 //! (`GameInfo::SetModName` / `SetLevelName`). The stock install has no user mod, so there Custom always ends
@@ -57,15 +63,16 @@
 //! under `save/<mod>/` (`Choice::shared_save_dir`). A mod that does not mount, or a listed map its archives do
 //! not hold (a loose `.map`: `InitializeMod` mounts only `resources/*.arc`), refuses Start and the menu stays.
 //!
-//! Characters (sub_140017980): the list holds the characters of `main/` and `user/`. Start in the
+//! Characters (`Game::ListCharacters`): the list holds the characters of `main/` and `user/`. Start in the
 //! campaign (mode 0, no mod) with a character that is not in the main quest (`is_in_main_quest` 0: created in
-//! the Crucible or a custom game) is refused. Start (sub_1400B9310) passes `GameInfo::GetModName`
-//! to the save creation sub_140013CD0, which sets `Player::SetIsInMainQuest(modName empty)` on a new
+//! the Crucible or a custom game) is refused. Start (`MainMenu::StartGame`) passes `GameInfo::GetModName`
+//! to the save creation `Game::CreatePlayer`, which sets `Player::SetIsInMainQuest(modName empty)` on a new
 //! character and fails for an existing one when `modName` is empty and `!IsInMainQuest`; the Crucible's mode 1
-//! has `modName` `survivalmode` (sub_1400C0F30), so a Crucible-made character is not in the main quest. The
-//! loader sub_140018360 refuses it in the same way (`IsInMainQuest` required when no mod is set).
+//! has `modName` `survivalmode` (`MainMenu::SetMapData`), so a Crucible-made character is not in the main quest. The
+//! loader `Game::LoadCharacter` refuses it in the same way (`IsInMainQuest` required when no mod is set).
 //!
-//! What the menu remembers (`playmenu.cpn`, reader 0x1400bbca0 / writer 0x1400bc580, layout in
+//! What the menu remembers (`playmenu.cpn`, reader `MainMenu::ReadPlayMenu` / writer `MainMenu::WritePlayMenu`,
+//! layout in
 //! `gd_formats::save::cpn`): the selected character, the game mode, the difficulty option and Veteran, and the
 //! Crucible arena. Read when the menu opens (a name that no longer exists leaves the default selection), written
 //! when one of them changes. PORT: the file is the port's own `<save dir>/playmenu.cpn` (the engine's shared save
@@ -74,13 +81,14 @@
 //! and map names (`mod_name`, `level_name2`), and a file whose custom map is no longer listed opens as the
 //! campaign. A hook that sets the menu (`GD_MENU_PICK`, `GD_MENU_CRUCIBLE`, hooks.rs) neither reads nor writes
 //! the file.
-use crate::session::{Choice, begin};
+use crate::session::begin;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::save::gdc::Gdc;
 use gd_formats::ui::Rect as URect;
-pub use gd_game::session::{CustomMap, DifficultyOption};
+use gd_game_core::session::Choice;
+pub use gd_game_core::session::{CustomMap, DifficultyOption};
 
 pub const CONSTANTS: &str = "records/ui/mainmenu/mainmenu_constants.dbr";
 
@@ -97,15 +105,15 @@ impl Plugin for MenuPlugin {
         app.init_resource::<MenuLayout>()
             .add_systems(
                 Startup,
-                setup.run_if(|h: Res<gd_game::hooks::Hooks>| !h.session.skip_menu),
+                setup.run_if(|h: Res<gd_game_core::hooks::Hooks>| !h.session.skip_menu),
             )
             .add_systems(
                 PreUpdate,
                 (
                     run_menu
                         .after(bevy::input::InputSystems)
-                        .before(crate::ui::options::OptionsInputSet),
-                    swallow_input.after(crate::ui::options::OptionsInputSet),
+                        .before(gd_ui::state::options::OptionsInputSet),
+                    swallow_input.after(gd_ui::state::options::OptionsInputSet),
                 )
                     .run_if(resource_exists::<MainMenu>),
             );
@@ -132,8 +140,8 @@ pub enum MenuWindow {
     Delete(String),
 }
 
-/// The game-mode window's edit (`gamemode_mastertable.dbr`, `GameModeWindow` sub_140091630): the
-/// Crucible toggle, the arena drop-down item (0 = Random, then [`gd_game::session::ARENAS`] order, as
+/// The game-mode window's edit (`gamemode_mastertable.dbr`, `GameModeWindow::HandleEvent`): the
+/// Crucible toggle, the arena drop-down item (0 = Random, then [`gd_game_core::session::ARENAS`] order, as
 /// offered) and whether the drop-down list is open; the Custom toggle, its map list (read when the
 /// toggle shows it, [`custom_maps`]) and the list's selection.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -147,7 +155,7 @@ pub struct GameType {
 }
 
 impl GameType {
-    /// The window as it opens on the menu's mode (sub_1400929E0: mode 2 shows the Custom view, its
+    /// The window as it opens on the menu's mode (`GameModeWindow::Open`: mode 2 shows the Custom view, its
     /// list read again and the entry of the current mod and map selected, else the first).
     fn open(m: &MainMenu, root: &std::path::Path) -> Self {
         let mut g = GameType {
@@ -161,7 +169,8 @@ impl GameType {
         g
     }
 
-    /// Shows the Custom view (sub_140090950): the list is read again, the entry of `current` selected.
+    /// Shows the Custom view (`GameModeWindow::ShowCustomView`): the list is read again, the entry of `current`
+    /// selected.
     fn show_custom(&mut self, root: &std::path::Path, current: Option<&CustomMap>) {
         (self.crucible, self.open, self.custom) = (false, false, true);
         self.maps = custom_maps(root);
@@ -171,7 +180,7 @@ impl GameType {
     }
 }
 
-/// The custom games the install offers (sub_1400C14B0): every folder of `<root>/mods/` but
+/// The custom games the install offers (`MainMenu::ListCustomMods`): every folder of `<root>/mods/` but
 /// `survivalmode` (case ignored), each with every `.map` of its `resources/` whose header is `MAP` and a
 /// version byte above 5 (`World::GetTQ1MapFileVersionNumber`; a map that does not open is listed too), or
 /// `levels/world001.map` when it has no map at all.
@@ -288,7 +297,7 @@ impl MainMenu {
     /// for the button (`ui::mainmenu`) and for Enter / a pick, so Enter never starts what Start would not.
     pub fn can_start(&self) -> bool {
         self.current()
-            .is_some_and(|e| !gd_game::session::is_dead(&e.gdc))
+            .is_some_and(|e| !gd_game_core::session::is_dead(&e.gdc))
     }
 
     fn select(&mut self, i: usize, max_rows: usize) {
@@ -347,16 +356,16 @@ impl MenuLayout {
         self.hits
             .iter()
             .rev()
-            .find(|(r, _)| crate::ui::contains(r, p))
+            .find(|(r, _)| gd_ui_kit::contains(r, p))
             .map(|h| h.1)
     }
 }
 
-/// The folders of the port's characters (sub_140017980: `Main/`, then `User/`).
+/// The folders of the port's characters (`Game::ListCharacters`: `Main/`, then `User/`).
 const CHARACTER_FOLDERS: [&str; 2] = ["main", "user"];
 
 /// The port's characters (of `main/` and `user/`), by name, and the most recently written one.
-pub fn scan_characters(save_dir: &gd_game::session::SaveDir) -> (Vec<Entry>, usize) {
+pub fn scan_characters(save_dir: &gd_game_core::session::SaveDir) -> (Vec<Entry>, usize) {
     let mut entries: Vec<(Entry, std::time::SystemTime)> = CHARACTER_FOLDERS
         .iter()
         .flat_map(|f| std::fs::read_dir(save_dir.join(f)))
@@ -388,13 +397,13 @@ pub fn scan_characters(save_dir: &gd_game::session::SaveDir) -> (Vec<Entry>, usi
 }
 
 /// The remembered-menu file (`playmenu.cpn`, the engine's shared save slot 2) of a save folder.
-pub fn playmenu_path(save_dir: &gd_game::session::SaveDir) -> std::path::PathBuf {
+pub fn playmenu_path(save_dir: &gd_game_core::session::SaveDir) -> std::path::PathBuf {
     save_dir.0.join("playmenu.cpn")
 }
 
 impl MainMenu {
     /// `base` (the file as it was, or the defaults) with the menu's remembered fields set.
-    /// `offered` = [`gd_game::session::available_arenas`].
+    /// `offered` = [`gd_game_core::session::available_arenas`].
     pub fn to_playmenu(
         &self,
         mut base: gd_formats::save::cpn::PlayMenu,
@@ -409,7 +418,7 @@ impl MainMenu {
         base.mode = match (self.crucible, &self.custom) {
             (true, _) => 1,
             (false, Some(c)) => {
-                // The reader matches mode 2 by these two (0x1400bbca0).
+                // The reader matches mode 2 by these two (`MainMenu::ReadPlayMenu`).
                 (base.mod_name, base.level_name2) = (c.module.clone(), c.level.clone());
                 2
             }
@@ -463,7 +472,9 @@ impl MainMenu {
 }
 
 /// Reads the remembered menu (a missing or unreadable file is the defaults).
-fn read_playmenu(save_dir: &gd_game::session::SaveDir) -> Option<gd_formats::save::cpn::PlayMenu> {
+fn read_playmenu(
+    save_dir: &gd_game_core::session::SaveDir,
+) -> Option<gd_formats::save::cpn::PlayMenu> {
     let b = std::fs::read(playmenu_path(save_dir)).ok()?;
     gd_formats::save::cpn::PlayMenu::parse(&b)
         .map_err(|e| warn!("menu: playmenu.cpn: {e:#}"))
@@ -471,20 +482,20 @@ fn read_playmenu(save_dir: &gd_game::session::SaveDir) -> Option<gd_formats::sav
 }
 
 /// Writes the menu's remembered fields into `playmenu.cpn` (port-owned folder only, `write_user_file`).
-fn write_playmenu(m: &MainMenu, root: &std::path::Path, save_dir: &gd_game::session::SaveDir) {
-    let offered = gd_game::session::available_arenas(root);
+fn write_playmenu(m: &MainMenu, root: &std::path::Path, save_dir: &gd_game_core::session::SaveDir) {
+    let offered = gd_game_core::session::available_arenas(root);
     let pm = m.to_playmenu(read_playmenu(save_dir).unwrap_or_default(), &offered);
     match pm.encode() {
-        Ok(b) => gd_game::session::write_user_file("menu", &playmenu_path(save_dir), b),
+        Ok(b) => gd_game_core::session::write_user_file("menu", &playmenu_path(save_dir), b),
         Err(e) => error!("menu: playmenu.cpn: {e:#}"),
     }
 }
 
 pub(crate) fn setup(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
-    save_dir: Res<gd_game::session::SaveDir>,
-    data: Res<crate::data::GameData>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
+    data: Res<gd_game_core::data::GameData>,
 ) {
     let (entries, selected) = scan_characters(&save_dir);
     // A hook that sets the menu leaves the remembered one alone.
@@ -523,7 +534,7 @@ pub(crate) fn setup(
     };
     m.select(selected, 12);
     if !hooked && let Some(pm) = read_playmenu(&save_dir) {
-        let offered = gd_game::session::available_arenas(data.root());
+        let offered = gd_game_core::session::available_arenas(data.root());
         m.restore(&pm, &offered, &custom_maps(data.root()), 12);
     }
     // `GD_MENU_CUSTOM` (hooks.rs).
@@ -535,32 +546,37 @@ pub(crate) fn setup(
     if let MenuWindow::Difficulty(o) = &mut m.window {
         *o = m.option;
     }
+    // PORT: no characters opens the Create window (the game shows an empty play menu); a hook-set
+    // window wins, and Cancel / Esc still close it.
+    if m.entries.is_empty() && m.window == MenuWindow::None {
+        m.window = MenuWindow::Create(NewCharacter::default());
+    }
     commands.insert_resource(m);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_menu(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut typed: MessageReader<KeyboardInput>,
     mut menu: ResMut<MainMenu>,
     layout: Res<MenuLayout>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     (mut options, fonts, mut exit, mut buttons, mut credits): (
-        ResMut<crate::ui::options::OptionsWindow>,
-        Res<crate::ui::text::FontCache>,
+        ResMut<gd_ui::state::options::OptionsWindow>,
+        Res<gd_ui_kit::text::FontCache>,
         MessageWriter<AppExit>,
         ResMut<ButtonInput<MouseButton>>,
         ResMut<crate::ui::credits::Credits>,
     ),
-    save_dir: Res<gd_game::session::SaveDir>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
     (mut accepted, mut picked): (Local<bool>, Local<bool>),
     time: Res<Time<Real>>,
 ) {
     // The press (the shared rule): read before `swallow_input` resets this frame's `ButtonInput`.
-    let pressed = crate::ui::widgets::button_pressed(&buttons);
+    let pressed = gd_ui_kit::widgets::button_pressed(&buttons);
     if options.open || credits.open {
         typed.clear();
         return;
@@ -575,7 +591,7 @@ fn run_menu(
     let cursor = window
         .single()
         .ok()
-        .and_then(|w| crate::ui::cursor_px(&hooks, w));
+        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
     let hit = cursor.filter(|_| pressed).and_then(|p| layout.at(p));
     // A press on a menu control is the menu's: the Options window, whose input runs next in this frame, must not
     // take it too (the press that opens it would land on whatever control lies under the cursor).
@@ -666,14 +682,28 @@ fn run_menu(
                     survival: m.crucible.then(|| arena_map(data.root(), m.arena)),
                     custom: m.custom.clone().filter(|_| !m.crucible),
                 };
-                start(&mut commands, choice, None, difficulty, veteran);
-                return;
+                // Accept writes the save and returns to the list with the new character selected
+                // (the player presses Start themselves); a failed write stays in the window.
+                match gd_game::save::create_character(&save_dir, &choice, difficulty, veteran) {
+                    Ok((path, gdc)) => {
+                        m.entries.push(Entry { path, gdc });
+                        m.entries.sort_by_key(|e| e.gdc.header.name.to_lowercase());
+                        let i = m
+                            .entries
+                            .iter()
+                            .position(|e| e.gdc.header.name.eq_ignore_ascii_case(&choice.name))
+                            .unwrap_or(0);
+                        m.select(i, rows);
+                        m.window = MenuWindow::None;
+                    }
+                    Err(e) => error!("menu: could not create {:?}: {e:#}", choice.name),
+                }
             }
         }
         MenuWindow::GameType(g) => {
             typed.clear();
-            let offered = gd_game::session::available_arenas(data.root());
-            // The toggles (sub_1400927A0): one of the three is down; Custom shows its view (the map
+            let offered = gd_game_core::session::available_arenas(data.root());
+            // The toggles (`GameModeWindow::HandleToggle`): one of the three is down; Custom shows its view (the map
             // list read again, the current custom map selected), the others hide it.
             match hit {
                 Some(Hit::ModeCampaign) => (g.crucible, g.open, g.custom) = (false, false, false),
@@ -691,7 +721,8 @@ fn run_menu(
                     m.window = MenuWindow::None;
                 }
             } else if enter || hit == Some(Hit::Accept) {
-                // `sub_140090770` / `sub_140091210`: the mode is set; Custom with an empty list falls back to
+                // `GameModeWindow::AcceptCustom` / `GameModeWindow::Accept`: the mode is set; Custom with an empty
+                // list falls back to
                 // the campaign; leaving a mode other than Custom re-applies the character (its difficulty
                 // clamped), picking Custom does not.
                 let was_custom = m.custom.is_some();
@@ -731,7 +762,12 @@ fn run_menu(
                     }
                     Err(err) => error!("menu: could not delete {}: {err:#}", path.display()),
                 }
-                m.window = MenuWindow::None;
+                // No characters left: the Create window opens (the setup rule, mid-session).
+                m.window = if m.entries.is_empty() {
+                    MenuWindow::Create(NewCharacter::default())
+                } else {
+                    MenuWindow::None
+                };
                 let i = m.selected.min(m.entries.len().saturating_sub(1));
                 m.first = 0;
                 m.select(i, rows);
@@ -852,7 +888,7 @@ pub(crate) fn start(
         commands.remove_resource::<MainMenu>();
         begin(commands, choice, gdc, difficulty, veteran);
         // Cover the world in this frame (`ui::loading::spawn_cover`): the state change comes a frame later.
-        crate::ui::loading::spawn_cover(commands);
+        gd_ui::loading::spawn_cover(commands);
         return;
     }
     commands.queue(move |world: &mut World| {
@@ -863,28 +899,28 @@ pub(crate) fn start(
         world.remove_resource::<MainMenu>();
         let mut commands = world.commands();
         begin(&mut commands, choice, gdc, difficulty, veteran);
-        crate::ui::loading::spawn_cover(&mut commands);
+        gd_ui::loading::spawn_cover(&mut commands);
         world.flush();
     });
 }
 
 /// The arena map the drop-down item `arena` starts (0 = Random, else the offered arenas in drop-down
-/// order; `sub_1400C0F30` picks `rand() % count` for Random).
+/// order; `MainMenu::SetMapData` picks `rand() % count` for Random).
 pub fn arena_map(root: &std::path::Path, arena: usize) -> String {
-    let offered = gd_game::session::available_arenas(root);
+    let offered = gd_game_core::session::available_arenas(root);
     let i = match arena {
         0 => offered
-            .get(gd_game::rng::usize(..offered.len().max(1)))
+            .get(gd_game_core::rng::usize(..offered.len().max(1)))
             .copied(),
         n => offered.get(n - 1).copied(),
     };
-    gd_game::session::arena_map(gd_game::session::ARENAS[i.unwrap_or(0)].1)
+    gd_game_core::session::arena_map(gd_game_core::session::ARENAS[i.unwrap_or(0)].1)
 }
 
 /// Removes a character folder (`.../{main,user}/_<name>/`), only inside the port's
 /// own save folder.
 fn delete_character(
-    save_dir: &gd_game::session::SaveDir,
+    save_dir: &gd_game_core::session::SaveDir,
     gdc: &std::path::Path,
 ) -> anyhow::Result<()> {
     let dir = gdc.parent().ok_or_else(|| anyhow::anyhow!("no folder"))?;
@@ -898,7 +934,8 @@ fn delete_character(
         save_dir.0.display()
     );
     anyhow::ensure!(
-        !dir.to_string_lossy().contains(crate::save::LIVE_SAVES),
+        !dir.to_string_lossy()
+            .contains(gd_game_core::session::LIVE_SAVES),
         "refusing to touch the game's saves"
     );
     std::fs::remove_dir_all(dir)?;

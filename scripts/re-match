@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Pairs one game version's functions with the next and carries the symbol table over.
+
+Input: the feature dumps `re-features.py` wrote for both versions, one JSONL per module, laid out as
+`<dir>/<version>/<module>.jsonl` (module = `Game.dll`, `Engine.dll`, `Grim Dawn.exe`).
+
+  scripts/re-match <dir> <old version> <new version> [--symbols <old symbols.tsv> <new symbols.tsv>]
+
+Writes beside the dumps:
+  <new version>/changed.tsv   the functions whose code differs: the update's real change list.
+  <new version>/unmatched.tsv the old functions with no counterpart (inlined, removed, or too changed).
+With `--symbols`, also writes the new table: `fn` / `global` rows re-addressed through the match (an unmatched
+one keeps `?`; a name the new binary exports is found by name), other rows carried over unchecked.
+"""
+
+import argparse
+import collections
+import json
+import os
+import re
+import sys
+
+MODULES = ["Game.dll", "Engine.dll", "Grim Dawn.exe"]
+
+
+def load(path):
+    return {r["ea"]: r for r in map(json.loads, open(path))}
+
+
+def detemplate(s):
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r"<[^<>]*>", "", s)
+    return s
+
+
+def short(demangled):
+    """`GAME::Skill::StartCooldown(uint)` -> `Skill::StartCooldown`."""
+    s = re.sub(r"\(.*$", "", demangled)
+    s = re.sub(r"^.*?\s(?=[\w:~<>]+$)", "", s)
+    return s.replace("GAME::", "")
+
+
+def match(old, new):
+    """Anchors on names both builds have, then grows the pairing by code shape and the call graph."""
+    pairs, taken = {}, set()
+
+    def add(a, b):
+        if a not in pairs and b not in taken:
+            pairs[a] = b
+            taken.add(b)
+
+    def unique(db, key):
+        out = collections.defaultdict(list)
+        for ea, r in db.items():
+            out[key(r)].append(ea)
+        return out
+
+    on, nn = unique(old, lambda r: r["name"]), unique(new, lambda r: r["name"])
+    for name, eas in on.items():
+        if not name.startswith("sub_") and len(eas) == 1 and len(nn.get(name, [])) == 1:
+            add(eas[0], nn[name][0])
+
+    def near(a, b):
+        x, y = old[a], new[b]
+        return x["mh"] == y["mh"] or abs(x["n"] - y["n"]) <= max(3, 0.15 * x["n"])
+
+    def callers(db):
+        out = collections.defaultdict(set)
+        for ea, r in db.items():
+            for t in r.get("ct", []):
+                out[t].add(ea)
+        return out
+
+    ro, rn = callers(old), callers(new)
+    for _ in range(8):
+        before = len(pairs)
+        for key in (
+            lambda r: (r["mh"], r["n"], tuple(r["calls"]), tuple(r["strs"])),
+            lambda r: (r["mh"], r["n"]),
+        ):
+            ou = unique({a: r for a, r in old.items() if a not in pairs}, key)
+            nu = unique({b: r for b, r in new.items() if b not in taken}, key)
+            for k, eas in ou.items():
+                if len(eas) == 1 and len(nu.get(k, [])) == 1:
+                    add(eas[0], nu[k][0])
+        for a, b in list(pairs.items()):
+            ca, cb = old[a].get("ct", []), new[b].get("ct", [])
+            if len(ca) == len(cb):
+                for x, y in zip(ca, cb):
+                    if x in old and y in new and x not in pairs and y not in taken and near(x, y):
+                        add(x, y)
+            co = [x for x in ro.get(a, ()) if x not in pairs]
+            cn = [y for y in rn.get(b, ()) if y not in taken]
+            if len(co) == 1 and len(cn) == 1 and near(co[0], cn[0]):
+                add(co[0], cn[0])
+        if len(pairs) == before:
+            break
+    return pairs
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dir")
+    ap.add_argument("old")
+    ap.add_argument("new")
+    ap.add_argument("--symbols", nargs=2, metavar=("OLD_TSV", "NEW_TSV"))
+    args = ap.parse_args()
+
+    matched, changed, unmatched = {}, [], []
+    for mod in MODULES:
+        po = os.path.join(args.dir, args.old, f"{mod}.jsonl")
+        pn = os.path.join(args.dir, args.new, f"{mod}.jsonl")
+        if not (os.path.exists(po) and os.path.exists(pn)):
+            print(f"{mod}: no dumps, skipped", file=sys.stderr)
+            continue
+        old, new = load(po), load(pn)
+        pairs = match(old, new)
+        matched[mod] = (old, new, pairs)
+        for a, b in pairs.items():
+            if old[a]["mh"] != new[b]["mh"] or old[a]["size"] != new[b]["size"]:
+                changed.append((mod, hex(a), hex(b), old[a]["size"], new[b]["size"], old[a]["name"]))
+        for a, r in old.items():
+            if a not in pairs:
+                unmatched.append((mod, hex(a), r["name"]))
+        print(f"{mod}: {len(pairs)}/{len(old)} paired, {len(new)} in the new build")
+
+    out = os.path.join(args.dir, args.new)
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "changed.tsv"), "w") as f:
+        f.write("# module\told\tnew\told_size\tnew_size\tname\n")
+        for row in sorted(changed):
+            f.write("\t".join(map(str, row)) + "\n")
+    with open(os.path.join(out, "unmatched.tsv"), "w") as f:
+        for row in sorted(unmatched):
+            f.write("\t".join(map(str, row)) + "\n")
+    print(f"{len(changed)} changed functions -> {out}/changed.tsv")
+
+    if not args.symbols:
+        return
+    by_name = collections.defaultdict(list)
+    for mod, (_, new, _) in matched.items():
+        for b, r in new.items():
+            if not r["name"].startswith("sub_"):
+                by_name[(mod, detemplate(short(r["name"])))].append(b)
+    rows, placed, missing = [], 0, 0
+    for line in open(args.symbols[0]):
+        if line.startswith("#") or not line.strip():
+            continue
+        name, kind, mod, value, origin = (line.rstrip("\n").split("\t") + [""] * 5)[:5]
+        if kind in ("fn", "global") and value.startswith("0x") and mod in matched:
+            old, _, pairs = matched[mod]
+            a = int(value, 16)
+            if a in pairs:
+                value, placed = hex(pairs[a]), placed + 1
+            else:
+                hits = by_name.get((mod, detemplate(name)), [])
+                if len(hits) == 1:
+                    value, placed = hex(hits[0]), placed + 1
+                else:
+                    value, missing = "?", missing + 1
+        rows.append((name, kind, mod, value, origin))
+    with open(args.symbols[1], "w") as f:
+        f.write("# name\tkind\tmodule\tvalue\torigin\n")
+        for row in sorted(set(rows), key=lambda r: (r[2], r[0].lower(), r[1], r[3])):
+            f.write("\t".join(row) + "\n")
+    print(f"{placed} rows re-addressed, {missing} left '?' -> {args.symbols[1]}")
+
+
+if __name__ == "__main__":
+    main()

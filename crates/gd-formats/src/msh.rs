@@ -1,14 +1,14 @@
 //! `.msh` meshes ("MSH" + u8 version, then `{u32 id, u32 len, data}` chunks).
 //!
-//! Layouts follow the chunk readers called from `GAME::GraphicsMesh::Initialize`
-//! (Engine.dll 0x1800b3d70). All stock files are
+//! Layouts follow the chunk readers called from `GraphicsMesh::Initialize`
+//! (Engine.dll). All stock files are
 //! version 3; the engine accepts >= 2 and the chunk layouts do not depend on it.
 //!
 //! Coordinates are the game's object space: Y up, right-handed basis as
 //! exported (bone/attach transforms are proper rotations), triangles wound
 //! clockwise when seen from the front (normal side). Units ~ metres.
 //!
-//! The physics mesh is the chunk 2 blob ([`PhysicsMesh`]; `PhysicsMesh::Initialize` @0x180186500):
+//! The physics mesh is the chunk 2 blob ([`PhysicsMesh`]; `PhysicsMesh::Initialize`):
 //! `i32 version (1|2)`, `u32 faces`, `u32 vertices`, [v2: `u32 nodes`], faces as 4 × u32 (3 vertex indices + the
 //! face's `PhysicsSurface`), vertices as 3 × f32, then the 40-byte tree nodes (not read).
 use crate::util::{Reader, latin1};
@@ -59,7 +59,7 @@ impl Coords {
         ]
     }
 
-    /// `self * other` (engine sub_180023330): apply `other`, then `self`.
+    /// `self * other` (engine `Coords::Multiply`): apply `other`, then `self`.
     pub fn mul(&self, o: &Coords) -> Coords {
         Coords {
             x: self.transform_vector(o.x),
@@ -115,7 +115,7 @@ impl Coords {
 }
 
 /// Vertex attribute type ids from chunk 4. Semantic names from the
-/// `Direct3DVertexDeclaration` ctor (Direct3D11.dll 0x180011400); byte sizes
+/// `Direct3DVertexDeclaration` ctor (Direct3D11.dll); byte sizes
 /// from the chunk-4 reader (the size is implied by the type, not stored).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VertexAttr {
@@ -202,10 +202,10 @@ pub struct FaceSet {
     /// First triangle (index into `indices` / 3).
     pub start_face: u32,
     pub num_faces: u32,
-    /// Fourth int (+64 in memory): the set's section, an index into
+    /// Fourth int: the set's section, an index into
     /// `Mesh::sections` (Engine.dll `GraphicsMeshInstance::
-    /// SetTransparency` @0x1800c0470 marks section `+64` of each set; the
-    /// per-section opacity lookup sub_1800C52F0 takes it). Almost always 0.
+    /// SetTransparency` marks `MeshSet.section` of each set; the
+    /// per-section opacity lookup `GraphicsMeshInstance::GetSectionOpacity` takes it). Almost always 0.
     pub section: i32,
     /// Bounding box of the set (center, half extents) - inferred from values.
     pub center: [f32; 3],
@@ -226,6 +226,11 @@ pub struct Bone {
     /// Bind transform in mesh space (`parent.abs * local`).
     pub abs: Coords,
 }
+
+/// The deepest bone chain accepted (root = depth 0). Stock skeletons are a few dozen
+/// deep; the cap keeps the recursive pose walks ([`crate::anm`]) off the stack-overflow
+/// path on corrupt or crafted meshes (a 10 MB bone chunk can encode a 100k-deep chain).
+const MAX_BONE_DEPTH: u32 = 1024;
 
 /// A set of bone indices for posing a skeleton without allocating: a stack bitset up to 512 bones, the heap past
 /// that.
@@ -343,9 +348,9 @@ pub struct ContourPoint {
 }
 
 /// Named attach point from the MIF text block (chunk 3), parsed once with the mesh ([`Mesh::attach`]). Per
-/// sub_1800B1AC0 (the MIF reader of `GraphicsMesh::Initialize`): a missing axis is the identity's, a given `xAxis` /
-/// `yAxis` / `zAxis` is normalised as read (no orthonormalisation: a mirrored point such as `hero_00.msh`'s "R Hand",
-/// basis (x, -y, z), stays mirrored), the origin is kept as is.
+/// `GraphicsMesh::ReadMif` (the MIF reader of `GraphicsMesh::Initialize`): a missing axis is the identity's, a given
+/// `xAxis` / `yAxis` / `zAxis` is normalised as read (no orthonormalisation: a mirrored point such as `hero_00.msh`'s
+/// "R Hand", basis (x, -y, z), stays mirrored), the origin is kept as is.
 #[derive(Debug, Clone)]
 pub struct AttachPoint {
     pub name: String,
@@ -357,7 +362,7 @@ pub struct AttachPoint {
 }
 
 impl AttachPoint {
-    /// The point in mesh space for the bone frames `abs` (`GraphicsMesh::GetAttachedCoords` @0x1800b8460): its
+    /// The point in mesh space for the bone frames `abs` (`GraphicsMesh::GetAttachedCoords`): its
     /// parent bone's frame (the identity without one) × the point.
     pub fn coords_in(&self, abs: &[Coords]) -> Coords {
         self.parent_bone
@@ -368,8 +373,8 @@ impl AttachPoint {
 }
 
 /// A `RigidBodyDescription` block of the MIF text (chunk 3): one body of the mesh's ragdoll, laid between the
-/// `parentName` and `childName` bones (`Character::PhysicsSetup` @Game 0x1800643a0 builds a Bullet body per block
-/// from the two bones' frames × `parentOrigin` / `childOrigin`; the reader is sub_1800B1AC0). Only the
+/// `parentName` and `childName` bones (`Character::PhysicsSetup` builds a Bullet body per block
+/// from the two bones' frames × `parentOrigin` / `childOrigin`; the reader is `GraphicsMesh::ReadMif`). Only the
 /// fields the port's ragdoll reads (`gd_game::ragdoll`): no stock mesh sets `playFallSound`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RigidBody {
@@ -380,8 +385,8 @@ pub struct RigidBody {
     pub child_origin: [f32; 3],
     pub mass: f32,
     pub friction: f32,
-    /// Its first ground contact plays the character's `bodyFallSound` (`Character::CollisionCallback`
-    /// @Game 0x180064020: the body's user data byte 8, the description's +232).
+    /// Its first ground contact plays the character's `bodyFallSound` (`Character::CollisionCallback`: the
+    /// body's user data `playFallSound` flag, copied from `RigidBodyDescription.playFallSound`).
     pub play_fall_sound: bool,
 }
 
@@ -824,8 +829,10 @@ impl Mesh {
             }
         }
         // Absolute bind transforms (children may precede parents in theory): walk up to the
-        // nearest resolved ancestor, then resolve back down. A chain longer than the bone count is a cycle.
+        // nearest resolved ancestor, then resolve back down. A chain longer than the bone count
+        // is a cycle; a chain deeper than MAX_BONE_DEPTH is rejected (the pose walks recurse).
         let mut done = vec![false; n];
+        let mut depth = vec![0u32; n];
         let mut chain = Vec::new();
         for i in 0..n {
             let mut j = i;
@@ -844,6 +851,14 @@ impl Mesh {
                     Some(p) => self.bones[p].abs.mul(&self.bones[k].local),
                     None => self.bones[k].local,
                 };
+                depth[k] = match self.bones[k].parent {
+                    Some(p) => depth[p] + 1,
+                    None => 0,
+                };
+                ensure!(
+                    depth[k] < MAX_BONE_DEPTH,
+                    "bone hierarchy deeper than {MAX_BONE_DEPTH}"
+                );
                 done[k] = true;
             }
         }
@@ -951,7 +966,7 @@ impl Mesh {
     }
 
     /// The mesh's ragdoll bodies ([`RigidBody`], read from [`Self::mif`] on each call: a death or a knockdown
-    /// asks once). `Actor::HasRigidBodyData` @Engine 0x18002c080 is "any". The numbers are quoted in the text
+    /// asks once). `Actor::HasRigidBodyData` is "any". The numbers are quoted in the text
     /// (`mass = "1.000000"`); a missing one reads 1.
     pub fn rigid_bodies(&self) -> impl Iterator<Item = RigidBody> + '_ {
         self.mif

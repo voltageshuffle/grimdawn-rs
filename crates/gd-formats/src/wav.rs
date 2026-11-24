@@ -1,12 +1,12 @@
 //! Sound file headers: what the engine needs of a sound before it plays it.
 //!
 //! `SoundManager::Load` (Engine.dll): a `.ogg` file is a stream
-//! (descriptor +72, `StartStream`: played at its own rate, no frequency
+//! (`SoundDescriptor::StartStream`: played at its own rate, no frequency
 //! set); anything else is a RIFF WAVE loaded whole into a sound buffer made
-//! from the file's own `fmt ` chunk (DS8Sound.dll `DS8SoundSample` vtable
-//! +104 @0x180001ed0: `RIFFGetChunk` 'RIFF' / 'WAVE' / 'fmt ' / 'data',
+//! from the file's own `fmt ` chunk (DS8Sound.dll virtual
+//! `DS8SoundSample::LoadWave`: `RIFFGetChunk` 'RIFF' / 'WAVE' / 'fmt ' / 'data',
 //! `nSamplesPerSec` copied), whose playback frequency is then set absolute
-//! (vtable +72 → `IDirectSoundBuffer::SetFrequency`).
+//! (`DS8SoundSample::SetFrequency` → `IDirectSoundBuffer::SetFrequency`).
 //!
 //! Stock data (2026-11-03 scan of the four `Sound.arc`s): 7 191 WAVs at
 //! 44.1 kHz, 1 414 at 48 kHz (quest dialog, monster vocalisations, Ashes /

@@ -10,10 +10,10 @@ pub(super) fn pet_commands(
     data: Res<GameData>,
     nav: Res<Nav>,
     mut slot_q: crate::melee::SlotQuery,
-    mut casts: MessageReader<crate::casting::CastRequest>,
+    mut casts: MessageReader<gd_game_core::casting::CastRequest>,
     mut orders: MessageReader<PetCommand>,
     mut stance_requests: MessageReader<SetPetStance>,
-    casters: Query<(Entity, &crate::casting::Caster), (With<Player>, Without<Dead>)>,
+    casters: Query<(Entity, &gd_game_core::casting::Caster), (With<Player>, Without<Dead>)>,
     mut stances: Query<&mut PetStances>,
     leaders: Query<&Transform, Without<Pet>>,
     monsters: Query<&Transform, (With<MonsterAi>, Without<Dead>, Without<Pet>)>,
@@ -64,7 +64,7 @@ pub(super) fn pet_commands(
             }
             // Only a pet the player leads takes his orders (`Monster::GetLeader`, the monster a convert joined
             // it to while that lasts, `combat::JoinedPack`): `Skill_PetAttack::GetValidTarget`
-            // @0x180503810 and `ControllerPlayer::HandlePetAction` @0x18015fd70 send none to it, and the
+            // and `ControllerPlayer::HandlePetAction` send none to it, and the
             // states' `DefaultRequestAttackResponse` / `DefaultRequestMoveResponse` refuse a sender that is
             // not its leader.
             if joined.is_some() {
@@ -115,7 +115,7 @@ pub(super) fn pet_commands(
         let Ok((e, _, mut pet, mut cb, _)) = pets.get_mut(req.pet) else {
             continue;
         };
-        // `Player::SetPetControllerType`, then `Monster::UseController` (@0x18037e700: no leader test,
+        // `Player::SetPetControllerType`, then `Monster::UseController` (no leader test,
         // so a converted pet changes stance too).
         match stances.get_mut(pet.owner) {
             Ok(mut s) => s.set(&pet.summon, req.stance),
@@ -265,8 +265,8 @@ pub(super) fn dismiss(
     kill_me(commands, e, cb, ch);
 }
 
-/// `Monster::UnJoinLeader(false)` @0x18037a230 on a quest pet (pen helper
-/// `sub_1803C9B30` mode 2, module docs): the pet stays alive with
+/// `Monster::UnJoinLeader(false)` on a quest pet (pen helper
+/// `PetPen::ReleaseEntry` mode 2, module docs): the pet stays alive with
 /// the owner's faction it got in `JoinMe`; it loses its banner
 /// (`RemoveConvertBanner`), its leader (`SetLeader` of the saved leader, 0
 /// for a spawned pet) and its anger list and target, and leaves the pen.
@@ -308,7 +308,7 @@ pub(super) fn stop_summon_skills(
 }
 
 /// [`Pet::time_to_live`] counts down with the game's time
-/// (`ControllerMonster::Update` @0x180134ec0); at 0 the pet dies
+/// (`ControllerMonster::Update`); at 0 the pet dies
 /// (`KillMe(overkillOnDismiss)`, module docs).
 pub(super) fn expire_pets(
     mut commands: Commands,
@@ -329,7 +329,7 @@ pub(super) fn expire_pets(
 }
 
 /// [`DisbandPet`] (the portrait menu, flag false) and [`ReleasePet`]:
-/// `ReleasePetConfigCmd::Execute` @0x1800e5080: overkill = remaining
+/// `ReleasePetConfigCmd::Execute`: overkill = remaining
 /// life >= max life x gibThreshold, the flag marks [`SuppressDyingSkill`],
 /// then `KillMe(overkill)` (module docs).
 pub(super) fn disband_pets(
@@ -474,13 +474,13 @@ pub fn removed_augments(
 pub fn released_by_augments(
     trees: &gd_sim::skills::SkillTrees,
     book: &gd_sim::skills::SkillBook,
-    links: Option<&crate::weapon_pool::SkillLinks>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     r: &AugmentsRemoved,
     summon: &str,
 ) -> bool {
     let has = |s: &str| book.skills.iter().any(|(n, _)| n.eq_ignore_ascii_case(s));
     let summon = summon.to_ascii_lowercase();
-    // `Skill::ReleasePets`: the skill's own pets and its base skills' (`Skill` +440: the skill a modifier or
+    // `Skill::ReleasePets`: the skill's own pets and its base skills' (`Skill.baseSkills`: the skill a modifier or
     // secondary hangs on).
     let hangs_on_summon = |s: &str| {
         links.is_some_and(|l| {
@@ -496,7 +496,7 @@ pub fn released_by_augments(
     {
         return true;
     }
-    // `sub_1803C9F00`: the pets of that mastery's skills (`Skill` +316).
+    // `PetPen::ReleaseMasteryPets`: the pets of that mastery's skills (`Skill.mastery`).
     if r.masteries.iter().any(|m| has(m))
         && let Some(m) = trees
             .trees
@@ -509,7 +509,7 @@ pub fn released_by_augments(
     {
         return true;
     }
-    // `sub_1803C9CC0`: every pet whose skill is the owner's and no item skill.
+    // `PetPen::ReleaseLearnedSkillPets`: every pet whose skill is the owner's and no item skill.
     r.all && has(&summon)
 }
 
@@ -518,7 +518,7 @@ pub fn released_by_augments(
 pub(super) fn release_augment_pets(
     data: Res<GameData>,
     mut removed: MessageReader<AugmentsRemoved>,
-    owners: Query<(&Loadout, Option<&crate::weapon_pool::SkillLinks>)>,
+    owners: Query<(&Loadout, Option<&gd_game_core::weapon_pool::SkillLinks>)>,
     pets: Query<(Entity, &Pet), Without<Dead>>,
     mut release: MessageWriter<ReleasePet>,
 ) {
@@ -543,20 +543,20 @@ pub(super) fn release_augment_pets(
 }
 
 /// A pet's dying skill (pets run the monster states, so
-/// `ControllerMonsterStateDying::OnBegin` @0x180147ab0 →
-/// `StartDyingSkill` @0x180147c20 casts `dyingSkillName` at once where it
-/// died unless `Character::ShouldSuppressDyingSkill`, +0x2834): Elemental
+/// `ControllerMonsterStateDying::OnBegin` →
+/// `StartDyingSkill` casts `dyingSkillName` at once where it
+/// died unless `Character::ShouldSuppressDyingSkill`, `Character.dyingSkillSuppressed`): Elemental
 /// Seeker's Elemental Blast, the Gaze of Dreeg's Caustic Eruption, after
 /// their `SkillActivated_Suicide` special (`combat::Suicide`), their time
 /// to live running out or a Disband alike (module docs).
 pub(super) fn pet_dying_skills(
-    mut procs: MessageWriter<crate::casting::ProcCast>,
+    mut procs: MessageWriter<gd_game_core::casting::ProcCast>,
     q: Query<(Entity, &Transform, &Pet), (Added<Dead>, Without<SuppressDyingSkill>)>,
 ) {
     for (e, tf, pet) in &q {
         if let Some((skill, li, kind)) = &pet.dying {
             debug!("pet {e} dying skill {skill}");
-            procs.write(crate::casting::ProcCast {
+            procs.write(gd_game_core::casting::ProcCast {
                 caster: e,
                 cast: Casting {
                     skill: skill.clone(),
@@ -616,7 +616,7 @@ impl Pet {
     }
 
     /// The timed-buff store (`casting::expire_buffs` ticks it).
-    pub(crate) fn buffs_mut(&mut self) -> &mut crate::skill_buffs::TimedBuffs {
+    pub(crate) fn buffs_mut(&mut self) -> &mut gd_game_core::skill_buffs::TimedBuffs {
         &mut self.buffs
     }
 
@@ -626,7 +626,7 @@ impl Pet {
         self.dirty = true;
     }
 
-    /// Its skill `skill` is active (`Skill` +0xDC): a toggle switched on or a timed buff running (a damage
+    /// Its skill `skill` is active (`Skill.active`): a toggle switched on or a timed buff running (a damage
     /// aura is in its `DamageAuras`; `crate::autocast`, skill-level autocasts).
     pub(crate) fn skill_running(&self, skill: &str) -> bool {
         self.toggled
@@ -713,7 +713,7 @@ impl Pet {
     pub fn buff_stats(
         &self,
         db: &gd_formats::vfs::Database,
-        received: Option<&crate::skill_buffs::ReceivedBuffs>,
+        received: Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
     ) -> Vec<(gd_formats::arz::Record, usize)> {
         let mut out = self.self_stats(db);
         if let Some(a) = received {
@@ -771,7 +771,7 @@ impl Pet {
         names.dedup();
         for n in names {
             if db.get(&n).is_some_and(gd_sim::skills::disruptable) {
-                crate::casting::replace_cooldown(&mut self.cooldowns, &n, secs);
+                gd_game_core::casting::replace_cooldown(&mut self.cooldowns, &n, secs);
             }
         }
     }

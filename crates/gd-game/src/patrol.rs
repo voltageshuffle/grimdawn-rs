@@ -5,8 +5,8 @@
 //! placed monster) is in a "ProxyPatrollers" (resp. "Patrollers") group whose
 //! child groups are "Patrol Points" groups. When a monster is attached to its
 //! controller it takes the patrol points of those child groups
-//! (`ControllerMonster::PostParentAttached` @0x1801391f0);
-//! `Proxy:LinkPatrolPointGroup` (exe sub_14006ad90) edits the
+//! (`ControllerMonster::PostParentAttached`);
+//! `Proxy:LinkPatrolPointGroup` (exe `LuaProxy::LinkPatrolPointGroup`) edits the
 //! groups at run time and re-points the proxy's live monsters.
 //!
 //! The patrol itself is the controller's "Patrol" state
@@ -26,13 +26,13 @@ impl Plugin for PatrolPlugin {
             Update,
             (
                 link_patrol_groups,
-                call_for_followers.after(crate::combat::CombatSet),
+                call_for_followers.after(gd_game_core::combat::CombatSet),
             ),
         );
     }
 }
 
-/// A `PatrolPoint` level object (`PatrolPoint::Load` @0x1803c7660: `radius`,
+/// A `PatrolPoint` level object (`PatrolPoint::Load`: `radius`,
 /// `shouldRun`; world position = the entity's `Transform`).
 #[derive(Component)]
 pub struct PatrolPoint {
@@ -52,15 +52,15 @@ pub struct PatrolGroups {
 /// proxy's spawned monsters get the points (`Monster::SetPatrolPoints` and
 /// `ControllerMonster::ReplacePatrolPoints`: the current point resets to 0).
 fn link_patrol_groups(
-    mut events: MessageReader<crate::story::StoryEffect>,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
     mut groups: ResMut<PatrolGroups>,
     mut monsters: Query<(
-        &crate::story::StoryProxyChild,
+        &gd_game_core::story::StoryProxyChild,
         &mut crate::combat::MonsterAi,
     )>,
 ) {
     for ev in events.read() {
-        let gd_sim::story::state::Effect::LinkPatrolPointGroup { proxy, group } = &ev.0 else {
+        let gd_story::story::state::Effect::LinkPatrolPointGroup { proxy, group } = &ev.0 else {
             continue;
         };
         let Some(points) = groups.groups.link(story_proxy_uid(*proxy), group) else {
@@ -96,7 +96,7 @@ fn lookup(points: &Points, uid: Uid) -> Option<PointInfo> {
         })
 }
 
-/// `ControllerMonster::Load` @0x180135e60 settings of the idle-time states
+/// `ControllerMonster::Load` settings of the idle-time states
 /// (defaults: `NeverRoam`, `NeverLead`, 20 %, 2000..5000 ms patrol
 /// idle, 3000..10000 ms before roaming, 4 followers, 0 for every distance).
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ impl Default for Settings {
 
 /// `LeaderBehavior`: when the monster calls the monsters near it to follow it
 /// (`ControllerMonsterState::CallForFollowers`: `LeadOnPatrol` when
-/// `Patrol::OnBegin` has started a leg, `LeadWhenEnemyIsSeen` from
+/// `ControllerMonsterStatePatrol::OnBegin` has started a leg, `LeadWhenEnemyIsSeen` from
 /// `DefaultEnemyFoundResponse`, `LeadOnDamage` from `DefaultAttackedResponse`).
 /// No record of the game sets it (every monster is `NeverLead`); the
 /// leaders in the data are summoners, whose minions `JoinMe` them.
@@ -221,33 +221,33 @@ pub struct Cx<'a, 'w, 's> {
 /// The controller's patrol data and idle-time state machine
 /// (`ControllerMonsterState{Idle,Patrol,Return,Roam,Wander,WanderPause,
 /// DefendLeader,FollowLeader}`). A transition runs the new state's
-/// `OnBegin` at once, like `ControllerAI::SetState` @0x180123d50.
+/// `OnBegin` at once, like `ControllerAI::SetState`.
 ///
-/// * Idle (`OnBegin` @0x18013f1b0): a monster whose leader is alive goes to
+/// * Idle (`OnBegin`): a monster whose leader is alive goes to
 ///   "DefendLeader"; else its timer is `MinTimeBeforeRoam`..`MaxTimeBeforeRoam`
-///   ms, or 0 when it has patrol points. `OnUpdate` is `StartedRoaming`
-///   @0x18013f3e0: when `RoamBehavior` is `Roam` and the timer ran out, a
+///   ms, or 0 when it has patrol points. `OnUpdate` is `StartedRoaming`:
+///   when `RoamBehavior` is `Roam` and the timer ran out, a
 ///   monster with a leader goes to "Wander", one with patrol points to
 ///   "Patrol", else to "Roam". Nothing else limits a failed start: the
 ///   state chain re-enters Idle at once, and runs again at the next update
 ///   (an unloaded point finds no path; a monster away from home walks back
 ///   first).
-/// * Roam (`StartRoaming` @0x1801453d0): a random spot (see [`pick_spot`])
+/// * Roam (`StartRoaming`): a random spot (see [`pick_spot`])
 ///   between twice its radius and `RoamDistance` from the spawn point, at
 ///   least `MinRoamDistance` from where it stands, walked; there (or when the
 ///   path failed) `rand() % 100 < 20` roams again, else Idle.
-/// * Wander (`OnBegin` @0x1801455d0, `CheckLeaderAndWanderDistance`
-///   @0x180145a60): the same around the leader (radii sum .. `WanderDistance`,
+/// * Wander (`OnBegin`, `CheckLeaderAndWanderDistance`):
+///   the same around the leader (radii sum .. `WanderDistance`,
 ///   `MinWanderDistance`); at the end of the path "WanderPause" stands 3..9999
 ///   ms, then wanders again. No leader object: Idle. Farther from the leader
 ///   than `WanderDistance` (surface to surface): "Return", which runs to the
 ///   leader ("FollowLeader").
-/// * DefendLeader (`OnBegin` @0x180148820, `OnUpdate` @0x180148a60): stands;
+/// * DefendLeader (`OnBegin`, `OnUpdate`): stands;
 ///   a leader gone or dead: Idle. Farther than `TeleportToLeaderDistance`
 ///   (0: never): `TeleportToLeader`. Every 300..699 ms it asks for its slot
 ///   next to the leader and runs there ("FollowLeader") when it is more than
 ///   2.5 cm away; after 3000..9999 ms it wanders.
-/// * FollowLeader (`OnBegin` @0x180147f50, `OnUpdate` @0x180148310): runs to
+/// * FollowLeader (`OnBegin`, `OnUpdate`): runs to
 ///   the slot when it is farther than the monster's radius and reachable,
 ///   else "DefendLeader"; arriving or failing: "DefendLeader"; the leader
 ///   dying: Idle (via "Return"). Teleports as DefendLeader does. Losing its
@@ -256,7 +256,7 @@ pub struct Cx<'a, 'w, 's> {
 ///   The slot is the leader's defence slot the monster is handed
 ///   (`Character::GetMoveToPoint` → `RequestDefenseSlot`, melee.rs); with
 ///   none free there is no point and the monster stays.
-/// * Return (`OnBegin` @0x180145e80, without the enemy cases the monster AI
+/// * Return (`OnBegin`, without the enemy cases the monster AI
 ///   handles): a monster with a leader goes "FollowLeader"; one at its spawn
 ///   point (`AlreadyThere` 0.025) is Idle; else it runs to the spawn point,
 ///   Idle at the end; with no way there it makes its spot the spawn point.
@@ -264,21 +264,21 @@ pub struct Cx<'a, 'w, 's> {
 /// The "Patrol" state:
 ///
 /// * `Idle` starts it when the monster has no leader (see above).
-/// * `OnBegin` @0x1801471b0: the closest loaded patrol point (3-D distance,
+/// * `OnBegin`: the closest loaded patrol point (3-D distance,
 ///   `GetClosest`) becomes the current one; none, or no way there: "Return".
 ///   Having started a leg, `LeadOnPatrol` calls its followers.
-/// * `MoveToCurrentPatrolPoint` @0x1801474f0: from the current point on, the
+/// * `MoveToCurrentPatrolPoint`: from the current point on, the
 ///   first loaded point more than 1 m away that the monster can path to
 ///   (a point with a `radius` is entered at a random spot inside it); the
 ///   controller's current index is not advanced by the skipped points. The
 ///   point's `shouldRun` picks run speed, else a walk.
-/// * Reaching it (`EndOfPathReached`/`PathFailed` @0x180147410): with
+/// * Reaching it (`EndOfPathReached`/`PathFailed`): with
 ///   `ChanceToIdleOnPatrol` % the monster stands for `MinPatrolIdleTime`..
 ///   `MaxPatrolIdleTime` ms, then (`OnUpdate`) moves on; the next point is
 ///   `(current + 1) % count`, so the route loops.
 /// * `UsePathPositionAsHome` is true: while patrolling the monster's home
 ///   (for `InPursuitRange`) is where it stands; in any other state it is the
-///   spawn point (or the leader's spot, `GetHomePosition` @0x180137da0).
+///   spawn point (or the leader's spot, `GetHomePosition`).
 ///
 /// Fighting is the monster AI's: it leaves these states when it gets an
 /// enemy, goes back ("Return") afterwards and is Idle again.
@@ -310,7 +310,7 @@ pub struct PatrolState {
     started: bool,
 }
 
-/// `sub_18013E7A0`: up to 5 tries at a random spot `lo..hi` from
+/// `ControllerMonster::FindRandomPoint`: up to 5 tries at a random spot `lo..hi` from
 /// `center` (uniform in distance, not in area), on the ground (a `nearest`
 /// walkable cell stands in for `TranslateToFloor`), within `max_dy` of the
 /// monster's height (0: any), farther than `min_move` from it and reachable
@@ -327,8 +327,8 @@ pub fn pick_spot(
     scratch: &mut gd_sim::nav::PathScratch,
 ) -> Option<Vec<Vec3>> {
     for _ in 0..5 {
-        let r = crate::rng::f32() * (hi - lo) + lo;
-        let a = crate::rng::f32() * std::f32::consts::TAU;
+        let r = gd_game_core::rng::f32() * (hi - lo) + lo;
+        let a = gd_game_core::rng::f32() * std::f32::consts::TAU;
         let q = center + Vec3::new(a.sin() * r, 2.0, a.cos() * r);
         let Some(c) = nav.0.nearest(q.to_array(), 1.5) else {
             continue;
@@ -351,7 +351,7 @@ pub fn pick_spot(
 
 /// `rand() % n + base` (ms) as seconds.
 fn rand_ms(base: i32, n: i32) -> f32 {
-    (base + crate::rng::i32(0..n)) as f32 / 1000.0
+    (base + gd_game_core::rng::i32(0..n)) as f32 / 1000.0
 }
 
 impl PatrolState {
@@ -410,7 +410,8 @@ impl PatrolState {
         }
         self.timer = if self.points.is_empty() {
             let (lo, hi) = self.settings.roam_wait_ms;
-            (crate::rng::f32() * (hi - lo) as f32 + lo as f32).max(0.0) as i32 as f32 / 1000.0
+            (gd_game_core::rng::f32() * (hi - lo) as f32 + lo as f32).max(0.0) as i32 as f32
+                / 1000.0
         } else {
             0.0
         };
@@ -564,8 +565,8 @@ impl PatrolState {
                 if p.radius > 0.01 {
                     // `NavManager::FindRandomPointInRadius`.
                     for _ in 0..8 {
-                        let a = crate::rng::f32() * std::f32::consts::TAU;
-                        let r = p.radius * crate::rng::f32().sqrt();
+                        let a = gd_game_core::rng::f32() * std::f32::consts::TAU;
+                        let r = p.radius * gd_game_core::rng::f32().sqrt();
                         let q = p.pos + Vec3::new(a.cos() * r, 2.0, a.sin() * r);
                         if let Some(c) = nav.0.nearest(q.to_array(), 1.5) {
                             target = Vec3::from(nav.0.pos(c));
@@ -674,12 +675,12 @@ impl PatrolState {
                 } else if path.is_empty() {
                     // `EndOfPathReached`.
                     let (lo, hi) = self.settings.idle_ms;
-                    let wait_ms = if (crate::rng::u32(0..100)) >= self.settings.idle_chance {
+                    let wait_ms = if (gd_game_core::rng::u32(0..100)) >= self.settings.idle_chance {
                         0
                     } else if (hi - lo) as u32 > 0x7FFD || hi < lo {
                         lo
                     } else {
-                        lo + crate::rng::i32(0..=(hi - lo))
+                        lo + gd_game_core::rng::i32(0..=(hi - lo))
                     };
                     if wait_ms != 0 {
                         self.wait = wait_ms as f32 / 1000.0;
@@ -697,7 +698,8 @@ impl PatrolState {
             Mode::Roam => {
                 // `EndOfPathReached`.
                 if path.is_empty()
-                    && (crate::rng::u32(0..100) >= 20 || !self.start_roaming(cx, *home, path))
+                    && (gd_game_core::rng::u32(0..100) >= 20
+                        || !self.start_roaming(cx, *home, path))
                 {
                     self.enter_idle(cx, path);
                 }
@@ -718,7 +720,7 @@ impl PatrolState {
                 }
             }
             Mode::DefendLeader | Mode::FollowLeader => {
-                // `FollowLeader::LostSlot` @0x1801487f0 sets a flag that its
+                // `ControllerMonsterStateFollowLeader::LostSlot` sets a flag that its
                 // `OnUpdate` turns into "DefendLeader" (before any other
                 // check); DefendLeader has no handler.
                 if self.mode == Mode::FollowLeader && cx.lost {
@@ -762,18 +764,21 @@ impl PatrolState {
     }
 }
 
-/// `ControllerMonsterState::CallForFollowers` @0x18014e360: the
+/// `ControllerMonsterState::CallForFollowers`: the
 /// monster calls the living friends (and leaderless or led alike) within
 /// `LeaderDistance` of it (and `MaxYViewDistance` in height), nearest-first
 /// as the region lists them, to join it (`Monster::JoinMe`) until
 /// `MaxFollowers` calls have been made over its lifetime (each call counts,
 /// whether or not the follower was already someone's). The sphere query keeps
 /// the characters for which `FactionManager::IsFriend(leader, other)` holds
-/// (`ControllerMonster::GetCharactersInSphere` @0x18013afe0;
-/// [`crate::monsters::FactionPack::is_friend`]); a monster without a faction
+/// (`ControllerMonster::GetCharactersInSphere`;
+/// [`gd_game_core::monsters::FactionPack::is_friend`]); a monster without a faction
 /// pack counts as a friend.
 fn call_for_followers(
-    mut q: Query<(Entity, &Transform, &mut crate::combat::MonsterAi), Without<crate::combat::Dead>>,
+    mut q: Query<
+        (Entity, &Transform, &mut crate::combat::MonsterAi),
+        Without<gd_game_core::combat::Dead>,
+    >,
 ) {
     let calls: Vec<(Entity, Vec3)> = q
         .iter()

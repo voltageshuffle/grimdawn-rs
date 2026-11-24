@@ -3,9 +3,9 @@ use bevy::prelude::*;
 use gd_game::endless::{EndlessGate, EndlessShrine};
 use gd_game::player_orders::{InteractTarget, Interactable};
 use gd_game::riftgates::GateTravel;
-use gd_game::story::StoryRuntime;
 use gd_game::testing::TestGame;
-use gd_sim::endless::{Dungeon, Entity as MapEntity, Floor, FloorState};
+use gd_game_core::story::StoryRuntime;
+use gd_story::endless::{Dungeon, Entity as MapEntity, Floor, FloorState};
 
 fn floor(region: usize, entrance: Option<[f32; 3]>) -> FloorState {
     FloorState {
@@ -79,7 +79,7 @@ fn using_an_exit_gate_travels_to_the_active_entrance() {
 
 #[test]
 fn a_shrine_is_used_once_and_gives_a_timed_buff() {
-    use gd_game::skill_buffs::ReceivedBuffs;
+    use gd_game_core::skill_buffs::ReceivedBuffs;
     let Some(mut g) = game() else {
         return;
     };
@@ -237,7 +237,8 @@ fn kills_of_the_active_floor_add_progress_chain_and_bonus_time() {
 #[test]
 fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
     use gd_game::monsters::ProxyStates;
-    use gd_game::session::{self, Choice};
+    use gd_game::session;
+    use gd_game_core::session::Choice;
     let Some(mut g) = game() else {
         return;
     };
@@ -273,10 +274,12 @@ fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
     world.entity_mut(player).despawn();
     session::end_session_state(world);
     world.remove_non_send::<StoryRuntime>();
-    world.resource_mut::<session::SessionEpoch>().0 += 1;
+    world
+        .resource_mut::<gd_game_core::session::SessionEpoch>()
+        .0 += 1;
     g.steps(3);
     let difficulty = saved.info.difficulty();
-    let veteran = session::is_veteran(&saved);
+    let veteran = gd_game_core::session::is_veteran(&saved);
     let choice = Choice {
         save: Some(written),
         name: saved.header.name.clone(),
@@ -308,14 +311,14 @@ fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
     assert_eq!(story.game.survival.timer_ms, 0, "no bonus timer");
 }
 
-/// The boss's death (`EndlessDungeon_Generator::Update` @0x18026dea0, HUD event 67 type 1): the bonus timer stops
+/// The boss's death (`EndlessDungeon_Generator::Update`, HUD event 67 type 1): the bonus timer stops
 /// (a reset of a running timer is no failure), and with the player in the dungeon tutorial page 0x42 unlocks (once).
 /// A boss killed after the timer ran out: the reset counts a failure (the HUD's `timerFailedSound`).
 #[test]
 fn the_boss_death_stops_the_timer_and_unlocks_the_end_tutorial() {
     use gd_game::endless::BOSS_TUTORIAL_PAGE;
     use gd_game::tutorials::TutorialPages;
-    use gd_sim::endless::{ProxyInfo, ProxyKind};
+    use gd_story::endless::{ProxyInfo, ProxyKind};
     let Some(mut g) = game() else {
         return;
     };

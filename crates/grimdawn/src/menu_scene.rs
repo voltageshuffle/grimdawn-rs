@@ -3,36 +3,36 @@
 //! (`crate::doll`, [`DollView::Menu`](crate::doll::DollView)).
 //!
 //! Grim Dawn.exe:
-//! - the record (sub_1400BB310): one of the menu's record list (MainMenu ctor
-//!   sub_1400B9B30: `records/game/gameengine.dbr` `menuRecord`, then
+//! - the record (`MainMenu::LoadMenuRecord`): one of the menu's record list (MainMenu ctor
+//!   `MainMenu::MainMenu`: `records/game/gameengine.dbr` `menuRecord`, then
 //!   `menuRecordExpansion1..3` of each loaded expansion when the field is set;
 //!   `database/templates/gamemenu.tpl`), picked by the menu-scene option
-//!   (`mainMenu`, `Options` int 12, at most the list's last). Before the pick,
-//!   once (`gdx3FirstRun`, bool 74, with the third expansion enabled): the
+//!   (`mainMenu`, at most the list's last). Before the pick,
+//!   once (`gdx3FirstRun`, with the third expansion enabled): the
 //!   option is set to 3 and the options are saved. A record other than the
 //!   loaded one unloads the scene (world, ambience, weather, jukebox) and
-//!   loads the new one; the options' Apply calls it too (sub_1400CD780).
+//!   loads the new one; the options' Apply calls it too (`OptionsWindow::Apply`).
 //!   Its camera: eye `mmCameraPosition`, looking at `mmCameraTarget` with up
-//!   +Y (sub_1402A2F50), `mmCameraFOV` (degrees; vertical, as every
+//!   +Y (`Camera::LookAt`), `mmCameraFOV` (degrees; vertical, as every
 //!   `GAME::Camera`), `mmCameraNearPlane` / `mmCameraFarPlane`; fixed (no path
 //!   or orbit). The character: `mmPlayerPosition`, `mmPlayerRotation`
 //!   (degrees), `mmPlayerScale`; `mmTime`, `mmMusic`, `mmVignetteBitmap`,
 //!   `mmLogo`.
-//! - loading (sub_1400BBAD0): `AmbianceManager::SetTime(mmTime)`,
+//! - loading (`MainMenu::LoadScene`): `AmbianceManager::SetTime(mmTime)`,
 //!   `SetTimeEnabled(false)`, `SetDepthFogClamp(0)`, the jukebox starts the
 //!   ambience and the music, `World::Load(mmMap)` and region 0 is loaded.
-//! - the selected character (sub_1400D95A0): its `Player` entity is added to
+//! - the selected character (`MainMenu::SelectCharacter`): its `Player` entity is added to
 //!   the menu region at `mmPlayerPosition` with `Actor::SetScale(mmPlayerScale)`
 //!   (Engine.dll: replaces the record's `scale`), `Player::RemoveLight` and
-//!   `Character::SetMenuCharacter`; sub_1400D9ED0 sets its rotation
+//!   `Character::SetMenuCharacter`; `MainMenu::SetCharacterRotation` sets its rotation
 //!   R(X, x) · R(Y, y + turn) · R(Z, z) (row vectors; `turn` is a menu
 //!   rotation, 0 here). Its controller state is `ControllerPlayerStateMenuIdle`
 //!   → `MenuIdleAction` (Game.dll; shares `LongIdleAction`'s transition timer).
 //! - an `AmbientShadow` with `fx/textures/ambientshadowmainmenu.tex` under it
-//!   (sub_1400BEAD0 `SetTexture`; drawn by sub_1400BF650 with
-//!   `AddToScene(coords, 1.0, 1.0)` 0.25 m below the scene's point at
-//!   +976, unrotated). Game.dll `AmbientShadow::RenderPass` @0x18001d2e0 /
-//!   `AddToScene` @0x18001d120: a horizontal quad `size` (1 m) to each side of
+//!   (`MainMenu::Initialize` `SetTexture`; drawn by `MainMenu::Render` with
+//!   `AddToScene(coords, 1.0, 1.0)` 0.25 m below the scene's point
+//!   `MainMenu.scenePoint`, unrotated). Game.dll `AmbientShadow::RenderPass` /
+//!   `AddToScene`: a horizontal quad `size` (1 m) to each side of
 //!   the point, white with alpha `scale` × 255, drawn with
 //!   `shaders/effects/ambientshadow.ssh` `emissiveStyle` (sort 6000; alpha
 //!   blend, depth test LessEqual without depth write, depth bias −0.001;
@@ -58,13 +58,14 @@
 //! the doll's looped long idle; the menu ambience (`StartAmbient`) and the
 //! scene's two breakable containers are not shown; the music plays at the
 //! area music's volume (0.6).
-use crate::data::GameData;
 use crate::world::{LevelCpu, Levels};
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
+use bevy::tasks::futures_lite::future;
 use gd_formats::map::MapFile;
 use gd_formats::options::Value;
-use gd_game::options::GameOptions;
+use gd_game_core::data::GameData;
+use gd_game_core::options::GameOptions;
 use gd_render::camera::GameCamera;
 use gd_render::render::backdrop::MenuBackdrop;
 use std::sync::Arc;
@@ -123,7 +124,7 @@ pub struct MenuView {
 /// The menu record `option` (the `mainMenu` option) picks (module doc).
 pub fn menu_view(
     data: &GameData,
-    hooks: &gd_game::hooks::Hooks,
+    hooks: &gd_game_core::hooks::Hooks,
     option: i32,
 ) -> Option<(MenuView, f32)> {
     let eng = data.db.get("records/game/gameengine.dbr")?;
@@ -191,7 +192,7 @@ impl MenuScene {
     }
 }
 
-/// Opens the picked record's scene, in place of another record's (module doc: sub_1400BB310).
+/// Opens the picked record's scene, in place of another record's (module doc: `MainMenu::LoadMenuRecord`).
 #[allow(clippy::too_many_arguments)]
 fn open_scene(
     mut commands: Commands,
@@ -199,7 +200,7 @@ fn open_scene(
     mut sounds: ResMut<crate::audio::Sounds>,
     layers: Res<gd_render::render::terrain::TerrainLayers>,
     grass: Res<gd_render::render::grass::GrassQuality>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut options: Option<ResMut<GameOptions>>,
     scene: Option<Res<MenuScene>>,
     owned: Query<Entity, With<MenuSceneEntity>>,
@@ -211,7 +212,7 @@ fn open_scene(
             o.set("mainMenu", Value::Int(3));
             o.set("gdx3FirstRun", Value::Bool(true));
             if hooks.session.options_file.is_none() {
-                crate::settings::store(o);
+                gd_ui_kit::state::settings::store(o);
             }
         }
         option = o.int("mainMenu");
@@ -287,9 +288,9 @@ fn finish_scene(
     mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut mats: gd_render::render::material::MaterialAssets,
     mut cache: ResMut<gd_render::model::ModelCache>,
-    mut bodies: ResMut<gd_game::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut textures: ResMut<gd_render::textures::Textures>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut backdrop: ResMut<MenuBackdrop>,
 ) {
     let Some(task) = scene.task.as_mut() else {

@@ -17,7 +17,7 @@ pub fn round_px(x: f32) -> f32 {
     (x + 0.5).floor()
 }
 
-/// `GraphicsEngine::GetUIScaleFactor` (Engine.dll 0x180092060).
+/// `GraphicsEngine::GetUIScaleFactor` (Engine.dll).
 ///
 /// `option` is the UI-scale slider in [0, 1] (`Options` float, default 0.5; 0.5 also when the engine flag that
 /// enables it is off). At the default the factor is 1.0 from ~1440×1015 pixels up, smaller below
@@ -61,7 +61,7 @@ impl Rect {
     }
 }
 
-/// Window screen alignment (`windowScreenAlignmentX/Y`, parser 0x140261A00).
+/// Window screen alignment (`windowScreenAlignmentX/Y`, parser `Ui::ParseScreenAlignment`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Align {
     /// Unknown/empty string: position used as-is, unscaled.
@@ -87,7 +87,7 @@ impl Align {
     }
 }
 
-/// Text-box alignment (`textAlignmentX/Y`, parsers 0x1400A2840 / 0x1400A2760):
+/// Text-box alignment (`textAlignmentX/Y`, parsers `Ui::ParseTextAlignmentX` / `Ui::ParseTextAlignmentY`):
 /// Left|Top = 0, Right|Bottom = 1, anything else (incl. the data's "Botton"
 /// typo) = Center.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -113,7 +113,7 @@ impl TextAlign {
             _ => TextAlign::Center,
         }
     }
-    /// `GraphicsCanvas::RenderText2d(Rect, ...)` (Engine 0x18009efa0): start
+    /// `GraphicsCanvas::RenderText2d(Rect, ...)` (Engine): start
     /// coordinate of a block of `extent` pixels in `[pos, pos + size)`.
     pub fn place(self, pos: f32, size: f32, extent: i32) -> f32 {
         let v = match self {
@@ -126,7 +126,7 @@ impl TextAlign {
 }
 
 /// A top-level UI window position (`windowDefault*` fields; generic loader
-/// 0x1402617D0, rect transform vtable+224 = 0x140261B70).
+/// `UIWindow::LoadBase`, rect transform virtual `Ui::TransformWindowRect`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WindowDef {
     pub x: f32,
@@ -172,7 +172,7 @@ impl WindowDef {
 }
 
 /// `records/ui/styles/text/*.dbr` (`fontstyle.tpl`, loader
-/// `StyleManager::LoadStyle` Engine 0x1801c4560).
+/// `StyleManager::LoadStyle` Engine).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FontStyle {
     pub font: String,
@@ -191,7 +191,7 @@ impl FontStyle {
     pub fn from_record(r: &Record) -> Self {
         let c = |k: &str| r.f32(k).unwrap_or(1.0);
         let color0 = [c("fontColor0.R"), c("fontColor0.G"), c("fontColor0.B")];
-        // `StyleManager::LoadStyle` (Engine.dll @0x1801c4560): each
+        // `StyleManager::LoadStyle` (Engine.dll): each
         // `fontColor1` channel defaults to the style's own `fontColor0`
         // channel (the loader passes it as the getter's default), not 1.0:
         // a style without `fontColor1` is one flat colour.
@@ -219,8 +219,8 @@ impl FontStyle {
     }
 }
 
-/// Bar graph (`bargraph.tpl` / `bargraphanimated.tpl`, loaders 0x14011F520 /
-/// 0x140121280, draw 0x140120C10).
+/// Bar graph (`bargraph.tpl` / `bargraphanimated.tpl`, loaders `BarGraph::Load` /
+/// `BarGraphAnimated::Load`, draw `BarGraph::Render`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BarGraph {
     pub empty: Option<String>,
@@ -250,14 +250,14 @@ pub struct BarAnim {
 
 impl BarGraph {
     /// Widget size before scaling: the empty bitmap's size if there is one,
-    /// else the full bitmap's (`SetBitmaps` 0x14011EDB0).
+    /// else the full bitmap's (`BarGraph::SetBitmaps`).
     pub fn base_size(&self, empty: Option<(u32, u32)>, full: Option<(u32, u32)>) -> (f32, f32) {
         let (w, h) = empty.or(full).unwrap_or((0, 0));
         (w as f32, h as f32)
     }
 
     /// Source rect in the full bitmap (texture px) for fill `ratio` at
-    /// animation `frame` (0x140120440 plain, 0x140120F50 animated).
+    /// animation `frame` (`BarGraph::GetFillSourceRect` plain, `BarGraphAnimated::GetFillSourceRect` animated).
     pub fn fill_src(&self, tex_w: u32, tex_h: u32, ratio: f32, frame: u32) -> Rect {
         let (ox, oy, cw, ch, sx, sy) = match self.anim {
             Some(a) => {
@@ -288,7 +288,7 @@ impl BarGraph {
     }
 
     /// Destination rect on screen for `ratio`, given the widget's screen rect
-    /// (0x140120540).
+    /// (`BarGraph::GetFillDestRect`).
     pub fn fill_dst(&self, r: Rect, ratio: f32) -> Rect {
         let k = ratio.clamp(0.0, 1.0);
         match (self.vertical, self.reverse) {
@@ -370,7 +370,8 @@ pub enum Widget {
         /// `cooldownTextTable`: the slot's own cooldown-seconds text record.
         cooldown_text: Option<String>,
         text: TextBox,
-        /// `disableCooldownRadial` (the button's +652): with a mask bitmap the cooldown is a masked fill.
+        /// `disableCooldownRadial` (`HotSlotButton.disableCooldownRadial`): with a mask bitmap the cooldown is a
+        /// masked fill.
         disable_radial: bool,
     },
     Text(TextBox),
@@ -514,12 +515,12 @@ pub struct GlyphQuad {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TextLayout {
     pub quads: Vec<GlyphQuad>,
-    /// Block size as measured by the engine (sub_1800A6200 / 0x1800A76F0).
+    /// Block size as measured by the engine (`GraphicsFont2::GetTextExtent` / `GraphicsFont2::MeasureText`).
     pub width: i32,
     pub height: i32,
 }
 
-/// Markup pass of `GraphicsFont2::ProcessCharacter` (0x1800b0c00): returns
+/// Markup pass of `GraphicsFont2::ProcessCharacter`: returns
 /// printable chars with the colour pair in effect for each.
 fn process_markup(text: &str, base: ([f32; 3], [f32; 3])) -> Vec<(char, [f32; 3], [f32; 3])> {
     let (mut c0, mut c1) = base;
@@ -585,7 +586,7 @@ pub fn layout_text(
         height: 0,
     };
     for line in process_markup(text, colors).split(|c| c.0 == '\n') {
-        // Measure (0x1800A76F0).
+        // Measure (`GraphicsFont2::MeasureText`).
         let mut x = 0i32;
         let mut prev: Option<(char, &crate::fnt::Glyph)> = None;
         for &(c, ..) in line {
@@ -608,7 +609,7 @@ pub fn layout_text(
         }
         out.width = out.width.max(x);
 
-        // Draw (0x1800A7DD0, left-to-right branch).
+        // Draw (`GraphicsFont2::DrawText`, left-to-right branch).
         let y = out.height as f32;
         let mut pen = 0i32;
         let mut prev_c = 0i32;
@@ -646,7 +647,7 @@ pub fn layout_text(
     out
 }
 
-/// `GraphicsFont2::GetStyle` fallback (sub_1800AE660, Engine 0x1800AE660).
+/// `GraphicsFont2::GetStyle` fallback (`GraphicsFont2::FindFallbackStyle`, Engine).
 pub fn pick_style(
     font: &crate::fnt::BitmapFont,
     size: u32,

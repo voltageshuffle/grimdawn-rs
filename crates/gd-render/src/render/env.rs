@@ -1,15 +1,14 @@
 //! Lighting environment: the `AmbianceManager` outdoor slot around the
 //! camera target ([`Ambiance`]: day/night cycles, environment colour
 //! modifiers, bloom and adjustment sector data, the `lightingTransformation`
-//! sun turn; Engine.dll `DayNightCycle::Read` 0x1800503b0, `GetLighting`
-//! 0x180050660, `GetLightDirection` 0x18004f830, `AmbianceManager::Update`
-//! 0x1800320c0) plus the level's point lights, packed into the storage
+//! sun turn; Engine.dll `DayNightCycle::Read`, `GetLighting`,
+//! `GetLightDirection`, `AmbianceManager::Update`) plus the level's point lights, packed into the storage
 //! buffer every Grim Dawn material reads; bloom / adjustment go to the
 //! camera's [`super::post::GammaOut`].
 use super::GdDefaults;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
-use gd_game::save::MapLayout;
+use gd_game_core::save::MapLayout;
 use std::f32::consts::PI;
 
 /// The system that writes the environment buffer and turns the sun
@@ -50,14 +49,14 @@ impl Plugin for EnvPlugin {
 }
 
 /// `DayNightLight` colours: `lerp(day, night, nightLightScale)`
-/// (`DayNightLight::UpdateSelf` @0x180051a60).
+/// (`DayNightLight::UpdateSelf`).
 #[derive(Component, Clone, Copy)]
 pub struct DayNightColors {
     pub day: Vec3,
     pub night: Vec3,
 }
 
-/// `AmbianceManager` night-light scale (sub_1800344C0 @0x1800344c0):
+/// `AmbianceManager` night-light scale (`AmbianceManager::ComputeNightLightScale`):
 /// `1 - clamp((lum(light) / 2 + lum(sky) / 2 - 0.3) * 10, 0, 1)` with
 /// lum = 0.3 r + 0.59 g + 0.11 b. It is computed for the
 /// environment slot of the camera region (underground or not,
@@ -80,12 +79,12 @@ pub fn night_light_scale(light: Vec3, sky: Vec3) -> f32 {
 /// fixed size, so a per-frame move costs no bind-group re-prepare).
 ///
 /// Its radius follows the character's `characterLightRadius` total every
-/// update (`Player::UpdateSelf` @0x1803d24a0, formula in
+/// update (`Player::UpdateSelf`, formula in
 /// `gd_sim::stats::light_radius`; the total is the profile's
 /// `light_radius`, computed with the other stats in gd-game). The same
 /// update sets its shadow priority to 4 when `Options::GetQuality(6)`
 /// (`lightingQuality`, video_options notes) is 3 ("very high"), else 0
-/// (`Light::SetShadowPriority`, +512): [`player_light_shadow`]; the light then
+/// (`Light::SetShadowPriority`, `Light.shadowPriority`): [`player_light_shadow`]; the light then
 /// competes for the point maps like any other (render/point_shadow.rs).
 ///
 /// The character `lightRig` (playerlightrig.dbr) is not this light: it lights
@@ -102,14 +101,14 @@ struct HasPlayerLight;
 fn player_light(
     mut commands: Commands,
     players: Query<
-        (Entity, Option<&crate::player::Loadout>),
-        (With<crate::player::Player>, Without<HasPlayerLight>),
+        (Entity, Option<&gd_game_core::player::Loadout>),
+        (With<gd_game_core::player::Player>, Without<HasPlayerLight>),
     >,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
 ) {
     for (p, loadout) in &players {
         commands.entity(p).insert(HasPlayerLight);
-        let record = gd_game::player::player_record(loadout.is_some_and(|l| l.female));
+        let record = gd_game_core::player::player_record(loadout.is_some_and(|l| l.female));
         let Some(rec) = data
             .db
             .get(record)
@@ -149,7 +148,7 @@ fn player_light(
 /// [`PlayerLight`]'s radius from its owner's `characterLightRadius` total.
 fn player_light_radius(
     mut lights: Query<(&PlayerLight, &ChildOf, &mut PointLight)>,
-    owners: Query<&crate::combat::Combatant>,
+    owners: Query<&gd_game_core::combat::Combatant>,
 ) {
     for (light, parent, mut point) in &mut lights {
         let Ok(c) = owners.get(parent.parent()) else {
@@ -163,10 +162,10 @@ fn player_light_radius(
     }
 }
 
-/// `Player::UpdateSelf` @0x1803d24a0: the player light's shadow
+/// `Player::UpdateSelf`: the player light's shadow
 /// priority is 4 at `lightingQuality` 3, else none.
 fn player_light_shadow(
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     lights: Query<(Entity, Option<&super::point_shadow::ShadowPriority>), With<PlayerLight>>,
     mut commands: Commands,
 ) {
@@ -191,9 +190,9 @@ fn player_light_shadow(
     }
 }
 
-/// Hour of the day (0..24) shown: `AmbianceManager::GetTime` (@0x180032d30): with the game's
-/// `dayNightCycle` option on, the running clock (gd-game's [`gd_game::day_clock::DayClock`]: from 9:00, a new
-/// character from 2:00, at 30 times real time); off, the fixed 12.0 (`AmbianceManager` ctor 0x1800315d0). `GD_TIME`
+/// Hour of the day (0..24) shown: `AmbianceManager::GetTime`: with the game's
+/// `dayNightCycle` option on, the running clock (gd-game's [`gd_game_core::day_clock::DayClock`]: from 9:00, a new
+/// character from 2:00, at 30 times real time); off, the fixed 12.0 (`AmbianceManager` ctor). `GD_TIME`
 /// overrides both.
 #[derive(Resource)]
 pub struct TimeOfDay(pub f32);
@@ -202,7 +201,7 @@ impl FromWorld for TimeOfDay {
     fn from_world(world: &mut bevy::ecs::world::World) -> Self {
         Self(
             world
-                .get_resource::<crate::hooks::Hooks>()
+                .get_resource::<gd_game_core::hooks::Hooks>()
                 .and_then(|h| h.render.time)
                 .unwrap_or(12.0),
         )
@@ -212,9 +211,9 @@ impl FromWorld for TimeOfDay {
 /// `GetTime` each frame (the option is read every frame).
 fn advance_time_of_day(
     mut tod: ResMut<TimeOfDay>,
-    options: Res<gd_game::options::GameOptions>,
-    clock: Res<gd_game::day_clock::DayClock>,
-    hooks: Res<crate::hooks::Hooks>,
+    options: Res<gd_game_core::options::GameOptions>,
+    clock: Res<gd_game_core::day_clock::DayClock>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if hooks.render.time.is_some() {
         return;
@@ -239,8 +238,9 @@ pub struct LightSetup {
     pub ground: Vec3,
 }
 
-/// `GAME::DayNightCycle` (+24 sunset, +28 sunrise, +32 day time (`GetDayTime`: the day begins), +36 night
-/// time (`GetNightTime`: the night begins), v2 files: sunrise / sunset, `DayNightCycle::Read`), +40 sun azimuth, +44 sun min angle, +48 moon azimuth, +52 moon min angle).
+/// `DayNightCycle` (`sunset`, `sunrise`, `dayTime` (`GetDayTime`: the day begins), `nightTime` (`GetNightTime`: the
+/// night begins), v2 files: sunrise / sunset, `DayNightCycle::Read`), `sunAzimuth`, `sunMinAngle`, `moonAzimuth`,
+/// `moonMinAngle`).
 #[derive(Clone, Debug)]
 pub struct DayNightCycle {
     pub sunset: f32,
@@ -259,7 +259,7 @@ fn hm(h: f32, m: f32) -> f32 {
 }
 
 impl Default for DayNightCycle {
-    /// `DayNightCycle::SetDefault` 0x18004ec50 (colour tables at 0x18034C250..).
+    /// `DayNightCycle::SetDefault` (colour tables `Engine::DayNightDefaultColors`).
     fn default() -> Self {
         let s = |t: f32, l: [f32; 3], sk: [f32; 3], g: [f32; 3]| LightSetup {
             time: t,
@@ -334,7 +334,7 @@ impl DayNightCycle {
     }
 
     /// (light, sky, ground) at `time`: Catmull-Rom over the cyclic keys
-    /// (sub_180051090), light faded to black around sunrise/sunset.
+    /// (`DayNightCycle::InterpolateKeys`), light faded to black around sunrise/sunset.
     pub fn lighting(&self, time: f32) -> (Vec3, Vec3, Vec3) {
         let s = &self.setups;
         let n = s.len();
@@ -406,15 +406,15 @@ impl DayNightCycle {
         Vec3::new(elev.cos(), az.sin() * elev.sin(), az.cos() * elev.sin()).normalize_or_zero()
     }
 
-    /// `DayNightCycle::GetIsDay` (@0x18004f510): `time` in the day window
-    /// [`Self::day_time`] (+32) .. [`Self::night_time`] (+36), mod 24.
+    /// `DayNightCycle::GetIsDay`: `time` in the day window
+    /// [`Self::day_time`] (`DayNightCycle.dayTime`) .. [`Self::night_time`] (`DayNightCycle.nightTime`), mod 24.
     pub fn is_day(&self, time: f32) -> bool {
         gd_sim::jukebox::is_day(time, self.day_time, self.night_time)
     }
 
-    /// `AmbianceManager` shadow intensity (sub_1800345F0): 0 → 1 over 0.1 h
+    /// `AmbianceManager` shadow intensity (`AmbianceManager::ComputeShadowIntensity`): 0 → 1 over 0.1 h
     /// after sunrise, back before sunset. It reaches no renderer:
-    /// AmbianceManager+204 is read only by its "Shadow Intensity" statistics
+    /// `AmbianceManager.shadowIntensity` is read only by its "Shadow Intensity" statistics
     /// line (`AmbianceManager::Update`) and the unused export
     /// `GetShadowIntensity` (imported by neither Game.dll nor the exe); the
     /// deferred sun pass has no intensity (render/shadow.rs).
@@ -451,7 +451,7 @@ pub struct EnvGpu {
     /// `hdrLighting`: the lights add into the float target, unclamped (the shaders' `env[4].x` limit).
     pub hdr: bool,
     /// The point lights' specular term unless `lightingQuality` is low: `Light::AddToScene`
-    /// @0x1801363a0 sets the scene light's +113 (`RenderDeferredPointLight` @0x1800aba80: `pointSpecular`, else
+    /// sets the scene light's `GraphicsLight.specular` (`RenderDeferredPointLight`: `pointSpecular`, else
     /// `point`) to !`GraphicsEngine::UseLowQualityLighting` (`lightingQuality` low, render/light_rig.rs), and
     /// only for a light not in simple mode ([`SimpleLight`]); [`GpuLight::specular`] is the result per light.
     /// The term itself (`pointSpecularPS`) is the sun's: `sat(V·R)^power · specular`, power =
@@ -467,36 +467,45 @@ pub struct GpuLight {
     pub color: Vec3,
     /// The point shadow's `shadowBluriness`, 0 = no map (render/point_shadow.rs).
     pub blur: f32,
-    /// `pointSpecular` rather than `point` (the scene light's +113, [`EnvGpu::point_specular`]).
+    /// `pointSpecular` rather than `point` (the scene light's `GraphicsLight.specular`, [`EnvGpu::point_specular`]).
     pub specular: bool,
 }
 
-/// A light in simple mode (the engine `Light`'s +518): `Light::AddToScene` @0x1801363a0 clears the
-/// scene light's specular flag (+113) and sets it, and the shadow priority, only when +518 is 0, so such a light
-/// is drawn with `point` (no specular) and never shadowed. Only effect lights set it: `Emitter::UpdateLight`
-/// @0x18006b670 copies the emitter's bools[11] (EmitterData +115, `gd_formats::pfx::Emitter::light_simple`) every
+/// A light in simple mode (the engine's `Light.simpleMode`): `Light::AddToScene` clears the
+/// scene light's specular flag (`GraphicsLight.specular`) and sets it, and the shadow priority, only when
+/// `simpleMode` is 0, so such a light is drawn with `point` (no specular) and never shadowed. Only effect lights set
+/// it: `Emitter::UpdateLight` copies the emitter's bools[11] (EmitterData +115,
+/// `gd_formats::pfx::Emitter::light_simple`) every
 /// update: 35 of the 1137 stock light emitters (devotion shield loops and the like); `Light::SetSimpleMode` has no
 /// other caller. Effect lights never get a point shadow in the port (render/point_shadow.rs), so only the
 /// specular is withheld here.
 #[derive(Component)]
 pub struct SimpleLight;
 
-/// `GraphicsEngine::GetHdrLightingFactor` (+320; 1.15 from the constructor, Engine.dll
-/// `GraphicsEngine` ctor @0x180090730; `SetHdrLightingFactor` has no caller in Engine.dll). With
+/// `GraphicsEngine::GetHdrLightingFactor` (`GraphicsEngine.hdrLightingFactor`; 1.15 from the constructor,
+/// Engine.dll `GraphicsEngine` ctor; `SetHdrLightingFactor` has no caller in Engine.dll). With
 /// `hdrLighting` the deferred renderer scales the sun's and the point lights' colour by it
-/// (`RenderDeferredDirectionalLight` @0x1800aade0, `RenderDeferredPointLight` @0x1800aba80:
-/// `lightColor *= factor` when renderer +1968 is set); the ambient pass is not scaled.
+/// (`RenderDeferredDirectionalLight`, `RenderDeferredPointLight`:
+/// `lightColor *= factor` when `GraphicsDeferredRenderer.hdrLighting` is set); the ambient pass is not scaled.
 pub const HDR_LIGHTING_FACTOR: f32 = 1.15;
 
 /// The limit the shaders clamp each light term to: the UNORM back buffer's 1, or none in
-/// the `hdrLighting` float target (`GraphicsDeferredRenderer::CreateRenderTargets`
-/// @0x1800ad850: renderer +254 is format 13 = DXGI R16G16B16A16_FLOAT, Direct3D11.dll
-/// sub_1800142F0; the G-buffer and back buffer are format 2 = B8G8R8A8_UNORM).
+/// the `hdrLighting` float target (`GraphicsDeferredRenderer::CreateRenderTargets`:
+/// `GraphicsDeferredRenderer.hdrTarget` is made in format 13 = DXGI R16G16B16A16_FLOAT, Direct3D11.dll
+/// `RenderDevice::GetDxgiFormat`; the G-buffer and back buffer are format 2 = B8G8R8A8_UNORM).
 const HDR_LIMIT: f32 = 65504.0;
 
 impl EnvGpu {
     pub fn to_vec4s(&self) -> Vec<[f32; 4]> {
-        let mut v = vec![
+        let mut v = Vec::new();
+        self.write_vec4s(&mut v);
+        v
+    }
+
+    /// [`Self::to_vec4s`] into a reused scratch buffer (PERF-16: no per-frame allocation).
+    fn write_vec4s(&self, v: &mut Vec<[f32; 4]>) {
+        v.clear();
+        v.extend([
             self.sun_dir
                 .extend(if self.sun_on { 1.0 } else { 0.0 })
                 .to_array(),
@@ -504,7 +513,7 @@ impl EnvGpu {
             self.sky.extend(0.0).to_array(),
             self.ground.extend(self.lights.len() as f32).to_array(),
             [if self.hdr { HDR_LIMIT } else { 1.0 }, 0.0, 0.0, 0.0],
-        ];
+        ]);
         for l in &self.lights {
             v.push(l.position.extend(l.radius).to_array());
             v.push(l.color.extend(0.0).to_array());
@@ -517,7 +526,6 @@ impl EnvGpu {
         }
         // A fixed size: a rewrite then updates the GPU buffer in place.
         v.resize(5 + 3 * MAX_LIGHTS, [0.0; 4]);
-        v
     }
 }
 
@@ -606,33 +614,33 @@ impl Tables {
 }
 
 /// The outdoor environment slot of `AmbianceManager` (Engine.dll;
-/// slot = this + 188, stock levels are never underground, see
+/// `AmbianceManager.outdoorSlot`, stock levels are never underground, see
 /// [`night_light_scale`]): each part blends the sector-data entries around
-/// the target ([`gd_game::levels::Levels::sector_weights`]) and fills the
+/// the target ([`gd_game_core::levels::Levels::sector_weights`]) and fills the
 /// remaining weight with its default.
-/// - day/night (sub_180033780, layer 4, ±20 m): Σ w·`GetLighting` and
-///   Σ w·`GetLightDirection`, rest from the default cycle (+616); the
+/// - day/night (`AmbianceManager::UpdateDayNightSlot`, layer 4, ±20 m): Σ w·`GetLighting` and
+///   Σ w·`GetLightDirection`, rest from the default cycle (`AmbianceManager.defaultCycle`); the
 ///   direction is normalised, then turned by the lighting transform.
-/// - modifiers (sub_180033E90, layer 0, ±20 m): Σ w·light / sky / ground
+/// - modifiers (`AmbianceManager::UpdateModifierSlot`, layer 0, ±20 m): Σ w·light / sky / ground
 ///   modifier + rest × 1; `GetLightColor` / `GetSkyAmbientColor` /
 ///   `GetGroundAmbientColor` multiply them into the colours (the weather
 ///   darkness is subtracted from sky and ground). The same pass fills
 ///   the fog: colour Σ w·colour and densities Σ w·density (the rest adds
-///   nothing; depth density clamped to [0, 1], `+177` environment effects
+///   nothing; depth density clamped to [0, 1], `AmbianceManager.environmentEffects`
 ///   on), the depth and height (start, end) distances Σ w·d / Σ w; the weather
-///   increments (+692..+708, 0 without weather) are added. With depth-fog clamping
-///   (+717, on from the constructor) the depth start becomes
+///   increments (`AmbianceManager.weather*`, 0 without weather) are added. With depth-fog clamping
+///   (`AmbianceManager.depthFogClamping`, on from the constructor) the depth start becomes
 ///   max(clamp, start) and the end keeps its distance to the start; the clamp
 ///   is [`depth_fog_clamp`].
-/// - bloom (sub_180034730, layer 5, ±5 m): Σ w·params, clamped to
+/// - bloom (`AmbianceManager_UpdateBloomSlot`, layer 5, ±5 m): Σ w·params, clamped to
 ///   [0,1] × [0,4] × [0,1] (+ weather increments, 0).
-/// - adjustment (sub_1800349B0, layer 8, ±5 m): Σ w·(brightness,
+/// - adjustment (`AmbianceManager::UpdateAdjustmentSlot`, layer 8, ±5 m): Σ w·(brightness,
 ///   contrast, saturation, tint) + rest × (0, 0, 0, 1, 1, 1), clamped to
 ///   [-1,1]³ × [0,1]³.
 ///
 /// The slots are recomputed from the sector data on every update, without
-/// easing: sub_180031340 (`AmbianceManager::Update`) only eases the
-/// outdoor / underground factor at +180 (target 1 outdoors, 0.1 × dt per
+/// easing: `AmbianceManager::UpdateOutdoorFactor` (from `AmbianceManager::Update`) only eases the
+/// outdoor / underground factor `AmbianceManager.outdoorFactor` (target 1 outdoors, 0.1 × dt per
 /// step), which stays 1 on stock levels (none is underground).
 /// Also the resource of the current frame's values (read by the
 /// conversation portrait's background, `ui::dialog`).
@@ -648,34 +656,35 @@ pub struct Ambiance {
     /// brightness, contrast, saturation.
     pub adjust: Vec3,
     pub tint: Vec3,
-    /// Fog colour (+328).
+    /// Fog colour (`fogColor`).
     pub fog_color: Vec3,
-    /// Depth fog (+356): start, end (view depth, m), density.
+    /// Depth fog (`depthFog`): start, end (view depth, m), density.
     pub depth_fog: Vec3,
-    /// Height fog (+344): start, end (world height, m), density.
+    /// Height fog (`heightFog`): start, end (world height, m), density.
     pub height_fog: Vec3,
-    /// `AmbianceManager::GetIsDay` (+596): `DayNightCycle::GetIsDay(t)` of the area's cycle, read by the weather's
+    /// `AmbianceManager::GetIsDay` (`AmbianceManager.isDay`): `DayNightCycle::GetIsDay(t)` of the area's cycle,
+    /// read by the weather's
     /// Day / Night climate filter and the ambient sound's day / night set (`audio.rs`).
-    /// `AmbianceManager::Update` @0x1800320c0: the area's cycle is the layer-4 entry of the cell under the target in
+    /// `AmbianceManager::Update`: the area's cycle is the layer-4 entry of the cell under the target in
     /// the manager's region (the same id array that picks the ambient layer-2 session), else the default cycle
-    /// (+616); `GetIsDay` @0x18004f510 tests the day window [`DayNightCycle::day_time`] ..
+    /// (`AmbianceManager.defaultCycle`); `GetIsDay` tests the day window [`DayNightCycle::day_time`] ..
     /// [`DayNightCycle::night_time`]. The same cycle feeds the shadow
-    /// intensity (sub_1800345F0).
+    /// intensity (`AmbianceManager::ComputeShadowIntensity`).
     pub is_day: bool,
     /// Name of the heaviest day/night entry (log only).
     pub daynight_name: String,
 }
 
 impl Ambiance {
-    /// `weights(layer, radius)` = [`gd_game::levels::Levels::sector_weights`];
+    /// `weights(layer, radius)` = [`gd_game_core::levels::Levels::sector_weights`];
     /// `transform_deg` = `gameengine.dbr` `lightingTransformation`;
     /// `fog_clamp` = [`depth_fog_clamp`]; `cell` = the layer-4 (day / night) id of the cell under the target
     /// ([`Self::is_day`]); `weather` = the weather increments
-    /// (`AmbianceManager::SetWeatherAdjustments`, @0x180032d90: +672
-    /// darkness ×3, +692 density, +696 distance, +700 colour): the darkness
+    /// (`AmbianceManager::SetWeatherAdjustments`: `weatherDarkness`
+    /// ×3, `weatherDensity`, `weatherDistance`, `weatherColor`): the darkness
     /// comes off the sky and ground ambient (`GetSkyAmbientColor` /
     /// `GetGroundAmbientColor`: c − min(d, c); the sun and shadows keep theirs),
-    /// sub_180033E90 adds the density (then clamps to 0..1), the distance to
+    /// `AmbianceManager::UpdateModifierSlot` adds the density (then clamps to 0..1), the distance to
     /// the depth fog's start before the depth-fog clamp (the end stays) and the
     /// colour (clamped 0..1).
     fn compute(
@@ -716,7 +725,7 @@ impl Ambiance {
         dir += rest * default_cycle.light_direction(time);
         let dir = dir.normalize_or_zero();
         // SetLightingTransformAngle: rotation about +Y by the angle (degrees,
-        // sub_180273B30 axis-angle matrix), applied as v · M.
+        // `Math::AxisAngleMatrix`), applied as v · M.
         let (sn, cs) = transform_deg.to_radians().sin_cos();
         let light_dir = Vec3::new(dir.x * cs + dir.z * sn, dir.y, -dir.x * sn + dir.z * cs);
 
@@ -747,7 +756,7 @@ impl Ambiance {
         sm += Vec3::splat(rest);
         gm += Vec3::splat(rest);
         // SetDepthFogClamp: the start moves out to at least the clamp
-        // distance, keeping the ramp length (AmbianceManager +717, on).
+        // distance, keeping the ramp length (`AmbianceManager.depthFogClamping`, on).
         let depth = Vec2::new(depth.x + weather.fog_distance, depth.y);
         let start = depth.x.max(fog_clamp);
         let depth_fog = Vec3::new(
@@ -796,7 +805,7 @@ impl Ambiance {
 }
 
 /// `AmbianceManager::SetDepthFogClamp` from the controlling `GameCamera`
-/// (Game.dll `GameCamera::ResetToDefaults` / sub_1802C0160, set on
+/// (Game.dll `GameCamera::ResetToDefaults` / `GameCamera::UpdateDepthFogClamp`, set on
 /// zoom): d + (d − min) / (max − min) × `CameraDepthFogClamp` with d the
 /// camera distance and min / max `CameraDistanceMin` / `Max`
 /// (`gameengine.dbr`: −1, 20, 48: 35.4 m at the default 36 m), so the depth
@@ -820,14 +829,18 @@ struct Cache {
     current: Option<(String, [i32; 9])>,
     /// The frame's point lights with their squared distance to the target (reused).
     lights: Vec<(f32, GpuLight)>,
+    /// The packed point lights (reused; moved into [`EnvGpu::lights`] each frame).
+    gpu_lights: Vec<GpuLight>,
+    /// The environment buffer's vec4s (reused; [`EnvGpu::write_vec4s`]).
+    vec4s: Vec<[f32; 4]>,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn update_env(
     world: Option<Res<MapLayout>>,
-    levels: Res<gd_game::levels::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
     defaults: Option<Res<GdDefaults>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     time: Res<TimeOfDay>,
     cams: Query<&crate::camera::GameCamera>,
     lights: Query<
@@ -842,13 +855,17 @@ fn update_env(
     >,
     mut suns: Query<(&mut Transform, &mut DirectionalLight)>,
     mut post: Query<&mut super::post::GammaOut>,
-    options: Option<Res<gd_game::options::GameOptions>>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     weather: Option<Res<super::weather::WeatherState>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut cache: Local<Cache>,
     menu: Option<Res<super::backdrop::MenuBackdrop>>,
-    (mut commands, current, hooks): (Commands, Option<Res<Ambiance>>, Res<crate::hooks::Hooks>),
-    story: Option<NonSend<crate::story::StoryRuntime>>,
+    (mut commands, current, hooks): (
+        Commands,
+        Option<Res<Ambiance>>,
+        Res<gd_game_core::hooks::Hooks>,
+    ),
+    story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
 ) {
     let Some(defaults) = defaults else { return };
     let target = cams.iter().next().map(|c| c.target).unwrap_or(Vec3::ZERO);
@@ -898,7 +915,10 @@ fn update_env(
     };
     // The day / night cell (`Ambiance::is_day`): in the game from the player's region's level (the manager's
     // region; the Shattered Realm's regions overlap main-world ground, as for the ambient sector in `audio.rs`).
-    let cell = match (&menu, gd_game::riftgates::player_region(story.as_deref())) {
+    let cell = match (
+        &menu,
+        gd_game_core::riftgates::player_region(story.as_deref()),
+    ) {
         (Some(m), _) => m.levels.sector_guid(target, 4),
         (None, Some(r)) => levels.sector_guid_in(r, target, 4),
         (None, None) => levels.sector_guid(target, 4),
@@ -974,24 +994,25 @@ fn update_env(
         shadow_intensity: amb.shadow_intensity,
         sky,
         ground,
-        lights: Vec::new(),
+        lights: std::mem::take(&mut cache.gpu_lights),
         hdr,
         point_specular: options
             .as_ref()
             .is_none_or(|o| super::light_rig::lighting_quality(o) != 0),
     };
+    env.lights.clear();
     // FireLights step their colour and radius every frame (world::Flicker),
     // effect lights fade: the buffer is rewritten in place at a fixed size
     // ([`EnvGpu::to_vec4s`]; a size change makes a new GPU buffer and
     // re-prepares every material bind group). Kept in a stable (position) order.
     // The shaders' falloff max(1 - (d / radius)², 0) · sat(N·L) ·
     // colour · albedo is deferred.ssh `pointPS` (radius = `lightMaxDistance`,
-    // `RenderDeferredPointLight` @0x1800aba80); every light in the scene is
-    // drawn (`SetupLights` @0x1800ceb80 has no cap). `pointPS` also
+    // `RenderDeferredPointLight`); every light in the scene is
+    // drawn (`SetupLights` has no cap). `pointPS` also
     // multiplies the light's point shadow (render/point_shadow.rs).
-    // `lightColor` is the scene light's +72, the record colour × intensity
-    // (× the HDR factor), not the pow(2.2) copy at +88
-    // (`Light::AddToScene` @0x1801363a0, `RenderDeferredPointLight`).
+    // `lightColor` is the scene light's `GraphicsLight.color`, the record colour × intensity
+    // (× the HDR factor), not the pow(2.2) copy `GraphicsLight.linearColor`
+    // (`Light::AddToScene`, `RenderDeferredPointLight`).
     let ls = &mut cache.lights;
     ls.clear();
     ls.extend(lights.iter().map(|(gt, l, dn, shadow, simple)| {
@@ -1031,18 +1052,22 @@ fn update_env(
         let (a, b) = (a.1.position, b.1.position);
         a.x.total_cmp(&b.x).then(a.z.total_cmp(&b.z))
     });
-    env.lights.extend(ls.iter().map(|(_, l)| l.clone()));
+    env.lights.extend(ls.drain(..).map(|(_, l)| l));
     // Rewrite only on change: a modified buffer asset re-prepares every
     // material bind group that references it.
-    let v = env.to_vec4s();
+    env.write_vec4s(&mut cache.vec4s);
     let same = buffers
         .get(&defaults.env)
-        .and_then(|b| b.cast_slice::<[f32; 4]>().map(|old| old == v.as_slice()))
+        .and_then(|b| {
+            b.cast_slice::<[f32; 4]>()
+                .map(|old| old == cache.vec4s.as_slice())
+        })
         .unwrap_or(false);
     if !same && let Some(mut buf) = buffers.get_mut(&defaults.env) {
         buf.clear();
-        buf.extend(v);
+        buf.extend(cache.vec4s.iter().copied());
     }
+    cache.gpu_lights = env.lights;
     for (mut tf, mut sun) in &mut suns {
         if sun.shadow_maps_enabled != env.sun_on {
             sun.shadow_maps_enabled = env.sun_on;

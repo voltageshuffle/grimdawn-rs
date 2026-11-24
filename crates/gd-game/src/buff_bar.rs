@@ -4,11 +4,11 @@
 //! keeps the bar's own state (icon order, fade-out, cooldown phase).
 //!
 //! The player (`hudPlayerStatusIcons` update, Grim Dawn.exe
-//! sub_14024E790), in this order:
-//! 1. `SkillManager::GetActiveSkillList` @0x180531780 — the character's
+//! `PlayerStatusIcons::Update`), in this order:
+//! 1. `SkillManager::GetActiveSkillList` — the character's
 //!    skills (save order), then its item skills, then its sub skills — each
-//!    that `Skill::HasIconDisplay` (vtable +528). That is `IsTrackable`
-//!    (+512), false for the base `Skill`, except `Skill_BuffRadius{,Toggled}`:
+//!    that `Skill::HasIconDisplay`. That is `IsTrackable`,
+//!    false for the base `Skill`, except `Skill_BuffRadius{,Toggled}`:
 //!    only with `debufSkill` (their buff shows from step 2). `IsTrackable`
 //!    per class (Game.dll): the `Skill_BuffSelfToggled` family
 //!    (`…Toggled`, `…Duration`, `…Shield`, `…Invulnerable`, `…Immobilize`,
@@ -21,21 +21,21 @@
 //!    `Skill_ChargePotion`: while its absorption lasts.
 //! 2. `Character::GetUITempSkillList`: the `SkillBuff`s on the character
 //!    (an aura's `buffSkillName` record, a buff someone cast on it) whose
-//!    `IsTempTrackable` (+520) = not `hideFromUI`; `SkillBuff_Debuf*` go to
+//!    `IsTempTrackable` = not `hideFromUI`; `SkillBuff_Debuf*` go to
 //!    the debuff area.
 //!
-//! What an icon shows comes from `GetTrackableType` (+552): 0 duration
+//! What an icon shows comes from `GetTrackableType`: 0 duration
 //! (`TrackableRemainingTime` / `TrackableTotalTime` ms; a `SkillBuff`'s
 //! total is 0 when ≤ 1500 ms, so an aura's buff has no timer), 1 charges
 //! (`Skill_TargetedSpawnPet`: living pets of it, `Skill_WeaponPool_Charged…`,
 //! `SkillBuff_PassiveCharged`), 2 Cadence's finale, 3 no timer (the
 //! `…Toggled` skills, `Skill_Shapeshift` with a set flag), 4 potions /
-//! `Skill_PassiveOnHitBuffShield`. Passives (+1464 true: `Skill_Passive*`,
+//! `Skill_PassiveOnHitBuffShield`. Passives (`Skill::IsPassive` true: `Skill_Passive*`,
 //! `Skill_Mastery`, `SkillSecondary_BuffSelfDuration`,
 //! `Skill_PassiveDualWieldWeapon`) are drawn round and keep their icon
 //! through their cooldown after the buff ends.
 //!
-//! A pet portrait (sub_140254DB0 → `Character::GetActiveStatusSkills`
+//! A pet portrait (`PlayerPortrait::Update` → `Character::GetActiveStatusSkills`
 //! @Game.dll): the same two lists filtered by `HasIconDisplay` /
 //! `IsTempTrackable`, as skill names; the icon is each skill's up bitmap.
 //!
@@ -50,26 +50,26 @@
 //! are the timed buffs left over after the learned skills (devotion and item
 //! procs).
 //!
-//! The icon: `GetTrackableIcon` (+560) when not empty, else the skill's up
-//! bitmap (sub_14024F350); only `Skill_ChargePotion` has one,
-//! [`POTION_ABSORB_ICON`] (@0x1804ef620), listed in the potion's place in the
-//! skill list while its absorb lasts ([`crate::casting::ShieldKind::Potion`]),
-//! type 4: left / total of the absorb pool, no text (sub_14024F110).
+//! The icon: `GetTrackableIcon` when not empty, else the skill's up
+//! bitmap (`PlayerStatusIcons::AddIcon`); only `Skill_ChargePotion` has one,
+//! [`POTION_ABSORB_ICON`], listed in the potion's place in the
+//! skill list while its absorb lasts ([`gd_game_core::casting::ShieldKind::Potion`]),
+//! type 4: left / total of the absorb pool, no text (`PlayerStatusIcons::RefreshIcon`).
 //!
-//! Combo charges (sub_14024E790 → sub_14024FEA0): after the lists
+//! Combo charges (`PlayerStatusIcons::Update` → `PlayerStatusIcons::UpdateComboCharge`): after the lists
 //! and the DoT icons, with a count (`SkillManager::GetComboCharge`) one
 //! entry of its own kind (2) in area 1, created only while
 //! `GetComboChargeMultiplier(count)` ≥ 1, icon [`COMBO_ICON`]: the count in
 //! `chargeText`, the time left (`GetComboChargeDuration`, ms) swept against
 //! the most seen (≤ 250 ms: no total); its rollover is `tagHUDComboCharge` /
-//! `tagHUDComboChargeMultiplier` (sub_14024C8B0), not a skill tooltip.
-use crate::casting::{Caster, ShieldKind, Shields};
+//! `tagHUDComboChargeMultiplier` (`PlayerStatusIcons::GetRolloverText`), not a skill tooltip.
 use crate::combo::Combo;
-use crate::player::Loadout;
-use crate::skill_buffs::ReceivedBuffs;
-use crate::weapon_pool::PoolCharges;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
+use gd_game_core::casting::{Caster, ShieldKind, Shields};
+use gd_game_core::player::Loadout;
+use gd_game_core::skill_buffs::ReceivedBuffs;
+use gd_game_core::weapon_pool::PoolCharges;
 use gd_sim::combo::ComboTable;
 
 /// What an icon shows ([module docs](self): `GetTrackableType`).
@@ -93,13 +93,13 @@ pub enum Track {
     },
 }
 
-/// The combo charge icon (sub_14024FEA0).
+/// The combo charge icon (`PlayerStatusIcons::UpdateComboCharge`).
 pub const COMBO_ICON: &str = "ui/hud/hud_combochargeicon.tex";
 
 /// The combo entry's key (it has no skill).
 pub const COMBO_KEY: &str = "combo charges";
 
-/// `Skill_ChargePotion::GetTrackableIcon` (@0x1804ef620).
+/// `Skill_ChargePotion::GetTrackableIcon`.
 pub const POTION_ABSORB_ICON: &str =
     "ui/skills/icons/potionbuffs/skillicon_potion_absorbing_up.tex";
 
@@ -108,7 +108,7 @@ pub const POTION_ABSORB_ICON: &str =
 pub struct PlayerState<'a> {
     pub loadout: &'a Loadout,
     pub caster: &'a Caster,
-    pub links: Option<&'a crate::weapon_pool::SkillLinks>,
+    pub links: Option<&'a gd_game_core::weapon_pool::SkillLinks>,
     pub pool: Option<&'a PoolCharges>,
     /// The summon skill of each living pet.
     pub pets: &'a [&'a str],
@@ -133,7 +133,7 @@ pub struct Tracked {
     pub debuff: bool,
     /// Drawn round (`roundBitmap` of it or its parent, or a passive).
     pub round: bool,
-    /// A passive (+1464): its icon stays through its cooldown, read from
+    /// A passive (`Skill::IsPassive`): its icon stays through its cooldown, read from
     /// `Caster::cooldowns[cooldown]`.
     pub passive: bool,
     pub cooldown: String,
@@ -147,7 +147,7 @@ fn self_trackable(class: &str) -> bool {
         || class == "Skill_OnHitAttackRadius"
 }
 
-/// +1464 (module docs).
+/// `Skill::IsPassive` (module docs).
 pub fn is_passive(class: &str) -> bool {
     class.starts_with("Skill_Passive")
         || class == "Skill_Mastery"
@@ -174,7 +174,7 @@ fn buff_of<'a>(db: &'a Database, rec: &'a Record) -> Option<(&'a str, &'a Record
 fn flags(rec: &Record, parent_round: bool) -> (bool, bool, bool) {
     let passive = is_passive(&rec.class);
     (
-        crate::skill_buffs::is_debuff(rec),
+        gd_game_core::skill_buffs::is_debuff(rec),
         round(rec) || parent_round || passive,
         passive,
     )
@@ -271,7 +271,7 @@ impl PlayerIcons {
         &mut self,
         db: &Database,
         loadout: &Loadout,
-        links: Option<&crate::weapon_pool::SkillLinks>,
+        links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     ) {
         self.built = true;
         self.skills.clear();
@@ -297,7 +297,7 @@ impl PlayerIcons {
                     buff: buff_of(db, rec).map(|b| b.0.to_owned()),
                 }
             } else if c == "Skill_TargetedSpawnPet" && rec.bool("trackSpawns") {
-                // Skill_TargetedSpawnPet::TrackableTotalTime @0x18050bcf0: GetPetLimit(level),
+                // Skill_TargetedSpawnPet::TrackableTotalTime: GetPetLimit(level),
                 // the modifier-summed limit (the spawn enforces the same).
                 let mods: Vec<(gd_formats::arz::Record, usize)> = links
                     .map(|l| {
@@ -313,9 +313,9 @@ impl PlayerIcons {
                 SkillKind::Potion
             } else if c.starts_with("Skill_WeaponPool_Charged") {
                 // Skill_WeaponPool_ChargedFinale::GetTrackableType (returns 2, not 1) and
-                // sub_14024F110 type 2: Cadence's icon has no count and no sweep.
+                // `PlayerStatusIcons::RefreshIcon` type 2: Cadence's icon has no count and no sweep.
                 let finale = c == "Skill_WeaponPool_ChargedFinale";
-                // Skill_WeaponPool_ChargedScaling::TrackableTotalTime @0x18050e680: the charge level.
+                // Skill_WeaponPool_ChargedScaling::TrackableTotalTime: the charge level.
                 let max = gd_sim::stats::level_value(rec, "skillChargeLevel", li)
                     .unwrap_or(1.0)
                     .max(1.0) as u32;
@@ -553,7 +553,7 @@ pub fn player_icons(db: &Database, st: &PlayerState) -> Vec<Tracked> {
 /// kept apart, so their relative order is by kind, not by age.
 pub fn pet_icons<'a>(
     db: &'a Database,
-    damage: Option<&crate::casting::DamageAuras>,
+    damage: Option<&gd_game_core::casting::DamageAuras>,
     pet: Option<&crate::pets::Pet>,
     received: Option<&ReceivedBuffs>,
 ) -> Vec<&'a str> {
@@ -582,7 +582,7 @@ pub fn pet_icons<'a>(
     let shown = |r: &Record| {
         r.class.starts_with("SkillBuff")
             && !r.bool("hideFromUI")
-            && !crate::skill_buffs::is_debuff(r)
+            && !gd_game_core::skill_buffs::is_debuff(r)
     };
     for (s, _, _) in timed.iter().rev() {
         if let Some(rec) = db.get(s).filter(|r| shown(r)) {
@@ -592,7 +592,7 @@ pub fn pet_icons<'a>(
     for b in received.map(|r| r.list.as_slice()).unwrap_or_default() {
         if let Some(rec) = db
             .get(&b.buff)
-            .filter(|r| !r.bool("hideFromUI") && !crate::skill_buffs::is_debuff(r))
+            .filter(|r| !r.bool("hideFromUI") && !gd_game_core::skill_buffs::is_debuff(r))
         {
             add(rec);
         }

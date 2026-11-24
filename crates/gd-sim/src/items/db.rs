@@ -5,8 +5,8 @@
 //! Crucible overlay, so an `ItemDb` from `GameData::item_db` serves the campaign's record or
 //! the overlay's as the session's mode changes. Lookups borrow: nothing is copied per call.
 use gd_formats::arz::{RawValue, Record};
+use gd_formats::collections::HashMap;
 use gd_formats::vfs::{Database, normalize};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Anything that can lend decoded database records by name.
@@ -38,7 +38,7 @@ impl MemorySource {
             class,
             fields
                 .iter()
-                .map(|(k, v)| (k.to_string(), vec![v.clone()]))
+                .map(|(k, v)| (Arc::from(*k), vec![v.clone()]))
                 .collect(),
         );
         self.0.insert(normalize(name), rec);

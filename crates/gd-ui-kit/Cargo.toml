@@ -1,0 +1,39 @@
+lints.workspace = true
+
+[package]
+name = "gd-ui-kit"
+version = "0.1.0"
+edition = "2024"
+description = "Grim Dawn's shared UI kit: the record-driven widget builder, fonts, chrome, scroll bars, confirm boxes, key bindings and the additive / masked UI materials over gd-game-core and gd-render"
+license = "MIT"
+
+[dependencies]
+# The UI's own records, fonts and text layout (gd-formats), the gameplay data the builder reads
+# (gd-game-core: GameData / Hooks / GameOptions / Requirements), the UI scale's sheet maths (gd-sim)
+# and the texture cache (gd-render). No gd-game: the kit compiles in parallel with the gameplay systems.
+bevy = {
+  version = "0.20",
+  default-features = false,
+  features = [
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_image",
+    "bevy_log",
+    "bevy_material",
+    "bevy_render",
+    "bevy_shader",
+    "bevy_sprite",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_window",
+    "multi_threaded",
+    "std",
+  ]
+}
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
+gd-render = { path = "../gd-render", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }

@@ -1,19 +1,19 @@
 //! Loot generation (Game.dll):
-//! - `LootLoader::Load(table, location, 6, difficulty)` 0x180362e40: up to six
+//! - `LootLoader::Load(table, location, 6, difficulty)`: up to six
 //!   `loot<Slot>Item<n>` (string array indexed by difficulty) weighted by
-//!   `chanceToEquip<Slot>Item<n>`; `GetLootName` 0x180362fe0 draws
+//!   `chanceToEquip<Slot>Item<n>`; `LootLoader::GetLootName` draws
 //!   `r % (total + 1)` and takes the first entry with `r <= cumulative`.
-//! - `LootMasterTable::GetLootName` 0x1803637b0 (`lootName/lootWeight` 1..100,
+//! - `LootMasterTable::GetLootName` (`lootName/lootWeight` 1..100,
 //!   cumulative, `r % total`, first `r < cum`, recursion depth 5), each entry a
-//!   `LevelTable` (`levels`/`records`, last `level >= levels[i]`, `sub_180355D40`).
-//! - `LootItemTable_DynWeight` 0x180359790/0x180359d40/0x18035a010: entries
+//!   `LevelTable` (`levels`/`records`, last `level >= levels[i]`, `LevelTable::GetRecord`).
+//! - `LootItemTable_DynWeight` (`Load` / `GetLootName` / `ComputeWeights`): entries
 //!   until the first gap, item level from each record's `itemLevel`, valid range
 //!   from `min/maxItemLevelEquation` (`(int)(max(x,1)+0.5)`), fallback to the
 //!   single highest level below the minimum, `forceHighestLevel`,
 //!   `disableLevelLimits`, bell-curve weights around `targetLevelEquation`
 //!   (`w = w * (int)bellSlope[|lvl-target|] / 100`, unchanged past the end of
 //!   the array; no bell array → total stays 0 → no drop), `r % total`.
-//! - `LootItemTableRandomizer_Dyn` 0x18035ca60/0x180361c20: affix tables
+//! - `LootItemTableRandomizer_Dyn` (`LoadFromDatabase` / `GetLootName`): affix tables
 //!   `prefix|suffix|rarePrefix|rareSuffixTableName<n>` (1..18, stop at first
 //!   missing) filtered by `TableLevelMin/Max` around the target level, the ten
 //!   `bothPrefixSuffix`.. weights (+% weight modifiers), one draw selects the
@@ -23,9 +23,9 @@
 //! - A plain `LootRandomizerTable` (no level limits: a relic's completion
 //!   bonus, `LootItemTableRandomizer`, the Tinker) reads only entries 1..70
 //!   ([`RANDOMIZER_ENTRIES`]); stock affix tables list up to 100.
-//! - Monster drops: `Character::LoadLoot` 0x180070030 /
-//!   `CreateItemFromLootTable` 0x180070760 and
-//!   `ControllerMonster::GetDropMiscItems` 0x180139b60: per slot
+//! - Monster drops: `Character::LoadLoot` /
+//!   `Character::CreateItemFromLootTable` and
+//!   `ControllerMonster::GetDropMiscItems`: per slot
 //!   `(float)(int)r * 4.6519563e-8 + 0.1 <= chanceToEquip<Slot>`, then the slot's
 //!   LootLoader; the item seed is the next draw after the name.
 //! - Rarity weights per source: [`weight_mods`] (monsters, containers) and
@@ -34,26 +34,25 @@
 //!   gold bonus ([`gold_with_bonus`]) and the auto-pickup radius ([`auto_pickup_radius`]).
 use super::db::{Fields, ItemDb};
 use super::resolve::{Classification, ResolvedItem};
-use crate::combat::Rng;
-use crate::expr::Expr;
 use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
+use gd_rules::Rng;
 
-/// Entries `LootRandomizerTable::Load` @0x180363d30 reads (70
-/// iterations over fixed 20-byte name tables, `randomizerWeight1..70` at
-/// 0x1807762a0 and `randomizerName1..70` at 0x180775d20; a weight > 0 with a
+/// Entries `LootRandomizerTable::Load` reads (70
+/// iterations over fixed 20-byte name tables, `randomizerWeight1..70` in
+/// `Game::RandomizerWeightKeys` and `randomizerName1..70` in `Game::RandomizerNameKeys`; a weight > 0 with a
 /// non-empty name joins, the total adds the weight). The loader behind
-/// `LootRandomizerTable::ManualLoad` @0x180363f90, which
+/// `LootRandomizerTable::ManualLoad`, which
 /// `ItemArtifact::InitializeItem`, `LootItemTableRandomizer::Get{Prefix,
 /// Suffix,Broken}Table`, `EnchanterTinkerConfigCmd::Execute` and
 /// `LootTable::ValidateSelectRandomizerRecursive` use: entries 71 and up of a
 /// table never roll there.
 pub const RANDOMIZER_ENTRIES: usize = 70;
 
-/// Entries `LootRandomizerTable_Dynamic::Load` @0x180364150 reads (
+/// Entries `LootRandomizerTable_Dynamic::Load` reads (
 /// 150 iterations over a name table it builds once, `randomizerName{i}`,
 /// `…Weight{i}`, `…LevelMin{i}`, `…LevelMax{i}` for 1..150). The loader
-/// behind `LootRandomizerTable_Dynamic::ManualLoad` @0x18036a1f0, which the
+/// behind `LootRandomizerTable_Dynamic::ManualLoad`, which the
 /// affix picks of `LootItemTableRandomizer_Dyn` and
 /// `GameEngine::GetAscendedItemName` use.
 pub const DYNAMIC_RANDOMIZER_ENTRIES: usize = 150;
@@ -75,13 +74,13 @@ pub struct LootParams {
     pub double_rare: f32,
     /// The Ascendant `equippedItemDropModifier`.
     pub equipped_drop: f32,
-    /// Ultimate Veteran ([`crate::mode::Mode::ultimate_veteran`]): containers
+    /// Ultimate Veteran ([`gd_rules::mode::Mode::ultimate_veteran`]): containers
     /// take `lootTable[3]`.
     pub ultimate_veteran: bool,
-    /// `LootBase::SetNoBrokenItems` (+0x30): the randomizers' `brokenOnly`
+    /// `LootBase::SetNoBrokenItems` (`LootBase.noBrokenItems`): the randomizers' `brokenOnly`
     /// weight is set to 0 after the modifiers (inlined in
-    /// `LootItemTable_DynWeight::GetLootName` 0x180359d40 and
-    /// `LootItemTable_FixedWeight::GetLootName` 0x18035b100);
+    /// `LootItemTable_DynWeight::GetLootName` and
+    /// `LootItemTable_FixedWeight::GetLootName`);
     /// `LootMasterTable::GetLootName` passes it to the child table. Only
     /// markets set it (`MarketMiniMart::Refresh`).
     pub no_broken: bool,
@@ -106,7 +105,7 @@ impl LootParams {
     }
 
     /// With the session's mode and altar formulas.
-    pub fn with_session(self, mode: crate::mode::Mode, a: &crate::ascendant::Ascendant) -> Self {
+    pub fn with_session(self, mode: gd_rules::mode::Mode, a: &crate::ascendant::Ascendant) -> Self {
         Self {
             double_rare: a.double_rare,
             equipped_drop: a.equipped_drop,
@@ -147,7 +146,7 @@ struct Names {
 
 fn level_eq(rec: &Record, key: &str, p: &LootParams) -> Option<f32> {
     let src = rec.str(key)?;
-    let e = Expr::parse(src).ok()?;
+    let e = crate::stats::record_expr(rec, key, src)?;
     Some(e.eval(&|v| match v {
         "minPlayerLevel" | "maxPlayerLevel" | "numberOfPlayers" => Some(1.0),
         "gameDifficulty" => Some(p.difficulty as f32),
@@ -201,7 +200,7 @@ fn pick_le<S: AsRef<str>>(list: &[(S, u32)], total: u32, rng: &mut Rng) -> Optio
 fn key<'k>(buf: &'k mut String, a: &str, b: &str, i: usize) -> &'k str {
     use std::fmt::Write;
     buf.clear();
-    let _ = write!(buf, "{a}{b}{i}");
+    write!(buf, "{a}{b}{i}").unwrap();
     buf
 }
 
@@ -364,7 +363,7 @@ impl Randomizer {
 /// One affix from a `LootItemTable_DynWeight` record's prefix / suffix (or
 /// rare) tables at `level`: `LoadFromDatabase` + `Get[Rare]PrefixTable` /
 /// `Get[Rare]SuffixTable` with the altar overrides off, as the Inventor's
-/// reroll panel does (GrimDawn.exe `sub_1401B7CD0`).
+/// reroll panel does (GrimDawn.exe `UIEnchanterRerollTab::Reroll`).
 pub fn affix_from_table(
     db: &ItemDb,
     table: &str,
@@ -508,9 +507,8 @@ fn fixed_weight(db: &ItemDb, rec: &Record, p: &LootParams, rng: &mut Rng, out: &
 }
 
 /// `LootItemTableRandomizer` (non-dynamic), loaded from the same record by
-/// `LootItemTable_FixedWeight::GetLootName` (`LoadFromDatabase`
-/// @0x18035ba90, `GetRandomizerNames` @0x18035c040, `GetPrefixTable`
-/// @0x18035c170). Its own fields: up to 15 `prefix`/`suffix`/`broken`
+/// `LootItemTable_FixedWeight::GetLootName` (`LoadFromDatabase`,
+/// `GetRandomizerNames`, `GetPrefixTable`). Its own fields: up to 15 `prefix`/`suffix`/`broken`
 /// `RandomizerName{i}` / `RandomizerWeight{i}` (no level limits) with a
 /// `…RandomizerChance` gate (`r / 2^31 <= chance`), and the five weights
 /// both / none / prefixOnly / suffixOnly / brokenOnly with the weight
@@ -691,7 +689,7 @@ pub fn roll_table_names(
     }
 }
 
-/// `ScriptableAction_GiveRandomItem::GenerateItem` 0x18046c930:
+/// `ScriptableAction_GiveRandomItem::GenerateItem`:
 /// builds a fresh table object from the action's record and rolls it once.
 /// Only a `LootItemTable_DynWeight` or a `LootMasterTable` record produces an
 /// item (any other class, a plain item record included, gives `NULL`). The
@@ -700,7 +698,7 @@ pub fn roll_table_names(
 /// modifiers are all 0 ([`LootParams::weight_mods`] cleared); the altar flag
 /// keeps its default (on, so the Ascendant `doubleRareWeightModifier`
 /// applies). A `LootMasterTable` is loaded with `SetNoBrokenItems(1, 1)`
-/// (`this+48 = 1`), a `LootItemTable_DynWeight` is not (`+48 = 0`). Both get
+/// (`LootBase.noBrokenItems = 1`), a `LootItemTable_DynWeight` is not (`= 0`). Both get
 /// the main player's level as parent and average level. The item seed is the
 /// draw after the names, as in [`roll_table`].
 pub fn story_random_item(
@@ -728,7 +726,7 @@ pub fn roll_loot(db: &ItemDb, table: &str, level: u32, rng: &mut Rng) -> Option<
     roll_table(db, table, &LootParams::at_level(level), rng)
 }
 
-/// Monster equipment locations (`LootLoader::Location`, string
+/// Monster equipment locations (`LootLoader::Load`'s location argument, string
 /// tables `aLootheaditem1` / `aChancetoequiph_1`).
 pub const SLOT_NAMES: [&str; 16] = [
     "Head",
@@ -849,8 +847,9 @@ pub fn weight_mods(db: &ItemDb, difficulty: u32, source: WeightSource) -> [i32; 
 }
 
 /// A challenge area's own `RandomizerWeightModifiers` for a loot source `ChallengeArea::Load`
-/// @0x18004a310 (the maps `GetMonsterLootWeightModifiers` / `GetChestLootWeightModifiers` read, inlined in
-/// `ControllerMonster::GetDropMiscItems` and the container loot job `sub_18003DB20`): at load, for the difficulty
+/// (the maps `GetMonsterLootWeightModifiers` / `GetChestLootWeightModifiers` read, inlined in
+/// `ControllerMonster::GetDropMiscItems` and the container loot job `LootContainer::GenerateFixedItem`): at load,
+/// for the difficulty
 /// (0 plain, 1 `Elite`, 2 `Ultimate`, else no entries: `None`, the engine's stay), one entry per classification
 /// with the area record's `<kind>[Elite|Ultimate]Modifier<Class>[Chest]` (missing fields are 0, so an area that
 /// lists none, as the stock sandstorms / blizzards, drops the engine's `+%` bonuses: the tables' own weights stay,
@@ -900,7 +899,7 @@ pub fn weight_mods_in(
         .unwrap_or_else(|| weight_mods(db, difficulty, source))
 }
 
-/// A challenge area's extra monster drop `ChallengeArea::GetMiscDropItem` @0x18004cb60 (called by
+/// A challenge area's extra monster drop `ChallengeArea::GetMiscDropItem` (called by
 /// `ControllerMonster::GetDropMiscItems` before the misc slots, same stream): the classification clamped to
 /// Common / Champion / Hero picks `dropChanceCommon` / `Champion` / `Hero`; one [`chance_roll`] always, and on a
 /// hit with a non-empty `dropItem` that record with the next draw as its seed. No stock area has a `dropItem`.
@@ -945,7 +944,7 @@ pub fn monster_drops(db: &ItemDb, monster: &str, p: &LootParams, rng: &mut Rng) 
 
 /// Like [`monster_drops`], with `true` for items the monster wears (equipment
 /// slots) — those drop on death only when not Broken
-/// (`Monster::DropIfNotBroken` 0x180376e20: classification 5 is
+/// (`Monster::DropIfNotBroken`: classification 5 is
 /// destroyed instead); `false` for the misc slots.
 pub fn monster_drops_tagged(
     db: &ItemDb,
@@ -966,7 +965,7 @@ pub fn monster_drops_tagged(
     )
 }
 
-/// The items a monster wears (`Character::LoadLoot` @0x180070030: each
+/// The items a monster wears (`Character::LoadLoot`: each
 /// slot's item is created from its loot table and equipped), rolled
 /// when it is created.
 pub fn monster_worn(db: &ItemDb, monster: &str, p: &LootParams, rng: &mut Rng) -> Vec<LootRoll> {
@@ -977,7 +976,7 @@ pub fn monster_worn(db: &ItemDb, monster: &str, p: &LootParams, rng: &mut Rng) -
 }
 
 /// The misc drop slots (`GetDropMiscItems`), rolled on death, for a monster in the challenge area `area`
-/// (its `ChallengeArea` record, `Monster` +8344): the area's extra drop ([`challenge_misc_drop`]) first, then
+/// (its `ChallengeArea` record, `Monster.challengeArea`): the area's extra drop ([`challenge_misc_drop`]) first, then
 /// the slots with the area's weights.
 pub fn monster_misc_in(
     db: &ItemDb,
@@ -1040,19 +1039,19 @@ fn monster_slots(
 }
 
 /// Containers (`FixedItemContainer` / `Destructible` loot, loader
-/// `sub_180358340`): `lootTable[min(difficulty, n - 1)]` (index 3 on
+/// `LootContainer::LoadLootTable`): `lootTable[min(difficulty, n - 1)]` (index 3 on
 /// Ultimate Veteran) at
 /// [`container_level`], then gold (`goldGenerator` with
 /// `goldGeneratorChance`, see `progress::gold_drop`). The table is a
 /// `fixeditemloot.tpl` record ([`fixed_item_loot_known`]); the game reads any table
-/// that way (the container's async loot job `sub_18003EBD0` →
-/// `sub_18003D6A0` / `sub_18003E370` only reads the fixed-loot fields, so
+/// that way (the container's async loot job `LootContainer::GenerateLootJob` →
+/// `LootContainer::GetFixedItemCount` / `LootContainer::GenerateFixedLoot` only reads the fixed-loot fields, so
 /// another table class yields no items; every stock container table is a
 /// `fixeditemloot.tpl`). Each item rolls with the container's
 /// `lootClassification` chest weight modifiers ([`weight_mods`]) and no
-/// Broken items (`sub_18003DB20`: its `LootLoader` gets
+/// Broken items (`LootContainer::GenerateFixedItem`: its `LootLoader` gets
 /// `GetChestLootWeightModifiers` and `SetNoBrokenItems(true, true)`; the
-/// classification is read with `lootTable` by `sub_180358340`).
+/// classification is read with `lootTable` by `LootContainer::LoadLootTable`).
 pub fn container_drops(
     db: &ItemDb,
     container: &str,
@@ -1075,7 +1074,7 @@ pub fn container_drops_known(
     container_drops_in(db, container, p, None, known, dropped, rng)
 }
 
-/// [`container_drops_known`] for a container standing in the challenge area `area` (`sub_18003DB20`:
+/// [`container_drops_known`] for a container standing in the challenge area `area` (`LootContainer::GenerateFixedItem`:
 /// the area at the container's coords, its chest weights replace the engine's, [`weight_mods_in`]).
 pub fn container_drops_in(
     db: &ItemDb,
@@ -1114,7 +1113,7 @@ pub fn container_drops_in(
     fixed_item_loot_known(db, table, p, known, dropped, rng)
 }
 
-/// A container's item level (`sub_1803585F0`): player level +
+/// A container's item level (`LootContainer::GetItemLevel`): player level +
 /// `levelOffset[difficulty]` + the area's offset (sector layer 9), clamped
 /// to the record's `[minLevel, maxLevel]`; when that gives 0 (no maxLevel),
 /// the level of the proxy that placed it, else the player level + offsets
@@ -1149,10 +1148,10 @@ pub fn container_level(
     level.max(1) as u32
 }
 
-/// `fixeditemloot.tpl` tables (`sub_18003E370`): the item count is
+/// `fixeditemloot.tpl` tables (`LootContainer::GenerateFixedLoot`): the item count is
 /// `IGenerate(min, max)` of `numSpawnMin/MaxEquation` (`numberOfPlayers` = 1,
 /// `averagePlayerLevel`, `gameDifficulty`), or else a pick over
-/// `numberWeights` (index = count). Item `i` (`sub_18003DB20`) picks a slot
+/// `numberWeights` (index = count). Item `i` (`LootContainer::GenerateFixedItem`) picks a slot
 /// `loot1..6` by its `lootNChance[i]` (cumulative, `FGenerate(0, Σ)`), then
 /// `lootNName1..6` by `lootNWeight1..6` like a monster loot slot. Epic /
 /// Legendary items already dropped this session and known blueprints
@@ -1169,7 +1168,7 @@ pub fn fixed_item_loot_known(
     let count = fixed_count(table, p, rng);
     let mut out = Vec::new();
     for i in 0..count.max(0) as usize {
-        // `sub_18003E370`: an item that is an Epic / Legendary
+        // `LootContainer::GenerateFixedLoot`: an item that is an Epic / Legendary
         // already dropped from a container this session
         // (`GameEngine::HasDroppedEpicOrLegendaryItem` set) or a blueprint the
         // player already knows (`GameEngine::IsItemInFormulas`) is rolled
@@ -1196,7 +1195,7 @@ pub fn fixed_item_loot_known(
     out
 }
 
-/// How many items a fixed table drops (`sub_18003D6A0`): uniform in
+/// How many items a fixed table drops (`LootContainer::GetFixedItemCount`): uniform in
 /// the `numSpawn{Min,Max}Equation` range, else an index into `numberWeights`.
 fn fixed_count(table: &Record, p: &LootParams, rng: &mut Rng) -> i32 {
     let vars = |n: &str| match n.to_ascii_lowercase().as_str() {
@@ -1211,14 +1210,13 @@ fn fixed_count(table: &Record, p: &LootParams, rng: &mut Rng) -> i32 {
         table.str("numSpawnMaxEquation"),
     ) {
         (Some(a), Some(b)) => {
-            let ev = |s: &str| {
-                Expr::parse(s)
-                    .ok()
+            let ev = |field: &str, s: &str| {
+                crate::stats::record_expr(table, field, s)
                     .map_or(0, |e| e.eval(&vars).max(0.0) as i32)
             };
-            let (a, b) = (ev(a), ev(b));
+            let (a, b) = (ev("numSpawnMinEquation", a), ev("numSpawnMaxEquation", b));
             let (lo, hi) = (a.min(b), a.max(b));
-            // `sub_18003D6A0`: int arithmetic, wrapping.
+            // `LootContainer::GetFixedItemCount`: int arithmetic, wrapping.
             let span = hi.wrapping_sub(lo).wrapping_add(1) as u32;
             lo.wrapping_add((rng.next() % span) as i32)
         }
@@ -1228,7 +1226,7 @@ fn fixed_count(table: &Record, p: &LootParams, rng: &mut Rng) -> i32 {
                 .into_iter()
                 .map(|w| w.max(0.0) as u32)
                 .collect();
-            // `sub_18003D6A0`: the weight sum and running total wrap.
+            // `LootContainer::GetFixedItemCount`: the weight sum and running total wrap.
             let total = w.iter().fold(0u32, |s, w| s.wrapping_add(*w));
             let m = total.wrapping_add(1);
             // (bad data: a sum wrapping to u32::MAX would divide by zero)
@@ -1245,12 +1243,12 @@ fn fixed_count(table: &Record, p: &LootParams, rng: &mut Rng) -> i32 {
 }
 
 /// Epic / Legendary items containers dropped this play session (lower-case
-/// records; `GameEngine` +224352). A new play session starts empty
+/// records; `GameEngine.droppedEpics`). A new play session starts empty
 /// (`GameEngine::ExitPlayingMode` / `ClearDroppedEpicsAndLegendaries`).
 #[derive(Debug, Clone, Default)]
-pub struct DroppedEpics(pub std::collections::BTreeSet<String>);
+pub struct DroppedEpics(pub gd_formats::collections::HashSet<String>);
 
-/// One item of a fixed-loot table (`sub_18003DB20`); `None` when it yields nothing.
+/// One item of a fixed-loot table (`LootContainer::GenerateFixedItem`); `None` when it yields nothing.
 fn fixed_item_once(
     db: &ItemDb,
     table: &Record,
@@ -1317,12 +1315,12 @@ pub fn rarity(r: &ResolvedItem) -> Classification {
     .unwrap_or(Classification::Common)
 }
 
-/// The sound a thrown item makes where it lands. `Item::PhysicsUpdate` @0x180325460 (landing: vfunc
-/// +1048 = `Item::PlayDropSoundWorld` @0x180325820, surface 100, tracked 3D): the item's classification sound
-/// when it has one (`ItemEquipment::InitializeItem` @0x18033c240 stores `GameEngine::GetItemDropSoundName`, the
+/// The sound a thrown item makes where it lands. `Item::PhysicsUpdate` (landing:
+/// `Item::PlayDropSoundWorld`, surface 100, tracked 3D): the item's classification sound
+/// when it has one (`ItemEquipment::InitializeItem` stores `GameEngine::GetItemDropSoundName`, the
 /// `*ItemDropSound` rows of `gameiteminfo.dbr` keyed by the classification enum: the larger of base / prefix /
 /// suffix, or 16 = rare prefix + rare suffix, 17 when the base is rare too; equipment only), else its record's
-/// `dropSound3D` (`Item::Load` @0x180324c60). The water case (`dropSoundWater`, surface 7) needs the physics
+/// `dropSound3D` (`Item::Load`). The water case (`dropSoundWater`, surface 7) needs the physics
 /// surface under the landing: PORT: always the ground one.
 pub fn drop_sound(idb: &ItemDb, item: &Item) -> Option<String> {
     let r = super::resolve(idb, item)?;
@@ -1360,7 +1358,7 @@ pub fn drop_sound(idb: &ItemDb, item: &Item) -> Option<String> {
 }
 
 /// A gold pickup with the character's `characterIncreasedGold` %
-/// (`Character::TakeBonus` @0x180067e30: gold + floor(gold × % +
+/// (`Character::TakeBonus`: gold + floor(gold × % +
 /// 0.5); the money text shows the sum).
 pub fn gold_with_bonus(gold: u32, bonus_pct: f32) -> u32 {
     if bonus_pct == 0.0 {
@@ -1371,15 +1369,15 @@ pub fn gold_with_bonus(gold: u32, bonus_pct: f32) -> u32 {
 }
 
 /// The auto-pickup radius of a ground item of `class` (None = gold), 0 when
-/// it is not picked up automatically. `Player::UpdateSelf`
-/// @0x1803d24a0: per item with `CanAutoPickup` and a radius above 0 the
+/// it is not picked up automatically. `Player::UpdateSelf`:
+/// per item with `CanAutoPickup` and a radius above 0 the
 /// pickup distance is `max(GetAutoPickupRadius, autoLootRadius × 10)`
-/// (3D, items within 10 m). Gold (`OneShot_Gold` @0x1803c0f50),
+/// (3D, items within 10 m). Gold (`OneShot_Gold`, via `OneShot_Skill::GetAutoPickupRadius`),
 /// `OneShot_Skill` and potions: always, 4 m (potions only when the bags
 /// have room: `Player::IsInventorySpaceAvailable`, the pickup itself fails
-/// otherwise); `OneShot_Food` 1 m (@0x1803c14b0); `ItemRelic` / `QuestItem`
-/// (@0x18034a9c0, @0x180428390): only when the option is above 0, 4 m with
-/// room. Each of them refuses an item the main player dropped (Item +1728
+/// otherwise); `OneShot_Food` 1 m (`OneShot_Food::GetAutoPickupRadius`); `ItemRelic` / `QuestItem`
+/// (`ItemRelic::CanAutoPickup`, `QuestItem::CanAutoPickup`): only when the option is above 0, 4 m with
+/// room. Each of them refuses an item the main player dropped (`Item.droppedBy` =
 /// the player's id, `gd_game::item_drop`: `gd_game::loot::pick_up` skips a
 /// `DroppedByPlayer`), and each waits out its 750 ms pick-up delay
 /// (`gd_game::loot::PICKUP_DELAY`).

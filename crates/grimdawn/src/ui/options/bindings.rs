@@ -1,6 +1,6 @@
 use super::*;
 
-/// The list's row order (sub_1400B0380).
+/// The list's row order (`KeyBindingList::AddRows`).
 pub(super) const ROW_ORDER: [u32; 67] = [
     63, 64, 65, 66, 1, 2, 3, 4, 56, 5, 6, 7, 8, 52, 53, 61, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
     19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 54, 55, 59, 35, 36, 37, 57, 38,
@@ -17,7 +17,7 @@ pub(super) fn binding_rows(
     ROW_ORDER
         .iter()
         .filter(|a| wasd || !(63..=66).contains(*a))
-        // ForceMove and Move are hidden in the keyboard modes (`sub_1401F73F0`).
+        // ForceMove and Move are hidden in the keyboard modes (`KeyBindingManager::IsActionHidden`).
         .filter(|a| !wasd || !(50..=51).contains(*a))
         .map(|&a| {
             let [p, s] = b.get(a);

@@ -1,43 +1,11 @@
 use super::*;
 
-/// Use a hotbar slot (the game sends it for keys and mouse buttons): at
-/// `target` (the character under the cursor: a foe, or one's own pet) or the
-/// ground `point`; `force` is Shift + left button (attack in place);
-/// `scripted` marks test-hook casts (their channels end after 2 s).
-///
-/// The aim by the skill's [`TargetType`](gd_sim::skills::TargetType),
-/// `ControllerPlayerState::DefaultRequestSkillAction` @0x180163c30 (its
-/// target is the combat enemy for enemy and location skills, the combat ally
-/// for ally skills, the player for self skills; the controller's enemy / ally
-/// are the foe / friend under the cursor, the player never one, sub_14002FF80):
-/// - `Ally` (`Skill_GiveBonus`, `Skill_BuffOther`): the friend under the
-///   cursor, else the request fails (`Skill_GiveBonus::GetValidTarget`
-///   @0x1804f6900: a projectile skill takes any target; one in the world
-///   passes; else `Skill::GetValidFriendTarget` @0x1804976d0 with radius 0
-///   (@0x180164172) finds none): no cast, no cost, a heal key over the
-///   ground does nothing;
-/// - `Enemy` with a friend under the cursor and no foe: refused (vtable
-///   +1440, false for every class), silently;
-/// - otherwise the foe (if any) and the point;
-/// - then the spell family's `SkillActivatedSpell::GetValidTarget`
-///   ([`gd_sim::skills::request_aim`]): a `targetingMode` `Point` or
-///   ground-only spell drops the foe, any other is refused without a foe.
-///   PORT: the friend is one's own living pet.
-#[derive(Message, Clone, Debug)]
-pub struct CastRequest {
-    pub slot: usize,
-    pub target: Option<Entity>,
-    pub point: Vec3,
-    pub force: bool,
-    pub scripted: bool,
-}
-
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn cast_requests(
     mut commands: Commands,
     mut requests: MessageReader<CastRequest>,
     data: Res<GameData>,
-    options: Option<Res<crate::options::GameOptions>>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     mut players: Query<
         (
             Entity,
@@ -46,13 +14,13 @@ pub fn cast_requests(
             &Loadout,
             &mut Character,
             &mut MovePath,
-            Option<&crate::weapon_pool::SkillLinks>,
+            Option<&gd_game_core::weapon_pool::SkillLinks>,
             Option<&MoveToUseSkill>,
-            &crate::player::ControllerDirection,
+            &gd_game_core::player::ControllerDirection,
             Option<&Casting>,
             Option<&mut Channel>,
             Option<&LastCast>,
-            &crate::player::EffectiveSkills,
+            &gd_game_core::player::EffectiveSkills,
         ),
         (
             With<Player>,
@@ -63,12 +31,12 @@ pub fn cast_requests(
     monsters: Query<
         (Entity, &GlobalTransform, &Combatant),
         (
-            Or<(With<MonsterAi>, With<crate::world::Breakable>)>,
+            Or<(With<MonsterAi>, With<gd_game_core::world::Breakable>)>,
             Without<Dead>,
             Without<Player>,
         ),
     >,
-    breakables: Query<&crate::world::Breakable>,
+    breakables: Query<&gd_game_core::world::Breakable>,
     mut player_cb: Query<&mut Combatant, (With<Player>, Without<MonsterAi>)>,
     ranged_q: Query<(), (With<Player>, With<RangedWeapon>)>,
     mut pool_rng: ResMut<crate::weapon_pool::PoolRng>,
@@ -84,7 +52,7 @@ pub fn cast_requests(
     let movement = options.as_ref().map_or(0, |o| o.int("movementType"));
     let lock = options.as_ref().is_none_or(|o| o.flag("gamepadTargetLock"));
     // This frame's requests go through the busy gate ([`queue_if_busy`]); then the
-    // pending-action slot re-asks permission (`CharacterHandlerUpdate` @0x1801279f0 runs
+    // pending-action slot re-asks permission (`CharacterHandlerUpdate` runs
     // after the input): the queued cast is taken out and offered again, the gate stores
     // it back while the current action still refuses it.
     let mut reqs = requests
@@ -109,9 +77,9 @@ pub fn cast_requests(
                 };
                 match ch
                     .queued
-                    .take_if(|q| matches!(q, crate::character::QueuedAction::Cast(_)))
+                    .take_if(|q| matches!(q, gd_game_core::character::QueuedAction::Cast(_)))
                 {
-                    Some(crate::character::QueuedAction::Cast(r)) => r,
+                    Some(gd_game_core::character::QueuedAction::Cast(r)) => r,
                     _ => break,
                 }
             }
@@ -142,7 +110,7 @@ pub fn cast_requests(
             continue;
         };
         // The Move slot's reset (`crate::hotbar::move_slot_keeps_target`,
-        // `Grim Dawn.exe` sub_140021000 @0x1400224e9): a left press keeps a breakable
+        // `InGameUI::HandleMouseEvent`): a left press keeps a breakable
         // only with `breakingMoveTo`, never a character; else the target is dropped and
         // the fallback weapon attack swings at the point, not the object.
         let picked = if crate::hotbar::is_move_to(&skill)
@@ -158,10 +126,10 @@ pub fn cast_requests(
             picked
         };
         // The Move skill's request always fails (`Skill_Move::GetValidTarget`, `crate::hotbar::MOVE_TO`): from a hot
-        // slot key or the armed slot nothing happens (the button's `+2225` fallback flag is off,
-        // `Grim Dawn.exe` sub_140205BE0 sets it on the two mouse buttons only); the left button's stationary /
-        // keyboard-mode press (`force`) falls back to the default weapon attack (`SelectPrimaryAction` @0x180161d00
-        // requests `GetDefaultSkillId(0)` after the primary skill fails).
+        // slot key or the armed slot nothing happens (the button's `UIHotSlotButton.fallbackToDefault` flag is
+        // off, the HUD constructor `UIPlayerHud::UIPlayerHud` sets it on the two mouse buttons only); the left
+        // button's stationary / keyboard-mode press (`force`) falls back to the default weapon attack
+        // (`SelectPrimaryAction` requests `GetDefaultSkillId(0)` after the primary skill fails).
         let skill = match crate::hotbar::is_move_to(&skill) {
             true if slot == SLOT_LEFT && force => DEFAULT_ATTACK.to_owned(),
             true => continue,
@@ -169,7 +137,7 @@ pub fn cast_requests(
         };
         // The kick rule (`crate::hotbar::kicks_breakable`): a left-button action on a
         // "Kick" breakable requests the kick whatever the slot holds, before the slot's
-        // skill (`SelectPrimaryAction` @0x180161d00); the Move fallback above
+        // skill (`SelectPrimaryAction`); the Move fallback above
         // included. Right-button and hot-slot requests have no such branch.
         let skill = if slot == SLOT_LEFT
             && picked.is_some_and(|t| {
@@ -273,7 +241,7 @@ pub fn cast_requests(
             if ch.state == CharState::Evade {
                 commands
                     .entity(e)
-                    .try_remove::<(crate::evade::Evading, crate::casting::Leap)>();
+                    .try_remove::<(crate::evade::Evading, gd_game_core::casting::Leap)>();
             }
             path.points.clear();
             // A new action: the held channel stops (`SkillManager::StopCurrentSkill`, as in `try_cast`; its state
@@ -401,7 +369,7 @@ pub fn cast_requests(
         let profile = player_cb.iter().next().map(|c| c.profile.clone());
         let none = std::collections::BTreeMap::new();
         // The pending walk to the same skill and target stays as it is
-        // (`ControllerPlayerStateMoveToUseSkill::RequestSkillAction` @0x1801677c0).
+        // (`ControllerPlayerStateMoveToUseSkill::RequestSkillAction`).
         if pending.is_some_and(|p| p.skill == skill && p.target == target) {
             continue;
         }
@@ -442,11 +410,11 @@ pub fn cast_requests(
     }
 }
 
-/// The action queue's busy gate (`LocalHandleAction` @0x180127e40 → `CheckAction`
-/// @0x180127b90): a request the current action refuses is remembered in the one
-/// pending slot (last wins, [`crate::character::QueuedAction`]) or dropped; one it
+/// The action queue's busy gate (`LocalHandleAction` → `CheckAction`):
+/// a request the current action refuses is remembered in the one
+/// pending slot (last wins, [`gd_game_core::character::QueuedAction`]) or dropped; one it
 /// allows runs now and clears the slot. During a swing or cast the answer is
-/// `AttackAction::QueryActionPermission` @0x180084380, in order:
+/// `AttackAction::QueryActionPermission`, in order:
 /// - the running skill itself (the held button's repeat) → dropped, even past
 ///   `AllowInterrupt`: a held skill casts again only once its clip's "End" ended the
 ///   action, so its cadence is the whole clip at the cast speed;
@@ -459,7 +427,7 @@ pub fn cast_requests(
 ///
 /// Other busy states (an evade's dash, a stun, a flinch) queue it; a dead character's
 /// request is dropped. The attack-delay a move's cancel left defers a skill use
-/// (`UseSkill::OnBegin` @0x180169250): queued. `instantCast` skills bypass the gate
+/// (`ControllerPlayerStateUseSkill::OnBegin`): queued. `instantCast` skills bypass the gate
 /// entirely (`DefaultRequestSkillAction` sends `ActivateSkillConfigCmd` directly).
 /// True when the caller must skip the request (queued or dropped). The running skill is the cast's
 /// [`Casting`], after its fire point the [`LastCast`] of the playing clip (the engine's
@@ -494,7 +462,11 @@ fn queue_if_busy(
             });
             let attack = rec.is_some_and(chains);
             if same
-                || (attack && matches!(ch.queued, Some(crate::character::QueuedAction::Cast(_))))
+                || (attack
+                    && matches!(
+                        ch.queued,
+                        Some(gd_game_core::character::QueuedAction::Cast(_))
+                    ))
             {
                 return true;
             }
@@ -505,57 +477,12 @@ fn queue_if_busy(
         _ => !ch.can_act(),
     };
     if queue || ch.attack_delay > 0.0 {
-        ch.queued = Some(crate::character::QueuedAction::Cast(req.clone()));
+        ch.queued = Some(gd_game_core::character::QueuedAction::Cast(req.clone()));
         return true;
     }
     ch.queued = None;
     false
 }
-
-/// A press on a pet portrait with a hot slot armed (`grimdawn` `ui/pets`):
-/// the armed slot's skill is requested on the pet ([`crate::hotbar`] takes the
-/// armed slot and turns it into a [`CastRequest`] at the pet).
-///
-/// `Grim Dawn.exe` sub_140254700 (the portrait's mouse handler)
-/// and Game.dll: with `PlayerHotSlotCtrl::IsAnySlotActive` (a slot armed,
-/// `SkillSet` +0) and the hot slots not disabled (`+40`,
-/// `SetDisableHotSlotsOverride`), a left or right press on the portrait's
-/// frame rect sets the pet as the controller's combat ally, clears its
-/// combat enemy and runs `ControllerPlayer::HandleActionFromMouse` at the
-/// pet's coordinates with the pet's id; its first step,
-/// `ControllerPlayerState::ActivateSuperSkill` @0x1801624b0, takes (and
-/// clears) the armed slot and requests its skill
-/// (`DefaultRequestSkillAction` @0x180163c30), which aims it by the skill's
-/// [`TargetType`](gd_sim::skills::TargetType) like any request
-/// ([`cast_requests`]). PORT: the friend is the player's own pet (single
-/// player has no party frames).
-#[derive(Message, Clone, Copy, Debug, PartialEq)]
-pub struct CastOnAlly {
-    pub ally: Entity,
-}
-
-/// The wrapper skill a hot slot cast ran as its `buffSkillName` record
-/// (`Casting::skill` is `buff`): what `SkillActivated::ApplyBuffOnTarget`'s
-/// `CastBuff` / `CastDebuf` triggers classify (`crate::autocast`). The last
-/// use's, instant ones included; the pending animated cast's cooldown key is
-/// [`CastCooldownKey`].
-#[derive(Component, Clone, Debug)]
-pub struct CastWrapper {
-    pub buff: String,
-    pub wrapper: String,
-}
-
-/// The wrapper a pending animated hot slot cast ([`Casting`] with `skill` =
-/// `buff`) runs under: its cooldown's key and its item-skill check at the fire
-/// (`fire_casts`; [`try_cast`] checks it, the hotbar shows it). Set with the
-/// [`Casting`] only, so an instant cast during the animation does not change it.
-#[derive(Component, Clone, Debug)]
-pub struct CastCooldownKey(pub CastWrapper);
-
-/// A hot slot skill was pressed while it cooled down (`Player::PlaySkillCooldownVox` and the UI's
-/// `tagSkillNotReady` text).
-#[derive(Message, Clone, Copy, Debug)]
-pub struct SkillNotReady;
 
 /// The gates every player skill use passes, [`try_cast`]'s and a new channel's ([`cast_requests`]) alike: a learned
 /// level (0 refuses), the form's allowed skill types, the worn weapons and the cooldown (a charge's arrival skips the
@@ -567,7 +494,7 @@ fn request_gates(
     caster: &Caster,
     loadout: &Loadout,
     effective: &gd_sim::skills::SkillBook,
-    links: Option<&crate::weapon_pool::SkillLinks>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     rec: &Record,
     skill: &str,
     how: Use,
@@ -591,7 +518,7 @@ fn request_gates(
     }
     // The worn weapons must suit it (`Skill::SetAvailability`).
     // PORT: the log line is the port's; the game shows nothing (GrimDawn.exe
-    // sub_1401E7C60 only voices cooldown / not-enough-energy, statuses 2 /
+    // `HotSlotButton::Press` only voices cooldown / not-enough-energy, statuses 2 /
     // 4 of `HotSlotOptionSkill::GetStatus`), the skill just isn't cast.
     if let Some(l) = links
         && !l.weapons_allow(&data.db, rec, skill)
@@ -604,7 +531,7 @@ fn request_gates(
     }
     if how != Use::ArrivedWarm && !caster.cooldowns.usable(skill) {
         debug!("cast {skill}: cooling down");
-        // `HotSlotOptionSkill::PlayCooldownVox` @0x18031c110: a pressed skill on cooldown also raises the red
+        // `HotSlotOptionSkill::PlayCooldownVox`: a pressed skill on cooldown also raises the red
         // "That skill is not ready" text (the `errorMessages` option, `ui/errormsg.rs`).
         if how == Use::Request {
             commands.write_message(SkillNotReady);
@@ -628,7 +555,7 @@ pub(crate) fn try_cast(
     caster: &mut Caster,
     loadout: &Loadout,
     effective: &gd_sim::skills::SkillBook,
-    links: Option<&crate::weapon_pool::SkillLinks>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     totals: &std::collections::BTreeMap<String, f32>,
     ch: &mut Character,
     path: &mut MovePath,
@@ -643,7 +570,7 @@ pub(crate) fn try_cast(
         return false;
     };
     // `instantCast` (activation mode 2) bypasses the busy guard and the cast-animation
-    // lock: `DefaultRequestSkillAction` @0x180163c30 sends `ActivateSkillConfigCmd`
+    // lock: `DefaultRequestSkillAction` sends `ActivateSkillConfigCmd`
     // directly, so the skill fires mid-swing / mid-cast.
     let instant = rec.bool("instantCast");
     if !instant && (!ch.can_act() || ch.attack_delay > 0.0) {
@@ -696,7 +623,7 @@ pub(crate) fn try_cast(
     // over their sums); cost × (1 − total %) floored at 0, cooldown × (1 −
     // total %). A value with a `…Chance` strictly between 0 and 100 counts
     // only when a fresh 0–100 roll is at or under it (`SkillAttribute::
-    // GetTotalValue` @0x18051e380, rolled per `GetTotalSkillAttribute` call)
+    // GetTotalValue`, rolled per `GetTotalSkillAttribute` call)
     // — rolled here for the skill's own record and modifiers
     // ([`own_skill_attribute`]); the character's gear / passive sums arrive
     // already summed in `totals`.
@@ -711,7 +638,7 @@ pub(crate) fn try_cast(
         &mod_refs,
         loadout.is_item_skill(&data.db, skill),
         gd_sim::actor::skill_attribute(totals, "skillManaCostReduction"),
-        |c| crate::rng::f32() * 100.0 <= c,
+        |c| gd_game_core::rng::f32() * 100.0 <= c,
     );
     let cost = if warm { 0.0 } else { cost };
     if caster.energy < cost {
@@ -742,7 +669,7 @@ pub(crate) fn try_cast(
         if !warm {
             caster.cooldowns.start(skill.to_owned(), cd, charges);
         }
-        crate::visuals::notify(commands, skill);
+        gd_game_core::visuals::notify(commands, skill);
         commands
             .entity(player)
             .insert(crate::combo::ComboUse::new(&data_name, rec, cd));
@@ -807,7 +734,7 @@ pub(crate) fn try_cast(
     // Ranged-profile skills fire from where the player stands: past the
     // usable distance the target is dropped and the point becomes the
     // skill's range along the line (`ControllerPlayerStateUseSkill::OnBegin`
-    // @0x180169250 with `Skill::GetRange`); a `targetingMode`
+    // with `Skill::GetRange`); a `targetingMode`
     // `Target` skill is refused instead, unpaid
     // (`gd_sim::skills::refused_out_of_range`).
     let to = (point - tf.translation).with_y(0.0);
@@ -819,7 +746,7 @@ pub(crate) fn try_cast(
         debug!("cast {skill}: target out of range");
         return false;
     }
-    // `Skill_AttackSpellReflectLink::ActivateNow` @0x1804d38d0: a target
+    // `Skill_AttackSpellReflectLink::ActivateNow`: a target
     // beyond `maxRange` (emit point to emit point; PORT: the feet to the aim
     // point) starts no link, cooldown or cost. PORT: a link already
     // on the target (re-paid by the engine) is not looked up here.
@@ -832,8 +759,8 @@ pub(crate) fn try_cast(
         return false;
     }
     commands.entity(player).remove::<MoveToUseSkill>();
-    // A new action ends a running channel (`SkillManager::StopCurrentSkill`
-    // @0x180534540); a cut-short charge's stale warm-up marker goes too (the
+    // A new action ends a running channel (`SkillManager::StopCurrentSkill`);
+    // a cut-short charge's stale warm-up marker goes too (the
     // charge keeps what it paid): only the charge's own arrival keeps it. The
     // cost and cooldown are paid at the cast's fire (`fire_casts`), not here.
     commands.entity(player).try_remove::<Channel>();
@@ -845,7 +772,7 @@ pub(crate) fn try_cast(
         skill.rsplit('/').next().unwrap_or(skill),
         (point - tf.translation).with_y(0.0).length()
     );
-    crate::visuals::notify(commands, skill);
+    gd_game_core::visuals::notify(commands, skill);
     let mut point = point;
     let mut target = target;
     // An ally skill keeps its target: its effect checks the range when it
@@ -863,7 +790,7 @@ pub(crate) fn try_cast(
     if ch.state == CharState::Evade {
         commands
             .entity(player)
-            .try_remove::<(crate::evade::Evading, crate::casting::Leap)>();
+            .try_remove::<(crate::evade::Evading, gd_game_core::casting::Leap)>();
     }
     path.points.clear();
     let special = loadout
@@ -909,14 +836,18 @@ pub(crate) fn try_cast(
     // Cast effect at the caster (`skillActivatedAuraName`, else the hand FX, `Skill::GetParticleEffect1`);
     // a toggle's is a loop while it is on (`skill_fx`).
     if kind != Kind::Toggle
-        && crate::skill_fx::timed_aura(rec).is_none()
+        && gd_game_core::skill_fx::timed_aura(rec).is_none()
         && let Some(fx) = rec
             .str("skillActivatedAuraName")
             .map(str::to_owned)
             .or_else(|| {
-                let mods =
-                    crate::skill_fx::override_mods(&data.db, links, Some(&loadout.skills), skill);
-                crate::skill_fx::particle_effect1(rec, &mods)
+                let mods = gd_game_core::skill_fx::override_mods(
+                    &data.db,
+                    links,
+                    Some(&loadout.skills),
+                    skill,
+                );
+                gd_game_core::skill_fx::particle_effect1(rec, &mods)
             })
     {
         spawn_fx(
@@ -927,48 +858,6 @@ pub(crate) fn try_cast(
         );
     }
     true
-}
-
-/// A channelled skill (`SkillChanneled` subclasses): it ticks
-/// every `timeBetweenAttacks` ms (default 100 for every class), ÷ cast
-/// speed (Spin: ÷ attack speed, `Skill_AttackRadiusSpin::Update`
-/// @0x1804ca140); each tick pays the full `skillManaCost` and the channel
-/// stops when the energy left is under it (`Skill_AttackSpellBeam::Update`
-/// @0x1804da5a0); releasing the key ends it (`SkillChanneled::Update`
-/// @0x1805294d0's timer, re-armed by every tick). The tick timer is the
-/// engine's (the same in all five `Update`s: Spin @0x1804ca140,
-/// Grow @0x1804c7130, Drain @0x1804d04c0, Cone @0x1804cdab0, Beam
-/// @0x1804da5a0): `timer -= frame ms; if timer <= 0 { timer =
-/// (int)(timeBetweenAttacks / speed); tick }`, so a tick re-arms the whole
-/// period (what the frame overshot is dropped) and there is one tick per
-/// update at most: the rate follows the frame time by design, don't "fix"
-/// it. PORT: the period is not cut to whole ms. Death and a stun end the
-/// channel ([`stop_skills`]). A test cast channels for
-/// 2 s. The beam turns to the cursor at once (the game's
-/// `rotationSpeedMultiplier` turn rate is not done); its rays, strikes and
-/// energy are [`spell_beams`]', the ribbons and effects grimdawn `beams.rs`'.
-/// A cone's strikes, energy and target are its cone entry's (`class_fx::ConeFx`); each re-request retargets it
-/// (`Skill_AttackSpellCone::GetValidTarget` @0x1804cd870: the request's target, [`Channel::target`]).
-#[derive(Component)]
-pub struct Channel {
-    pub skill: String,
-    pub level_index: usize,
-    /// The hotbar slot it was started from.
-    pub slot: usize,
-    pub(super) tick: f32,
-    pub scripted: bool,
-    /// The slot's key / button is still held (set by the game's input).
-    pub input_held: bool,
-    /// The cursor's ground point (set by the game's input).
-    pub input_aim: Option<Vec3>,
-    /// The point the channel aims at this frame (the cursor's, or the keyboard modes' `keyboard_aim`): a beam's
-    /// slope ([`spell_beams`]).
-    pub aim: Option<Vec3>,
-    /// Seconds channelled (Winds of Asterkarn's growth).
-    pub(super) held: f32,
-    /// The targeted foe: a drain's; a cone's, re-read from each re-request (the cursor's character; scripted: the
-    /// nearest foe).
-    pub target: Option<Entity>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -983,7 +872,7 @@ pub fn channels(
             &mut Caster,
             &mut Channel,
             &mut Character,
-            &crate::player::ControllerDirection,
+            &gd_game_core::player::ControllerDirection,
         ),
         (With<Player>, Without<Dead>),
     >,
@@ -1001,7 +890,7 @@ pub fn channels(
     mut elapsed: Local<f32>,
     mut activations: MessageWriter<crate::secondary::Activate>,
     (options, record): (
-        Option<Res<crate::options::GameOptions>>,
+        Option<Res<gd_game_core::options::GameOptions>>,
         Res<crate::hotbar::WorldCursor>,
     ),
 ) {
@@ -1029,7 +918,7 @@ pub fn channels(
         return;
     }
     // Aim: the cursor's ground point (test: the nearest foe). The held key / button re-requests the skill
-    // (`ControllerPlayerStateUseSkill::RequestSkillAction` @0x180169aa0 → `DefaultRequestSkillAction`), so
+    // (`ControllerPlayerStateUseSkill::RequestSkillAction` → `DefaultRequestSkillAction`), so
     // the keyboard modes aim it by `keyboard_aim`: in Keyboard Only at the controller's cursor record (the picked foe)
     // or along the movement direction / facing, a Spin standing at the player (PORT: every frame, not per repeat).
     let movement = options.as_ref().map_or(0, |o| o.int("movementType"));
@@ -1125,10 +1014,10 @@ pub fn channels(
     let start = tf.translation;
     // The shape per class:
     // - the others `GetTargetsInRadius` (`Combatant::in_radius`);
-    // - drain (`FindNewTargets` @0x1804cfa30): the targeted foe within
+    // - drain (`FindNewTargets`): the targeted foe within
     //   `maxRange` (`sparkMaxNumber` extras: no shipping drain has them);
     // - spin: `skillTargetRadius` around the caster;
-    // - grow (`Update` @0x1804c7130): that radius plus `radiusIncrement` per
+    // - grow (`Update`): that radius plus `radiusIncrement` per
     //   `timeBetweenGrow` ms (default 100) ÷ cast speed, up to
     //   `explosionRadius`.
     let end = start + dir * range;
@@ -1183,88 +1072,5 @@ pub fn channels(
             Transform::from_translation(end + Vec3::Y),
         );
     }
-    crate::visuals::notify(&mut commands, &ch.skill);
-}
-
-/// A grow channel's radius after `held` seconds (`Skill_AttackRadiusGrow::Update` @0x1804c7130): `skillTargetRadius`
-/// plus `radiusIncrement` per `timeBetweenGrow` ms (default 100) ÷ cast speed, up to `explosionRadius`.
-pub(super) fn grow_radius(rec: &Record, li: usize, held: f32, spell_speed: f32) -> f32 {
-    let r = level_f(rec, "skillTargetRadius", li).max(1.0);
-    let steps = (held * 1000.0 * spell_speed.max(0.2)
-        / rec.f32("timeBetweenGrow").unwrap_or(100.0).max(1.0))
-    .floor();
-    (r + steps * rec.f32("radiusIncrement").unwrap_or(0.0))
-        .min(rec.f32("explosionRadius").unwrap_or(r).max(r))
-}
-
-/// The cone's frustum (`Skill_AttackSpellCone::GetTargets` @0x1804ce270 → `sub_180595640`): the near face
-/// at `near`, the far face at `far`, each `w0` / `w1` wide along the caster's `right` axis and `h` high along its
-/// `up` axis; the near / far planes face the caster's forward `fwd`, the four sides join the faces' edges. True when
-/// the box `b` meets it. PORT: `GetTargetsInFrustum` against the foe's world box (a plane test: the box's centre
-/// within each plane's distance plus the box's projected half extent).
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cone_frustum_meets_box(
-    near: Vec3,
-    far: Vec3,
-    fwd: Vec3,
-    right: Vec3,
-    up: Vec3,
-    w0: f32,
-    w1: f32,
-    h: f32,
-    b: &gd_sim::bounds::Aabb,
-) -> bool {
-    let c = Vec3::from(b.center);
-    let half = Vec3::from(b.half);
-    let reach = |n: Vec3| n.abs().dot(half);
-    // Outward normal and a point of each plane.
-    let side = |axis: Vec3, other: Vec3, a: f32, b: f32| {
-        let (p, q) = (near + axis * a * 0.5, far + axis * b * 0.5);
-        let n = (q - p).cross(other).normalize_or_zero();
-        (if n.dot(axis) < 0.0 { -n } else { n }, p)
-    };
-    let planes = [
-        (-fwd, near),
-        (fwd, far),
-        side(right, up, w0, w1),
-        side(-right, up, w0, w1),
-        side(up, right, h, h),
-        side(-up, right, h, h),
-    ];
-    planes.iter().all(|(n, p)| (c - *p).dot(*n) <= reach(*n))
-}
-
-/// The `GD_CAST` script: `state` (a `Local` of the calling system) holds the start time and the entries left.
-pub fn test_cast(
-    state: &mut Option<(std::time::Instant, Vec<(f32, usize)>)>,
-    hooks: &crate::hooks::Hooks,
-) -> Option<usize> {
-    let st = state.get_or_insert_with(|| (std::time::Instant::now(), hooks.gameplay.cast.clone()));
-    let now = st.0.elapsed().as_secs_f32();
-    let i = st.1.iter().position(|(t, _)| now >= *t)?;
-    Some(st.1.remove(i).1)
-}
-
-/// A skill's own part of `Skill::GetTotalSkillAttribute` (see [`cast_requests`]): `k` over
-/// its record and modifiers (each gated by its `{k}Chance`, a fresh roll per call), plus |that| ×
-/// the same sum of `{k}Modifier` %.
-pub(crate) fn own_skill_attribute<'a>(
-    recs: impl Iterator<Item = (&'a Record, usize)> + Clone,
-    k: &str,
-) -> f32 {
-    let rolled = |k: &str| {
-        recs.clone()
-            .map(|(r, l)| {
-                let c = level_f(r, &format!("{k}Chance"), l);
-                if c > 0.0 && c < 100.0 && crate::rng::f32() * 100.0 > c {
-                    0.0
-                } else {
-                    level_f(r, k, l)
-                }
-            })
-            .sum::<f32>()
-    };
-    let own = rolled(k);
-    let own_pct = rolled(&format!("{k}Modifier"));
-    own + own.abs() * own_pct * 0.01
+    gd_game_core::visuals::notify(&mut commands, &ch.skill);
 }

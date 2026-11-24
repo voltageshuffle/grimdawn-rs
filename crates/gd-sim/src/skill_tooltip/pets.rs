@@ -4,7 +4,7 @@ use super::*;
 
 /// `spawnObjects` record of a summon at `level`, a learned
 /// `Skill_SpawnPetTransmuter`'s `modSpawnObjects` replacing it
-/// (`Skill_SpawnPetTransmuter::PreLoadPet` @0x180509fa0; `spawnObjects`
+/// (`Skill_SpawnPetTransmuter::PreLoadPet`; `spawnObjects`
 /// holds its last entry for later levels).
 fn spawn_record(prof: &Record, mods: &[(Record, usize)], level: u32) -> Option<String> {
     let pick = |r: &Record, f: &str| {
@@ -19,8 +19,8 @@ fn spawn_record(prof: &Record, mods: &[(Record, usize)], level: u32) -> Option<S
         .or_else(|| pick(prof, "spawnObjects"))
 }
 
-/// `Skill::CreateUI[Next]PetLimitText` @0x18048d0b0 / @0x18048d400 and
-/// `Skill_Modifier`'s @0x1804fbfb0 (`...Mod` tags, any value > 0):
+/// `Skill::CreateUI[Next]PetLimitText` and
+/// `Skill_Modifier::CreateUIPetLimitText` (`...Mod` tags, any value > 0):
 /// burst, limit.
 fn pet_limit_lines(
     ctx: &SkillTipCtx,

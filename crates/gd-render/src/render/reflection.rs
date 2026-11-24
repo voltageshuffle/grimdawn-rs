@@ -2,19 +2,19 @@
 //! mesh's `reflectionStyle`), the `reflectionQuality` option.
 //!
 //! Engine.dll:
-//! - `Water::AddReflectionPlanes` @0x1801f9490 gives a layer / path a reflection
+//! - `Water::AddToScene` gives a layer / path a reflection
 //!   plane only when its `surfaceParams.z` (the lighting blend, `p[7]`) > 0.
-//! - `GraphicsMTRenderer::BuildReflections` @0x1800cd410: `reflectionQuality`
+//! - `GraphicsMTRenderer::BuildReflections`: `reflectionQuality`
 //!   (quality[3]) 0 = off. The reflection scene is rendered by a camera mirrored
-//!   across the water plane: `sub_1800C75D0` reflects the view matrix across the
+//!   across the water plane: `GraphicsMTRenderer::ReflectViewMatrix` reflects the view matrix across the
 //!   plane (per column `c' = c − 2n(n·c)`, the translation column `+ d`), then
 //!   negates one basis column (the handedness flip, so the mirrored image samples
 //!   correctly). The reflection is clipped at the water plane and the casters are
 //!   cut at 64 m (ultra: the far plane) by `Camera::GetMinFrustum`.
-//! - The reflection target is a FIXED 512×512 (`xmmword_18034C090` viewport,
-//!   `RenderReflection` @0x1800ceea0 creates the surface at the viewport size).
+//! - The reflection target is a FIXED 512×512 (`GraphicsMTRenderer::ReflectionViewport` viewport,
+//!   `RenderReflection` creates the surface at the viewport size).
 //!   The quality does NOT size it: it sets the reflection scene's content flags
-//!   (+0x650: medium 0x408, high 0x40A, very high 0x60A, ultra 0x61A; the main
+//!   (`GraphicsScene.contentFlags`: medium 0x408, high 0x40A, very high 0x60A, ultra 0x61A; the main
 //!   scene is 0x7FF) which select what reflects, and the caster distance.
 //! - `reflectionStyle` (every mesh): `base × (sat(N·L)·sun + hemisphere ambient)`,
 //!   alpha `base.a`, clipped at the water plane — no point lights, shadows,
@@ -56,7 +56,7 @@ use bevy::render::render_resource::{Extent3d, TextureFormat};
 /// The scene shaders test `view.exposure > 2.0` (`is_reflection_view`); the glow
 /// view is 0.83 and the main camera ≈ 0, so the three never collide.
 pub const REFLECTION_EV100: f32 = -2.0;
-/// The engine's reflection target width (`xmmword_18034C090` viewport), fixed for
+/// The engine's reflection target width (`GraphicsMTRenderer::ReflectionViewport` viewport), fixed for
 /// every enabled quality (module doc).
 pub const REFLECTION_SIZE: u32 = 512;
 /// The engine's reflection caster distance (`BuildReflections` v8): 64 m below
@@ -109,7 +109,7 @@ pub fn reflection_caster_distance(quality: u32, far: f32) -> f32 {
 }
 
 /// The reflection quality of the session options (0 = off).
-pub fn option_quality(options: &gd_game::options::GameOptions) -> u32 {
+pub fn option_quality(options: &gd_game_core::options::GameOptions) -> u32 {
     match options.get("reflectionQuality") {
         Some(gd_formats::options::Value::Quality(q)) => super::shadow::quality_index(q),
         _ => 1,
@@ -117,7 +117,7 @@ pub fn option_quality(options: &gd_game::options::GameOptions) -> u32 {
 }
 
 /// The mirrored camera for a water plane at `plane_height`: the main camera
-/// reflected across `y = plane_height` (the engine's `sub_1800C75D0` reflection +
+/// reflected across `y = plane_height` (the engine's `GraphicsMTRenderer::ReflectViewMatrix` reflection +
 /// handedness flip, which Bevy expresses as the reflection matrix +
 /// `Camera::invert_culling`), and the water plane as the oblique near clip plane
 /// so nothing below the surface reflects. The reflection matrix /
@@ -147,7 +147,7 @@ pub fn reflection_camera(
 fn setup_reflection(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
 ) {
     let size = reflection_target_size(option_quality(&options)).max(1);
     let image = images.add(Image::new_target_texture(
@@ -188,7 +188,7 @@ fn setup_reflection(
 /// Follows the main camera across the nearest reflecting water plane, sizes the
 /// target by the option, and turns the pass off when there is nothing to reflect.
 fn sync_reflection(
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     mains: Query<
         (&Camera, &Transform, &Projection, &Frustum),
         (With<GameCamera>, Without<ReflectionCamera>),

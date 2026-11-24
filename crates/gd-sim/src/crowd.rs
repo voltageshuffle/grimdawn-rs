@@ -1,16 +1,20 @@
 //! The crowd's per-agent rules: who meets whom, who pushes whom, the monsters' separation steering and the
-//! player's velocity sampling. Engine.dll crowd update sub_18025C440 (`crowd.cpp`), the agents'
-//! parameters from Game.dll `Character::CrowdAgentCreated` @0x180066c20 / `CrowdAgentUpdate` @0x180066d60 and the
-//! `Player` / `Monster` overrides (@0x1803e8200, @0x1803762e0 / @0x180376370); the ECS side is
+//! player's velocity sampling. Engine.dll crowd update `Crowd::Update` (`crowd.cpp`), the agents'
+//! parameters from Game.dll `Character::CrowdAgentCreated` / `CrowdAgentUpdate` and the
+//! `Player` / `Monster` overrides (`Player::CrowdAgentCreated`, `Monster::CrowdAgentCreated` /
+//! `Monster::CrowdAgentUpdate`); the ECS side is
 //! `gd_game::movement`. Positions and velocities here are horizontal (x, z).
 //!
-//! Collision groups (params +16) and masks (+20): an agent's neighbours are the agents whose group meets its mask,
-//! found in a sphere around it (sub_18025EB90: 3D distance below the range, within half the agent's height up or
+//! Collision groups (`CrowdAgentParams.collisionGroup`) and masks (`CrowdAgentParams.collisionMask`): an agent's
+//! neighbours are the agents whose group meets its mask,
+//! found in a sphere around it (`Crowd::QueryNeighbours`: 3D distance below the range, within half the agent's
+//! height up or
 //! down). The player is group 1, mask 2; a monster hostile to the player group 2, mask 7; any other monster (pets,
 //! allies) group 1, mask 2; other characters (NPCs) group 4, mask 6. A monster with `forceCollision`, or a Boss /
-//! Quest / SuperBoss (`Monster::Load` @0x180373810: classification 3..5), is hostile-grouped and adds group 8; one
-//! with `forceNoCollision` has group 0 (no one meets it). Priority (+32): 2 for the player, 1 for every other one.
-//! A spinning character (`Skill_AttackRadiusSpin::StartAction` @0x1804ca8be sets Character +3529, the
+//! Quest / SuperBoss (`Monster::Load`: classification 3..5), is hostile-grouped and adds group 8; one
+//! with `forceNoCollision` has group 0 (no one meets it). Priority (`CrowdAgentParams.priority`): 2 for the player,
+//! 1 for every other one.
+//! A spinning character (`Skill_AttackRadiusSpin::StartAction` sets `Character.spinning`, the
 //! "selective pathing push-through", until `StopSpinning`) has mask 8 (`CrowdAgentUpdate`): it meets only the group-8
 //! monsters. The `Monster` override rewrites the mask afterwards, so this only matters for the player.
 use crate::grid::Grid;
@@ -33,15 +37,18 @@ pub mod group {
 
 /// The player's crowd priority; every other character has 1.
 pub const PLAYER_PRIORITY: i32 = 2;
-/// The separation weight of a monster (`Monster::CrowdAgentCreated`, params +28); 0 for other characters.
+/// The separation weight of a monster (`Monster::CrowdAgentCreated`, `CrowdAgentParams.separationWeight`); 0 for
+/// other characters.
 pub const MONSTER_SEPARATION: f32 = 1.1;
-/// Params +24: the agent arrives within this distance of its target; the player's avoidance also ignores a
+/// `CrowdAgentParams.arriveDistance`: the agent arrives within this distance of its target; the player's avoidance
+/// also ignores a
 /// neighbour standing at the target by this margin.
 pub const ARRIVE_DIST: f32 = 0.025;
-/// Params +40 / +44: a moving agent slower than this (m/s) for more than [`STUCK_MS`] fails its path (reason 3).
+/// `CrowdAgentParams.stuckSpeed` / `stuckTime`: a moving agent slower than this (m/s) for more than [`STUCK_MS`]
+/// fails its path (reason 3).
 pub const STUCK_SPEED: f32 = 1.1;
 pub const STUCK_MS: f32 = 400.0;
-/// Params +4 stands in for `Actor::GetHeight` in the neighbour query (PORT: 2 m for everyone).
+/// `CrowdAgentParams.height` stands in for `Actor::GetHeight` in the neighbour query (PORT: 2 m for everyone).
 pub const HEIGHT: f32 = 2.0;
 
 /// The neighbour range of a moving agent's planning (`max(8 r, r + the largest radius)`).
@@ -60,11 +67,11 @@ pub fn grid_cell(max_r: f32) -> f32 {
     (2.0 * max_r).max(0.5)
 }
 
-/// `Character::CrowdAgentDepenetrate` @0x180067280 (called with (own state, own priority, the neighbour's
+/// `Character::CrowdAgentDepenetrate` (called with (own state, own priority, the neighbour's
 /// state, its priority)): whether an agent (`moving`, `priority`) is pushed by an overlapping neighbour. A moving agent
 /// is pushed unless the neighbour moves too with a higher priority; a still one only by a still neighbour of higher
 /// priority (a running player slides off a standing monster, a standing player shoves the standing monsters out).
-/// (`Monster` @0x180376450: never for a `forceCollision` one, nor while its Spawn animation plays.)
+/// (`Monster::CrowdAgentDepenetrate`: never for a `forceCollision` one, nor while its Spawn animation plays.)
 pub fn depenetrated_by(
     moving: bool,
     priority: i32,
@@ -94,7 +101,7 @@ pub struct Body {
     /// `CrowdAgentDepenetrate` may say yes (false for a `forceCollision` monster and one playing its Spawn
     /// animation).
     pub pushable: bool,
-    /// The movement direction (+84), which parts coincident agents.
+    /// The movement direction (`CrowdAgent.moveDir`), which parts coincident agents.
     pub dir: V2,
 }
 
@@ -112,7 +119,7 @@ impl Body {
     }
 }
 
-/// The collision pass (sub_18025C440, the last loop): every colliding agent's push away from the overlapping
+/// The collision pass (`Crowd::Update`, the last loop): every colliding agent's push away from the overlapping
 /// neighbours that may push it, each (r_a + r_b − d) / d × 0.35 of the separation vector, averaged over them.
 /// Coincident agents (d ≤ 1 mm) part by 1 mm along the agent's direction (x negated for the earlier agent, z for
 /// the later one: the engine orders by address, PORT: by index). A still agent only takes a push of at least
@@ -220,7 +227,8 @@ pub fn clamp_len(v: V2, max: f32) -> V2 {
     }
 }
 
-/// The stuck check (the crowd update's end, params +40 / +44 at +56 / +60, the count at +224): a moving agent whose
+/// The stuck check (the crowd update's end, `CrowdAgentParams.stuckSpeed` / `stuckTime` copied to
+/// `CrowdAgent.stuckSpeed` / `stuckTime`, the count in `CrowdAgent.stuckCount`): a moving agent whose
 /// top speed is above [`STUCK_SPEED`] and that moved slower than it (its displacement over the update, pushes
 /// included) for more than [`STUCK_MS`] fails its path (reason 3), and the count starts again.
 #[derive(Clone, Copy, Debug, Default)]
@@ -248,7 +256,7 @@ impl Stuck {
     }
 }
 
-/// The integration's occupied-target test (sub_18025C440, failure reason 2): an agent whose step ends at
+/// The integration's occupied-target test (`Crowd::Update`, failure reason 2): an agent whose step ends at
 /// `new` (radius `r`) toward `target` fails its path when the step overlaps a neighbour (horizontal distance at most
 /// the radii's sum) that stands on the target (the target within the neighbour's radius and its half height) or
 /// when the agent itself is then within its radius of the target (and its half height). `neighbours` are
@@ -276,7 +284,8 @@ pub struct Obstacle {
     pub dvel: V2,
 }
 
-/// The avoidance's velocity sampling (sub_18025F250 with the sample score sub_18025EF20; Detour's adaptive
+/// The avoidance's velocity sampling (`ObstacleAvoidanceQuery::SampleVelocityAdaptive` with the sample score
+/// `ObstacleAvoidanceQuery::ProcessSample`; Detour's adaptive
 /// sampling with its own weights): for an agent at `pos` with radius `r`, top speed `vmax`, velocity `vel` and
 /// desired velocity `dvel`, the best velocity against `obstacles`. 22 samples (the centre and three rings of 7 at
 /// radii 1, ⅔, ⅓, the middle ring turned by π/7, the pattern turned to `dvel`) around `dvel` × 0.25 with radius

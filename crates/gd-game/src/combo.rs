@@ -12,16 +12,16 @@
 //! (the lockout makes the two the same for a multi-target hit); a use spends
 //! on its first hit only; the melee / ranged choice of the lockout is the
 //! port's melee test (weapon skill without a ranged weapon) for the engine's
-//! `AttackInfo` +148 flag; "player teleport" (sub_1805820F0) is riftgate /
+//! `AttackInfo.isMelee` flag; "player teleport" (`TeleportLocalClientActivity::PlacePlayer`) is riftgate /
 //! portal travel. The look: the count's aura (`skillComboChargeAura`) as a
 //! buff effect on the player; the "remain" effect / sound of a kept spend
 //! is not played.
-use crate::data::GameData;
-use crate::inventory::Inventory;
-use crate::player::Player;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
-use gd_sim::combat::Rng;
+use gd_game_core::data::GameData;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::Player;
+use gd_rules::Rng;
 use gd_sim::combo::{ComboCharges, ComboTable};
 
 pub struct ComboPlugin;
@@ -37,8 +37,8 @@ impl Plugin for ComboPlugin {
                 look.run_if(resource_exists::<ComboRules>),
             )
                 .chain()
-                .before(crate::combat::CombatSet)
-                .after(crate::inventory::InventorySet),
+                .before(gd_game_core::combat::CombatSet)
+                .after(gd_game_core::inventory::InventorySet),
         );
     }
 }
@@ -51,7 +51,7 @@ pub struct Combo(pub ComboCharges);
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ComboRules(pub ComboTable);
 
-/// The current skill use's claim on the charges (`Skill` +1460 / +1464).
+/// The current skill use's claim on the charges (`Skill.comboClaim` / `Skill.comboClaimCount`).
 #[derive(Component, Debug, Clone, Default)]
 pub struct ComboUse {
     /// The used skill's data record (what its hits name).
@@ -98,7 +98,7 @@ fn init(
 
 /// `SkillManager::Update`: the charges expire, the lockout runs out.
 fn tick(time: Res<Time>, mut q: Query<&mut Combo>, mut carry: Local<f32>) {
-    let ms = crate::session::frame_ms(&mut carry, &time);
+    let ms = gd_game_core::session::frame_ms(&mut carry, &time);
     if ms <= 0 {
         return;
     }
@@ -112,12 +112,12 @@ fn tick(time: Res<Time>, mut q: Query<&mut Combo>, mut carry: Local<f32>) {
 /// `ClearComboCharges`: a weapon attached (the worn weapons changed), the
 /// swap buttons, travel.
 fn clear(
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     // Option: the travel messages clear the combo without an inventory (no inventory takes no swap).
     inv: Option<Res<Inventory>>,
     mut swaps: MessageReader<crate::weapon_sets::SwapWeapons>,
     mut travel: MessageReader<crate::riftgates::GateTravel>,
-    mut q: Query<&mut Combo, (With<Player>, Without<crate::combat::Dead>)>,
+    mut q: Query<&mut Combo, (With<Player>, Without<gd_game_core::combat::Dead>)>,
     mut worn: Local<Option<[Option<gd_formats::save::item::Item>; 2]>>,
 ) {
     if fresh.begun() {
@@ -162,7 +162,7 @@ fn look(
     data: Res<GameData>,
     rules: Res<ComboRules>,
     q: Query<(Entity, &Combo, Option<&ComboAura>), Changed<Combo>>,
-    fx: Query<(Entity, &crate::visuals::BuffFx)>,
+    fx: Query<(Entity, &gd_game_core::visuals::BuffFx)>,
 ) {
     for (e, c, shown) in &q {
         let want = rules.0.aura(c.0.count);

@@ -1,16 +1,15 @@
 //! The Inventor's convert tab: a set item becomes another piece of the same
 //! set, or a piece of a random other set of its rarity.
 //!
-//! (GrimDawn.exe `UIEnchanterConvertTab`: loader `sub_1401A7AF0`,
-//! update `sub_1401A7260`, ready test `sub_1401A93D0`, button handler
-//! `sub_1401A7890`, convert `sub_1401A8BF0`; Game.dll
-//! `ItemSetFormula::Load` @0x180333790, `ItemRandomSetFormula::Load`
-//! @0x180333cd0, `GetItemSetNames` @0x180333c20):
+//! (GrimDawn.exe `UIEnchanterConvertTab`: loader `UIEnchanterConvertTab::Load`,
+//! update `UIEnchanterConvertTab::Update`, ready test `UIEnchanterConvertTab::IsReady`, button handler
+//! `UIEnchanterConvertTab::OnButton`, convert `UIEnchanterConvertTab::Convert`; Game.dll
+//! `ItemSetFormula::Load`, `ItemRandomSetFormula::Load`, `GetItemSetNames`):
 //! - The tab record (`convert_table.dbr`) names three formulas:
 //!   `sameSetRecipe` (`ItemSetFormula`), `randomSetRecipe` and
 //!   `randomSetRecipeLegendary` (`ItemRandomSetFormula`, with
 //!   `randomItemSets`), and `blacklistedSets`.
-//! - The item slot (`reagentBaseBox`, `sub_1401B06D0` / `sub_1401B0A00`)
+//! - The item slot (`reagentBaseBox`, `UIEnchanterConvertTab::CanAcceptItem` / `InventorItemBox::AddItem`)
 //!   takes any `ItemEquipment` whose record has an `itemSetName`.
 //! - The radio buttons `sameSetButton` (the default) / `randomSetButton` pick
 //!   the mode; in random mode a Legendary item (`GetItemClassification` = 4)
@@ -27,15 +26,14 @@
 //!   The new item is a uniform pick (`IGenerate(0, n - 1)`) of the target
 //!   set's `setMembers` without the item's own record, made with a fresh
 //!   seed and nothing else (no affixes, component or augment).
-//! - `CreateArtifactConfigCmd::Execute` @0x1800e7eb0: money −= cost, the
+//! - `CreateArtifactConfigCmd::Execute`: money −= cost, the
 //!   slot item is destroyed (`TakeItemFromCharacter`), the reagents taken,
-//!   the new item given (`Player::GiveSetItemToCharacter` @0x1803d47a0: into the shown convert tab's slot,
+//!   the new item given (`Player::GiveSetItemToCharacter`: into the shown convert tab's slot,
 //!   gd-game `crafting::convert_item`).
 use super::ItemDb;
 use super::db::Fields;
-use crate::combat::Rng;
-use crate::expr::Expr;
 use gd_formats::arz::Record;
+use gd_rules::Rng;
 
 /// The tab's record.
 pub const TABLE: &str = "records/ui/inventor/convertpanel/convert_table.dbr";
@@ -80,11 +78,7 @@ impl SetFormula {
 
     /// Iron bits it costs at `player_level` (`GetCreationCost`).
     pub fn cost(&self, player_level: u32) -> u64 {
-        let l = player_level as f32;
-        let v = Expr::parse(&self.cost)
-            .map(|e| e.eval(&|n| n.eq_ignore_ascii_case("playerLevel").then_some(l)))
-            .unwrap_or(0.0);
-        (v.max(1.0) + 0.5) as u64
+        super::cost_at(&self.cost, player_level)
     }
 }
 

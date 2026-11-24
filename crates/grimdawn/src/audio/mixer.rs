@@ -1,5 +1,7 @@
 //! The mixer ([`Bus`]): every sound entity's [`Voice`] is summed in blocks of [`BLOCK`] frames on the audio thread,
-//! and bevy_audio / rodio play that one stereo stream at the output device's rate.
+//! and a port-owned rodio sink plays that one stereo stream at the selected device's rate ([`start_bus`]):
+//! bevy_audio 0.20 opens only the default sink (no public device hook). A `soundDevice` change reopens the sink
+//! without dropping the voice queue or the playing voices ([`switch_device`], `devices`).
 //!
 //! PORT (deliberate): rodio plays every sink through a chain of generic per-sample sources (speed, position, pause,
 //! volume, the mixer's resampler); a fight's 60+ voices starved the device callback that way. The bus costs well under
@@ -10,13 +12,15 @@
 //! the engine's `Play2D` / `StartStream`) pass through without ear gains.
 use super::Sounds;
 use super::cache::Loaded;
+use super::devices::{self, AudioDevices};
 use super::listener::{BaseVolume, SoundClass, VOICES, sound};
 use bevy::audio::{ChannelCount, Decodable, Sample, SampleRate, Source};
 use bevy::prelude::*;
-use gd_game::options::GameOptions;
-use gd_game::pause::GamePause;
+use gd_game_core::options::GameOptions;
+use gd_game_core::pause::GamePause;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 /// Gives `e` its [`Voice`] (as its [`VoiceStart`] says) and hands the voice to the mixer. A voice the mixer cannot
@@ -70,7 +74,7 @@ pub fn spawn_2d(
 }
 
 /// A sound fading out to silence, then despawned: `SoundManager::FadeSound` / `SoundManager::Update`
-/// @0x1801b5b10 (`timeLeft -= min(dt, 100)`, volume = start × timeLeft / total). Used by the boss / event music and
+/// (`timeLeft -= min(dt, 100)`, volume = start × timeLeft / total). Used by the boss / event music and
 /// the weather loops.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Fade {
@@ -300,48 +304,20 @@ const BLOCK: usize = 256;
 /// memory; a bigger one, and every `.ogg`, is decoded while it plays.
 pub(super) const BUFFER_BYTES: usize = 4 << 20;
 
-/// The mixer's one rodio voice ([`Bus`]) at the output device's rate; its decoder takes the receiving end of the voice
-/// queue.
-#[derive(Asset, TypePath)]
-pub struct BusOutput {
-    rx: Mutex<Option<mpsc::Receiver<BusVoice>>>,
-    hz: u32,
-}
-
-impl Decodable for BusOutput {
-    type Decoder = Bus;
-
-    fn decoder(&self) -> Bus {
-        let rx = self
-            .rx
-            .lock()
-            .ok()
-            .and_then(|mut rx| rx.take())
-            .unwrap_or_else(|| mpsc::sync_channel(0).1);
-        Bus {
-            rx,
-            hz: self.hz,
-            voices: Vec::with_capacity(VOICES * 2),
-            out: vec![0.0; BLOCK * 2].into_boxed_slice(),
-            at: BLOCK * 2,
-        }
-    }
-}
-
 /// The game's mixer: every voice summed in blocks of [`BLOCK`] frames into one endless stereo span at the device's
-/// rate (`hz`), the only source bevy_audio / rodio play.
-pub struct Bus {
+/// rate (`hz`). Shared behind a mutex so a device switch ([`open_bus`]) moves it to the new sink with the voice
+/// queue and the playing voices intact.
+pub(super) struct BusState {
     rx: mpsc::Receiver<BusVoice>,
     hz: u32,
     voices: Vec<BusVoice>,
-    /// The current block, interleaved stereo; `at` is the next sample out.
+    /// The current block, interleaved stereo; the [`Bus`] copies it out one block at a time.
     out: Box<[f32]>,
-    at: usize,
 }
 
-impl Bus {
+impl BusState {
     fn mix_block(&mut self) {
-        let Bus {
+        let BusState {
             rx, voices, out, ..
         } = self;
         voices.extend(rx.try_iter());
@@ -356,12 +332,33 @@ impl Bus {
     }
 }
 
+/// The mixer's rodio source: one [`BLOCK`]-frame span at a time out of the shared [`BusState`] — one lock per
+/// block, not per sample.
+struct Bus {
+    state: Arc<Mutex<BusState>>,
+    /// The current block copied out of the state.
+    out: Box<[f32]>,
+    at: usize,
+}
+
+impl Bus {
+    fn new(state: Arc<Mutex<BusState>>) -> Bus {
+        Bus {
+            state,
+            out: vec![0.0; BLOCK * 2].into_boxed_slice(),
+            at: BLOCK * 2,
+        }
+    }
+}
+
 impl Iterator for Bus {
     type Item = Sample;
 
     fn next(&mut self) -> Option<Sample> {
         if self.at == self.out.len() {
-            self.mix_block();
+            let mut s = self.state.lock();
+            s.mix_block();
+            self.out.copy_from_slice(&s.out);
             self.at = 0;
         }
         let s = self.out[self.at];
@@ -380,7 +377,8 @@ impl Source for Bus {
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(self.hz).unwrap_or(SampleRate::new(FALLBACK_HZ).unwrap())
+        let hz = self.state.lock().hz;
+        SampleRate::new(hz).unwrap_or(SampleRate::new(FALLBACK_HZ).unwrap())
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -537,7 +535,7 @@ impl Stream {
                 if !sp.fresh.load(Ordering::Acquire) {
                     return false;
                 }
-                let Ok(mut slot) = sp.slot.try_lock() else {
+                let Some(mut slot) = sp.slot.try_lock() else {
                     return false;
                 };
                 let Some(d) = slot.as_mut() else {
@@ -612,29 +610,100 @@ impl Stream {
     }
 }
 
-/// Starts the mixer at the default output device's rate (the config rodio's `open_default_sink` opens),
-/// [`FALLBACK_HZ`] without one: its one rodio voice plays for the whole process.
+/// The port-owned rodio output playing the [`Bus`], kept in [`Sounds`] so the stream lives as long as the bus:
+/// `_sink` / `_player` are keep-alive handles (dropping them stops playback), `device` is the index actually
+/// opened (0 = the default sink, also the fallback of a device that failed to open).
+pub(super) struct BusSink {
+    _sink: rodio::MixerDeviceSink,
+    _player: rodio::Player,
+    device: i32,
+}
+
+/// Starts the mixer: the voice queue and the shared mixing state, then the port-owned rodio sink on the options'
+/// `soundDevice` ([`open_bus`]). bevy_audio 0.20 opens only the default sink (no public device hook), so the port
+/// owns this one; it plays for the whole process, reopened on a device change ([`switch_device`]).
 pub(super) fn start_bus(
-    mut commands: Commands,
-    mut outputs: ResMut<Assets<BusOutput>>,
     mut sounds: ResMut<Sounds>,
+    options: Res<GameOptions>,
+    devices: Res<AudioDevices>,
 ) {
-    use cpal::traits::{DeviceTrait, HostTrait};
-    let hz = cpal::default_host()
-        .default_output_device()
-        .and_then(|d| d.default_output_config().ok())
-        .map_or(FALLBACK_HZ, |c| c.sample_rate());
-    info!("sound mixer at {hz} Hz");
     let (tx, rx) = mpsc::sync_channel(VOICES * 4);
     sounds.bus = Some(tx);
+    sounds.bus_state = Some(Arc::new(Mutex::new(BusState {
+        rx,
+        hz: FALLBACK_HZ,
+        voices: Vec::with_capacity(VOICES * 2),
+        out: vec![0.0; BLOCK * 2].into_boxed_slice(),
+    })));
+    open_bus(&mut sounds, &devices, options.int("soundDevice"));
+}
+
+/// Opens the bus's sink on the `soundDevice` index (0 = system default) and appends a [`Bus`] reading the shared
+/// mixing state. A selected device that fails to open falls back to the default sink and is recorded as index 0,
+/// so a re-Apply of the same `soundDevice` retries it ([`switch_device`]); no sink at all keeps the
+/// current one playing (at startup: silence, [`FALLBACK_HZ`]). The state — the voice queue and the playing voices —
+/// survives the switch; the voices rescale to the new rate.
+fn open_bus(sounds: &mut Sounds, devices: &AudioDevices, index: i32) {
+    let Some(state) = sounds.bus_state.clone() else {
+        return;
+    };
+    let (sink, opened) = match devices::selected_output(devices, index) {
+        Some(d) => match rodio::DeviceSinkBuilder::from_device(d).and_then(|b| b.open_stream()) {
+            Ok(s) => (Ok(s), index),
+            Err(e) => {
+                warn!("sound device failed to open ({e}); using the default");
+                (rodio::DeviceSinkBuilder::open_default_sink(), 0)
+            }
+        },
+        None => (rodio::DeviceSinkBuilder::open_default_sink(), 0),
+    };
+    let sink = match sink {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("no audio output device ({e})");
+            return;
+        }
+    };
+    // The old sink (its audio thread gone) stops before the new bus reads the state.
+    sounds.bus_out = None;
+    let hz = sink.config().sample_rate().get();
+    {
+        let mut s = state.lock();
+        if s.hz != hz {
+            let scale = s.hz as f64 / hz as f64;
+            for v in &mut s.voices {
+                v.step *= scale;
+            }
+            s.hz = hz;
+        }
+    }
+    let player = rodio::Player::connect_new(sink.mixer());
+    player.append(Bus::new(state));
     sounds.bus_hz = hz;
-    commands.spawn((
-        AudioPlayer(outputs.add(BusOutput {
-            rx: Mutex::new(Some(rx)),
-            hz,
-        })),
-        PlaybackSettings::ONCE,
-    ));
+    sounds.bus_out = Some(BusSink {
+        _sink: sink,
+        _player: player,
+        device: opened,
+    });
+    info!("sound mixer at {hz} Hz");
+}
+
+/// The options window's Apply changing `soundDevice`: reopens the bus's sink on the new device, keeping the voice
+/// queue and the playing voices ([`open_bus`]). PORT: the engine stores a device index too; hotplug shifts the
+/// enumeration under a saved index — the same weakness (a stale index falls back to the default).
+pub(super) fn switch_device(
+    options: Option<Res<GameOptions>>,
+    devices: Res<AudioDevices>,
+    mut sounds: ResMut<Sounds>,
+) {
+    let Some(options) = options.filter(|o| o.is_changed()) else {
+        return;
+    };
+    let index = options.int("soundDevice");
+    if sounds.bus_out.as_ref().is_some_and(|o| o.device == index) {
+        return;
+    }
+    open_bus(&mut sounds, &devices, index);
 }
 
 /// Builds a fresh next-pass decoder for every looped stream that used its [`Spare`] (off the audio thread; the spent
@@ -645,10 +714,9 @@ pub(super) fn refill_spares(voices: Query<&Voice>) {
             continue;
         }
         let dec = sp.file.decoder();
-        if let Ok(mut slot) = sp.slot.lock() {
-            *slot = Some(dec);
-            sp.fresh.store(true, Ordering::Release);
-        }
+        let mut slot = sp.slot.lock();
+        *slot = Some(dec);
+        sp.fresh.store(true, Ordering::Release);
     }
 }
 
@@ -661,11 +729,12 @@ pub(super) fn reap_voices(mut commands: Commands, voices: Query<(Entity, &Voice)
     }
 }
 
-/// Whether the window's focus loss silences the game: Grim Dawn.exe main loop sub_14000E9F0: while the window
+/// Whether the window's focus loss silences the game: Grim Dawn.exe main loop `Game::MainLoop`: while the window
 /// is not active and `(int)(inactiveUpdateRate * 30) <= 0` (default 0) it calls the window's deactivate handler
-/// sub_140011AC0 once (`PauseGameTime` in single player, `SoundManager::FastPause` = `Pause`: every playing sound
-/// paused); regaining focus calls sub_140011B20 (`UnpauseGameTime` unless a menu pause holds, `SoundManager::UnPause`
-/// unless game time is still paused). With a rate above 0 nothing is paused (the loop only sleeps).
+/// `Game::OnDeactivate` once (`PauseGameTime` in single player, `SoundManager::FastPause` = `Pause`: every playing
+/// sound paused); regaining focus calls `Game::OnActivate` (`UnpauseGameTime` unless a menu pause holds,
+/// `SoundManager::UnPause` unless game time is still paused). With a rate above 0 nothing is paused (the loop only
+/// sleeps).
 pub fn unfocused_mute(options: &GameOptions, focused: bool) -> bool {
     !focused && (options.float("inactiveUpdateRate") * 30.0) as i32 <= 0
 }

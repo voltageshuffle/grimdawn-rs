@@ -8,24 +8,24 @@
 //! `affinityRequiredN` / `affinityRequiredNameN` and the affinity it gives
 //! once complete (`affinityGivenN` / `affinityGivenNameN`).
 //!
-//! Rules (exe 0x140184f20 / 0x14018cb40): a star with links needs
+//! Rules (exe `DevotionWindow::UpdateLocks` / `DevotionWindow_ResetAll`): a star with links needs
 //! one of its linked stars taken; a constellation is available when the
 //! player's affinity of every required type is at least the requirement;
 //! affinity is the sum of what completed constellations give
 //! (`Character::AddAffinity` on completion).
 //!
-//! Points (`ScriptableAction_GiveDevotion::Execute` @0x18046acc0 and
+//! Points (`ScriptableAction_GiveDevotion::Execute` and
 //! `GameEngine::HandleShrineReward`): a grant raises both the
 //! unspent and the total points, capped so the total stays at most
 //! `maxDevotionPoints` (`playerlevels.dbr`, 55).
 //!
-//! Celestial powers (`SkillManager::AddExperience` @0x180540740):
+//! Celestial powers (`SkillManager::AddExperience`):
 //! a power bound to a skill gains the experience the character
 //! receives and levels up while its experience reaches
 //! `skillExperienceLevels[level]`, up to the table's length.
 //!
-//! Removing a star (exe star map refresh 0x140184f20 in remove mode and its
-//! affinity check 0x14018c560; the aether / gold refund cost is
+//! Removing a star (exe star lock refresh `DevotionWindow::UpdateLocks` in reclaim mode and its
+//! affinity check `DevotionWindow::CheckAffinityLoss`; the aether / gold refund cost is
 //! `ui/devotion.rs`): a star is locked while any taken star of its
 //! constellation lists it in its links, even when that star has another
 //! taken link; and, when its constellation is complete, while the player's
@@ -237,7 +237,7 @@ impl Devotions {
     }
 
     /// The constellations that would lose their affinity requirement if constellation `c` lost its
-    /// completion bonus (GrimDawn.exe `sub_14018C560`): only a complete constellation gives
+    /// completion bonus (GrimDawn.exe `DevotionWindow::CheckAffinityLoss`): only a complete constellation gives
     /// affinity; its bonus is taken off the player's affinity and every constellation with a taken
     /// star is checked, `c` itself included (then it is "self locked",
     /// `FailedConstellationSelfLocked`).

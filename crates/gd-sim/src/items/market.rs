@@ -1,41 +1,41 @@
 //! Merchant stock (`NpcMerchant` `marketFileName` → `market.tpl` record).
 //!
-//! (`MarketMiniMart` constructor @0x18036b8c0, the category
+//! (`MarketMiniMart::MarketMiniMart`, the category
 //! classes' `GetTableName` / `GetNumItemsMin` / `Max` /
 //! `GetDuplicatesAllowed`): a merchant's stock is [`CATEGORIES`] in that
 //! order, each `marketXTable` with `marketNumXMin..Max`. A faction merchant
-//! (`factionmarket.tpl`, constructor @0x180298cc0, refresh @0x1802991c0)
+//! (`factionmarket.tpl`, `MarketFaction::MarketFaction`, `MarketFaction::Refresh`)
 //! refreshes each tier record (`friendly..reveredNormalTable`) through
 //! [`TIER_CATEGORIES`] (`marketWeaponTable`, `marketArmorTable`,
 //! `marketPotionTable` and the `marketStaticItems` list, which has no count)
 //! for that tier's tab, then its own record's `marketStaticTable` (tier 0).
 //!
-//! `MarketMiniMart::Refresh` @0x18036fdf0, per category: `n = min + r %
+//! `MarketMiniMart::Refresh`, per category: `n = min + r %
 //! (max - min + 1)` (always drawn); then by the class of the field's first
-//! record: a `LootMasterTable` gives `n` rolls (`LoadItem` @0x18036fd10, at
+//! record: a `LootMasterTable` gives `n` rolls (`LoadItem`, at
 //! the market's level, parent and player level both); a `LevelTable` picks
-//! its table by that level (`sub_180355D40`) and gives `n` rolls of it;
+//! its table by that level (`LevelTable::GetRecord`) and gives `n` rolls of it;
 //! anything else (item records, `marketStaticItems`) adds every listed
 //! record once, `n` unused. Each pick goes through `AddIfUnique`
-//! @0x18036fb20 (a repeat is refused unless the category allows
-//! duplicates; a new item draws its seed) and `UploadItems` @0x180370260.
+//! (a repeat is refused unless the category allows
+//! duplicates; a new item draws its seed) and `UploadItems`.
 //! The game restocks every `marketRefreshTimeMin..Max` minutes
-//! (`sub_180371130`) at the merchant's level.
+//! (`ServerMarket::Update`) at the merchant's level.
 //!
-//! Prices (`sub_18036CD80`, `sub_18036D7F0`): buying costs
+//! Prices (`MarketMiniMart::GetBuyPrice`, `Market::GetSellPrice`): buying costs
 //! `cost + trunc(cost × marketCostAdjustment % + 0.00001)` as a wrapping u32;
 //! selling pays `cost − floor(cost × marketDepreciation % + 0.5)`, capped
 //! (when non-zero, negative included) at `maxPlayerPurchase[difficulty]` ×
 //! stack size (int, wrapping), never below 0.
 //!
 //! Vendor search (GrimDawn.exe market window, Game.dll `Item::SearchText`):
-//! the box's text, trimmed ([`search_query`] `sub_1402A5300`) and
+//! the box's text, trimmed ([`search_query`] `Ui::TrimSearchText`) and
 //! lowercased (`towlower_l`, the game locale), is looked for as a substring of
 //! each of the item's search lines ([`search_matches`],
-//! `Item::SearchText` @0x180329720: one line must contain the whole query; an
+//! `Item::SearchText`: one line must contain the whole query; an
 //! empty query matches nothing). The lines (`Item::GenerateSearchText`
-//! @0x180329370, cached per item) are the item's display text
-//! (`ItemEquipment::GetSearchText` @0x18033e4a0 for equipment: the tooltip's
+//! cached per item) are the item's display text
+//! (`ItemEquipment::GetSearchText` for equipment: the tooltip's
 //! name / attribute / skill / pet / granted skill / set / requirement blocks;
 //! the class's `GetUIDisplayText` otherwise), each format-stripped
 //! (`LocalizerFormatStrip`) and lowercased ([`search_line`]).
@@ -46,12 +46,12 @@
 //! rolled again after [`refresh_minutes`]. Prices: [`prices`] (with the faction discount), [`stock_price`] (the
 //! buyback tab charges the stored sale price).
 use super::ItemDb;
-use super::inventory::Sack;
 use super::loot::{LootParams, LootRoll, roll_table_names};
-use crate::combat::Rng;
 use gd_formats::arz::Record;
+use gd_formats::collections::HashMap;
+use gd_formats::inventory::Sack;
 use gd_formats::save::item::Item;
-use std::collections::HashMap;
+use gd_rules::Rng;
 
 /// A market category: its list field and its `marketNum<X>Min/Max` name
 /// (`None`: no count, 0..0).
@@ -96,8 +96,8 @@ pub const TIER_CATEGORIES: [Category; 4] = [
 pub const FACTION_STATIC: Category = ("marketStaticTable", Some("Static"));
 
 /// The market record of an `NpcMerchant` on `difficulty` (0 Normal, 1 Elite, 2 Ultimate).
-/// `NpcMerchant::Load` @0x1803bd830: `marketFileName[GameInfo::GetDifficulty()]` through
-/// `LoadTableBinary::GetArrayValue` (Engine.dll @0x180140900), which clamps the index to the last entry (no challenge term: Ultimate Veteran reads the
+/// `NpcMerchant::Load`: `marketFileName[GameInfo::GetDifficulty()]` through
+/// `LoadTableBinary::GetArrayValue` (Engine.dll), which clamps the index to the last entry (no challenge term: Ultimate Veteran reads the
 /// Ultimate entry). Stock:
 /// the Shattered Realm's reward merchants (`merchant_reward_02..05`) list one table per difficulty, and only the
 /// Ultimate one (`merchanttbl_reward_0Nu`) sells the Shattered set (`lt_shatteredset_*`).
@@ -228,7 +228,7 @@ fn refresh(
         .collect()
 }
 
-/// What the merchant asks for an item worth `cost` (`sub_18036CD80`:
+/// What the merchant asks for an item worth `cost` (`MarketMiniMart::GetBuyPrice`:
 /// `cost + (int64)(adj*0.01*cost + 0.00001)` stored as a u32, wrapping).
 pub fn buy_price(market: &Record, cost: u32) -> u64 {
     let adj = market.f32("marketCostAdjustment").unwrap_or(0.0);
@@ -237,7 +237,7 @@ pub fn buy_price(market: &Record, cost: u32) -> u64 {
 }
 
 /// What the merchant pays for an item worth `cost` (stack of `count`)
-/// (`sub_18036D7F0`): `cost - floor(dep*0.01*cost + 0.5)` in
+/// (`Market::GetSellPrice`): `cost - floor(dep*0.01*cost + 0.5)` in
 /// floats, truncated to an int; a non-zero cap (times the stack size when
 /// that is non-zero, wrapping) lowers it, negative caps included; then at
 /// least 0.
@@ -261,7 +261,7 @@ pub fn sell_price(market: &Record, cost: u32, count: u32, difficulty: usize) -> 
 }
 
 /// The search box text as the market window searches for it (
-/// `sub_1402A5300` then `towlower_l`): spaces trimmed at both ends, a `{`
+/// `Ui::TrimSearchText` then `towlower_l`): spaces trimmed at both ends, a `{`
 /// or `}` among the trimmed characters kept at its end (the last one met
 /// from the outside in), lowercased.
 pub fn search_query(raw: &str) -> String {
@@ -331,13 +331,13 @@ pub fn refresh_minutes(mrec: &Record, roll: f32) -> f32 {
 }
 
 /// The vendor tab of an item class. The market client sorts each
-/// item into a sack by the item's market category (Item vtable +1384:
+/// item into a sack by the item's market category (`Item::GetMarketCategory`:
 /// 2 = melee weapons incl. spears, daggers and scepters, 3 = ranged
 /// weapons and `WeaponMagical*` (staves), 1 = `ArmorProtective*`,
 /// `ArmorMisc*`, shields and off-hands, anything else (jewellery, relics,
-/// consumables) the fourth sack; `sub_18036CA50`), and the window's tabs
+/// consumables) the fourth sack; `MarketMiniMart::GetItemSack`), and the window's tabs
 /// show the categories in the order 2, 3, 1, 4 (GrimDawn.exe
-/// `sub_140275370`, table @0x14031EC80), then the buyback sack.
+/// `MarketWindow::SetVisible`, table `Ui::MarketTabCategories`), then the buyback sack.
 pub fn vendor_tab(class: &str) -> usize {
     if class.starts_with("WeaponMelee") || class == "WeaponHunting_Spear" {
         0
@@ -355,9 +355,9 @@ pub fn vendor_tab(class: &str) -> usize {
 }
 
 /// The tab a market window opens on (GrimDawn.exe window show
-/// `sub_140275370`): the remembered one (`tab`) unless its page is empty,
+/// `MarketWindow::SetVisible`): the remembered one (`tab`) unless its page is empty,
 /// then the first stocked of the four category tabs in their order (table
-/// @0x14031EC80: categories 2, 3, 1, 4 = tabs 0–3; not the buyback tab);
+/// `Ui::MarketTabCategories`: categories 2, 3, 1, 4 = tabs 0–3; not the buyback tab);
 /// `tab` when all are empty.
 pub fn opening_tab(pages: &[Sack<Item>], tab: usize) -> usize {
     if tab_enabled(pages, tab) {
@@ -369,15 +369,15 @@ pub fn opening_tab(pages: &[Sack<Item>], tab: usize) -> usize {
 }
 
 /// Whether a market tab can be picked: an empty page's button is disabled
-/// and drawn dimmed (window update `sub_1402731E0`: every frame,
+/// and drawn dimmed (window update `MarketWindow::Update`: every frame,
 /// each tab button whose `GetMarketInventorySack` is empty gets its
-/// disabled flags, +641 / +644; draw in the module doc of `ui/trade.rs`).
+/// disabled flags, `UIButton.disabled` / `UIButton.dimmed`; draw in the module doc of `ui/trade.rs`).
 pub fn tab_enabled(pages: &[Sack<Item>], tab: usize) -> bool {
     pages.get(tab).is_some_and(|p| !p.items.is_empty())
 }
 
 /// What the vendor search finds in a market: per tab, the grid cells of the
-/// matching items. (grid `sub_1401FC8E0`, every window update,
+/// matching items. (grid `UIInventoryGrid::ApplySearch`, every window update,
 /// [`search_matches`]): with a non-empty query the
 /// shown page's items are split into matches and the rest (the grid marks
 /// both, see `ui/trade.rs`), and every other tab whose sack has a match
@@ -425,7 +425,7 @@ pub fn prices(
 }
 
 /// The item at `cell` of a merchant's tab `tab` (`pages`: its stock, `buyback`: the stored sale price per
-/// buyback cell) and its price: the buyback tab charges the stored sale price (`sub_18036D720`:
+/// buyback cell) and its price: the buyback tab charges the stored sale price (`Market::GetBuyPrice`:
 /// without the faction discount or the `marketCostAdjustment` markup), the rest [`prices`]' buy price with
 /// the faction `discount`.
 #[allow(clippy::too_many_arguments)]

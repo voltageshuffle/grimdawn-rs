@@ -1,14 +1,14 @@
 use super::*;
 
-/// Sight anger, `ControllerMonster::AngerUpdate` @0x18013bd20:
+/// Sight anger, `ControllerMonster::AngerUpdate`:
 /// every living monster (aggroed or not; `ControllerMonster::Update` calls
 /// it outside the dying states) runs a 250 ms tick, its phase randomised at
 /// construction (`rand() % 251` ms). Each tick it gathers the characters
-/// within `ViewDistance` (a sphere, `GetCharactersInSphere` @0x18013afe0:
+/// within `ViewDistance` (a sphere, `GetCharactersInSphere`:
 /// alive, foes, |Δy| ≤ `MaxYViewDistance` when set, `CausesAnger`), keeps
 /// those whose nav path is no longer than `pathingViewDistance` when that
 /// is set (a failed path search passes), and adds
-/// `ProcessAngerTarget` @0x180139600 × the elapsed ticks: nothing outside
+/// `ProcessAngerTarget` × the elapsed ticks: nothing outside
 /// `InPursuitRange`, else `InnerSightAngerRate` within `InnerViewDistance`,
 /// else `SightAngerRate` × (1 − 0.1 × distance / `ViewDistance`), per
 /// second. There is no line-of-sight test anywhere on this path. The same
@@ -37,9 +37,9 @@ pub(super) fn sight_anger(
         .iter()
         .map(|(e, t, p)| (e, t.translation(), p.map_or(1.0, |p| p.anger_multiplier)))
         .collect();
-    // The monsters a monster of a foe faction may see: the `causesAnger` ones (`GetCharactersInSphere` @0x18013afe0
-    // skips Character +8376 == 0: a defense turret, a training dummy), anger scaled by their `angerMultiplier`
-    // (`AngerManager::AddAnger` @0x18001dfa0). Built only on a frame where a
+    // The monsters a monster of a foe faction may see: the `causesAnger` ones (`GetCharactersInSphere`
+    // skips `Character.causesAnger` == 0: a defense turret, a training dummy), anger scaled by their `angerMultiplier`
+    // (`AngerManager::AddAnger`). Built only on a frame where a
     // monster ticks; each ticking monster checks the distance before the faction. A rival names its pack by index
     // (`pack_index`: one `Arc` per distinct pack); the grid (`combat::grid`) lists the ones near a monster in
     // this list's order.
@@ -80,14 +80,14 @@ pub(super) fn sight_anger(
         let ticks = (1.0 - ai.anger_tick / 0.25).floor().max(1.0);
         ai.anger_tick += 0.25 * ticks;
         let secs = 0.25 * ticks;
-        // Forgiving (`AngerManager::Update` @0x18001dbb0): every
+        // Forgiving (`AngerManager::Update`): every
         // entry loses `ForgiveRate` per second; below 0 it is dropped.
         let forgive = ai.forgive * secs;
         if forgive > 0.0 && !ai.anger.is_empty() {
             ai.anger.iter_mut().for_each(|a| a.1 -= forgive);
             ai.anger.retain(|a| a.1 >= 0.0);
         }
-        // `ignoreSleepingEnemies`: the same `Update` drops a sleeping non-player (`ShouldRemoveEnemy` @0x18001eec0);
+        // `ignoreSleepingEnemies`: the same `Update` drops a sleeping non-player (`ShouldRemoveEnemy`);
         // it runs after this tick's `AddAnger`, so one in view gains nothing either.
         let ignore_sleeping = ai.ignore_sleeping;
         if ignore_sleeping {
@@ -114,7 +114,10 @@ pub(super) fn sight_anger(
                             r.0 != me_e
                                 && r.1.distance_squared(me) <= ai.view * ai.view
                                 && r.3.is_some_and(|i| {
-                                    crate::monsters::FactionPack::foes(&ai.faction, &packs[i])
+                                    gd_game_core::monsters::FactionPack::foes(
+                                        &ai.faction,
+                                        &packs[i],
+                                    )
                                 })
                         })
                         .map(|r| (r.0, r.1, r.2)),
@@ -157,7 +160,7 @@ pub(super) fn sight_anger(
     }
 }
 
-/// `ControllerMonster::UnderAttack` @0x18013c8e0: only when the
+/// `ControllerMonster::UnderAttack`: only when the
 /// attacker or its master (a pet's owner; else the attacker again) is
 /// `InPursuitRange` ([`MonsterAi::in_pursuit`]) does anything happen: at most
 /// every 500 ms the attacker gets (1 − `petAngerTransference`) ×
@@ -166,47 +169,41 @@ pub(super) fn sight_anger(
 /// FleeOnDamage; the "AlertBeforePursue" state's is empty). A sniped monster
 /// beyond its leash gains no anger. Anger decay is in [`sight_anger`].
 ///
-/// Distress calls: `Character::UnderAttack` @0x180068be0 calls
-/// for help when `ShouldUseDistressCall` @0x18005a870 allows (the flag,
+/// Distress calls: `Character::UnderAttack` calls
+/// for help when `ShouldUseDistressCall` allows (the flag,
 /// calls left, its timer run out), then spends a call and re-arms the timer
 /// (`distressCallTime` ms, default 5000; `maxDistressCalls`, default 1).
 /// The flag is the record's `distressCallWhenDying` (default 1): `Character::
-/// Load` @0x180054e70 stores it over `distressCall` in the same byte.
-/// `CharacterIsDying` @0x180068db0 always calls once more on the killer (its
-/// gate, Character +0x45A4, is only ever set to 1 by the constructor).
-/// `DoDistressCall` @0x18005a8a0 reaches every friend within
+/// Load` stores it over `distressCall` in the same byte.
+/// `CharacterIsDying` always calls once more on the killer (its
+/// gate, `Character.dyingCallsKiller`, is only ever set to 1 by the constructor).
+/// `DoDistressCall` reaches every friend within
 /// `distressCallRange`; each runs `ControllerMonster::AllyAttacked`
-/// @0x18013ca50: when the attacker is in its pursuit range and
-/// `ShouldCareAboutDistressCall` @0x18013ba90 holds (`DistressResponseBehavior`
+///: when the attacker is in its pursuit range and
+/// `ShouldCareAboutDistressCall` holds (`DistressResponseBehavior`
 /// RespondToAll; RespondToSameRace: a shared `characterRacialProfile` entry;
 /// RespondToSameGroup: equal `Character` distress groups, which only the
 /// Shattered Realm generator sets (`Monster::InitialUpdate`), so always
 /// equal here) it adds `AllyAttackedAnger` for the attacker. An idle monster
-/// also answers (`DefaultAllyAttackedResponse` @0x18014d390, Wander state):
+/// also answers (`DefaultAllyAttackedResponse`, Wander state):
 /// at `ChanceToRespondToDistressCall` % (default 100), when the attacker is
 /// not already its enemy and is valid, 100 anger and pursuit.
+/// The hit-anger and distress timers decay once per frame in [`monster_ai`]
+/// (earlier in the chain, before this system's additions), so a timer armed
+/// this frame keeps its full interval.
 pub(super) fn anger_from_hits(
-    time: Res<Time>,
     mut landed: MessageReader<HitLanded>,
     mut killed: MessageReader<MonsterKilled>,
     mut monsters: Query<(Entity, &GlobalTransform, &mut MonsterAi, Has<Dead>)>,
     tfs: Query<&GlobalTransform>,
     pets: Query<&crate::pets::Pet>,
+    mut calls: Local<Vec<(Entity, Entity)>>,
 ) {
-    let dt = time.delta_secs();
-    for (_, _, mut ai, _) in &mut monsters {
-        if ai.anger_timer > 0.0 {
-            ai.anger_timer -= dt;
-        }
-        if ai.distress.timer > 0.0 {
-            ai.distress.timer -= dt;
-        }
-    }
     if landed.is_empty() && killed.is_empty() {
         return;
     }
     // An attacking monster (an `Allied` guard) is angered at by its `angerMultiplier`, and not at all without
-    // `causesAnger` (`AngerManager::AddAnger` @0x18001dfa0 / `ShouldRemoveEnemy` @0x18001eec0 drops it: a turret).
+    // `causesAnger` (`AngerManager::AddAnger` / `ShouldRemoveEnemy` drops it: a turret).
     let mult = |monsters: &Query<(Entity, &GlobalTransform, &mut MonsterAi, Has<Dead>)>,
                 e: Entity| match pets.get(e) {
         Ok(p) => p.anger_multiplier,
@@ -220,7 +217,7 @@ pub(super) fn anger_from_hits(
         }),
     };
     // (caller, attacker)
-    let mut calls: Vec<(Entity, Entity)> = Vec::new();
+    calls.clear();
     for h in landed.read() {
         let m_att = mult(&monsters, h.attacker);
         let m_owner = pets
@@ -280,7 +277,7 @@ pub(super) fn anger_from_hits(
             calls.push((k.entity, by));
         }
     }
-    for (caller, attacker) in calls {
+    for &(caller, attacker) in calls.iter() {
         let Ok((_, ctf, cai, _)) = monsters.get(caller) else {
             continue;
         };
@@ -317,7 +314,7 @@ pub(super) fn anger_from_hits(
             let ally = ai.ally_anger;
             ai.add_anger(attacker, ally * m);
             if !ai.aggro
-                && (crate::rng::u32(..100) as f32) < ai.respond
+                && (gd_game_core::rng::u32(..100) as f32) < ai.respond
                 && ai.enemy != Some(attacker)
             {
                 ai.add_anger(attacker, 100.0 * m);
@@ -330,7 +327,7 @@ pub(super) fn anger_from_hits(
 /// ([`gd_sim::actor::Profile::speeds`]; the profile includes gear, skills and buffs).
 /// A changed speed reaches the playing clip in place
 /// ([`Character::force_speed_update`], `Character::ForceSpeedUpdate`
-/// @0x180068ca0 → `AnimationSet::AdjustAnimation` @0x180024f20): a run-speed
+/// → `AnimationSet::AdjustAnimation`): a run-speed
 /// buff gained mid-run speeds the run clip up at once, not at the next
 /// stop-start (slows already scale the advance's dt).
 pub(super) fn sync_speeds(mut q: Query<(&Combatant, &mut Character), Changed<Combatant>>) {

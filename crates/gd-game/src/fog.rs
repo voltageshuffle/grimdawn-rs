@@ -1,7 +1,7 @@
 //! Fog of war (map exploration), per difficulty in
 //! `levels_world001.map/<Difficulty>/map.fow` (format and reveal rule:
 //! `gd_formats::save::fow`). The game reveals around the player through
-//! `World::AddFOWVisibility` (Engine.dll 0x180219f50): only when the player has
+//! `World::AddFOWVisibility` (Engine.dll): only when the player has
 //! moved at least 1 m (x or z) since the last call, for every region touching a
 //! box of `kVisibleRange` (30 m) around the player, in the region's local
 //! coordinates. Each region's grid is created fully fogged on first use
@@ -11,14 +11,14 @@
 //! The data is exposed as [`FogOfWar`] for a minimap: [`FogOfWar::is_in_fog`]
 //! for a world position, or the per-region [`FogGrid`]s.
 //! [`reveal`] reveals around the player (by map region of the open map,
-//! [`crate::save::MapLayout`]). Engine.dll `World::AddFOWVisibility` /
-//! sub_18008B5F0 / `Region::GetFogOfWar` (0x180194880): each region has two
-//! grids revealed together, the saved one (Region +312, [`FogOfWar::grids`])
-//! and a session one (+320, [`FogOfWar::session`]: fully fogged on first use,
+//! [`gd_game_core::save::MapLayout`]). Engine.dll `World::AddFOWVisibility` /
+//! `FogOfWar::Reveal` / `Region::GetFogOfWar`: each region has two
+//! grids revealed together, the saved one (`Region.fogOfWar`, [`FogOfWar::grids`])
+//! and a session one (`Region.sessionFogOfWar`, [`FogOfWar::session`]: fully fogged on first use,
 //! never saved), which the local map greys by (grimdawn `ui::localmap::raster`).
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
 use gd_formats::save::fow::{FogGrid, Fow, FowRegion};
-use std::collections::HashMap;
 
 /// Explored areas of the session's difficulty.
 #[derive(Resource, Default)]
@@ -101,7 +101,7 @@ impl FogOfWar {
         for (r, key) in map.regions.iter().zip(self.keys(map)) {
             let (lo, hi) = bounds(r);
             if p.x >= lo.x && p.x <= hi.x && p.z >= lo.z && p.z <= hi.z {
-                let o = crate::levels::region_origin(r);
+                let o = gd_game_core::levels::region_origin(r);
                 return self
                     .grids
                     .get(key)
@@ -131,7 +131,7 @@ impl FogOfWar {
             if p.x + m < lo.x || p.x - m > hi.x || p.z + m < lo.z || p.z - m > hi.z {
                 continue;
             }
-            let o = crate::levels::region_origin(r);
+            let o = gd_game_core::levels::region_origin(r);
             let new = || FogGrid::new(r.bbox.half[0] * 2.0, r.bbox.half[2] * 2.0);
             if !grids.contains_key(key) {
                 order.push(r.name.clone());
@@ -158,8 +158,14 @@ impl FogOfWar {
 /// reveal (module doc).
 pub fn reveal(
     mut fog: ResMut<FogOfWar>,
-    map: Res<crate::save::MapLayout>,
-    players: Query<&Transform, (With<crate::player::Player>, Without<crate::combat::Dead>)>,
+    map: Res<gd_game_core::save::MapLayout>,
+    players: Query<
+        &Transform,
+        (
+            With<gd_game_core::player::Player>,
+            Without<gd_game_core::combat::Dead>,
+        ),
+    >,
 ) {
     let Ok(p) = players.single() else {
         return;
@@ -180,8 +186,10 @@ pub fn init_fog(
     // Option: `fog` is the existence check (this system creates it); `loaded` is absent for a new character.
     fog: Option<Res<FogOfWar>>,
     travel: Res<crate::riftgates::TravelState>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    choice: Res<crate::session::Choice>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    choice: Res<gd_game_core::session::Choice>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
+    mut shared: ResMut<gd_game_core::stash::SharedFiles>,
 ) {
     if fog.is_some() {
         return;
@@ -191,17 +199,21 @@ pub fn init_fog(
         difficulty: d,
         ..Default::default()
     };
-    if loaded.is_some()
-        && let Some(path) = choice.save_file(
-            std::path::Path::new(&choice.map_folder())
-                .join(FogOfWar::dir_name(d))
-                .join("map.fow"),
-        )
-        && let Ok(bytes) = std::fs::read(&path)
-    {
-        match Fow::parse(&bytes) {
-            Ok(f) => s = FogOfWar::from_fow(d, &f),
-            Err(e) => warn!("fog: {}: {e:#}", path.display()),
+    // The map file loads under the save guard (`stash::read_guarded`): unreadable → set aside / block,
+    // never rewritten from the empty runtime (`save.rs`).
+    if let Some(c) = &loaded {
+        let rel = std::path::Path::new(&choice.map_folder())
+            .join(FogOfWar::dir_name(d))
+            .join("map.fow");
+        if let Some(path) = choice.save_file(&rel) {
+            let target = choice
+                .player_folder(&save_dir, &c.0.header.name, c.0.info.is_in_main_quest != 0)
+                .join(&rel);
+            if let Some(f) =
+                gd_game_core::stash::read_guarded(&mut shared, &path, &target, Fow::parse)
+            {
+                s = FogOfWar::from_fow(d, &f);
+            }
         }
     }
     info!("fog: {} regions explored", s.grids.len());
@@ -209,7 +221,7 @@ pub fn init_fog(
 }
 
 pub fn bounds(r: &gd_formats::map::RegionInfo) -> (Vec3, Vec3) {
-    let c = crate::levels::region_origin(r) + Vec3::from(r.bbox.center);
+    let c = gd_game_core::levels::region_origin(r) + Vec3::from(r.bbox.center);
     let h = Vec3::from(r.bbox.half);
     (c - h, c + h)
 }
@@ -223,14 +235,14 @@ impl Plugin for FogPlugin {
             Update,
             (
                 init_fog
-                    .after(crate::player::PlayerSet)
+                    .after(gd_game_core::player::PlayerSet)
                     .run_if(resource_exists::<crate::riftgates::TravelState>)
                     .run_if(not(resource_exists::<FogOfWar>)),
                 reveal
                     .after(init_fog)
-                    .after(crate::player::PlayerSet)
+                    .after(gd_game_core::player::PlayerSet)
                     .run_if(resource_exists::<FogOfWar>)
-                    .run_if(resource_exists::<crate::save::MapLayout>),
+                    .run_if(resource_exists::<gd_game_core::save::MapLayout>),
             ),
         );
     }

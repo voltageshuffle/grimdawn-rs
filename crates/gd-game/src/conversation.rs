@@ -1,44 +1,44 @@
 //! Conversations with NPCs: opening, answering and closing the conversation
-//! window. The story runtime ([`crate::story::StoryRuntime`], `gd_sim::story`
+//! window. The story runtime ([`gd_game_core::story::StoryRuntime`], `gd_story::story`
 //! dialogs) decides what is said; this module owns the open conversation
 //! ([`Conversation`]) and applies the player's [`ConversationRequest`]s.
 //! The game draws the window from [`Conversation::view`] and sends requests.
 //!
 //! * Talk range: `ControllerPlayerState::DefaultRequestNpcAction`
-//!   (Game.dll 0x1801625e0): clicking an NPC talks at once when
+//!   (Game.dll): clicking an NPC talks at once when
 //!   `Character::NearTarget(npc, 3.0)` holds (3D distance of the origins
 //!   ≤ player radius + NPC radius + 3 m, [`in_talk_range`]); otherwise the
 //!   player walks to it (`MoveToNpc`) and talks when the path ends
 //!   (`ControllerPlayerStateMoveToNpc::EndOfPathReached` → `TalkToNpc`,
 //!   whatever the distance then). `Npc::Converse` opens the window only when
 //!   the conversation has an available speech.
-//! * Closing: the window's update `Grim Dawn.exe` 0x1401725c0: it
+//! * Closing: the window's update `Grim Dawn.exe` `ConversationWindow::Update`: it
 //!   closes when the NPC or the player is gone, when the 3D distance between
 //!   them exceeds the NPC's `GetUICloseDistance` (`uiCloseDistance` of its
-//!   record, 5 m when missing or ≤ 0, Engine.dll `Actor::GetUICloseDistance`
-//!   0x18002d1f0; [`close_distance`]), or after 150 s without input
+//!   record, 5 m when missing or ≤ 0, Engine.dll `Actor::GetUICloseDistance`;
+//!   [`close_distance`]), or after 150 s without input
 //!   (`Engine::IsUserIdle(150000)`; PORT: not checked). The window's close
-//!   slot (0x140170ee0, used for Esc / the close button) and the "End
+//!   slot (`ConversationWindow::OnCloseSlot`, used for Esc / the close button) and the "End
 //!   Conversation" button close it without running actions
 //!   ([`ConversationRequest::Close`]).
 //! * Voice-overs: the window's step update `Grim Dawn.exe`
-//!   0x14016f7c0: each speech shown (opening, a Continue / link reply) stops
+//!   `ConversationWindow::UpdateStep`: each speech shown (opening, a Continue / link reply) stops
 //!   the previous speech's VO (`ConversationStep::StopVO`, the step kept at
-//!   window +6744) and plays its own (`PlayVO`, [`DialogView::voice`]); the
-//!   window's close (0x140170de0: Esc / close button / End, Accept /
-//!   Decline / End replies and no speech left through 0x14016f7c0, walking
-//!   away / the NPC gone through the update 0x1401725c0) stops it. Nothing
+//!   `ConversationWindow.currentStep`) and plays its own (`PlayVO`, [`DialogView::voice`]); the
+//!   window's close (`ConversationWindow::Close`: Esc / close button / End, Accept /
+//!   Decline / End replies and no speech left through `UpdateStep`, walking
+//!   away / the NPC gone through the update `ConversationWindow::Update`) stops it. Nothing
 //!   waits for the voice: the text and replies show at once, a page
 //!   "Continue" neither restarts nor stops it, and the voice runs to its end
 //!   while the window stays open. [`Conversation::line`] numbers the speeches
 //!   shown; the game's audio plays [`DialogView::voice`] of each new line.
-//! * PORT: the window's 0.5 s fade in / out (`+6844`, `dt × 0.002`) is not
+//! * PORT: the window's 0.5 s fade in / out (`ConversationWindow.fade`, `dt × 0.002`) is not
 //!   modelled; it opens and closes at once.
-use crate::data::GameData;
-use crate::player::Player;
-use crate::story::{StoryActor, StoryRuntime};
 use bevy::prelude::*;
-use gd_sim::story::DialogView;
+use gd_game_core::data::GameData;
+use gd_game_core::player::Player;
+use gd_game_core::story::{StoryActor, StoryRuntime};
+use gd_story::story::DialogView;
 
 pub struct ConversationPlugin;
 
@@ -50,7 +50,7 @@ impl Plugin for ConversationPlugin {
                 Update,
                 run_conversations
                     .in_set(ConversationStage::Run)
-                    .after(crate::story::StoryStage::Tick),
+                    .after(gd_game_core::story::StoryStage::Tick),
             );
     }
 }
@@ -78,12 +78,12 @@ pub struct Conversation {
     pub version: u64,
     /// The NPC's faction icon while the window is open
     /// ([`crate::factions::faction_icon`], taken when it opens:
-    /// `ConversationWindow` layout 0x140170470 reads the NPC's
+    /// `ConversationWindow::Layout` reads the NPC's
     /// `GetVisibleFaction`).
     pub faction_icon: Option<String>,
     /// The NPC's conversation has a quest step the player's standing with
     /// the NPC's faction locks (`Story::locked_quest_faction`, taken when it
-    /// opens: sub_14016E390, PORT: the engine also re-runs it from two
+    /// opens: `ConversationWindow::Open`, PORT: the engine also re-runs it from two
     /// window virtuals, not decompiled): the window shows the locked-quests
     /// icon instead of the faction icon.
     pub locked_quests: bool,
@@ -172,7 +172,7 @@ pub fn run_conversations(
                 conv.faction_tip = conv.view.as_ref().and_then(|_| {
                     let f = factions.as_ref()?;
                     let i = crate::factions::visible_faction(&data.db, &record)?;
-                    let gf = data.db.get(gd_sim::faction::GAME_FACTIONS)?;
+                    let gf = data.db.get(gd_rules::faction::GAME_FACTIONS)?;
                     crate::factions::faction_tip(gf, i, f.value(i), lock.map(|(_, d)| d))
                 });
             }

@@ -1,11 +1,11 @@
 //! Requirement reductions (`…ReqReduction` character attributes, ids 29-54).
 //!
-//! `ItemEquipment::AreRequirementsMet` @0x180343c30 /
-//! `GetUIRequirementText` @0x180343850 / `Item::AreRequirementsMet`
-//! @0x180326930 / `Item::GenerateRequirementText` @0x180327420: the
+//! `ItemEquipment::AreRequirementsMet` /
+//! `GetUIRequirementText` / `Item::AreRequirementsMet`
+//! / `Item::GenerateRequirementText`: the
 //! character's accumulator value (`GetValue`) of the item's attribute ids is
 //! summed per requirement: Physique / Cunning / Spirit take the class
-//! family's id (the item +0xDF8…, set by the class: melee 32-34, hunting
+//! family's id (`ItemEquipment.reqReductionIds`, set by the class: melee 32-34, hunting
 //! 35-37, staff 38-40, shield / off-hand 44-46, protective armour 47-49,
 //! jewellery 50-52), a weapon adds the Weapon ids (29-31), a two-handed melee
 //! weapon the 2H ids (41-43), and the global one (53) when above 0 adds to

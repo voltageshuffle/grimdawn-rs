@@ -1,10 +1,11 @@
 //! Per-world/per-difficulty state: `quests.gdd` and `conversations.gdd`
 //! (`main/_<name>/levels_world001.map/<Difficulty>/`).
 //!
-//! Quests — Game.dll `sub_1803FBBE0` (file body), `Quest2Repository::
-//! WriteProperties` (0x1804238c0), `Quest2::WriteProperties` (0x180420fe0),
-//! `Quest2Task::WriteProperties` (0x180426370). Conversations — writer
-//! `sub_1803FC800`, reader `sub_1803FC3C0`, payload `sub_18017B780`.
+//! Quests — Game.dll `Player::WriteQuestFile` (file body), `Quest2Repository::
+//! WriteProperties`, `Quest2::WriteProperties`,
+//! `Quest2Task::WriteProperties`. Conversations — writer
+//! `Player::WriteConversationFile`, reader `Player::ReadConversationFile`, payload
+//! `ConversationManager::WriteProperties`.
 //!
 //! Quest task payloads contain the task's objective/condition state, written by
 //! virtual `WriteProperties` of objects created from the quest definitions

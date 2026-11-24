@@ -2,27 +2,67 @@
 dev = "run -p grimdawn --features dev"
 dev-build = "build -p grimdawn --features dev"
 
+[build]
+rustflags = [
+  "-Clink-arg=-Wl,-z,pack-relative-relocs",
+  "-Clink-arg=-fuse-ld=/usr/bin/mold",
+  "-Ctarget-cpu=native",
+  "-Zembed-metadata=no",
+  "-Zlocation-detail=none",
+  "-Zshare-generics=y",
+]
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+panic = "abort"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+
 [profile.dev.package.gd-formats]
 opt-level = 3
-codegen-backend = "llvm"
 
 [profile.dev.package.gd-sim]
 opt-level = 3
-codegen-backend = "llvm"
-
-[profile.dev.package.tracing]
-debug-assertions = true
 
 [profile.dev.package.log]
 debug-assertions = true
 
+[profile.dev.package.tracing]
+debug-assertions = true
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+panic = "abort"
+
 [profile.profiling]
-inherits = "release"
-debug = "line-tables-only"
+inherits = "dev"
+opt-level = 3
 strip = "none"
+debug-assertions = false
+overflow-checks = false
+
+[profile.profiling.package.log]
+debug-assertions = true
 
 [profile.profiling.package.tracing]
 debug-assertions = true
 
-[profile.profiling.package.log]
-debug-assertions = true
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = [
+  "-Clink-arg=-Wl,-z,pack-relative-relocs",
+  "-Clink-arg=-fuse-ld=/usr/bin/mold",
+  "-Ctarget-cpu=native",
+  "-Zembed-metadata=no",
+  "-Zshare-generics=y",
+  "-Zlocation-detail=none",
+]
+
+[unstable]
+panic-immediate-abort = true

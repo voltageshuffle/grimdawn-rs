@@ -3,26 +3,27 @@
 //!
 //! 3D sounds: [`Positioned`] holds every mono sound the engine would make a 3D buffer; its voice is mixed to the two
 //! ears with the gains of [`gd_sim::sound3d`], kept current every frame ([`positioned_sounds`], `emitters::emitters`).
-//! DS8Sound.dll @0x180001ed0: a sample's buffer is made with `DSBCAPS_CTRL3D`, which DirectSound refuses for a
-//! stereo WAV; it is then made again as a plain buffer and marked not 3D (+12), so the position and min / max distance
-//! calls do nothing: a stereo file plays centred at its full volume wherever it is (`Loaded::mono`; 901 of the 5 955
-//! stock pak entries, many monster vocalisations). The checks of `SoundPak::Play3D` still apply to it.
+//! DS8Sound.dll `DS8SoundSample::LoadWave`: a sample's buffer is made with `DSBCAPS_CTRL3D`, which DirectSound
+//! refuses for a stereo WAV; it is then made again as a plain buffer and marked not 3D (`SoundBuffer.is3d`), so the
+//! position and min / max distance calls do nothing: a stereo file plays centred at its full volume wherever it is
+//! (`Loaded::mono`; 901 of the 5 955 stock pak entries, many monster vocalisations). The checks of `SoundPak::Play3D`
+//! still apply to it.
 use super::Sounds;
 use super::cache::Loaded;
 use super::listener::{BaseVolume, Listener, SoundClass, VOICES, sound};
 use super::mixer::{EarGains, OnEnd, Voice3d, attach_voice};
-use crate::data::GameData;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::data::GameData;
 use gd_sim::sound3d::distance_gain;
 use std::sync::Arc;
 
 /// The frequency every engine sound buffer is set to unless pitched: `SoundDescriptor::SoundDescriptor`
-/// @0x1801b29f0 (+56 = 44100).
+/// (`SoundDescriptor.frequency` = 44100).
 pub const ENGINE_HZ: f32 = 44100.0;
 
-/// Playback speed of a sound file at the engine frequency `freq` (Hz). `SoundManager::Play3D` @0x1801b7540 /
-/// `Play2D` @0x1801b7180 set a sound buffer's frequency to the descriptor's (`ENGINE_HZ`, or a [`pitch_hz`]) through
+/// Playback speed of a sound file at the engine frequency `freq` (Hz). `SoundManager::Play3D` /
+/// `Play2D` set a sound buffer's frequency to the descriptor's (`ENGINE_HZ`, or a [`pitch_hz`]) through
 /// `IDirectSoundBuffer::SetFrequency`, absolute Hz, on a buffer made in the WAV's own format (`gd_formats::wav`): a
 /// 48 kHz WAV plays at 44100 / 48000 = 0.919 speed, a 96 kHz one at half speed. `.ogg` streams (`rate` None,
 /// `StartStream`) get no frequency: their own speed.
@@ -31,7 +32,7 @@ pub fn playback_speed(freq: f32, rate: Option<u32>) -> f32 {
         .map_or(1.0, |r| (freq / r as f32).max(0.05))
 }
 
-/// A `SoundPak` record as `SoundPak::Load` @0x1801b9ef0 reads it, kept in [`Sounds`] by name until the mod changes, so
+/// A `SoundPak` record as `SoundPak::Load` reads it, kept in [`Sounds`] by name until the mod changes, so
 /// a play does no record lookups.
 pub(crate) struct PakInfo {
     /// `volumeSet` ([`volume_set`]).
@@ -99,20 +100,20 @@ impl Sounds {
 /// position, heard from the listener (`listener::ears`); `None` (or no listener yet) plays it 2D. The single place
 /// gameplay one-shots start, so every rule that limits what is heard is here:
 ///
-/// - `SoundManager::Play3D` @0x1801b7540 / `Play2D` @0x1801b7180: not started while its volume set's option
+/// - `SoundManager::Play3D` / `Play2D`: not started while its volume set's option
 ///   gain or the master volume is below 1e-4 ([`audible_gain`]); not started while all [`VOICES`] slots play
-///   (`GetEmptyCurrentPlayingIndex` @0x1801b6e80 returns -1: no stealing, no priority); slots free when a sound ends.
-/// - `SoundPak::Play3D` @0x1801baa20: a `force2d` pak positioned in the world plays 2D only when the spot is
-///   inside the view frustum widened by 20 m (`IsValidPositionInFrustum` @0x1801b5a20); others only if
-///   [`could_possibly_hear`] (`CouldPossiblyHear` @0x1801ba8e0, always on).
-/// - `SoundPak::Load` @0x1801b9ef0: `volumeSet` picks the volume option ([`volume_set`]); `weightN` default
-///   25, `PickSound` @0x1801ba3f0 ([`pick_sound`]).
+///   (`GetEmptyCurrentPlayingIndex` returns -1: no stealing, no priority); slots free when a sound ends.
+/// - `SoundPak::Play3D`: a `force2d` pak positioned in the world plays 2D only when the spot is
+///   inside the view frustum widened by 20 m (`IsValidPositionInFrustum`); others only if
+///   [`could_possibly_hear`] (`CouldPossiblyHear`, always on).
+/// - `SoundPak::Load`: `volumeSet` picks the volume option ([`volume_set`]); `weightN` default
+///   25, `PickSound` ([`pick_sound`]).
 /// - Pitch: [`pitch_hz`], played at the file's [`playback_speed`].
 ///
 /// Footstep / vox / combat requests that fail these are dropped here, at the same point the engine drops them (the
 /// callbacks themselves are not gated: `Actor::UpdateSelf` runs `HandleAnimationCallbacks` for every updated actor).
 ///
-/// `SoundPak::GetPlayLocation` @0x1801ba660: after the hearing check a `spawnAtCameraY` pak (level up, low
+/// `SoundPak::GetPlayLocation`: after the hearing check a `spawnAtCameraY` pak (level up, low
 /// health warnings) plays at the ears' height. A mono file heard in 3D stays where it started ([`Positioned`]).
 pub fn play_pak(
     commands: &mut Commands,
@@ -291,7 +292,7 @@ pub(super) fn start_voice(
     e
 }
 
-/// `SoundPak::CouldPossiblyHear` @0x1801ba8e0: a 3D sound starts only when the listener is closer than 8 × `fallOff`
+/// `SoundPak::CouldPossiblyHear`: a 3D sound starts only when the listener is closer than 8 × `fallOff`
 /// (squared distances compared).
 pub fn could_possibly_hear(falloff: f32, d: f32) -> bool {
     d * d < (8.0 * falloff) * (8.0 * falloff)
@@ -312,7 +313,7 @@ pub fn volume_set(s: Option<&str>) -> SoundClass {
     }
 }
 
-/// `SoundPak::PickSound` @0x1801ba3f0: `roll % total`, the first variant whose cumulative weight reaches it; 0 when
+/// `SoundPak::PickSound`: `roll % total`, the first variant whose cumulative weight reaches it; 0 when
 /// the weights sum to 0.
 pub fn pick_sound(weights: &[u32], roll: u32) -> usize {
     let total: u32 = weights.iter().sum();
@@ -330,9 +331,9 @@ pub fn pick_sound(weights: &[u32], roll: u32) -> usize {
     0
 }
 
-/// The frequency (Hz) a pak plays a variant at. `SoundPak::Load` @0x1801b9ef0 reads `pitchUp` into both pitch
-/// fields (`pitchDown` is never read) and `pitchStep` (0 → 2000); `SoundPak::Play3D` @0x1801baa20 plays at 44100 +
-/// (`rand() % (2 up + 1)`) × step Hz (only upwards), `Play2D` @0x1801ba510 at 44100 + (`rand() % (2 up + 1)` − up) ×
+/// The frequency (Hz) a pak plays a variant at. `SoundPak::Load` reads `pitchUp` into both pitch
+/// fields (`pitchDown` is never read) and `pitchStep` (0 → 2000); `SoundPak::Play3D` plays at 44100 +
+/// (`rand() % (2 up + 1)`) × step Hz (only upwards), `Play2D` at 44100 + (`rand() % (2 up + 1)` − up) ×
 /// step; the file's speed then follows [`playback_speed`].
 pub fn pitch_hz(up: i32, step: i32, positional: bool, roll: u32) -> f32 {
     let up = up.max(0);
@@ -362,8 +363,8 @@ pub(super) fn numbered(rec: &Record, key: &str) -> Vec<String> {
 }
 
 /// A mono sound heard in 3D. It has a fixed position, its gain and pan following the listener
-/// (`gd_sim::sound3d` module doc), unless tracked (`SoundPak::Track` → `SoundManager::RegisterMovingObject`
-/// @0x1801b3f30): `SoundManager::Update` @0x1801b5b10 moves it to its object every frame and drops the object from the
+/// (`gd_sim::sound3d` module doc), unless tracked (`SoundPak::Track` → `SoundManager::RegisterMovingObject`):
+/// `SoundManager::Update` moves it to its object every frame and drops the object from the
 /// list once it is gone (the sound plays on where it was).
 #[derive(Component)]
 pub struct Positioned {
@@ -397,12 +398,12 @@ pub(super) fn positioned_sounds(
     }
 }
 
-/// Gameplay's sound requests (`gd_game::visuals::PlaySound`), heard from the ears; tracked ones (`PlaySoundOn`)
+/// Gameplay's sound requests (`gd_game_core::visuals::PlaySound`), heard from the ears; tracked ones (`PlaySoundOn`)
 /// follow their entity ([`Positioned`]).
 pub(super) fn play_requests(
     mut commands: Commands,
-    mut events: MessageReader<gd_game::visuals::PlaySound>,
-    mut tracked: MessageReader<gd_game::visuals::PlaySoundOn>,
+    mut events: MessageReader<gd_game_core::visuals::PlaySound>,
+    mut tracked: MessageReader<gd_game_core::visuals::PlaySoundOn>,
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,
 ) {
@@ -426,13 +427,13 @@ pub(super) fn play_requests(
 /// Story `PlaySound` (a sound pak, at a script object or on the player).
 pub(super) fn story_sounds(
     mut commands: Commands,
-    mut events: MessageReader<crate::story::StoryEffect>,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,
-    actors: Query<(&crate::story::StoryActor, &GlobalTransform)>,
+    actors: Query<(&gd_game_core::story::StoryActor, &GlobalTransform)>,
 ) {
     for ev in events.read() {
-        if let gd_sim::story::Effect::PlaySound { record, at } = &ev.0 {
+        if let gd_story::story::Effect::PlaySound { record, at } = &ev.0 {
             let pos = at.and_then(|id| {
                 actors
                     .iter()
@@ -444,7 +445,7 @@ pub(super) fn story_sounds(
     }
 }
 
-/// `SoundPeriodic` (Game.dll `SoundPeriodic::Load` @0x18055f680 / `Update` @0x18055f7b0), the periodic sound of a
+/// `SoundPeriodic` (Game.dll `SoundPeriodic::Load` / `Update`), the periodic sound of a
 /// `Decoration` (`periodicSound`, `soundPeriod`, `randomPeriod`,
 /// `randomPeriodMin` / `Max` in seconds): the timer starts at one period (or a random draw, both ends inclusive) and
 /// counts down; at 0 the pak plays at the object and the timer is armed again, counted from the start of the sound.
@@ -534,15 +535,16 @@ const FOOTPRINT_RANGE: f32 = 40.0;
 pub(super) fn character_callbacks(
     mut commands: Commands,
     data: Res<GameData>,
-    mut callbacks: MessageReader<gd_game::character::AnimCallback>,
+    mut callbacks: MessageReader<gd_game_core::character::AnimCallback>,
     chars: Query<
-        (&gd_game::character::Character, &GlobalTransform),
+        (&gd_game_core::character::Character, &GlobalTransform),
         Without<crate::doll::DollBody>,
     >,
-    players: Query<&GlobalTransform, With<crate::player::Player>>,
+    players: Query<&GlobalTransform, With<gd_game_core::player::Player>>,
     coll: Res<crate::collision::WorldCollision>,
-    mut out: MessageWriter<gd_game::visuals::PlaySound>,
-    mut tracked: MessageWriter<gd_game::visuals::PlaySoundOn>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
+    mut out: MessageWriter<gd_game_core::visuals::PlaySound>,
+    mut tracked: MessageWriter<gd_game_core::visuals::PlaySoundOn>,
 ) {
     use gd_game::char_sounds::{self, Surface};
     let player = players.iter().next().map(|g| g.translation());
@@ -568,13 +570,13 @@ pub(super) fn character_callbacks(
         if let Some(pak) = heard.sound {
             debug!("{}: {} on {surface:?} at {at} -> {pak}", cb.entity, cb.name);
             if heard.tracked {
-                tracked.write(gd_game::visuals::PlaySoundOn {
+                tracked.write(gd_game_core::visuals::PlaySoundOn {
                     pak,
                     on: cb.entity,
                     at,
                 });
             } else {
-                out.write(gd_game::visuals::PlaySound { pak, at: Some(at) });
+                out.write(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
             }
         }
         let Some((decal, left)) = heard.footprint else {
@@ -584,21 +586,15 @@ pub(super) fn character_callbacks(
             continue;
         }
         // `GetFootCoords`: the toe bone, else the character's own coords.
-        let toe = if left { "BN_LToe" } else { "BN_RToe" };
-        let foot = c
-            .body
-            .bones
-            .iter()
-            .position(|b| b.name.eq_ignore_ascii_case(toe))
-            .and_then(|i| {
-                c.posed()
-                    .get(i)
-                    .map(|m| g.transform_point(Vec3::from(m.origin)))
-            });
+        let foot = bodies.toe(&c.body, left).and_then(|i| {
+            c.posed()
+                .get(i)
+                .map(|m| g.transform_point(Vec3::from(m.origin)))
+        });
         let (_, rot, _) = g.to_scale_rotation_translation();
         debug!("{}: footprint {decal}", cb.entity);
         commands.spawn((
-            gd_render::fx::DropDecal(decal),
+            gd_render::fx::DropDecal(decal.into()),
             Transform::from_translation(foot.unwrap_or(at)).with_rotation(rot),
         ));
     }

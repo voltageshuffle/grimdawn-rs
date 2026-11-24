@@ -5,17 +5,18 @@
 //!
 //! Records (`records/game/weathermanager.dbr` `systems`, `weathersystem*.dbr`, `records/fx/climate/<set>.dbr`,
 //! `records/fx/climate_weather/<n>.dbr`) load through [`Templates::load`], [`ClimateSet::load`]. All weather random
-//! numbers come from one Park-Miller generator ([`Rng`] = `combat::Rng`, manager +298: state * 16807
+//! numbers come from one Park-Miller generator ([`Rng`] = `gd_rules::Rng`, `WeatherManager.rng`: state * 16807
 //! mod 2^31-1, `rnd * 4.656613e-10` the unit float).
 //!
-//! PORT stand-ins: the intensity ramp (`+48`, set at once), the rain gust calm length and noise, the fog burst line
-//! placement (an exact copy of sub_1802139C0 was not transcribed), particle fades (engine: fog 500 ms in, wind
+//! PORT stand-ins: the intensity ramp (`WeatherSystem.intensityRamp`, set at once), the rain gust calm length and
+//! noise, the fog burst line placement (an exact copy of `FogSystem::SpawnParticle`'s was not transcribed),
+//! particle fades (engine: fog 500 ms in, wind
 //! particles 500 ms in and out; here every type fades), the flat ground (the focus height) for ground fog, the
 //! direction of the fog distance adjustment.
 use crate::crt::CrtRand;
 use gd_formats::vfs::Database;
 
-pub use crate::combat::Rng;
+use gd_rules::Rng;
 
 /// The weather generator seeded from `seed` (`seed % (2^31-1)`, 0 → 1: a valid Park–Miller state).
 fn seeded(seed: u32) -> Rng {
@@ -57,7 +58,8 @@ pub fn quality_index(name: &str) -> u8 {
     }
 }
 
-/// Spawn-delay multiplier sub_180212910: 3 / 2 / 1 for quality 0 / 1 / >= 2 (low weather has a third of the particles).
+/// Spawn-delay multiplier `WeatherSystem::SetIntensity`: 3 / 2 / 1 for quality 0 / 1 / >= 2 (low weather has a third
+/// of the particles).
 pub fn quality_factor(quality: u8) -> i32 {
     match quality {
         0 => 3,
@@ -69,7 +71,7 @@ pub fn quality_factor(quality: u8) -> i32 {
 /// `WeatherManager::maxParticles`, per system.
 pub const MAX_PARTICLES: usize = 1024;
 
-/// The particle system types (string compare in `SetWeather` @0x18020eb10).
+/// The particle system types (string compare in `WeatherManager::SetWeather`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Rain,
@@ -97,7 +99,7 @@ impl Kind {
         })
     }
 
-    /// The spawn delay in ms at intensity `i` (0..1) sub_180212910 (before the quality factor).
+    /// The spawn delay in ms at intensity `i` (0..1) `WeatherSystem::SetIntensity` (before the quality factor).
     pub fn delta_ms(self, i: f32) -> f32 {
         match self {
             Self::Rain => 20.0 - 18.0 * i,
@@ -109,13 +111,13 @@ impl Kind {
         }
     }
 
-    /// Loop-sound volume factor (vfunc +120): rain is louder.
+    /// Loop-sound volume factor (`WeatherSystem::GetLoopVolume`): rain is louder.
     pub fn volume_factor(self) -> f32 {
         if self == Self::Rain { 1.2 } else { 1.0 }
     }
 }
 
-/// A `weathersystem*.dbr` (loader sub_1802173C0).
+/// A `weathersystem*.dbr` (loader `WeatherSystem::Load`).
 #[derive(Clone, Debug)]
 pub struct Template {
     pub name: String,
@@ -149,7 +151,7 @@ impl Template {
     }
 }
 
-/// The manager's templates in record order; two sharing a name: the first wins (`Initialize` @0x18020dd90).
+/// The manager's templates in record order; two sharing a name: the first wins (`WeatherManager::Initialize`).
 #[derive(Clone, Debug, Default)]
 pub struct Templates {
     pub list: Vec<Template>,
@@ -178,7 +180,7 @@ impl Templates {
     }
 }
 
-/// An entry's time filter (sub_18004AB20): "" / "Always" always, "Day", anything else night.
+/// An entry's time filter (`ClimateSet::Load`): "" / "Always" always, "Day", anything else night.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum When {
     Always,
@@ -196,7 +198,8 @@ impl When {
     }
 }
 
-/// A `climate_weather` record (loader sub_18004A680): up to three systems with their intensity range (0..1) and the
+/// A `climate_weather` record (loader `ClimateWeather::Load`): up to three systems with their intensity range (0..1)
+/// and the
 /// ambience adjustments.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Climate {
@@ -241,7 +244,7 @@ pub struct Entry {
 }
 
 /// A `records/fx/climate/<set>.dbr`: up to 5 entries, loading stops at the first one with chance <= 0 or no record
-/// (sub_18004AB20), so a set can hold none.
+/// (`ClimateSet::Load`), so a set can hold none.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClimateSet {
     pub entries: Vec<Entry>,
@@ -284,7 +287,7 @@ impl ClimateSet {
     }
 }
 
-/// The weighted pick sub_18004B030: the eligible entries are those that are Always, Day while it is day,
+/// The weighted pick `ClimateSet::PickWeather`: the eligible entries are those that are Always, Day while it is day,
 /// Night while it is not. One eligible: it (no draw); none: `None`; else `r = rnd % (sum + 1)` and the first eligible
 /// entry with `r <= running sum` wins.
 pub fn pick(entries: &[Entry], is_day: bool, rng: &mut Rng) -> Option<usize> {
@@ -327,7 +330,7 @@ pub struct Adjust {
 }
 
 impl Adjust {
-    /// `UpdateAmbience` @0x18020f940: darkness / density / colour ease at 0.1 / s, the distance at 1.0 / s.
+    /// `WeatherManager::UpdateAmbience`: darkness / density / colour ease at 0.1 / s, the distance at 1.0 / s.
     pub fn ease_to(&mut self, target: &Adjust, dt: f32) {
         let step = |v: &mut f32, t: f32, rate: f32| {
             let d = rate * dt;
@@ -342,20 +345,22 @@ impl Adjust {
     }
 }
 
-/// The wind (`WeatherManager` +1196..+1232). `Update` @0x18020fb70: the
-/// strength factor (+1228) eases at 0.1 / s to a target (+1232) re-rolled on its own timer, every `10000 + rnd % 50001`
+/// The wind (`WeatherManager.windDir` .. `WeatherManager.windTarget`). `WeatherManager::Update`: the
+/// strength factor (`WeatherManager.windFactor`) eases at 0.1 / s to a target (`WeatherManager.windTarget`) re-rolled
+/// on its own timer, every `10000 + rnd % 50001`
 /// ms, to `1 + 2 * strength` (`strength` = the mean of the chosen climate's intensities that are > 0 times its
 /// `windIntensity`, 0 without a choice); the direction turns towards the target direction `RandomizeWind` picks.
 #[derive(Clone, Debug)]
 pub struct Wind {
     pub factor: f32,
     target: f32,
-    /// `RandomizeWind`'s timer (+305) and the strength timer (+306), ms.
+    /// `RandomizeWind`'s timer (`WeatherManager.windDirTimer`) and the strength timer
+    /// (`WeatherManager.windStrengthTimer`), ms.
     dir_timer_ms: i32,
     strength_timer_ms: i32,
-    /// The current unit direction (x, z) (+1196): what the particles and gusts follow.
+    /// The current unit direction (x, z) (`WeatherManager.windDir`): what the particles and gusts follow.
     pub dir: [f32; 2],
-    /// Where it turns to (+1208).
+    /// Where it turns to (`WeatherManager.windTargetDir`).
     pub target_dir: [f32; 2],
 }
 
@@ -374,7 +379,7 @@ impl Wind {
         w
     }
 
-    /// `RandomizeWind` @0x1802114c0: the next pick in `10000 + rnd % 50001` ms; the target direction is
+    /// `WeatherManager::RandomizeWind`: the next pick in `10000 + rnd % 50001` ms; the target direction is
     /// `normalise(b, 0, a)` of two draws `a`, `b` uniform in -1..1 (a square, so the diagonals come up more often);
     /// `immediate` also turns the wind there at once.
     pub fn randomize(&mut self, rng: &mut Rng, immediate: bool) {
@@ -487,7 +492,7 @@ pub trait Ground {
     fn ray(&self, origin: [f32; 3], dir: [f32; 3], len: f32) -> Option<f32>;
 }
 
-/// One running particle system (`WeatherSystem`, vfunc update sub_180212490).
+/// One running particle system (`WeatherSystem`, update `WeatherSystem::Update`).
 #[derive(Clone, Debug)]
 pub struct ParticleSystem {
     /// Unique per [`Weather`]: what the renderer keys its draw state by.
@@ -508,7 +513,7 @@ pub struct ParticleSystem {
     gusting: bool,
     gust_offset: [f32; 2],
     /// Rain drops that died this update (where they ended): each asks for a water ripple at quality > 1 (the
-    /// death hook sub_180215F20; [`Ripples`]).
+    /// death hook `RainSystem::OnParticleDeath`; [`Ripples`]).
     pub died: Vec<[f32; 3]>,
 }
 
@@ -557,7 +562,8 @@ impl ParticleSystem {
         }
     }
 
-    /// The rain tilt vector (sub_180216720): base `(0.3 wx, -1, 0.3 wz)` normalised, plus the gust offset while
+    /// The rain tilt vector (`RainWeatherSystem::GetTilt`): base `(0.3 wx, -1, 0.3 wz)` normalised, plus the gust
+    /// offset while
     /// [`Self::update_gust`] has a gust blowing.
     fn rain_tilt(&self, f: &Frame<'_>) -> [f32; 3] {
         let [wx, wz] = f.wind_dir;
@@ -569,7 +575,7 @@ impl ParticleSystem {
         norm([0.3 * wx + ox, -1.0, 0.3 * wz + oz])
     }
 
-    /// `SetIntensity` sub_180212910: the spawn delay is `int(deltaFn(i) * Q)` ms.
+    /// `WeatherSystem::SetIntensity`: the spawn delay is `int(deltaFn(i) * Q)` ms.
     pub fn set_intensity(&mut self, i: f32, quality: u8) {
         self.active = self.intensity > 0.0 || i > 0.0;
         if i <= 0.0 {
@@ -587,12 +593,12 @@ impl ParticleSystem {
         self.intensity = 0.0;
     }
 
-    /// Finished (vfunc +32): stopped and empty.
+    /// Finished (`WeatherSystem::IsFinished`): stopped and empty.
     pub fn finished(&self) -> bool {
         !self.active && self.particles.is_empty()
     }
 
-    /// Loop volume (vfunc +120): `min(factor * count / max, 1)`.
+    /// Loop volume (`WeatherSystem::GetLoopVolume`): `min(factor * count / max, 1)`.
     pub fn volume(&self) -> f32 {
         (self.template.kind.volume_factor() * self.particles.len() as f32 / MAX_PARTICLES as f32)
             .min(1.0)
@@ -696,7 +702,8 @@ impl ParticleSystem {
                     d[1] * speed * rng.range(0.8, 1.2),
                     d[2] * speed * rng.range(0.8, 1.2),
                 ];
-                // sub_180215B60 (notes "Rain splash"): at weatherQuality 3 a ground ray of length 2 * spawnRadius cuts
+                // RainSystem::SpawnParticle (notes "Rain splash"): at weatherQuality 3 a ground ray of length
+                // 2 * spawnRadius cuts
                 // the life to `hit distance / particleSpeed` ms, so the drop (and its ripple) ends at the ground, under a
                 // roof or tree at its surface. The ray runs from the spawn point along the drop's direction.
                 if self.quality >= 3
@@ -766,7 +773,8 @@ impl ParticleSystem {
     }
 }
 
-/// The lightning flash (class 0x40 B, update sub_180215500): a white point light (range 100) near the camera.
+/// The lightning flash (class 0x40 B, update `LightningWeatherSystem::Update`): a white point light (range 100) near
+/// the camera.
 /// Strikes come after `100 + rnd % (14901 - 13000 * i)` ms, the first one too (counted from the frame lightning
 /// becomes active); a strike is 2 or 3 flashes, each on `(1 + u) * 40` ms and off `(1 + u) * 35` ms. There is no
 /// thunder and no bolt in the weather path.
@@ -839,7 +847,8 @@ pub struct Ripple {
     pub alpha: f32,
 }
 
-/// A water's ripple set (`Water` +4312; ctor sub_180203940, add sub_180203E90, update sub_180203AC0):
+/// A water's ripple set (`Water.ripples`; ctor `WaterRipples::Construct`, add `WaterRipples::Add`, update
+/// `WaterRipples::Update`):
 /// [`Ripples::SLOTS`] slots, a new ripple takes the first free one (none free: dropped).
 #[derive(Clone, Debug)]
 pub struct Ripples {
@@ -858,10 +867,10 @@ impl Default for Ripples {
 
 impl Ripples {
     pub const SLOTS: usize = 128;
-    /// Growth in m/s (ctor: rate +8 = 1.0, times dt ms * 0.001).
+    /// Growth in m/s (ctor: `WaterRipples.rate` = 1.0, times dt ms * 0.001).
     pub const RATE: f32 = 1.0;
 
-    /// `Water::CreateRipple(pos, size, strength, 0)` @0x1801fa070 with the water height already found: `water` = the
+    /// `Water::CreateRipple(pos, size, strength, 0)` with the water height already found: `water` = the
     /// nearest water surface an upward ray from `pos.y - 2` hits (`GetWaterPointInfo`), if any. The hit
     /// must lie below `pos.y + 2`; a ripple is added only when `strength >= 1`, its size parameter is `size * 4`.
     /// Returns whether the point was on water (the engine's return, also when no ripple was added).
@@ -878,7 +887,8 @@ impl Ripples {
         true
     }
 
-    /// sub_180203E90: the first free slot; size 0.3..0.7, max `s +- 0.2`, centre jittered +-0.2 m on x / z and 0.01 m
+    /// `WaterRipples::Add`: the first free slot; size 0.3..0.7, max `s +- 0.2`, centre jittered +-0.2 m on x / z and
+    /// 0.01 m
     /// above the surface (`rand() / 32767` per draw, in this order: size, max, x, z).
     pub fn add(&mut self, at: [f32; 3], s: f32) -> bool {
         let Some(i) = self.slots.iter().position(|r| !r.active) else {
@@ -900,7 +910,8 @@ impl Ripples {
         true
     }
 
-    /// sub_180203AC0 (`Water::Update`): a slot that reached its max goes; the others grow by `dt * RATE` (capped at the
+    /// `WaterRipples::Update` (`Water::Update`): a slot that reached its max goes; the others grow by `dt * RATE`
+    /// (capped at the
     /// max) and are drawn with the triangle alpha of the NEW size: up to 1 at half the max, back to 0 at the max.
     pub fn update(&mut self, dt_ms: f32) {
         let step = dt_ms * Self::RATE * 0.001;
@@ -931,7 +942,7 @@ impl Ripples {
     }
 }
 
-/// A directional wind push (`World::CreateDirectionalWind` @0x180220200): bends the grass around `pos`
+/// A directional wind push (`World::CreateDirectionalWind`): bends the grass around `pos`
 /// (`Terrain::CreateGrassWind`) and calls `Water::CreateRipple(pos, radius, strength, 0)` on the water there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalWind {
@@ -942,7 +953,7 @@ pub struct DirectionalWind {
     pub strength: f32,
 }
 
-/// One `advancedWind` gust (`WeatherManager` +1240 list `Update` @0x18020fb70): it moves downwind from 20 m
+/// One `advancedWind` gust (`WeatherManager.gusts` list, `WeatherManager::Update`): it moves downwind from 20 m
 /// upwind of the camera and pushes the ground every 50 ms with an envelope over its life.
 #[derive(Clone, Debug)]
 pub struct Gust {
@@ -1001,7 +1012,7 @@ pub struct Weather {
     /// Counts picks (a pick restarts the systems).
     pub picks: u32,
     next_id: u32,
-    /// `advancedWind` gusts (at most 3 spawn) and the spawn timer (+314).
+    /// `advancedWind` gusts (at most 3 spawn) and the spawn timer (`WeatherManager.gustTimer`).
     pub gusts: Vec<Gust>,
     gust_timer_ms: i32,
     /// This update's directional wind pushes (the gusts' 50 ms ticks).
@@ -1033,7 +1044,7 @@ impl Weather {
         }
     }
 
-    /// `RefreshIntensities` @0x1802116a0: the running systems take a changed `weatherQuality` at once.
+    /// `WeatherManager::RefreshIntensities`: the running systems take a changed `weatherQuality` at once.
     pub fn refresh_quality(&mut self, quality: u8) {
         for s in &mut self.systems {
             if s.active {
@@ -1049,7 +1060,8 @@ impl Weather {
             .map(|e| &e.climate)
     }
 
-    /// `ChangeClimate` @0x18020f220: a different set name reloads and picks at once; the same name is a no-op; `None`
+    /// `WeatherManager::ChangeClimate`: a different set name reloads and picks at once; the same name is a no-op;
+    /// `None`
     /// is "no sector data": no choice, no re-roll until a set appears.
     pub fn change_climate(
         &mut self,
@@ -1086,7 +1098,8 @@ impl Weather {
         self.apply(quality);
     }
 
-    /// Chosen systems get `cur = min + rnd * (max - min)` (sub_18004A9C0); every other running system is stopped.
+    /// Chosen systems get `cur = min + rnd * (max - min)` (`ClimateWeather::RollIntensity`); every other running
+    /// system is stopped.
     fn apply(&mut self, quality: u8) {
         self.used.clear();
         let systems = self
@@ -1140,7 +1153,7 @@ impl Weather {
             .fold(0.0, f32::max)
     }
 
-    /// sub_18004A5B0: the mean of the chosen climate's intensities that are > 0 (0 when none is).
+    /// `ClimateWeather::GetMeanIntensity`: the mean of the chosen climate's intensities that are > 0 (0 when none is).
     pub fn mean_intensity(&self) -> f32 {
         let (sum, n) = self
             .used
@@ -1212,15 +1225,16 @@ impl Weather {
         }
     }
 
-    /// `advancedWind` (`weatherQuality` 2 or 3 `RefreshIntensities` @0x1802116a0), `Update`'s gust block
+    /// `advancedWind` (`weatherQuality` 2 or 3 `WeatherManager::RefreshIntensities`), `Update`'s gust block
     /// (`dt` clamped to 100 ms, s = (factor - 1) / 2): each gust ages; every 50 ms it pushes with
     /// `radius * e` and `s0^2 * e` (e = [`Gust::envelope`]) after moving `speed * 0.05` m downwind and onto the floor
     /// (PORT: the terrain height, `ground`). While the factor is above 1.25 and fewer than 3 blow, a new one comes after
     /// `lo + rnd % (hi - lo + 1)` ms (lo = int(4000 - 3000 s), hi = int(8000 - 6000 s)): 20 m upwind of the camera,
     /// `rnd * 40 - 20` m across, speed `5 + 6 rnd + 12 s` m/s, radius `3 + 4 rnd + 5 s` m, life
     /// `(rnd + 1) * 30000 / speed` ms, envelope `rnd & 1`. The particle modifier it then registers is dead
-    /// (type 1; `RegisterParticleModifier` keeps it only at quality 3 and the handlers, Fog sub_180214730 and Leaves /
-    /// WindParticle sub_1802170E0, act on type 0 only), so weather particles are not pushed.
+    /// (type 1; `RegisterParticleModifier` keeps it only at quality 3 and the handlers, Fog
+    /// `FogWeatherSystem::ApplyModifier` and Leaves / WindParticle `WindParticleWeatherSystem::ApplyModifier`, act on
+    /// type 0 only), so weather particles are not pushed.
     fn update_gusts(&mut self, cam: [f32; 3], dt: i32, ground: Option<&dyn Ground>) {
         let winds = &mut self.winds;
         self.gusts.retain_mut(|g| {

@@ -8,15 +8,15 @@
 //! base attack speed (base + the modifier table's affix) is the
 //! attacks-per-second line ([`attack_speed_line`], the player's speed and
 //! the weapon animation's rate passed in).
-//! (`DamageAttributeDur::GetText` @0x180190a30, `DamageAttributeAbs::
-//! GetText` @0x18018e050): duration damage shows the total (per-second value
+//! (`DamageAttributeDur::GetText`, `DamageAttributeAbs::
+//! GetText`): duration damage shows the total (per-second value
 //! × duration, `DamageSingleFormat` / `DamageRangeFormat`), then the type tag,
 //! then `tagPerSecond` for a 1 s duration, else `DamageSingleFormatTime` /
 //! `DamageRangeFormatTime`; nothing without both damage and duration. Any
 //! chance > 0 prefixes the class's chance tag (`tagChanceOf`, `tagChanceTo`
 //! for freeze reflexes).
-//! Line order (`Armor` / `Weapon` / `WeaponArmor::CreateUIAttributeText`
-//! @0x18002c5e0 / @0x18058a540): each store's attributes write into its text
+//! Line order (`Armor` / `Weapon` / `WeaponArmor::CreateUIAttributeText`):
+//! each store's attributes write into its text
 //! lists in creation order; base lines come first (armour: base protection;
 //! weapons: base damage then base attack speed; shields / off-hands: base
 //! damage then base protection), then damage, conversion, character,
@@ -174,7 +174,7 @@ fn expand(fmt: &str, args: &[Arg], trim_zeros: bool, rich: bool, collapse: bool)
                 let conv = b.next_if(|&(_, c)| matches!(c, 'f' | 'd' | 't' | 's' | 'g'));
                 let Some((_, conv)) = conv else {
                     let end = b.peek().map_or(fmt.len(), |&(i, _)| i);
-                    let _ = out.write_str(&fmt[at..end]);
+                    out.write_str(&fmt[at..end]).unwrap();
                     continue;
                 };
                 // An index past `usize` reads argument 0.
@@ -187,7 +187,7 @@ fn expand(fmt: &str, args: &[Arg], trim_zeros: bool, rich: bool, collapse: bool)
                         if plus && !s.starts_with('-') {
                             out.push('+');
                         }
-                        let _ = out.write_str(s);
+                        out.write_str(s).unwrap();
                         continue;
                     }
                     Some(Arg::Num(v)) => *v,
@@ -200,11 +200,12 @@ fn expand(fmt: &str, args: &[Arg], trim_zeros: bool, rich: bool, collapse: bool)
                 };
                 // Numbers have no whitespace: the value is `out.s[start..]`.
                 let start = out.flush();
-                let _ = match conv {
+                match conv {
                     'd' => write!(out, "{}", v as i64),
                     't' | 'g' => write!(out, "{}", Num(v)),
                     _ => write!(out, "{v:.prec$}"),
-                };
+                }
+                .unwrap();
                 // As `skill_tooltip::format`:
                 // `%+.1f` of 3 shows `+3`, of 4.8 `+4.8` (trailing zeros dropped).
                 let n = &out.s[start..];
@@ -255,20 +256,20 @@ pub fn attribute_line_rich(tags: &TagTable, a: &Attr) -> Option<String> {
 }
 
 /// The weapon's base attack speed line (Game.dll
-/// `CharAttributeVal_BaseAttackSpeed::CreateText` @0x1800cd3d0): the
+/// `CharAttributeVal_BaseAttackSpeed::CreateText`): the
 /// attribute's value (the base record's `characterBaseAttackSpeed` plus the
 /// modifier table's affix, [`super::resolve`]) plus 1, times the player's
 /// base attack speed, times the weapon animation's frame rate over its
 /// length; localised with `tagAttackSpeed` ("X.XX Attacks per Second").
 /// Nothing when the result is not positive — without a main player
-/// `GameEngine::GetPlayerBaseAttackSpeed` @0x1802e3a20 is 0 and the engine
+/// `GameEngine::GetPlayerBaseAttackSpeed` is 0 and the engine
 /// prints no line.
 ///
 /// `player_speed` is that getter: the player's accumulated `AttackSpeed`
 /// value × (1 + its modifier %) × (1 + its multiplier) (the accumulator's
 /// three banks at indices 15 / 73 / 131, the port's
 /// `Profile::speed_caps[1].raw`); `anim_rate` the weapon animation's `GetFrameRate / GetLength` (the
-/// `AnimationSet` subobject at +1200, vtable +72 / +64; the same ratio as
+/// `AnimationSet` subobject `Weapon.animationSet`, its `GetFrameRate` / `GetLength` virtuals; the same ratio as
 /// [`crate::dps::weapon_rate`]'s animation duration), 1 without one.
 pub fn attack_speed_line(
     tags: &TagTable,
@@ -287,7 +288,7 @@ pub fn attack_speed_line(
 
 fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -> Option<String> {
     let t = |k: &str| tags.get(k);
-    // `ConversionAttribute` text (sub_18017C950): `tagDamageConversion`
+    // `ConversionAttribute` text (`ConversionAttribute::GetText`): `tagDamageConversion`
     // (percent, `tagConversion<in>`, `tagConversion<out>`), or `tagDamageRemoval`
     // (percent, in) when the out type has no name; nothing at 0 %.
     if a.class == "ConversionAttribute" {
@@ -404,9 +405,9 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             trim_in_place(&mut s);
             s
         }
-        // `DamageAttributeDurMod::GetText` @0x18018c530: no value but
-        // a duration modifier, on a class with a `GetDamageTypeTag` (vtable
-        // +384: only `DamageAttributeDurMod_Poison`, "DamageDurationPoison"):
+        // `DamageAttributeDurMod::GetText`: no value but
+        // a duration modifier, on a class with a `GetDamageTypeTag` virtual
+        // (only `DamageAttributeDurMod_Poison`, "DamageDurationPoison"):
         // `IncreasedDuration` (modifier, type text) instead of the value tag.
         AttrFamily::OffenseDurationModifier | AttrFamily::RetaliationDurationModifier
             if a.class == "DamageAttributeDurMod_Poison"
@@ -470,12 +471,12 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             }
         }
     };
-    // `DamageAttributeDurMod::GetText` @0x18018c530: after the value text, a
+    // `DamageAttributeDurMod::GetText`: after the value text, a
     // positive duration modifier appends `ImprovedTimeFormat`
     // (" with +30% Increased Duration"); the duration-only variant is the
     // `IncreasedDuration` arm above. The Ctrl view does not use the range
-    // variant (`GetRangeText` @0x18018ca20, `ImprovedTimeFormatR`, vtable +64:
-    // no item caller; `Create*RangeText` calls `CreateRangeNumbers`, +72, see
+    // variant (the `GetRangeText` virtual, `ImprovedTimeFormatR`:
+    // no item caller; `Create*RangeText` calls the `CreateRangeNumbers` virtual, see
     // [`range_numbers`]).
     if matches!(
         def.family,
@@ -507,30 +508,31 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
 
 /// The details (Ctrl) view's range numbers of one attribute: the text the
 /// engine appends to the attribute's own line (`ItemEquipment::Create*RangeText`
-/// @0x180343ef0..0x1803443f0, called by `Armor` / `Weapon` /
+/// family from `ItemEquipment::CreateDamageRangeText` on, called by `Armor` / `Weapon` /
 /// `WeaponArmor::CreateUIAttributeText` with the details flag: per slot of the
 /// store's non-global list the rolled attribute's `CreateText`, then the
 /// `_Min` attribute's `CreateRangeNumbers(_Max attribute)`, which appends
 /// `DamageRangeFormatAppend` (" [min-max]") to the last line of the list).
 /// `min` / `max` are the slot's attributes of [`super::resolve::AttrBounds`].
 /// per class (`CreateRangeNumbers` / `GetRangeNumbers`):
-/// - character (`CharAttribute` @0x1800cb880): the format at +80
+/// - character (`CharAttribute::CreateRangeNumbers`): the format `CharAttribute.format`
 ///   (`DamageSingleFormat`, `Float1Format` for life / energy regeneration) of
-///   both values, unless both are 0; skill (`SkillAttribute` @0x18051df70),
-///   defense (`DefenseAttribute_Typical` @0x1801fc510): `DamageSingleFormat`,
-///   same rule; conversion (`sub_18017D290`): the percentages;
-/// - flat damage / reflexes (`DamageAttributeAbs` @0x18018eb70): per store its
-///   single format at +160 when min == max, else `(` range format at +168 `)`
+///   both values, unless both are 0; skill (`SkillAttribute`),
+///   defense (`DefenseAttribute_Typical`): `DamageSingleFormat`,
+///   same rule; conversion (`ConversionAttribute::CreateRangeNumbers`): the percentages;
+/// - flat damage / reflexes (`DamageAttributeAbs`): per store its
+///   single format `DamageAttributeAbs.singleFormat` when min == max, else `(` range format
+///   `DamageAttributeAbs.rangeFormat` `)`
 ///   (`DamageSingleFormat` / `DamageRangeFormat`; the reflexes
 ///   `DamageInfluence*Format`), nothing when all four are 0;
-/// - `DamageAttribute_Physical` @0x1801a1d20: as flat damage, then the pierce
+/// - `DamageAttribute_Physical`: as flat damage, then the pierce
 ///   ratios when either is above 0;
-/// - modifiers (`DamageAttributeAbsMod` @0x18018b170): always the two modifiers;
-///   duration modifiers (`DamageAttributeDurMod` @0x18018cca0): the modifiers
+/// - modifiers (`DamageAttributeAbsMod`): always the two modifiers;
+///   duration modifiers (`DamageAttributeDurMod`): the modifiers
 ///   when either is not 0, then the duration modifiers when either is above 0;
-/// - DoTs (`DamageAttributeDur` @0x180191a60): the totals (per-second value
+/// - DoTs (`DamageAttributeDur`): the totals (per-second value
 ///   times duration, single or `(range)` per store), then the durations;
-///   fixed-value effects (`DamageAttributeDurFixed` @0x180193bf0: slows,
+///   fixed-value effects (`DamageAttributeDurFixed`: slows,
 ///   reductions, OA / DA, fumble...): the values when any is not 0, then the
 ///   durations;
 /// - base damage / armour / attack speed (`...AbsBase`, `_BasePhysical`,
@@ -722,8 +724,8 @@ pub struct Have {
     pub reduction: super::req_reduction::Reduction,
 }
 
-/// `GameTextClass` values (the order of `GameEngine::LoadFromDatabase`
-/// @0x180313190: `Default` = 0 and each following key's `...Indent`
+/// `GameTextClass` values (the order of `GameEngine::LoadGameTextStyles`:
+/// `Default` = 0 and each following key's `...Indent`
 /// read in sequence; `ItemNameCommon` = 3 matches `GetItemTextClass`'s
 /// fallback). The key is the `records/game/gameengine.dbr` field holding the
 /// style record (`{key}Indent` the indent).
@@ -853,7 +855,7 @@ pub mod tc {
     pub const ARTIFACT_CRAFT: u8 = 69;
 }
 
-/// A blank spacer line (`sub_18001C090` @0x18001C090 pushes an empty line).
+/// A blank spacer line (`GameTextLines::AddBlankLine` pushes an empty line).
 pub fn blank() -> Line {
     Line {
         text: String::new(),
@@ -863,8 +865,8 @@ pub fn blank() -> Line {
     }
 }
 
-/// Requirement lines (`ItemEquipment::GetUIRequirementText` @0x180343850 →
-/// `Item::GenerateRequirementText` @0x180327420, class 20): Player Level,
+/// Requirement lines (`ItemEquipment::GetUIRequirementText` →
+/// `Item::GenerateRequirementText`, class 20): Player Level,
 /// Physique, Cunning, Spirit; a requirement of 0 shows nothing.
 pub fn requirement_lines(
     tags: &TagTable,
@@ -875,9 +877,9 @@ pub fn requirement_lines(
 }
 
 /// [`requirement_lines`] of equipment of `class`:
-/// `ItemEquipment::GetUIRequirementText` @0x180343850 passes the character's
+/// `ItemEquipment::GetUIRequirementText` passes the character's
 /// reduction (level: attribute 54, the others `Reduction::for_class`) to
-/// `Item::GenerateRequirementText` @0x180327420: met without it = `MeetsRequirement`;
+/// `Item::GenerateRequirementText`: met without it = `MeetsRequirement`;
 /// met with it = `MeetsRequirementWithReduction` (label, reduced need, need,
 /// percent); else `FailsRequirementWithReduction` when the percent is above 0,
 /// else `FailsRequirement`.

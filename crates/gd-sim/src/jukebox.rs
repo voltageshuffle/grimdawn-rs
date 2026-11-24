@@ -1,5 +1,5 @@
 //! The jukebox's crossfading channel (music and ambient sessions): the rules of `Jukebox::LoadMusicPlaylist` /
-//! `LoadAmbientPlaylist` / `Update` (Engine.dll @0x18012a050 / @0x180129e50 / @0x180129b80).
+//! `LoadAmbientPlaylist` / `Update` (Engine.dll).
 //!
 //! A channel holds the playing session (`cur`) and the one replacing it (`next`), each with a fade volume. Loading a
 //! different session drops a pending one and arms a delay: 1 ms when nothing plays, else [`MUSIC_SWITCH_MS`] (music: the
@@ -97,7 +97,7 @@ impl Channel {
     }
 }
 
-/// The next track of a music session (`MusicSession` tick, `sub_18014F9F0`): sequential from the start, or random with
+/// The next track of a music session (`MusicSession::Update`): sequential from the start, or random with
 /// no immediate repeat (`rand() % n`, the current + 1 on a repeat) when `randomize`. `cur` is the last index.
 pub fn next_track(n: usize, cur: Option<usize>, randomize: bool, roll: usize) -> usize {
     if n == 0 {
@@ -117,7 +117,7 @@ pub fn next_track(n: usize, cur: Option<usize>, randomize: bool, roll: usize) ->
     }
 }
 
-/// `DayNightCycle::GetIsDay(t)` @0x18004f510: day lies from `day` (`GetDayTime`) to `night` (`GetNightTime`),
+/// `DayNightCycle::GetIsDay(t)`: day lies from `day` (`GetDayTime`) to `night` (`GetNightTime`),
 /// hours mod 24.
 pub fn is_day(t: f32, day: f32, night: f32) -> bool {
     let mut b = night;

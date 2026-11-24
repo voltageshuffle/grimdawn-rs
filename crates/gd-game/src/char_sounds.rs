@@ -6,37 +6,37 @@
 //!
 //! Game.dll: a `Character` keeps two `CharacterSounds` tables, its
 //! own (loaded from its record by `Character::Load`) and an override one
-//! (+8648, `SetOverrideSounds` @0x18006d650 loads `replacementSounds` into
+//! (`Character.overrideSounds`, `SetOverrideSounds` loads `replacementSounds` into
 //! it, an empty path clears it). Both are read by the table loader
-//! `sub_18008F6C0`: `footGrass`, `footDirt`, `footSand`, `footSnow`,
+//! `CharacterSounds::Load`: `footGrass`, `footDirt`, `footSand`, `footSnow`,
 //! `footStone`, `footWood`, `footWater`, `footMud`, `loopingRunningSound`,
 //! `attackSound`, `swipeSound`, `stunSound`, `criticalHitSound`,
 //! `impactSound`, the locked / cooldown / low-health / not-enough-mana UI
 //! sounds, `deathSound1..3`, `voxSound`, `specialAttackSound1..4`. Every
 //! use takes the override entry when it has one, else the own one, entry
-//! by entry ([`sound`]; e.g. `GetSwipeSound` @0x18005c8f0,
-//! `PlayAttackSound` @0x18005c960). The chances (`voxSoundChance`,
+//! by entry ([`sound`]; e.g. `GetSwipeSound`,
+//! `PlayAttackSound`). The chances (`voxSoundChance`,
 //! `specialAttackSound1..4Chance`) are the character's own record's.
-//! Footprints the same way (`SetOverrideFootsteps` @0x18006d6c0, loader
-//! `sub_180274F20`): `footPrintGrass` … `footPrintMud`, each falling back to
-//! `footPrint` of the same record (`sub_180274E10`), then the override set's
+//! Footprints the same way (`SetOverrideFootsteps`, loader
+//! `CharacterFootprints::Load`): `footPrintGrass` … `footPrintMud`, each falling back to
+//! `footPrint` of the same record (`CharacterFootprints::GetFallback`), then the override set's
 //! entry before the own one ([`footprint`]).
 //!
-//! `Character::AnimationCallback` @0x1800599c0 ([`callback`]): the current
+//! `Character::AnimationCallback` ([`callback`]): the current
 //! action sees the callback first (it may consume it); then `voxSound`,
 //! `deathSound1..3`, `specialAttackSound1..4` play that sound at the
-//! character (`PlayOverridableSound3d` @0x180059930: with a chance > 0 only
+//! character (`PlayOverridableSound3d`: with a chance > 0 only
 //! when `rand() × 0.0030488 + 0.1` (0.1 .. 100) ≤ it; death sounds always);
-//! `Character::Load` @0x180054e70 also keeps `genericSound1..4`, `bodyFallSound`
+//! `Character::Load` also keeps `genericSound1..4`, `bodyFallSound`
 //! and `voiceSound1..3` of its own record in a map by callback name
-//! (`LoadAnimationSound` @0x18006e820); a callback found there plays that
+//! (`LoadAnimationSound`); a callback found there plays that
 //! sound at the character when the same roll ≤ its `<name>Chance`, a chance
-//! of 0 never (sub_180025480, no form override: a Familiar's wing flaps);
+//! of 0 never (`Character::PlayAnimationSound`, no form override: a Familiar's wing flaps);
 //! `L Footstep` / `R Footstep` play the foot sound of the surface below
 //! (`World::GetSurfaceTypeBelow`, [`crate::collision::WorldCollision::surface_below`],
 //! the rules of the terrain and water in [`gd_sim::surface`]; a surface
 //! without foot sounds, or none, plays and places nothing), tracked on the
-//! character (`SoundPak::Track`), and place that surface's footprint (`GetFootCoords` @0x180059730: the
+//! character (`SoundPak::Track`), and place that surface's footprint (`GetFootCoords`: the
 //! `BN_LToe` / `BN_RToe` bone (none in the stock meshes: the actor's own
 //! coords), moved to the floor and 0.05 m up; `World::PlaceDecal`).
 //!
@@ -46,20 +46,20 @@
 //! The error lines (`notEnoughManaSound`, `skillCooldownSound`, `itemCooldownSound`, `inventoryFullSound`):
 //! [`crate::error_vox`].
 //!
-//! The low-health warning ([`low_health_vox`], `Character::PlayLowHealthSoundIfNeeded`
-//! @0x18005cf30): a latch per character — at life ≤ `lowHealthTriggerLevel`% of max it plays
+//! The low-health warning ([`low_health_vox`], `Character::PlayLowHealthSoundIfNeeded`):
+//! a latch per character — at life ≤ `lowHealthTriggerLevel`% of max it plays
 //! `lowHealthSound` once and re-arms only at life ≥ `lowHealthResetLevel`% (malepc01 / femalepc01
 //! 28 / 30; the levels are the own record's, the sound the override table's). The locked-object
 //! voices ([`locked_vox`]: `lockedChestSound` / `lockedDoorSound` / `lockedShrineSound` /
-//! `lockedQuestObjectSound`, `Player::PlayLockedChestVox` @0x1803e5c40) are picked here;
+//! `lockedQuestObjectSound`, `Player::PlayLockedChestVox`) are picked here;
 //! the refusal paths play them.
 //!
 //! PORT: the action's own callback handling is not consulted; the running sounds are not played.
-use crate::character::Character;
-use crate::combat::{Combatant, Dead};
-use crate::data::GameData;
-use crate::visuals::PlaySound;
 use bevy::prelude::*;
+use gd_game_core::character::Character;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::visuals::PlaySound;
 
 pub use gd_sim::surface::Surface;
 
@@ -111,7 +111,7 @@ pub fn is_footstep(name: &str) -> bool {
 
 /// The engine's sound roll (`rand() × 0.0030488 + 0.1`, 0.1 .. 100).
 pub fn roll() -> f32 {
-    crate::rng::f32() * 99.9 + 0.1
+    gd_game_core::rng::f32() * 99.9 + 0.1
 }
 
 /// `Character::AnimationCallback` for the callback `name` (module doc), the
@@ -176,16 +176,6 @@ pub fn callback(
     }
 }
 
-/// Whether a swipe callback of the animation slot `anim` reaches a weapon
-/// skill's `SwipeAction` (`SkillActivatedWeapon` and its kin; the spells' is
-/// only their swipe sound, `crate::combat_sounds::swipe_action`): the default
-/// attack (the Attack or an `AttTurn*` slot) or a cast of a weapon skill (`cast`, e.g. a form's
-/// claws in their special animation).
-/// PORT: the cast's kind stands in for the skill class's `SwipeAction`.
-pub fn weapon_swipe(anim: gd_sim::anim::AnimType, cast: Option<&crate::casting::Casting>) -> bool {
-    gd_sim::anim::is_attack(anim) || cast.is_some_and(|c| c.kind == crate::casting::Kind::Weapon)
-}
-
 /// A locked object's refusal voice (`Player::PlayLocked*Vox`, module doc).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LockedKind {
@@ -222,7 +212,7 @@ pub struct LowHealth {
 }
 
 /// The low-health warning of the living characters (module doc,
-/// `Character::PlayLowHealthSoundIfNeeded` @0x18005cf30): a latch per character
+/// `Character::PlayLowHealthSoundIfNeeded`): a latch per character
 /// — at life ≤ `lowHealthTriggerLevel`% of max it plays `lowHealthSound` at the
 /// character once, and re-arms only at life ≥ `lowHealthResetLevel`%. The levels
 /// are the character record's (0 when unset: never triggers); the sound is the

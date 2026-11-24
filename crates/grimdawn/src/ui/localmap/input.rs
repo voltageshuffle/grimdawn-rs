@@ -1,10 +1,11 @@
 use super::*;
+use gd_ui::state::map::MapWindow;
 
 /// The map key (`crate::ui::keys::MAP`, M by default) toggles the map window; Esc closes it. A riftgate opening its map
 /// shows the world page.
 pub(super) fn keys(
     input: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
     rift: Res<RiftgateMap>,
     mut win: ResMut<MapWindow>,
     mut was_open: Local<bool>,
@@ -14,7 +15,7 @@ pub(super) fn keys(
         win.local = false;
     }
     *was_open = rift.open;
-    if bindings.just_pressed(crate::ui::keys::MAP, &input) {
+    if bindings.just_pressed(gd_ui_kit::keys::MAP, &input) {
         if win.open || rift.open {
             win.open = false;
             if rift.open {
@@ -43,13 +44,14 @@ pub(super) fn keys(
 
 /// Center Map (action 31, default Numpad 0) presses the open map window's centre button: the local map's pan goes
 /// back to 0, the world map centres as on opening (`riftmap.rs`). `Grim Dawn.exe` `UIWorldMap` key action
-/// sub_1401F5010 (vtable +88, reached while the window is open): action 31 presses the button at +1056 (the
-/// `centerButton`, whose press sub_1401F4E40 handles for either page) through the window's button manager.
+/// `UIWorldMap::OnKeyAction` (`UIWindow::OnKeyAction`, reached while the window is open): action 31 presses
+/// `UIWorldMap.centerButton` (the `centerButton`, whose press `UIWorldMap::OnButtonClick` handles for either page)
+/// through the window's button manager.
 pub(in crate::ui) fn center_map_key(
     keys: &ButtonInput<KeyCode>,
-    bindings: &crate::ui::keys::KeyBindings,
+    bindings: &gd_ui_kit::keys::KeyBindings,
 ) -> bool {
-    bindings.just_pressed(crate::ui::keys::CENTER_MAP, keys)
+    bindings.just_pressed(gd_ui_kit::keys::CENTER_MAP, keys)
 }
 
 /// Local map mouse (module doc): zoom / centre / switch / close buttons,
@@ -57,7 +59,7 @@ pub(in crate::ui) fn center_map_key(
 /// the window takes the mouse.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn clicks(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<MouseWheel>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -65,8 +67,8 @@ pub(super) fn clicks(
     mut win_state: ResMut<MapWindow>,
     mut capture: ResMut<UiCapture>,
     mut out: MessageWriter<RiftgateRequest>,
-    (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<crate::ui::keys::KeyBindings>),
-    pause: Res<gd_game::pause::GamePause>,
+    (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<gd_ui_kit::keys::KeyBindings>),
+    pause: Res<gd_game_core::pause::GamePause>,
 ) {
     let Some(wr) = win_state
         .layout
@@ -95,12 +97,12 @@ pub(super) fn clicks(
         win_state.pan = Vec2::ZERO;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = crate::ui::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
         return;
     };
     // A drag keeps going while the button is held inside the window; it
-    // ends on release or leaving it (sub_14017A7F0).
-    if !buttons.pressed(MouseButton::Left) || !crate::ui::contains(&wr, p) {
+    // ends on release or leaving it (`LocalMap::HandleMouseEvent`).
+    if !buttons.pressed(MouseButton::Left) || !gd_ui_kit::contains(&wr, p) {
         win_state.drag = None;
     }
     let legend_hover = win_state
@@ -109,21 +111,21 @@ pub(super) fn clicks(
         .iter()
         .find(|(_, r)| (p - Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5)).length() < r.w * 0.5)
         .map(|(i, _)| *i)
-        .filter(|_| crate::ui::contains(&wr, p));
+        .filter(|_| gd_ui_kit::contains(&wr, p));
     if win_state.legend_hover != legend_hover {
         win_state.legend_hover = legend_hover;
     }
     // `ButtonStatic` draws `bitmapNameInFocus` while hovered (as the world map).
-    let over = |r: Option<URect>| r.is_some_and(|r| crate::ui::contains(&r, p));
+    let over = |r: Option<URect>| r.is_some_and(|r| gd_ui_kit::contains(&r, p));
     let l = &win_state.layout;
     let button_hover = [l.close, l.center, l.switch]
         .iter()
         .position(|r| over(*r))
-        .filter(|_| crate::ui::contains(&wr, p));
+        .filter(|_| gd_ui_kit::contains(&wr, p));
     if win_state.button_hover != button_hover {
         win_state.button_hover = button_hover;
     }
-    if !crate::ui::contains(&wr, p) {
+    if !gd_ui_kit::contains(&wr, p) {
         return;
     }
     capture.0 = true;
@@ -152,9 +154,9 @@ pub(super) fn clicks(
         return;
     }
     let l = win_state.layout.clone();
-    let hit = |r: Option<URect>| r.is_some_and(|r| crate::ui::contains(&r, p));
+    let hit = |r: Option<URect>| r.is_some_and(|r| gd_ui_kit::contains(&r, p));
     if let Some(i) = legend_hover {
-        // sub_14017A660: the type's icons blink for 1000 ms.
+        // `LocalMap::OnLegendButton`: the type's icons blink for 1000 ms.
         win_state.blink[LEGEND_KIND[i] as usize] = 1000.0;
     } else if hit(l.close) {
         win_state.open = false;
@@ -169,7 +171,7 @@ pub(super) fn clicks(
         win_state.pan = Vec2::ZERO;
     } else if hit(l.switch) {
         win_state.switch(&rift);
-    } else if crate::ui::contains(&l.pane, p) {
+    } else if gd_ui_kit::contains(&l.pane, p) {
         win_state.drag = Some((p, win_state.pan));
     }
 }

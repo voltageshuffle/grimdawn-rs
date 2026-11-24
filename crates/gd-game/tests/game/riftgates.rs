@@ -6,8 +6,8 @@ use gd_game::riftgates::{
     GateTravel, IndexedPoint, PersonalPortal, Portal, Rift, RiftgateMap, RiftgateRequest,
     TravelState, Waypoint, WaypointIndex, WaypointKind,
 };
-use gd_game::story::Notify;
 use gd_game::testing::TestGame;
+use gd_game_core::story::Notify;
 
 fn game() -> Option<TestGame> {
     let mut g = TestGame::new_character("Tester", false, false)?;

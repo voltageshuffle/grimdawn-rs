@@ -4,7 +4,7 @@
 //! covers, and burst along their whole length when their life ends.
 //!
 //! Game.dll, `Skill_AttackLineFan`:
-//! - `Load` @0x1804b6020 (class-level, not per level): `useTargetDir`,
+//! - `Load` (class-level, not per level): `useTargetDir`,
 //!   `useHandLaunch`, `followTerrain`, `launchAttachPointName`,
 //!   `attackWidth`, `lineLength`, `segmentLengthMin` / `…Max`,
 //!   `segmentRotationMin` / `…Max` (degrees), `travelTime` (× 1000 → int
@@ -17,25 +17,25 @@
 //!   is `lineLength` × 1000 / travel ms (0 without a travel time). The
 //!   number of lines and the fan angle are `skillTargetNumber` (0 → 1) and
 //!   `skillTargetAngle` with the learned modifiers' (`GetSkillModifierData`,
-//!   vtable +744, read in `TargetResult`).
-//! - `ActivateNow` @0x1804b6590 (Forgotten Gods content only:
+//!   read in `TargetResult`).
+//! - `ActivateNow` (Forgotten Gods content only:
 //!   `Engine::IsExpansion3Loaded`): the fan's coordinates are the caster's
 //!   (with `useHandLaunch` the hand's attach point, `GetCoordsFromCallback`;
 //!   else the `launchAttachPointName` point when named); `useTargetDir` with
 //!   a target turns them to look at it (when the horizontal direction is not
 //!   zero); with neither launch point, or with `followTerrain`, they go on
 //!   the floor and 0.1 m up; then `launchOffset` along the heading. It sends
-//!   an attack with no targets, whose `TargetResult` @0x1804b6940 pays the
+//!   an attack with no targets, whose `TargetResult` pays the
 //!   mana, starts the cooldown and creates the fan: when another fan of this
-//!   skill is still alive (its list +1840 not empty) the whole fan is turned
+//!   skill is still alive (`Skill_AttackLineFan.liveFans` not empty) the whole fan is turned
 //!   `alternateLaunchRotation`° about +Y (Beronath's second scrape); line i of
 //!   n heads at `−angle / 2 + i × step` (`step` = angle / (n − 1), angle / n
 //!   for a full circle; one line: straight ahead). Each line gets its trail
 //!   at its start (anchors `GetTextureWidth(0)` wide across it) and its
 //!   `endEffect` there, emitting; then `startSound` plays at the fan's
 //!   coordinates and `loopSound` starts there.
-//! - `Update` @0x1804b7650, per line each frame (rotations: about +Y,
-//!   `sub_180591A10` with the angle in degrees × π / 180; a positive angle
+//! - `Update`, per line each frame (rotations: about +Y,
+//!   `Game::RotationAboutY` with the angle in degrees × π / 180; a positive angle
 //!   turns +Z toward +X):
 //!   - while its travel time lasts: the tip moves speed × dt along its own
 //!     heading (`followTerrain`: put on the floor, 0.1 m up), the end effect
@@ -46,7 +46,7 @@
 //!     wanders about a straight course), the trail's anchors are set across
 //!     the tip `GetTextureWidth(distance)` wide (`textureWidthStart` →
 //!     `…Middle` over the first half of `lineLength`, `…Middle` → `…End` over
-//!     the rest, @0x1804b84c0) and the trail moves there. Every
+//!     the rest, `GetTextureWidth`) and the trail moves there. Every
 //!     `fxMeshDistance` travelled an `fxMesh` drops at the tip; every
 //!     `explosionDistance` the tip's coordinates are kept as an explosion
 //!     point. Then `GetTargetsAroundRay` from the line's start along its
@@ -58,37 +58,37 @@
 //!     out: `GetTargetsAroundRay` from the start along the start heading,
 //!     the full `lineLength`, `attackWidth` wide, every target (the fan's
 //!     list is not checked: what the line hit is hit again) attacked at the
-//!     start's coordinates as an explosion (`AttackInfo` +148). Then
+//!     start's coordinates as an explosion (`AttackInfo.isExplosion`). Then
 //!     `explosionEffect` plays at each explosion point (self-removing), the
 //!     end effect stops, the trail fades (`StartFade` + `Liberate`); the
 //!     fan's first line to end fades the loop sound (250 ms) and plays
 //!     `endSound` at its tip. The line is done; the fan goes once all are.
-//!     `StopSkill` @0x1804b8510 ends every line at once, without the burst.
+//!     `StopSkill` ends every line at once, without the burst.
 //!   - No wall, door or line of sight stops a line.
 //! - `TargetResult` with targets: per target `CollectCombatParameters` with
 //!   the explosion's damage percentage (`explosionDamageScale` × 100, 0 =
 //!   100 % for travel hits and for records without one), the rag doll,
 //!   `CreateTargetFx` and `PlayHitSound` at the target, the attack; then the
 //!   secondaries on that list at the attack's coordinates.
-//! - `GameEngine::GetTargetsAroundRay` @0x1802ec0b0 → Engine.dll
-//!   `World::GetEntitiesAroundRay` @0x180221680: an entity whose bounds,
+//! - `GameEngine::GetTargetsAroundRay` → Engine.dll
+//!   `World::GetEntitiesAroundRay`: an entity whose bounds,
 //!   grown by the width on every side, the ray meets within its length.
 //!
 //! PORT: the hand / named launch points are their bind-pose positions, the
 //! hand that of RightHandHit (the cast's callback is not kept); the
 //! segment hit test is `GetTargetsAroundRay` with `attackWidth`
 //! (`crate::secondary::beam_targets`); the
-//! segment rotations and lengths draw from the gameplay stream (`crate::rng`, seeded with the session; the
+//! segment rotations and lengths draw from the gameplay stream (`gd_game_core::rng`, seeded with the session; the
 //! engine's `RandomUniformLocked` stream); `fxMesh` (an `FxMesh`) drops as an
-//! [`FxMeshRequest`](crate::visuals::FxMeshRequest) the renderer shows; the travel's end puts
-//! [`StartPulse`](crate::visuals::StartPulse) on the trail. The renderer draws each line's trail from its
+//! [`FxMeshRequest`](gd_game_core::visuals::FxMeshRequest) the renderer shows; the travel's end puts
+//! [`StartPulse`](gd_game_core::visuals::StartPulse) on the trail. The renderer draws each line's trail from its
 //! [`TrailAnchor`] entity (a `TrailRequest` owner) and fades it on
 //! `StopEmitting`.
-use crate::casting::SkillHit;
-use crate::combat::{Combatant, Dead};
-use crate::data::GameData;
 use crate::nav::Nav;
 use bevy::prelude::*;
+use gd_game_core::casting::SkillHit;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
 
 pub struct LineFanPlugin;
 
@@ -98,8 +98,8 @@ impl Plugin for LineFanPlugin {
             Update,
             update
                 .in_set(crate::casting::CastingSet)
-                .after(crate::player::PlayerSet)
-                .before(crate::combat::CombatSet),
+                .after(gd_game_core::player::PlayerSet)
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -132,7 +132,7 @@ pub struct Line {
     /// the last segment's rotation).
     pub tip: Vec3,
     pub heading: Vec3,
-    /// Distance travelled (+212).
+    /// Distance travelled (`LineFanLine.distance`).
     pub dist: f32,
     /// Travel time and life left (s).
     pub travel: f32,
@@ -179,7 +179,7 @@ pub struct LineFan {
     trail: bool,
     explosion_fx: Option<String>,
     end_sound: Option<String>,
-    /// The playing `loopSound` (a [`SoundLoop`](crate::visuals::SoundLoop)).
+    /// The playing `loopSound` (a [`SoundLoop`](gd_game_core::visuals::SoundLoop)).
     loop_sound: Option<Entity>,
     ended: bool,
 }
@@ -210,7 +210,7 @@ pub fn fan_angles(angle: f32, number: u32) -> Vec<f32> {
     (0..n).map(|i| first + step * i as f32).collect()
 }
 
-/// `GetTextureWidth` @0x1804b84c0: the trail's width `d` metres out.
+/// `GetTextureWidth`: the trail's width `d` metres out.
 pub fn texture_width(w: [f32; 3], length: f32, d: f32) -> f32 {
     let (a, b) = if d > length * 0.5 {
         (w[1], w[2])
@@ -251,10 +251,10 @@ fn create(
 ) -> Option<LineFan> {
     let rec = data.db.get(&l.skill)?;
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
-    let facing = crate::character::facing_flat(caster_tf);
+    let facing = gd_game_core::character::facing_flat(caster_tf);
     // The launch point (module docs): `useHandLaunch` the hand of the cast's callback
     // (`GetCoordsFromCallback`: RightHandHit → `R Hand`, LeftHandHit → `L Hand`), else the named
-    // point (`Actor::GetAttachedCoords`, vtable +376), else the caster; its position only. PORT: the
+    // point (`Actor::GetAttachedCoords`), else the caster; its position only. PORT: the
     // point's bind pose (as `crate::waves`), and the callback is taken as RightHandHit.
     let named = rec.str("launchAttachPointName").filter(|n| !n.is_empty());
     let hand = rec.bool("useHandLaunch");
@@ -311,7 +311,7 @@ fn create(
             });
             let trail = trail.as_ref().zip(anchor).map(|(t, owner)| {
                 commands
-                    .spawn(crate::visuals::TrailRequest {
+                    .spawn(gd_game_core::visuals::TrailRequest {
                         owner,
                         record: t.clone(),
                         width: 0.0,
@@ -334,7 +334,7 @@ fn create(
                 explosions: Vec::new(),
                 done: false,
                 last_segment: origin,
-                next_segment: 0.125 + crate::rng::f32() * 0.125,
+                next_segment: 0.125 + gd_game_core::rng::f32() * 0.125,
                 last_explosion: 0.0,
                 last_mesh: 0.0,
                 anchor,
@@ -344,14 +344,14 @@ fn create(
         })
         .collect();
     if let Some(pak) = rec.str("startSound") {
-        commands.write_message(crate::visuals::PlaySound {
+        commands.write_message(gd_game_core::visuals::PlaySound {
             pak: pak.to_owned(),
             at: Some(origin),
         });
     }
     let loop_sound = rec.str("loopSound").filter(|s| !s.is_empty()).map(|pak| {
         commands
-            .spawn(crate::visuals::SoundLoop {
+            .spawn(gd_game_core::visuals::SoundLoop {
                 pak: pak.to_owned(),
                 on: None,
                 at: origin,
@@ -406,16 +406,16 @@ fn effect_entities(
     names
         .into_iter()
         .map(|n| {
-            let mut spec = crate::visuals::EffectSpec::record(n);
+            let mut spec = gd_game_core::visuals::EffectSpec::record(n);
             spec.despawn_when_complete = true;
             commands.spawn((spec, tf)).id()
         })
         .collect()
 }
 
-/// A uniform draw in `a..b` from the gameplay stream (`crate::rng`).
+/// A uniform draw in `a..b` from the gameplay stream (`gd_game_core::rng`).
 fn range((a, b): (f32, f32)) -> f32 {
-    a + crate::rng::f32() * (b - a)
+    a + gd_game_core::rng::f32() * (b - a)
 }
 
 /// Creates the cast fans, moves the lines, hits what they reach and bursts
@@ -430,7 +430,7 @@ fn update(
     mut launches: MessageReader<Launch>,
     mut fans: Query<(Entity, &mut LineFan)>,
     mut frames: Query<&mut Transform, (Without<Combatant>, Without<LineFan>)>,
-    casters: Query<(&Transform, Option<&crate::character::Character>), With<Combatant>>,
+    casters: Query<(&Transform, Option<&gd_game_core::character::Character>), With<Combatant>>,
     foes: Query<(Entity, &Transform, &Combatant, crate::combat::VictimSide), Without<Dead>>,
     sides: Query<crate::combat::SideData>,
     mut hits: MessageWriter<SkillHit>,
@@ -513,7 +513,9 @@ fn update(
                 if line.travel <= 0.0
                     && let Some(t) = line.trail
                 {
-                    commands.entity(t).try_insert(crate::visuals::StartPulse);
+                    commands
+                        .entity(t)
+                        .try_insert(gd_game_core::visuals::StartPulse);
                 }
                 let step = dt * speed;
                 line.dist += step;
@@ -546,7 +548,7 @@ fn update(
                 {
                     line.last_mesh = line.dist;
                     commands.spawn((
-                        crate::visuals::FxMeshRequest(m.clone()),
+                        gd_game_core::visuals::FxMeshRequest(m.clone()),
                         frame(line.tip, line.heading, 1.0),
                     ));
                 }
@@ -620,7 +622,12 @@ fn update(
                 }
                 if let Some(fx) = &fan.explosion_fx {
                     for (p, h) in &line.explosions {
-                        crate::visuals::spawn_fx(&mut commands, &data, fx, frame(*p, *h, 1.0));
+                        gd_game_core::visuals::spawn_fx(
+                            &mut commands,
+                            &data,
+                            fx,
+                            frame(*p, *h, 1.0),
+                        );
                     }
                 }
                 stop_line(&mut commands, &line);
@@ -629,7 +636,7 @@ fn update(
                         commands.entity(l).try_despawn();
                     }
                     if let Some(pak) = &fan.end_sound {
-                        commands.write_message(crate::visuals::PlaySound {
+                        commands.write_message(gd_game_core::visuals::PlaySound {
                             pak: pak.clone(),
                             at: Some(line.tip),
                         });
@@ -650,10 +657,12 @@ fn stop_line(commands: &mut Commands, line: &Line) {
     for fx in &line.tip_fx {
         commands
             .entity(*fx)
-            .try_insert(crate::visuals::StopEmitting);
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
     if let Some(t) = line.trail {
-        commands.entity(t).try_insert(crate::visuals::StopEmitting);
+        commands
+            .entity(t)
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
     if let Some(a) = line.anchor {
         commands.entity(a).try_despawn();

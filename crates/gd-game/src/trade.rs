@@ -16,35 +16,36 @@
 //!
 //! Voices (the NPC record's `dialogPak`, [`DialogPak`]; Game.dll): opening a service
 //! makes its NPC say hello (`Npc::SayHello`: `NpcMerchant::Converse` before the trade event 26, the other services'
-//! `OnPlayerInteract`), every service window's hide says goodbye (`Npc::SayGoodbye`, vtable +2400: Grim Dawn.exe merchant
-//! closes `sub_140219780` / `sub_140219830`, `GameEngine::CaravanGoodbye`, crafter `sub_14026BBD0`, Inventor
-//! `sub_14026DAC0`, `sub_140114490`, the spirit guide's windows: `crate::reclamation`), and `Npc::Converse` greets
+//! `OnPlayerInteract`), every service window's hide says goodbye (`Npc::SayGoodbye`: Grim Dawn.exe merchant
+//! closes `MerchantWindow::Close` / `MerchantWindow::Hide`, `GameEngine::CaravanGoodbye`, crafter
+//! `CraftingWindow::Hide`, Inventor `InventorWindow::SetVisible`, `ServiceWindow::Hide`, the spirit guide's windows:
+//! `crate::reclamation`), and `Npc::Converse` greets
 //! when the NPC has no speech to give. Both `Say*` do nothing for an NPC with a `conversation`. These send
 //! [`NpcSay`]; [`say_lines`] picks the line ([`DialogPak::pick`]) and sends [`NpcVoice`] for the game's audio, which
-//! plays it in 3D at the NPC. `sub_180266650`: nothing is said while the NPC's previous line still plays
+//! plays it in 3D at the NPC. `DialogPak::Say`: nothing is said while the NPC's previous line still plays
 //! (PORT: the game's audio drops the new line then; the engine checks before the pick, so here a dropped line still
 //! restarts the `Chat` animation and a dropped greeting the long-greeting countdown (no stock pak has a
-//! `longGreeting`)). The pak's `+120` cooldown is
+//! `longGreeting`)). The pak's `DialogPak.cooldown` is
 //! zeroed by every line and only counted down, so it never blocks. The countdown runs on app time (the engine's
 //! `Npc::UpdateSelf` subtracts the frame's ms). After the line the NPC plays the pak's `animation` slot (`Chat`,
 //! [`say_lines`]).
-use crate::inventory::Inventory;
-use crate::session::MessageDrain;
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
+use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::item::Item;
-use gd_sim::items::inventory::{Footprint, Sack};
+use gd_game_core::inventory::Inventory;
+use gd_game_core::session::MessageDrain;
 use gd_sim::items::market::{
     BUYBACK_TAB, VENDOR_TABS, prices, refresh_minutes, stock_price, vendor_tab,
 };
-use std::collections::HashMap;
 
 /// Each merchant's stock this session, by merchant key: one page per tab;
 /// and the buyback price of each item on the buyback tab, by grid cell.
-/// `sub_18029A900` (sell): the gold paid out (`sub_18036D7F0`) is
-/// stored with the item (`Market` vtable +0x80, `sub_18036F040`), and
-/// `sub_18036D720` (buy price) returns that stored price as is (found by
-/// `sub_18036DD80`), without the faction discount multiplier
-/// (`sub_18036D550`) or `marketCostAdjustment` markup.
+/// `MarketManager::Sell` (sell): the gold paid out (`Market::GetSellPrice`) is
+/// stored with the item (`Market::StoreBuybackItem`), and
+/// `Market::GetBuyPrice` (buy price) returns that stored price as is (found by
+/// `Market::FindBuybackItem`), without the faction discount multiplier
+/// (`Market::GetFactionDiscount`) or `marketCostAdjustment` markup.
 #[derive(Resource, Default)]
 pub struct Markets(
     pub HashMap<String, Vec<Sack<Item>>>,
@@ -53,12 +54,12 @@ pub struct Markets(
 
 /// When each merchant's stock is rolled again (seconds of app time):
 /// `marketRefreshTimeMin..Max` minutes (the market record, read ×60 000 ms
-/// by the market's load @0x180370f70). Server market
-/// tick `sub_180371130`: the countdown is re-rolled every tick while the
+/// by `Market::Load`). Server market
+/// tick `ServerMarket::Update`: the countdown is re-rolled every tick while the
 /// merchant chats (`Npc::IsChatting`), so it runs from when the window
 /// closes; at zero a new seed is drawn and the clients refresh, which also
-/// empties the buyback tab (client refresh `sub_18036C6B0` →
-/// `sub_18036CFA0`). Here the new stock is rolled when the window next
+/// empties the buyback tab (client refresh `ClientMarket::Refresh` →
+/// `ClientMarket::ClearBuyback`). Here the new stock is rolled when the window next
 /// opens, which looks the same.
 #[derive(Resource, Default)]
 pub struct MarketTimers(pub HashMap<String, f64>);
@@ -87,7 +88,7 @@ pub fn stock_market(
     now: f64,
     key: &str,
     mrec: &gd_formats::arz::Record,
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     inv: &mut Inventory,
     params: &gd_sim::items::LootParams,
 ) {
@@ -99,9 +100,9 @@ pub fn stock_market(
             .map(|_| Sack::new(VENDOR_W, FACTION_VENDOR_H, false))
             .collect();
         let idb = data.item_db();
-        let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+        let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
         use gd_sim::items::market::{FACTION_STATIC, TIER_CATEGORIES, roll_categories};
-        let mut stock: Vec<(usize, Vec<gd_sim::items::LootRoll>)> = gd_sim::faction::TIERS
+        let mut stock: Vec<(usize, Vec<gd_sim::items::LootRoll>)> = gd_rules::faction::TIERS
             .iter()
             .enumerate()
             .filter_map(|(t, (field, _))| {
@@ -133,12 +134,12 @@ pub fn stock_market(
     }
     timers.0.insert(
         key.to_owned(),
-        now + refresh_minutes(mrec, crate::rng::f32()) as f64 * 60.0,
+        now + refresh_minutes(mrec, gd_game_core::rng::f32()) as f64 * 60.0,
     );
     markets.0.remove(key);
     markets.1.remove(key);
     let idb = data.item_db();
-    let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let mut pages: Vec<Sack<Item>> = (0..VENDOR_TABS)
         .map(|_| Sack::new(VENDOR_W, VENDOR_H, false))
         .collect();
@@ -172,14 +173,14 @@ pub fn close_market(
     if mrec.str("friendlyNormalTable").is_none() {
         timers.0.insert(
             key.to_owned(),
-            now + refresh_minutes(mrec, crate::rng::f32()) as f64 * 60.0,
+            now + refresh_minutes(mrec, gd_game_core::rng::f32()) as f64 * 60.0,
         );
     }
 }
 
 /// Sells `item` to the merchant `key` (market record `market`): pays its
 /// sell price and puts it on the buyback tab at that price
-/// (`sub_18029A900`: bought back for the gold paid out). Returns the price.
+/// (`MarketManager::Sell`: bought back for the gold paid out). Returns the price.
 #[allow(clippy::too_many_arguments)]
 pub fn sell_item(
     markets: &mut Markets,
@@ -222,8 +223,8 @@ pub const NO_ROOM: &str = "no room in the bags";
 
 /// Buys the item at `cell` of tab `tab` into the bags. `endless`: a faction
 /// tier tab, whose stock never runs out (the faction market
-/// `sub_180298CC0` keeps the tiers' items in its static list and a purchase
-/// from it, `sub_18029AB80`, hands out a copy). `Ok`: the price paid.
+/// `MarketFaction::MarketFaction` keeps the tiers' items in its static list and a purchase
+/// from it, `MarketManager::PurchaseTierItem`, hands out a copy). `Ok`: the price paid.
 #[allow(clippy::too_many_arguments)]
 pub fn buy_item(
     markets: &mut Markets,
@@ -300,8 +301,8 @@ pub struct Shop {
 /// decided from the open service, [`ServiceVisit`]). A faction
 /// tier the player's rank has not unlocked can be browsed but not bought
 /// from: `apply_trade` refuses it with `tagMarketError05` ([`TradeRefused`];
-/// Game.dll faction market purchase `sub_18029A460`: the market's
-/// vtable +40 standing check fails → `DialogManager::AddDialog` Ok box with
+/// Game.dll faction market purchase `MarketFaction::Purchase`: the market's
+/// standing check `Market::CanPurchase` fails → `DialogManager::AddDialog` Ok box with
 /// that tag, before the price and bag-room checks).
 #[derive(Message, Clone, Debug)]
 pub struct BuyRequest {
@@ -327,17 +328,17 @@ pub struct SellRequest {
 }
 
 /// The held item clicked on the merchant window: sold whole
-/// (`CursorHandlerItemMove::PrimaryMarketActivate` @0x180186c10: the market's
-/// sale, vtable +56, of the cursor's item; a split-off part of a stack,
+/// (`CursorHandlerItemMove::PrimaryMarketActivate`: the market's
+/// sale, `Market::Sell`, of the cursor's item; a split-off part of a stack,
 /// `crate::stack`, carries the open market's id for it).
 #[derive(Message, Clone, Debug)]
 pub struct SellHeld {
     pub shop: Shop,
 }
 
-/// Sells the item worn in equipment slot `slot` (index into `crate::inventory::SLOTS`): a right press on it
-/// while a merchant is open with `quickBuy` (GrimDawn.exe `sub_1401BC820`: `PlayerSaleRequest` of the
-/// slot's item, then `EquipmentCtrl::RemoveItem`).
+/// Sells the item worn in equipment slot `slot` (index into `gd_game_core::inventory::SLOTS`): a right press on it
+/// while a merchant is open with `quickBuy` (GrimDawn.exe `EquipSlotWidget::HandleMouseEvent`: `PlayerSaleRequest`
+/// of the slot's item, then `EquipmentCtrl::RemoveItem`).
 #[derive(Message, Clone, Debug)]
 pub struct SellEquipped {
     pub shop: Shop,
@@ -362,12 +363,12 @@ fn apply_trade(
         MessageWriter<crate::error_vox::ErrorVox>,
         MessageWriter<TradeRefused>,
     ),
-    mut sound: MessageWriter<crate::visuals::PlaySound>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
     visit: Res<ServiceVisit>,
     mut markets: ResMut<Markets>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut inv: ResMut<Inventory>,
-    mut progress: ResMut<crate::progress::PlayerProgress>,
+    mut progress: ResMut<gd_game_core::progress::PlayerProgress>,
 ) {
     if buys.is_empty() && sells.is_empty() && held.is_empty() && worn.is_empty() {
         return;
@@ -376,8 +377,8 @@ fn apply_trade(
     // The open faction merchant's prices and endless tier tabs (none for a plain merchant).
     let discount = visit.discount();
     let endless = visit.faction.is_some();
-    let sale_sound = crate::stash::market_sale_sound(&data);
-    let buy_sound = crate::stash::market_purchase_sound(&data);
+    let sale_sound = gd_game_core::stash::market_sale_sound(&data);
+    let buy_sound = gd_game_core::stash::market_purchase_sound(&data);
     for r in held.read() {
         let Some(item) = inv.held.take() else {
             continue;
@@ -395,7 +396,7 @@ fn apply_trade(
             &mut inv,
         );
         if let Some(pak) = sale_sound.clone() {
-            sound.write(crate::visuals::PlaySound { pak, at: None });
+            sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
         }
         done.write(TradeDone::default());
     }
@@ -417,7 +418,7 @@ fn apply_trade(
             &mut inv,
         );
         if let Some(pak) = sale_sound.clone() {
-            sound.write(crate::visuals::PlaySound { pak, at: None });
+            sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
         }
         done.write(TradeDone::default());
     }
@@ -447,7 +448,7 @@ fn apply_trade(
             &mut inv,
         );
         if let Some(pak) = sale_sound.clone() {
-            sound.write(crate::visuals::PlaySound { pak, at: None });
+            sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
         }
         done.write(TradeDone::default());
     }
@@ -485,11 +486,12 @@ fn apply_trade(
         match bought {
             Ok(_) => {
                 if let Some(pak) = buy_sound.clone() {
-                    sound.write(crate::visuals::PlaySound { pak, at: None });
+                    sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
                 }
                 done.write(TradeDone::default());
             }
-            // `sub_18029A460`: no room after the price check says so (`error_vox`).
+            // `MarketMiniMart::Purchase` / `MarketFaction::Purchase`: no room after the price check says so
+            // (`error_vox`).
             Err(NO_ROOM) => {
                 vox.write(crate::error_vox::ErrorVox::new(
                     crate::error_vox::VoxKind::InventoryFull,
@@ -522,22 +524,22 @@ impl Plugin for TradePlugin {
                 Update,
                 apply_trade
                     .run_if(resource_exists::<Inventory>)
-                    .run_if(resource_exists::<crate::progress::PlayerProgress>)
-                    .run_if(resource_exists::<crate::data::GameData>)
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet),
+                    .run_if(resource_exists::<gd_game_core::progress::PlayerProgress>)
+                    .run_if(resource_exists::<gd_game_core::data::GameData>)
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet),
             )
             .add_systems(
                 Update,
                 run_services
                     .run_if(services_ready)
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet),
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet),
             )
             .add_systems(
                 Update,
                 say_lines
-                    .run_if(resource_exists::<crate::data::GameData>)
+                    .run_if(resource_exists::<gd_game_core::data::GameData>)
                     .after(run_services),
             )
             .drain_messages_unless::<ServiceRequest, _>(services_ready)
@@ -551,10 +553,10 @@ impl Plugin for TradePlugin {
 /// [`run_services`]' gate: the session's resources it reads and writes.
 fn services_ready(
     inv: Option<Res<Inventory>>,
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    data: Option<Res<crate::data::GameData>>,
-    mode: Option<Res<crate::session::GameMode>>,
-    altar: Option<Res<crate::ascendant::AltarState>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    data: Option<Res<gd_game_core::data::GameData>>,
+    mode: Option<Res<gd_game_core::session::GameMode>>,
+    altar: Option<Res<gd_game_core::ascendant::AltarState>>,
 ) -> bool {
     inv.is_some() && progress.is_some() && data.is_some() && mode.is_some() && altar.is_some()
 }
@@ -587,8 +589,8 @@ pub enum TradeOpen {
     Crafter { npc: Entity },
     /// The Inventor's window (`NpcEnchanter`): the salvage / dismantle /
     /// convert / reroll tabs of `EnchanterWindow` (GrimDawn.exe
-    /// `sub_14026CF20` loader, `sub_14026DAC0` open handler), not the
-    /// blacksmith's crafting window (`sub_14026B220`).
+    /// `InventorWindow::Load` loader, `InventorWindow::SetVisible` open handler), not the
+    /// blacksmith's crafting window (`CraftingWindow::Load`).
     Inventor { npc: Entity },
     /// The Runekeeper's item ascension window (`NpcItemAscension`).
     Ascension { npc: Entity },
@@ -614,7 +616,7 @@ impl TradeOpen {
 pub struct FactionView {
     pub name_tag: String,
     pub value: f32,
-    pub levels: gd_sim::faction::Levels,
+    pub levels: gd_rules::faction::Levels,
     /// Which tier tabs the standing unlocks.
     pub open: [bool; 4],
 }
@@ -671,21 +673,21 @@ fn faction_view(
     npc: &gd_formats::arz::Record,
     mrec: &gd_formats::arz::Record,
     factions: Option<&crate::factions::PlayerFactions>,
-    loaded: Option<&crate::session::LoadedCharacter>,
+    loaded: Option<&gd_game_core::session::LoadedCharacter>,
 ) -> Option<FactionView> {
     mrec.str("friendlyNormalTable")?;
-    let gf = db.get(gd_sim::faction::GAME_FACTIONS)?;
-    let (idx, fkey) = gd_sim::faction::index_of(gf, npc.str("factions")?)?;
+    let gf = db.get(gd_rules::faction::GAME_FACTIONS)?;
+    let (idx, fkey) = gd_rules::faction::index_of(gf, npc.str("factions")?)?;
     let value = factions
         .map(|f| f.value(idx))
         .or_else(|| loaded.and_then(|c| c.0.factions.factions.get(idx).map(|f| f.value)))
         .unwrap_or(0.0);
-    let levels = gd_sim::faction::Levels::from_record(gf);
+    let levels = gd_rules::faction::Levels::from_record(gf);
     let level = levels.level_of(value).map_or(0, |i| i as u32 + 1);
-    let open = gd_sim::faction::TIERS.map(|(_, need)| level >= need);
+    let open = gd_rules::faction::TIERS.map(|(_, need)| level >= need);
     info!("trade: faction {fkey} = {value} ({})", levels.tag(value));
     Some(FactionView {
-        name_tag: gd_sim::faction::tag(idx).unwrap_or_default(),
+        name_tag: gd_rules::faction::tag(idx).unwrap_or_default(),
         value,
         levels,
         open,
@@ -726,26 +728,30 @@ pub fn run_services(
         Res<Time>,
         crate::session::Session,
     ),
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut inv: ResMut<Inventory>,
-    progress: Res<crate::progress::PlayerProgress>,
+    progress: Res<gd_game_core::progress::PlayerProgress>,
     // Option: a new character has no save.
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     // Option: before `PlayerFactions` exists the save's standings are read.
     factions: Option<Res<crate::factions::PlayerFactions>>,
     // Plain NPCs have no `Combatant` (`story::arm_story_characters` skips them): their radius is the record's.
-    npcs: Query<(Entity, &GlobalTransform, &crate::character::Character)>,
+    npcs: Query<(
+        Entity,
+        &GlobalTransform,
+        &gd_game_core::character::Character,
+    )>,
     mut players: Query<
         (
             &Transform,
             &mut crate::movement::MovePath,
             &mut crate::player_orders::InteractTarget,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
         ),
-        With<crate::player::Player>,
+        With<gd_game_core::player::Player>,
     >,
     mut says: MessageWriter<NpcSay>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     nav: Res<crate::nav::Nav>,
     // `GD_TRADE`: (opened, seconds the player has been in the world).
     mut hook: Local<(bool, f32)>,
@@ -820,10 +826,12 @@ pub fn run_services(
         return;
     }
     // NPC use range (`DefaultRequestNpcAction`, `conversation::in_talk_range`): open at once within player
-    // radius + NPC radius + 3 m (3D), else at the walk's end (`MoveToNpc::EndOfPathReached`).
+    // radius + NPC radius + 3 m (3D), else at the walk's end (`ControllerPlayerStateMoveToNpc::EndOfPathReached`).
     let d = gt.translation().distance(ptf.translation);
-    let npc_radius =
-        crate::combat::get_radius(data.db.get(&ch.record), crate::combat::ACTOR_RADIUS);
+    let npc_radius = gd_game_core::combat::get_radius(
+        data.db.get(&ch.record),
+        gd_game_core::combat::ACTOR_RADIUS,
+    );
     if !crate::conversation::in_talk_range(d, pcb.radius, npc_radius) && !path.points.is_empty() {
         return;
     }
@@ -887,7 +895,7 @@ pub fn run_services(
     });
 }
 
-/// An NPC's spoken line request: `Npc::SayHello` / `Npc::SayGoodbye` (Game.dll @0x1803ba4c0 / @0x1803ba500), or the
+/// An NPC's spoken line request: `Npc::SayHello` / `Npc::SayGoodbye` (Game.dll), or the
 /// greeting of `Npc::Converse` when the NPC has no speech to give ([`NpcSay::Greet`]). [`say_lines`] answers with
 /// the [`NpcVoice`] to play (module doc, "Voices").
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
@@ -909,12 +917,13 @@ pub struct NpcVoice {
     pub at: Vec3,
 }
 
-/// When an NPC's long greeting may come again (app seconds): the dialog pak's countdown (+128), reset to
+/// When an NPC's long greeting may come again (app seconds): the dialog pak's countdown
+/// (`DialogPak.longGreetingCountdown`), reset to
 /// `longGreetingPeriod` by each greeting that found it run out. Absent: never set (the pak's constructor's 0).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct LongGreeting(pub f64);
 
-/// A `dialogPak` record (`dialogpak.tpl`) as `sub_1802666D0` loads it.
+/// A `dialogPak` record (`dialogpak.tpl`) as `DialogPak::Load` loads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DialogPak {
     pub short: Vec<String>,
@@ -927,7 +936,7 @@ pub struct DialogPak {
 }
 
 impl DialogPak {
-    /// `sub_1802666D0`: `shortGreeting1..5`, `longGreeting1..5`, `goodbye1..5`, each non-empty one in order.
+    /// `DialogPak::Load`: `shortGreeting1..5`, `longGreeting1..5`, `goodbye1..5`, each non-empty one in order.
     pub fn load(rec: &gd_formats::arz::Record) -> Self {
         let list = |key: &str| {
             (1..=5)
@@ -953,13 +962,13 @@ impl DialogPak {
     }
 
     /// The line a greeting (`goodbye` false) or goodbye plays at app time `now`, `long_until` the NPC's
-    /// [`LongGreeting`] (updated). `sub_180265F70`: a goodbye picks from `goodbye`; a greeting picks from
+    /// [`LongGreeting`] (updated). `DialogPak::PickSound`: a goodbye picks from `goodbye`; a greeting picks from
     /// the short ones while the countdown runs, else restarts it and picks a long one (a short one when there is
-    /// none). `sub_180265E20`: `rand() % n`; a list empty plays nothing; a `.ogg` (a stream,
+    /// none). `DialogPak::PlayRandom`: `rand() % n`; a list empty plays nothing; a `.ogg` (a stream,
     /// `SoundManager::Load`) is refused ("DialogPak %s attempted to play sound stream!").
     pub fn pick(&self, goodbye: bool, now: f64, long_until: &mut f64) -> Option<&str> {
         fn one(list: &[String]) -> Option<&str> {
-            (!list.is_empty()).then(|| list[crate::rng::usize(..list.len())].as_str())
+            (!list.is_empty()).then(|| list[gd_game_core::rng::usize(..list.len())].as_str())
         }
         let line = if goodbye {
             one(&self.goodbye)
@@ -974,19 +983,19 @@ impl DialogPak {
 }
 
 /// Answers the [`NpcSay`]s with the NPCs' [`NpcVoice`]s and starts the pak's `animation` on the NPC (module doc,
-/// "Voices"). `sub_180265FE0`: after the line, whether or not one played, the NPC's animation set plays the
+/// "Voices"). `DialogPak::Play`: after the line, whether or not one played, the NPC's animation set plays the
 /// slot if it has it (`AnimationSet::PlayAnimationIfAvailable` inlined: [`Character::play_scripted`]).
 ///
-/// [`Character::play_scripted`]: crate::character::Character::play_scripted
+/// [`Character::play_scripted`]: gd_game_core::character::Character::play_scripted
 fn say_lines(
     mut commands: Commands,
     mut says: MessageReader<NpcSay>,
     mut voices: MessageWriter<NpcVoice>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     time: Res<Time>,
     mut npcs: Query<(
         &GlobalTransform,
-        &mut crate::character::Character,
+        &mut gd_game_core::character::Character,
         Option<&mut LongGreeting>,
     )>,
 ) {

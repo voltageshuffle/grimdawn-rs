@@ -6,10 +6,10 @@ use gd_game::devotion::{
     DevotionState, RemoveStar, Shrine, ShrineRequest, ShrineWindow, TakeStar, offering_slots,
     spawn_shrine,
 };
-use gd_game::inventory::Inventory;
-use gd_game::player::Loadout;
-use gd_game::story::StoryEffect;
 use gd_game::testing::TestGame;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::Loadout;
+use gd_game_core::story::StoryEffect;
 
 fn game() -> Option<(TestGame, Entity)> {
     Some(started(TestGame::new_character("Tester", false, false)?))
@@ -51,7 +51,7 @@ fn save_state_and_story_grants() {
     let (points, total) = (state(&g).points, state(&g).total);
     g.app
         .world_mut()
-        .write_message(StoryEffect(gd_sim::story::Effect::GiveDevotion(1)));
+        .write_message(StoryEffect(gd_story::story::Effect::GiveDevotion(1)));
     g.step();
     let s = state(&g);
     let max = g.rules().levels.max_devotion_points.max(0) as u32;
@@ -111,7 +111,7 @@ fn take_and_refund_a_star() {
         .unwrap();
     g.app
         .world_mut()
-        .resource_mut::<gd_game::progress::PlayerProgress>()
+        .resource_mut::<gd_game_core::progress::PlayerProgress>()
         .gold += 10_000_000;
     for _ in 0..50 {
         g.app
@@ -172,7 +172,7 @@ fn shrine_window_takes_the_offerings() {
             Transform::from_xyz(1.0, 0.0, 0.0),
             rec,
             uid,
-            gd_sim::mode::Mode::default(),
+            gd_rules::mode::Mode::default(),
         )
         .expect("shrine");
         w.flush();
@@ -192,15 +192,15 @@ fn shrine_window_takes_the_offerings() {
         offering_slots(
             g.get::<Shrine>(e),
             w.resource::<Inventory>(),
-            w.get_resource::<gd_game::stash::Stash>(),
+            w.get_resource::<gd_game_core::stash::Stash>(),
         )
     };
     let count = |g: &TestGame, rec: &str| {
         let w = g.app.world();
         let names = [rec.to_owned()];
-        w.get_resource::<gd_game::stash::Stash>().map_or_else(
+        w.get_resource::<gd_game_core::stash::Stash>().map_or_else(
             || w.resource::<Inventory>().count_by_record(rec),
-            |st| gd_game::stash::count(&names, w.resource::<Inventory>(), st),
+            |st| gd_game_core::stash::count(&names, w.resource::<Inventory>(), st),
         )
     };
     use_it(&mut g);

@@ -6,15 +6,16 @@
 //! coords, after `SkillManager::AddToScrollSkillList`).
 //!
 //! `ItemDevotionReset` (Tonic of Clarity):
-//! `CreateSecondaryCursorHandler` @0x1803367b0 (requirements met, [`use_gated`]) -> `CursorHandlerDevotionReset`;
-//! `AllowUse` @0x1803365f0 = some devotion points spent (`GetDevotionPoints < GetTotalDevotionPoints`).
-//! `SecondaryInitialize` @0x180181390: allowed -> the yes / no dialog `tagDevotionResetConfirmation`
-//! ([`Inventory::use_ask`] up, answered with [`UseAnswer`]; `Update` @0x180181560: yes ->
+//! `CreateSecondaryCursorHandler` (requirements met, [`use_gated`]) -> `CursorHandlerDevotionReset`;
+//! `AllowUse` = some devotion points spent (`GetDevotionPoints < GetTotalDevotionPoints`).
+//! `SecondaryInitialize`: allowed -> the yes / no dialog `tagDevotionResetConfirmation`
+//! ([`Inventory::use_ask`] up, answered with [`UseAnswer`]; `Update`: yes ->
 //! `UseItem`, no -> cancelled, kept); not allowed -> `UseItem`, refused by `AllowUse`: the "cannot" sound
-//! (`GameEngine` +559*8 = `PlayErrorSound`'s `genericErrorSound`), kept, no dialog ([`ask_use`]).
-//! `Use` @0x180336550 -> `DevotionWindow_ResetAll` (exe @0x14018cb40): every star removed (powers and bindings
+//! (`GameEngine.genericErrorSound`, `PlayErrorSound`'s), kept, no dialog ([`ask_use`]).
+//! `Use` -> `DevotionWindow_ResetAll` (exe): every star removed (powers and bindings
 //! cleared), unspent = total (shrines stay); skipped entirely while the devotion pane is in its reclaim mode
-//! (`+9241`, [`crate::reclamation::SkillReclamation::devotion_mode`]), the tonic still used up; then `useSound`.
+//! (`DevotionWindow.reclaimMode`, [`crate::reclamation::SkillReclamation::devotion_mode`]), the tonic still used
+//! up; then `useSound`.
 //! Game.dll `PlayerInventoryCtrl::UseItem` → `UsePotionOfType`
 //! (`OneShot_Scroll` derives from `OneShot_Potion`): a scroll is refused
 //! (and kept) while its cooldown runs: the cooldown of its scroll `type`
@@ -27,10 +28,10 @@
 //! records) has single-valued fields, so the cast level is moot (level
 //! index 0). `ItemUsableSkill` (binding stones, pet and mini pet summons,
 //! `pets.rs` module docs; a class
-//! without symbols in Game.dll, loader @0x180355200): `Use` @0x180355680 activates its `skillName` like a
+//! without symbols in Game.dll, loader `ItemUsableSkill_Load`): `Use` activates its `skillName` like a
 //! scroll, with no item cooldown (it is not an `OneShot_Potion`) and no
 //! cooldown test in the activation (`Skill_SpawnPet::ActivateNow`); its
-//! `AllowUse` @0x1803557b0 always allows and `Character::UseInventoryItem`
+//! `AllowUse` always allows and `Character::UseInventoryItem`
 //! takes one of the stack, so the item is used up unless it is a single
 //! `infiniteUse` item. `ItemUsableSkill_Use`: it plays `useSound` at the user's coords, then
 //! `Character::ActivateSkill(skill, "End", user, user coords)`: target the user, at its own position (no
@@ -56,26 +57,28 @@
 //! `bonusManaPercent`); `bonusConstitutionPercent` / `bonusConstitutionPoints` fill
 //! [`crate::constitution::Constitution`] (`CharacterBio::TakeBonus`). The other `OneShot_Potion`
 //! bonus fields (experience, gold, attribute / skill points) are 0 in every stock food and not applied.
-//! `ItemAttributeReset` (Tonic of Reshaping): `CreateSecondaryCursorHandler` @0x180335e20 (requirements
-//! met) -> `CursorHandlerAttributeReset`, the same shape as the devotion one (`SecondaryInitialize` @0x180180f10:
-//! allowed -> `tagAttributeResetConfirmation`, dialog 27; `Update` @0x1801810e0: yes -> `UseItem`); `AllowUse`
-//! @0x180335bc0 = `IsExpansion1Loaded` and `HasModifierPointsInUse` (some attribute point spent; the port always
-//! has the expansion); `Use` @0x180335b00: the refund (`points` module doc), then `useSound`. PORT: `Use` also calls
-//! a `GameEngine` +822*8 object's vt+320 (not traced, taken as a UI refresh; the port's UI reads the state).
+//! `ItemAttributeReset` (Tonic of Reshaping): `CreateSecondaryCursorHandler` (requirements
+//! met) -> `CursorHandlerAttributeReset`, the same shape as the devotion one (`SecondaryInitialize`:
+//! allowed -> `tagAttributeResetConfirmation`, dialog 27; `Update`: yes -> `UseItem`); `AllowUse`
+//! = `IsExpansion1Loaded` and `HasModifierPointsInUse` (some attribute point spent; the port always
+//! has the expansion); `Use`: the refund (`points` module doc), then `useSound`. PORT: `Use` also calls
+//! a `GameEngine.attributeResetListener` object's `AttributeResetListener::OnReset` (not traced, taken as a UI
+//! refresh; the port's UI reads the state).
 //! `ItemFactionBooster` / `ItemFactionWarrant` (writs / bounties): `CreateSecondaryCursorHandler`
-//! @0x180345420 (requirements met) -> `CursorHandlerFactionBooster` (both classes; the bounty derives from the
-//! writ): `SecondaryInitialize` @0x1801833d0 asks `tagFactionWarrantConfirmation` (a bounty allowed while the
+//! (requirements met) -> `CursorHandlerFactionBooster` (both classes; the bounty derives from the
+//! writ): `SecondaryInitialize` asks `tagFactionWarrantConfirmation` (a bounty allowed while the
 //! faction has a positive boost) or `tagFactionMandateConfirmation` (allowed while it has a negative boost), dialog
-//! 24, else `UseItem` at once; `AllowUse` @0x180345140 / @0x1803459f0 and `Use`: `factions` module doc.
+//! 24, else `UseItem` at once; `AllowUse` (both classes') and `Use`: `factions` module doc.
 //! Item classes `ItemUpgrade` / `MasteryReset` / `SkillReset` / `Respec` / `InventorBlueprint` are not in stock
 //! data.
 //! Hook `GD_USE_ITEM` (hooks.rs).
-use crate::casting::{Caster, Casting, Kind, ProcCast};
 use crate::constitution::Constitution;
-use crate::data::GameData;
-use crate::inventory::Inventory;
-use crate::player::{Loadout, Player, ProfileDirty};
 use bevy::prelude::*;
+use gd_game_core::casting::{Caster, Casting, Kind, ProcCast};
+use gd_game_core::consumables::UseAsk;
+use gd_game_core::data::GameData;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
 
 pub struct ConsumablesPlugin;
 
@@ -92,9 +95,9 @@ impl Plugin for ConsumablesPlugin {
                     apply_difficulty_unlocks,
                 )
                     .chain()
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet)
-                    .run_if(resource_exists::<crate::inventory::Inventory>),
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet)
+                    .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
             );
     }
 }
@@ -104,18 +107,6 @@ impl Plugin for ConsumablesPlugin {
 pub struct DifficultyUnlockUsed {
     pub unlocked: usize,
     pub quests: Vec<String>,
-}
-
-/// A tonic / writ / bounty right-clicked in the bags ([`Inventory::use_ask`], [`asks`], module doc).
-#[derive(Clone, Debug, PartialEq)]
-pub struct UseAsk {
-    pub bag: usize,
-    pub x: u32,
-    pub y: u32,
-    pub record: String,
-    pub class: String,
-    /// The yes / no question up (its text tag), else not yet tested.
-    pub question: Option<&'static str>,
 }
 
 /// The classes whose secondary cursor handler may ask first: `CursorHandlerDevotionReset`,
@@ -162,10 +153,10 @@ fn allow_use(
     }
 }
 
-fn booster(data: &GameData, record: &str) -> Option<gd_sim::faction::Booster> {
+fn booster(data: &GameData, record: &str) -> Option<gd_rules::faction::Booster> {
     data.db
         .get(record)
-        .and_then(gd_sim::faction::Booster::from_record)
+        .and_then(gd_rules::faction::Booster::from_record)
 }
 
 /// The secondary cursor handlers that ask first (module doc): `SecondaryInitialize` decides between the
@@ -194,7 +185,7 @@ fn ask_use(
         a.question = match a.class.as_str() {
             "ItemDevotionReset" => ok.then_some(DEVOTION_RESET_TAG),
             "ItemAttributeReset" => ok.then_some(ATTRIBUTE_RESET_TAG),
-            // `CursorHandlerFactionBooster::SecondaryInitialize` @0x1801833d0: a bounty allowed while the
+            // `CursorHandlerFactionBooster::SecondaryInitialize`: a bounty allowed while the
             // faction is positive boosted asks `tagFactionWarrantConfirmation`; else any allowed while it is
             // negative boosted asks `tagFactionMandateConfirmation`; else `UseItem` at once.
             _ => booster(&data, &a.record).and_then(|b| {
@@ -230,7 +221,7 @@ fn ask_use(
                 "{} refused (AllowUse)",
                 a.record.rsplit('/').next().unwrap_or("")
             );
-            inv.sounds.extend(crate::stash::error_sound(&data));
+            inv.sounds.extend(gd_game_core::stash::error_sound(&data));
             continue;
         }
         let Some(i) = inv.bags.get(a.bag).and_then(|b| {
@@ -256,10 +247,10 @@ fn ask_use(
 /// The inventory bags a difficulty unlock item gives.
 const UNLOCK_BAG: &str = "records/items/misc/inventorybag.dbr";
 
-/// The campaign's difficulty unlock item, `ItemDifficultyUnlock::Use` @0x180336ef0:
-/// `GameEngine::CompleteDifficulty` @0x1802f9bf0 (above the greatest difficulty, 3 reading 0: the cinematic text
+/// The campaign's difficulty unlock item, `ItemDifficultyUnlock::Use`:
+/// `GameEngine::CompleteDifficulty` (above the greatest difficulty, 3 reading 0: the cinematic text
 /// `tagDifficultyUnlocked` / `tagDifficultyLevelUnlocked` with `tagGameDifficultySetting0<d+1>`, type 7, and the
-/// greatest becomes it); the difficulties it skips ([`gd_sim::story::Story::skip_difficulties`]) get every riftgate
+/// greatest becomes it); the difficulties it skips ([`gd_story::story::Story::skip_difficulties`]) get every riftgate
 /// of the world's `Riftgates` instance groups ([`crate::riftgates::RiftgateGroup`], `Player::AddTeleportUID`) and
 /// the skill / attribute points of the `statQuests` tasks not done there (events 49 / 50); then five inventory bags
 /// (`GiveItemToCharacter`). The quests' own catch-up scaling (`Quest2Task::AdjustRewards`) runs when a task
@@ -267,13 +258,13 @@ const UNLOCK_BAG: &str = "records/items/misc/inventorybag.dbr";
 #[allow(clippy::too_many_arguments)]
 pub fn apply_difficulty_unlocks(
     mut used: MessageReader<DifficultyUnlockUsed>,
-    unlock: Option<ResMut<crate::session::DifficultyUnlock>>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    unlock: Option<ResMut<gd_game_core::session::DifficultyUnlock>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     travel: Option<ResMut<crate::riftgates::TravelState>>,
     group: Option<Res<crate::riftgates::RiftgateGroup>>,
-    mut effects: MessageWriter<crate::story::StoryEffect>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
-    mut gained: MessageWriter<crate::progress::PointsGained>,
+    mut effects: MessageWriter<gd_game_core::story::StoryEffect>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
+    mut gained: MessageWriter<gd_game_core::progress::PointsGained>,
 ) {
     let (mut unlock, mut travel) = (unlock, travel);
     for u in used.read() {
@@ -281,10 +272,10 @@ pub fn apply_difficulty_unlocks(
             && u.unlocked > cur.0
         {
             cur.0 = u.unlocked;
-            cinematic.write(crate::story::CinematicText {
+            cinematic.write(gd_game_core::story::CinematicText {
                 head: "tagDifficultyUnlocked".to_owned(),
                 sub: "tagDifficultyLevelUnlocked".to_owned(),
-                sub_args: vec![crate::floating::TextArg::Tag(format!(
+                sub_args: vec![gd_game_core::floating::TextArg::Tag(format!(
                     "tagGameDifficultySetting0{}",
                     u.unlocked + 1
                 ))],
@@ -311,21 +302,23 @@ pub fn apply_difficulty_unlocks(
                 }
             }
         }
-        use gd_sim::story::Effect;
+        use gd_story::story::Effect;
         if skill > 0 {
-            effects.write(crate::story::StoryEffect(Effect::GiveSkillPoints(skill)));
+            effects.write(gd_game_core::story::StoryEffect(Effect::GiveSkillPoints(
+                skill,
+            )));
             // Event 49 (the effect itself sends none: `progress` module doc); event 50 comes with the attribute effect.
-            gained.write(crate::progress::PointsGained {
+            gained.write(gd_game_core::progress::PointsGained {
                 skill: true,
                 ..default()
             });
         }
         if attrib > 0 {
-            effects.write(crate::story::StoryEffect(Effect::GiveAttributePoints(
-                attrib,
-            )));
+            effects.write(gd_game_core::story::StoryEffect(
+                Effect::GiveAttributePoints(attrib),
+            ));
         }
-        effects.write(crate::story::StoryEffect(Effect::GiveItem {
+        effects.write(gd_game_core::story::StoryEffect(Effect::GiveItem {
             record: UNLOCK_BAG.to_owned(),
             count: 5,
         }));
@@ -351,7 +344,7 @@ pub fn is_usable(class: &str) -> bool {
 }
 
 /// `OneShot_Potion` and its subclasses (classInfo parents; `OneShot_Scroll` is one too, with its own `Use`):
-/// `PlayerInventoryCtrl::UseItem` @0x1803f42c0 sends them through `UsePotionOfType` (the cooldown).
+/// `PlayerInventoryCtrl::UseItem` sends them through `UsePotionOfType` (the cooldown).
 /// `OneShot_Dye` derives from `OneShot`, not from them.
 pub fn is_potion(class: &str) -> bool {
     matches!(
@@ -360,8 +353,8 @@ pub fn is_potion(class: &str) -> bool {
     )
 }
 
-/// The blueprint classes: all share `ItemArtifactFormula::Use` @0x180332eb0 (learn into `formulas.gst`) and
-/// `AllowUse` @0x180333300 (refused when known) in their vtables (+1496 / +1504).
+/// The blueprint classes: all share `ItemArtifactFormula::Use` (learn into `formulas.gst`) and
+/// `AllowUse` (refused when known) in their vtables.
 pub fn is_formula(class: &str) -> bool {
     matches!(
         class,
@@ -375,13 +368,13 @@ pub fn is_formula(class: &str) -> bool {
 }
 
 /// Whether a right click's `CursorHandlerItemUse` (`PlayerInventoryCtrl::UseItem(id, 1)` at once) is behind
-/// the item's requirements. Game.dll `CreateSecondaryCursorHandler` (Item vt+1000):
-/// `OneShot_Potion::…` @0x1803beee0 (also `OneShot_PotionHealth` / `_PotionMana` / `OneShot_Dye`) always
-/// makes it; `OneShot_SkillUnlock::…` @0x18032dd70 (folded: `OneShot_Scroll`, the formulas, `ItemNote`,
-/// `ItemDifficultyUnlock`, `ItemTransmuterSet`) only when `AreRequirementsMet` (vt+1352 @0x180326930) passes,
+/// the item's requirements. Game.dll `CreateSecondaryCursorHandler` (an `Item` virtual):
+/// `OneShot_Potion::…` (also `OneShot_PotionHealth` / `_PotionMana` / `OneShot_Dye`) always
+/// makes it; `OneShot_SkillUnlock::…` (folded: `OneShot_Scroll`, the formulas, `ItemNote`,
+/// `ItemDifficultyUnlock`, `ItemTransmuterSet`) only when `AreRequirementsMet` passes,
 /// else none (the click then goes to `SmartAutoInsert`, which refuses them: nothing happens).
-/// `ItemUsableSkill` shares the folded `OneShot_SkillUnlock` handler
-/// @0x18032dd70; `ItemDevotionReset::CreateSecondaryCursorHandler` @0x1803367b0 makes its
+/// `ItemUsableSkill` shares the folded `OneShot_SkillUnlock` handler;
+/// `ItemDevotionReset::CreateSecondaryCursorHandler` makes its
 /// `CursorHandlerDevotionReset` only when `AreRequirementsMet` passes.
 pub fn use_gated(class: &str) -> bool {
     is_formula(class)
@@ -408,7 +401,7 @@ pub fn consumed(rec: &gd_formats::arz::Record, stack: u32) -> bool {
         && !(rec.class == "ItemUsableSkill" && rec.bool("infiniteUse") && stack <= 1)
 }
 
-/// The scroll cooldown key of an `OneShot_Scroll` (`sub_1803C3260`: the
+/// The scroll cooldown key of an `OneShot_Scroll` (`OneShot_Scroll::GetCooldownKey`: the
 /// three scroll types share one cooldown each; untyped scrolls have their
 /// own, by record).
 pub(crate) fn scroll_key(rec: &gd_formats::arz::Record, item: &str) -> String {
@@ -421,8 +414,8 @@ pub(crate) fn scroll_key(rec: &gd_formats::arz::Record, item: &str) -> String {
 /// In the session's shared folder (`Choice::shared_save_dir`, as the engine's `potions.gst`); a hardcore
 /// character's is `potionunlocks_hardcore.txt` (the engine's `potions.gsh`, `gd_formats::save::Shared::Potions`).
 fn unlocks_file(
-    choice: &crate::session::Choice,
-    dir: &crate::session::SaveDir,
+    choice: &gd_game_core::session::Choice,
+    dir: &gd_game_core::session::SaveDir,
 ) -> std::path::PathBuf {
     choice.shared_save_dir(dir).join(if choice.hardcore {
         "potionunlocks_hardcore.txt"
@@ -433,8 +426,8 @@ fn unlocks_file(
 
 /// The account's potion unlock items.
 pub fn account_unlocks(
-    choice: &crate::session::Choice,
-    dir: &crate::session::SaveDir,
+    choice: &gd_game_core::session::Choice,
+    dir: &gd_game_core::session::SaveDir,
 ) -> Vec<String> {
     std::fs::read_to_string(unlocks_file(choice, dir))
         .unwrap_or_default()
@@ -448,11 +441,11 @@ pub fn account_unlocks(
 /// Applies the account's unlocks to a new / loaded character, then the
 /// `GD_POTION_SELECT` choices.
 pub fn apply_account_unlocks(
-    choice: &crate::session::Choice,
-    dir: &crate::session::SaveDir,
+    choice: &gd_game_core::session::Choice,
+    dir: &gd_game_core::session::SaveDir,
     db: &gd_formats::vfs::Database,
     book: &mut gd_sim::skills::SkillBook,
-    hooks: &crate::hooks::Hooks,
+    hooks: &gd_game_core::hooks::Hooks,
 ) {
     for u in account_unlocks(choice, dir) {
         if let Some(r) = db.get(&u) {
@@ -468,8 +461,8 @@ pub fn apply_account_unlocks(
 }
 
 fn add_account_unlock(
-    choice: &crate::session::Choice,
-    dir: &crate::session::SaveDir,
+    choice: &gd_game_core::session::Choice,
+    dir: &gd_game_core::session::SaveDir,
     record: &str,
 ) {
     let mut list = account_unlocks(choice, dir);
@@ -478,17 +471,20 @@ fn add_account_unlock(
     }
     list.push(record.to_owned());
     let path = unlocks_file(choice, dir);
-    if path.to_string_lossy().contains(crate::session::LIVE_SAVES) {
+    if path
+        .to_string_lossy()
+        .contains(gd_game_core::session::LIVE_SAVES)
+    {
         return;
     }
-    let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+    let _created = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
     if let Err(e) = std::fs::write(&path, list.join("\n") + "\n") {
         warn!("potion unlocks: {}: {e}", path.display());
     }
 }
 
 fn test_use(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     mut inv: ResMut<Inventory>,
     players: Query<(), With<Player>>,
@@ -517,7 +513,7 @@ fn test_use(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn use_items(
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
     data: Res<GameData>,
     mut inv: ResMut<Inventory>,
@@ -529,32 +525,32 @@ pub(crate) fn use_items(
             &Transform,
             &mut Caster,
             &mut Loadout,
-            &crate::inventory::Requirements,
+            &gd_game_core::inventory::Requirements,
         ),
         With<Player>,
     >,
     mut bodies: Query<
         (
-            &mut crate::combat::Combatant,
-            Option<&crate::casting::PotionOverTime>,
+            &mut gd_game_core::combat::Combatant,
+            Option<&gd_game_core::casting::PotionOverTime>,
             Option<&mut Constitution>,
         ),
         With<Player>,
     >,
     mut procs: MessageWriter<ProcCast>,
-    save_dir: Res<crate::session::SaveDir>,
-    mut active: Local<std::collections::HashMap<String, String>>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
+    mut active: Local<gd_formats::collections::HashMap<String, String>>,
     (mut notes, mut sets, mut sound, reclaim): (
         MessageWriter<crate::lore::UseNote>,
         MessageWriter<crate::illusion::UseTransmuteSet>,
-        MessageWriter<crate::visuals::PlaySound>,
+        MessageWriter<gd_game_core::visuals::PlaySound>,
         // Option: the reclaim mode is only possible with it.
         Option<Res<crate::reclamation::SkillReclamation>>,
     ),
     (choice, rt, unlock, mut unlocks, mut devotion_undo): (
-        Res<crate::session::Choice>,
-        Option<NonSend<crate::story::StoryRuntime>>,
-        Option<Res<crate::session::DifficultyUnlock>>,
+        Res<gd_game_core::session::Choice>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        Option<Res<gd_game_core::session::DifficultyUnlock>>,
         MessageWriter<DifficultyUnlockUsed>,
         // Option: present with the devotion plugin; the tonic's reset drops its pending steps.
         Option<ResMut<crate::devotion::DevotionUndo>>,
@@ -613,7 +609,7 @@ pub(crate) fn use_items(
                     give_back(&mut commands, &mut inv, &data, at, item, from);
                     continue;
                 }
-                let kind = crate::casting::kind_of(srec);
+                let kind = gd_game_core::casting::kind_of(srec);
                 if kind == Kind::Unsupported {
                     warn!("consumable skill {skill} ({}) not supported", srec.class);
                     give_back(&mut commands, &mut inv, &data, at, item, from);
@@ -651,7 +647,7 @@ pub(crate) fn use_items(
                 // (`Character::ActivateSkill` at its coords; the port's self casts take the caster as their
                 // target: `target` stays None). `ItemUsableSkill` plays its `useSound` at the user.
                 if !scroll && let Some(pak) = rec.str("useSound").filter(|p| !p.is_empty()) {
-                    sound.write(crate::visuals::PlaySound {
+                    sound.write(gd_game_core::visuals::PlaySound {
                         pak: pak.to_owned(),
                         at: Some(tf.translation),
                     });
@@ -696,10 +692,10 @@ pub(crate) fn use_items(
                 };
                 info!("{tag}: {}", item.base_name.rsplit('/').next().unwrap_or(""));
             }
-            // `ItemDifficultyUnlock::AllowUse` @0x180337710 / `Use` @0x180336ef0 (`gameMode` Survival, the
+            // `ItemDifficultyUnlock::AllowUse` / `Use` (`gameMode` Survival, the
             // Merit items): in the Crucible the Merit items are usable when their difficulty
             // is above the character's greatest survival difficulty; using one stores it
-            // (`CompleteSurvivalDifficulty(GameDifficulty)` @0x1802fa070). The campaign's (`gameMode` Campaign,
+            // (`CompleteSurvivalDifficulty(GameDifficulty)`). The campaign's (`gameMode` Campaign,
             // `difficultyunlock_*`): outside the Crucible (game mode 0 or 2), with Forgotten Gods loaded (the items are
             // its records), when its difficulty is above the greatest campaign difficulty ([`apply_difficulty_unlocks`]).
             // An item refused stays.
@@ -739,9 +735,9 @@ pub(crate) fn use_items(
                     continue;
                 }
             }
-            // `UseItem` @0x1803f42c0 → `UsePotionOfType` (the record's cooldown, refused and kept while it
-            // runs; started at `useDelayTime`), then `OneShot_Potion::Use` @0x1803bf9d0: `OneShot::Use`
-            // @0x1803bebb0 (use sound, play stats) and `Character::TakeBonus` (vt+1632) of its bonus fields.
+            // `UseItem` → `UsePotionOfType` (the record's cooldown, refused and kept while it
+            // runs; started at `useDelayTime`), then `OneShot_Potion::Use`: `OneShot::Use`
+            // (use sound, play stats) and `Character::TakeBonus` of its bonus fields.
             c if is_potion(c) => {
                 let key = scroll_key(rec, &item.base_name);
                 if caster.cooldowns.contains_key(&key) {
@@ -778,7 +774,7 @@ pub(crate) fn use_items(
                 info!("drank {}", item.base_name.rsplit('/').next().unwrap_or(""));
                 stats.write(crate::play_stats::PlayStat::PotionUsed(c.to_owned()));
             }
-            // `OneShot_Dye::Use` @0x1803c17e0 (a `OneShot`, no potion cooldown): `OneShot::Use`, then the
+            // `OneShot_Dye::Use` (a `OneShot`, no potion cooldown): `OneShot::Use`, then the
             // player's base texture becomes `maleTexture` / `femaleTexture` (`OneShot_Dye::Load`) by gender.
             // PORT: the texture is not swapped (no stock dye record); the dye is used up.
             "OneShot_Dye" => {
@@ -839,13 +835,13 @@ pub(crate) fn use_items(
                     commands.entity(e).try_insert(ProfileDirty);
                 }
                 if let Some(pak) = rec.str("useSound").filter(|p| !p.is_empty()) {
-                    sound.write(crate::visuals::PlaySound {
+                    sound.write(gd_game_core::visuals::PlaySound {
                         pak: pak.to_owned(),
                         at: Some(tf.translation),
                     });
                 }
             }
-            // `ItemAttributeReset::Use` @0x180335b00 (`HasModifierPointsInUse` re-tested; reached refused
+            // `ItemAttributeReset::Use` (`HasModifierPointsInUse` re-tested; reached refused
             // only by the `GD_USE_ITEM` hook, which skips `AllowUse`): the refund (`points::ResetAttributes`),
             // then `useSound`.
             "ItemAttributeReset" => {
@@ -856,7 +852,7 @@ pub(crate) fn use_items(
                 }
                 resets.write(crate::points::ResetAttributes);
                 if let Some(pak) = rec.str("useSound").filter(|p| !p.is_empty()) {
-                    sound.write(crate::visuals::PlaySound {
+                    sound.write(gd_game_core::visuals::PlaySound {
                         pak: pak.to_owned(),
                         at: Some(tf.translation),
                     });
@@ -864,7 +860,7 @@ pub(crate) fn use_items(
             }
             // The boost itself: `factions::use_boosters` (`ItemFactionBooster::Use` / `ItemFactionWarrant::Use`).
             "ItemFactionBooster" | "ItemFactionWarrant" => {
-                let ok = gd_sim::faction::Booster::from_record(rec)
+                let ok = gd_rules::faction::Booster::from_record(rec)
                     .zip(factions.as_deref())
                     .is_some_and(|(b, f)| f.booster_allowed(&data, &b));
                 if !ok {

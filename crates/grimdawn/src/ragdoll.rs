@@ -12,7 +12,7 @@ impl Plugin for RagdollViewPlugin {
         app.add_systems(
             Update,
             (
-                write_view.before(gd_game::combat::CombatSet),
+                write_view.before(gd_game_core::combat::CombatSet),
                 body_decals.after(gd_game::ragdoll::RagdollStage::Throw),
             ),
         );
@@ -37,7 +37,7 @@ fn write_view(
 fn body_decals(mut commands: Commands, mut decals: MessageReader<BodyDecal>) {
     for d in decals.read() {
         commands.spawn((
-            gd_render::fx::DropDecal(d.record.clone()),
+            gd_render::fx::DropDecal(d.record.clone().into()),
             gd_render::decal::GrowIn::default(),
             Transform::from_translation(d.at).with_rotation(d.rotation),
         ));

@@ -1,10 +1,10 @@
 //! The Crucible leaderboard: the local top scores, shared by all characters.
 //!
-//! `GameEngine::SaveSurvivalScore` @0x1802f81c0 / `LoadSurvivalScore` @0x1802f8860:
+//! `GameEngine::SaveSurvivalScore` / `LoadSurvivalScore`:
 //! entries of (player name, difficulty, score), at most
 //! 15; a score of 0 or an empty name is not stored; with 15 entries the lowest is replaced if the
 //! new score is higher, else dropped. The file is a shared save, `save\leaderboard.brd` (per
-//! `GameEngine::GetSharedSavePath` @0x1802c7fb0 case 3: the save root, no mod folder or hardcore twin):
+//! `GameEngine::GetSharedSavePath` case 3: the save root, no mod folder or hardcore twin):
 //! `u32 count`, then per entry `u32 len`, the name as UTF-16 code
 //! units, `u32 difficulty`, `u32 score`. PORT: whether `len` counts code units (assumed) or bytes, the
 //! plain (uncompressed, unciphered) encoding and the highest-first order are not traced.
@@ -120,6 +120,6 @@ mod tests {
             "the lowest was replaced"
         );
         assert_eq!(Leaderboard::parse(&l.encode()).unwrap(), l);
-        assert!(Leaderboard::parse(&[1, 0, 0, 0]).is_err());
+        Leaderboard::parse(&[1, 0, 0, 0]).unwrap_err();
     }
 }

@@ -2,37 +2,37 @@
 //! (windmills, swinging lanterns, carts, ...).
 //!
 //! Game.dll:
-//! - `Decoration::Load` @0x1801fa9c0: `animation` (the base), `playOnce`, and
+//! - `Decoration::Load`: `animation` (the base), `playOnce`, and
 //!   `animation1`..`animation5` each kept with its `animationNChance` when that
 //!   is > 0.
-//! - `Decoration::InitialUpdate` @0x1801fb2c0 plays the base animation once
-//!   (speed 1); `Decoration::AnimationCallback` @0x1801fb460, on its "End",
-//!   unless `playOnce`, plays `GetRandomAnimation` @0x1801fb560: r = rand() /
+//! - `Decoration::InitialUpdate` plays the base animation once
+//!   (speed 1); `Decoration::AnimationCallback`, on its "End",
+//!   unless `playOnce`, plays `GetRandomAnimation`: r = rand() /
 //!   32767 · 100, walk the list subtracting chances until r ≤ a chance (that
 //!   one), else the base. So a decoration loops through its animations; with
 //!   `playOnce` it stops on the last frame.
-//! - `WeatherDecoration` (vtable 0x1806e8388; Load sub_18058ED20,
-//!   InitialUpdate sub_18058EB00, UpdateSelf sub_18058EBB0): plays one
+//! - `WeatherDecoration` (`WeatherDecoration::vftable`; `WeatherDecoration::Load`,
+//!   `WeatherDecoration::InitialUpdate`, `WeatherDecoration::UpdateSelf`): plays one
 //!   `GetRandomAnimation` looped; speed 1, or with `animateAtWindSpeed`
 //!   `min + (max − min) · normalised wind` (`min/maxAnimateWindMultiplier`).
 //!
 //! - `Floater` (a `Decoration` that bobs on water, 9 stock records: barrels,
-//!   boats, a coffin, a corpse; class "Floater" sub_180003eb0, vtable
-//!   0x180766bb0; [`Floater`]): `Load` sub_1802b9330 reads `bobTime` (s → ms),
+//!   boats, a coffin, a corpse; class "Floater" `Floater::RegisterClass`, vtable
+//!   `Floater::vftable`; [`Floater`]): `Floater::Load` reads `bobTime` (s → ms),
 //!   `bobMax`, `alwaysBob`, then `Decoration::Load`, and draws its first target
-//!   t = `FGenerate(bobMax / 2, bobMax)`, from −t, timer 0. `OnAddToLevel`
-//!   sub_1802b9670 keeps its placed coords. `UpdateSelf` sub_1802b9410 (in a
+//!   t = `FGenerate(bobMax / 2, bobMax)`, from −t, timer 0.
+//!   `Floater::OnAddToLevel` keeps its placed coords. `Floater::UpdateSelf` (in a
 //!   region, no parent): timer += dt; past `bobTime` the target becomes the
 //!   start and a new one is drawn on the other side (`FGenerate(bobMax / 2,
 //!   bobMax)` after a target ≤ 0, else `FGenerate(−bobMax / 2, −bobMax)`), the
 //!   timer restarts and `World::CreatePointDisturbance` runs at its coords with
-//!   radius |the half extents of its region box| (`Entity` +0x50,
+//!   radius |the half extents of its region box| (`Entity.regionBoundingBox`,
 //!   `SetRegionBoundingBox`), strength 1, falloff, splash 0; then its coords are
 //!   the placed ones raised by from + (to − from) · (sin(timer / bobTime · π −
 //!   π/2) + 1) / 2.
 //!
 //! PORT: `animateAtWindSpeed` (no stock record sets it) and the
-//! `windDirectionBone` turn toward the wind (`TweakPose` sub_18058E720) /
+//! `windDirectionBone` turn toward the wind (`WeatherDecoration::TweakPose`) /
 //! its weather particle funnel are not ported; `rand()` and `FGenerate` are
 //! `fastrand`; `alwaysBob` is read but its consumer is not traced; a floater's
 //! region box is its mesh box through its placement (world axes).
@@ -108,7 +108,7 @@ fn roll() -> f32 {
 fn start_animations(
     mut commands: Commands,
     new: Query<(Entity, &DecorationAnims), Added<DecorationAnims>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut cache: ResMut<ModelCache>,
 ) {
     for (e, d) in &new {
@@ -127,7 +127,7 @@ fn start_animations(
 /// A decoration's animation ended: the next random one (`AnimationCallback`).
 fn next_animation(
     mut q: Query<(&DecorationAnims, &mut Animator)>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut cache: ResMut<ModelCache>,
 ) {
     for (d, mut a) in &mut q {
@@ -222,11 +222,9 @@ fn generate(lo: f32, hi: f32) -> f32 {
 fn bob_floaters(
     time: Res<Time>,
     mut q: Query<(&mut Floater, &mut Transform, &GlobalTransform)>,
-    mut out: MessageWriter<gd_game::visuals::PointDisturbance>,
+    mut out: MessageWriter<gd_game_core::visuals::PointDisturbance>,
     mut carry: Local<f32>,
 ) {
-    // The engine's frame time is whole milliseconds; the remainder carries
-    // (render/lights.rs `update_fire_lights`), so the bob is not slow at 144 Hz.
     let ms = time.delta_secs() * 1000.0 + *carry;
     let dt_ms = ms.floor();
     *carry = ms - dt_ms;
@@ -234,7 +232,7 @@ fn bob_floaters(
     for (mut f, mut tf, gt) in &mut q {
         let (turned, y) = f.step(dt_ms);
         if turned {
-            out.write(gd_game::visuals::PointDisturbance {
+            out.write(gd_game_core::visuals::PointDisturbance {
                 pos: gt.translation(),
                 radius: f.radius,
                 strength: 1.0,

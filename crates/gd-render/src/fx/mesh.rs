@@ -1,24 +1,24 @@
 //! `FxMesh` effects (Game.dll `GAME::FxMesh`, an FxPak's `meshEffectNames`: 92 stock paks, e.g. the devotion ground
 //! effects, bone spikes, ice spikes): an animated model placed at the pak's coords.
 //!
-//! `FxMesh::Load` @0x1802ba340, `Start` @0x1802bc7c0, `UpdateSelf` @0x1802bbf00: the
+//! `FxMesh::Load`, `Start`, `UpdateSelf`: the
 //! record's `meshName`, up to three animations (`animationName`, `animationName2`, `animationName3` with `speed`,
 //! `speed2`, `speed3` and `animationWeight`, ...: one is picked by weight when it starts), `loop`, `scale` (uniform),
 //! `fadeInTime` / `sustainTime` / `fadeOutTime` (seconds); the effect removes itself once its animation has ended (a
 //! looping one after its fade-in, sustain and fade-out). With any of the three times set, `Start` enters the fade-in
 //! and `UpdateSelf` sets the mesh instance's diffuse colour to a grey `c` ([`grey`]). Game.dll:
-//! `Load` stores the three times as whole ms (fade-in +1504, fade-out +1508, sustain +1512); `Start`
+//! `Load` stores the three times as whole ms (`FxMesh.fadeInMs`, `fadeOutMs`, `sustainMs`); `Start`
 //! arms the fade-in when any is > 0; `UpdateSelf` counts the phase down by the frame's ms: fade-in
 //! `c = sat(1 - left / fadeInTime)`, then the sustain (no colour write: the fade-in's last 1 stays), then, when
 //! `fadeOutTime` > 0, `c = sat(left / fadeOutTime)`, after which the colour keeps its last value (0) and the effect
-//! goes once its animation has ended. `GraphicsMeshInstance::SetDiffuseColor` @0x1800c2490 (Engine.dll) writes
-//! instance +556, which `FxMesh::AddToScene` @0x1802bc150 leaves alone (no `Actor` tint over it) and
+//! goes once its animation has ended. `GraphicsMeshInstance::SetDiffuseColor` (Engine.dll) writes
+//! `GraphicsMeshInstance.diffuseColor`, which `FxMesh::AddToScene` leaves alone (no `Actor` tint over it) and
 //! `SetShaderParameters` sends as `diffuseColor` = 0.5 x `c` (here: the parts' [`GdMaterial`] copies, as
 //! `Actor::SetTintColor`'s in `enchant.rs`): a darkening, not an alpha fade. Stock: most `FxMesh` records fade, all
 //! briefly (fade-ins 0.01 to 0.25 s, fade-outs at most 0.5 s), often while their animation sinks the mesh into
 //! the ground (`skillclass10/leap_faultlineground_meshfx01`: sustain 1.5 s, fade-out 0.5 s; checked with
 //! `GD_FX_TEST`), so the fade is hard to see on screen. A character pak's mesh rides the record's `attachPoint`
-//! (`PFxManager::AddMeshEffect` @0x1803caf80: `Attach(effect, identity, attachPoint)`; `gd_game::casting` effects,
+//! (`PFxManager::AddMeshEffect`: `Attach(effect, identity, attachPoint)`; `gd_game::casting` effects,
 //! moved by `enchant.rs`'s `follow_points`); with `stationaryAttachment` ([`Stationary`]) it does not turn with the
 //! character. A worn item's mesh creates its `FxMesh`es like its effects (`Actor::CreateAttachmentsFromMesh`,
 //! `items.rs`: e.g. the gdx3 shoulder wings), which play the record's weapon-set animations as the player animates
@@ -27,7 +27,7 @@
 use crate::character::CharAssets;
 use crate::render::material::GdMaterial;
 use bevy::prelude::*;
-use gd_game::visuals::FxMeshRequest;
+use gd_game_core::visuals::FxMeshRequest;
 use gd_sim::anim::AnimType;
 
 pub struct FxMeshPlugin;
@@ -50,7 +50,7 @@ impl Plugin for FxMeshPlugin {
 #[derive(Component)]
 pub struct Stationary;
 
-/// The `AnimationSet_Type` slots `FxMesh::Load` @0x1802ba340 fills from the record (melee / ranged prefix):
+/// The `AnimationSet_Type` slots `FxMesh::Load` fills from the record (melee / ranged prefix):
 /// AttackIdle, Run, Attack, Fidget, MenuIdle, MenuFidget.
 const SYNC_SLOTS: [(AnimType, &str); 6] = [
     (AnimType::AttackIdle, "AttackIdleAnim"),
@@ -91,8 +91,8 @@ impl Synced {
     }
 }
 
-/// `FxMesh::PlaySyncedAnimation` @0x1802bca00: every animation the player starts (`Player::PlayAnimation`
-/// @0x1803e2900 passes its type, `EquipManager::GetHandState` and the loop flag down the attached entities, so to a
+/// `FxMesh::PlaySyncedAnimation`: every animation the player starts (`Player::PlayAnimation`
+/// passes its type, `EquipManager::GetHandState` and the loop flag down the attached entities, so to a
 /// worn item's mesh effects) plays the effect's ranged set's clip for that type when the hand state is ranged
 /// (`Ranged1h`, `Ranged2h`, `DualRanged`, `Ranged1hShield`, `Ranged1hOffhand`: mask 0x12B00), else the melee set's,
 /// with the clip's speed and the player's loop flag; a type without a clip leaves the effect's animation as it is.
@@ -100,7 +100,7 @@ impl Synced {
 fn sync_meshes(
     mut commands: Commands,
     mut q: Query<(Entity, &mut Synced, &super::items::ItemFx)>,
-    players: Query<&gd_game::character::Character, With<gd_game::player::Player>>,
+    players: Query<&gd_game_core::character::Character, With<gd_game_core::player::Player>>,
     mut assets: CharAssets,
 ) {
     use gd_sim::equip::HandState as H;
@@ -200,7 +200,7 @@ fn start_meshes(
         Entity,
         &FxMeshRequest,
         &Transform,
-        Has<gd_game::casting::BuffFx>,
+        Has<gd_game_core::visuals::BuffFx>,
         Has<super::items::ItemFx>,
     )>,
     mut assets: CharAssets,
@@ -240,7 +240,7 @@ fn start_meshes(
             }
         }
         let total: f32 = anims.iter().map(|a| a.2).sum();
-        let mut roll = gd_game::rng::f32() * total;
+        let mut roll = gd_game_core::rng::f32() * total;
         let pick = anims
             .iter()
             .find(|a| {

@@ -1,7 +1,7 @@
 //! The HUD hot slot's and the skill pick list's rollovers, and the hot slot status.
 use super::*;
 
-/// What a hot-bar skill is waiting for (`Skill` +176, read by `GameEngine::GenerateUISkillInfo`): 1 its
+/// What a hot-bar skill is waiting for (`Skill.availability`, read by `GameEngine::GenerateUISkillInfo`): 1 its
 /// cooldown, 2 energy, 4 its weapon configuration; anything else is ready ([`hot_state`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotState {
@@ -11,13 +11,14 @@ pub enum HotState {
     Configuration,
 }
 
-/// The state `Skill::SetAvailability` @0x1804924f0 stores at skill+176 (`Skill::Update` calls it
-/// every frame with its +504 byte and `false`): not enough energy ([`energy_cost`] above the current
-/// energy, `Skill::IsManaAvailable`) → 2 `LowMana`, unless the +504 byte skips the check; else the
-/// cooldown running (+484 > 0) or no charge left (`GetCooldownCharges` < 1) → 1 `Cooldown`; else the
-/// worn weapons not suiting it (`QualifyingWeapon` / `QualifyingHandState`) → 4 `Configuration`; else 0
+/// The state `Skill::SetAvailability` stores in `Skill.availability` (`Skill::Update` calls it
+/// every frame with its `Skill.ignoreMana` byte and `false`): not enough energy ([`energy_cost`] above the
+/// current energy, `Skill::IsManaAvailable`) → 2 `LowMana`, unless `Skill.ignoreMana` skips the check; else
+/// the cooldown running (`Skill.cooldownRemaining` > 0) or no charge left (`GetCooldownCharges` < 1) → 1
+/// `Cooldown`; else the worn weapons not suiting it (`QualifyingWeapon` / `QualifyingHandState`) → 4
+/// `Configuration`; else 0
 /// ready, 5 for level 0 and 7 outside the skill's shapeshift form (both read as ready by
-/// `GenerateUISkillInfo`, whose not-learned line comes first). `energy_ok` is the caller's: the +504 byte
+/// `GenerateUISkillInfo`, whose not-learned line comes first). `energy_ok` is the caller's: `Skill.ignoreMana`
 /// ([`ignores_energy`]) or the energy check.
 pub fn hot_state(energy_ok: bool, cooling: bool, weapons_ok: bool) -> HotState {
     if !energy_ok {
@@ -31,8 +32,8 @@ pub fn hot_state(energy_ok: bool, cooling: bool, weapons_ok: bool) -> HotState {
     }
 }
 
-/// The +504 byte (`Skill::SetIgnoreMana`, nothing calls it): the energy check of [`hot_state`] is skipped.
-/// the writes of +504 in Game.dll: set by the `Skill_Passive` constructor (so its kin
+/// The `Skill.ignoreMana` byte (`Skill::SetIgnoreMana`, nothing calls it): the energy check of [`hot_state`] is
+/// skipped. The writes of it in Game.dll: set by the `Skill_Passive` constructor (so its kin
 /// `Skill_PassiveDualWieldWeapon`, `Skill_PassiveShield`, `Skill_Mastery`), by `Skill_PlayAttackAnimation`'s
 /// and `SkillBuff`'s; the toggles `Skill_BuffSelfToggled`, `Skill_BuffAttackRadiusToggled`,
 /// `Skill_OnHitAttackRadius`, `Skill_OnHitBuffSelf` copy their on byte into it in `ActivateNow` (so it is set
@@ -54,13 +55,13 @@ pub fn ignores_energy(class: &str, active: bool) -> bool {
     }
 }
 
-/// The energy `Skill::IsManaAvailable` @0x180492350 asks for: `skillManaCost` of
+/// The energy `Skill::IsManaAvailable` asks for: `skillManaCost` of
 /// `GetSkillModifierData` at the current level (the profile plus its learned modifiers) × (1 −
 /// `GetTotalSkillAttribute(2)` %, `skillManaCostReduction`: the skill's own record and modifiers, value plus
-/// |value| × `…Modifier` %, plus the player's), floored at 0; an item skill (+761, here `item_skill`)
-/// or a potion (+764, `Skill_ChargePotion`) takes the cost unreduced. A reduction with a
+/// |value| × `…Modifier` %, plus the player's), floored at 0; an item skill (`Skill.isItemSkill`, here
+/// `item_skill`) or a potion (`Skill.isPotion`, `Skill_ChargePotion`) takes the cost unreduced. A reduction with a
 /// `skillManaCostReductionChance` inside (0, 100) never counts: `GetTotalSkillAttribute` rolls it
-/// (`SkillAttribute::GetTotalValue` @0x18051e380, a Park–Miller draw × 100 ≤ the chance) into the
+/// (`SkillAttribute::GetTotalValue`, a Park–Miller draw × 100 ≤ the chance) into the
 /// accumulator's chance part, and `IsManaAvailable` asks without it (its third argument 0 in the
 /// disassembly; a chance of 0 or 100 and above is a plain value). No stock record has such a chance. PORT:
 /// the player's part is the profile total, which has no chance part of its own.
@@ -92,13 +93,13 @@ pub fn energy_cost(ctx: &SkillTipCtx, skill: &str, item_skill: bool) -> f32 {
 }
 
 /// Whether a skill attribute with chance `chance` (%) is a plain value, not rolled (
-/// `SkillAttribute::GetTotalValue` @0x18051e380: a chance inside (0, 100) is rolled).
+/// `SkillAttribute::GetTotalValue`: a chance inside (0, 100) is rolled).
 pub fn plain_value(chance: f32) -> bool {
     chance <= 0.0 || chance >= 100.0
 }
 
 /// The rollover of the evade and potion hot slots: [`hot_slot_lines`] of their default skill at level 1.
-/// `PlayerHotSlotCtrl::CreateHotSlotOption` @0x1803eaee0: slot types 2 / 3 are
+/// `PlayerHotSlotCtrl::CreateHotSlotOption`: slot types 2 / 3 are
 /// `HotSlotOptionPotionSkill`, 5 `HotSlotOptionEvade`, and both keep `HotSlotOptionSkill::GetRolloverText`
 /// (the one-line `HotSlotOptionPotion::GetRolloverText` belongs to a class nothing creates);
 /// `SkillManager::LoadDefaultPlayerSkills` loads `defaulthealthpotion` / `defaultmanapotion` /
@@ -116,16 +117,17 @@ pub fn default_hot_slot_lines(ctx: &SkillTipCtx, skill: &str, state: HotState) -
     hot_slot_lines(&ctx, skill, state, None)
 }
 
-/// The HUD hot slot's rollover. `HotSlotOptionSkill::GetRolloverText` @0x18031c490: it sets the
-/// skill's hot bar view (+766) and, without the slot's simple-text byte (+29, `SetSimpleText`, set only
-/// by the skill pick list `sub_1401D6520`, [`pick_list_lines`]), prints `GameEngine::GenerateUISkillInfo`
-/// @0x1802e6670: the heading (name 46, description 47), `tagExclusiveSkill` (47) for an exclusive skill,
+/// The HUD hot slot's rollover. `HotSlotOptionSkill::GetRolloverText`: it sets the skill's hot bar view
+/// (`Skill.isHotBarView`) and, without the slot's simple-text byte (`HotSlotOptionSkill.simpleText`,
+/// `SetSimpleText`, set only by the skill pick list `SkillPickList::BuildLines`, [`pick_list_lines`]), prints
+/// `GameEngine::GenerateUISkillInfo`: the heading (name 46, description 47), `tagExclusiveSkill` (47) for an
+/// exclusive skill,
 /// a blank, the current level's block when learned ([`current_block`]: no next level) and a blank, then
 /// one status line: `tagSkillUnusableNotLearned` (52) for an unlearned non-item skill, else by `state`
 /// `tagSkillUnusableCooldown` / `LowMana` / `Configuration` (52) or `tagSkillUsableReady` (51; an
-/// unlearned item skill: `Configuration`). `granted`: the level of a skill that comes from gear (skill+761,
+/// unlearned item skill: `Configuration`). `granted`: the level of a skill that comes from gear (`Skill.isItemSkill`,
 /// `SkillManager::AddItemSkills` sets it at the item's `itemSkillLevel`) or is granted for a while (a form's,
-/// `SetAsGrantedSkillAuto`); both set skill+765 (`SetAsItemSkill[Auto]`),
+/// `SetAsGrantedSkillAuto`); both set `Skill.suppressLevelTitles` (`SetAsItemSkill[Auto]`),
 /// so their block has no level header ([`current_block`]).
 pub fn hot_slot_lines(
     ctx: &SkillTipCtx,

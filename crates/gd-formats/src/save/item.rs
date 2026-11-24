@@ -1,7 +1,7 @@
 //! Item records shared by the character file and the shared stash files.
 //!
-//! Layout: `GAME::ItemReplicaInfo::WriteProperties` (Game.dll 0x180586110)
-//! and `ReadProperties` (0x180585bb0); the reader only accepts the current
+//! Layout: `ItemReplicaInfo::WriteProperties` (Game.dll)
+//! and `ReadProperties`; the reader only accepts the current
 //! layout for container versions >= 11 (older versions drop fields).
 //! Field names follow their use in game code (see each field).
 use super::cipher::{Decoder, Encoder};
@@ -22,9 +22,9 @@ pub struct Item {
     /// Augment (faction enchantment).
     pub augment_name: String,
     /// The augment's own `var1` (its level): `ItemEquipment::AddEnchantment`
-    /// (Game.dll 0x180342be0) creates the augment item with this as replica
-    /// +352 (`var1`, `Item` +1688 = `ItemEnchantment::SetEnchantmentLevel`)
-    /// and `augment_seed` as its seed; the attach path (0x180342f40) stores
+    /// (Game.dll) creates the augment item with this as replica
+    /// `var1` (`ItemEnchantment::SetEnchantmentLevel`)
+    /// and `augment_seed` as its seed; the attach path (`ItemEquipment::AttachEnchantment`) stores
     /// them back from the augment's replica.
     pub unk_augment: u32,
     pub augment_seed: u32,
@@ -34,17 +34,17 @@ pub struct Item {
     /// `ascendant_unused` but the writer emits it.
     pub ascendant_name: String,
     pub ascendant_unused: String,
-    /// Replica +352 → `Item` +1688: the relic/augment level
+    /// Replica `var1` → `Item.relicLevel`: the relic/augment level
     /// (`ItemRelic::SetRelicLevel`, `ItemEnchantment::SetEnchantmentLevel`;
     /// components count their completed parts here).
     pub var1: u32,
     /// container version >= 4
     pub stack_count: u32,
-    /// Blacksmith seed rerolls (container version >= 8; `ItemReplicaInfo` +384 →
-    /// `Item` +1720 `GetSeedRerolls`).
+    /// Blacksmith seed rerolls (container version >= 8; `ItemReplicaInfo.seedRerolls` →
+    /// `Item.seedRerolls`, `GetSeedRerolls`).
     pub seed_rerolls: u32,
-    /// Blacksmith affix rerolls (container version >= 11; replica +380 → `Item`
-    /// +1716 `GetAffixRerolls`).
+    /// Blacksmith affix rerolls (container version >= 11; `ItemReplicaInfo.affixRerolls` →
+    /// `Item.affixRerolls`, `GetAffixRerolls`).
     pub affix_rerolls: u32,
 }
 
@@ -136,12 +136,12 @@ pub struct StashSack {
     pub width: u32,
     pub height: u32,
     pub items: Vec<StashItem>,
-    /// Four u32s written after the items: the sack's +64, +68, symbol
-    /// (`InventorySack::GetSymbolIndex`, +72) and symbol colour
-    /// (`GetSymbolColorIndex`, +76); `name` is its button name (+80, set by
+    /// Four u32s written after the items: the sack's `InventorySack.unused0`, `InventorySack.unused1`, symbol
+    /// (`InventorySack::GetSymbolIndex`) and symbol colour
+    /// (`GetSymbolColorIndex`); `name` is its button name (set by
     /// `SetButtonName`). Per `GameEngine::WritePlayerTransfer`. The first
     /// two are unused: `ReadPlayerTransfer` stores them and the sack
-    /// copy/constructor (zero) are the only other code touching +64/+68.
+    /// copy/constructor (zero) are the only other code touching them.
     pub unk: [u32; 4],
     pub name: String,
 }

@@ -9,9 +9,9 @@
 //! - `GD_MEM_TOUR=<n>@<secs>` travels to `n` riftgates spread over the map's index, `secs` after each arrival.
 //! - `GD_MEM_EXIT=<secs>`: the first session exits to the main menu `secs` after it began (after the tour), and the
 //!   same character starts again from the menu 5 s later.
-use crate::hooks::Hooks;
-use crate::session::AppState;
+use gd_ui::state::session::AppState;
 use bevy::prelude::*;
+use gd_game_core::hooks::Hooks;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -87,8 +87,8 @@ fn log(
     caches: (
         Res<gd_render::textures::Textures>,
         Res<gd_render::model::ModelCache>,
-        Res<gd_game::creature::BodyCache>,
-        Res<gd_game::character::AnimCache>,
+        Res<gd_game_core::creature::BodyCache>,
+        Res<gd_game_core::character::AnimCache>,
         Res<crate::audio::Sounds>,
         Option<Res<gd_render::fx::FxAssets>>,
         Res<gd_render::render::terrain::TerrainLayers>,
@@ -208,7 +208,7 @@ fn tour(
 struct Restart {
     /// When the first session began; when the menu showed.
     since: Option<f32>,
-    exited: Option<(gd_game::session::Choice, gd_sim::mode::Mode)>,
+    exited: Option<(gd_game_core::session::Choice, gd_rules::mode::Mode)>,
     done: bool,
 }
 
@@ -217,10 +217,10 @@ fn exit_and_restart(
     hooks: Res<Hooks>,
     time: Res<Time<Real>>,
     state: Res<State<AppState>>,
-    choice: Option<Res<gd_game::session::Choice>>,
-    mode: Option<Res<gd_game::session::GameMode>>,
+    choice: Option<Res<gd_game_core::session::Choice>>,
+    mode: Option<Res<gd_game_core::session::GameMode>>,
     pending: Res<crate::doors::PendingTravel>,
-    mut exit: MessageWriter<crate::exit::ExitToMenu>,
+    mut exit: MessageWriter<gd_ui::state::exit::ExitToMenu>,
     mut commands: Commands,
     mut local: Local<Restart>,
 ) {
@@ -242,7 +242,7 @@ fn exit_and_restart(
                 info!("mem: exiting to the main menu");
                 local.exited = Some((choice.clone(), mode.0));
                 local.since = None;
-                exit.write(crate::exit::ExitToMenu);
+                exit.write(gd_ui::state::exit::ExitToMenu);
             }
         }
         (AppState::Menu, Some((choice, mode))) => {

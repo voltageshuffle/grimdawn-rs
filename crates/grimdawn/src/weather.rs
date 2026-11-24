@@ -2,21 +2,22 @@
 //! pick and the spawn rules are documented there).
 //!
 //! Each frame ([`simulate_weather`]): the sector type 6 ("climate") cell under the camera focus names a climate set
-//! record (`WeatherManager::Update` @0x18020fb70 / `ChangeClimate` @0x18020f220; the table is read once from
+//! record (`WeatherManager::Update` / `ChangeClimate`; the table is read once from
 //! the map's sector data); `gd_sim::weather::Weather` picks / re-rolls / moves the particle systems. [`draw_weather`]
 //! draws them, [`weather_flash`] makes the lightning flash a point light of the lighting environment (`render::env`
 //! gathers it like any level light), [`weather_sounds`] loops the template `sound` and the manager's `windSound` as 2D
 //! ambient sounds. The climate's ambience adjustments go into `render::env`'s ambiance
-//! (`AmbianceManager::SetWeatherAdjustments` @0x180032d90: the darkness comes off the sky and ground ambient
+//! (`AmbianceManager::SetWeatherAdjustments`: the darkness comes off the sky and ground ambient
 //! only; the sun colour and the shadows are untouched, so a storm (darkness 0.3 x intensity) keeps its sunlight; fog
 //! density / colour added, the distance moves the depth fog start).
 //!
-//! Drawing (render functions sub_180212EB0, Rain sub_180216010, and the `weatherparticle*.ssh` DirectX11
+//! Drawing (render functions `WeatherSystem::Render`, Rain `RainSystem::Render`, and the `weatherparticle*.ssh`
+//! DirectX11
 //! programs, `shaders/weather.wesl`): one quad per particle of side = the particle size (template `particleSize` x the
 //! spawn phase: rain 0.25..0.75 m), white vertex colour with the alpha of [`alpha`], the texture as is. Rain and Snow
 //! use the directional program (a square along the velocity, sideways = velocity x camera direction: no stretch by
 //! speed); the others a vertical billboard facing the camera horizontally, turned by the spin. Mist, Fog and GroundFog
-//! use the soft variants when `softParticles` is on (bool 20, `GetShader` @0x180211730): the scene depth (copied after
+//! use the soft variants when `softParticles` is on (`GetShader`): the scene depth (copied after
 //! the opaque passes, [`WeatherDepth`]) discards hidden fragments and fades the alpha over the last metre. Texture
 //! flipbook frame 0 only (nothing in the weather code reads the frame count / rate; the engine shows frame 0
 //! too). The programs carry their own pass states (`weatherparticle*.ssh`, also the soft ones): Combine
@@ -30,19 +31,21 @@
 //!
 //! The day / night filter reads `Ambiance::is_day` (`AmbianceManager::GetIsDay`, the area's own cycle). The main menu
 //! scene weathers from its own map's climate sector layer and clock; the FoA menu map's only climate entry has an empty
-//! record path, so it has no weather there. Quality 3 rain ends at the terrain (sub_180215B60: no splash
+//! record path, so it has no weather there. Quality 3 rain ends at the terrain (`RainSystem::SpawnParticle`: no splash
 //! effect exists, the life is cut to the ground ray's hit against the physics world, [`Floor`]). Above quality 1 a drop
-//! that dies asks for a water ripple where it ends (sub_180215F20, `Water::CreateRipple(pos, 0.5, 5.0)`;
+//! that dies asks for a water ripple where it ends (`RainSystem::OnParticleDeath`,
+//! `Water::CreateRipple(pos, 0.5, 5.0)`;
 //! `water.rs` places and draws them). At quality 2 and 3 (`advancedWind`) strong wind blows gusts
 //! (`gd_sim::weather::Weather::winds`): each push may ripple the water there (`World::CreateDirectionalWind`, only at
 //! strength >= 1) and bends the grass (`Terrain::CreateGrassWind`, render/grass.rs). The `windSound` loop plays while
 //! the wind factor is above 1.25 at `min(gusts, 3) * 0.1 + (factor - 1) * 0.35` (`Update`).
 //!
 //! Looping sounds are 2D at the pak's volume times the system's particle share: the template loops
-//! (sub_180212490) and `windSound` start with `SoundPak::Play2D` and nothing in the weather code places them; a
+//! (`WeatherSystem::Update`) and `windSound` start with `SoundPak::Play2D` and nothing in the weather code
+//! places them; a
 //! destroyed system's sound fades out over 3 s.
 use crate::audio::{BaseVolume, ENGINE_HZ, Fade, SoundClass, spawn_2d};
-use crate::session::AppState;
+use gd_ui::state::session::AppState;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -64,7 +67,7 @@ use bevy::render::storage::ShaderBuffer;
 use bevy::render::texture::GpuImage;
 use bevy::render::view::ViewDepthStencilTexture;
 use bevy::shader::ShaderRef;
-use gd_game::options::GameOptions;
+use gd_game_core::options::GameOptions;
 use gd_render::camera::GameCamera;
 use gd_render::fx::{FxAssets, render};
 use gd_render::render::weather::WeatherState;
@@ -367,8 +370,9 @@ pub struct WeatherRuntime {
 }
 
 /// The program of a system type: (directional, soft-capable). The constructors (`GetShader` index 0 simple,
-/// 1 directional, +2 additive, +4 soft): Rain sub_1802159C0 and Snow sub_180216B10 directional, never soft; Mist
-/// sub_180215870, Fog / GroundFog sub_1802137F0 simple with the soft request; Leaves / WindParticle sub_180216C80 simple.
+/// 1 directional, +2 additive, +4 soft): Rain `RainSystem::RainSystem` and Snow `SnowSystem::SnowSystem` directional,
+/// never soft; Mist `MistSystem::MistSystem`, Fog / GroundFog `FogSystem::FogSystem` simple with the soft request;
+/// Leaves / WindParticle `LeavesSystem::LeavesSystem` simple.
 fn program(kind: Kind) -> (bool, bool) {
     match kind {
         Kind::Rain | Kind::Snow => (true, false),
@@ -378,9 +382,11 @@ fn program(kind: Kind) -> (bool, bool) {
 }
 
 /// A particle's vertex alpha (the colour is always white). Rain / Snow / Mist spawn (1, 1, 1, 1) and keep
-/// it; Fog (sub_1802139C0, move sub_1802142A0) spawns at the system alpha (+116: 1.0 on soft-particle-capable
-/// hardware, else 0.5; here 1.0) and fades out over its last 500 ms; GroundFog (move sub_180214970) fades in over the
-/// first and out over the last 1000 ms, times the system alpha; Leaves / WindParticle (sub_180217040) spawn at 0 and
+/// it; Fog (`FogSystem::SpawnParticle`, move `FogSystem::MoveParticle`) spawns at the system alpha
+/// (`WeatherSystem.systemAlpha`: 1.0 on soft-particle-capable hardware, else 0.5; here 1.0) and fades out over its
+/// last 500 ms; GroundFog (move `GroundFogSystem::MoveParticle`) fades in over the
+/// first and out over the last 1000 ms, times the system alpha; Leaves / WindParticle (`LeavesSystem::SpawnParticle`)
+/// spawn at 0 and
 /// fade in / out over 500 ms.
 fn alpha(kind: Kind, p: &Particle) -> f32 {
     let age = p.total_ms - p.life_ms;
@@ -407,9 +413,9 @@ fn simulate_weather(
     (mut rt, mut state): (ResMut<WeatherRuntime>, ResMut<WeatherState>),
     world: Option<Res<crate::world::StreamedMap>>,
     levels: Res<crate::world::Levels>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     options: Res<GameOptions>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time<Virtual>>,
     (tod, ambiance, menu, backdrop, coll): (
         Res<gd_render::render::env::TimeOfDay>,
@@ -419,7 +425,7 @@ fn simulate_weather(
         Option<Res<crate::collision::WorldCollision>>,
     ),
     cams: Query<&GameCamera>,
-    story: Option<NonSend<crate::story::StoryRuntime>>,
+    story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     owned: Owned,
     mut commands: Commands,
 ) {
@@ -526,7 +532,7 @@ fn simulate_weather(
             // regions overlap main-world ground). PORT: the engine's climate sector source is not traced; the
             // menu scene has one map, so the position alone.
             let region =
-                gd_game::riftgates::player_region(story.as_deref()).filter(|_| menu.is_none());
+                gd_game_core::riftgates::player_region(story.as_deref()).filter(|_| menu.is_none());
             let guid = match region {
                 Some(r) => levels.sector_guid_in(r, focus, 6),
                 None => levels.sector_guid(focus, 6),
@@ -560,7 +566,8 @@ fn simulate_weather(
         ground,
     );
 
-    // The rain's death hook sub_180215F20: above `weatherQuality` 1 every drop asks for a ripple where it
+    // The rain's death hook `RainSystem::OnParticleDeath`: above `weatherQuality` 1 every drop asks for a ripple
+    // where it
     // ends, `Water::CreateRipple(pos, 0.5, 5.0, 0)` on the camera region's water.
     if quality > 1 {
         for s in weather
@@ -605,7 +612,7 @@ fn simulate_weather(
 fn draw_weather(
     mut rt: ResMut<WeatherRuntime>,
     state: Res<WeatherState>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut assets: ResMut<FxAssets>,
     mut res: (
         ResMut<Assets<Image>>,
@@ -703,7 +710,8 @@ fn draw_weather(
             d.mesh = assets.quads(d.cap, meshes);
             commands.entity(entity).insert(Mesh3d(d.mesh.clone()));
         }
-        // The vertex data of the render functions (sub_180212EB0, Rain sub_180216010): the centre, the colour,
+        // The vertex data of the render functions (`WeatherSystem::Render`, Rain `RainSystem::Render`): the centre,
+        // the colour,
         // (u, v, size, spin) and the velocity (Rain) / the base wind tilt (the others; unused by the simple program).
         scratch.clear();
         scratch.push([f32::from_bits(n as u32), 0.0, 0.0, 0.0]);
@@ -792,7 +800,7 @@ fn wanted(weather: &Weather, wind: Option<f32>, pak: &str) -> Option<f32> {
 /// fades out over 3000 ms (`SoundManager::FadeSound`, linear, stopped at the end: [`Fade`]).
 fn weather_sounds(
     state: Res<WeatherState>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut sounds: ResMut<crate::audio::Sounds>,
     mut loops: Query<(Entity, &WeatherLoop, &mut BaseVolume), Without<Fade>>,
     mut commands: Commands,

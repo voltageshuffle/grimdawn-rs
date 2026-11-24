@@ -4,34 +4,34 @@
 //! also grows the caster to `actorScale` while it lasts and back after.
 //!
 //! Game.dll:
-//! - `SkillProfile::LoadProfile` @0x180546c27 reads `actorScaleTime` (s →
-//!   ms, +0x4F8) and `actorScale` (+0x4FC), once per skill (not per level).
-//! - `ReceiveActiveUpdate` @0x1804ea3f0 (the buff going on or off): turns the
-//!   scaling on (+1592); going on, the goal is `actorScale` (an absolute
-//!   scale, not × the actor's own), going off `Actor::GetBaseScale`; the time
+//! - `SkillProfile::LoadProfile` reads `actorScaleTime` (s →
+//!   ms, `SkillProfile.actorScaleTime`) and `actorScale` (`SkillProfile.actorScale`), once per skill (not per level).
+//! - `ReceiveActiveUpdate` (the buff going on or off): turns the
+//!   scaling on (`Skill_BuffSelfColossus.scaling`); going on, the goal is `actorScale` (an absolute
+//!   scale, not × the actor's own), going off `Actor.baseScale`; the time
 //!   is `actorScaleTime` either way and the step the distance from
-//!   `GetCurrentScale` to the goal (+1604). Then the usual self-buff cast
+//!   `GetCurrentScale` to the goal (`Skill_BuffSelfColossus.scaleStep`). Then the usual self-buff cast
 //!   (cost, activate sound, secondaries, visual effects).
-//! - `Update` @0x1804ea390 calls `Scale` @0x1804ea930 every update while
+//! - `Update` calls `Scale` every update while
 //!   scaling is on: current ± dt / time × step toward the goal, clamped at it
-//!   (reaching it turns scaling off), through `Actor::SetScale` (vtable
-//!   +0x310). So the size changes linearly over `actorScaleTime` both ways.
+//!   (reaching it turns scaling off), through `Actor::SetScale`. So the size
+//!   changes linearly over `actorScaleTime` both ways.
 //!
 //! The port keeps the scale on the entity's `Transform` (the actor's scale,
 //! `creature.rs`); [`Colossus`] runs the growth while the caster's timed buff
 //! of the skill is listed (`MonsterSkills::buffs`, `Pet::buffs`).
 //!
-//! The radius follows the scale. `Actor::GetRadius` (Engine.dll
-//! @0x18002b410, vtable +456): the length of the actor's scale vector x
+//! The radius follows the scale. `Actor::GetRadius` (Engine.dll, a virtual):
+//! the length of the actor's scale vector x
 //! `actorRadius`, so the reach / melee-distance radii
-//! (`Character::GetTargetDistance` @0x18005df40, `NearTarget` @0x18005e0b0)
+//! (`Character::GetTargetDistance`, `NearTarget`)
 //! grow with the Colossus scale, while `Character::GetExtents` (spawn-set
 //! spacing) does not scale. [`Combatant::radius`] is the radius at the
 //! base scale (sqrt(3) x `scale` x `actorRadius`, `combat::get_radius`)
 //! x scale / base scale.
-use crate::combat::Combatant;
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_game_core::combat::Combatant;
+use gd_game_core::data::GameData;
 
 pub struct ColossusPlugin;
 
@@ -42,7 +42,7 @@ impl Plugin for ColossusPlugin {
             (start, scale)
                 .chain()
                 .after(crate::casting::CastingSet)
-                .before(crate::combat::CombatSet),
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -54,11 +54,11 @@ pub struct Grow {
     pub skill: String,
 }
 
-/// The scaling of one caster (`Skill_BuffSelfColossus` +1592 … +1604).
+/// The scaling of one caster (`Skill_BuffSelfColossus.scaling` … `Skill_BuffSelfColossus.scaleStep`).
 #[derive(Component, Clone, Debug)]
 pub struct Colossus {
     pub skill: String,
-    /// `Actor::GetBaseScale`: what it shrinks back to.
+    /// `Actor.baseScale`: what it shrinks back to.
     pub base: f32,
     /// The radius at the base scale (`combat::get_radius`).
     base_radius: f32,

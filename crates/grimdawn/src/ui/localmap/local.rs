@@ -1,4 +1,5 @@
 use super::*;
+use gd_ui::state::map::{LEGEND, LocalLayout, MapWindow};
 
 /// The root of the local map's tree, built per window size; its [`LocalLayer`]s are rebuilt each on its own
 /// signature ([`LocalBuilt`]).
@@ -68,26 +69,26 @@ pub(super) struct LocalBuilt {
 /// The local map window (module doc), rebuilt when its view or hover changes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn local_map(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
     time: Res<Time<Real>>,
     world: Option<Res<crate::world::StreamedMap>>,
     fog: Option<Res<gd_game::fog::FogOfWar>>,
-    rt: Option<NonSend<gd_game::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     (rift, options, pause): (
         Res<RiftgateMap>,
-        Res<gd_game::options::GameOptions>,
-        Res<gd_game::pause::GamePause>,
+        Res<gd_game_core::options::GameOptions>,
+        Res<gd_game_core::pause::GamePause>,
     ),
-    values: Res<crate::ui::HudValues>,
+    values: Res<gd_ui::HudValues>,
     (cams, player, mut src): Scene,
     mut nodes: LocalNodes,
     mut win_state: ResMut<MapWindow>,
     mut tiles: ResMut<MapTiles>,
-    mut assets: crate::ui::UiAssets,
-    (mut built, mut fresh): (Local<LocalBuilt>, gd_game::session::NewSession),
+    mut assets: gd_ui_kit::UiAssets,
+    (mut built, mut fresh): (Local<LocalBuilt>, gd_game_core::session::NewSession),
 ) {
     if fresh.begun() {
         *built = Default::default();
@@ -99,7 +100,7 @@ pub(super) fn local_map(
     let size = UVec2::new(win.physical_width(), win.physical_height());
     if !shown || size.x == 0 {
         if built.root.is_some() {
-            crate::ui::window::despawn_all(&mut commands, &nodes.roots);
+            gd_ui::window::despawn_all(&mut commands, &nodes.roots);
             win_state.layout = LocalLayout::default();
         }
         // The map image stays (a few MB): opening again shows it at once, redrawing only what changed.
@@ -109,7 +110,7 @@ pub(super) fn local_map(
         };
         return;
     }
-    // Legend blinks run down (sub_14017C480).
+    // Legend blinks run down (`LocalMap::Update`).
     let dt = time.delta_secs() * 1000.0;
     for b in win_state.blink.iter_mut() {
         *b = (*b - dt).max(0.0);
@@ -218,13 +219,13 @@ pub(super) fn local_map(
                 angle_of(Vec2::new(q[0] - sp[0], q[1] - sp[1]))
             });
             // A Custom quad's offset: px × 0.3125 / zoom × 460, no UI
-            // scale (sub_1401786D0).
+            // scale (`DetailMapWidget::RenderLocalMapIcons`).
             let off = i.screen_offset(angle, 0.3125 / win_state.zoom * 460.0);
             Some((p + off + Vec2::new(pane.x, pane.y), i, angle))
         })
         .collect();
     // The game menu / Options holds the cursor: no icon name under it.
-    let cursor = crate::ui::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let cursor = gd_ui_kit::cursor_px(&hooks, win).filter(|_| !pause.menu);
     let hover = cursor.and_then(|c| {
         placed.iter().rposition(|(p, i, _)| {
             i.kind != 14 && !i.name.is_empty() && (c - *p).length() < isz * 0.5
@@ -240,12 +241,12 @@ pub(super) fn local_map(
     let root = match nodes.roots.iter().next() {
         Some(r) if built.root == Some(size) => r,
         _ => {
-            crate::ui::window::despawn_all(&mut commands, &nodes.roots);
+            gd_ui::window::despawn_all(&mut commands, &nodes.roots);
             built.root = Some(size);
             built.map = None;
             built.chrome = None;
             built.label = None;
-            crate::ui::spawn_root(&mut commands, LocalRoot, crate::ui::window::Z_WINDOW)
+            gd_ui_kit::spawn_root(&mut commands, LocalRoot, gd_ui::window::Z_WINDOW)
         }
     };
     let mut ui = assets.ui(
@@ -288,7 +289,7 @@ pub(super) fn local_map(
                 continue;
             };
             // Custom: texture px × scale × 460 × s × 0.3125 / zoom; a blinking
-            // icon grows by (ms left / 1000) × 20 × s (sub_1401786D0).
+            // icon grows by (ms left / 1000) × 20 × s (`DetailMapWidget::RenderLocalMapIcons`).
             let sz = if i.kind == 14 {
                 ts.as_vec2() * i.scale * 460.0 * s * 0.3125 / zoom
             } else {
@@ -379,7 +380,7 @@ pub(super) fn local_map(
             button(&mut ui, "records/ui/mapaerial/map_buttonzoomin.dbr", false),
             button(&mut ui, "records/ui/mapaerial/map_buttonzoomout.dbr", false),
         ];
-        // The map window's buttons (sub_1401F48A0): centre, switch ("Local Map"), close.
+        // The map window's buttons (`UIWorldMap::Draw`): centre, switch ("Local Map"), close.
         if let Some(w) = data.db.get(crate::ui::riftmap::WINDOW) {
             layout.center = w
                 .str("centerButton")
@@ -393,7 +394,7 @@ pub(super) fn local_map(
                         .and_then(|b| b.str("style").map(str::to_owned)),
                 ) {
                     let text = ui.fonts.tag("tagMapWindowName").to_owned();
-                    crate::ui::trade::label(
+                    gd_ui_kit::widgets::label(
                         &mut ui,
                         r,
                         &style,

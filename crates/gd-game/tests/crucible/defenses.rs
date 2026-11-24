@@ -44,7 +44,7 @@ fn a_defense_is_built_and_upgraded_twice() {
             .take_effects()
             .into_iter()
             .filter_map(|e| match e {
-                gd_sim::story::Effect::Spawn { record, coords, .. }
+                gd_story::story::Effect::Spawn { record, coords, .. }
                     if record.contains("/creatures/defenses/") =>
                 {
                     Some((record, coords.origin))

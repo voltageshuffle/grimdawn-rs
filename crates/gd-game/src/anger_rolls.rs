@@ -1,35 +1,37 @@
 //! The controller's periodic anger rolls: `RandomAnger*` and `ignorePets*`.
 //!
-//! Game.dll `ControllerMonster::Update` @0x180134ec0 (outside the
-//! Dying / Dead states), timers from the constructor @0x1801346c0, fields from
-//! `ControllerMonster::Load` @0x180135e60:
-//! * ignorePets: a timer (+0x6B0, 5000 ms at construction) runs down; at or
+//! Game.dll `ControllerMonster::Update` (outside the
+//! Dying / Dead states), timers from the constructor, fields from
+//! `ControllerMonster::Load`:
+//! * ignorePets: a timer (`ControllerMonster.ignorePetsTimer`, 5000 ms at construction) runs down; at or
 //!   below 0 it is set to `ignorePetsInterval` (ms, default 5000) and the flag
-//!   (+0x6B4) re-rolled: `rand() % 101 < ignorePetsChance` (sub_180025C60(0,
-//!   100), int %, default 0). `ShouldIgnorePets` @0x18013b780 = the flag
-//!   unless `AngerManager::HasOnlyPetTargets` @0x18001e9c0 (no living
+//!   (`ControllerMonster.ignorePets`) re-rolled: `rand() % 101 < ignorePetsChance` (`Game::RandomInt(0,
+//!   100)`, int %, default 0). `ShouldIgnorePets` = the flag
+//!   unless `AngerManager::HasOnlyPetTargets` (no living
 //!   character without a master on the anger list). While it holds:
-//!   `AngerManager::GetNewTarget` @0x18001e1c0 skips the pets on the list
-//!   (`FindEnemy` @0x18013b7b0), `AngerUpdate`'s sight sphere and
+//!   `AngerManager::GetNewTarget` skips the pets on the list
+//!   (`FindEnemy`), `AngerUpdate`'s sight sphere and
 //!   `FindEnemyUpdate`'s too-close sphere leave pets out
-//!   (`GetCharactersInSphere` @0x18013afe0, last argument), and
-//!   `UnderAttack` @0x18013c8e0 does not pass a pet's hit on to its master:
+//!   (`GetCharactersInSphere`, last argument), and
+//!   `UnderAttack` does not pass a pet's hit on to its master:
 //!   the pet gets both shares. Quest pets (`Skill_SpawnQuestPet`,
-//!   `Character::SetQuestPet`: Character +0x2080) are never ignored; the port
+//!   `Character::SetQuestPet`: `Character.questPet`) are never ignored; the port
 //!   has none.
-//! * RandomAnger: until it has once succeeded (+0x640), a timer (+0x638,
+//! * RandomAnger: until it has once succeeded (`ControllerMonster.randomAngerDone`), a timer
+//!   (`ControllerMonster.randomAngerTimer`,
 //!   3000 ms at construction) runs down; below 0 it is set to
 //!   `RandomAngerEvaluationTime` (ms, default 3000) and, when `rand() % 100 <
 //!   RandomAngerChance` (default 0) and the current state has no target
 //!   (`GetCurrentStateData()` first dword), `PickRandomEnemyInView`
-//!   @0x18013cb40 picks a uniformly random character among the living foes
+//!   picks a uniformly random character among the living foes
 //!   within `ViewDistance` (sphere) and `MaxYViewDistance` (when set) of the
 //!   monster, pets left out while ignoring them: it gets 100 anger
 //!   (`AngerManager::AddAnger`, × its anger multiplier) and the rolls stop for good. `FindEnemy` then
 //!   takes it up.
-use crate::combat::{Dead, MonsterAi};
+use crate::combat::MonsterAi;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::combat::Dead;
 
 /// The roll fields, timers and flags of a monster's controller.
 #[derive(Clone, Debug)]
@@ -77,7 +79,7 @@ pub fn update(
     foe_q: Query<
         (Entity, &Transform, Option<&crate::pets::Pet>),
         (
-            Or<(With<crate::player::Player>, With<crate::pets::Pet>)>,
+            Or<(With<gd_game_core::player::Player>, With<crate::pets::Pet>)>,
             Without<Dead>,
             Without<MonsterAi>,
         ),
@@ -91,7 +93,7 @@ pub fn update(
         r.ignore_timer -= dt;
         if r.ignore_timer <= 0.0 {
             r.ignore_timer = r.ignore_interval;
-            r.ignore_pets = (crate::rng::u32(..=100) as i32) < r.ignore_chance;
+            r.ignore_pets = (gd_game_core::rng::u32(..=100) as i32) < r.ignore_chance;
         }
         if r.random_done {
             continue;
@@ -101,7 +103,7 @@ pub fn update(
             continue;
         }
         r.random_timer = r.random_interval;
-        if (crate::rng::u32(..100) as i32) >= r.random_chance || ai.enemy.is_some() {
+        if (gd_game_core::rng::u32(..100) as i32) >= r.random_chance || ai.enemy.is_some() {
             continue;
         }
         let me = tf.translation;
@@ -132,7 +134,7 @@ pub fn update(
         if seen.is_empty() {
             continue;
         }
-        let (pick, mult) = seen[crate::rng::usize(..seen.len())];
+        let (pick, mult) = seen[gd_game_core::rng::usize(..seen.len())];
         debug!("random anger: {pick} picked");
         ai.add_anger(pick, 100.0 * mult);
         ai.rolls.random_done = true;

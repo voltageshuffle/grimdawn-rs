@@ -5,47 +5,47 @@
 //! skills (`charFxPakSelfNames`).
 //!
 //! Game.dll: a skill's buff effects go on with `Skill::
-//! ApplyBuffSelfEffects` @0x18049de00 (a toggle switching on, through
+//! ApplyBuffSelfEffects` (a toggle switching on, through
 //! `ApplyActivatedVisualEffects`) and `Skill::ApplyBuffOtherEffects`
-//! @0x18049e550 (every `SkillBuff::Install`, so also an aura's buff on its
+//! (every `SkillBuff::Install`, so also an aura's buff on its
 //! own caster): `SkillManager::AddCharFxPak` with the skill's
 //! `charFxPakSelfNames` (resp. `charFxPakOtherNames`) entry of its level
 //! (level − 1, clamped to the list) plus each learned modifier's
 //! `GetBuffSelfCharFxPakName`, then `RemoveWeaponEnchantment(id)` and
 //! `AddWeaponEnchantment(id, weaponEnchantment[level − 1])` when that
-//! entry is set (SkillProfile +2064, read by `SkillProfile::Load`
-//! @0x180545880); switching off removes both. `SkillManager::
-//! AddWeaponEnchantment` @0x18053d700 appends (id, pak) to a list and hands
-//! the new pak to `EquipManager::SetWeaponEnchantment` @0x180286b60;
-//! `RemoveWeaponEnchantment` @0x18053d7e0 drops the id's entries and hands
+//! entry is set (`SkillProfile.weaponEnchantment`, read by `SkillProfile::LoadProfile`);
+//! switching off removes both. `SkillManager::
+//! AddWeaponEnchantment` appends (id, pak) to a list and hands
+//! the new pak to `EquipManager::SetWeaponEnchantment`;
+//! `RemoveWeaponEnchantment` drops the id's entries and hands
 //! over the list's last pak, or "" when it is empty. So a character shows
 //! one enchantment, the newest of its buffs still on
 //! ([`WeaponEnchantments::shown`]); `SetWeaponEnchantment` gives it to every
-//! equipped `Weapon` (`Weapon::SetWeaponEnchantment` @0x18058b330, drawn by
-//! `grimdawn::fx::enchant`). `Weapon::GetProjectileName` @0x1805895c0
+//! equipped `Weapon` (`Weapon::SetWeaponEnchantment`, drawn by
+//! `grimdawn::fx::enchant`). `Weapon::GetProjectileName`
 //! returns the pak's `projectileName` for a ranged weapon
 //! ([`enchanted_projectile`]).
 //!
-//! Visibility: `EquipManager::UpdateWeaponFxVisibility`
-//! @0x180286c50, called only from `Player::UpdateSelf`, clears the main
+//! Visibility: `EquipManager::UpdateWeaponFxVisibility`,
+//! called only from `Player::UpdateSelf`, clears the main
 //! player's weapon enchantment while the `toggledWeaponEffects` option
-//! (bool 64) is off and puts it back when it is on; monsters' and pets'
-//! always show. `CharFxPak::UpdateVisibility` @0x1800ed3c0 and `Skill::
-//! UpdateFxVisibility` @0x18049ed30 hide the character effects of an
-//! auto-toggle skill (`IsAutoToggle`: the `…Toggled` classes set +1521 in
+//! is off and puts it back when it is on; monsters' and pets'
+//! always show. `CharFxPak::UpdateVisibility` and `Skill::
+//! UpdateFxVisibility` hide the character effects of an
+//! auto-toggle skill (`IsAutoToggle`: the `…Toggled` classes set `Skill_BuffSelfToggled.autoToggle` in
 //! their constructors, a `SkillBuff` asks its parent skill) on the main
-//! player by `toggledAurasSelf` (bool 62) and on another `Player` by
-//! `toggledAurasOther` (bool 63); a pet's or a monster's are never hidden,
-//! so in single player bool 63 does nothing. `AuraManager::Update`
-//! @0x180047620 does the same for the auto-toggle skills'
+//! player by the `toggledAurasSelf` option and on another `Player` by
+//! `toggledAurasOther`; a pet's or a monster's are never hidden,
+//! so in single player `toggledAurasOther` does nothing. `AuraManager::Update`
+//! does the same for the auto-toggle skills'
 //! `skillActivatedAuraName` loops (see below).
 //!
-//! The aura loop (`Skill::ApplyActivatedVisualEffects` @0x18049db20,
+//! The aura loop (`Skill::ApplyActivatedVisualEffects`,
 //! called from the toggles' / self buffs' `ReceiveActiveUpdate`): unless the
 //! skill's owner is a paper-doll copy (`Player::IsCopy`) it removes the old
-//! aura (`Character::RemoveAura`, skill +181) and, switching on, adds the
-//! profile's `skillActivatedAuraName` (+2088) with `Character::AddAura`
-//! (`AuraManager::AddAura` @0x1800478e0: the effect entity attached to the
+//! aura (`Character::RemoveAura`, `Skill.activatedAuraId`) and, switching on, adds the
+//! profile's `skillActivatedAuraName` with `Character::AddAura`
+//! (`AuraManager::AddAura`: the effect entity attached to the
 //! character at identity coords, kept until `RemoveAura` clears its keep flag
 //! and `AuraManager::Update` stops it emitting, self-deleting) and
 //! `IsAutoToggle` as the visibility flag `Update` applies with the options
@@ -67,45 +67,45 @@
 //! sources are re-read only when the character's buff names, toggles or
 //! loadout change (a cheap signature), not every frame.
 //!
-//! Modifier visual overrides ([`override_mods`] and the resolvers below).
+//! Modifier visual overrides ([`gd_game_core::skill_fx::override_mods`] and the resolvers there).
 //! Game.dll: every getter takes the last *learned* modifier (only those `IsSkillEnabled`) that sets
 //! the field, and only when none does, the last such *gear* modifier (`GetItemSkillModifiers`), else the
 //! skill's own field. Per-level lists are indexed by the skill's level (clamped to the list).
-//! - `targetFxPakOverride` → `targetFxPakName` (`Skill::GetTargetFX` @0x18049c1d0, [`target_fx`]).
-//! - `projectileOverride` (per-level list) → `skillProjectileName` (`Skill::GetProjectileName`
-//!   @0x18049b680); `projectileFragmentsOverride` → `projectileFragmentsName` (`GetProjectileFragmentsName`
-//!   @0x18049ba70) ([`projectile_name`], [`fragments_name`]).
-//! - `particleEffect1Override` → `particleEffectName1` (`Skill::GetParticleEffect1` @0x180495ba0,
-//!   [`particle_effect1`]); `lightningOverride` → `lightningName` (`Skill::GetLightning` @0x180496a50:
-//!   chain / fork / radius lightning, [`lightning`]).
+//! - `targetFxPakOverride` → `targetFxPakName` (`Skill::GetTargetFX`, [`gd_game_core::skill_fx::target_fx`]).
+//! - `projectileOverride` (per-level list) → `skillProjectileName` (`Skill::GetProjectileName`);
+//!   `projectileFragmentsOverride` → `projectileFragmentsName` (`Skill::GetProjectileFragmentsName`)
+//!   ([`gd_game_core::skill_fx::projectile_name`], [`gd_game_core::skill_fx::fragments_name`]).
+//! - `particleEffect1Override` → `particleEffectName1` (`Skill::GetParticleEffect1`,
+//!   [`gd_game_core::skill_fx::particle_effect1`]); `lightningOverride` → `lightningName` (`Skill::GetLightning`:
+//!   chain / fork / radius lightning, [`gd_game_core::skill_fx::lightning`]).
 //! - `projectileFXOverride` → `additionalProjectileFX`, an effect added to a weapon skill's projectile
-//!   (`SkillActivated::AddProjectileEffects` @0x180519510; a weapon-pool attack adds its pool parent's
-//!   first, `Skill_WPAttack::AddProjectileEffects` @0x180516d10) ([`projectile_fx`]).
-//! - `fxChanges` (a list, `Skill::AddModifierFXChanges` @0x180494bb0, [`fx_changes`]) replaces what each class
+//!   (`SkillActivated::AddProjectileEffects`; a weapon-pool attack adds its pool parent's
+//!   first, `Skill_WPAttack::AddProjectileEffects`) ([`gd_game_core::skill_fx::projectile_fx`]).
+//! - `fxChanges` (a list, `Skill::AddModifierFXChanges`, [`gd_game_core::skill_fx::fx_changes`]) replaces what each class
 //!   names: the projectile of `Skill_AttackProjectile` / `…Chain` / the secondary area-effect and orbiting
-//!   projectiles (`CreateProjectile`: entry at the level over [`projectile_name`]), the radius family's
+//!   projectiles (`CreateProjectile`: entry at the level over [`gd_game_core::skill_fx::projectile_name`]), the radius family's
 //!   `radiusEffectName` (`CreateVisualEffect` of `Skill_BuffRadius` / `AttackBuffRadius` / `OnHitAttackRadius` /
-//!   `AttackRadiusTeleport`: entry at the level, [`radius_effect`]), a beam's `beamName` / `startEffect` /
-//!   `endEffect` (`Skill_AttackSpellBeam::ActivateNow`: entries 0–2 when the list has three, [`beam_effects`]),
+//!   `AttackRadiusTeleport`: entry at the level, [`gd_game_core::skill_fx::radius_effect`]), a beam's `beamName` / `startEffect` /
+//!   `endEffect` (`Skill_AttackSpellBeam::ActivateNow`: entries 0–2 when the list has three, [`gd_game_core::skill_fx::beam_effects`]),
 //!   a drain's beams (four or more entries: gd-render `chaos_beam.rs`), and the cone's
-//!   `coneName` (`Skill_AttackSpellCone::ActivateNow` @0x1804cd370: entry 0, [`cone_effect`]), the spin's cast aura
-//!   `skillCastAuraName` (`Skill_AttackRadiusSpin::ApplyCastVisualEffects` @0x1804c9c70: entry at the level,
-//!   [`spin_aura`]), the grow's `radiusEffectNames` (`Skill_AttackRadiusGrow::ApplyCastVisualEffects` @0x1804c6a80:
-//!   entry at the grow step, [`grow_effect`]), a chaos skill's `chaosBeamName` (`Skill_AttackSpellChaos::Update`
-//!   @0x1804dc590: entry 0, [`chaos_beam`]) and the charged-scaling charge effect `skillChargeAura`
-//!   (`Skill_WeaponPool_ChargedScaling::SetChargeEffect` @0x180510c00: entry at the charge, [`charge_aura`]); the
+//!   `coneName` (`Skill_AttackSpellCone::ActivateNow`: entry 0, [`gd_game_core::skill_fx::cone_effect`]), the spin's cast aura
+//!   `skillCastAuraName` (`Skill_AttackRadiusSpin::ApplyCastVisualEffects`: entry at the level,
+//!   [`gd_game_core::skill_fx::spin_aura`]), the grow's `radiusEffectNames` (`Skill_AttackRadiusGrow::ApplyCastVisualEffects`:
+//!   entry at the grow step, [`gd_game_core::skill_fx::grow_effect`]), a chaos skill's `chaosBeamName` (`Skill_AttackSpellChaos::Update`:
+//!   entry 0, [`gd_game_core::skill_fx::chaos_beam`]) and the charged-scaling charge effect `skillChargeAura`
+//!   (`Skill_WeaponPool_ChargedScaling::SetChargeEffect`: entry at the charge, [`gd_game_core::skill_fx::charge_aura`]); the
 //!   effects themselves: `crate::casting::class_fx` (the chaos beams: `crate::casting::chaos`).
-use crate::casting::BuffFx;
-use crate::combat::Dead;
-use crate::data::GameData;
 use crate::monster_skills::MonsterSkills;
 use crate::pets::Pet;
-use crate::player::Loadout;
-use crate::skill_buffs::ReceivedBuffs;
-use crate::weapon_pool::SkillLinks;
 use bevy::prelude::*;
-use gd_formats::arz::{RawValue, Record};
 use gd_formats::vfs::Database;
+use gd_game_core::combat::Dead;
+use gd_game_core::data::GameData;
+use gd_game_core::player::Loadout;
+use gd_game_core::skill_buffs::ReceivedBuffs;
+use gd_game_core::skill_fx::{ToggleFx, WeaponEnchantments, level_str, timed_aura};
+use gd_game_core::visuals::BuffFx;
+use gd_game_core::weapon_pool::SkillLinks;
 use std::hash::{Hash, Hasher};
 
 pub struct SkillFxPlugin;
@@ -115,31 +115,6 @@ impl Plugin for SkillFxPlugin {
         app.add_systems(Update, sync_skill_fx.after(crate::auras::AurasSet));
     }
 }
-
-/// The weapon enchantments of the buffs on a character: (skill or buff
-/// record, `WeaponEnchantmentPak` record), oldest first (module docs).
-#[derive(Component, Default, Debug)]
-pub struct WeaponEnchantments {
-    list: Vec<(String, String)>,
-    sig: u64,
-}
-
-impl WeaponEnchantments {
-    /// The pak its weapons wear: the newest (`RemoveWeaponEnchantment`
-    /// hands over the list's last).
-    pub fn shown(&self) -> Option<&str> {
-        self.list.last().map(|(_, p)| p.as_str())
-    }
-
-    pub fn list(&self) -> &[(String, String)] {
-        &self.list
-    }
-}
-
-/// On a [`BuffFx`] that a toggle's character effects spawned here: the paks
-/// it was started from.
-#[derive(Component)]
-pub struct ToggleFx(pub Vec<String>);
 
 /// One buff or toggle on a character.
 #[derive(Debug, Clone, PartialEq)]
@@ -151,189 +126,6 @@ struct Source {
     enchantment: Option<String>,
     /// The toggle's `skillActivatedAuraName` loop (toggles only).
     aura: Option<String>,
-}
-
-/// A per-level string field at level index `li` (clamped to the list;
-/// empty = none), as `SkillProfile`'s level tables.
-pub fn level_str(rec: &Record, key: &str, li: usize) -> Option<String> {
-    let v = rec.get(key)?;
-    match v.get(li.min(v.len().checked_sub(1)?))? {
-        RawValue::Str(s) if !s.is_empty() => Some(s.clone()),
-        _ => None,
-    }
-}
-
-/// A skill's target effect pak (`Skill::GetTargetFX` @0x18049c1d0): the last learned
-/// modifier whose `targetFxPakOverride` (a per-level list, indexed by the skill's level) is set, else the last such
-/// gear modifier (`GetItemSkillModifiers`; stock has them, e.g. the Execution / Doom Bolt item modifiers'
-/// `wpattack_*_impact_fxpak`), replaces the skill's own `targetFxPakName` (per-level, clamped). `mods`: the enabled
-/// gear modifiers, then the learned ones (`Skill_Modifier::IsSkillEnabled`: a gear modifier made exclusive to a
-/// learned transmuter is off, `weapon_pool::build_links` leaves it out).
-pub fn target_fx(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
-    mods.iter()
-        .rev()
-        .find_map(|(m, _)| level_str(m, "targetFxPakOverride", li))
-        .or_else(|| level_str(rec, "targetFxPakName", li))
-}
-
-/// The modifiers whose visual overrides apply to `skill` (module doc), in the order the resolvers take
-/// them: the gear ones, then the learned ones (a caster with a skill book has the learned; one without has
-/// no gear). Gear modifiers that are off (`IsSkillEnabled`) are not in the links (`weapon_pool::build_links`).
-pub fn override_mods(
-    db: &Database,
-    links: Option<&SkillLinks>,
-    book: Option<&gd_sim::skills::SkillBook>,
-    skill: &str,
-) -> Vec<(Record, usize)> {
-    let names = links.map_or(&[][..], |l| l.mods_of(skill));
-    let learned = |m: &str| book.is_none_or(|b| b.level(m) > 0);
-    let (mine, gear): (Vec<_>, Vec<_>) = names.iter().partition(|(m, _)| learned(m));
-    gear.into_iter()
-        .chain(mine)
-        .filter_map(|(m, ml)| db.get_owned(m).map(|r| (r, *ml)))
-        .collect()
-}
-
-/// A plain string override `key` of `mods` (the last that sets it, module doc).
-fn override_str(mods: &[(Record, usize)], key: &str) -> Option<String> {
-    mods.iter()
-        .rev()
-        .find_map(|(m, _)| m.str(key).filter(|s| !s.is_empty()).map(str::to_owned))
-}
-
-fn own_str(rec: &Record, key: &str) -> Option<String> {
-    rec.str(key).filter(|s| !s.is_empty()).map(str::to_owned)
-}
-
-/// `Skill::AddModifierFXChanges`: the `fxChanges` list of the last modifier that has one (module doc).
-pub fn fx_changes(mods: &[(Record, usize)]) -> Option<Vec<String>> {
-    mods.iter().rev().find_map(|(m, _)| {
-        let v: Vec<String> = m.strs_iter("fxChanges").map(|s| s.to_string()).collect();
-        v.iter().any(|s| !s.is_empty()).then_some(v)
-    })
-}
-
-/// The `fxChanges` entry for level index `li` (clamped to the list; empty = none).
-fn fx_change_at(mods: &[(Record, usize)], li: usize) -> Option<String> {
-    fx_changes(mods)
-        .and_then(|v| v.get(li.min(v.len() - 1)).cloned())
-        .filter(|s| !s.is_empty())
-}
-
-/// The projectile record a projectile skill fires at `li` (`CreateProjectile`): the `fxChanges` entry, else
-/// `Skill::GetProjectileName` (`projectileOverride`, else the skill's `skillProjectileName`).
-pub fn projectile_name(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
-    fx_change_at(mods, li)
-        .or_else(|| {
-            mods.iter()
-                .rev()
-                .find_map(|(m, _)| level_str(m, "projectileOverride", li))
-        })
-        .or_else(|| level_str(rec, "skillProjectileName", li))
-}
-
-/// `Skill::GetProjectileFragmentsName`: `projectileFragmentsOverride`, else the skill's `projectileFragmentsName`.
-pub fn fragments_name(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
-    override_str(mods, "projectileFragmentsOverride")
-        .or_else(|| own_str(rec, "projectileFragmentsName"))
-}
-
-/// `Skill::GetParticleEffect1`: `particleEffect1Override`, else the skill's `particleEffectName1`.
-pub fn particle_effect1(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
-    override_str(mods, "particleEffect1Override").or_else(|| own_str(rec, "particleEffectName1"))
-}
-
-/// `Skill::GetLightning`: `lightningOverride`, else the skill's `lightningName`.
-pub fn lightning(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
-    override_str(mods, "lightningOverride").or_else(|| own_str(rec, "lightningName"))
-}
-
-/// `SkillActivated::AddProjectileEffects`: `projectileFXOverride`, else the skill's `additionalProjectileFX`.
-pub fn projectile_fx(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
-    override_str(mods, "projectileFXOverride").or_else(|| own_str(rec, "additionalProjectileFX"))
-}
-
-/// The effects a cast adds to its projectile (`AddProjectileEffects`): a weapon-pool attack's pool `parent`'s
-/// first (with the parent's own modifiers), then the skill's ([`projectile_fx`] each).
-pub fn projectile_effects(
-    db: &Database,
-    links: Option<&SkillLinks>,
-    book: Option<&gd_sim::skills::SkillBook>,
-    rec: &Record,
-    mods: &[(Record, usize)],
-    parent: Option<&str>,
-) -> Vec<String> {
-    let parent_fx = parent.and_then(|p| {
-        let r = db.get(p)?;
-        projectile_fx(r, &override_mods(db, links, book, p))
-    });
-    parent_fx
-        .into_iter()
-        .chain(projectile_fx(rec, mods))
-        .collect()
-}
-
-/// The radius family's effect at `li` (`CreateVisualEffect`): the `fxChanges` entry, else the skill's
-/// `radiusEffectName` (per level, clamped).
-pub fn radius_effect(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
-    fx_change_at(mods, li).or_else(|| level_str(rec, "radiusEffectName", li))
-}
-
-/// A beam skill's `beamName`, `startEffect` and `endEffect` (`Skill_AttackSpellBeam::ActivateNow`): an
-/// `fxChanges` list of three or more replaces all three by its first entries.
-pub fn beam_effects(rec: &Record, mods: &[(Record, usize)]) -> [Option<String>; 3] {
-    match fx_changes(mods).filter(|v| v.len() >= 3) {
-        Some(v) => [0, 1, 2].map(|i| Some(v[i].clone()).filter(|s| !s.is_empty())),
-        None => ["beamName", "startEffect", "endEffect"].map(|k| own_str(rec, k)),
-    }
-}
-
-/// `Skill_AttackSpellCone::ActivateNow` @0x1804cd370: the cone effect is `coneName` at `li` (clamped), replaced by
-/// the first `fxChanges` entry when a modifier has a list.
-pub fn cone_effect(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
-    match fx_changes(mods) {
-        Some(v) => Some(v[0].clone()).filter(|s| !s.is_empty()),
-        None => level_str(rec, "coneName", li),
-    }
-}
-
-/// `Skill_AttackRadiusSpin::ApplyCastVisualEffects` @0x1804c9c70: the spin's cast aura, the profile's
-/// `skillCastAuraName` (+2120), replaced by the `fxChanges` entry at `li`.
-pub fn spin_aura(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
-    fx_change_at(mods, li).or_else(|| own_str(rec, "skillCastAuraName"))
-}
-
-/// `Skill_AttackRadiusGrow::ApplyCastVisualEffects` @0x1804c6a80: the grow step of `radius`, the last
-/// `radiusEffectSize` entry it reaches (0 when it reaches none).
-pub fn grow_step(rec: &Record, radius: f32) -> usize {
-    rec.f32s("radiusEffectSize")
-        .iter()
-        .rposition(|s| radius >= *s)
-        .unwrap_or(0)
-}
-
-/// `Skill_AttackRadiusGrow::ApplyCastVisualEffects`: the effect of grow step `step`, `radiusEffectNames` at the
-/// step (clamped; none without the list), replaced by the `fxChanges` entry at the step.
-pub fn grow_effect(rec: &Record, step: usize, mods: &[(Record, usize)]) -> Option<String> {
-    rec.get("radiusEffectNames")?;
-    fx_change_at(mods, step).or_else(|| level_str(rec, "radiusEffectNames", step))
-}
-
-/// `Skill_WeaponPool_ChargedScaling::SetChargeEffect` @0x180510c00: the effect of `charges` charges (none at 0),
-/// `SkillProfile::GetChargeAuraName` (`skillChargeAura` at `charges` − 1, clamped) replaced by the `fxChanges`
-/// entry there.
-pub fn charge_aura(rec: &Record, charges: u32, mods: &[(Record, usize)]) -> Option<String> {
-    let i = (charges as usize).checked_sub(1)?;
-    fx_change_at(mods, i).or_else(|| level_str(rec, "skillChargeAura", i))
-}
-
-/// `Skill_AttackSpellChaos::Update` @0x1804dc590: each new beam's `ChaosBeam` record, the first `fxChanges` entry
-/// when a modifier has a list, else `chaosBeamName`.
-pub fn chaos_beam(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
-    match fx_changes(mods) {
-        Some(v) => Some(v[0].clone()).filter(|s| !s.is_empty()),
-        None => own_str(rec, "chaosBeamName"),
-    }
 }
 
 /// A toggle at `li`: its own paks (with its learned modifiers'
@@ -373,7 +165,7 @@ fn toggle_sources(
         && let Some(b) = db.get(&e.buff)
     {
         out.push(Source {
-            key: e.buff.clone(),
+            key: e.buff.to_string(),
             paks: level_str(b, "charFxPakOtherNames", li)
                 .into_iter()
                 .collect(),
@@ -404,15 +196,6 @@ fn buff_source(db: &Database, record: &str, li: usize) -> Option<Source> {
         enchantment,
         aura,
     })
-}
-
-/// The looping aura of a timed self buff (the skill record), `None` for any other record (an aura buff's, a toggle's).
-pub fn timed_aura(rec: &Record) -> Option<String> {
-    (rec.class == "Skill_BuffSelfDuration")
-        .then(|| rec.str("skillActivatedAuraName"))
-        .flatten()
-        .filter(|a| !a.is_empty())
-        .map(str::to_owned)
 }
 
 fn player_sources(
@@ -629,55 +412,19 @@ pub fn sync_skill_fx(
             let mut effects: Vec<(String, Option<String>)> = s
                 .paks
                 .iter()
-                .flat_map(|p| crate::casting::pak_effects(&data, p))
+                .flat_map(|p| gd_game_core::casting::pak_effects(&data, p))
                 .collect();
             // The aura loop sits at the character's origin (empty point, `Skill::ApplyActivatedVisualEffects`).
             effects.extend(s.aura.map(|a| (a, Some(String::new()))));
-            let sounds = crate::casting::char_pak_sounds(&data, &s.paks);
+            let sounds = gd_game_core::casting::char_pak_sounds(&data, &s.paks);
             let (key, paks) = (s.key, s.paks);
             commands.queue(move |w: &mut World| {
                 let fx = crate::casting::spawn_pak_on(w, &effects, e, &key, true);
-                crate::casting::start_char_pak_sounds(w, &sounds, e, &fx);
+                gd_game_core::casting::start_char_pak_sounds(w, &sounds, e, &fx);
                 for f in fx {
                     w.entity_mut(f).insert(ToggleFx(paks.clone()));
                 }
             });
         }
     }
-}
-
-/// The projectile a ranged weapon (`base`: its `basicProjectileName`)
-/// fires: the shown weapon enchantment's `projectileName` if it has one
-/// (`Weapon::GetProjectileName`; the pak reads it only for a `Ranged1h` /
-/// `Ranged2h` weapon, its loader sub_18058D560), else `base`. The player's
-/// enchantment counts only while `toggledWeaponEffects` is on.
-pub fn weapon_projectile(
-    db: &Database,
-    base: &str,
-    ench: Option<&WeaponEnchantments>,
-    player: bool,
-    options: &crate::options::GameOptions,
-) -> String {
-    ench.filter(|_| enchantment_visible(options, player))
-        .and_then(|w| w.shown())
-        .and_then(|p| db.get(p))
-        .and_then(|r| r.str("projectileName").map(str::to_owned))
-        .unwrap_or_else(|| base.to_owned())
-}
-
-/// Whether the player's weapon enchantment shows (`toggledWeaponEffects`,
-/// bool 64; only the main player's is cleared, module docs).
-pub fn enchantment_visible(options: &crate::options::GameOptions, player: bool) -> bool {
-    !player || options.flag("toggledWeaponEffects")
-}
-
-/// Whether a toggled skill's character effect on a character shows
-/// (`toggledAurasSelf`, bool 62, on the player; never hidden on others in
-/// single player, module docs).
-pub fn toggle_fx_visible(
-    options: &crate::options::GameOptions,
-    fx: &BuffFx,
-    owner_is_player: bool,
-) -> bool {
-    !fx.toggled || !owner_is_player || options.flag("toggledAurasSelf")
 }

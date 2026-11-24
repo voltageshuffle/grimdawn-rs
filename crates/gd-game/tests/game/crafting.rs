@@ -5,11 +5,11 @@
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game::crafting::{Refusal, SalvageKind, craft, dismantle_item, salvage_item};
-use gd_game::inventory::{Inventory, Requirements};
-use gd_game::progress::PlayerProgress;
 use gd_game::reroll::{Kind, reroll_item};
-use gd_game::stash::Stash;
 use gd_game::testing::{TestGame, first_blueprint};
+use gd_game_core::inventory::{Inventory, Requirements};
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::stash::Stash;
 use gd_sim::items::LootParams;
 
 const SWORD: &str = "records/items/gearweapons/swords1h/a00_sword001.dbr";
@@ -53,7 +53,7 @@ fn deposit_moves_crafting_materials(g: &mut TestGame) {
     });
     g.app
         .world_mut()
-        .write_message(gd_game::stash::DepositReagents);
+        .write_message(gd_game_core::stash::DepositReagents);
     g.steps(1);
     with(g, |data, inv, stash, _| {
         let stored = stash
@@ -91,7 +91,7 @@ fn item(rec: &str) -> Item {
 /// Runs `f` with the inventory, stash and gold.
 fn with<R>(
     g: &mut TestGame,
-    f: impl FnOnce(&gd_game::data::GameData, &mut Inventory, &mut Stash, &mut u64) -> R,
+    f: impl FnOnce(&gd_game_core::data::GameData, &mut Inventory, &mut Stash, &mut u64) -> R,
 ) -> R {
     let data = g.data();
     let w = g.app.world_mut();
@@ -113,8 +113,8 @@ fn crafting_pays_and_takes_reagents(g: &mut TestGame) {
     // Not enough reagents: refused, nothing taken.
     let refused = with(g, |data, inv, stash, gold| {
         for (names, _) in &bp.reagents {
-            let n = gd_game::stash::count(names, inv, stash);
-            gd_game::stash::take(names, n, inv, stash);
+            let n = gd_game_core::stash::count(names, inv, stash);
+            gd_game_core::stash::take(names, n, inv, stash);
         }
         craft(
             data,
@@ -127,7 +127,7 @@ fn crafting_pays_and_takes_reagents(g: &mut TestGame) {
             &req,
         )
     });
-    assert!(refused.is_err());
+    refused.unwrap_err();
     let made = with(g, |data, inv, stash, gold| {
         *gold += bp.cost(54) + 1;
         for (names, n) in &bp.reagents {
@@ -151,7 +151,7 @@ fn crafting_pays_and_takes_reagents(g: &mut TestGame) {
             before - *gold,
             bp.reagents
                 .iter()
-                .map(|(names, _)| gd_game::stash::count(names, inv, stash))
+                .map(|(names, _)| gd_game_core::stash::count(names, inv, stash))
                 .sum::<u32>(),
         )
     });
@@ -169,8 +169,8 @@ fn dismantle_needs_dynamite_and_gold(g: &mut TestGame) {
         .and_then(|e| e.str("dynamite").map(str::to_owned))
         .unwrap();
     let (first, second) = with(g, |data, inv, stash, gold| {
-        let n = gd_game::stash::count(std::slice::from_ref(&dynamite), inv, stash);
-        gd_game::stash::take(std::slice::from_ref(&dynamite), n, inv, stash);
+        let n = gd_game_core::stash::count(std::slice::from_ref(&dynamite), inv, stash);
+        gd_game_core::stash::take(std::slice::from_ref(&dynamite), n, inv, stash);
         // Enough gold: only the Dynamite is missing.
         *gold += 1_000_000;
         let first = dismantle_item(
@@ -198,7 +198,7 @@ fn dismantle_needs_dynamite_and_gold(g: &mut TestGame) {
         (
             first,
             second.is_ok()
-                && gd_game::stash::count(std::slice::from_ref(&dynamite), inv, stash) == 0,
+                && gd_game_core::stash::count(std::slice::from_ref(&dynamite), inv, stash) == 0,
         )
     });
     assert_eq!(first, Err(Refusal::Missing(dynamite.clone(), 1)));
@@ -251,7 +251,7 @@ fn convert_makes_another_set_piece(g: &mut TestGame) {
     // Guardsman's Raiment (`itemset_c001`, level 20).
     let head = "records/items/gearhead/c006_head.dbr";
     let scrap = "records/items/questitems/scrapmetal.dbr";
-    let set_of = |data: &gd_game::data::GameData, name: &str| {
+    let set_of = |data: &gd_game_core::data::GameData, name: &str| {
         data.db
             .get(name)
             .and_then(|r| r.str("itemSetName").map(str::to_owned))

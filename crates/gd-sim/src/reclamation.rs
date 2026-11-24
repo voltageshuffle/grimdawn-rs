@@ -2,10 +2,10 @@
 //! state and the requests are `gd_game::reclamation`, the window
 //! `grimdawn::ui::skills`).
 //!
-//! Price (Game.dll `SkillManager::UseReclamationPoints` @0x180534de0,
-//! `GetCurrentSkillReclamationCost` @0x180534ec0, `SkillManager::Load` reads
+//! Price (Game.dll `SkillManager::UseReclamationPoints`,
+//! `GetCurrentSkillReclamationCost`, `SkillManager::Load` reads
 //! the player record's `reclamationPointTiers` / `reclamationPointCosts`): the
-//! refund count (`SkillManager` +184, save block 8
+//! refund count (`SkillManager.reclamationPointsUsed`, save block 8
 //! `skill_reclamation_points_used`) picks the first band
 //! `[tiers[i], tiers[i + 1])` holding it, else the last cost ([`cost`]). A
 //! refund of `n` points charges the cost at each count before raising it and
@@ -14,9 +14,9 @@
 //! count back, the money capped at 2,000,000,000. The devotion refunds are
 //! the same with the `devotion*` fields (`gd_game::devotion::reclaim_cost`).
 //!
-//! Which buttons refund (GrimDawn.exe `sub_140249440` flags, used by
-//! the button update `sub_140247890` and the frame draw `sub_1402461E0` while
-//! the window's reclaim flag `+7756` is set), [`Flags`]:
+//! Which buttons refund (GrimDawn.exe `UISkillPane::GetRequirementFlags` flags, used by
+//! the button update `UISkillPane::Update` and the frame draw `UISkillPane::Draw` while
+//! the window's reclaim flag `UISkillPane.reclamationMode` is set), [`Flags`]:
 //! * disabled (no click) = [`Flags::disabled`]: unlearned (f11), the cost above
 //!   the money (f8, the cost at the current count), removing the last point
 //!   would orphan a dependant (f10, [`orphans`]) or a celestial power is bound
@@ -24,7 +24,7 @@
 //!   autocast's operation 3, a devotion binding); a mastery also while a
 //!   learned skill of its tree needs its level (f13, [`mastery_needed`]: the
 //!   skill's tier level `>=` the mastery level) and at level 1 (the click
-//!   callback `sub_140248510` refuses it as well);
+//!   callback `UISkillPane::OnButtonClick` refuses it as well);
 //! * grey (grayscale shader, still clickable) = [`Flags::grayed`]: mastery too
 //!   low for the tier (f1), base skill unlearned (f2), mastery slots full (f4),
 //!   dependency unmet (f5);
@@ -88,8 +88,8 @@ pub fn payback(db: &Database, count: u32, n: u32) -> u64 {
     (1..=n.min(count)).map(|k| cost(&t, &c, count - k)).sum()
 }
 
-/// Money text: `%i` with a comma before each group of three digits (Game.dll `sub_180592A10`, the
-/// tooltip's cost; the window's numbers use GrimDawn.exe's copy `sub_1402A57B0`).
+/// Money text: `%i` with a comma before each group of three digits (Game.dll `Game::FormatMoney`, the
+/// tooltip's cost; the window's numbers use GrimDawn.exe's copy `UI::FormatThousands`).
 pub fn money(v: u64) -> String {
     let d = v.to_string();
     let n = d.len();
@@ -115,7 +115,8 @@ fn dependencies(db: &Database, skill: &str) -> (Vec<String>, bool) {
     )
 }
 
-/// f10, `sub_140248E30`: taking the last point of `skill` would leave a dependant without it. Only at level 1.
+/// f10, `UISkillPane::WouldOrphanDependant`: taking the last point of `skill` would leave a dependant without it.
+/// Only at level 1.
 /// The tree's learned skills listing it in `skillDependancy`: an all-mode list blocks; an any-mode list blocks
 /// unless another listed skill is learned, and then the scan of further dependants stops (engine order). Then the
 /// learned modifiers / secondary skills of `skill` (tree entries whose base it is, [`ClassTree::bases`]) block, unless
@@ -154,7 +155,8 @@ pub fn orphans(db: &Database, book: &SkillBook, tree: &ClassTree, skill: &str) -
         .any(|(c, _)| !alternative || dependencies(db, c).0.is_empty())
 }
 
-/// f13, `sub_140249330`: some learned skill of the mastery's tree needs the mastery's level (`tree` one of
+/// f13, `UISkillPane::IsMasteryNeeded`: some learned skill of the mastery's tree needs the mastery's level (`tree`
+/// one of
 /// `trees`).
 pub fn mastery_needed(
     db: &Database,
@@ -170,7 +172,7 @@ pub fn mastery_needed(
         .any(|s| book.level(s) > 0 && trees.tier_requirement(db, s) >= level)
 }
 
-/// A skill button's reclaim flags (`sub_140249440`, module docs).
+/// A skill button's reclaim flags (`UISkillPane::GetRequirementFlags`, module docs).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags {
     pub mastery: bool,

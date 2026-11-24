@@ -8,14 +8,14 @@
 //! (`Skill::IsTargetInRange`: distance minus both radii ≤ the
 //! skill's `Skill::GetRange`, `gameengine.dbr` `meleeRange` for the melee
 //! profile); the hit-callback re-check uses `meleeTargetDistance`
-//! ([`crate::rules::GameEngineRules::melee_target_distance`]) with a cone fallback ([`targets_in_cone`]).
+//! ([`gd_game_core::rules::GameEngineRules::melee_target_distance`]) with a cone fallback ([`targets_in_cone`]).
 //!
 //! Aggro is anger (`AngerManager`, see [`MonsterAi`]): sight anger
 //! ([`sight_anger`]), hits and distress calls ([`anger_from_hits`]) fill it
 //! and the monster goes for the target `AngerManager::GetNewTarget` picks
 //! (see `monster_ai`). Distress calls: `Character::UnderAttack`
-//! @0x180068be0 → `DoDistressCall` @0x18005a8a0 tells the friends within
-//! `distressCallRange` (`ControllerMonster::AllyAttacked` @0x18013ca50).
+//! → `DoDistressCall` tells the friends within
+//! `distressCallRange` (`ControllerMonster::AllyAttacked`).
 //! Bodies: `Character::InitialUpdate` picks the death handler by
 //! `deleteBehavior` (see [`corpse_time`]).
 //!
@@ -23,17 +23,17 @@
 //! movement helpers), `monster_ai` (the monster / auto-fight / player attack systems), `hits` (`apply_hits`,
 //! block recovery), `influence` (convert and disruption), `bodies` (suicide, kill, corpses, regen, picking),
 //! `cc_states` (fear / confusion states), `combatant` (`Combatant`, `Dead`, ...), `grid` (spatial indices).
-use crate::character::{AnimCallback, CharState, Character};
-use crate::data::GameData;
-use crate::monsters::{Monster, ProxyStates};
+use crate::monsters::ProxyStates;
 use crate::movement::MovePath;
 use crate::nav::Nav;
-use crate::player::Player;
-use crate::session::PlayerStart;
 use bevy::prelude::*;
-use gd_sim::actor::Profile;
-use gd_sim::combat::Rng;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
+use gd_game_core::character::{AnimCallback, CharState, Character};
+use gd_game_core::data::GameData;
+use gd_game_core::monsters::Monster;
+use gd_game_core::player::Player;
+use gd_game_core::session::PlayerStart;
+use gd_rules::Rng;
 use std::sync::Arc;
 
 pub struct CombatPlugin;
@@ -56,7 +56,7 @@ impl Plugin for CombatPlugin {
                 sync_speeds
                     .after(crate::player::rebuild_profile)
                     .after(crate::monsters::equip_monsters)
-                    .before(crate::character::CharacterStage::Drive),
+                    .before(gd_game_core::character::CharacterStage::Drive),
             )
             .add_systems(Update, block_recovery)
             // Body boxes are this frame's pose: right after the advance in Update.
@@ -64,8 +64,19 @@ impl Plugin for CombatPlugin {
                 Update,
                 posed_bounds
                     .after(crate::character::advance_animations)
-                    .in_set(crate::character::CharacterStage::Animate),
+                    .in_set(gd_game_core::character::CharacterStage::Animate),
             )
+            // ECS-1: the combat core is a genuine dependency chain, not a blanket
+            // serialization. Every link below carries data: the global-RNG draws
+            // (`gd_game_core::rng`, a thread-local stream) must keep their exact
+            // mutual order — `notify_monsters` (dodge roll) → `anger_rolls` →
+            // `monster_ai` (melee/flee/patrol/alert rolls) → `player_attack`
+            // (`try_cast`/`los_spot`) → `apply_hits` (its session RNG seed) →
+            // `anger_from_hits` (distress roll); the message flows
+            // (`AttackMade`→`hit_aggro`, `HitLanded`/`MonsterKilled`→`anger_from_hits`,
+            // `Influenced`→`join_converted`/`disrupt_skills`) and the shared
+            // `MonsterAi`/`Combatant`/`Transform`/`Character` writes fix the rest.
+            // None of these is component-disjoint from the next, so they stay ordered.
             .add_systems(
                 Update,
                 (
@@ -76,7 +87,7 @@ impl Plugin for CombatPlugin {
                     monster_ai,
                     auto_fight,
                     player_attack,
-                    apply_hits.run_if(resource_exists::<crate::rules::CombatRules>),
+                    apply_hits.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     hit_aggro,
                     (join_converted, unjoin_converted)
                         .run_if(resource_exists::<crate::factions::PlayerFactions>),
@@ -86,11 +97,23 @@ impl Plugin for CombatPlugin {
                     sight_anger,
                     dead_bodies,
                     player_regen,
-                    ambush_dissolve,
                 )
                     .chain()
                     .in_set(CombatSet)
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::player::PlayerSet),
+            )
+            // `ambush_dissolve` is the one combat system component-disjoint from the
+            // core: it only advances `AmbushDissolve` (no other core system reads it),
+            // draws no RNG and passes no message, so it overlaps the core freely. It
+            // stays after `monster_ai`, which inserts `AmbushDissolve` deferred: the
+            // flush must precede the `is_added` skip so a fresh dissolve starts ticking
+            // the frame after its insert, exactly as the chain had it.
+            .add_systems(
+                Update,
+                ambush_dissolve
+                    .after(monster_ai)
+                    .in_set(CombatSet)
+                    .after(gd_game_core::player::PlayerSet),
             );
     }
 }
@@ -101,7 +124,7 @@ pub struct HitLanded {
     pub attacker: Entity,
     pub target: Entity,
     /// The skill used (None: a plain weapon swing).
-    pub skill: Option<String>,
+    pub skill: Option<Arc<str>>,
     pub critical: bool,
     /// Melee (plain swings and weapon skills, not ranged weapons).
     pub melee: bool,
@@ -115,18 +138,18 @@ pub struct HitLanded {
 }
 
 /// An attack made on a target, hit or miss (`Character::AttackTarget`
-/// @0x180067460 calls `SkillServices::AttackingEnemy` whatever the
+/// calls `SkillServices_Character::AttackingEnemy` whatever the
 /// outcome): the `AttackEnemy(Crit)` autocast triggers.
 #[derive(Message, Clone, Debug)]
 pub struct AttackMade {
     pub attacker: Entity,
     pub target: Entity,
     /// The skill used (None: a plain weapon swing).
-    pub skill: Option<String>,
+    pub skill: Option<Arc<str>>,
     /// Critical (`ParametersCombat` crit multiplier > 1).
     pub critical: bool,
     /// A weapon attack (plain swing or weapon skill): it carries the
-    /// attacker's weapon ids (`ParametersCombat` +0x80 / +0x84); spells
+    /// attacker's weapon ids (`ParametersCombat.weaponIds`); spells
     /// pass none (`Skill_AttackSpell::TargetResult` / `Skill_AttackRadius::
     /// TargetResult` hand `AttackTarget` zero ids).
     pub weapon: bool,
@@ -148,7 +171,7 @@ pub struct AttackMade {
     pub defensive_ability: f32,
 }
 
-/// A reflect link's passed-on attack (`ReflectLinkDamage` @0x1804d3f10 →
+/// A reflect link's passed-on attack (`ReflectLinkDamage` →
 /// `Character::AttackTarget`): runs the caster's `AttackEnemy(Crit)` autocast
 /// triggers like [`AttackMade`] but is not shown again (its numbers are the
 /// [`CounterHit`]'s).
@@ -156,7 +179,7 @@ pub struct AttackMade {
 pub struct LinkedAttack {
     pub attacker: Entity,
     pub target: Entity,
-    pub skill: Option<String>,
+    pub skill: Option<Arc<str>>,
     pub critical: bool,
     pub weapon: bool,
 }
@@ -164,7 +187,7 @@ pub struct LinkedAttack {
 /// A retaliation (`TakeAttack` style 3) or reflection (style 6) hit back
 /// at the original attacker (`target`). It runs `TakeAttack`'s outcome and
 /// combat-number code like any attack (`CombatManager::TakeAttack`
-/// @0x18011d950: neither style can be blocked; reflection's multiplier is
+///: neither style can be blocked; reflection's multiplier is
 /// 1 − `defensivePercentReflectionResistance` %), but not
 /// `Character::AttackTarget`, so no [`AttackMade`] (no autocasts).
 #[derive(Message, Clone, Debug)]
@@ -175,7 +198,7 @@ pub struct CounterHit {
 }
 
 /// The largest single life subtraction an attack (hit, reflection, retaliation) made on `target`
-/// (`Character::SubtractLife` @0x180068b00 → `PlayStats::TallyDamageReceived` type 1;
+/// (`Character::SubtractLife` → `PlayStats::TallyDamageReceived` type 1;
 /// [`gd_sim::actor::Hit::largest_applied`]; the greatest hit received, `death.rs`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct LifeSubtracted {
@@ -183,20 +206,16 @@ pub struct LifeSubtracted {
     pub amount: f32,
 }
 
-/// Combat systems (skill casting runs before them).
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CombatSet;
-
-/// The melee hit re-check (`mtd`: [`crate::rules::GameEngineRules::melee_target_distance`]): the swing
+/// The melee hit re-check (`mtd`: [`gd_game_core::rules::GameEngineRules::melee_target_distance`]): the swing
 /// lands while the 3-D distance minus both radii (`radii`) is within `mtd`.
 pub fn in_melee_reach(from: Vec3, to: Vec3, radii: f32, mtd: f32) -> bool {
     (to - from).length() - radii <= mtd
 }
 
-/// `GameEngine::GetTargetsInCone` (Engine `World::GetEntitiesInCone` @0x18021edf0):
+/// `GameEngine::GetTargetsInCone` (Engine `World::GetEntitiesInCone`):
 /// the targets within `range` of `at` (edge to edge, 3-D) inside the facing's cone
 /// (`half_angle` radians, horizontal), most centred first — the engine sorts by
-/// descending `forward · direction` (comparator @0x18021ece0). `foes`: the valid
+/// descending `forward · direction` (comparator `World::CompareConeHits`). `foes`: the valid
 /// targets as (entity, position, radius); the caller filters sides / hiding.
 pub fn targets_in_cone(
     at: Vec3,
@@ -220,8 +239,6 @@ pub fn targets_in_cone(
     hits.into_iter().map(|(e, _)| e).collect()
 }
 
-pub use crate::rules::CombatRules;
-
 mod sight;
 use self::sight::*;
 mod ai;
@@ -237,4 +254,6 @@ pub mod cc_states;
 pub use self::bodies::*;
 mod combatant;
 pub use self::combatant::*;
+use gd_game_core::combat::{Attackers, CombatSet, Combatant, ControllerClass, Dead};
+use gd_game_core::rules::CombatRules;
 pub mod grid;

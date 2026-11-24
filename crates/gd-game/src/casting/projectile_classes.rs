@@ -4,12 +4,12 @@
 //! (`Entity::SetPhysicsSimulation`), sets its speed to `projectileVelocity` × (1 + the speed modifier % / 100) and
 //! starts the flight (state 1); each `UpdateSelf` moves the projectile by `SetCoords` while in state 1, then runs
 //! `ProjectileFireballLike::UpdateSelf`, which does the hits along the step (as for every projectile: `fly_projectiles`)
-//! and stops it (`ProjectileStop`, vtable +1128: state 3, an `explodeOnMiss` explosion) once it is
-//! `projectileDistance` or more from its launch coordinates (`ProjectileBase` +1736). A stop by the class itself
+//! and stops it (`ProjectileStop`: state 3, an `explodeOnMiss` explosion) once it is
+//! `projectileDistance` or more from its launch coordinates (`ProjectileBase.launchCoords`). A stop by the class itself
 //! (its end below) makes no hit that frame.
 //!
-//! - `ProjectileBoomerang` (vtable 0x180788ea0: `Load` sub_18040aab0, `ProjectileGo` sub_18040afa0,
-//!   `UpdateSelf` sub_18040ab50; ctor sub_18040a9b0). `Load`: `projectileFollow`, `projectileHoverDuration` and
+//! - `ProjectileBoomerang` (its vtable: `Load`, `ProjectileGo`,
+//!   `UpdateSelf`; ctor). `Load`: `projectileFollow`, `projectileHoverDuration` and
 //!   `projectileFollowDuration` (× 1000, int ms), `projectileTravelDistance`. `ProjectileGo` (Ashes of Malmouth
 //!   content: `IsExpansion1Loaded`) heads at the target's hit point (else along the launch direction) and keeps the
 //!   return point: the owner's centre of mass in the world (`Actor::GetCenterOfMass` × its coords; no owner
@@ -19,8 +19,8 @@
 //!   flies straight at the return point and stops within 1 m of it (3D). With `projectileFollow` the return point is
 //!   the owner's centre of mass again each frame while he lives, and the way back stops when the follow duration
 //!   (counted down on the way back) runs out.
-//! - `ProjectileSpark` (vtable 0x18078b838: `Load` sub_180410d70, `ProjectileGo` sub_180411010,
-//!   `UpdateSelf` sub_180410e30, `PhysicsSetup` sub_180411400; ctor sub_180410c90). `Load`: `projectileDuration`
+//! - `ProjectileSpark` (its vtable: `Load`, `ProjectileGo`,
+//!   `UpdateSelf`, `PhysicsSetup`; ctor). `Load`: `projectileDuration`
 //!   and `changeDirectionTime` (× 1000, int ms; the ctor's 3000 / 0 are overwritten, a missing field is 0),
 //!   `disableCollision`, `minRotation` / `maxRotation` (degrees). `ProjectileGo` (Forgotten Gods content:
 //!   `IsExpansion2Loaded`) heads at the target's hit point, else at the aimed point 1 m up (when it is not the
@@ -30,8 +30,8 @@
 //!   (`RandomUniformLocked::FGenerate`, the engine's stream; turns add up, so the spark wanders); it flies on at
 //!   its speed along the heading. `disableCollision` clears the physics body's collision mask: no wall or door
 //!   stops it (23 of the 45 stock sparks).
-//! - `ProjectileInverse` (vtable 0x18078aea8: `Load` sub_18040f530, `ProjectileGo` sub_18040fa00,
-//!   `UpdateSelf` sub_18040f5b0; ctor sub_18040f450). `Load`: `projectileStartDistance`, `projectileFollow`,
+//! - `ProjectileInverse` (its vtable: `Load`, `ProjectileGo`,
+//!   `UpdateSelf`; ctor). `Load`: `projectileStartDistance`, `projectileFollow`,
 //!   `projectileDuration` (× 1000, int ms; ctor 3000). `ProjectileGo` (`IsExpansion1Loaded`): the target point is
 //!   the owner's centre of mass in the world (no owner character: the launch coordinates); the launch direction
 //!   made level (y = 0) times max(start distance, 1) from that point is where it appears, facing out along that
@@ -39,19 +39,19 @@
 //!   stop measures from, stay the caster's). `UpdateSelf`: the duration's end stops it; with `projectileFollow`
 //!   the target point is the owner's centre of mass each frame, and a dead or gone owner stops it; within 1 m of
 //!   the target point (level distance) it stops; else it flies straight at it (3D).
-//! - `ProjectileTerrainFollowing` (`UpdateSelf` @0x180413020): steps along its heading, then
+//! - `ProjectileTerrainFollowing` (`UpdateSelf`): steps along its heading, then
 //!   `World::GetNearestFloorHeight` re-seats it at floor + its `actorHeight`, eased (when |Δy| > 1.25×height it
 //!   moves 0.75 of the excess); it stops only when the new point is off the nav mesh
 //!   (`NavManager::IsPointOnPathMesh`). The terrain is its floor, not a wall (`fly_projectiles` skips the terrain
 //!   contact for it).
-//! - `ProjectileHoming` (`UpdateSelf` sub_18040EC20, `ProjectileGo` sub_18040EFD0): each frame it
+//! - `ProjectileHoming` (`UpdateSelf`, `ProjectileGo`): each frame it
 //!   re-resolves its target, takes `ProjectileBase::GetHitPoint` (the body box centre) and steps straight at it
 //!   at its speed; a dead or gone target or the `projectileDuration`'s end stops it; `ProjectileGo` aborts the
 //!   launch entirely without a valid target (`fire_casts`).
 //! - `ProjectileChain` flies as any fireball; its skill (`Skill_AttackProjectileChain`) collects the spark list
 //!   at launch and the impact attacks every entry (`fire`'s `chain_sparks`, [`super::Projectile::chain`]).
-//! - `ProjectileFragmenting` (exported: `Load` @0x18040d870, `ProjectileGo` @0x18040d8d0, `UpdateSelf`
-//!   @0x18040d9d0, `ProjectileStop` @0x18040d910, `ProjectileHit` @0x18040d970) flies as any fireball (the base's
+//! - `ProjectileFragmenting` (exported: `Load`, `ProjectileGo`, `UpdateSelf`,
+//!   `ProjectileStop`, `ProjectileHit`) flies as any fireball (the base's
 //!   physics flight, no steering). `Load`: `fragmentInterval` (× 1000, int ms) and `fragmentOnStop`. `ProjectileGo`
 //!   (`IsExpansion3Loaded`) starts the interval timer full. `UpdateSelf` (a copy of the base's with one addition):
 //!   in flight the timer counts down and at 0 restarts and runs `ProcessFragmentation(0, its coords)`: the skill's
@@ -301,7 +301,7 @@ pub(super) fn steer(
             if *change <= 0.0 {
                 *change = *every;
                 if turn.0 <= turn.1 {
-                    let a = turn.0 + (turn.1 - turn.0) * crate::rng::f32();
+                    let a = turn.0 + (turn.1 - turn.0) * gd_game_core::rng::f32();
                     *heading = Quat::from_rotation_y(a.to_radians()) * *heading;
                 }
             }

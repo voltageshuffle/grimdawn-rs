@@ -4,25 +4,25 @@
 //! monsters around it to use one of their special skills.
 //!
 //! Game.dll:
-//! - `LoadResources` @0x18050c270: `numToFire` (int), `specialSkillNum`
+//! - `LoadResources`: `numToFire` (int), `specialSkillNum`
 //!   (int), `findClosest`, `targetCharacter`, `searchRadius` (float),
 //!   `turretName` (a record path), `useSpecialAnim`.
-//! - `ActivateNow` @0x18050c370 (only with Ashes of Malmouth loaded, and the
+//! - `ActivateNow` (only with Ashes of Malmouth loaded, and the
 //!   skill's launcher present): `GameEngine::GetTargetsInRadius` around the
 //!   caster within `searchRadius` with the friend filter
-//!   (`FilterInvalidTargets` @0x1802eca00: living characters, not NPCs,
+//!   (`FilterInvalidTargets`: living characters, not NPCs,
 //!   `FactionManager::IsFriend`), without the caster; of those the `Turret`s
-//!   (RTTI) whose object name (record) equals `turretName` (sub_180593650:
+//!   (RTTI) whose object name (record) equals `turretName` (`Game::RecordNamesEqual`:
 //!   case-insensitive, `/` = `\`; an empty `turretName` takes every turret).
 //!   `numToFire` < 0 orders them all, else min(n, found): the n nearest with
-//!   `findClosest` (sub_1801515D0), else n drawn without replacement
-//!   (sub_1804F3D30, as `geysers::pick`).
+//!   `findClosest` (`Game::FindClosestEntities`), else n drawn without replacement
+//!   (`Game::DrawWithoutReplacement`, as `geysers::pick`).
 //! - Each turret aims at the skill's own target (point and object) with
 //!   `targetCharacter`, else at 5 m along its own facing, no object. Its
 //!   controller must be a `ControllerMonster`; `specialSkillNum` 1..7 picks
 //!   its special slot (`specialAttackSkillName`, `specialAttack2SkillName`,
-//!   …: controller +1304 + 28 × (n − 1), `Monster::InitSkillsInController`
-//!   @0x18037a310), anything else nothing. With `useSpecialAnim` the
+//!   …: `ControllerMonster.specialSkills[n − 1]`, `Monster::InitSkillsInController`),
+//!   anything else nothing. With `useSpecialAnim` the
 //!   controller gets an `AttackAction` with that skill (the cast animation
 //!   plays first, `monster_skills::start`); without, an
 //!   `ActivateSkillConfigCmd` ("RightHandHit") makes it go off at once
@@ -30,7 +30,7 @@
 //!
 //! The turrets are monsters placed straight in the levels (class `Turret`,
 //! not proxies), streamed in with their level (`monsters::populate`,
-//! `LevelProxies::placed`). `Character::Load` @0x180054e70 (through
+//! `LevelProxies::placed`). `Character::Load` (through
 //! `Monster::Load`): a character placed in a level file takes its record's
 //! `charLevel` equation at the players' average level, clamped to
 //! `minLevel` / `maxLevel` ([`crate::monsters::placed_char_level`]), for its
@@ -39,12 +39,13 @@
 //! The game-balance pak column (`Monster::OnGameBalanceLevel`) is the global
 //! difficulty column every monster uses. PORT: the random pick uses the
 //! port's RNG; a slot whose skill the port cannot cast is skipped.
-use crate::casting::{Casting, ProcCast, kind_of};
-use crate::character::Character;
-use crate::combat::{Dead, MonsterAi};
-use crate::data::GameData;
-use crate::monsters::Monster;
+use crate::combat::MonsterAi;
 use bevy::prelude::*;
+use gd_game_core::casting::{Casting, ProcCast, kind_of};
+use gd_game_core::character::Character;
+use gd_game_core::combat::Dead;
+use gd_game_core::data::GameData;
+use gd_game_core::monsters::Monster;
 
 pub struct TurretsPlugin;
 
@@ -54,7 +55,7 @@ impl Plugin for TurretsPlugin {
             Update,
             command
                 .after(crate::casting::CastingSet)
-                .before(crate::combat::CombatSet),
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -69,7 +70,7 @@ pub struct Command {
     pub target: Option<Entity>,
 }
 
-/// sub_180593650: record names equal ignoring case and slash direction.
+/// `Game::RecordNamesEqual`: record names equal ignoring case and slash direction.
 fn same_record(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes().zip(b.bytes()).all(|(x, y)| {
@@ -123,7 +124,7 @@ fn command(
             order,
             rec.i32("numToFire").unwrap_or(0),
             rec.bool("findClosest"),
-            |len| crate::rng::u32(..len as u32) as usize,
+            |len| gd_game_core::rng::u32(..len as u32) as usize,
         )
         .into_iter()
         .map(|v| found[v.x as usize].1)
@@ -165,9 +166,9 @@ fn command(
             let kind = kind_of(srec);
             if matches!(
                 kind,
-                crate::casting::Kind::Unsupported
-                    | crate::casting::Kind::Toggle
-                    | crate::casting::Kind::Beam
+                gd_game_core::casting::Kind::Unsupported
+                    | gd_game_core::casting::Kind::Toggle
+                    | gd_game_core::casting::Kind::Beam
             ) {
                 debug!(
                     "turret {}: {skill} ({}) not supported",
@@ -179,7 +180,7 @@ fn command(
                 (m.point, m.target)
             } else {
                 (
-                    tf.translation + crate::character::facing_flat(&tf) * 5.0,
+                    tf.translation + gd_game_core::character::facing_flat(&tf) * 5.0,
                     None,
                 )
             };

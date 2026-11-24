@@ -11,11 +11,13 @@
 //! out the ring (casts aim at the nearest dummy, so they fly ≥ 6 m).
 //! `GD_ARENA_MONSTERS` adds real monsters (AI, skills,
 //! loot) 10 m to the player's right, for testing monster behaviour.
-use crate::combat::{CombatRules, Combatant, MonsterAi};
-use crate::session::PlayerStart;
-use crate::world::Nav;
+use crate::combat::MonsterAi;
 use bevy::prelude::*;
-pub use gd_game::world::Dummy;
+use gd_game::nav::Nav;
+use gd_game_core::session::PlayerStart;
+pub use gd_game_core::world::Dummy;
+use gd_game_core::combat::Combatant;
+use gd_game_core::rules::CombatRules;
 
 pub struct TestWorldPlugin;
 
@@ -29,7 +31,7 @@ impl Plugin for TestWorldPlugin {
     fn build(&self, app: &mut App) {
         if app
             .world()
-            .resource::<crate::hooks::Hooks>()
+            .resource::<gd_game_core::hooks::Hooks>()
             .session
             .testworld
             .is_none()
@@ -167,12 +169,12 @@ fn dummy_spots(far: bool) -> Vec<Vec3> {
 }
 
 fn spawn_dummies(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
 
     mut done: Local<bool>,
     rules: Option<Res<CombatRules>>,
-    players: Query<(), With<crate::player::Player>>,
+    players: Query<(), With<gd_game_core::player::Player>>,
     mut assets: gd_game::creature::Spawner,
 ) {
     if *done || players.is_empty() {
@@ -200,7 +202,7 @@ fn spawn_dummies(
     // Effectively unkillable (life is also refilled every frame).
     profile.sheet.life = 1.0e9;
     let profile = std::sync::Arc::new(profile);
-    let radius = gd_game::combat::get_radius(assets.data.db.get(&record), 0.5);
+    let radius = gd_game_core::combat::get_radius(assets.data.db.get(&record), 0.5);
     let spots = dummy_spots(hooks.session.testworld.as_deref() == Some("far"));
     for (i, p) in spots.iter().enumerate() {
         // Facing the centre: +Z forward (`character::facing`), `looking_to` aims −Z.
@@ -240,9 +242,9 @@ fn spawn_dummies(
             ) else {
                 continue;
             };
-            let radius = gd_game::combat::get_radius(assets.data.db.get(rec), 0.5);
+            let radius = gd_game_core::combat::get_radius(assets.data.db.get(rec), 0.5);
             commands.entity(e).insert((
-                crate::monsters::Monster {
+                gd_game_core::monsters::Monster {
                     record: rec.to_owned(),
                     level,
                     slot: (usize::MAX, 0, n as usize),

@@ -1,4 +1,4 @@
-//! The ten arenas (`gd_game::session::ARENAS`): their script objects.
+//! The ten arenas (`gd_game_core::session::ARENAS`): their script objects.
 use super::*;
 
 /// A map's story objects (records with a script hook): `(id, record, coords)`, as the host streams them.
@@ -33,8 +33,8 @@ pub fn arena_objects(g: &TestGame, map: &str) -> Vec<(u32, String, Coords)> {
 /// spawn points 1 and 2, `tier01waves.lua`; point 6 is the bonus spawn, off until `checkBonusStatus`).
 #[test]
 fn every_arena_loads_and_starts_an_event() {
-    for (_, letter) in gd_game::session::ARENAS {
-        let map = gd_game::session::arena_map(letter);
+    for (_, letter) in gd_game_core::session::ARENAS {
+        let map = gd_game_core::session::arena_map(letter);
         let Some((g, _, _)) = setup() else { return };
         assert!(g.data().vfs.exists(&map), "{map}");
         let objs = arena_objects(&g, &map);
@@ -94,9 +94,9 @@ fn every_arena_loads_and_starts_an_event() {
             .take_effects()
             .into_iter()
             .filter_map(|e| match e {
-                gd_sim::story::Effect::Spawn {
+                gd_story::story::Effect::Spawn {
                     record,
-                    class: gd_sim::story::state::ObjClass::Proxy,
+                    class: gd_story::story::state::ObjClass::Proxy,
                     ..
                 } => Some(record),
                 _ => None,

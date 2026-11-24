@@ -1,18 +1,21 @@
 //! The trade windows' search box ([`TradeSearch`]; matching `gd_sim::items::market::search_market`): the
 //! vendor window's `marketSearchBox`, the caravan window's `searchBox` and the crafting panel's `searchBox`
-//! (all `editbox.tpl`, vtable @0x140316028). A left click on it presses the clear button first
-//! (`sub_140272B50` / `sub_140274190`) and focuses it (`sub_1401941B0`); a click elsewhere unfocuses it
-//! (`sub_140194240`). While focused it takes the keyboard: printable characters (`sub_140194990`), Backspace,
-//! Enter (unfocus, `sub_140194A60`); Esc unfocuses it instead of closing the window (`sub_140274140`). The
-//! text is cut to the box's `Width` − 10 px (`sub_140194F80`). The clear button shows while the text is not
-//! empty; closing the window empties it (`sub_140275370`). Caret, selection, Delete, key repeat and
-//! Ctrl+A/C/V are `gd_sim::edit`. PORT: the clipboard is process-local ([`Clipboard`]); a click focuses
+//! (all `editbox.tpl`, an `EditBox`). A left click on it presses the clear button first
+//! (`MarketWindow::HandleMouseEvent` / `MarketWindow::ClearSearch`) and focuses it (`EditBox::Focus`); a click
+//! elsewhere unfocuses it (`EditBox::Unfocus`). While focused it takes the keyboard: printable characters
+//! (`EditBox::HandleKey` / `EditBox::RejectsText`), Backspace, Enter (unfocus); Esc unfocuses it instead of closing
+//! the window (`MarketWindow::HandleEscape`). The text is cut to the box's `Width` − 10 px (`EditBox::ClipText`). The
+//! clear button shows while the text is not empty; closing the window empties it (`MarketWindow::SetVisible`). Caret,
+//! selection, Delete, key repeat and Ctrl+A/C/V are `gd_sim::edit`. PORT: the clipboard is process-local
+//! ([`Clipboard`]); a click focuses
 //! with the caret at the end. The search lines are `Item::GenerateSearchText`'s
 //! (`gd_sim::items::tooltip_item::item_search_text`). The caravan window searches the shown
-//! stash's pages the same way (`sub_1401360A0` / `sub_140130900`; the query survives the personal /
-//! transfer toggle). PORT: the transfer view's Materials / Components plates are not searched. The crafting
-//! panel filters its recipe list instead (`crafting.rs`, `sub_14019B7F0` / `sub_140199B20`).
+//! stash's pages the same way (`CaravanWindow::FilterStash` / `CaravanWindow::MatchesSearch`; the query survives
+//! the personal / transfer toggle). PORT: the transfer view's Materials / Components plates are not searched. The
+//! crafting panel filters its recipe list instead (`crafting.rs`, `CraftList::CacheQuery` /
+//! `CraftList::FilterRows`).
 use super::*;
+use gd_ui::state::trade::{Clipboard, Panel, Trade, TradeSearch, search_box_record};
 
 /// The focused trade-window search box takes the keyboard (module doc): typed
 /// text, Backspace, Enter / Esc unfocus; the game's keys see nothing
@@ -20,18 +23,18 @@ use super::*;
 /// has no search box; the crafting panel keeps it while another tab shows.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn search_input(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<Trade>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
-    data: Res<crate::data::GameData>,
-    fonts: ResMut<crate::ui::text::FontCache>,
+    data: Res<gd_game_core::data::GameData>,
+    fonts: ResMut<gd_ui_kit::text::FontCache>,
     mut font_assets: ResMut<Assets<Font>>,
     mut hooked: Local<bool>,
     time: Res<Time>,
     mut clipboard: ResMut<Clipboard>,
     mut mods: Local<(bool, bool)>,
-    pause: Res<gd_game::pause::GamePause>,
+    pause: Res<gd_game_core::pause::GamePause>,
 ) {
     use bevy::input::keyboard::Key;
     use gd_sim::edit::EditKey;
@@ -177,14 +180,14 @@ pub(super) fn search_hits(
     mut trade: ResMut<Trade>,
     markets: Res<Markets>,
     stash: Option<Res<Stash>>,
-    mut craft: Option<ResMut<crate::crafting::CraftList>>,
-    data: Res<crate::data::GameData>,
-    fonts: Res<crate::ui::text::FontCache>,
+    mut craft: Option<ResMut<gd_ui::state::crafting::CraftList>>,
+    data: Res<gd_game_core::data::GameData>,
+    fonts: Res<gd_ui_kit::text::FontCache>,
     inv: Option<Res<Inventory>>,
     progress: Option<Res<PlayerProgress>>,
-    hud: Res<crate::ui::HudValues>,
-    rules: Option<Res<crate::combat::CombatRules>>,
-    players: Query<&crate::combat::Combatant, With<Player>>,
+    hud: Res<gd_ui::HudValues>,
+    rules: Option<Res<gd_game_core::rules::CombatRules>>,
+    players: Query<&gd_game_core::combat::Combatant, With<Player>>,
 ) {
     // Nothing the search reads changed this frame.
     if !trade.is_changed()

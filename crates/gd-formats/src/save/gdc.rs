@@ -1,8 +1,8 @@
 //! `player.gdc` — the character file.
 //!
-//! Structure (Game.dll): `Player::WriteNewFormatHeader` (0x1803d9270),
-//! `Player::ReadNewFormatHeader` (0x1803d9020), `Player::SaveNewFormatData`
-//! (0x1803dba00), `Player::LoadNewFormatData` (0x1803d9480) and the per-component
+//! Structure (Game.dll): `Player::WriteNewFormatHeader`,
+//! `Player::ReadNewFormatHeader`, `Player::SaveNewFormatData`,
+//! `Player::LoadNewFormatData` and the per-component
 //! `WriteProperties` functions; offsets/types/order are
 //! from the writer. Field names come from tying each written member to
 //! the game code that names it: block 1 by the `Player`/`Character` accessors
@@ -224,7 +224,7 @@ pub struct ExtraSkill {
     pub source_name: String,
 }
 
-/// Block 8 (v8): `SkillManager::WriteProperties` (0x18052c940).
+/// Block 8 (v8): `SkillManager::WriteProperties`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skills {
     pub version: u32,
@@ -252,7 +252,7 @@ pub struct Faction {
     pub negative_boost: f32,
 }
 
-/// Block 13 (v5): `FactionPack::WriteProperties` (0x1802a4fc0).
+/// Block 13 (v5): `FactionPack::WriteProperties`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Factions {
     pub version: u32,
@@ -296,7 +296,7 @@ pub struct HotSlotBar {
     pub slots: Vec<HotSlot>,
 }
 
-/// Block 14 (v7): UI state (`sub_1803CC0B0`), `PlayerHotSlotCtrl` and camera distance.
+/// Block 14 (v7): UI state (`Player::WriteUiState`), `PlayerHotSlotCtrl` and camera distance.
 /// The UI record (`unk1` byte, `unk2` u32, the slots, `unk3` byte) is
 /// known to carry no game state: `SaveNewFormatData` always writes a
 /// freshly constructed one (all zero/empty, first slot flag 1) and
@@ -330,9 +330,9 @@ pub struct PerDifficultyStats {
     pub last_monster_hit_by: String,
 }
 
-/// Block 16 (v12): `PlayStats::WriteProperties` (0x180400950) + two Player u32s.
+/// Block 16 (v12): `PlayStats::WriteProperties` + two Player u32s.
 /// Names come from the members' accessors and the equation variable names
-/// of `PlayStats::ResolveEquationVariable` (Game.dll 0x1804037e0): play time
+/// of `PlayStats::ResolveEquationVariable` (Game.dll): play time
 /// (seconds; `GetPlayTimeInMinutes` divides by 60), `IncrementDeaths`,
 /// `IncrementKills` (kills, experience, champion-or-better and hero kills,
 /// per-difficulty boss kills, Ultimate veteran boss kills, and "hits

@@ -7,13 +7,13 @@
 // Bevy system parameters (queries with filters, param tuples) are long by
 // nature; Bevy recommends allowing this lint for them.
 #![allow(clippy::type_complexity)]
-use gd_game::{afflictions, collision, combat, consumables, data, save};
+use gd_game::{afflictions, collision, combat, consumables, data};
 mod ascendant;
 #[cfg(feature = "dev")]
 mod dev;
 mod exit;
 mod hooks;
-use gd_game::hooks::Hooks;
+use gd_game_core::hooks::Hooks;
 mod audio;
 mod breakables;
 mod camera_input;
@@ -44,13 +44,13 @@ mod physics_decoration;
 mod player;
 mod ragdoll;
 mod record_facts;
+mod render_devices;
 mod reroll;
 mod riftgates;
 mod session;
 mod settings;
 mod sheet_dps;
 mod story;
-mod tooltip;
 mod trade;
 mod ui;
 mod weather;
@@ -74,8 +74,39 @@ fn main() {
     let hooks = Hooks::from_env();
     #[cfg(not(feature = "dev"))]
     let hooks = Hooks::default();
+    // The `device` option (int 7) picks the launch adapter: read the options file early (the same file
+    // `settings::load` reads at PreStartup), enumerate the wgpu adapters once and pass the choice to
+    // `WgpuSettings` below. PORT: applied at the NEXT launch only (no hot-swap); an out-of-range index
+    // keeps Bevy's default adapter. `WGPU_ADAPTER_NAME` still overrides the name (Bevy reads it itself).
+    let options_file = hooks
+        .session
+        .options_file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(gd_ui_kit::state::settings::path);
+    let device = std::fs::read_to_string(&options_file)
+        .map(|text| gd_game_core::options::GameOptions::parse(&text).int("device"))
+        .unwrap_or(0);
+    let adapters = render_devices::enumerate();
+    let adapter = usize::try_from(device)
+        .ok()
+        .and_then(|i| adapters.get(i))
+        .and_then(|a| render_devices::backend_of(&a.backend).map(|b| (a.name.clone(), b)));
+    let mut wgpu_settings = bevy::render::settings::WgpuSettings {
+        memory_hints: bevy::render::settings::MemoryHints::Manual {
+            suballocated_device_memory_block_size: (512 << 20)..(512 << 20),
+        },
+        ..default()
+    };
+    if let Some((name, backend)) = &adapter {
+        wgpu_settings.adapter_name = Some(name.clone());
+        // The name match is a substring: restrict the backend too, so an adapter of another backend
+        // sharing the name cannot win.
+        wgpu_settings.backends = Some(wgpu::Backends::from(*backend));
+    }
     let mut app = App::new();
     app.insert_resource(hooks.clone())
+        .insert_resource(render_devices::RenderAdapters { entries: adapters })
         .add_plugins(
             DefaultPlugins
                 // The doll and portrait cameras carry the light rig in their `ColorGrading` with
@@ -86,22 +117,8 @@ fn main() {
                     filter: "wgpu=error,naga=warn,bevy_core_pipeline::tonemapping=error".into(),
                     ..default()
                 })
-                // Upload staging out of the small (~256 MiB without Resizable BAR) device-local host-visible
-                // heap. wgpu stages every `write_buffer` / `create_buffer_init` in `CpuToGpu` memory, which
-                // gpu-allocator puts in that heap while a block fits (other processes share it, so this varied
-                // run to run). CPU writes there ran at ~25 MB/s (NVIDIA RTX 3060), so Bevy's per-frame skin,
-                // cluster and mesh-uniform uploads took ~70 ms and a crowded scene (the Emissary hub) fell to
-                // 10 fps. Host blocks of 256 MiB (wgpu makes them half the device size; gpu-allocator caps both
-                // at 256 MiB) cannot fit in that heap, so gpu-allocator falls back to host memory. With
-                // Resizable BAR the heap is large and staging stays there, as with the default hints.
                 .set(bevy::render::RenderPlugin {
-                    render_creation: bevy::render::settings::WgpuSettings {
-                        memory_hints: bevy::render::settings::MemoryHints::Manual {
-                            suballocated_device_memory_block_size: (512 << 20)..(512 << 20),
-                        },
-                        ..default()
-                    }
-                    .into(),
+                    render_creation: wgpu_settings.into(),
                     ..default()
                 })
                 .set(WindowPlugin {
@@ -135,7 +152,7 @@ fn main() {
             menu_scene::MenuPlugin,
         ))
         .add_plugins(gd_render::fx::FxPlugin)
-        .add_plugins(ui::UiPlugin)
+        .add_plugins((gd_ui::UiPlugin, ui::UiPlugin))
         .add_plugins(story::StoryPlugin)
         .add_plugins(heap::HeapPlugin)
         .add_plugins((
@@ -150,7 +167,7 @@ fn main() {
             casting::CastingViewPlugin,
             loot::LootPlugin,
             inventory::InventoryPlugin,
-            tooltip::TooltipPlugin,
+            gd_ui::tooltip::TooltipPlugin,
         ))
         .add_plugins((
             chests::ChestsPlugin,
@@ -186,6 +203,7 @@ fn main() {
             pets::PetInputPlugin,
             ascendant::AscendantPlugin,
             settings::SettingsPlugin,
+            render_devices::RenderDevicesPlugin,
         ))
         .add_systems(Startup, setup_lighting)
         .add_systems(PostStartup, place_camera)
@@ -196,6 +214,11 @@ fn main() {
             Color::BLACK
         }))
         .add_systems(Update, follow_focus);
+    // The logger exists once DefaultPlugins are built (LogPlugin installs its subscriber in `build`).
+    match &adapter {
+        Some((name, backend)) => info!("render adapter: {name} ({backend:?})"),
+        None => info!("render adapter: Bevy default"),
+    }
     #[cfg(feature = "dev")]
     app.add_plugins(dev::DevPlugin);
     app.run();
@@ -234,11 +257,11 @@ fn game_root() -> Result<std::path::PathBuf, String> {
             c
         }
     };
-    data::find_install(candidates).map_err(|tried| {
+    gd_game_core::data::find_install(candidates).map_err(|tried| {
         let tried: Vec<String> = tried.iter().map(|p| p.display().to_string()).collect();
         format!(
             "no Grim Dawn install found (no {} in: {}); start with --game-dir <the Grim Dawn folder>",
-            data::INSTALL_MARKER,
+            gd_game_core::data::INSTALL_MARKER,
             tried.join(", ")
         )
     })

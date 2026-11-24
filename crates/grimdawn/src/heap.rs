@@ -1,6 +1,6 @@
 //! Returning freed memory to the system. glibc's allocator keeps what the program frees inside its arenas (one per
 //! thread that allocates; only free space at an arena's top goes back), so after an unloaded level's assets go (its
-//! models, textures, effects and sounds go with their last holder, `gd_game::weak_cache`; its models and terrain
+//! models, textures, effects and sounds go with their last holder, `gd_game_core::weak_cache`; its models and terrain
 //! layers only once they stop lingering, `world::Lingering`) or a session ends, the resident set would stay at its
 //! peak. After such a free event (fewer loaded levels, lingering levels let go, a new `SessionEpoch`) and `SETTLE` of
 //! real time with no level building or spawning (`StreamedMap::busy`), a background task runs `malloc_trim(0)`, which
@@ -47,10 +47,10 @@ struct Trim {
 /// is idle and unless the last one still runs.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim_after_free(
-    levels: Res<gd_game::levels::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
     lingering: Res<crate::world::Lingering>,
     streamed: Option<Res<crate::world::StreamedMap>>,
-    epoch: Res<gd_game::session::SessionEpoch>,
+    epoch: Res<gd_game_core::session::SessionEpoch>,
     time: Res<Time<Real>>,
     mut trim: Local<Trim>,
 ) {

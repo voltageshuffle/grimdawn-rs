@@ -3,38 +3,38 @@
 //! `waveEndWidth`, hitting each foe once as its front passes.
 //!
 //! Game.dll (`Skill_AttackWave`; `Skill_WPAttack_AttackWave`'s
-//! `Update` @0x180512aa0 / `RunTargeting` @0x180514f70 are the same code):
-//! - `Load` @0x1804e0840 (class-level, not per level): `waveTime` × 1000 ms
+//! `Update` / `RunTargeting` are the same code):
+//! - `Load` (class-level, not per level): `waveTime` × 1000 ms
 //!   clamped to [1, 30000], `waveDepth` clamped to [0.01, 20], `fxPakExtents`
 //!   / `fxPakSpawnDistance` / `fxPakRandOffsetX` / `fxPakRandOffsetY` /
 //!   `fxPakRandAngle` / `fxPakAlternate`, `waveEffectName` (a trail),
 //!   `lineEffectName` (an effect), `fxPakName`, `waveStartSound`,
 //!   `waveLoopSound`, `waveSource` (`Source` / `Target`), `useTargetDir`,
 //!   `launchOffset`, `launchAttachPointName`. The per-level `waveStartWidth`,
-//!   `waveEndWidth`, `waveDistance` are `SkillProfile` fields (+0x68 / +0x6C
-//!   / +0x70, loader @0x18054a660), taken with the learned modifiers'
-//!   (`GetSkillModifierData`, vtable +744).
-//! - `ActivateNow` @0x1804e1f00 places the wave: `waveSource` Target starts
+//!   `waveEndWidth`, `waveDistance` are `SkillProfile_Modifiers` fields (loader
+//!   `SkillProfile_Modifiers::Load`), taken with the learned modifiers'
+//!   (`GetSkillModifierData`).
+//! - `ActivateNow` places the wave: `waveSource` Target starts
 //!   it at the validated target (none: no wave) heading away from the
 //!   caster; Source at the caster heading toward the target (else the cast
 //!   point) with `useTargetDir`, else along the caster's facing; a zero
 //!   direction falls back to the facing. `waveSource` is an exact match
 //!   (`ResolveEnum_Source`: only `Target` is 1; `Source;Target` is Source).
 //!   With a `launchAttachPointName` a Source wave starts at that point of
-//!   the caster's mesh instead (`Actor::GetAttachedCoords`, Engine.dll
-//!   @0x1800274c0: the point at the current pose × the actor's coords; a name
+//!   the caster's mesh instead (`Actor::GetAttachedCoords`, Engine.dll:
+//!   the point at the current pose × the actor's coords; a name
 //!   the mesh lacks gives the actor's own coords), put on the floor, and the
 //!   `useTargetDir` heading is from there. `Name` ids are case-sensitive
-//!   (`Name::Create` @0x180150150 hashes the raw bytes; the mesh lookup
+//!   (`Name::Create` hashes the raw bytes; the mesh lookup
 //!   compares ids), so the Questing Beast tail spit's `FxForwardGround` misses
 //!   its mesh's `FXForwardGround` and starts at the beast; the Dread's
 //!   `FX_ForwardMidGround` is 4.5 m ahead. Every point is raised 1.25 m
-//!   (`Skill_AttackWave` +1716, ctor), which the floor walks below undo. The
+//!   (`Skill_AttackWave.launchHeight`, ctor), which the floor walks below undo. The
 //!   origin moves `launchOffset` along the heading
-//!   (`Skill_WPAttack_AttackWave::ActivateNow` @0x180513e80 has no launch
+//!   (`Skill_WPAttack_AttackWave::ActivateNow` has no launch
 //!   point or offset and always heads from the caster to the target, else the
 //!   cast point). It sends an
-//!   attack with no targets, whose `TargetResult` @0x1804e23d0 creates the
+//!   attack with no targets, whose `TargetResult` creates the
 //!   wave: widths clamped to [0.1, 20], length `waveDistance` clamped to
 //!   [1, `GetWaveDistanceLimit` = 50]. A walk from the origin in 1 m steps
 //!   along the floor (1 m above it) stops at the first static level object
@@ -42,31 +42,31 @@
 //!   `collision.rs`; never a door) the step meets: the wave's length ends
 //!   there, while the width keeps growing over the full length. The start
 //!   sound plays at the origin, the trail / line effect start there.
-//! - Effects (`GetEffect` @0x1804e37b0: the last enabled modifier's
+//! - Effects (`GetEffect`: the last enabled modifier's
 //!   `waveEffectOverride` / `lineEffectOverride` / `waveFxPakOverride`, else
 //!   the skill's `waveEffectName` / `lineEffectName` / `fxPakName`). The trail
 //!   is created as a `TrailEffect` and the line effect as an `EffectEntity`;
 //!   a record of another class is dropped (`CreateObjectFromFile` class
-//!   check, sub_1804B58B0 / sub_1800375A0; every stock `lineEffectName` is
+//!   check, `Game::CreateObjectOfClass` / `Game::CheckObjectClass`; every stock `lineEffectName` is
 //!   an `EffectEntity`, no stock skill sets `waveEffectName`). Both start at
 //!   the origin with anchors (the trail's `SetAnchorPoints`, the line
 //!   effect's `SetAnchored` + `SetAnchor1/2`) at ∓ start width / 2 along the
 //!   coords' x axis.
-//! - `Update` @0x1804e0c20, per frame: `current` = min(elapsed / waveTime, 1)
+//! - `Update`, per frame: `current` = min(elapsed / waveTime, 1)
 //!   × length (so the wave always takes `waveTime`, even when cut short); the
 //!   front is at `current + waveDepth`, as wide as
 //!   `start + front / full length × (end − start)`; the trail and the line
 //!   effect move to the front (put on the floor) and their anchors to ∓ that
-//!   width / 2 across it ([`crate::visuals::EffectAnchors`]: an anchored
+//!   width / 2 across it ([`gd_game_core::visuals::EffectAnchors`]: an anchored
 //!   emitter emits along the band between them). Between those two points it
 //!   disturbs the grass and water (`World::CreateLineDisturbance`, strength 2,
-//!   no splash; [`crate::visuals::LineDisturbance`]). The fx pak drops along the
+//!   no splash; [`gd_game_core::visuals::LineDisturbance`]). The fx pak drops along the
 //!   front each `fxPakSpawnDistance` (1.5 m before the first), at both ends
 //!   of a row `width − fxPakExtents` wide and every `fxPakExtents` from its
 //!   right end, each moved by random `fxPakRandOffsetX` sideways and forward,
 //!   `fxPakRandOffsetY` down and turned by random `fxPakRandAngle`°, only on
 //!   the nav mesh (`fxPakAlternate`: just the two ends turned ±90°).
-//!   Targeting ([`slice`], `RunTargeting` @0x1804e31b0) runs when
+//!   Targeting ([`slice`], `RunTargeting`) runs when
 //!   `current − last ≥ waveDepth` or on the last frame (`current + depth ≥
 //!   length`): the band from `last` to `current + depth` (on the last frame
 //!   to `length + depth`) is a frustum, its near / far edges as wide as the
@@ -76,8 +76,8 @@
 //!   secondaries on that list at the wave's origin coordinates. The wave ends
 //!   on that last frame (the effects stop, the loop sound fades).
 //! - The underground stop, first thing each frame: only when the caster's
-//!   region `IsUnderground` (Engine.dll @0x180194160: its level has a
-//!   `GridRegion`, which `Level::Load` @0x18012c770 makes only for grid
+//!   region `IsUnderground` (Engine.dll: its level has a
+//!   `GridRegion`, which `Level::Load` makes only for grid
 //!   terrain; every stock level is a heightfield, `gd_formats::map::level`),
 //!   a ray from the origin along the heading ends the wave when the level
 //!   geometry it meets within `current` has surface 0
@@ -93,14 +93,14 @@
 //! `GetDirection` between the raised points can tilt); a foe counts when its
 //! world box (`Combatant::body_box`, the engine's bounds) meets the band's
 //! planes (the box's projected half extents; the side planes upright); the fx paks' random offsets draw from
-//! the gameplay stream (`crate::rng`; the engine's CRT `rand`); the
+//! the gameplay stream (`gd_game_core::rng`; the engine's CRT `rand`); the
 //! trail's `SetLowEfficiencyMode` is not modelled.
-use crate::casting::SkillHit;
-use crate::combat::{Combatant, Dead};
-use crate::data::GameData;
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::casting::SkillHit;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
 
 pub struct WavesPlugin;
 
@@ -110,15 +110,15 @@ impl Plugin for WavesPlugin {
             Update,
             travel
                 .in_set(crate::casting::CastingSet)
-                .after(crate::player::PlayerSet)
-                .before(crate::combat::CombatSet),
+                .after(gd_game_core::player::PlayerSet)
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
 
-/// `GetWaveDistanceLimit` (`Skill::GetWaveDistanceLimit` @0x18049f1d0).
+/// `GetWaveDistanceLimit` (`Skill::GetWaveDistanceLimit`).
 const DISTANCE_LIMIT: f32 = 50.0;
-/// The targeting frustum's height (`Skill_AttackWave` +1720, 5.0, ctor).
+/// The targeting frustum's height (`Skill_AttackWave.frustumHeight`, 5.0, ctor).
 const HEIGHT: f32 = 5.0;
 
 /// A travelling wave (the gameplay state; its `Transform` is the front's
@@ -143,7 +143,7 @@ pub struct Wave {
     /// Travel time and time so far (s).
     pub time: f32,
     pub elapsed: f32,
-    /// Distance targeted so far (`WaveInfo` +24).
+    /// Distance targeted so far (`WaveInfo.lastDistance`).
     pub last: f32,
     /// Foes it has hit (each once).
     pub hit: Vec<Entity>,
@@ -231,7 +231,7 @@ pub(crate) fn launch_point(
     name: &str,
 ) -> Vec3 {
     body.filter(|b| b.attach_points().iter().any(|p| p.name == name))
-        .and_then(|b| crate::casting::attach_point_bind(b, name))
+        .and_then(|b| gd_game_core::casting::attach_point_bind(b, name))
         .map_or(caster_tf.translation, |local| {
             caster_tf.transform_point(local)
         })
@@ -240,9 +240,9 @@ pub(crate) fn launch_point(
 /// The engine's line / trail anchors across the front at `at`, `width`
 /// wide: along the coords' x axis (`LookIn` with +Y up: (z, 0, −x) of the
 /// heading), anchor 1 at −width / 2.
-fn anchors(at: Vec3, dir: Vec3, width: f32) -> crate::visuals::EffectAnchors {
+fn anchors(at: Vec3, dir: Vec3, width: f32) -> gd_game_core::visuals::EffectAnchors {
     let side = Vec3::new(dir.z, 0.0, -dir.x) * width * 0.5;
-    crate::visuals::EffectAnchors(at - side, at + side)
+    gd_game_core::visuals::EffectAnchors(at - side, at + side)
 }
 
 /// A frame at `at`, facing `dir` (+Z), `width` across (the trail's anchor).
@@ -284,14 +284,14 @@ pub fn start(
     coll: &crate::collision::WorldCollision,
     rec: &Record,
     lf: &dyn Fn(&str) -> f32,
-    cast: &crate::casting::Casting,
+    cast: &gd_game_core::casting::Casting,
     caster: Entity,
     caster_tf: &Transform,
     target: Option<Vec3>,
     mods: &[(Record, usize)],
     body: Option<&gd_formats::msh::Mesh>,
 ) -> Option<Wave> {
-    let facing = crate::character::facing_flat(caster_tf);
+    let facing = gd_game_core::character::facing_flat(caster_tf);
     let at = caster_tf.translation;
     let pool = rec.class == "Skill_WPAttack_AttackWave";
     // A `Source` wave starts at the named launch point (put on the floor
@@ -341,7 +341,7 @@ pub fn start(
     }
     let time = (rec.f32("waveTime").unwrap_or(0.0) * 1000.0).clamp(1.0, 30000.0) / 1000.0;
     let depth = rec.f32("waveDepth").unwrap_or(0.0).clamp(0.01, 20.0);
-    // `Skill_WPAttack_AttackWave::GetEffect(2)` @0x1804e37b0: the last learned modifier's
+    // `Skill_WPAttack_AttackWave::GetEffect(2)`: the last learned modifier's
     // `waveFxPakOverride` replaces the skill's `fxPakName`.
     let pak_name = effect_name(rec, mods, "fxPakName", "waveFxPakOverride");
     let fx_pak = pak_name.filter(|s| data.db.get(s).is_some()).map(|s| {
@@ -392,7 +392,7 @@ pub fn start(
 pub fn spawn(commands: &mut Commands, rec: &Record, mut wave: Wave) {
     let tf = Transform::from_translation(wave.origin).looking_to(-wave.dir, Vec3::Y);
     if let Some(pak) = rec.str("waveStartSound") {
-        commands.write_message(crate::visuals::PlaySound {
+        commands.write_message(gd_game_core::visuals::PlaySound {
             pak: pak.to_owned(),
             at: Some(wave.origin),
         });
@@ -401,7 +401,7 @@ pub fn spawn(commands: &mut Commands, rec: &Record, mut wave: Wave) {
     if let Some(t) = wave.trail_name.clone() {
         let owner = commands.spawn(trail_frame(at, dir, w)).id();
         let trail = commands
-            .spawn(crate::visuals::TrailRequest {
+            .spawn(gd_game_core::visuals::TrailRequest {
                 owner,
                 record: t,
                 width: 0.0,
@@ -411,14 +411,14 @@ pub fn spawn(commands: &mut Commands, rec: &Record, mut wave: Wave) {
         wave.riders.trail = Some((owner, trail));
     }
     if let Some(fx) = wave.line_name.clone() {
-        let mut spec = crate::visuals::EffectSpec::record(fx);
+        let mut spec = gd_game_core::visuals::EffectSpec::record(fx);
         spec.despawn_when_complete = true;
         wave.riders.line = Some(commands.spawn((spec, tf, anchors(at, dir, w))).id());
     }
     let e = commands.spawn((wave, tf)).id();
     if let Some(pak) = rec.str("waveLoopSound").filter(|s| !s.is_empty()) {
         commands.spawn((
-            crate::visuals::SoundLoop {
+            gd_game_core::visuals::SoundLoop {
                 pak: pak.to_owned(),
                 on: Some(e),
                 at: tf.translation,
@@ -429,7 +429,7 @@ pub fn spawn(commands: &mut Commands, rec: &Record, mut wave: Wave) {
     }
 }
 
-/// The fx pak row at `x` metres out (`Update`'s drop), random offsets from the gameplay stream (`crate::rng`).
+/// The fx pak row at `x` metres out (`Update`'s drop), random offsets from the gameplay stream (`gd_game_core::rng`).
 fn drop_row(commands: &mut Commands, data: &GameData, nav: &Nav, w: &Wave, x: f32) {
     let Some((pak, f)) = &w.fx_pak else { return };
     let f = *f;
@@ -453,7 +453,7 @@ fn drop_row(commands: &mut Commands, data: &GameData, nav: &Nav, w: &Wave, x: f3
             points.push((right - side * f.extents * i as f32, 0.0));
         }
     }
-    let r = |a: f32| (crate::rng::f32() * 2.0 - 1.0) * a;
+    let r = |a: f32| (gd_game_core::rng::f32() * 2.0 - 1.0) * a;
     let yaw0 = w.dir.x.atan2(w.dir.z);
     for (p, turn) in points {
         let p = p
@@ -465,7 +465,7 @@ fn drop_row(commands: &mut Commands, data: &GameData, nav: &Nav, w: &Wave, x: f3
         }
         let yaw = yaw0 + turn + r(f.angle).to_radians();
         let tf = Transform::from_translation(p).with_rotation(Quat::from_rotation_y(yaw));
-        crate::visuals::spawn_fx(commands, data, pak, tf);
+        gd_game_core::visuals::spawn_fx(commands, data, pak, tf);
     }
 }
 
@@ -479,7 +479,10 @@ fn travel(
     coll: Res<crate::collision::WorldCollision>,
     mut waves: Query<(Entity, &mut Wave, &mut Transform)>,
     mut riders: Query<
-        (&mut Transform, Option<&mut crate::visuals::EffectAnchors>),
+        (
+            &mut Transform,
+            Option<&mut gd_game_core::visuals::EffectAnchors>,
+        ),
         (Without<Wave>, Without<Combatant>),
     >,
     foes: Query<
@@ -514,9 +517,9 @@ fn travel(
             }
         }
         // `Update`: `World::CreateLineDisturbance` across the front between the same two points, strength
-        // 2 (flt @0x1807a8098), no splash.
+        // 2 (the float constant `Skill_AttackWave::kDisturbanceStrength`), no splash.
         let ends = anchors(at, w.dir, width);
-        commands.write_message(crate::visuals::LineDisturbance {
+        commands.write_message(gd_game_core::visuals::LineDisturbance {
             from: ends.0,
             to: ends.1,
             strength: 2.0,
@@ -615,12 +618,14 @@ const BODY_REACH: f32 = 20.0;
 
 fn stop(commands: &mut Commands, e: Entity, w: &Wave) {
     if let Some(l) = w.riders.line {
-        commands.entity(l).try_insert(crate::visuals::StopEmitting);
+        commands
+            .entity(l)
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
     if let Some((owner, trail)) = w.riders.trail {
         commands
             .entity(trail)
-            .try_insert(crate::visuals::StopEmitting);
+            .try_insert(gd_game_core::visuals::StopEmitting);
         commands.entity(owner).try_despawn();
     }
     commands.entity(e).try_despawn();

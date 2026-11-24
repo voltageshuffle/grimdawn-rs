@@ -1,13 +1,13 @@
 //! Attribute schema: the engine's attribute enums and the database field
 //! names that feed them (Game.dll).
 //!
-//! - [`CharAttr`] = `GAME::CharAttributeType`: index into the 58-slot
+//! - [`CharAttr`] = `CharAttributeType`: index into the 58-slot
 //!   `CharAttributeAccumulator` (character stats: Physique/Cunning/Spirit,
 //!   life, energy, OA/DA, speeds, dodge, requirement reductions, ...).
 //!   Numbers come from each `CharAttributeVal_*`/`CharAttributeMod_*`
-//!   constructor (`this+8 = type`, `this+64 = field name`).
-//! - [`CombatType`] = `GAME::CombatAttributeType`: damage/defense/debuff
-//!   kinds; names from the debug-name switch `sub_1801225F0`.
+//!   constructor (`Attribute.type` = type, `CharAttribute.valueTag` = field name).
+//! - [`CombatType`] = `CombatAttributeType`: damage/defense/debuff
+//!   kinds; names from the debug-name switch `CombatAttribute::GetTypeName`.
 //! - [`FIELDS`](crate::catalog::FIELDS): every DB field name the
 //!   offense/defense/retaliation/character/skill attribute classes load
 //!   (provenance and invariants in [`crate::catalog`]); [`lookup`] finds the
@@ -15,7 +15,7 @@
 use crate::catalog::FIELDS;
 use std::sync::LazyLock;
 
-/// `GAME::CharAttributeType` (constructor type ids).
+/// `CharAttributeType` (constructor type ids).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum CharAttr {
@@ -169,7 +169,7 @@ const _: () = {
     }
 };
 
-/// `GAME::CombatAttributeType` (`sub_1801225F0` name switch + the
+/// `CombatAttributeType` (`CombatAttribute::GetTypeName` name switch + the
 /// `GetType` virtual of every attribute class).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
@@ -325,7 +325,7 @@ impl CombatType {
 
     /// The "elemental" test used by resistance reduction:
     /// `((t - 5) & ~3) == 0 && t != 7` -> Cold, Fire, Lightning (
-    /// `CombatAttributeAbsDefense::Process` @0x180115370).
+    /// `CombatAttributeAbsDefense::Process`).
     pub fn is_elemental(self) -> bool {
         matches!(
             self,
@@ -636,8 +636,8 @@ impl FieldDef {
     }
 }
 
-/// The order `DamageAttributeStore_Equipment::Load` @0x1801a8150 /
-/// `DamageAttributeStore_Skill::Load` @0x1801a8cc0 create their attribute
+/// The order `DamageAttributeStore_Equipment::Load` /
+/// `DamageAttributeStore_Skill::Load` create their attribute
 /// classes in (the skill store is the same order without the
 /// `…Base` classes in front). Attributes reach a store's lists in this
 /// order, which decides the global "one of" pick on the character sheet.
@@ -797,6 +797,8 @@ pub fn class_def(class: &str) -> Option<&'static FieldDef> {
 }
 
 /// FNV-1a of `s` ASCII-lowercased: equal for names equal ignoring ASCII case.
+/// An internal index key, no engine parity claim; FNV keeps the case fold
+/// allocation-free on the lookup path.
 fn folded_hash(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ b.to_ascii_lowercase() as u64).wrapping_mul(0x0000_0100_0000_01b3)

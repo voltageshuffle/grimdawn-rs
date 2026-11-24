@@ -114,7 +114,7 @@ fn extract_hot(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(m + settings.bloom.z * (r - vec3<f32>(m)), 1.0);
 }
 
-// sub_1800A48A0: gain · {.10,.11,.14,.15,.15,.14,.11,.10} at ±{0.5..3.5}
+// `GraphicsCanvas_Blur8Tap`: gain · {.10,.11,.14,.15,.15,.14,.11,.10} at ±{0.5..3.5}
 // source texels.
 fn blur(uv: vec2<f32>, step: vec2<f32>, gain: f32) -> vec4<f32> {
     let w = array<f32, 8>(0.10, 0.11, 0.14, 0.15, 0.15, 0.14, 0.11, 0.10);
@@ -156,7 +156,7 @@ const AO_KERNEL = array<vec3<f32>, 8>(
     vec3<f32>(0.038510, -0.939059, 0.038510),
 );
 
-// The 4 × 4 rotation texture (sub_1800A2230) as the shader reads it
+// The 4 × 4 rotation texture (`GraphicsCanvas::CreateSsaoRotationTexture`) as the shader reads it
 // (byte / 255 · 2 − 1): the first 16 vectors of a seed-1 MSVC rand() stream.
 const AO_ROTATION = array<vec3<f32>, 16>(
     vec3<f32>(-0.850980, 0.105882, -0.521569),
@@ -216,7 +216,7 @@ fn ao_create(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(vec3<f32>(occ * (1.0 - settings.ao.y) + settings.ao.y), 1.0);
 }
 
-// sub_1800A48A0 with gain 1 and spread 1 (`Engine` +3072).
+// `GraphicsCanvas_Blur8Tap` with gain 1 and spread 1 (`Engine.ssaoBlurSpread`).
 @fragment
 fn ao_blur_v(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return blur(in.uv, step_v(), 1.0);

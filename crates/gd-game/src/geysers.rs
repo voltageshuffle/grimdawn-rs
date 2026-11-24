@@ -5,14 +5,14 @@
 //! around the boss's arena.
 //!
 //! Game.dll:
-//! - `LoadResources` @0x1804f3690: `numGeysersToFire` (int, default 0) and
+//! - `LoadResources`: `numGeysersToFire` (int, default 0) and
 //!   `findClosest` (default false) on top of `Skill::LoadResources`.
-//! - `ActivateNow` @0x1804f36f0: the skill's projectile launcher (none:
+//! - `ActivateNow`: the skill's projectile launcher (none:
 //!   nothing happens); `World::GetEntitiesInSphere` of 45 m around the
 //!   caster, keeping the `CharonGeyserMarker`s (RTTI); `numGeysersToFire`
 //!   < 0 fires them all, else min(n, found): with `findClosest` the n nearest
-//!   to the caster (sorted, sub_1801515D0), else n drawn at random without
-//!   replacement (`rand() % left`, sub_1804F3D30). Each one launches the
+//!   to the caster (sorted, `Game::FindClosestEntities`), else n drawn at random without
+//!   replacement (`rand() % left`, `Game::DrawWithoutReplacement`). Each one launches the
 //!   skill's area-effect projectile at the marker's coordinates
 //!   (`ClearHitIteration` between them, so each area hits on its own): an
 //!   ordinary `ProjectileAreaEffect` for `skillActiveDuration`, radius
@@ -23,16 +23,16 @@
 //! The markers are level entities (`CharonGeyserMarker` class records, e.g.
 //! `ellena_geysers_marker.dbr`), streamed in with their level as
 //! [`GeyserMarker`]s (`monsters::populate`). In the game the marker
-//! draws nothing: its constructor @0x1804f34d0 (an `Actor`) calls
-//! `SetVisibility(false)` unless `Engine::IsEditorMode` (Engine.dll, `gEngine`
-//! +658), and `Load` @0x1804f3540 only forces the editor's default mesh
+//! draws nothing: its constructor (an `Actor`) calls
+//! `SetVisibility(false)` unless `Engine::IsEditorMode` (Engine.dll, `Engine.editorMode`),
+//! and `Load` only forces the editor's default mesh
 //! (`System/Meshes/Sphere.msh`) before `Actor::Load` (the record's `mesh`,
 //! `aethercrystals01_summon.msh`, and `baseTexture` are the editor's look), so
 //! the dressing has nothing to draw. PORT: the draw for the random pick uses
 //! the port's RNG.
-use crate::casting::Casting;
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_game_core::casting::Casting;
+use gd_game_core::data::GameData;
 
 pub struct GeysersPlugin;
 
@@ -41,7 +41,7 @@ impl Plugin for GeysersPlugin {
         app.add_message::<Fire>().add_systems(
             Update,
             fire.after(crate::casting::CastingSet)
-                .before(crate::combat::CombatSet),
+                .before(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -101,7 +101,7 @@ fn fire(
             .collect();
         let n = rec.i32("numGeysersToFire").unwrap_or(0);
         let points = pick(found, n, rec.bool("findClosest"), |len| {
-            crate::rng::u32(..len as u32) as usize
+            gd_game_core::rng::u32(..len as u32) as usize
         });
         debug!(
             "geysers {}: {} of the markers",

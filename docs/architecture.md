@@ -3,20 +3,32 @@
 ## Crates
 - **gd-formats**: one module per file format (`map/*`, `save/*`, ...). `vfs::Database` is the merged ARZ
   (base → gdx1 → gdx2 → gdx3 → mod), `vfs::Vfs` the merged ARC. The world is gdx3's `Levels.arc/world001.map`.
-- **gd-sim**: engine rules with no Bevy: `expr` (equations), `stats`, `combat` (TakeAttack), `actor`
-  (profiles; `rules`, `display`, `retaliation`), `skills`, `skill_tooltip`, `equip`, `nav`, `proxy` /
-  `setpiece`, `items/*`, `story/*` (quests, dialogs, the `lua` host), `endless` (Shattered Realm). The full
-  list is in `lib.rs`.
+- **gd-rules**: Bevy-free primitives shared by gd-sim and gd-story: `expr` (equations), `mode`, `faction`, `Rng`.
+- **gd-sim**: engine rules with no Bevy: `stats`, `combat` (TakeAttack), `actor` (profiles; `rules`, `display`,
+  `retaliation`), `skills`, `skill_tooltip`, `equip`, `nav`, `proxy` / `setpiece`, `items/*`. The full list is in `lib.rs`.
+- **gd-story**: the story / Lua host (`story/*`: quests, dialogs, the `lua` host) and Shattered Realm (`endless`);
+  vendored mlua. Compiles in parallel with gd-sim.
+- **gd-game-core**: gameplay data shared by gd-game and gd-render: components, resources, messages, pure
+  resolvers and SystemSets — no systems.
 - **gd-game**: headless gameplay as Bevy ECS (no render, window or audio). `GameLogicPlugin` adds everything.
   `testing` holds the `TestGame` harness.
-- **gd-render**: the game's look over gd-game: deferred shading, lighting, post (`render/`), models and
+- **gd-render**: the game's look over gd-game-core: deferred shading, lighting, post (`render/`), models and
   textures, character bodies, particles (`fx/`), decals, water, trails, beams, see-through scenery, camera. It
   reads gameplay components and the presentation state the app writes. It has no gameplay of its own. Mesh
   parts spawn with their final material (`MaterialAssets` builds them, `MaterialCache` keeps the shader
   analyses and variants); grass detail reads the `GrassQuality` resource.
-- **grimdawn**: the binary: world streaming (`world`), UI (`ui/`, `tooltip`), input, audio, weather and menu
-  scene, plus the `dress_*` systems that give gameplay entities models and effects. It imports gd-game modules
-  at the root (`use gd_game::{…}`), so `crate::x::Y` paths resolve inside the crate.
+- **gd-ui-kit**: the shared UI presentation layer over gd-game-core + gd-render (no gd-game): the record-driven
+  widget builder (`Ui`, `UiAssets`), the font cache (`text`), common chrome (`widgets`, `tip`, `confirm`), key
+  bindings (`keys`), the additive / masked UI materials, and the settings-file helpers / UI scale (`state::settings`).
+- **gd-ui**: the in-game UI windows and HUD over gd-ui-kit + gd-game + gd-render: the movable window clusters
+  (`hud`, `character`, `trade`, `skills`, `devotion`, `quests`, ...), the rebuild hub / Esc dispatcher (`lib.rs`),
+  the window open/close manager (`window`), the paper-doll builders (`doll`), tooltips, and the presentation state
+  (`state`) the binary's input / world systems share (Trade, InvLayout, CraftList, Hovered, AppState, MapWindow, ...).
+  It reads gameplay and sends request messages; it never mutates Inventory / Stash / PlayerProgress.
+- **grimdawn**: the binary: world streaming (`world`), input, audio, weather and menu scene, the UI windows coupled
+  to them (`ui/`: options, localmap, riftmap, survival, credits, cinematic, mainmenu, quicktip, view), plus the
+  `dress_*` systems that give gameplay entities models and effects. It imports gd-game modules at the root
+  (`use gd_game::{…}`), so `crate::x::Y` paths resolve inside the crate.
 
 ## State and data flow
 - **One source per value.** Raw state lives once (`Loadout`, `PlayerProgress`, `Inventory`, `Character`,
@@ -46,8 +58,9 @@
   `gd-game/src/endless.rs`.
 
 ## App phases, gating and session lifecycle
-- `grimdawn::session::AppState { Menu, Loading, InGame }`. gd-game has no states. Data loads at startup.
-- **Gating.** Every HUD, window and tooltip system is in `ui::UiPlaySet` (or one of its child sets
+- `gd_ui::state::session::AppState { Menu, Loading, InGame }` (the binary's `session.rs` mirrors the session
+  resources into it). gd-game has no states. Data loads at startup.
+- **Gating.** Every HUD, window and tooltip system is in `gd_ui_kit::UiPlaySet` (or one of its child sets
   `UiInputSet` / `HudSet`, never both). In gd-game, a system that needs a session resource takes a plain
   `Res` and is registered with `run_if(resource_exists::<..>)`. Use `Option<Res<..>>` only for genuinely
   optional data, with a comment saying why.
@@ -55,7 +68,7 @@
   A set nobody is in orders nothing, silently, so check that its `.in_set(..)` exists.
 - **Session end** runs in process (`grimdawn/src/exit/mod.rs` + `gd_game::session::end_session_state`). It
   despawns the session's entities and removes or resets the session resources (the UI layout resets:
-  `ui::reset_session`), then the menu starts again. New session state needs its reset there. A `Local` caching
+  `gd_ui::reset_session` + `grimdawn::ui::reset_session`), then the menu starts again. New session state needs its reset there. A `Local` caching
   session data takes `gd_game::session::NewSession` and clears itself when `begun()`. Never despawn
   `IsResource` entities.
 - **Hooks.** `GD_*` variables are parsed once into the `Hooks` resource (`gd_game::hooks`). Hook-only code is
@@ -63,23 +76,24 @@
 - Use `try_despawn` / `try_insert` on entities that another system may have removed the same frame.
 
 ## UI (performance)
-- `ui::rebuild` builds the HUD in root groups, each with a signature. A signature holds only what changes the
+- `gd_ui::rebuild` builds the HUD in root groups, each with a signature. A signature holds only what changes the
   layout, never a per-frame value: bars, numbers and cooldowns animate in place from `HudVitals`. Windows read
   `UiScaleOption` when they are built, not per frame.
 - Dragging and scrolling move a container. They don't rebuild.
-- Shared building blocks (use them, don't write another copy): `ui::contains`, `ui::cursor_px` (the one
-  pointer read), `ui/rollover.rs::hud_rollover` (record-styled rollovers), `ui::tip` (skill-style tooltips),
-  `tooltip.rs` (items), `ui::confirm::confirm_box`, `ui::widgets::static_button`, `ui::window::add_window`,
-  `UiAssets::ui(..)`, `ui::spawn_root`.
-- Input: one Esc dispatcher (`ui::esc_dispatcher`, `UiInputSet`) walks the open modals and the focus stack,
+- Shared building blocks (use them, don't write another copy): `gd_ui_kit::contains`, `gd_ui_kit::cursor_px` (the one
+  pointer read), `gd_ui::rollover::hud_rollover` (record-styled rollovers), `gd_ui_kit::tip` (skill-style tooltips),
+  `gd_ui::tooltip` (items), `gd_ui_kit::confirm::confirm_box`, `gd_ui_kit::widgets::static_button`, `gd_ui::window::add_window`,
+  `UiAssets::ui(..)`, `gd_ui_kit::spawn_root`.
+- Input: one Esc dispatcher (`gd_ui::esc_dispatcher`, `UiInputSet`) walks the open modals and the focus stack,
   closes the frontmost and consumes the press, and opens the game menu when none is open; the PreUpdate input
-  systems that swallow the keyboard leave Escape for it (`ui::keys::reset_but_escape`). Buttons activate on a
-  left press (`ui::widgets::button_pressed`, sub_140124D90 / sub_1400A01D0). The shared window chrome
-  (`ui::window`): `add_window`, the `WindowPolicy` open/close table, `close_button` and the z bands. The UI reads
+  systems that swallow the keyboard leave Escape for it (`gd_ui_kit::keys::reset_but_escape`). Buttons activate on a
+  left press (`gd_ui_kit::widgets::button_pressed`, sub_140124D90 / sub_1400A01D0). The shared window chrome
+  (`gd_ui::window`): `add_window`, the `WindowPolicy` open/close table, `close_button` and the z bands. The UI reads
   `Inventory` immutably (`Inventory::info` is `&self`, an interior cache).
 
 ## Bevy notes
 - At most 16 system params: group them with tuples or a `SystemParam` (`Session`, `ContainerLoot`,
-  `creature::Spawner`). `clippy::type_complexity` is allowed crate-wide in gd-game, gd-render and grimdawn.
+  `creature::Spawner`). `clippy::type_complexity` is allowed crate-wide in gd-game, gd-render, gd-ui and grimdawn.
 - Gameplay never draws from `fastrand::*`: use `gd_game::rng` (seeded per `TestGame`) or the engine's
-  `gd_sim::combat::Rng`. `std` hash maps iterate in random order: sort where order matters.
+  `gd_sim::combat::Rng`. `gd_formats::collections` hash maps iterate in a fixed but insertion-dependent
+  order: sort where order matters.

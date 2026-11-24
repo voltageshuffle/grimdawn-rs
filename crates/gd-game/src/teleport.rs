@@ -4,32 +4,35 @@
 use bevy::prelude::*;
 
 /// A travel (door, riftgate, portal) in progress: its destination, and the player's teleport state
-/// (`Character::IsTeleporting`, Character +9258, set by the teleport activity from its start to its last
-/// phase, sub_180582330 / sub_1805823E0). Set by the travel requests, run by [`TeleportActivity`] and cleared when it
-/// ends ([`crate::doors::run_teleport`]). `InstallTeleportActivity` @0x1802d6a30: a second teleport while one runs is
+/// (`Character::IsTeleporting`, `Character.isTeleporting`, set by the teleport activity from its start to its last
+/// phase, `TeleportLocalClientActivity::Start` / `TeleportLocalClientActivity::Update`). Set by the travel requests,
+/// run by [`TeleportActivity`] and cleared when it ends ([`crate::doors::run_teleport`]). `InstallTeleportActivity`:
+/// a second teleport while one runs is
 /// dropped (`ActivityManager::IsAlreadyTeleporting`): requests only set it when it is empty.
 #[derive(Resource, Default)]
 pub struct PendingTravel(pub Option<Vec3>);
 
-/// The local player's teleport activity (`TeleportLocalClientActivity`, Game.dll vtable 0x18079DDB0; every
-/// [`PendingTravel`], whatever its distance). Update sub_1805823E0 (ms; each phase change restarts the
-/// clock):
-/// - start: the player is frozen (Character +8048) and teleporting (+9258);
-/// - [`TeleportPhase::FadeOut`]: the loading screen fades in over [`TELEPORT_FADE_MS`] (+52);
+/// The local player's teleport activity (`TeleportLocalClientActivity`, Game.dll; every
+/// [`PendingTravel`], whatever its distance). `TeleportLocalClientActivity::Update` (ms; each phase change restarts
+/// the clock):
+/// - start: the player is frozen (`Character.frozen`) and teleporting (`Character.isTeleporting`);
+/// - [`TeleportPhase::FadeOut`]: the loading screen fades in over [`TELEPORT_FADE_MS`] (`Activity.fadeMs`);
 /// - [`TeleportPhase::Loading`]: `Engine::SetTeleportMode(true)`; the destination's `RegionLoader` (helper
-///   sub_1803B8750: the regions in the player's frustum at the destination) loads; once it is done the clock is
-///   taken modulo [`TELEPORT_HOURGLASS_MS`] (+88, the hourglass' turn) and the phase ends when it reaches it again;
-///   then the player is put at the destination (vtable +72 = sub_1805820F0, [`crate::nav::teleport_landing`]);
+///   `RegionLoader::CollectFrustumRegions`: the regions in the player's frustum at the destination) loads; once it is
+///   done the clock is taken modulo [`TELEPORT_HOURGLASS_MS`] (`Activity.hourglassMs`, the hourglass' turn) and the
+///   phase ends when it reaches it again; then the player is put at the destination
+///   (`TeleportLocalClientActivity::PlacePlayer`, [`crate::nav::teleport_landing`]);
 /// - [`TeleportPhase::FadeIn`]: the screen fades back over [`TELEPORT_FADE_MS`]; then the player is unfrozen and
 ///   (a frame later, PORT: the same frame) no longer teleporting.
 ///
-/// The screen (render sub_180581850): alpha = clock / fade in FadeOut, 1 while loading, 1 − clock / fade in FadeIn.
+/// The screen (`TeleportLocalClientActivity::Render`): alpha = clock / fade in FadeOut, 1 while loading, 1 − clock /
+/// fade in FadeIn.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
 pub struct TeleportActivity {
     pub phase: TeleportPhase,
-    /// Milliseconds in the phase (+20).
+    /// Milliseconds in the phase (`Activity.elapsedMs`).
     pub ms: u32,
-    /// The destination is loaded (+92).
+    /// The destination is loaded (`TeleportLocalClientActivity.loaded`).
     pub loaded: bool,
 }
 
@@ -42,9 +45,9 @@ pub enum TeleportPhase {
     FadeIn,
 }
 
-/// Base activity ctor sub_180580F60: +52 = 1000.
+/// Base activity ctor `Activity::Activity`: `Activity.fadeMs` = 1000.
 pub const TELEPORT_FADE_MS: u32 = 1000;
-/// sub_180580F60: +88 = 1000.
+/// `Activity::Activity`: `Activity.hourglassMs` = 1000.
 pub const TELEPORT_HOURGLASS_MS: u32 = 1000;
 
 /// What a [`TeleportActivity::step`] asks the caller to do.

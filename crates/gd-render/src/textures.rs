@@ -4,7 +4,6 @@
 //! port has its own shaders, colour maps use the `_srgb` view so Bevy's linear
 //! PBR shows them at the intended brightness. UI shaders encode the decoded
 //! texel back to its stored value (`render/post.rs`, "UI").
-use crate::data::GameData;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
@@ -12,22 +11,23 @@ use bevy::render::render_resource::{
     Extent3d, TextureDataOrder, TextureDimension, TextureFormat, TextureViewDescriptor,
     TextureViewDimension,
 };
+use gd_formats::collections::HashMap;
 use gd_formats::tex::{Dds, PixelFormat, Tex};
-use std::collections::HashMap;
+use gd_game_core::data::GameData;
 
 /// The entries a [`WeakHandles`] holds before it first drops the dead ones.
 const PRUNE_MIN: usize = 64;
 
 /// Asset handles by normalized path, held weakly (as `AssetId`s): a hit recovers a strong handle while the asset
 /// lives (`Assets::get_strong_handle`), so an asset goes when its last user drops it (PORT: no timed unload,
-/// `gd_game::weak_cache`) — unless it is one of the last [`gd_game::weak_cache::RECENT`] handed out, which stay
+/// `gd_game_core::weak_cache`) — unless it is one of the last [`gd_game_core::weak_cache::RECENT`] handed out, which stay
 /// loaded (an effect's flipbook is not decoded again on every cast). `X`: facts kept with the asset (a flipbook's
 /// frame count). A file that failed to load stays failed until [`WeakHandles::clear`].
 pub struct WeakHandles<A: Asset, X: Copy = ()> {
     map: HashMap<String, Option<(AssetId<A>, X)>>,
     /// The size at which the next insert drops the dead entries.
     prune_at: usize,
-    recent: gd_game::weak_cache::Recent<Held<A>>,
+    recent: gd_game_core::weak_cache::Recent<Held<A>>,
 }
 
 /// A strong handle in a [`WeakHandles`]' recent set.
@@ -39,7 +39,7 @@ impl<A: Asset> Clone for Held<A> {
     }
 }
 
-impl<A: Asset> gd_game::weak_cache::Shared for Held<A> {
+impl<A: Asset> gd_game_core::weak_cache::Shared for Held<A> {
     fn id(&self) -> usize {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         BuildHasherDefault::<DefaultHasher>::default().hash_one(self.0.id()) as usize
@@ -49,7 +49,7 @@ impl<A: Asset> gd_game::weak_cache::Shared for Held<A> {
 impl<A: Asset, X: Copy> Default for WeakHandles<A, X> {
     fn default() -> Self {
         Self {
-            map: HashMap::new(),
+            map: HashMap::default(),
             prune_at: PRUNE_MIN,
             recent: Default::default(),
         }
@@ -120,9 +120,9 @@ pub struct Textures {
     /// Textures decoded in the background ([`Textures::ready`], [`collect_texture_loads`]): key, sRGB, image.
     loading: Vec<bevy::tasks::Task<(String, bool, Option<Image>)>>,
     /// The (key, sRGB) pairs of `loading`, so a texture is decoded once.
-    in_flight: std::collections::HashSet<(String, bool)>,
-    /// Decodes just filed, held until their waiters take them ([`gd_game::weak_cache::Fresh`]).
-    fresh: gd_game::weak_cache::Fresh<Handle<Image>>,
+    in_flight: gd_formats::collections::HashSet<(String, bool)>,
+    /// Decodes just filed, held until their waiters take them ([`gd_game_core::weak_cache::Fresh`]).
+    fresh: gd_game_core::weak_cache::Fresh<Handle<Image>>,
 }
 
 pub struct TexturePlugin;
@@ -418,8 +418,8 @@ pub fn set_anisotropy(level: i32) {
     );
 }
 
-/// The `textureQuality` option (`GraphicsEngine::UpdateFromOptions` @0x180093020:
-/// `GraphicsEngine+280`, read by `GetTextureReduction` @0x1800915F0 and `GraphicsTexture::GetDataLength` /
+/// The `textureQuality` option (`GraphicsEngine::UpdateFromOptions`:
+/// `GraphicsEngine.textureReduction`, read by `GetTextureReduction` and `GraphicsTexture::GetDataLength` /
 /// `Initialize`): the number of top mips a mipmapped texture skips. PORT: read at load, so textures already loaded keep
 /// theirs (the engine unloads all resources on a change; the port applies it to textures loaded from now on and at the
 /// next start); the per-directory reduction (`SetDirectoryTextureReduction`) is not ported; 0 until [`set_texture_quality`].

@@ -3,23 +3,23 @@
 //! Game.dll: a projectile is a physics entity
 //! (`ProjectileBase::GetCollisionType` 2 / 3) and the physics engine reports
 //! its contact with level objects and terrain through
-//! `ProjectileFireballLike::CollisionCallback` @0x18040d5b0 (the collision is
+//! `ProjectileFireballLike::CollisionCallback` (the collision is
 //! with the objects' physics meshes, Engine.dll `PhysicsMesh_Bullet`; terrain
 //! through `Terrain::GetIntersection`'s heightfield). Contact with anything
 //! but another projectile is a "miss": `ProjectileStop` (state 3), no
 //! damage; the next update runs `ProcessExplosion` only when the record's
 //! `explodeOnMiss` is set, then deletes it (`ProjectileFireballLike::
-//! UpdateSelf` @0x18040d1a0).
+//! UpdateSelf`).
 //!
 //! The physics mesh is the `.msh` chunk 2 blob (`gd_formats::msh::PhysicsMesh`, whose module docs give the layout).
 //!
-//! Which level objects get a body: `Actor::InitialUpdate` (Engine.dll
-//! @0x180029ee0) calls `Entity::SetPhysicsSimulation(1)` when `IsStatic()`,
+//! Which level objects get a body: `Actor::InitialUpdate` (Engine.dll)
+//! calls `Entity::SetPhysicsSimulation(1)` when `IsStatic()`,
 //! `IsInWorld()` and `GetIsPartOfLevel()`; Game.dll `Decoration::IsStatic` is
 //! `!allowPathing` and `Decoration::GetIsPartOfLevel` is "empty `description`".
 //! Props, destructibles, fixed items (doors, shrines, chests), NPCs and
 //! monsters keep the `false` defaults, so only such `Decoration` records are
-//! solid (`world.rs` picks them). `Actor::PhysicsSetup` (@0x180026960) mode 1
+//! solid (`world.rs` picks them). `Actor::PhysicsSetup` mode 1
 //! builds the body from the mesh's physics mesh (`GraphicsMesh::
 //! GetPhysicsMesh`, chunk 2) when it has one, otherwise from every hit box
 //! whose name is not `Visibility` / `Transparency` (so `BlockLOS` boxes are
@@ -44,10 +44,11 @@
 //! physics body behind it (mechanism not found).
 use bevy::math::Affine3A;
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
 use gd_formats::msh::{Mesh as Msh, PhysicsMesh};
 use gd_sim::nav::Obstacle;
 use gd_sim::surface::{Ground, NO_SURFACE};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -359,9 +360,10 @@ impl WorldCollision {
 
     /// Registers a level's scenery objects without a physics body (call after [`Self::add_level`]): what
     /// [`Self::surface_below`] finds besides the solid ones. `World::GetSurfaceTypeBelow`'s object
-    /// test (Engine.dll sub_180133E70) takes every entity of the region's tree whose `GetVisibility` is 1 or 3
-    /// (an `Actor` with a mesh instance, not faded out) but the character itself, through `Actor::GetIntersection`
-    /// → `GraphicsMeshInstance::GetIntersection` @0x1800c3790 (the mesh's physics mesh, else its hit boxes,
+    /// test (Engine.dll `World::IntersectObjectsBelow`) takes every entity of the region's tree whose `GetVisibility`
+    /// is 1 or 3 (an `Actor` with a mesh instance, not faded out) but the character itself, through
+    /// `Actor::GetIntersection`
+    /// → `GraphicsMeshInstance::GetIntersection` (the mesh's physics mesh, else its hit boxes,
     /// else its bounding box: surface 100), with a physics body or not: a `TerrainDecoration` bridge
     /// (`bridgestonea02cntr.msh`: stone deck faces) or an `allowPathing` floor tile is stood on like a solid
     /// `Decoration`. PORT: built like the solid objects ([`Self::instance`]: no bounding-box fallback,
@@ -502,9 +504,9 @@ impl WorldCollision {
         });
     }
 
-    /// `World::CheckLOS` (Engine.dll @0x1802219e0): the segment
+    /// `World::CheckLOS` (Engine.dll): the segment
     /// `a → b` is clear unless it meets a `BlockLOS` hit box of a level
-    /// object (`GraphicsMeshInstance::CheckLOS` @0x1800c39c0 tests exactly
+    /// object (`GraphicsMeshInstance::CheckLOS` tests exactly
     /// the mesh's hit boxes named `BlockLOS`, scaled by the instance scale;
     /// `Level::CheckLOS` walks the level's object tree, `World::CheckLOS`
     /// every loaded level). The terrain is not tested.
@@ -563,7 +565,7 @@ impl WorldCollision {
                     best = Some((t, n));
                 }
             }
-            let _ = lv.instances.along(a, b, |_, ins| {
+            let _flow = lv.instances.along(a, b, |_, ins| {
                 if let Some((t, _, _, n)) = ins.first_hit_normal(a, b)
                     && t > 0.0
                     && best.is_none_or(|x| t < x.0)
@@ -590,13 +592,13 @@ impl WorldCollision {
     }
 
     /// The `PhysicsSurface` under a character at `p`, [`NO_SURFACE`] if
-    /// nothing is in reach. `World::GetSurfaceTypeBelow` @0x1802207b0
+    /// nothing is in reach. `World::GetSurfaceTypeBelow`
     /// casts a ray from 1 m above the character straight down, 2 m long
-    /// (`sub_180220A50`); of every level within reach the nearest of its
+    /// (`World::RaycastLevelsBelow`); of every level within reach the nearest of its
     /// terrain, its objects (closer than that) and its water (closer than
     /// both) counts. Terrain: [`Ground::terrain_surface`]; objects: the face's
-    /// surface of the physics mesh (`PhysicsMesh::GetIntersection`
-    /// @0x180186b30), or [`NO_SURFACE`] for hit boxes
+    /// surface of the physics mesh (`PhysicsMesh::GetIntersection`),
+    /// or [`NO_SURFACE`] for hit boxes
     /// (`GraphicsMeshInstance::GetIntersection`: no physics mesh); water
     /// always 7 ([`gd_sim::surface`]).
     ///
@@ -631,7 +633,7 @@ impl WorldCollision {
                         });
             }
             for bins in [&lv.instances, &lv.floors] {
-                let _ = bins.along(a, b, |_, ins| {
+                let _flow = bins.along(a, b, |_, ins| {
                     if let Some((t, s, _)) = ins.first_hit(a, b)
                         && t < near
                     {
@@ -680,7 +682,7 @@ impl WorldCollision {
                     best = Some((t.clamp(0.0, 1.0), "terrain"));
                 }
             }
-            let _ = lv.instances.along(a, b, |_, ins| {
+            let _flow = lv.instances.along(a, b, |_, ins| {
                 if let Some((t, _, kind)) = ins.first_hit(a, b)
                     && best.is_none_or(|x| t < x.0)
                 {
@@ -726,7 +728,7 @@ impl WorldCollision {
                     }
                 }
             }
-            let _ = lv.instances.near(min, max, |i, ins| {
+            let _flow = lv.instances.near(min, max, |i, ins| {
                 if !overlaps(ins.min, ins.max) {
                     return ControlFlow::Continue(());
                 }

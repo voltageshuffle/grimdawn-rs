@@ -2,24 +2,24 @@
 //! character (monster, NPC, pet): the hover target gets an outline and the
 //! `UIActorDescription` widget at the top centre of the screen describes it.
 //!
-//! Target (Grim Dawn.exe frame update sub_14002BC00 → sub_14010F2B0
-//! → sub_14010F470), in this order:
+//! Target (Grim Dawn.exe frame update `InGameUI::Update` → `InGameUI::SetHoverTarget`
+//! → `InGameUI::OutlineHoverTarget`), in this order:
 //! 1. an unopened container under the cursor (`FixedItemContainer`,
 //!    `IsOfInterest`: state 1, closed: `Chest::is_of_interest`);
 //! 2. an enemy under the cursor: of the enemies the cursor touches, the one
-//!    nearest to the player (sub_140032100); it also becomes the combat
-//!    enemy. The list (sub_1400318C0) takes `Destructible`s that are
+//!    nearest to the player (`InGameUI::PickNearestEnemy`); it also becomes the combat
+//!    enemy. The list (`InGameUI::CollectEnemyCandidates`) takes `Destructible`s that are
 //!    `IsTargetable` (record `targetable`, not broken) too, so a targetable
 //!    breakable is hovered (and clicked) like an enemy. One pick feeds the hover and the attack
 //!    (`combat::pick_enemy`: the posed body box under the ray, else near it, the touched enemy nearest to the
-//!    player; the candidate margin widens while a held click is pathing / repeated, sub_140021000);
+//!    player; the candidate margin widens while a held click is pathing / repeated, `InGameUI::HandleMouseEvent`);
 //! 3. a non-enemy character under the cursor: an `Npc` (record `Class`
 //!    `Npc*`) only while it is available for conversations
 //!    (`Npc::IsAvailableForConversations`: the story object's flag; level
 //!    NPCs without story hooks count as available, PORT) and visible;
 //!    friendly monsters always; the player's own pets only while the Target
 //!    Pet key is held; with them a described decoration (a direction sign:
-//!    `gd_game::world::Described`, its parts' mesh boxes under the ray), named
+//!    `gd_game_core::world::Described`, its parts' mesh boxes under the ray), named
 //!    by its `description` and outlined in the object colour;
 //! 4. another fixed item of interest: doors (`gd_game::doors` module docs),
 //!    devotion shrines / totems (`Shrine::is_of_interest`: not during their
@@ -29,21 +29,21 @@
 //!
 //! The list above is the gamepad / WASD path; in Keyboard Only (`movementType` 2) the only thing it touches is the
 //! controller targeting's pick (`crate::controller_target`: not a ground item, whose label is selected instead).
-//! PORT: the mouse path (sub_140021000) keeps its filters but is not ported
-//! as such: it collects what is near the cursor (sub_14002FF80) and takes the
-//! mesh under the ray, else the one nearest to it (sub_140030D80), with no
+//! PORT: the mouse path (`InGameUI::HandleMouseEvent`) keeps its filters but is not ported
+//! as such: it collects what is near the cursor (`InGameUIActorCapture::CollectCandidates`) and takes the
+//! mesh under the ray, else the one nearest to it (`InGameUIActorCapture::PickObjectUnderCursor`), with no
 //! fixed order of kinds.
-//! What it drops, sub_14002FF80: the main player (never outlined:
-//! sub_14010F350 only clears the outline), characters failing its virtual
-//! +1120 / +1152 / +1160 checks, and a `Pet` that is no foe of the player
-//! unless its argument is 0, which is byte +2121 of the input
-//! object, set while key action 38 Target Pet is held (sub_140026910;
+//! What it drops, `InGameUIActorCapture::CollectCandidates`: the main player (never outlined:
+//! `InGameUI::ClearHoverTarget` only clears the outline), characters failing its virtual
+//! `Character::IsCursorPickable` / `IsCursorTargetable` / `IsCursorVisible` checks, and a `Pet` that is no foe of
+//! the player unless its argument is 0, which is the input object's `InGameUI.targetPetHeld`,
+//! set while key action 38 Target Pet is held (`InGameUI::HandleKeyEvent`;
 //! `tagKeybind35`, "Target Pet (Hold Key and Click)"). So a summon is neither
 //! named nor outlined until that key is down, and then it is `friendOutline`.
 //! All of this needs a main player, so nothing is hovered on the main menu,
 //! whose character is a paper doll (`doll::DollBody`).
 //!
-//! Outline (sub_14010F470, with the `targetOutline` option, bool 22, on by
+//! Outline (`InGameUI::OutlineHoverTarget`, with the `targetOutline` option, on by
 //! default in `Options::Options`): fixed items get `objectOutlineColor`;
 //! characters `friendOutlineColor` when `FactionManager::IsFriend(player
 //! pack, GetOriginalFaction, pack)`, else `mindControlledOutlineColor` when
@@ -60,7 +60,7 @@
 //! enemy (1, 0, 0).
 //!
 //! The outline itself (Engine.dll `GraphicsDeferredRenderer::
-//! RenderFinalScene` @0x1800adeb0; details in `render/post.rs`): the
+//! RenderFinalScene`; details in `render/post.rs`): the
 //! outlined meshes are drawn flat in `outlineColor` into a separate target,
 //! blurred by `ApplyGlow(target, 1.25, 1.0)` and added over the scene except
 //! on the object's own visible pixels: a soft halo of about 4 px around it.
@@ -76,21 +76,21 @@
 //! actor has one outline colour, so each class is one palette entry.
 //!
 //! The widget (`records/ui/inworld/actordescription.dbr`, loader
-//! sub_14010DA60, update sub_14010E9B0, draw sub_14010E2B0 from the game
-//! window's draw sub_140027350). The anchor is the top centre of the
+//! `UIActorDescription::Load`, update `UIActorDescription::Update`, draw `UIActorDescription::Draw` from the game
+//! window's draw `InGameUI::Render`). The anchor is the top centre of the
 //! viewport: x = viewport x + width / 2, y = 1 px (not UI-scaled); each part
 //! is centred on the anchor x (texts by their text width, bitmaps by theirs)
 //! plus its own record offset (scaled). Drawn in order:
 //! - name (`actor_name.dbr`, y 0, `style_special_enemyname`): a fixed
 //!   item's `description` (a personal portal: `tagRiftgatePersonal`,
-//!   `FixedItemTeleport::GetGameDescription` @0x1802b5df0: the tag localized
+//!   `FixedItemTeleport::GetGameDescription`: the tag localized
 //!   with the owner's name as its parameter, which stock text does not use); an NPC's `Npc::GetRolloverDescription`
 //!   (`description` + " - " + `professionTag` when set); other characters'
 //!   `Monster::GetGameDescription`: the classification's colour code
 //!   (`GameEngine::GetMonsterColorText`, gameengine.dbr: Common `{^w}`,
 //!   Champion `{^y}`, Hero `{^o}`, Boss / SuperBoss `{^r}`, Quest `{^p}`)
 //!   before the `description`;
-//! - for objects and NPCs (+2120 set: `Npc` or `Decoration`) nothing else,
+//! - for objects and NPCs (`UIActorDescription.isObjectOrNpc` set: `Npc` or `Decoration`) nothing else,
 //!   except a `Destructible` (its `GetGameDescription`: the `description`):
 //!   `healthBar` at `GetLife` / `GetMaxLife` and the tier-1 border (no race,
 //!   no level; PORT: the fill clamp is the characters' 0.02…1);
@@ -105,18 +105,18 @@
 //!   border by classification: Common tier 1, Champion 2, Hero 3, Quest 4,
 //!   Boss / SuperBoss 5 (Quest and Boss fall back to tier 3 below 1920 px;
 //!   y 31; a player gets tier 1); status icons only with
-//!   `monsterBarsDebuffs` (bool 58, off: the strip, `debuff_strip`);
+//!   `monsterBarsDebuffs` (off: the strip, `debuff_strip`);
 //! - the level (`actor_level.dbr`, y 27, `style_special_enemylvl`): the
 //!   character level as a bare number, coloured by its difference to the
 //!   player's level d: d < −2 `levelDiffTier6`, −2…−1 tier 5, 0…1 tier 4,
 //!   2…3 tier 3, 4…5 tier 2, ≥ 6 tier 1; drawn for players always and for
-//!   other characters with `showMonsterLevelOnRollover` (bool 5, on by
+//!   other characters with `showMonsterLevelOnRollover` (on by
 //!   default: `Options::Options` leaves the bit at the array's `true`).
 //!
-//! The widget's fade (+2121…+2128: alpha 0.3 → 1 over 250 ms) never runs:
-//! only its constructor (sub_14010D810) writes the fade flags (to 0), so the
-//! widget always draws at full alpha (the writes to +2121/+2122/
-//! +2123 in Grim Dawn.exe).
+//! The widget's fade (`UIActorDescription.fadeState`: alpha 0.3 → 1 over 250 ms) never runs:
+//! only its constructor (`UIActorDescription::UIActorDescription`) writes the fade flags (to 0), so the
+//! widget always draws at full alpha (the writes to its fade flags
+//! in Grim Dawn.exe).
 //!
 //! PORT (a performance choice): the widget is built when what it shows changes (target, level, strip, window), not
 //! for the target's life: the bar's fill follows it in place (`HoverFill`, `animate_fill`).
@@ -126,20 +126,22 @@
 //! `GD_HOVER=npc` / `GD_HOVER=breakable` / `GD_HOVER=decoration` points it at
 //! the nearest foe / NPC / targetable breakable (1 m up) / described
 //! decoration (2 m up).
-use crate::data::GameData;
 use crate::record_facts::{RecordFacts, icon_override};
-use crate::ui::{Ui, text::FontCache};
+use gd_ui::state::hover::{Hovered, HoverPoint, Interact, Kind};
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use gd_formats::collections::HashMap;
 use gd_formats::ui::{BarGraph, Rect as URect, TextBox, Widget};
+use gd_game_core::data::GameData;
 use gd_render::hover::HoverGlow;
 use gd_render::render::material::GdMaterial;
 use gd_render::render::post::{GLOW_LAYER, OutlineGlow};
 use gd_sim::bounds;
-use std::collections::HashMap;
+use gd_ui_kit::Ui;
+use gd_ui_kit::text::FontCache;
 use std::sync::Arc;
 
 const DESC: &str = "records/ui/inworld/actordescription.dbr";
@@ -158,10 +160,10 @@ impl Plugin for HoverPlugin {
                     (deco_spheres, pick).chain(),
                     (outline, describe, animate_fill)
                         .chain()
-                        .in_set(crate::ui::UiPlaySet),
+                        .in_set(gd_ui_kit::UiPlaySet),
                 )
                     .chain()
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::player::PlayerSet),
             );
         #[cfg(feature = "dev")]
         app.add_systems(
@@ -169,58 +171,17 @@ impl Plugin for HoverPlugin {
             hook_debuff
                 .after(pick)
                 .before(outline)
-                .in_set(crate::ui::UiPlaySet),
+                .in_set(gd_ui_kit::UiPlaySet),
         );
     }
 }
 
-/// What the hover target is (decides the widget's parts).
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum Kind {
-    /// A fixed item: name only.
-    #[default]
-    Object,
-    /// An `Npc`: name only.
-    Npc,
-    /// Another character: name, race, health bar (when it has a life),
-    /// tier border, level.
-    Character,
-    /// A `Destructible`: name, health bar, tier-1 border.
-    Breakable,
-}
 
-/// What the world mouse handler (Grim Dawn.exe sub_140021000) marks for the
-/// cursor about the hover target (`ui::cursor` reads it).
-/// sub_140021000: `Attack` (game window +2106) when the object under the
-/// cursor has an id and the controller's combat enemy is set (an enemy, a
-/// targetable breakable); for a visible `Npc` that `IsOfInterest` (a plain
-/// `Npc`: `Npc::IsOfInterest`; every `Npc` subclass's slot returns true),
-/// `Merchant` (+2105) when its class is `NpcMerchant` (or derives from it:
-/// no stock class does), else `Dialog` (+2104); then the actor's record
-/// `interactIconOverride` (`Actor::Load`, `GetInteractIconOverride`):
-/// "Dialog" clears the flags and sets `Dialog`, "Attack" sets `Attack`.
-/// The combat enemy is not the hover target: sub_140021000 clears
-/// it each event, picks the object under the cursor from the whole list
-/// (sub_140030D80 over the frame's candidates) and, when there is one, sets
-/// the combat enemy from the enemy list's pick (the touched enemy /
-/// targetable breakable nearest to the player); so a container, door or
-/// non-interest NPC that wins the hover over an enemy still gets `Attack`,
-/// while an NPC's merchant / dialog marks outrank it in `ui::cursor::select`
-/// ([`marks`]). While an enemy-target skill runs (`IsRunningSkill`, the running skill's `GetTargetType` 2),
-/// an ally under the cursor drops the object: no hover target, no mark. With `targetLock` the held button keeps
-/// the object ([`held_pick`]).
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum Interact {
-    #[default]
-    None,
-    Attack,
-    Dialog,
-    Merchant,
-}
 
-/// What the world mouse handler remembers between events (sub_140021000): the object of the last event
-/// (+2472: set to the picked object, cleared when none), whether the last left press issued a primary command
-/// (+465: `HandleActionFromMouse` with the left button, not through the Move key; cleared once no button is held)
+/// What the world mouse handler remembers between events (`InGameUI::HandleMouseEvent`): the object of the last
+/// event (`InGameUI.lockedObject`: set to the picked object, cleared when none), whether the last left press issued
+/// a primary command (`InGameUI.primaryCommandIssued`: `HandleActionFromMouse` with the left button, not through
+/// the Move key; cleared once no button is held)
 /// and the combat enemy of the last event (restored with a locked object).
 #[derive(Default)]
 struct HeldLock {
@@ -231,9 +192,9 @@ struct HeldLock {
 
 /// The inputs of [`held_pick`].
 struct HeldInput {
-    /// Option `targetLock` ("Classic Targeting", bool 27).
+    /// Option `targetLock` ("Classic Targeting").
     target_lock: bool,
-    /// `SkillManager::IsRunningSkill`. PORT: a channel (`gd_game::casting::Channel`) is the running skill.
+    /// `SkillManager::IsRunningSkill`. PORT: a channel (`gd_game_core::casting::Channel`) is the running skill.
     running: bool,
     /// `IsCommandRepeated`: a world button held after its press, or the Move key held.
     repeated: bool,
@@ -251,7 +212,7 @@ enum HeldPick {
     Nothing,
 }
 
-/// sub_140021000 (mouse input mode): with `targetLock`, no skill running, an object remembered and the
+/// `InGameUI::HandleMouseEvent` (mouse input mode): with `targetLock`, no skill running, an object remembered and the
 /// command repeated, the object stays the target (unless it is gone or a broken breakable) and the last event's
 /// combat enemy is restored; else, with `targetLock`, no skill running and the last left press a primary command,
 /// nothing is picked while the button is held. Otherwise the cursor picks as usual.
@@ -266,23 +227,18 @@ fn held_pick(i: &HeldInput) -> HeldPick {
     }
 }
 
-/// The pointer position the pick used this frame (logical px; the
-/// `GD_HOVER` stand-in when set), `None` outside the window. Written by
-/// [`pick`] only.
-#[derive(Resource, Default, PartialEq, Clone, Copy, Debug)]
-pub struct HoverPoint(pub Option<Vec2>);
 
 /// Test hook `GD_DEBUFF_TARGET=<skill>`: the skill's debuff (as `casting::fire` lands a curse: the wrapper's
 /// buff record, level 1, its `skillActiveDuration`) lands once on each character the pointer hovers, cast by
 /// the player.
 #[cfg(feature = "dev")]
 fn hook_debuff(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     data: Res<GameData>,
     hovered: Res<Hovered>,
-    player: Query<Entity, With<crate::player::Player>>,
+    player: Query<Entity, With<gd_game_core::player::Player>>,
     mut debufs: MessageWriter<gd_game::skill_buffs::DebufTarget>,
-    (mut done, mut fresh): (Local<Vec<Entity>>, gd_game::session::NewSession),
+    (mut done, mut fresh): (Local<Vec<Entity>>, gd_game_core::session::NewSession),
 ) {
     if fresh.begun() {
         done.clear();
@@ -315,26 +271,12 @@ fn hook_debuff(
         level_index: 0,
         mods: Vec::new(),
         devotion: 0,
-        secs: (gd_game::casting::level_f(brec, "skillActiveDuration", 0) * 1000.0) as i32 as f32
+        secs: (gd_game_core::casting::level_f(brec, "skillActiveDuration", 0) * 1000.0) as i32
+            as f32
             / 1000.0,
     });
 }
 
-/// The hover target and what the widget shows of it.
-#[derive(Resource, Default, PartialEq, Clone, Debug)]
-pub struct Hovered {
-    pub entity: Option<Entity>,
-    pub name: Arc<str>,
-    pub kind: Kind,
-    /// The cursor's mark for it.
-    pub interact: Interact,
-    /// The outline colour (`None`: not outlined).
-    pub outline: Option<Vec3>,
-    /// Race line (characters).
-    pub race: Arc<str>,
-    /// `monsterClassification` index (Common 0 … SuperBoss 5).
-    pub classification: u8,
-}
 
 /// The hover target's [`Interact`]: its own mark (`base`), `Attack` added
 /// when a combat enemy is under the cursor (`enemy`, whatever won the
@@ -416,11 +358,14 @@ type Foes<'w, 's> = Query<
     (
         Entity,
         &'static GlobalTransform,
-        &'static crate::combat::Combatant,
+        &'static gd_game_core::combat::Combatant,
         &'static gd_render::character::Character,
         gd_game::combat::SideData,
     ),
-    (Without<crate::combat::Dead>, Without<crate::player::Player>),
+    (
+        Without<gd_game_core::combat::Dead>,
+        Without<gd_game_core::player::Player>,
+    ),
 >;
 type Friends<'w, 's> = Query<
     'w,
@@ -429,14 +374,14 @@ type Friends<'w, 's> = Query<
         Entity,
         &'static GlobalTransform,
         &'static gd_render::character::Character,
-        Option<&'static gd_game::story::StoryActor>,
+        Option<&'static gd_game_core::story::StoryActor>,
         Option<&'static Visibility>,
         Option<&'static gd_game::pets::Pet>,
         gd_game::combat::SideData,
     ),
     (
-        Without<crate::player::Player>,
-        Without<crate::combat::Dead>,
+        Without<gd_game_core::player::Player>,
+        Without<gd_game_core::combat::Dead>,
         Without<crate::doll::DollBody>,
     ),
 >;
@@ -457,7 +402,7 @@ struct DecoSphere {
 
 fn deco_spheres(
     mut commands: Commands,
-    described: Query<Entity, (With<gd_game::world::Described>, Without<DecoSphere>)>,
+    described: Query<Entity, (With<gd_game_core::world::Described>, Without<DecoSphere>)>,
     children: Query<&Children>,
     boxes: Query<(&GlobalTransform, &Aabb)>,
 ) {
@@ -490,8 +435,8 @@ fn deco_spheres(
 fn pick(
     window: Query<&Window, With<PrimaryWindow>>,
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
-    capture: Res<crate::inventory::UiCapture>,
-    hooks: Res<crate::hooks::Hooks>,
+    capture: Res<gd_ui::state::inventory::UiCapture>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     data: Res<GameData>,
     fonts: Res<FontCache>,
     objects: (
@@ -503,10 +448,10 @@ fn pick(
             (
                 Entity,
                 &GlobalTransform,
-                &crate::combat::Combatant,
-                &gd_game::world::Breakable,
+                &gd_game_core::combat::Combatant,
+                &gd_game_core::world::Breakable,
             ),
-            Without<crate::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
         >,
         Query<(Entity, &GlobalTransform, &gd_game::riftgates::Portal)>,
         Query<(Entity, &GlobalTransform, &gd_game::ascendant::Altar)>,
@@ -518,7 +463,7 @@ fn pick(
             Query<(
                 Entity,
                 &GlobalTransform,
-                &gd_game::world::Described,
+                &gd_game_core::world::Described,
                 Option<&DecoSphere>,
             )>,
             Query<&Children>,
@@ -534,29 +479,29 @@ fn pick(
                 Entity,
                 &GlobalTransform,
                 &gd_game::movement::MovePath,
-                &crate::combat::Combatant,
+                &gd_game_core::combat::Combatant,
             ),
-            With<crate::player::Player>,
+            With<gd_game_core::player::Player>,
         >,
     ),
-    (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<crate::ui::keys::KeyBindings>),
-    rt: Option<NonSend<gd_game::story::StoryRuntime>>,
+    (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<gd_ui_kit::keys::KeyBindings>),
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     (mut facts, mut lock, mut fresh): (
         ResMut<RecordFacts>,
         Local<HeldLock>,
-        gd_game::session::NewSession,
+        gd_game_core::session::NewSession,
     ),
     held: (
         Res<ButtonInput<MouseButton>>,
         Res<crate::casting::MoveKeyHeld>,
-        Query<&gd_game::casting::Channel, With<crate::player::Player>>,
+        Query<&gd_game_core::casting::Channel, With<gd_game_core::player::Player>>,
     ),
     (mut hovered, mut commands, glow): (ResMut<Hovered>, Commands, Query<Entity, With<HoverGlow>>),
     mut point: ResMut<HoverPoint>,
     (options, controller, pause): (
-        Res<gd_game::options::GameOptions>,
+        Res<gd_game_core::options::GameOptions>,
         Res<crate::controller_target::ControllerPick>,
-        Res<gd_game::pause::GamePause>,
+        Res<gd_game_core::pause::GamePause>,
     ),
 ) {
     let (
@@ -601,10 +546,10 @@ fn pick(
     let fonts = &*fonts;
     let [object_c, friend_c, enemy_c] = facts.colours(&data);
     let ppos = player.single().map_or(Vec3::ZERO, |p| p.1.translation());
-    let target_pet_key = bindings.pressed(crate::ui::keys::TARGET_PET, &keys);
+    let target_pet_key = bindings.pressed(gd_ui_kit::keys::TARGET_PET, &keys);
     let story = rt.as_ref().map(|rt| rt.story.borrow());
     // `Npc::IsAvailableForConversations` / `IsOfInterest` of a story NPC.
-    let npc_state = |a: Option<&gd_game::story::StoryActor>| -> (bool, bool) {
+    let npc_state = |a: Option<&gd_game_core::story::StoryActor>| -> (bool, bool) {
         let Some(o) = a.and_then(|a| story.as_ref()?.entities.get(a.0)) else {
             return (true, false);
         };
@@ -680,7 +625,7 @@ fn pick(
             .and_then(|(c, (cam, tf))| cam.viewport_to_world(tf, c).ok())
             .map(Probe::Ray)
     };
-    // The held button (option `targetLock`, sub_140021000, [`held_pick`]).
+    // The held button (option `targetLock`, `InGameUI::HandleMouseEvent`, [`held_pick`]).
     let (mouse, move_held, channel) = held;
     let running = channel.single().ok();
     let pressed = mouse.any_just_pressed([MouseButton::Left, MouseButton::Right]);
@@ -702,7 +647,7 @@ fn pick(
         lock.primary = true;
     }
     let last_enemy = lock.enemy;
-    // The held-click pick frustum widens while pathing to an enemy or repeated (sub_140021000
+    // The held-click pick frustum widens while pathing to an enemy or repeated (`InGameUI::HandleMouseEvent`
     // `IsPathing || IsCommandRepeated`): the stickiness of a held attack.
     let wide =
         (any_held && !pressed) || move_held.0 || (pcb.target.is_some() && !ppath.points.is_empty());
@@ -767,7 +712,7 @@ fn pick(
                         (
                             e,
                             gt.translation() + Vec3::Y * 0.5,
-                            gd_game::combat::body_radius(c.radius) + 0.5,
+                            gd_game_core::combat::body_radius(c.radius) + 0.5,
                             c.record.as_str(),
                         )
                     }),
@@ -784,14 +729,14 @@ fn pick(
                         name: f.name.clone(),
                         kind: Kind::Character,
                         interact,
-                        // sub_14010F470 asks `IsFriend` of the original faction: a converted pet's is the
-                        // player's, so it keeps the friend colour while it fights him.
+                        // `InGameUI::OutlineHoverTarget` asks `IsFriend` of the original faction: a converted
+                        // pet's is the player's, so it keeps the friend colour while it fights him.
                         outline: Some(if converted { friend_c } else { enemy_c }),
                         race: f.race.clone(),
                         classification: f.classification,
                     });
                 }
-                // A breakable: the object colour with the mouse (sub_14010F470).
+                // A breakable: the object colour with the mouse (`InGameUI::OutlineHoverTarget`).
                 Some((e, _, Err(b))) => {
                     let o = object(e, &b.record);
                     let interact = if o.interact == Interact::None {
@@ -817,7 +762,7 @@ fn pick(
                     continue;
                 }
                 let f = facts.of(&data, fonts, &ch.record);
-                let radius = gd_game::combat::body_radius(f.radius);
+                let radius = gd_game_core::combat::body_radius(f.radius);
                 let Some(t) = probe.hit(e, gt.translation() + Vec3::Y, radius + 0.4) else {
                     continue;
                 };
@@ -857,8 +802,8 @@ fn pick(
                 };
                 best = Some((t, h));
             }
-            // Described decorations (`gd_game::world::Described`) are with the characters
-            // (sub_14002FF80 lists them with them; sub_14002BC00 takes a `Decoration`
+            // Described decorations (`gd_game_core::world::Described`) are with the characters
+            // (`InGameUIActorCapture::CollectCandidates` lists them with them; `InGameUI::Update` takes a `Decoration`
             // from that pick): the nearest along the ray. Name only, object outline.
             for (e, _, d, sphere) in &described {
                 let Some(t) = deco_hit(probe, e, sphere) else {
@@ -891,7 +836,7 @@ fn pick(
                     (
                         e,
                         gt.translation() + Vec3::Y,
-                        gd_game::combat::body_radius(d.radius) + 0.8,
+                        gd_game_core::combat::body_radius(d.radius) + 0.8,
                         d.record.as_str(),
                     )
                 });
@@ -902,7 +847,7 @@ fn pick(
                     (
                         e,
                         gt.translation() + Vec3::Y,
-                        gd_game::combat::body_radius(s.radius).max(1.0),
+                        gd_game_core::combat::body_radius(s.radius).max(1.0),
                         s.record.as_str(),
                     )
                 });
@@ -938,7 +883,7 @@ fn pick(
                 (
                     e,
                     gt.translation() + Vec3::Y,
-                    gd_game::combat::body_radius(a.radius).max(1.0),
+                    gd_game_core::combat::body_radius(a.radius).max(1.0),
                     a.record.as_str(),
                 )
             });
@@ -961,7 +906,7 @@ fn pick(
                         (
                             e,
                             gt.translation() + Vec3::Y,
-                            gd_game::combat::body_radius(s.radius).max(1.0),
+                            gd_game_core::combat::body_radius(s.radius).max(1.0),
                             s.record.as_str(),
                         )
                     });
@@ -977,7 +922,7 @@ fn pick(
             )
             .map(|(e, rec)| {
                 let mut h = object(e, rec);
-                // `FixedItemTeleport::GetGameDescription` @0x1802b5df0 (the exit gate's class inherits
+                // `FixedItemTeleport::GetGameDescription` (the exit gate's class inherits
                 // it): `tagRiftgatePersonal`, not the record's description.
                 if rec == gd_game::riftgates::PORTAL_RECORD
                     || rec == gd_game::endless::EXIT_GATE_RECORD
@@ -990,7 +935,7 @@ fn pick(
         (next, enemy)
     };
     // An ally under the cursor while an enemy-target skill runs (`GetTargetType` 2 and `IsRunningSkill`): the
-    // object is dropped (sub_140021000: the ally pick is set, then the object cleared).
+    // object is dropped (`InGameUI::HandleMouseEvent`: the ally pick is set, then the object cleared).
     let enemy_skill_running = running.is_some_and(|c| {
         data.db.get(&c.skill).is_some_and(|r| {
             gd_sim::skills::target_type(&r.class) == gd_sim::skills::TargetType::Enemy
@@ -1010,7 +955,7 @@ fn pick(
                     .hit(
                         e,
                         gt.translation() + Vec3::Y,
-                        gd_game::combat::body_radius(f.radius) + 0.4,
+                        gd_game_core::combat::body_radius(f.radius) + 0.4,
                     )
                     .is_some()
             })
@@ -1034,7 +979,7 @@ fn pick(
             }
         }
     };
-    // +2472: the object of this event (none: cleared), and the combat enemy for the next one.
+    // `InGameUI.lockedObject`: the object of this event (none: cleared), and the combat enemy for the next one.
     lock.remembered = next.as_ref().and_then(|h| h.entity);
     lock.enemy = enemy;
     let next = next.unwrap_or_default();
@@ -1046,8 +991,9 @@ fn pick(
         *hovered = next;
     }
     // The light rig's hover highlight (`gd_render::hover`): the marker follows the hover target that took the outline
-    // path (sub_140021000: an `Npc` goes through sub_14010F2B0, whose sub_14010F470 outlines and ends in
-    // `SetHighlight(true)`, only when `IsOfInterest`; else it is only named), whether or not `targetOutline` draws it.
+    // path (`InGameUI::HandleMouseEvent`: an `Npc` goes through `InGameUI::SetHoverTarget`, whose
+    // `InGameUI::OutlineHoverTarget` outlines and ends in `SetHighlight(true)`, only when `IsOfInterest`; else it
+    // is only named), whether or not `targetOutline` draws it.
     let want = hovered.entity.filter(|_| hovered.outline.is_some());
     let cur = glow.iter().next();
     if cur != want {
@@ -1064,10 +1010,12 @@ fn pick(
 #[derive(Component)]
 pub struct OutlineMask;
 
-/// The ground item outline colours of the label manager (`Grim Dawn.exe` `UIWorldDescManager` +356 / +372,
-/// ctor sub_14028A4F0): every item whose label is listed (sub_14028BAD0, from the frustum scan sub_14028C670:
-/// `EnableOutline(true)`, `SetOutlineColor(+356)`) and the selected label's item (update sub_14028AE50, when the
-/// command is not repeated: `SetOutlineColor(+372)`). Not gated by `targetOutline`.
+/// The ground item outline colours of the label manager (`Grim Dawn.exe` `UIWorldDescManager.itemOutlineColor` /
+/// `UIWorldDescManager.selectedOutlineColor`, ctor `UIWorldDescManager::UIWorldDescManager`): every item whose label
+/// is listed (`UIWorldDescManager::ListLabel`, from the frustum scan `UIWorldDescManager::ScanFrustum`:
+/// `EnableOutline(true)`, `SetOutlineColor(itemOutlineColor)`) and the selected label's item (update
+/// `UIWorldDescManager::Update`, when the command is not repeated: `SetOutlineColor(selectedOutlineColor)`). Not gated
+/// by `targetOutline`.
 const ITEM_OUTLINE: Vec3 = Vec3::new(0.5, 0.4, 0.25);
 const SELECTED_ITEM_OUTLINE: Vec3 = Vec3::new(1.0, 0.8, 0.5);
 
@@ -1086,14 +1034,14 @@ fn outline(
     mut commands: Commands,
     hovered: Res<Hovered>,
     listed: Res<crate::loot::ListedLabels>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     children: Query<&Children>,
     parts: Query<
         (&Mesh3d, &MeshMaterial3d<GdMaterial>, Option<&SkinnedMesh>),
         Without<OutlineMask>,
     >,
     mut materials: ResMut<Assets<GdMaterial>>,
-    (mut state, mut fresh): (Local<Outlined>, gd_game::session::NewSession),
+    (mut state, mut fresh): (Local<Outlined>, gd_game_core::session::NewSession),
     mut glow: ResMut<OutlineGlow>,
 ) {
     if fresh.begun() {
@@ -1195,7 +1143,7 @@ type Shown = (
     Option<i32>,
     i32,
     UVec2,
-    Vec<crate::ui::status::TargetDebuff>,
+    Vec<gd_ui::status::TargetDebuff>,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -1204,18 +1152,18 @@ fn describe(
     hovered: Res<Hovered>,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
-    roots: Query<(Entity, &crate::ui::RootFrame), With<NameRoot>>,
+    roots: Query<(Entity, &gd_ui_kit::RootFrame), With<NameRoot>>,
     frame: Res<bevy::diagnostic::FrameCount>,
     lives: Query<(
-        &crate::combat::Combatant,
-        Has<gd_game::monsters::Monster>,
+        &gd_game_core::combat::Combatant,
+        Has<gd_game_core::monsters::Monster>,
         Has<gd_game::pets::Pet>,
     )>,
-    player: Query<&crate::combat::Combatant, With<crate::player::Player>>,
-    mut assets: crate::ui::UiAssets,
-    (mut shown, mut fresh): (Local<Option<Shown>>, gd_game::session::NewSession),
-    options: Res<gd_game::options::GameOptions>,
-    values: Res<crate::ui::HudValues>,
+    player: Query<&gd_game_core::combat::Combatant, With<gd_game_core::player::Player>>,
+    mut assets: gd_ui_kit::UiAssets,
+    (mut shown, mut fresh): (Local<Option<Shown>>, gd_game_core::session::NewSession),
+    options: Res<gd_game_core::options::GameOptions>,
+    values: Res<gd_ui::HudValues>,
     mut fills: Query<&mut HoverFill>,
 ) {
     if fresh.begun() {
@@ -1235,7 +1183,7 @@ fn describe(
         .filter(|_| hovered.kind == Kind::Character && options.flag("showMonsterLevelOnRollover"))
         .map(|l| l.0.profile.level);
     let plevel = player.single().map(|p| p.profile.level).unwrap_or(1);
-    let strip: &[crate::ui::status::TargetDebuff] = if options.flag("monsterBarsDebuffs") {
+    let strip: &[gd_ui::status::TargetDebuff] = if options.flag("monsterBarsDebuffs") {
         &values.target_debuffs
     } else {
         &[]
@@ -1249,7 +1197,7 @@ fn describe(
             && s.5 == strip
     });
     let clear = hovered.entity.is_none() || hovered.name.is_empty() || size.x == 0;
-    crate::ui::retire_roots(
+    gd_ui_kit::retire_roots(
         &mut commands,
         roots.iter().map(|(e, f)| (e, f.0)),
         frame.0,
@@ -1281,7 +1229,7 @@ fn describe(
     let (Some(desc), Some(name_rec)) = (data.db.get(DESC), data.db.get(NAME_BOX)) else {
         return;
     };
-    let root = crate::ui::spawn_frame_root(&mut commands, NameRoot, frame.0, 4);
+    let root = gd_ui_kit::spawn_frame_root(&mut commands, NameRoot, frame.0, 4);
     let mut ui = assets.ui(
         &mut commands,
         &data,
@@ -1290,9 +1238,9 @@ fn describe(
         1.0 / win.scale_factor(),
         size.as_vec2(),
     );
-    // Anchor: the viewport's top centre, 1 px down (sub_140027350).
+    // Anchor: the viewport's top centre, 1 px down (`InGameUI::Render`).
     let anchor = Vec2::new((ui.screen.x * 0.5).trunc(), 1.0);
-    // A text box as wide as its text, centred on the anchor (sub_14010E2B0).
+    // A text box as wide as its text, centred on the anchor (`UIActorDescription::Draw`).
     let text = |ui: &mut Ui, tb: &TextBox, s: &str, tint: Color| {
         let Some(style) = tb.style.as_deref() else {
             return;
@@ -1311,7 +1259,7 @@ fn describe(
         Color::WHITE,
     );
     let sub = |k: &str| desc.str(k).map(str::to_owned).unwrap_or_default();
-    // A `Destructible` (sub_14010E2B0's +2120 branch): `healthBar` at
+    // A `Destructible` (`UIActorDescription::Draw`'s `UIActorDescription.isObjectOrNpc` branch): `healthBar` at
     // life / max life and the tier-1 border, nothing else.
     if hovered.kind == Kind::Breakable {
         if let Some(ratio) = ratio
@@ -1380,7 +1328,8 @@ fn describe(
     }
 }
 
-/// The debuff icon strip under the bar (`monsterBarsDebuffs`; sub_14010E2B0, sub_14024E2E0): the widget
+/// The debuff icon strip under the bar (`monsterBarsDebuffs`; `UIActorDescription::Draw`,
+/// `PlayerStatusIcons::DrawArea`): the widget
 /// `actor_statusicons.dbr` is centred on the anchor by its width, its debuff area
 /// (area 2: `activeHudArea2X/Y` = (0, 120), width 226) starts there and the icons run left to right at their
 /// texture's own size (32 px) plus `iconHorizSpace` / `iconVertSpace` (6); a row ends once the running sum
@@ -1391,7 +1340,7 @@ fn debuff_strip(
     data: &GameData,
     record: &str,
     anchor: Vec2,
-    icons: &[crate::ui::status::TargetDebuff],
+    icons: &[gd_ui::status::TargetDebuff],
 ) {
     let Some(rec) = data.db.get(record) else {
         return;
@@ -1502,7 +1451,7 @@ fn animate_fill(time: Res<Time>, mut fills: Query<(&HoverFill, &mut Node, &mut I
             .anim
             .map_or(0, |a| (time.elapsed_secs() * a.fps) as u32);
         let src = f.bar.fill_src(f.full_size.x, f.full_size.y, f.ratio, frame);
-        crate::ui::set_node_rect(&mut node, f.bar.fill_dst(f.rect, f.ratio), f.inv);
-        crate::ui::set_image_src(&mut img, src);
+        gd_ui_kit::set_node_rect(&mut node, f.bar.fill_dst(f.rect, f.ratio), f.inv);
+        gd_ui_kit::set_image_src(&mut img, src);
     }
 }

@@ -1,12 +1,12 @@
-//! Display names. `Armor/Weapon::GetGameDescription` (Game.dll 0x18002bd30 /
-//! 0x180589cf0) localises `tagItemNameOrder`
+//! Display names. `Armor/Weapon::GetGameDescription` (Game.dll) localises
+//! `tagItemNameOrder`
 //! (`{%_s0}{%_s1}{%_s2}{%_s3}{%_s4}`) with prefix name, quality tag, style
 //! tag, base name tag and suffix name. The `_` flag makes
-//! `LocalizationManager::BuildFinalString` (Engine 0x1801470e0) insert a
+//! `LocalizationManager::BuildFinalString` (Engine) insert a
 //! space before a non-empty parameter when the output is already non-empty;
 //! string parameters are tag names resolved through the tag
 //! table; a missing tag shows the raw string (`LocalizationManager::
-//! GetText` Engine 0x180146040: the tag text itself, prefixed "Tag not
+//! GetText` Engine: the tag text itself, prefixed "Tag not
 //! found: " only with the `ShowTagErrors` debug switch). Stackable items use
 //! `tagItemNameAndStack` when the stack is > 1.
 use super::resolve::{NameTags, ResolvedItem};
@@ -75,11 +75,11 @@ pub fn record_description(tags: &TagTable, rec: &gd_formats::arz::Record) -> Str
     strip_markup(&compose(tags, &n))
 }
 
-/// A gold pile's name and its colour (`OneShot_Gold::GetGameDescription` @0x1803c0b50 /
-/// `GetUIGameDescription` @0x1803c0d00): `tagMoneyFormat` (stock `{^s}{%d0}  {%s1}`) localised with the amount
+/// A gold pile's name and its colour (`OneShot_Gold::GetGameDescription` /
+/// `GetUIGameDescription`): `tagMoneyFormat` (stock `{^s}{%d0}  {%s1}`) localised with the amount
 /// and the item's name (`name_tag`, the record's `description`), spacing kept; only `^n`, line breaks and the
-/// outer spaces / braces are removed (sub_180592340, sub_180592560), so the format's own colour code colours
-/// the text (`None`: it has none and the classification's colour shows).
+/// outer spaces / braces are removed (`Game::StripTextFormatting`, `Game::TrimTextBraces`), so the format's own
+/// colour code colours the text (`None`: it has none and the classification's colour shows).
 pub fn money_label(tags: &TagTable, name_tag: &str, amount: u32) -> (String, Option<[f32; 4]>) {
     use super::tooltip::{Arg, format_spaced};
     let fmt = tags.get("tagMoneyFormat").unwrap_or("tagMoneyFormat");

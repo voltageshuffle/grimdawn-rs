@@ -22,7 +22,7 @@
 //! each item instance, passive / pak record, the attacking skill, each global
 //! group), not summed into one gear entry: the defender's `DotManager` keys
 //! its slots by the owner object + attribute (
-//! `DamageAttributeDur::AddDamageToAccumulator` @0x180190560), so distinct
+//! `DamageAttributeDur::AddDamageToAccumulator`), so distinct
 //! sources stack and only the same source's re-application keeps max. The
 //! summed `totals` keep the DoT fields for the sheet, whose display
 //! accumulator sums every source.
@@ -35,16 +35,22 @@
 //!
 //! Submodules: `rules` (game-wide rule records, speed caps), `display` (what
 //! the sheet, tooltips and rollovers show), `retaliation`.
+//!
+//! PERF-36: the attack path reuses per-thread scratch buffers (AttackScratch,
+//! combat::ConvertScratch) for its small collections instead of allocating per
+//! hit. They hold no gameplay value between attacks (cleared on take and
+//! return), so totals / CombatCache remain the single source.
 use crate::attributes::{CharAttr, CombatType};
 use crate::combat::{
-    self, AttackKind, AttackerScaling, DamageScale, Defender, Defense, ReductionInfo, Rng,
-    WeaponDamage,
+    self, AttackKind, AttackerScaling, DamageScale, Defender, Defense, ReductionInfo, WeaponDamage,
 };
-use crate::expr::Expr;
 use crate::stats::*;
 use gd_formats::arz::Record;
+use gd_formats::collections::HashMap;
 use gd_formats::vfs::Database;
-use std::collections::{BTreeMap, HashMap};
+use gd_rules::Rng;
+use std::collections::BTreeMap;
+use std::cell::RefCell;
 use std::sync::{Arc, LazyLock, OnceLock};
 
 mod display;
@@ -81,8 +87,8 @@ pub struct Profile {
     pub speed_caps: [SpeedCap; 3],
     pub is_player: bool,
     /// A player's pet of the engine's `Pet` class (record class `Pet`, [`Side::Pet`]): its resistances cap at
-    /// `playerPetDefenseCap` (`Pet::GetDefenseAttributeCap` @0x1803c80b0: the pet cap while its faction,
-    /// Character +7308, is 0 = the player's, which `Monster::JoinMe` copies from the player it joins; another
+    /// `playerPetDefenseCap` (`Pet::GetDefenseAttributeCap`: the pet cap while its faction,
+    /// `Character.faction`, is 0 = the player's, which `Monster::JoinMe` copies from the player it joins; another
     /// faction takes the monster cap). Other summons (`Monster` class turrets, totems, ...) are monsters there.
     pub pet: bool,
     /// Global damage conversions (in type, out type, %): items, item sets,
@@ -213,13 +219,15 @@ impl Attacker<'_> {
 }
 
 /// One active skill's share of `SkillManager::GetActiveLifeCost` / `GetActiveManaCost` (life, energy per
-/// second). `SkillManager::Update` @0x180532420: for every `SkillActivatedBuffSelf` skill
+/// second). `SkillManager::Update`: for every `SkillActivatedBuffSelf` skill
 /// ([`crate::skills::ClassInfo::buff_self`]) whose
-/// active byte (+0xDC) is set, vtable +744 (`Skill_Modifier::GetSkillModifierData` @0x18049af30, shared by
-/// every skill: `Skill::GetSkillModifierData` @0x18049af90 at `GetCurrentLevel`, modifiers included) is
-/// summed into +1052 / +1056: the skill's PROFILE (`GetSkillProfile`, a wrapper's `buffSkillName` record:
+/// `Skill.active` byte is set, the virtual `Skill_Modifier::GetSkillModifierData` (shared by
+/// every skill: `Skill::GetSkillModifierData` at `GetCurrentLevel`, modifiers included) is
+/// summed into `SkillManager.activeLifeCost` / `SkillManager.activeManaCost`: the skill's PROFILE
+/// (`GetSkillProfile`, a wrapper's `buffSkillName` record:
 /// the devotion `tier3_08g_skill` keeps its cost in `tier3_08g_skill_buff`) at its level, plus each learned
-/// modifier (+320) and gear skill modifier (+344) at theirs. `prof` is that profile record, `mods` the
+/// modifier (`Skill.modifiers`) and gear skill modifier (`Skill.itemModifiers`) at theirs. `prof` is that
+/// profile record, `mods` the
 /// modifiers (record, level index). No reduction applies (`skillManaCostReduction` is the cast costs').
 /// Stock: no `Skill_Modifier` record has a `skillActive*Cost`, so `mods` adds 0 there.
 pub fn active_cost(prof: &Record, li: usize, mods: &[(Record, usize)]) -> [f32; 2] {
@@ -236,11 +244,11 @@ pub fn active_cost(prof: &Record, li: usize, mods: &[(Record, usize)]) -> [f32; 
 }
 
 /// One record's global-chance group: the attributes flagged `<stem>Global`
-/// (`DamageAttribute::HasGlobalChance`, +153) go to the store's global
+/// (`DamageAttribute::HasGlobalChance`) go to the store's global
 /// lists instead of its plain one (`DamageAttributeDur::AddToStore` and
 /// siblings: `<stem>XOR` set → `AddGlobalXorAttribute`, else
 /// `AddGlobalAndAttribute`). `DamageAttributeStore::
-/// AddDamageToAccumulator` @0x1801a4980 / `AddModifierToAccumulator`:
+/// AddDamageToAccumulator` / `AddModifierToAccumulator`:
 /// with `GetGlobalChance` (`offensiveGlobalChance`) > 0 one roll
 /// `chance >= rand × 100` decides the whole group; then every "all"
 /// attribute is added under `SetGlobalChance(chance)` and exactly one "one
@@ -248,9 +256,9 @@ pub fn active_cost(prof: &Record, li: usize, mods: &[(Record, usize)]) -> [f32; 
 /// list order; both skip their own chance roll (the `bool` argument).
 ///
 /// On the character sheet (`CombatDisplayAccumulator`, whose random state
-/// at +128 starts at 0, so every draw is 0): the roll always passes, the
+/// (`CombatDisplayAccumulator.randomState`) starts at 0, so every draw is 0): the roll always passes, the
 /// "all" attributes count × the global chance (`GetChanceMultiplier`
-/// returns +136 × 0.01 while it is set) and the "one of" pick is always the
+/// returns `CombatAttributeAccumulator.globalChance` × 0.01 while it is set) and the "one of" pick is always the
 /// first in load order ([`crate::attributes::DAMAGE_LOAD_ORDER`]) at its
 /// own chance (the global chance is reset to 0 before the pick).
 ///
@@ -285,18 +293,18 @@ pub struct HandFlats {
 /// One owner's damage-over-time fields (`offensiveSlowX*` of the damage
 /// types), kept apart from `totals` so an attack deals them as their own
 /// source: the defender's `DotManager` keys slots by the owning object +
-/// attribute (`DamageAttributeDur::AddDamageToAccumulator`
-/// @0x180190560: `(GetObjectId(owner), attribute_index)`;
-/// `ItemEquipment::GetOffensiveDamageAttributes` @0x180340950 passes the
+/// attribute (`DamageAttributeDur::AddDamageToAccumulator`:
+/// `(GetObjectId(owner), attribute_index)`;
+/// `ItemEquipment::GetOffensiveDamageAttributes` passes the
 /// item's id, `Skill_Passive::CollectPassiveOffensiveDamageAttributes`
-/// @0x1804fb320 the skill's), so distinct owners' same-type DoTs stack and
+/// the skill's), so distinct owners' same-type DoTs stack and
 /// only the same owner's re-application keeps max. PORT: one entry per owner
 /// and damage type (the engine keeps one per attribute instance; an item's
 /// base and affix DoTs of one type are summed here before the key).
 #[derive(Debug, Clone, Default)]
 pub struct DotSource {
     /// The owner's stable id ([`item_dot_owner`] for an item instance,
-    /// `fnv1a(record path)` for a skill / passive / pak record).
+    /// the port's hash of the record path for a skill / passive / pak record).
     pub owner: u64,
     /// Its ungated DoT fields (plain names; chance-gated instances stay in
     /// `totals` and roll on their own).
@@ -304,26 +312,18 @@ pub struct DotSource {
 }
 
 /// A DoT's slot key: the owner id hashed with the attribute's field (the
-/// engine's `(GetObjectId(owner), attribute_index)`; 64-bit FNV-1a as
-/// [`crate::hash_order::fnv1a`], no allocation).
+/// engine's `(GetObjectId(owner), attribute_index)`; the port hashes with
+/// [`gd_formats::collections::hash_one`], no allocation). The value is
+/// process-local (never saved): only equality matters.
 pub fn dot_source_key(owner: u64, field: &str) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for b in owner.to_le_bytes().iter().chain(field.as_bytes()) {
-        h = (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
+    gd_formats::collections::hash_one((owner, field))
 }
 
 /// An item instance's owner id: its base, affixes and seeds (the save's
-/// `Item` identity — two rolls of the same base are distinct owners).
+/// `Item` identity — two rolls of the same base are distinct owners), hashed
+/// with the port's hasher ([`gd_formats::collections::hash_one`]).
 pub fn item_dot_owner(item: &gd_formats::save::item::Item) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    let mut eat = |bytes: &[u8]| {
-        for &b in bytes.iter().chain(b"|") {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    };
-    for s in [
+    gd_formats::collections::hash_one((
         &item.base_name,
         &item.prefix_name,
         &item.suffix_name,
@@ -331,13 +331,11 @@ pub fn item_dot_owner(item: &gd_formats::save::item::Item) -> u64 {
         &item.relic_name,
         &item.augment_name,
         &item.ascendant_name,
-    ] {
-        eat(s.as_bytes());
-    }
-    for n in [item.seed, item.relic_seed, item.augment_seed, item.var1] {
-        eat(&n.to_le_bytes());
-    }
-    h
+        item.seed,
+        item.relic_seed,
+        item.augment_seed,
+        item.var1,
+    ))
 }
 
 /// A field that is a damage-over-time value (not a debuff, not a
@@ -402,12 +400,18 @@ impl Profile {
 
 /// A profile's memoized derived combat parameters ([`Profile::combat_cache`]):
 /// the global groups' attribute split ([`global_parts`]), the chance-gated
-/// modifiers and instances of `totals` ([`chance_key`]), and the defender's
-/// profile-derived defenses and scalar lookups ([`defender`]). Built once per
-/// profile; gd-game rebuilds the profile on `ProfileDirty`, so the cache never
-/// outlives its inputs. A profile must be complete before the first attack
-/// reads it (the builders finish mutating it first).
-#[derive(Debug, Clone, Default)]
+/// modifiers and instances of `totals` ([`chance_key`]), the defender's
+/// profile-derived defenses and scalar lookups ([`defender`]), and the dense
+/// per-source offense arrays ([`SLOTS`], [`SlotVals`]) the attack's
+/// `collect_source` reads — gear (main / off hand), each DoT source, each global
+/// group's damage store and each gated instance — so an attack rolls over floats
+/// in catalog order instead of scanning the attribute families with string
+/// lookups per source. `totals` stays the single raw source; these are derived
+/// from it once. Built once per profile; gd-game rebuilds the profile on
+/// `ProfileDirty`, so the cache never outlives its inputs. A profile must be
+/// complete before the first attack reads it (the builders finish mutating it
+/// first).
+#[derive(Debug, Clone)]
 pub struct CombatCache {
     groups: Vec<CachedGroup>,
     /// Chance-gated % modifiers (`OffenseModifier` / `OffenseDurationModifier`
@@ -417,6 +421,10 @@ pub struct CombatCache {
     offense_instances: Vec<ChanceInstance>,
     /// Chance-gated retaliation instances ([`chance_instances`]).
     retaliation_instances: Vec<(f32, BTreeMap<String, f32>)>,
+    /// Whether any retaliation attribute is present in `totals` (a zero
+    /// total still counts) or a gated instance exists: [`retaliate`]'s
+    /// early-out, so a retaliation-less defender skips the catalog scan.
+    has_retaliation: bool,
     defenses: Vec<Defense>,
     negative_damage_mult: f32,
     /// `defensivePercentReflectionResistance` total, uncapped ([`Profile::reflection_resist`]).
@@ -426,6 +434,15 @@ pub struct CombatCache {
     reflect: f32,
     block_modifier: f32,
     block_amount_modifier: f32,
+    /// The gear source's dense offense values ([`SLOTS`]) from `totals` (the main-hand reading).
+    gear: [SlotVals; OFFENSE_SLOTS],
+    /// The off-hand reading (`totals` − main hand + off hand), when dual wielding.
+    gear_off: Option<[SlotVals; OFFENSE_SLOTS]>,
+    /// Dense values of `dot_sources`, parallel to it (the owner stays on [`DotSource`]).
+    dots: Vec<[SlotVals; OFFENSE_SLOTS]>,
+    /// Dense values of the dual weapons' own DoT sources (`HandFlats::main_dots` / `off_dots`).
+    main_dots: Vec<[SlotVals; OFFENSE_SLOTS]>,
+    off_dots: Vec<[SlotVals; OFFENSE_SLOTS]>,
 }
 
 impl CombatCache {
@@ -449,13 +466,18 @@ struct ChanceInstance {
     chance: f32,
     fields: BTreeMap<String, f32>,
     owner: u64,
+    /// Dense offense values of `fields` ([`collect_source`]).
+    dense: [SlotVals; OFFENSE_SLOTS],
 }
 
 /// One [`GlobalGroup`]'s deterministic attribute split ([`cache_attrs`]).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct CachedGroup {
     all: CachedAttrs,
     one_of: Vec<CachedAttrs>,
+    /// Dense damage values of `all` / each `one_of` store (play: no own chance; the sheet adds it).
+    all_dmg: [SlotVals; OFFENSE_SLOTS],
+    one_of_dmg: Vec<[SlotVals; OFFENSE_SLOTS]>,
 }
 
 /// One global store's offense attributes, split once per profile so an
@@ -522,23 +544,58 @@ impl Profile {
                     .next()
                     .and_then(|k| crate::attributes::lookup(k))
                     .map_or(0, |d| {
-                        crate::hash_order::fnv1a(d.class.as_bytes())
-                            ^ (chance.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                        gd_formats::collections::hash_one((d.class, chance.to_bits()))
                     });
+                let dense = dense_from(|k| fields.get(k).copied().unwrap_or(0.0));
                 ChanceInstance {
                     chance,
                     fields,
                     owner,
+                    dense,
                 }
             })
             .collect();
+            let retaliation_instances = chance_instances(
+                &self.totals,
+                &[
+                    F::Retaliation,
+                    F::RetaliationDuration,
+                    F::RetaliationCrowdControl,
+                ],
+            );
+            let has_retaliation = !retaliation_instances.is_empty()
+                || [
+                    F::Retaliation,
+                    F::RetaliationDuration,
+                    F::RetaliationCrowdControl,
+                ]
+                .into_iter()
+                .any(|f| {
+                    crate::attributes::family(f)
+                        .any(|d| d.fields().any(|k| self.totals.contains_key(k)))
+                });
             CombatCache {
                 groups: self
                     .global_groups
                     .iter()
-                    .map(|g| CachedGroup {
-                        all: cache_attrs(&g.all),
-                        one_of: g.one_of.iter().map(|(_, f)| cache_attrs(f)).collect(),
+                    .map(|g| {
+                        let all = cache_attrs(&g.all);
+                        let one_of: Vec<CachedAttrs> =
+                            g.one_of.iter().map(|(_, f)| cache_attrs(f)).collect();
+                        let dmg = |pairs: &[(&'static str, f32)], k: &str| {
+                            pairs.iter().find(|(f, _)| *f == k).map_or(0.0, |(_, v)| *v)
+                        };
+                        let all_dmg = dense_from(|k| dmg(&all.dmg, k));
+                        let one_of_dmg = one_of
+                            .iter()
+                            .map(|a| dense_from(|k| dmg(&a.dmg, k)))
+                            .collect();
+                        CachedGroup {
+                            all,
+                            one_of,
+                            all_dmg,
+                            one_of_dmg,
+                        }
                     })
                     .collect(),
                 gated: self
@@ -555,14 +612,8 @@ impl Profile {
                     })
                     .collect(),
                 offense_instances,
-                retaliation_instances: chance_instances(
-                    &self.totals,
-                    &[
-                        F::Retaliation,
-                        F::RetaliationDuration,
-                        F::RetaliationCrowdControl,
-                    ],
-                ),
+                retaliation_instances,
+                has_retaliation,
                 defenses: build_defenses(self),
                 negative_damage_mult: t("negativeDamageMult"),
                 reflection_resist: t("defensivePercentReflectionResistance"),
@@ -576,6 +627,38 @@ impl Profile {
                 reflect: t("defensiveReflect") * (1.0 + t("defensiveReflectModifier") * PCT),
                 block_modifier: t("defensiveBlockModifier"),
                 block_amount_modifier: t("defensiveBlockAmountModifier"),
+                gear: dense_from(t),
+                gear_off: self.dual.as_ref().map(|h| {
+                    dense_from(|k| {
+                        t(k) - h.main.get(k).copied().unwrap_or(0.0)
+                            + h.off.get(k).copied().unwrap_or(0.0)
+                    })
+                }),
+                dots: self
+                    .dot_sources
+                    .iter()
+                    .map(|ds| dense_from(|k| ds.fields.get(k).copied().unwrap_or(0.0)))
+                    .collect(),
+                main_dots: self
+                    .dual
+                    .as_ref()
+                    .map(|h| {
+                        h.main_dots
+                            .iter()
+                            .map(|ds| dense_from(|k| ds.fields.get(k).copied().unwrap_or(0.0)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                off_dots: self
+                    .dual
+                    .as_ref()
+                    .map(|h| {
+                        h.off_dots
+                            .iter()
+                            .map(|ds| dense_from(|k| ds.fields.get(k).copied().unwrap_or(0.0)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             }
         })
     }
@@ -592,7 +675,7 @@ impl Profile {
 }
 
 /// DB damage-type name of `conversionInType` / `conversionOutType`
-/// (the name lookup used by the conversion `Load` @0x18017bfa0;
+/// (the name lookup used by the conversion `ConversionAttribute::Load`;
 /// `Poison` = acid, `Life` = vitality, `Stun` = stun; any other name, e.g.
 /// `Bleeding`, disables the conversion).
 pub fn conversion_type(name: &str) -> Option<CombatType> {
@@ -616,6 +699,13 @@ pub fn conversion_type(name: &str) -> Option<CombatType> {
 /// A record's conversions at a level (`conversionInType`/`OutType`/
 /// `Percentage`, and the `…2` pair).
 pub fn conversions_of(rec: &Record, li: usize) -> Vec<(CombatType, CombatType, f32)> {
+    let mut v = Vec::new();
+    conversions_of_into(rec, li, &mut v);
+    v
+}
+
+/// [`conversions_of`] appended into a caller-held buffer (PERF-36).
+fn conversions_of_into(rec: &Record, li: usize, v: &mut Vec<(CombatType, CombatType, f32)>) {
     const CONVERSION_FIELDS: [[&str; 3]; 2] = [
         [
             "conversionPercentage",
@@ -628,7 +718,6 @@ pub fn conversions_of(rec: &Record, li: usize) -> Vec<(CombatType, CombatType, f
             "conversionOutType2",
         ],
     ];
-    let mut v = Vec::new();
     for [pct, in_type, out_type] in CONVERSION_FIELDS {
         let pct = level_value(rec, pct, li).unwrap_or(0.0);
         if pct <= 0.0 {
@@ -641,7 +730,6 @@ pub fn conversions_of(rec: &Record, li: usize) -> Vec<(CombatType, CombatType, f
             v.push((i, o, pct));
         }
     }
-    v
 }
 
 /// A `%` damage modifier with its own `...ModifierChance` (e.g. a monster's
@@ -650,7 +738,7 @@ pub fn conversions_of(rec: &Record, li: usize) -> Vec<(CombatType, CombatType, f
 /// unconditional ones (see `gated_mods`). The same holds for chance-gated flat
 /// damage, DoT, crowd control and retaliation attributes: the engine creates
 /// one instance per attribute per source, each rolled on its own chance
-/// (`DamageAttributeAbs::AddDamageToAccumulator` @0x18018da60), so
+/// (`DamageAttributeAbs::AddDamageToAccumulator`), so
 /// their value fields (and the chance field itself) are kept apart too.
 /// `d` is `field`'s definition ([`crate::attributes::lookup`]).
 fn chance_key(
@@ -753,6 +841,204 @@ fn offense_defs() -> impl Iterator<Item = &'static crate::attributes::FieldDef> 
             .collect()
     });
     DEFS.iter().copied()
+}
+
+/// One offense attribute slot of [`SLOTS`]: a catalog definition [`collect_source`] reads, in the
+/// exact family/field iteration order the per-attack rolls follow (OffenseBase, Offense,
+/// OffenseDuration, OffenseCrowdControl). The dense per-source arrays ([`SlotVals`]) are indexed by
+/// these slots, so an attack reads floats instead of scanning the catalog with string lookups.
+#[derive(Clone, Copy)]
+struct SlotDef {
+    ty: CombatType,
+    kind: SlotKind,
+    /// [`SlotKind::Dot`]'s outcome filter (precomputed from `ty`).
+    dot: DotKind,
+    /// The min field (also the DoT slot key's field, [`dot_source_key`]).
+    fmin: &'static str,
+    max: Option<&'static str>,
+    chance: Option<&'static str>,
+    dmin: Option<&'static str>,
+    dmax: Option<&'static str>,
+    /// `offensivePhysicalMin`: weapon-style base damage, skipped by the summed sources.
+    base_physical: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SlotKind {
+    Hit,
+    Dot,
+    Cc,
+}
+
+/// A DoT slot's filter: damage (scaled, gated by `collect_dots`), an allowed debuff, or skipped.
+#[derive(Clone, Copy, PartialEq)]
+enum DotKind {
+    Damage,
+    Debuff,
+    Skip,
+}
+
+/// One slot's raw field values from a source (0 when absent): min, max, chance, duration min/max.
+/// The clamps / chance filter [`collect_source`] applies are the engine's, done per attack on these.
+#[derive(Clone, Copy, Default, Debug)]
+struct SlotVals([f32; 5]);
+
+const SV_MIN: usize = 0;
+const SV_MAX: usize = 1;
+const SV_CHANCE: usize = 2;
+const SV_DMIN: usize = 3;
+const SV_DMAX: usize = 4;
+
+/// Number of [`SLOTS`] (the offense definitions with a min field and a combat type).
+const OFFENSE_SLOTS: usize = offense_slot_count();
+
+const fn offense_slot_count() -> usize {
+    use crate::attributes::AttrFamily as F;
+    let fams = [
+        F::OffenseBase,
+        F::Offense,
+        F::OffenseDuration,
+        F::OffenseCrowdControl,
+    ];
+    let mut n = 0;
+    let mut fi = 0;
+    while fi < fams.len() {
+        let (start, end) = crate::catalog::FAMILY_RANGES[fams[fi] as usize];
+        let mut i = start;
+        while i < end {
+            let d = &crate::catalog::FIELDS[i];
+            if d.min.is_some() && d.ty >= 1 && (d.ty as usize) <= CombatType::ALL.len() {
+                n += 1;
+            }
+            i += 1;
+        }
+        fi += 1;
+    }
+    n
+}
+
+/// The offense slots in [`collect_source`]'s iteration order (family order, then catalog order).
+static SLOTS: LazyLock<Vec<SlotDef>> = LazyLock::new(|| {
+    use crate::attributes::{AttrFamily as F, family};
+    use CombatType as T;
+    let mut v = Vec::new();
+    for (fam, kind) in [
+        (F::OffenseBase, SlotKind::Hit),
+        (F::Offense, SlotKind::Hit),
+        (F::OffenseDuration, SlotKind::Dot),
+        (F::OffenseCrowdControl, SlotKind::Cc),
+    ] {
+        for d in family(fam) {
+            let (Some(fmin), Some(ty)) = (d.min, d.combat_type()) else {
+                continue;
+            };
+            let dot = if kind != SlotKind::Dot {
+                DotKind::Skip
+            } else if is_dot_damage(ty) {
+                DotKind::Damage
+            } else if matches!(
+                ty,
+                T::TotalSpeed
+                    | T::AttackSpeed
+                    | T::CastSpeed
+                    | T::RunSpeed
+                    | T::OffensiveAbility
+                    | T::DefensiveAbility
+                    | T::OffensiveReduction
+                    | T::DefensiveReduction
+                    | T::Fumble
+                    | T::ProjectileFumble
+                    | T::LifeLeech
+                    | T::ManaLeech
+                    | T::DamageMultiplier
+            ) || (28..=37).contains(&(ty as u8))
+            {
+                DotKind::Debuff
+            } else {
+                DotKind::Skip
+            };
+            v.push(SlotDef {
+                ty,
+                kind,
+                dot,
+                fmin,
+                max: d.max,
+                chance: d.chance,
+                dmin: d.duration_min,
+                dmax: d.duration_max,
+                base_physical: fmin == "offensivePhysicalMin",
+            });
+        }
+    }
+    assert_eq!(v.len(), OFFENSE_SLOTS, "offense slot count mismatch");
+    v
+});
+
+/// A source's dense offense values: read each slot's fields once (at cache build, or per attack for
+/// the skill source) instead of per-field string lookups in [`collect_source`].
+fn dense_from(get: impl Fn(&str) -> f32) -> [SlotVals; OFFENSE_SLOTS] {
+    let mut out = [SlotVals::default(); OFFENSE_SLOTS];
+    for (i, s) in SLOTS.iter().enumerate() {
+        out[i] = SlotVals([
+            get(s.fmin),
+            s.max.map_or(0.0, &get),
+            s.chance.map_or(0.0, &get),
+            s.dmin.map_or(0.0, &get),
+            s.dmax.map_or(0.0, &get),
+        ]);
+    }
+    out
+}
+
+/// A record's offense field values at a level index, cached per record ([`Record::derived`] slot 1)
+/// so the skill source ([`skill_offense_vals`]) combines array reads, not record scans, per attack.
+#[derive(Default)]
+struct RecordOffenseFields(parking_lot::Mutex<HashMap<usize, Arc<[SlotVals; OFFENSE_SLOTS]>>>);
+
+fn offense_fields(rec: &Record, li: usize) -> Arc<[SlotVals; OFFENSE_SLOTS]> {
+    match rec.derived::<1, _>(RecordOffenseFields::default) {
+        Some(m) => {
+            m.0.lock()
+                .entry(li)
+                .or_insert_with(|| Arc::new(dense_from(|k| level_value(rec, k, li).unwrap_or(0.0))))
+                .clone()
+        }
+        None => Arc::new(dense_from(|k| level_value(rec, k, li).unwrap_or(0.0))),
+    }
+}
+
+/// The skill source's dense offense values: `SkillUse::f` over the cached per-record values, in the
+/// same f32 order (own record × scale + the modifiers' sum, then the parent's `f`). A tooltip drops
+/// the learned modifiers' values (own record × scale + the parent's `f`, `DamageAttributeStore::
+/// ProcessText`).
+fn skill_offense_vals(s: &SkillUse, tooltip: bool) -> [SlotVals; OFFENSE_SLOTS] {
+    let rec = offense_fields(s.record, s.level_index);
+    let parent = s.parent.as_ref().map(|p| skill_offense_vals(p, false));
+    let mods: Vec<Arc<[SlotVals; OFFENSE_SLOTS]>> = if tooltip {
+        Vec::new()
+    } else {
+        s.mods
+            .iter()
+            .map(|(r, li)| offense_fields(r, *li))
+            .collect()
+    };
+    let mut out = [SlotVals::default(); OFFENSE_SLOTS];
+    for i in 0..OFFENSE_SLOTS {
+        for f in 0..5 {
+            let rec_term = rec[i].0[f] * s.scale;
+            let pv = parent.as_ref().map_or(0.0, |p| p[i].0[f]);
+            out[i].0[f] = if tooltip {
+                rec_term + pv
+            } else {
+                let mut ms = 0.0;
+                for m in &mods {
+                    ms += m[i].0[f];
+                }
+                (rec_term + ms) + pv
+            };
+        }
+    }
+    out
 }
 
 /// An offense attribute with a global-chance stem ([`split_global`]).
@@ -922,18 +1208,18 @@ struct Contribution {
 
 /// A record's [`Contribution`]s by (level index, name hash).
 #[derive(Default)]
-struct RecordContributions(std::sync::Mutex<HashMap<(usize, u64), Arc<Contribution>>>);
+struct RecordContributions(parking_lot::Mutex<HashMap<(usize, u64), Arc<Contribution>>>);
 
 fn contribution(rec: &Record, level_index: usize, owner: u64) -> Contribution {
     let mut own: BTreeMap<String, f32> = rec
         .fields
         .iter()
         .filter(|(k, _)| is_total_field(k))
-        .filter_map(|(k, _)| level_value(rec, k, level_index).map(|v| (k.clone(), v)))
+        .filter_map(|(k, _)| level_value(rec, k, level_index).map(|v| (k.to_string(), v)))
         .collect();
     fill_max(&mut own);
     // Without a global chance the global lists add nothing
-    // (`DamageAttributeStore::AddDamageToAccumulator` @0x1801a4980).
+    // (`DamageAttributeStore::AddDamageToAccumulator`).
     let chance = own.get("offensiveGlobalChance").copied().unwrap_or(0.0);
     let group = split_global(&mut own, chance, owner).filter(|_| chance > 0.0);
     // Each field's chance key, and whether it is one of the record's ungated DoTs, their own source (the
@@ -963,11 +1249,10 @@ fn add_fields(
     rec: &Record,
     level_index: usize,
 ) {
-    let owner = crate::hash_order::fnv1a(rec.name.as_bytes());
-    let c = match rec.derived(RecordContributions::default) {
+    let owner = gd_formats::collections::hash_one(rec.name.as_str());
+    let c = match rec.derived::<0, _>(RecordContributions::default) {
         Some(m) => {
             m.0.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .entry((level_index, owner))
                 .or_insert_with(|| Arc::new(contribution(rec, level_index, owner)))
                 .clone()
@@ -1081,7 +1366,7 @@ pub fn attr_conversions(
 
 /// A creature record's skills (`skillName1..N`) with their levels
 /// (`skillLevelN`, a number or an equation in `charLevel`), as
-/// `SkillManager::LoadSkills` @0x18052ef00 reads them for `Monster::Load`:
+/// `SkillManager::LoadSkills` reads them for `Monster::Load`:
 /// at most 34 slots, stopping at the first empty name; the
 /// level truncated to an integer. A skill at level 0 is loaded but disabled
 /// (`Skill::IsSkillEnabled` needs level > 0, checked by
@@ -1091,23 +1376,20 @@ pub fn monster_skill_levels(rec: &Record, level: i32) -> Vec<(String, u32)> {
     let lvl = level as f32;
     (1..=34)
         .map_while(|i| {
-            rec.str(&format!("skillName{i}"))
+            rec.str(&SKILL_NAME_KEYS[(i - 1) as usize])
                 .filter(|n| !n.is_empty())
                 .map(|n| (i, n))
         })
         .filter_map(|(i, name)| {
-            let sl = match rec.get(&format!("skillLevel{i}")).and_then(|v| v.first()) {
-                Some(gd_formats::arz::RawValue::Str(s)) => Expr::parse(s)
-                    .map(|e| e.eval(&|n| n.eq_ignore_ascii_case("charLevel").then_some(lvl)))
-                    .unwrap_or(0.0),
-                Some(v) => v.as_f32().unwrap_or(0.0),
-                None => 0.0,
-            };
-            let sl = sl as i32;
+            let sl = crate::skills::skill_level_eq(rec, i as usize, lvl) as i32;
             (sl > 0).then(|| (name.to_owned(), sl as u32))
         })
         .collect()
 }
+
+/// `skillName1..=34` keys (a static table, no per-spawn `format!`).
+static SKILL_NAME_KEYS: LazyLock<[String; 34]> =
+    LazyLock::new(|| std::array::from_fn(|i| format!("skillName{}", i + 1)));
 
 /// A monster record at `level` (bio equations + passive skills).
 pub fn monster(
@@ -1310,7 +1592,7 @@ pub fn monster_full(
     );
     p.global_groups = groups;
     p.dot_sources = dots;
-    // `CharacterBio::Update` @0x18008aa70 regenerates every character: the
+    // `CharacterBio::Update` regenerates every character: the
     // bio equation, not the raw attribute (no player gate; the player's
     // `playerresourcebehavior` equations run in `finish`).
     p.sheet.life_regen_per_sec = bio.life_regen_per_sec(level, &acc);
@@ -1499,8 +1781,8 @@ pub fn skill_attribute(totals: &BTreeMap<String, f32>, field: &str) -> f32 {
 impl Profile {
     /// The character's total of a skill attribute (`skillCooldownReduction`,
     /// `skillManaCostReduction`, ...) over gear and passives: value + |value|
-    /// × `<field>Modifier` % (`Player::CalculateSkillValues` @
-    /// 0x1803ce1e0 and the manager part of `Skill::GetTotalSkillAttribute`).
+    /// × `<field>Modifier` % (`Player::CalculateSkillValues`
+    /// and the manager part of `Skill::GetTotalSkillAttribute`).
     pub fn skill_attribute(&self, field: &str) -> f32 {
         skill_attribute(&self.totals, field)
     }
@@ -1516,9 +1798,9 @@ pub struct Hit {
     /// critical tier (`CalculateDamageModifier`).
     pub multiplier: f32,
     pub tier: u32,
-    /// The attack's style (`ParametersCombat` +4): `afflictions::receive`
+    /// The attack's style (`ParametersCombat.attackStyle`): `afflictions::receive`
     /// reads it for the sleep wake (`DurationDamageManager::BeginNewAttack`
-    /// @0x18027a1e0 runs for every style but retaliation / debuff /
+    /// runs for every style but retaliation / debuff /
     /// reflection).
     pub kind: AttackKind,
     /// Absolute damage of the hit ([`combat::HitResult::total`]).
@@ -1583,13 +1865,13 @@ impl Hit {
         self.applied.iter().map(|a| a.1).sum()
     }
 
-    /// The largest single life subtraction (`Character::SubtractLife` @0x180068b00 hands
+    /// The largest single life subtraction (`Character::SubtractLife` hands
     /// each amount to `PlayStats::TallyDamageReceived`).
     pub fn largest_applied(&self) -> f32 {
         self.applied.iter().fold(0.0, |m, a| m.max(a.1))
     }
 
-    /// `Character::SubtractLife`'s overkill (@0x180068b00): an amount that leaves the
+    /// `Character::SubtractLife`'s overkill: an amount that leaves the
     /// life (starting at `life_before`) at or below 0 and is at least `threshold`
     /// (`maxLife * gibThreshold / 100`).
     pub fn overkills(&self, life_before: f32, threshold: f32) -> bool {
@@ -1651,7 +1933,7 @@ pub struct SkillUse<'a> {
     /// Scale of the whole hit's damage: a projectile burst / ring's range
     /// falloff ([`range_scale`]); 1 otherwise.
     pub damage_scale: f32,
-    /// `TakeAttack` combat style of the hit (`ParametersCombat` +16, as the
+    /// `TakeAttack` combat style of the hit (`ParametersCombat.combatStyle`, as the
     /// skill's `TargetResult` passes it to `CollectCombatParameters`:
     /// weapon attacks melee, projectiles ranged, radius / spell skills style
     /// 0 = [`AttackKind::Direct`] for `Skill_AttackRadius`,
@@ -1659,7 +1941,7 @@ pub struct SkillUse<'a> {
     /// classes).
     pub style: AttackKind,
     /// The combo charge bonus of this use, (100 + multiplier) % (the
-    /// `DamageScaleInfo` +4 factor, applied after the % modifiers:
+    /// `DamageScaleInfo.comboFactor`, applied after the % modifiers:
     /// `gd_sim::combo`); 0 = none.
     pub combo: f32,
     /// The attacker's worn weapons (right, left), when known: a modifier's
@@ -1668,8 +1950,8 @@ pub struct SkillUse<'a> {
         Option<crate::equip::WeaponType>,
         Option<crate::equip::WeaponType>,
     )>,
-    /// An item skill (`Skill` +761: `SkillManager::AddItemSkills` / `Skill::SetAsItemSkill`, the skills worn gear
-    /// grants): `Skill::GetManaCost` takes its cost unreduced ([`skill_energy_cost`]).
+    /// An item skill (`Skill.isItemSkill`: `SkillManager::AddItemSkills` / `Skill::SetAsItemSkill`, the skills worn
+    /// gear grants): `Skill::GetManaCost` takes its cost unreduced ([`skill_energy_cost`]).
     pub item_skill: bool,
 }
 
@@ -1701,17 +1983,17 @@ pub fn range_scale(rec: &Record, distance: f32) -> Option<f32> {
     })
 }
 
-/// The energy cost of a skill (`Skill::GetManaCost` @0x1804921e0):
+/// The energy cost of a skill (`Skill::GetManaCost`):
 /// `skillManaCost` of the record and its learned modifiers,
 /// × (1 − reduction %), floored at 0. The reduction is the skill's own
 /// `skillManaCostReduction` (+ |value| × `…Modifier` %) plus the character's
-/// total (`GetTotalSkillAttribute` @0x180492650). An item skill (`item_skill`)
+/// total (`GetTotalSkillAttribute`). An item skill (`item_skill`)
 /// or a potion (`Skill_ChargePotion`) pays unreduced. `roll(chance)` decides
 /// each chance-gated reduction instance (`SkillAttribute::GetTotalValue`
-/// @0x18051e380 rolls a chance inside (0, 100) per call); pass `|_| false`
+/// rolls a chance inside (0, 100) per call); pass `|_| false`
 /// for the plain value the hot slot's usable state shows (it asks without
 /// the chance part). The one cost function of the cast request and the
-/// energy absorption (`ParametersCombat+152`).
+/// energy absorption (`ParametersCombat.manaCost`).
 pub fn skill_energy_cost(
     rec: &Record,
     level_index: usize,
@@ -1762,11 +2044,6 @@ impl<'a> SkillUse<'a> {
     }
     fn f(&self, k: &str) -> f32 {
         self.own(k) + self.parent.as_ref().map_or(0.0, |p| p.f(k))
-    }
-    /// [`Self::f`] without the learned modifiers' values.
-    fn flat_without_mods(&self, k: &str) -> f32 {
-        level_value(self.record, k, self.level_index).unwrap_or(0.0) * self.scale
-            + self.parent.as_ref().map_or(0.0, |p| p.f(k))
     }
     fn own(&self, k: &str) -> f32 {
         level_value(self.record, k, self.level_index).unwrap_or(0.0) * self.scale
@@ -1829,9 +2106,9 @@ impl<'a> SkillUse<'a> {
         own * parent
     }
     /// `retaliationDamagePct` of the skill at its level plus its modifiers'
-    /// at theirs (`Skill::CollectLocalRetaliationDamagePercent` @0x1804970e0 →
-    /// `CollectRetaliationDamagePctFromModifiers` @0x180498a20).
-    /// `Skill::CollectCombatParameters` @0x180499e40 (Ashes of Malmouth on):
+    /// at theirs (`Skill::CollectLocalRetaliationDamagePercent` →
+    /// `CollectRetaliationDamagePctFromModifiers`).
+    /// `Skill::CollectCombatParameters` (Ashes of Malmouth on):
     /// above 0 the attack's retaliation accumulator gets the
     /// skill's own retaliation attributes and then the character's
     /// (`SkillManager::CollectAvailableRetaliationAttributes`: equipment,
@@ -1868,18 +2145,72 @@ impl<'a> SkillUse<'a> {
     /// (`Skill_WPAttack::CollectLocalConversionAttributes`: own,
     /// `AddModifierConversionAttributes`, then the parent's).
     fn conversions(&self) -> Vec<(CombatType, CombatType, f32)> {
-        let mut v = conversions_of(self.record, self.level_index);
+        let mut v = Vec::new();
+        self.conversions_into(&mut v);
+        v
+    }
+    /// [`conversions`](Self::conversions) appended into a caller-held buffer
+    /// (the attack path's scratch, PERF-36), in the same order.
+    fn conversions_into(&self, out: &mut Vec<(CombatType, CombatType, f32)>) {
+        conversions_of_into(self.record, self.level_index, out);
         for (r, li) in &self.mods {
-            v.extend(conversions_of(r, *li));
+            conversions_of_into(r, *li, out);
         }
         if let Some(p) = &self.parent {
-            v.extend(p.conversions());
+            p.conversions_into(out);
         }
-        v
     }
 }
 
-type GroupMods = BTreeMap<&'static str, f32>;
+/// The global groups' modifier fields summed for one attack: (field, value),
+/// first-seen order, one entry per field (a small linear list — PERF-36 reuses
+/// its buffer; lookups return the same sum the `BTreeMap` held).
+type GroupMods = Vec<(&'static str, f32)>;
+
+/// One global group's damage source for [`collect_source`]: the profile's cached
+/// dense values in play (indices into [`CombatCache`]'s groups, so the buffer is
+/// scratch-reusable), a chance-weighted copy on the sheet (its own chance fields
+/// set to the store's weight).
+enum GroupDmg {
+    Cached { group: usize, pick: Option<usize> },
+    Display(Box<[SlotVals; OFFENSE_SLOTS]>),
+}
+
+/// Reusable per-attack buffers (PERF-36): the attack path's small collections
+/// (the damage list, the global groups' modifier sums and damage sources, the
+/// chance-gated modifiers, the skill's conversions, the defender's absorb copy
+/// and the conversion buffers) are collected here instead of fresh heap
+/// allocations per hit. One per thread, taken empty and returned cleared (the
+/// `gd_game_core::rng` pattern), so a nested or parallel attack never shares
+/// buffers and no gameplay value survives an attack — only capacity is reused.
+/// `totals` / [`CombatCache`] stay the raw source; this caches nothing.
+/// PORT: the engine allocates these per `CollectCombatParameters` / `TakeAttack`.
+#[derive(Default)]
+struct AttackScratch {
+    damage: Vec<combat::Damage>,
+    group_mods: GroupMods,
+    gated: Vec<(usize, f32)>,
+    group_damage: Vec<(u64, GroupDmg)>,
+    convs: Vec<combat::Conversion>,
+    absorb: Vec<combat::Absorb>,
+    convert: combat::ConvertScratch,
+}
+
+thread_local! {
+    static ATTACK_SCRATCH: RefCell<AttackScratch> = RefCell::new(AttackScratch::default());
+}
+
+/// Takes this thread's attack scratch, leaving an empty one (a nested call gets
+/// fresh buffers and returns them; the outer call restores its own).
+fn take_scratch() -> AttackScratch {
+    ATTACK_SCRATCH.with(|c| c.replace(AttackScratch::default()))
+}
+
+fn put_scratch(s: AttackScratch) {
+    ATTACK_SCRATCH.with(|c| {
+        c.replace(s);
+    });
+}
 
 /// Global-chance groups ([`GlobalGroup`]): the attributes that apply to
 /// this attack. Modifiers join the totals (× their chance weight on the
@@ -1887,11 +2218,22 @@ type GroupMods = BTreeMap<&'static str, f32>;
 /// set to the weight the sheet gives them, or removed: no own roll), each
 /// with its store's source id. The attribute split is the profile's
 /// [`CombatCache`]; only the rolls run per attack.
-fn global_parts(atk: &Profile, rng: &mut Rng, display: bool) -> (GroupMods, Vec<(u64, GroupMods)>) {
+fn global_parts(
+    atk: &Profile,
+    rng: &mut Rng,
+    display: bool,
+    group_mods: &mut GroupMods,
+    group_damage: &mut Vec<(u64, GroupDmg)>,
+) {
     let chance_weight = |c: f32| if c > 0.0 && c < 100.0 { c * 0.01 } else { 1.0 };
-    let mut group_mods: GroupMods = BTreeMap::new();
-    let mut group_damage: Vec<(u64, GroupMods)> = Vec::new();
-    for (g, cg) in atk.global_groups.iter().zip(&atk.combat_cache().groups) {
+    group_mods.clear();
+    group_damage.clear();
+    for (gi, (g, cg)) in atk
+        .global_groups
+        .iter()
+        .zip(&atk.combat_cache().groups)
+        .enumerate()
+    {
         if !display && g.chance < rng.unit() * 100.0 {
             continue;
         }
@@ -1907,44 +2249,60 @@ fn global_parts(atk: &Profile, rng: &mut Rng, display: bool) -> (GroupMods, Vec<
                 target <= acc
             })
         };
-        let picked = pick.map(|i| (&cg.one_of[i], Some(g.one_of[i].0)));
-        for (attrs, own) in std::iter::once((&cg.all, None)).chain(picked) {
+        let picked = pick.map(|i| (&cg.one_of[i], Some(g.one_of[i].0), &cg.one_of_dmg[i], Some(i)));
+        for (attrs, own, play_dense, pick_idx) in
+            std::iter::once((&cg.all, None, &cg.all_dmg, None)).chain(picked)
+        {
             // Sheet weight: the global chance for "all", the own chance for the pick.
             let weight = own.unwrap_or(g.chance);
             let w = if display { chance_weight(weight) } else { 1.0 };
             for &(f, v) in &attrs.mods {
-                *group_mods.entry(f).or_default() += v * w;
+                let idx = match group_mods.iter().position(|x| x.0 == f) {
+                    Some(i) => i,
+                    None => {
+                        group_mods.push((f, 0.0));
+                        group_mods.len() - 1
+                    }
+                };
+                group_mods[idx].1 += v * w;
             }
-            let mut dmg: GroupMods = attrs.dmg.iter().cloned().collect();
             if display {
-                for &f in &attrs.chance {
-                    dmg.insert(f, weight);
+                let mut dense = *play_dense;
+                for (i, s) in SLOTS.iter().enumerate() {
+                    if s.chance.is_some_and(|cf| attrs.chance.contains(&cf)) {
+                        dense[i].0[SV_CHANCE] = weight;
+                    }
                 }
-            }
-            if !dmg.is_empty() {
-                group_damage.push((g.source, dmg));
+                if !attrs.dmg.is_empty() || !attrs.chance.is_empty() {
+                    group_damage.push((g.source, GroupDmg::Display(Box::new(dense))));
+                }
+            } else if !attrs.dmg.is_empty() {
+                group_damage.push((
+                    g.source,
+                    GroupDmg::Cached {
+                        group: gi,
+                        pick: pick_idx,
+                    },
+                ));
             }
         }
     }
-    (group_mods, group_damage)
 }
 
 /// Chance-gated modifiers (`field@chance`, see `chance_key`) that apply to
 /// this attack (on the sheet: all, × chance / 100). The candidates are the
 /// profile's [`CombatCache`]; only the rolls run per attack. Flat damage
 /// instances roll in `collect_damage` / `retaliation_parts`, not here.
-fn gated_mods<'a>(atk: &'a Profile, rng: &mut Rng, display: bool) -> Vec<(&'a str, f32)> {
+fn gated_mods(atk: &Profile, rng: &mut Rng, display: bool, out: &mut Vec<(usize, f32)>) {
     let chance_weight = |c: f32| if c > 0.0 && c < 100.0 { c * 0.01 } else { 1.0 };
-    atk.combat_cache()
-        .gated
-        .iter()
-        .filter_map(|(field, chance, v)| {
-            if display {
-                return Some((&**field, *v * chance_weight(*chance)));
-            }
-            (rng.unit() * 100.0 < *chance).then_some((&**field, *v))
-        })
-        .collect()
+    out.clear();
+    for (i, (_, chance, v)) in atk.combat_cache().gated.iter().enumerate() {
+        if display {
+            out.push((i, *v * chance_weight(*chance)));
+        } else if rng.unit() * 100.0 < *chance {
+            out.push((i, *v));
+        }
+    }
 }
 
 /// One [`CombatType`]'s modifier fields from the catalog, built once
@@ -2012,12 +2370,11 @@ fn type_fields(ty: CombatType) -> &'static TypeFields {
 
 /// A hit type's % modifier from an attribute source.
 /// `offensiveElementalModifier` adds its % as three modifiers, cold, fire
-/// and lightning (`DamageAttributeAbsMod_Elemental::AddModifierToAccumulator`
-/// @0x18019cc10), so it raises every cold / fire / lightning hit
+/// and lightning (`DamageAttributeAbsMod_Elemental::AddModifierToAccumulator`),
+/// so it raises every cold / fire / lightning hit
 /// (the thirds of an Elemental damage too). `offensiveTotalDamageModifier`
 /// is added to each hit type's modifier and each DoT type's
-/// (`DamageAttributeAbsMod_TotalDamageModifier::AddModifierToAccumulator`
-/// @0x18019cdc0).
+/// (`DamageAttributeAbsMod_TotalDamageModifier::AddModifierToAccumulator`).
 fn hit_mod(get: &dyn Fn(&str) -> f32, ty: CombatType) -> f32 {
     use CombatType as T;
     let total = if matches!(
@@ -2075,27 +2432,32 @@ fn dot_mod(get: &dyn Fn(&str) -> f32, ty: CombatType) -> (f32, f32) {
 pub struct DisplayModifiers<'a> {
     profile: &'a Profile,
     group_mods: GroupMods,
-    gated: Vec<(&'a str, f32)>,
+    gated: Vec<(usize, f32)>,
 }
 
 impl<'a> DisplayModifiers<'a> {
     pub fn new(atk: &'a Profile) -> Self {
         let mut rng = Rng(0);
-        let (group_mods, _) = global_parts(atk, &mut rng, true);
+        let mut group_mods = GroupMods::default();
+        let mut group_damage = Vec::new();
+        global_parts(atk, &mut rng, true, &mut group_mods, &mut group_damage);
+        let mut gated = Vec::new();
+        gated_mods(atk, &mut rng, true, &mut gated);
         DisplayModifiers {
             profile: atk,
             group_mods,
-            gated: gated_mods(atk, &mut rng, true),
+            gated,
         }
     }
     fn get(&self, k: &str) -> f32 {
+        let gated = &self.profile.combat_cache().gated;
         self.profile.totals.get(k).copied().unwrap_or(0.0)
-            + self.group_mods.get(k).copied().unwrap_or(0.0)
+            + self.group_mods.iter().find(|x| x.0 == k).map_or(0.0, |x| x.1)
             + self
                 .gated
                 .iter()
-                .filter(|g| g.0 == k)
-                .map(|g| g.1)
+                .filter(|&&(i, _)| &*gated[i].0 == k)
+                .map(|&(_, v)| v)
                 .sum::<f32>()
     }
     pub fn hit(&self, ty: CombatType) -> f32 {
@@ -2113,7 +2475,7 @@ impl<'a> DisplayModifiers<'a> {
 /// (`Skill::CollectCombatParameters`, [`display_damage`]).
 ///
 /// `display` is the character sheet's accumulator (`CombatDisplayAccumulator`
-/// with procs included `GetChanceMultiplier` @0x18011ba10): nothing
+/// with procs included `GetChanceMultiplier`): nothing
 /// is rolled against its chance; an attribute or modifier with a chance
 /// strictly between 0 and 100 counts × chance / 100, every other one in full.
 /// `tooltip`: a skill tooltip's store text (`DamageAttributeStore::
@@ -2132,12 +2494,14 @@ fn collect_damage(
     tooltip: bool,
     racial_pct: f32,
 ) -> (Vec<combat::Damage>, f32, f32) {
+    let mut sc = take_scratch();
+    let cache = atk.profile.combat_cache();
     let chance_weight = |c: f32| if c > 0.0 && c < 100.0 { c * 0.01 } else { 1.0 };
     use CombatType as T;
     let ad = |ty| atk_debuffs.get(ty);
     let out_red = outgoing_reduction(atk_debuffs);
-    let (group_mods, group_damage) = global_parts(atk.profile, rng, display);
-    let t = |k: &str| atk.total(k) + group_mods.get(k).copied().unwrap_or(0.0);
+    global_parts(atk.profile, rng, display, &mut sc.group_mods, &mut sc.group_damage);
+    let t = |k: &str| atk.total(k) + sc.group_mods.iter().find(|x| x.0 == k).map_or(0.0, |x| x.1);
     // Damage multipliers (`offensiveDamageMultModifier`, e.g. a gear skill
     // modifier's -30 %) scale the damage after the other modifiers
     // (`CombatAttributeAccumulator::ModifyDamage` applies type 61 last;
@@ -2163,17 +2527,24 @@ fn collect_damage(
         formulas: &rules.formulas,
         vars,
     };
-    let gated = gated_mods(atk.profile, rng, display);
-    use crate::attributes::{AttrFamily, family};
+    gated_mods(atk.profile, rng, display, &mut sc.gated);
     // The skill's own modifiers (its record, its modifiers, its parent) and
     // the character's: `Skill::CollectCombatParameters` applies the skill's
     // (`ModifyDamage`) before the skill's and the character's conversions,
     // the character's after them, so only the skill's travel with converted
     // damage (`combat::convert_damage`).
     let local = |f: &str| skill.as_ref().map_or(0.0, |s| s.f(f));
-    let player = |f: &str| t(f) + gated.iter().filter(|g| g.0 == f).map(|g| g.1).sum::<f32>();
+    let player = |f: &str| {
+        t(f) + sc
+            .gated
+            .iter()
+            .filter(|&&(i, _)| &*cache.gated[i].0 == f)
+            .map(|&(_, v)| v)
+            .sum::<f32>()
+    };
     let modifier = |ty: CombatType| hit_mod(&local, ty) + hit_mod(&player, ty);
-    let mut damage = Vec::new();
+    sc.damage.clear();
+    let damage = &mut sc.damage;
     let (physical, pierce_ratio) = atk.base_physical();
     if weapon_scale > 0.0 && physical.1 > 0.0 {
         let (min, max) = (
@@ -2192,43 +2563,18 @@ fn collect_damage(
     // Aether dagger) and flat bonuses (`offensiveXMin/Max`), each with its
     // `offensiveXModifier` % and optional `offensiveXChance`; the attacker's
     // scaled by the weapon %, the skill's at full value.
-    type Source<'a> = (&'a dyn Fn(&str) -> f32, f32);
-    // A skill tooltip's damage lines (`DamageAttributeStore::ProcessText`)
-    // put only the skill's own store's damage in the display
-    // accumulator; its learned modifiers add their % modifiers
-    // (`CollectLocalOffensiveModifierAttributes` →
-    // `AddModifierOffensiveModifierAttributes`) and conversions, not their
-    // flat damage.
-    let skill_get = |k: &str| {
-        skill.as_ref().map_or(0.0, |s| {
-            if tooltip {
-                s.flat_without_mods(k)
-            } else {
-                s.f(k)
-            }
-        })
-    };
-    let group_owners: Vec<u64> = group_damage.iter().map(|(o, _)| *o).collect();
-    let group_gets: Vec<_> = group_damage
-        .iter()
-        .map(|(_, m)| move |k: &str| m.get(k).copied().unwrap_or(0.0))
-        .collect();
-    let skill_owner = skill
-        .as_ref()
-        .map_or(0, |s| crate::hash_order::fnv1a(s.record.name.as_bytes()));
-    let mut sources: Vec<Source> = vec![(&t, weapon_scale), (&skill_get, 1.0)];
-    sources.extend(
-        group_gets
-            .iter()
-            .map(|g| (g as &dyn Fn(&str) -> f32, weapon_scale)),
-    );
-    // One source's offense attributes. `instance_weight`: a chance-gated
-    // instance already rolled (or weighted, on the sheet); `None` rolls each
-    // attribute's own chance. `owner`: the source's DoT slot key base
-    // ([`dot_source_key`]); `collect_dots`: false for the summed gear source
-    // in play (its DoTs come per owner from `dot_sources` below; the sheet
-    // keeps the sum).
-    let collect_source = |get: &dyn Fn(&str) -> f32,
+    let skill_owner = skill.as_ref().map_or(0, |s| {
+        gd_formats::collections::hash_one(s.record.name.as_str())
+    });
+    // One source's offense attributes, read from its dense [`SlotVals`] in [`SLOTS`] order — the
+    // catalog family/field order the per-attack rolls follow (OffenseBase + Offense hits, then
+    // OffenseDuration DoTs / debuffs, then OffenseCrowdControl), so the interleaved `rng.unit()`
+    // draws and the f32 operations are exactly the catalog scan's. `instance_weight`: a chance-gated
+    // instance already rolled (or weighted, on the sheet); `None` rolls each attribute's own chance.
+    // `owner`: the source's DoT slot key base ([`dot_source_key`]); `collect_dots`: false for the
+    // summed gear source in play (its DoTs come per owner from `dot_sources` below; the sheet keeps
+    // the sum).
+    let collect_source = |vals: &[SlotVals; OFFENSE_SLOTS],
                           scale: f32,
                           skip_base_physical: bool,
                           instance_weight: Option<f32>,
@@ -2239,244 +2585,216 @@ fn collect_damage(
         if scale <= 0.0 {
             return;
         }
-        for d in family(AttrFamily::OffenseBase).chain(family(AttrFamily::Offense)) {
-            let (Some(fmin), Some(ty)) = (d.min, d.combat_type()) else {
-                continue;
-            };
-            // Base physical (`offensivePhysicalMin/Max`) is weapon-style damage:
-            // the attacker's is dealt above, a chance-gated instance's below.
-            if skip_base_physical && fmin == "offensivePhysicalMin" {
+        for (s, v) in SLOTS.iter().zip(vals.iter()) {
+            // Base physical (`offensivePhysicalMin/Max`) is weapon-style damage: the attacker's is
+            // dealt above, a chance-gated instance's below; the summed sources skip it (no roll).
+            if s.kind == SlotKind::Hit && skip_base_physical && s.base_physical {
                 continue;
             }
-            let min = get(fmin);
+            let min = v.0[SV_MIN];
             if min <= 0.0 {
                 continue;
             }
-            let max = d.max.map(get).filter(|m| *m >= min).unwrap_or(min);
+            let ty = s.ty;
+            let max = if v.0[SV_MAX] >= min { v.0[SV_MAX] } else { min };
             let mut weight = 1.0;
             if let Some(w) = instance_weight {
                 weight = w;
-            } else if let Some(c) = d.chance.map(get).filter(|c| *c > 0.0) {
-                if display {
+            } else if v.0[SV_CHANCE] > 0.0 {
+                let c = v.0[SV_CHANCE];
+                if s.kind == SlotKind::Cc {
+                    // Crowd control rolls its chance even on the sheet (no display weight).
+                    if rng.unit() * 100.0 > c {
+                        continue;
+                    }
+                } else if display {
                     weight = chance_weight(c);
                 } else if rng.unit() * 100.0 > c {
                     continue;
                 }
             }
-            let k = total_mod * scale * weight;
-            match ty {
-                // Life leech: % of the life removed, healed on the attacker.
-                // `DamageAttributeAbs_LifeLeech::AddDamageToAccumulator`
-                // @0x18019a810: the weapon % is capped at 1; `Process`
-                // @0x180118860 takes the outgoing reduction, no attribute
-                // scaling, no racial / combo scale; the type-61 multiplier
-                // applies (its flags leave it eligible).
-                T::LifeLeech => {
-                    let k = total_mod * scale.min(1.0) * weight;
-                    let red = |x: f32| {
-                        (x - (x.abs() * out_red.total_pct * PCT + out_red.total_abs)).max(0.0)
-                    };
-                    damage.push(combat::Damage::LifeLeech {
-                        value: red(min * k + (max - min) * k * rng.unit()),
-                        min: red(min * k),
-                        max: red(max * k),
-                    });
+            match s.kind {
+                SlotKind::Hit => {
+                    let k = total_mod * scale * weight;
+                    match ty {
+                        // Life leech: % of the life removed, healed on the attacker.
+                        // `DamageAttributeAbs_LifeLeech::AddDamageToAccumulator`: the weapon % is
+                        // capped at 1; `Process` takes the outgoing reduction, no attribute scaling,
+                        // no racial / combo scale; the type-61 multiplier applies.
+                        T::LifeLeech => {
+                            let k = total_mod * scale.min(1.0) * weight;
+                            let red = |x: f32| {
+                                (x - (x.abs() * out_red.total_pct * PCT + out_red.total_abs))
+                                    .max(0.0)
+                            };
+                            damage.push(combat::Damage::LifeLeech {
+                                value: red(min * k + (max - min) * k * rng.unit()),
+                                min: red(min * k),
+                                max: red(max * k),
+                            });
+                        }
+                        // % current life: the skill's scale applies uncapped, no type-61 multiplier
+                        // and no reduction (`..._PercentLife::Process`).
+                        T::PercentCurrentLife => {
+                            let k = skill.as_ref().map_or(1.0, |s| s.damage_scale.max(0.0))
+                                * scale
+                                * weight;
+                            damage.push(combat::Damage::PercentCurrentLife {
+                                value: min * k + (max - min) * k * rng.unit(),
+                                min: min * k,
+                                max: max * k,
+                            });
+                        }
+                        // Fear / confusion / taunt / convert: no weapon scale
+                        // (`CombatAttributeInfluenceDamage_*`; the roll × `GetChanceMultiplier`, 1 in
+                        // play). Fear `Execute` adds a fixed-duration entry at >= 1 s; taunt, convert
+                        // and disruption become the hit's `combat::Influence`.
+                        T::Fear | T::Confusion | T::Taunt | T::Convert => {
+                            let secs = (min + (max - min) * rng.unit()) * weight;
+                            damage.push(combat::Damage::Reflex { ty, secs });
+                        }
+                        // Disruption seconds scale as % current life does.
+                        T::Disruption => {
+                            let k = skill.as_ref().map_or(1.0, |s| s.damage_scale.max(0.0))
+                                * scale
+                                * weight;
+                            let secs = (min + (max - min) * rng.unit()) * k;
+                            damage.push(combat::Damage::Reflex { ty, secs });
+                        }
+                        _ => {
+                            if ty == CombatType::Elemental {
+                                for h in
+                                    combat::HitDamage::roll_elemental(min * k, max * k, 1.0, rng)
+                                {
+                                    damage.push(combat::Damage::Hit(h));
+                                }
+                            } else {
+                                damage.push(combat::Damage::Hit(combat::HitDamage::roll(
+                                    ty, min * k, max * k, 1.0, rng,
+                                )));
+                            }
+                        }
+                    }
                 }
-                // % current life: the skill's scale applies uncapped, no
-                // type-61 multiplier and no reduction
-                // (`..._PercentLife::Process` @0x1801186e0 only zeroes the
-                // modifier; `AddDamageToAccumulator` @0x180199d20).
-                T::PercentCurrentLife => {
-                    let k =
-                        skill.as_ref().map_or(1.0, |s| s.damage_scale.max(0.0)) * scale * weight;
-                    damage.push(combat::Damage::PercentCurrentLife {
-                        value: min * k + (max - min) * k * rng.unit(),
-                        min: min * k,
-                        max: max * k,
-                    });
-                }
-                // Fear / confusion / taunt / convert: no weapon scale
-                // (`CombatAttributeInfluenceDamage_*`;
-                // `DamageAttributeAbs_Taunt::AddDamageToAccumulator`
-                // @0x1801996f0, the same code for fear and convert: the roll
-                // × the accumulator's `GetChanceMultiplier`, 1 in play). Fear
-                // `Execute` @0x180118e40 adds a fixed-duration entry at >= 1 s;
-                // taunt, convert and disruption become the hit's
-                // `combat::Influence` (thresholds in `take_attack`).
-                T::Fear | T::Confusion | T::Taunt | T::Convert => {
-                    let secs = (min + (max - min) * rng.unit()) * weight;
-                    damage.push(combat::Damage::Reflex { ty, secs });
-                }
-                // Disruption seconds scale as % current life does (
-                // `DamageAttributeAbs_Disruption::AddDamageToAccumulator`
-                // @0x18019a580: the roll × (a7 + a8) × the chance multiplier).
-                T::Disruption => {
-                    let k =
-                        skill.as_ref().map_or(1.0, |s| s.damage_scale.max(0.0)) * scale * weight;
-                    let secs = (min + (max - min) * rng.unit()) * k;
-                    damage.push(combat::Damage::Reflex { ty, secs });
-                }
-                _ => {
-                    let rolled: Vec<combat::HitDamage> = if ty == CombatType::Elemental {
-                        combat::HitDamage::roll_elemental(min * k, max * k, 1.0, rng).into()
+                SlotKind::Dot => {
+                    // Damage over time and debuffs (`offensiveSlowX…`, per second for
+                    // `DurationMin/Max` seconds); damage types scale with the total damage modifier
+                    // and the weapon %, debuff values do not.
+                    let dmin = v.0[SV_DMIN];
+                    let dmax = if v.0[SV_DMAX] >= dmin {
+                        v.0[SV_DMAX]
                     } else {
-                        vec![combat::HitDamage::roll(ty, min * k, max * k, 1.0, rng)]
+                        dmin
                     };
-                    damage.extend(rolled.into_iter().map(combat::Damage::Hit));
+                    let dur = dmin + (dmax - dmin) * rng.unit();
+                    if dur <= 0.0 {
+                        continue;
+                    }
+                    let dmg = s.dot == DotKind::Damage;
+                    if s.dot == DotKind::Skip || (dmg && !collect_dots) {
+                        continue;
+                    }
+                    let k = if dmg { total_mod * scale * weight } else { 1.0 };
+                    let val = min * k + (max - min) * k * rng.unit();
+                    damage.push(combat::Damage::Dot(combat::DotDamage {
+                        ty,
+                        dps: [val, min * k, max * k],
+                        duration: dur,
+                        base_duration: dur,
+                        modifier: 0.0,
+                        duration_modifier: 0.0,
+                        scale_by_attributes: dmg,
+                        hit_multiplier: 1.0,
+                        source: dot_source_key(owner, s.fmin),
+                    }));
+                }
+                SlotKind::Cc => {
+                    // Crowd control (`offensiveStun/Freeze/…Min/Max` seconds), `offensiveXModifier`
+                    // % longer.
+                    let secs =
+                        (min + (max - min) * rng.unit()) * weight * (1.0 + modifier(ty) * PCT);
+                    damage.push(combat::Damage::Reflex { ty, secs });
                 }
             }
-        }
-        // Damage over time and debuffs (`offensiveSlowX…`, per second for
-        // `DurationMin/Max` seconds), with `offensiveSlowXModifier` /
-        // `…DurationModifier`; damage types scale with the total damage
-        // modifier and the weapon %, debuff values do not.
-        for d in family(AttrFamily::OffenseDuration) {
-            let (Some(fmin), Some(ty)) = (d.min, d.combat_type()) else {
-                continue;
-            };
-            let min = get(fmin);
-            if min <= 0.0 {
-                continue;
-            }
-            let max = d.max.map(get).filter(|m| *m >= min).unwrap_or(min);
-            let mut weight = 1.0;
-            if let Some(w) = instance_weight {
-                weight = w;
-            } else if let Some(c) = d.chance.map(get).filter(|c| *c > 0.0) {
-                if display {
-                    weight = chance_weight(c);
-                } else if rng.unit() * 100.0 > c {
-                    continue;
-                }
-            }
-            let dmin = d.duration_min.map(get).unwrap_or(0.0);
-            let dmax = d
-                .duration_max
-                .map(get)
-                .filter(|m| *m >= dmin)
-                .unwrap_or(dmin);
-            let dur = dmin + (dmax - dmin) * rng.unit();
-            if dur <= 0.0 {
-                continue;
-            }
-            let dmg = is_dot_damage(ty);
-            if dmg && !collect_dots {
-                continue;
-            }
-            if !dmg
-                && !matches!(
-                    ty,
-                    T::TotalSpeed
-                        | T::AttackSpeed
-                        | T::CastSpeed
-                        | T::RunSpeed
-                        | T::OffensiveAbility
-                        | T::DefensiveAbility
-                        | T::OffensiveReduction
-                        | T::DefensiveReduction
-                        | T::Fumble
-                        | T::ProjectileFumble
-                        | T::LifeLeech
-                        | T::ManaLeech
-                        // `CombatAttributeDur_DamageMultiplier::Execute` @0x180114dd0:
-                        // `offensiveSlowDamageMult*` (percent, seconds) becomes a type-61 fixed entry.
-                        | T::DamageMultiplier
-                )
-                && !(28..=37).contains(&(ty as u8))
-            {
-                continue;
-            }
-            let k = if dmg { total_mod * scale * weight } else { 1.0 };
-            let v = min * k + (max - min) * k * rng.unit();
-            damage.push(combat::Damage::Dot(combat::DotDamage {
-                ty,
-                dps: [v, min * k, max * k],
-                duration: dur,
-                base_duration: dur,
-                modifier: 0.0,
-                duration_modifier: 0.0,
-                scale_by_attributes: dmg,
-                hit_multiplier: 1.0,
-                source: dot_source_key(owner, fmin),
-            }));
-        }
-        // Crowd control (`offensiveStun/Freeze/…Min/Max` seconds, chance),
-        // `offensiveXModifier` % longer.
-        for d in family(AttrFamily::OffenseCrowdControl) {
-            let (Some(fmin), Some(ty)) = (d.min, d.combat_type()) else {
-                continue;
-            };
-            let min = get(fmin);
-            if min <= 0.0 {
-                continue;
-            }
-            let max = d.max.map(get).filter(|m| *m >= min).unwrap_or(min);
-            let mut weight = 1.0;
-            if let Some(w) = instance_weight {
-                weight = w;
-            } else if let Some(c) = d.chance.map(get).filter(|c| *c > 0.0)
-                && rng.unit() * 100.0 > c
-            {
-                continue;
-            }
-            let secs = (min + (max - min) * rng.unit()) * weight * (1.0 + modifier(ty) * PCT);
-            damage.push(combat::Damage::Reflex { ty, secs });
         }
     };
-    for (si, (get, scale)) in sources.into_iter().enumerate() {
-        let (owner, collect_dots) = match si {
-            0 => (0, display),
-            1 => (skill_owner, true),
-            _ => (group_owners[si - 2], true),
+    // The gear source: the summed `totals` (the off-hand reading on a dual wielder's off-hand
+    // swing). Its DoTs come per owner below in play; the sheet keeps the sum (`collect_dots`).
+    let gear_vals = if atk.hands.is_some() {
+        cache.gear_off.as_ref().unwrap()
+    } else {
+        &cache.gear
+    };
+    collect_source(
+        gear_vals,
+        weapon_scale,
+        true,
+        None,
+        rng,
+        damage,
+        0,
+        display,
+    );
+    // The skill's own damage (its record, learned modifiers and parent at their levels). With no
+    // skill every field is 0, so the source rolls nothing — skipped.
+    if let Some(s) = skill.as_ref() {
+        let sv = skill_offense_vals(s, tooltip);
+        collect_source(&sv, 1.0, false, None, rng, damage, skill_owner, true);
+    }
+    // The global-chance groups' damage stores (rolled in `global_parts`).
+    for (owner, gd) in &sc.group_damage {
+        let vals = match gd {
+            GroupDmg::Cached { group, pick } => pick.map_or(
+                &cache.groups[*group].all_dmg,
+                |p| &cache.groups[*group].one_of_dmg[p],
+            ),
+            GroupDmg::Display(b) => &**b,
         };
         collect_source(
-            get,
-            scale,
-            si == 0,
+            vals,
+            weapon_scale,
+            true,
             None,
             rng,
-            &mut damage,
-            owner,
-            collect_dots,
+            damage,
+            *owner,
+            true,
         );
     }
-    // The gear's and passives' DoTs per owning source (item instance / record):
-    // distinct owners stack in the defender's DotManager, the same owner's
-    // re-application keeps max (module docs). A dual wielder's swing deals its
-    // hand's weapon's DoTs, not the other hand's.
+    // The gear's and passives' DoTs per owning source (item instance / record): distinct owners
+    // stack in the defender's DotManager, the same owner's re-application keeps max (module docs).
+    // A dual wielder's swing deals its hand's weapon's DoTs, not the other hand's.
     if !display {
-        let hand_dots = atk.profile.dual.as_ref().map(|h| {
-            if atk.hands.is_some() {
-                &h.off_dots
-            } else {
-                &h.main_dots
-            }
-        });
-        for ds in atk
+        let (hand_ds, hand_dense): (&[DotSource], &[[SlotVals; OFFENSE_SLOTS]]) =
+            match atk.profile.dual.as_ref() {
+                Some(h) if atk.hands.is_some() => (&h.off_dots, &cache.off_dots),
+                Some(h) => (&h.main_dots, &cache.main_dots),
+                None => (&[], &[]),
+            };
+        for (ds, vals) in atk
             .profile
             .dot_sources
             .iter()
-            .chain(hand_dots.into_iter().flatten())
+            .zip(cache.dots.iter())
+            .chain(hand_ds.iter().zip(hand_dense.iter()))
         {
-            let get = |k: &str| ds.fields.get(k).copied().unwrap_or(0.0);
             collect_source(
-                &get,
+                vals,
                 weapon_scale,
                 true,
                 None,
                 rng,
-                &mut damage,
+                damage,
                 ds.owner,
                 true,
             );
         }
     }
-    // The character's chance-gated instances (`field@chance`, `chance_key`,
-    // split once per profile in its `CombatCache`): one roll each, as the
-    // engine's per-source attribute instances
-    // (`DamageAttributeAbs::AddDamageToAccumulator` @0x18018da60).
+    // The character's chance-gated instances (`field@chance`, `chance_key`, split once per profile
+    // in its `CombatCache`): one roll each, as the engine's per-source attribute instances
+    // (`DamageAttributeAbs::AddDamageToAccumulator`).
     if weapon_scale > 0.0 {
-        for inst in &atk.profile.combat_cache().offense_instances {
+        for inst in &cache.offense_instances {
             let c = inst.chance;
             let weight = if display {
                 chance_weight(c)
@@ -2487,11 +2805,11 @@ fn collect_damage(
             };
             let get = |k: &str| inst.fields.get(k).copied().unwrap_or(0.0);
             // A gated `offensivePhysicalMin/Max` (`DamageAttribute_Physical`) is base physical
-            // damage of its own: `DamageAttribute_Physical::AddDamageToAccumulator`
-            // @0x1801a2330 adds a `CombatAttributeDamage_BasePhysical` of its min / max × the
-            // chance multiplier × the scale. PORT: its pierce ratio is its own record's
-            // `offensivePierceRatio` (`GetPierceRatio` @0x1801a2820), which the totals do not keep
-            // per instance: 0 (no stock record with a gated physical sets one).
+            // damage of its own: `DamageAttribute_Physical::AddDamageToAccumulator` adds a
+            // `CombatAttributeDamage_BasePhysical` of its min / max × the chance multiplier × the
+            // scale. PORT: its pierce ratio is its own record's `offensivePierceRatio`
+            // (`GetPierceRatio`), which the totals do not keep per instance: 0 (no stock record with
+            // a gated physical sets one).
             let ((min, max), _) = base_physical(get);
             if min > 0.0 {
                 let k = total_mod * weapon_scale * weight;
@@ -2504,12 +2822,12 @@ fn collect_damage(
                 )));
             }
             collect_source(
-                &get,
+                &inst.dense,
                 weapon_scale,
                 true,
                 Some(weight),
                 rng,
-                &mut damage,
+                damage,
                 inst.owner,
                 true,
             );
@@ -2523,7 +2841,7 @@ fn collect_damage(
     // ratio instead); no attribute scaling (it uses
     // `CombatAttributeAbsDamage::Process`, whose attribute scaling only
     // covers type 4).
-    for d in &mut damage {
+    for d in damage.iter_mut() {
         match d {
             combat::Damage::Weapon(w) => w.physical_modifier = hit_mod(&local, T::Physical),
             combat::Damage::Hit(h) if h.ty == T::ManaBurn => {}
@@ -2536,18 +2854,21 @@ fn collect_damage(
             _ => {}
         }
     }
-    let mut own_convs = skill.as_ref().map(|s| s.conversions()).unwrap_or_default();
+    sc.convs.clear();
+    if let Some(s) = skill.as_ref() {
+        s.conversions_into(&mut sc.convs);
+    }
     if tooltip {
-        own_convs.retain(|c| c.2 >= 100.0);
+        sc.convs.retain(|c| c.2 >= 100.0);
     }
     let player_convs: &[_] = if tooltip {
         &[]
     } else {
         &atk.profile.conversions
     };
-    combat::convert_damage(&mut damage, &[&own_convs, player_convs]);
-    // `DamageScaleInfo`: the racial bonus (+0, (100 + %) % when above 0,
-    // `crate::racial`) and the combo charges (+4).
+    combat::convert_damage_with(damage, &[&sc.convs, player_convs], &mut sc.convert);
+    // `DamageScaleInfo`: the racial bonus (`DamageScaleInfo.racialBonus`, (100 + %) % when above 0,
+    // `crate::racial`) and the combo charges (`DamageScaleInfo.comboFactor`).
     let combo_scale = DamageScale(
         if racial_pct > 0.0 {
             100.0 + racial_pct
@@ -2556,13 +2877,13 @@ fn collect_damage(
         },
         skill.as_ref().map_or(0.0, |s| s.combo),
     );
-    for d in &mut damage {
+    for d in damage.iter_mut() {
         match d {
             combat::Damage::Weapon(w) => {
                 w.physical_modifier += hit_mod(&player, T::Physical);
                 // PORT: the weapon's pierce part takes the skill's pierce
                 // modifier unscaled by a physical conversion (the engine's
-                // `BasePhysical` holds one modifier at +72, scaled).
+                // `BasePhysical` holds one modifier, scaled).
                 w.pierce_modifier = modifier(T::Pierce);
                 w.process(
                     &scaling,
@@ -2612,7 +2933,7 @@ fn collect_damage(
             &get,
             ret_pct * PCT,
             rng,
-            &[&own_convs, player_convs],
+            &[&sc.convs, player_convs],
         );
         process_retaliation(
             &mut ret,
@@ -2630,12 +2951,14 @@ fn collect_damage(
             .as_ref()
             .map_or(0.0, |s| s.f("offensiveManaBurnDamageRatio"))
         + modifier(T::ManaBurn);
-    // `Skill::CollectCombatParameters` @0x180499e40: the skill's and
-    // the character's type-59 modifiers sum into `ParametersCombat+160`,
+    // `Skill::CollectCombatParameters`: the skill's and
+    // the character's type-59 modifiers sum into `ParametersCombat.critDamageBonus`,
     // stored as a fraction (`DamageAttributeAbsMod_CritDamageModifier`
-    // @0x18019d310 × 0.01); `TakeAttack` adds it to the crit multiplier.
+    // × 0.01); `TakeAttack` adds it to the crit multiplier.
     let crit_damage_bonus =
         (player("offensiveCritDamageModifier") + local("offensiveCritDamageModifier")) * PCT;
+    let damage = std::mem::take(damage);
+    put_scratch(sc);
     (damage, mana_burn_ratio, crit_damage_bonus)
 }
 
@@ -2674,7 +2997,7 @@ pub fn racial_damage(atk: &Profile, skill: &Option<SkillUse>, target: &[String])
 ///   uses).
 /// - `def_energy`: the defender's current energy (`None`: full). Mana burn
 ///   takes at most what is left of it (`CombatAttributeAbsDamage_ManaBurn::
-///   Execute` @0x1801189c0) and its damage follows the energy
+///   Execute`) and its damage follows the energy
 ///   actually burned.
 /// - `absorb`: the defender's damage-absorbing buffs (their pools run down in
 ///   place).
@@ -2710,6 +3033,7 @@ pub fn attack_linked(
         false,
         racial_pct,
     );
+    let mut sc = take_scratch();
     let mut attack = combat::Attack {
         kind: skill.as_ref().map_or(AttackKind::Melee, |s| s.style),
         offensive_ability: debuffed_offensive_ability(atk.profile, atk_debuffs),
@@ -2717,8 +3041,8 @@ pub fn attack_linked(
         projectile_fumbled: false,
         unblockable: false,
         crit_damage_bonus,
-        // `ParametersCombat+152` = `Skill::GetManaCost` (
-        // `Skill::CollectCombatParameters` @0x180499e40): the cost the
+        // `ParametersCombat.manaCost` = `Skill::GetManaCost` (
+        // `Skill::CollectCombatParameters`): the cost the
         // defender's energy absorption feeds on.
         energy_cost: skill.as_ref().map_or(0.0, |s| {
             s.energy_cost(atk.profile.skill_attribute("skillManaCostReduction"), |c| {
@@ -2732,13 +3056,19 @@ pub fn attack_linked(
     if let Some(e) = def_energy {
         d.energy = e.clamp(0.0, d.energy_max);
     }
-    d.absorb = absorb.to_vec();
+    sc.absorb.clear();
+    sc.absorb.extend_from_slice(absorb);
+    d.absorb = std::mem::take(&mut sc.absorb);
     d.link_absorb = link_absorb;
     d.block_cooldown_ms = *block_cooldown_ms;
     d.racial_reduction = crate::racial::defense_against(&def.racial, &atk.profile.race);
     let mut r = combat::take_attack(&rules.formulas, &mut attack, &mut d, rng);
     *block_cooldown_ms = d.block_cooldown_ms;
     absorb.clone_from_slice(&d.absorb);
+    sc.absorb = std::mem::take(&mut d.absorb);
+    sc.absorb.clear();
+    sc.damage = std::mem::take(&mut attack.damage);
+    sc.damage.clear();
     let damage = (*life - d.life).max(0.0);
     *life = d.life.max(0.0);
     // Reflected debuffs (`CombatAttributeDurFixedDamage`, the only reflected
@@ -2758,10 +3088,11 @@ pub fn attack_linked(
             }
         }
     }
+    put_scratch(sc);
     Hit::from_result(r, attack.kind, damage)
 }
 
-/// `Skill_AttackSpellReflectLink::ReflectLinkDamage` @0x1804d3f10:
+/// `Skill_AttackSpellReflectLink::ReflectLinkDamage`:
 /// a link's part of [`Hit::link_copy`]: every attribute scaled
 /// by the skill's `damageAbsorptionReflectPercent`, the ones flagged for the
 /// reflect cap (the debuffs, as in [`attack_linked`]) by at most the
@@ -2792,7 +3123,7 @@ pub fn link_reflection(
         .collect()
 }
 
-/// `CombatManager::ReflectCombatDamage` @0x180120270: the
+/// `CombatManager::ReflectCombatDamage`: the
 /// reflected damage hits the original attacker as a style-6 attack (always
 /// lands; `TakeAttack` scales it by 1 − the attacker's capped
 /// `defensivePercentReflectionResistance` % ([`Profile::reflection_resist`],
@@ -2853,18 +3184,18 @@ fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuff
     let cap = if def.is_player {
         rules.caps.player_defense_cap[diff]
     } else if def.pet {
-        // `Pet::GetDefenseAttributeCap` @0x1803c80b0 ([`Profile::pet`]).
+        // `Pet::GetDefenseAttributeCap` ([`Profile::pet`]).
         rules.caps.player_pet_defense_cap[diff]
     } else {
-        // `Monster::GetDefenseAttributeCap` @0x18037c410 reads
+        // `Monster::GetDefenseAttributeCap` reads
         // `monsterDefenseCap` at the difficulty.
         rules.caps.monster_defense_cap[diff]
     };
     let cache = def.combat_cache();
     Defender {
         defensive_ability: debuffed_defensive_ability(def, def_debuffs),
-        // `CanIDodgeAttack` @0x18011d750 / `CanIDeflectProjectile`
-        // @0x18011d850: character attributes 27 / 28, percent.
+        // `CanIDodgeAttack` / `CanIDeflectProjectile`:
+        // character attributes 27 / 28, percent.
         dodge: def.sheet.dodge,
         deflect: def.sheet.deflect,
         // `take_attack` processes a copy of each per hit.
@@ -2872,8 +3203,9 @@ fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuff
         resistance_cap: cap,
         resistance_reduction: res_red,
         armor_reduction: dd(T::DefensiveReduction),
-        // `CombatManager::TakeAttack` @0x18011d950: `(DDM.GetFixedDamage(61) + 100) +
-        // accumulator.GetTotalDefenseType(61)` (the defender's `negativeDamageMult`, @0x180203810).
+        // `CombatManager::TakeAttack`: `(DDM.GetFixedDamage(61) + 100) +
+        // accumulator.GetTotalDefenseType(61)` (the defender's `negativeDamageMult`,
+        // `DefenseAttributeMisc_NegativeDamageMultiplier::AddToAccumulator`).
         // `negativeDamageMultChance` is not rolled, by design: no stock record (base … gdx3,
         // `survivalmode*`) sets it, so every `negativeDamageMult` (the Amplification potions) always counts.
         damage_taken_pct: 100.0 + dd(T::DamageMultiplier) + cache.negative_damage_mult,
@@ -2912,10 +3244,10 @@ fn build_defenses(def: &Profile) -> Vec<Defense> {
     use CombatType as T;
     let mut defenses: Vec<Defense> = Vec::new();
     for &(ty, value) in &def.resistances {
-        // `DefenseAttributeAbs_CrowdControl::AddToAccumulator`
-        // @0x180200490: `defensiveCrowdControl` (type 54) becomes four
+        // `DefenseAttributeAbs_CrowdControl::AddToAccumulator`:
+        // `defensiveCrowdControl` (type 54) becomes four
         // restricted defenses — stun, freeze, petrify, trap — merged into
-        // ones already held (`AddDefense` @0x18011aa80).
+        // ones already held (`AddDefense`).
         let types: &[CombatType] = if ty == T::CrowdControl {
             &[T::Stun, T::Freeze, T::Petrify, T::Trap]
         } else {
@@ -3098,7 +3430,7 @@ pub fn player_from_items(
             }
         }
         totals.push((None, t));
-        owners.push(crate::hash_order::fnv1a(set.record.as_bytes()));
+        owners.push(gd_formats::collections::hash_one(set.record.as_str()));
     }
     type AddAttrs<'a> = Box<dyn Fn(&mut CharAttrAccumulator) + 'a>;
     let adds: Vec<AddAttrs> = items

@@ -26,22 +26,22 @@ pub(super) fn apply_hits(
         Query<(Entity, &Transform, &Combatant, crate::combat::VictimSide), Without<Dead>>,
     )>,
     mut states: ResMut<ProxyStates>,
-    (mut rng, mut fresh): (Local<Option<Rng>>, crate::session::NewSession),
+    (mut rng, mut fresh): (Local<Option<Rng>>, gd_game_core::session::NewSession),
     mut killed: MessageWriter<MonsterKilled>,
     (mut skill_hits, mut ticks, corpses): (
-        MessageReader<crate::casting::SkillHit>,
+        MessageReader<gd_game_core::casting::SkillHit>,
         MessageReader<crate::skill_buffs::DebuffTick>,
         Query<(&Combatant, Option<&crate::afflictions::Afflictions>), With<Dead>>,
     ),
     // (casting / ranged / invincible / dummy marks)
     marks: Query<(
-        Has<crate::casting::Casting>,
-        Has<crate::casting::RangedWeapon>,
+        Has<gd_game_core::casting::Casting>,
+        Has<gd_game_core::casting::RangedWeapon>,
         Has<Invincible>,
-        Has<crate::world::Dummy>,
+        Has<gd_game_core::world::Dummy>,
     )>,
     data: Res<GameData>,
-    mut casters: Query<AnyOf<(&mut crate::casting::Caster, &mut crate::pets::Pet)>>,
+    mut casters: Query<AnyOf<(&mut gd_game_core::casting::Caster, &mut crate::pets::Pet)>>,
     (mut landed, mut made, mut combos, combo_rules, mut counters): (
         MessageWriter<HitLanded>,
         MessageWriter<AttackMade>,
@@ -54,16 +54,16 @@ pub(super) fn apply_hits(
         MessageWriter<CounterHit>,
     ),
     links: Query<(
-        &crate::weapon_pool::SkillLinks,
-        Option<&crate::weapon_pool::PoolCharges>,
+        &gd_game_core::weapon_pool::SkillLinks,
+        Option<&gd_game_core::weapon_pool::PoolCharges>,
     )>,
     picks: Query<&crate::weapon_pool::PoolPick>,
-    mut procs: MessageWriter<crate::casting::ProcCast>,
+    mut procs: MessageWriter<gd_game_core::casting::ProcCast>,
     (mut shields, reflect_links, mut linked_attacks, loadouts, mut influenced, mut lifes): (
-        Query<&mut crate::casting::Shields>,
-        Query<&crate::reflect_link::ReflectLinks>,
+        Query<&mut gd_game_core::casting::Shields>,
+        Query<&gd_game_core::reflect_link::ReflectLinks>,
         MessageWriter<LinkedAttack>,
-        Query<&crate::player::Loadout>,
+        Query<&gd_game_core::player::Loadout>,
         MessageWriter<Influenced>,
         MessageWriter<LifeSubtracted>,
     ),
@@ -71,19 +71,19 @@ pub(super) fn apply_hits(
     if fresh.begun() {
         *rng = None;
     }
-    let rng = rng.get_or_insert_with(|| Rng(crate::rng::u32(1..0x7FFF_FFFF)));
+    let rng = rng.get_or_insert_with(|| Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF)));
     // Melee swings (attack animations), then skill hits (casting.rs):
     // (attacker, target, skill, its weapon-pool parent, off-hand swing,
     // damage scale, projectile, a debuff's attack: its holder and modifiers).
     type Todo = (
         Entity,
         Entity,
-        Option<(String, usize)>,
-        Option<(String, usize)>,
+        Option<(Arc<str>, usize)>,
+        Option<(Arc<str>, usize)>,
         bool,
         f32,
         bool,
-        Option<(Entity, Vec<(String, usize)>)>,
+        Option<(Entity, Arc<[(String, usize)]>)>,
     );
     let mut todo: Vec<Todo> = Vec::new();
     let mtd = data.engine().melee_target_distance;
@@ -129,7 +129,7 @@ pub(super) fn apply_hits(
                 at: atf.translation,
                 radius: acb.radius,
                 side: aside.side(),
-                fwd: crate::character::facing_flat(atf),
+                fwd: gd_game_core::character::facing_flat(atf),
                 is_monster: amon.is_some(),
                 left: ev.name == "LeftHandHit",
                 primary: (target, ttf.translation, tcb.radius),
@@ -138,9 +138,9 @@ pub(super) fn apply_hits(
         out
     };
     // The hit-frame re-check: 3-D distance minus both radii within
-    // `meleeTargetDistance` (`Skill::IsTargetInRange` @0x180497a90).
+    // `meleeTargetDistance` (`Skill::IsTargetInRange`).
     // Out of reach: the plain attack's 10° cone at that distance may catch a foe
-    // who stepped in (`ExecuteMeleeAttack` @0x180518320 → `GetTargetsInCone`).
+    // who stepped in (`ExecuteMeleeAttack` → `GetTargetsInCone`).
     let mut resolved: Vec<(Entity, Entity, Vec3, bool, bool)> = Vec::new();
     {
         let victims = qs.p1();
@@ -179,14 +179,14 @@ pub(super) fn apply_hits(
         // is the playing clip's — the picked skill's special animation when
         // it has one (`weapon_pool::pool_swing_specials`), else the plain
         // swing's (`SkillActivatedWeaponPool::StartAction`
-        // @0x18051bb90 runs the picked skill's own action).
+        // runs the picked skill's own action).
         if let Ok(p) = picks.get(attacker)
-            && p.is_for(crate::casting::DEFAULT_ATTACK)
+            && p.is_for(gd_game_core::casting::DEFAULT_ATTACK)
             && let Some(pick) = p.pick.clone()
             && let Some(cast) =
                 crate::weapon_pool::pick_cast(&data, pick, None, hit_at, Some(target), is_monster)
         {
-            procs.write(crate::casting::ProcCast {
+            procs.write(gd_game_core::casting::ProcCast {
                 caster: attacker,
                 cast,
             });
@@ -198,8 +198,8 @@ pub(super) fn apply_hits(
         todo.push((
             h.attacker,
             h.target,
-            Some((h.skill.clone(), h.level_index)),
-            h.parent.clone(),
+            Some((Arc::from(h.skill.as_str()), h.level_index)),
+            h.parent.as_ref().map(|(p, li)| (Arc::from(p.as_str()), *li)),
             false,
             h.scale,
             h.projectile,
@@ -211,7 +211,7 @@ pub(super) fn apply_hits(
         todo.push((
             t.caster,
             t.target,
-            Some((t.buff.clone(), t.level_index)),
+            Some((Arc::from(t.buff.as_str()), t.level_index)),
             None,
             false,
             1.0,
@@ -221,7 +221,7 @@ pub(super) fn apply_hits(
     }
     // The damage pass re-borrows the main query (the victim view is released).
     let mut q = qs.p0();
-    let mut records: HashMap<String, Option<&gd_formats::arz::Record>> = HashMap::new();
+    let mut records: HashMap<Arc<str>, Option<&gd_formats::arz::Record>> = HashMap::default();
     for (attacker, target, skill, parent, left, damage_scale, projectile, debuff) in todo {
         // A dead caster's debuffs still attack while its body is there
         // (`crate::skill_buffs`), and so do its skills: a dying skill is cast
@@ -237,7 +237,7 @@ pub(super) fn apply_hits(
             continue;
         };
         // `PetPlayerScaling` pets attack as their player owner (`pets.rs` docs,
-        // `Skill::CollectCombatParameters` @0x180499e40).
+        // `Skill::CollectCombatParameters`).
         let owner_cb = casters
             .get(attacker)
             .ok()
@@ -323,65 +323,66 @@ pub(super) fn apply_hits(
                 &t.0,
                 &c,
                 u.map(|u| u.into_inner()),
-                skill.as_ref().map(|s| s.0.as_str()),
+                skill.as_ref().map(|s| &*s.0),
             ),
             _ => Default::default(),
         };
-        let use_ =
-            rec.zip(skill.as_ref())
-                .map(|(r, (s, li))| gd_sim::actor::SkillUse {
-                    record: r,
-                    level_index: *li,
-                    mods: own_mods.iter().map(|(m, l)| (*m, *l)).collect(),
-                    parent: parent_rec.as_ref().zip(parent.as_ref()).map(
-                        |((pr, pli, pm), (ps, _))| {
-                            Box::new(gd_sim::actor::SkillUse {
-                                record: pr,
-                                level_index: *pli,
-                                mods: pm.iter().map(|(m, l)| (*m, *l)).collect(),
-                                parent: None,
-                                scale: scale(pr, ps),
-                                damage_scale: 1.0,
-                                style: gd_sim::combat::AttackKind::Melee,
-                                combo: 0.0,
-                                hands: alinks.map(|l| l.hands),
-                                item_skill: false,
-                            })
-                        },
-                    ),
-                    scale: scale(r, s),
-                    damage_scale,
-                    // Weapon attacks melee, projectiles ranged, other skills style 0
-                    // (`gd_sim::actor::SkillUse::style`).
-                    style: if let Some(holder_da) = holder_da {
-                        // `SkillBuff_Debuf::Update`: style 4 with a multiplier of at
-                        // least 1 rolled from the attack's OA and the holder's DA
-                        // (`crate::skill_buffs`).
-                        let pth = gd_sim::combat::probability_to_hit(
-                            &rules.0.formulas,
-                            gd_sim::actor::debuffed_offensive_ability(&aprof, &adeb),
-                            holder_da,
-                        );
-                        gd_sim::combat::AttackKind::Debuff(
-                            gd_sim::combat::damage_modifier(&rules.0.formulas, pth, rng.unit())
-                                .multiplier
-                                .max(1.0),
-                        )
-                    } else if projectile {
-                        gd_sim::combat::AttackKind::Ranged
-                    } else if crate::casting::kind_of(r) == crate::casting::Kind::Weapon {
-                        gd_sim::combat::AttackKind::Melee
-                    } else {
-                        gd_sim::combat::AttackKind::Direct
-                    },
-                    combo: hit_combo.scale,
-                    hands: alinks.map(|l| l.hands),
-                    item_skill: loadouts
-                        .get(attacker)
-                        .is_ok_and(|l| l.is_item_skill(&data.db, s)),
-                });
+        let use_ = rec
+            .zip(skill.as_ref())
+            .map(|(r, (s, li))| gd_sim::actor::SkillUse {
+                record: r,
+                level_index: *li,
+                mods: own_mods.iter().map(|(m, l)| (*m, *l)).collect(),
+                parent: parent_rec
+                    .as_ref()
+                    .zip(parent.as_ref())
+                    .map(|((pr, pli, pm), (ps, _))| {
+                        Box::new(gd_sim::actor::SkillUse {
+                            record: pr,
+                            level_index: *pli,
+                            mods: pm.iter().map(|(m, l)| (*m, *l)).collect(),
+                            parent: None,
+                            scale: scale(pr, ps),
+                            damage_scale: 1.0,
+                            style: gd_sim::combat::AttackKind::Melee,
+                            combo: 0.0,
+                            hands: alinks.map(|l| l.hands),
+                            item_skill: false,
+                        })
+                    }),
+                scale: scale(r, s),
+                damage_scale,
+                // Weapon attacks melee, projectiles ranged, other skills style 0
+                // (`gd_sim::actor::SkillUse::style`).
+                style: if let Some(holder_da) = holder_da {
+                    // `SkillBuff_Debuf::Update`: style 4 with a multiplier of at
+                    // least 1 rolled from the attack's OA and the holder's DA
+                    // (`crate::skill_buffs`).
+                    let pth = gd_sim::combat::probability_to_hit(
+                        &rules.0.formulas,
+                        gd_sim::actor::debuffed_offensive_ability(&aprof, &adeb),
+                        holder_da,
+                    );
+                    gd_sim::combat::AttackKind::Debuff(
+                        gd_sim::combat::damage_modifier(&rules.0.formulas, pth, rng.unit())
+                            .multiplier
+                            .max(1.0),
+                    )
+                } else if projectile {
+                    gd_sim::combat::AttackKind::Ranged
+                } else if gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon {
+                    gd_sim::combat::AttackKind::Melee
+                } else {
+                    gd_sim::combat::AttackKind::Direct
+                },
+                combo: hit_combo.scale,
+                hands: alinks.map(|l| l.hands),
+                item_skill: loadouts
+                    .get(attacker)
+                    .is_ok_and(|l| l.is_item_skill(&data.db, s)),
+            });
         // The target's damage-absorbing filters run on each damage type in turn
-        // ([`crate::casting::Shields`]), and so do its reflect links (`reflect_link.rs`).
+        // ([`gd_game_core::casting::Shields`]), and so do its reflect links (`reflect_link.rs`).
         let mut sh = shields.get_mut(target).ok();
         let tlinks = reflect_links.get(target).ok();
         let own_filters = sh.as_ref().map_or(0, |s| s.0.len());
@@ -424,7 +425,7 @@ pub(super) fn apply_hits(
                 tlinks.map_or(0.0, |l| l.absorb()),
             )
         };
-        // `Character::SubtractLife` @0x180068ab0 takes nothing from an invincible character.
+        // `Character::SubtractLife` takes nothing from an invincible character.
         if marks.get(target).is_ok_and(|m| m.2) {
             tcb.life = life_before;
             // No life removed: the leech percent heals nothing either
@@ -432,7 +433,7 @@ pub(super) fn apply_hits(
             hit.leeched = 0.0;
             hit.applied.clear();
         }
-        // A training dummy never dies (`crate::world::Dummy`).
+        // A training dummy never dies (`gd_game_core::world::Dummy`).
         if marks.get(target).is_ok_and(|m| m.3) {
             tcb.life = tcb.life.max(1.0);
         }
@@ -476,7 +477,7 @@ pub(super) fn apply_hits(
                     .chain(own_mods.iter().map(|(m, l)| (*m, *l)))
                     .collect(),
             };
-            let melee = crate::casting::kind_of(r) == crate::casting::Kind::Weapon
+            let melee = gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
                 && !marks.get(attacker).is_ok_and(|m| m.1);
             let reduction = aprof.skill_attribute("skillComboChargeSpendReduction");
             crate::combo::on_hit(
@@ -495,13 +496,13 @@ pub(super) fn apply_hits(
             target,
             skill: skill.as_ref().map(|s| s.0.clone()),
             critical: hit.critical,
-            weapon: rec
-                .as_ref()
-                .is_none_or(|r| crate::casting::kind_of(r) == crate::casting::Kind::Weapon),
+            weapon: rec.as_ref().is_none_or(|r| {
+                gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
+            }),
             melee: !projectile
-                && rec
-                    .as_ref()
-                    .is_none_or(|r| crate::casting::kind_of(r) == crate::casting::Kind::Weapon),
+                && rec.as_ref().is_none_or(|r| {
+                    gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
+                }),
             miss: hit.miss,
             blocked: hit.blocked,
             multiplier: hit.multiplier,
@@ -511,10 +512,9 @@ pub(super) fn apply_hits(
             defensive_ability: gd_sim::actor::debuffed_defensive_ability(&tprof, &tdeb),
         });
         if !hit.missed {
-            let melee = rec
-                .as_ref()
-                .is_none_or(|r| crate::casting::kind_of(r) == crate::casting::Kind::Weapon)
-                && !marks.get(attacker).is_ok_and(|m| m.1);
+            let melee = rec.as_ref().is_none_or(|r| {
+                gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
+            }) && !marks.get(attacker).is_ok_and(|m| m.1);
             // Gear, passive and skill taunt alike (`gd_sim::combat::Influence`).
             let taunt = hit.influence.taunt;
             landed.write(HitLanded {
@@ -546,7 +546,7 @@ pub(super) fn apply_hits(
                     hit.reflex
                 );
             }
-            a.receive(&hit, attacker, skill.as_ref().map(|s| s.0.as_str()));
+            a.receive(&hit, attacker, skill.as_ref().map(|s| &*s.0));
         }
         if hit.energy_burned > 0.0
             && let Ok((c, p)) = casters.get_mut(target)
@@ -597,7 +597,7 @@ pub(super) fn apply_hits(
                 is_player,
                 &mut states,
                 &mut killed,
-                Some((attacker, skill.as_ref().map(|s| s.0.clone()))),
+                Some((attacker, skill.as_ref().map(|s| s.0.to_string()))),
             );
         }
         // Life leech: `TakeAttack`'s tail sends the leech percent of the life
@@ -633,7 +633,7 @@ pub(super) fn apply_hits(
                 let damage =
                     gd_sim::actor::link_reflection(&rules.0, &tprof, &hit.link_copy, link.reflect);
                 // `ReflectLinkDamage` sends it with `Character::AttackTarget`
-                // (@0x1804d3f10), which tells the caster's attack
+                // (), which tells the caster's attack
                 // triggers; the copy keeps the original attack's skill,
                 // weapon ids and crit.
                 if link.reflect > 0.0 {
@@ -643,7 +643,7 @@ pub(super) fn apply_hits(
                         skill: skill.as_ref().map(|s| s.0.clone()),
                         critical: hit.critical,
                         weapon: rec.as_ref().is_none_or(|r| {
-                            crate::casting::kind_of(r) == crate::casting::Kind::Weapon
+                            gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
                         }),
                     });
                 }
@@ -788,10 +788,9 @@ pub(super) fn apply_hits(
         }
         // Retaliation on landed melee hits: plain swings and weapon-type
         // skills (`TakeAttack` style 1; spells and projectiles are not melee).
-        let melee = rec
-            .as_ref()
-            .is_none_or(|r| crate::casting::kind_of(r) == crate::casting::Kind::Weapon)
-            && !marks.get(attacker).is_ok_and(|m| m.1);
+        let melee = rec.as_ref().is_none_or(|r| {
+            gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
+        }) && !marks.get(attacker).is_ok_and(|m| m.1);
         if hit.missed || !melee {
             continue;
         }
@@ -878,7 +877,7 @@ pub(super) fn apply_hits(
 
 /// `CombatManager::Update`: the shield's block recovery runs down.
 pub(super) fn block_recovery(time: Res<Time>, mut q: Query<&mut Combatant>, mut carry: Local<f32>) {
-    let ms = crate::session::frame_ms(&mut carry, &time);
+    let ms = gd_game_core::session::frame_ms(&mut carry, &time);
     for mut c in &mut q {
         if c.block_cooldown_ms > 0 {
             c.block_cooldown_ms -= ms;
@@ -886,7 +885,7 @@ pub(super) fn block_recovery(time: Res<Time>, mut q: Query<&mut Combatant>, mut 
     }
 }
 
-/// The attacked monster's aggro (`Character::UnderAttack` @0x180068be0): every
+/// The attacked monster's aggro (`Character::UnderAttack`): every
 /// attack made — hit or miss — aggroes its target. Split out of [`apply_hits`]
 /// so that system's `SideData` / victim queries (shared `MonsterAi`) do not
 /// double-fetch it beside an exclusive one; runs right after it, before the

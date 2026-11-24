@@ -88,12 +88,12 @@ pub fn sheet_damage<'a>(rules: &Rules, atk: impl Into<Attacker<'a>>) -> Vec<Show
 /// GetMinMaxDamage` over the accumulator). The display accumulator
 /// ([`collect_damage`] with `display`) rolls nothing against chances.
 /// Hit damage and weapon damage add their min / max, a damage over time its
-/// per-second min / max (`CombatAttributeDurDamage::GetMinMaxDamage` @
-/// 0x1801144f0, not the duration); mana burn, disruption, life leech, %
+/// per-second min / max (`CombatAttributeDurDamage::GetMinMaxDamage`,
+/// not the duration); mana burn, disruption, life leech, %
 /// current life, crowd control and debuffs count nothing (their
 /// `GetMinMaxDamage` is the empty base one or needs the flag the display
-/// passes as 0: `CombatAttributeAbsDamage_LifeLeech` / `_PercentLife` @
-/// 0x1801186a0; the type 21 duration attribute likewise).
+/// passes as 0: `CombatAttributeAbsDamage_LifeLeech` / `_PercentLife`,
+/// `CombatAttributeAbsDamage_PercentLife::GetMinMaxDamage`; the type 21 duration attribute likewise).
 pub fn display_damage(rules: &Rules, atk: &Profile, skill: &Option<SkillUse>) -> (f32, f32) {
     shown_damage(rules, atk.into(), skill)
         .iter()
@@ -101,7 +101,7 @@ pub fn display_damage(rules: &Rules, atk: &Profile, skill: &Option<SkillUse>) ->
 }
 
 /// The damage lines a skill's own attributes show in its tooltip, scaled by
-/// the main player (`DamageAttributeStore::ProcessText` @0x1801a6af0,
+/// the main player (`DamageAttributeStore::ProcessText`,
 /// The skill's damage attributes go through a
 /// `CombatDisplayAccumulator` with the same `Process` / modifier machinery
 /// the character sheet uses, so the player's `offensive*Modifier` totals and
@@ -109,9 +109,10 @@ pub fn display_damage(rules: &Rules, atk: &Profile, skill: &Option<SkillUse>) ->
 /// not part of the skill's store: PORT: it is taken out of the profile here.
 /// No conversions of the character apply and only the skill's own full ones
 /// (`ProcessText`: the skill's `ConversionAttributeAccumulator`
-/// (vtable +992, `Weigh`) turns an attribute only for a conversion of ≥ 100 %
+/// (`ConversionAttributeAccumulator::Weigh`) turns an attribute only for a conversion of ≥ 100 %
 /// (`ConvertCombatAttributeForDisplay`); the player then adds only its
-/// modifiers (`+2128` vtable +128) before `ModifyDamage`).
+/// modifiers (`Character.modifierAccumulator`, `CombatAttributeAccumulator::AddModifiers`) before
+/// `ModifyDamage`).
 /// Returns (kind: 0 hit / 2 damage over time, type, min, max).
 pub fn skill_tooltip_damage(
     rules: &Rules,
@@ -162,7 +163,7 @@ pub fn skill_tooltip_damage(
 }
 
 /// The numbers of a skill's "N% Retaliation Damage (a - b)" line
-/// (`Skill::CollectRetaliationDamage` @0x180498c00): with the
+/// (`Skill::CollectRetaliationDamage`): with the
 /// skill's `retaliationDamagePct` > 0 the display accumulator takes the
 /// skill's own retaliation attributes and the character's (equipment,
 /// skills, devotions) × that %, then the retaliation modifiers, the skill's
@@ -219,7 +220,7 @@ pub fn display_retaliation(rules: &Rules, atk: &Profile, skill: &SkillUse) -> (f
 
 /// [`display_damage`] of a dual wielder's two accumulators: the second
 /// hand's has the attributes the first already holds taken out
-/// (`CombatAttributeAccumulator::FilterSameSource` @0x18011b080, which
+/// (`CombatAttributeAccumulator::FilterSameSource`, which
 /// drop attributes of the second matching one of the first; matched here by
 /// kind, type, values and duration), so only the off-hand weapon's own
 /// damage is left.
@@ -247,11 +248,11 @@ pub fn display_damage_hands<'o>(
 }
 
 /// The LMB / RMB rollover's damage lines of a skill (Grim
-/// Dawn.exe `sub_140153300`): each hand's accumulator (`CalculateSkillDps`)
+/// Dawn.exe `SkillRollover::BuildDamageLines`): each hand's accumulator (`CalculateSkillDps`)
 /// lists its damage types, instant ones (`GetDamageTypes(1)`) then
 /// durations (2), with `GetMinMaxDamage(type, 0, kind)`; the right hand's
 /// types first, each combined with the left's same (type, kind) by the
-/// player (vtable +0x5F8: the lower min and the higher max of two non-zero
+/// player (`Player::CombineHandDamage`: the lower min and the higher max of two non-zero
 /// hands, as the damage rows), then the left's own; lines with a zero max
 /// are dropped. `(duration, type, min, max)`; the weapon's damage counts as
 /// its physical and pierce parts. `off`: a dual wielder's off-hand swing
@@ -327,17 +328,17 @@ pub fn display_breakdown(
 pub type DamageLine = (bool, CombatType, f32, f32);
 
 /// [`display_breakdown`] of a skill plus its secondary skills' damage
-/// (Grim Dawn.exe `sub_1401527E0`): for each skill of
+/// (Grim Dawn.exe `CharacterWindow::BuildSkillDamageRollover`): for each skill of
 /// `Skill::GetSecondarySkills` (the learned ones of the base skill's tree,
-/// `Skill` +368, not gear-granted secondaries: see `skills`) with
+/// `Skill.secondarySkills`, not gear-granted secondaries: see `skills`) with
 /// `GetCurrentLevel() != 0`, `Player::CalculateSkillDps(secondary, …,
-/// parent)` @0x1803e06d0 fills the accumulators and `sub_140153300` makes its
+/// parent)` fills the accumulators and `SkillRollover::BuildDamageLines` makes its
 /// lines; each base line takes (adds min and max of) every secondary line
 /// of the same (type, kind), the rest are appended after the base lines, in
 /// their order. One list, no heading: the merged lines use the base's tags.
 /// A secondary's `CalculateSkillDps` collects its own record's attributes
 /// at its level with the parent's weapons (`SkillSecondary` branch: the
-/// parent's `SkillActivated` vtable +1760 weapons, then vtable +1272 with no
+/// parent's `SkillActivated::GetSkillWeapons`, then `Skill::CollectDpsAttributes` with no
 /// hand count), so only the main hand's accumulator gets its damage: the
 /// secondaries take no `off` profile. `secondaries`: one use each, its
 /// record the secondary itself (not its `buffSkillName`).
@@ -356,7 +357,7 @@ pub fn display_breakdown_with_secondaries(
 }
 
 /// The rollover's merge of a secondary skill's lines into the list
-/// (`sub_1401527E0`): every list line adds the min / max of each
+/// (`CharacterWindow::BuildSkillDamageRollover`): every list line adds the min / max of each
 /// secondary line with its (duration, type) and drops it; what is left is
 /// appended.
 pub fn merge_secondary_lines(out: &mut Vec<DamageLine>, mut sec: Vec<DamageLine>) {

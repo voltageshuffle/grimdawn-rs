@@ -4,21 +4,23 @@
 //!
 //! [`PointsGained`] mirrors the engine's game events 49 (skill points) and 50 (attribute points), which start the
 //! HUD's level-up pulses (`grimdawn` `ui::hud::pulse_hud`). Senders (Game.dll `EventManager::Send` callers):
-//! - 49: each level gained whose `skillModifierPoints` entry is > 0 (sub_18028E990, the level-up loop);
-//!   `ItemDifficultyUnlock::Use` @0x180336ef0 when the skipped quests' skill points are > 0; `Character::TakeBonus`
-//!   @0x180067e30 for a bonus with `bonusSkillPoints` (no stock record sets it);
-//! - 50: `ScriptableAction_GiveAttribPoint::Execute` @0x18046aae0 (every run that applies, any amount);
+//! - 49: each level gained whose `skillModifierPoints` entry is > 0 (`ExperienceLevelControl::AddExperience`, the
+//!   level-up loop);
+//!   `ItemDifficultyUnlock::Use` when the skipped quests' skill points are > 0; `Character::TakeBonus`
+//!   for a bonus with `bonusSkillPoints` (no stock record sets it);
+//! - 50: `ScriptableAction_GiveAttribPoint::Execute` (every run that applies, any amount);
 //!   `ItemDifficultyUnlock::Use` when its attribute points are > 0; `TakeBonus` (`bonusAttributePoints`, none stock).
-//! - No event: `ScriptableAction_GiveSkillPoint::Execute` @0x18046ceb0 and the Lua `GiveSkillPoints`
-//!   (`Character::AddSkillPoints` = `AddToSkillPoints` @0x1800608d0) only add the points.
-use crate::combat::{Combatant, MonsterKilled};
-use crate::data::GameData;
-use crate::player::{Player, PlayerSet, ProfileDirty};
-use crate::rules::CombatRules;
-use crate::session::LoadedCharacter;
-use crate::story::StoryEffect;
+//! - No event: `ScriptableAction_GiveSkillPoint::Execute` and the Lua `GiveSkillPoints`
+//!   (`Character::AddSkillPoints` = `AddToSkillPoints`) only add the points.
+use crate::combat::MonsterKilled;
 use bevy::prelude::*;
-use gd_sim::progress::Progress;
+use gd_game_core::combat::Combatant;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Player, PlayerSet, ProfileDirty};
+use gd_game_core::progress::{LeveledUp, PlayerProgress, PointsGained};
+use gd_game_core::rules::CombatRules;
+use gd_game_core::session::LoadedCharacter;
+use gd_game_core::story::StoryEffect;
 
 pub struct ProgressPlugin;
 
@@ -44,26 +46,6 @@ impl Plugin for ProgressPlugin {
     }
 }
 
-/// The player gained levels (its profile is rebuilt at `level` with full
-/// life; the game refills energy).
-#[derive(Message, Clone, Debug)]
-pub struct LeveledUp {
-    pub player: Entity,
-    pub level: i32,
-    /// Levels gained by this rise (`crate::play_stats`: one `max_level` each).
-    pub gained: u32,
-}
-
-/// The player was granted unspent points by a source that tells the HUD (module doc: events 49 / 50; several events of
-/// one frame / one level-up batch are one message).
-#[derive(Message, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PointsGained {
-    /// Event 49 (skill points) was sent.
-    pub skill: bool,
-    /// Event 50 (attribute points) was sent.
-    pub attribute: bool,
-}
-
 /// The messages a level-up / point grant sends.
 pub(crate) type LevelUpOut<'w> = (
     MessageWriter<'w, LeveledUp>,
@@ -73,41 +55,9 @@ pub(crate) type LevelUpOut<'w> = (
 pub(crate) type LevelUpQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static mut Combatant), With<Player>>;
 
-/// The player's experience and gold this session (items: `inventory.rs`).
-#[derive(Resource)]
-pub struct PlayerProgress {
-    pub progress: Progress,
-    pub gold: u64,
-}
-
-impl PlayerProgress {
-    /// The loaded character's progress, or a new character's.
-    pub fn from_save(loaded: Option<&LoadedCharacter>) -> Self {
-        let (level, xp, gold, attr_pts, skill_pts) = match loaded {
-            Some(c) => (
-                c.0.bio.level as i32,
-                c.0.bio.experience as u64,
-                c.0.info.money as u64,
-                c.0.bio.attribute_points as i32,
-                c.0.bio.skill_points as i32,
-            ),
-            None => (1, 0, 0, 0, 0),
-        };
-        PlayerProgress {
-            progress: Progress {
-                level: level.max(1),
-                experience: xp,
-                attribute_points: attr_pts,
-                skill_points: skill_pts,
-            },
-            gold,
-        }
-    }
-}
-
 /// Creates [`PlayerProgress`] once the player exists.
 pub fn init_progress(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     // Option: `progress` is the existence check (this system creates it); `loaded` is absent for a new character.
     progress: Option<Res<PlayerProgress>>,
@@ -142,24 +92,24 @@ pub fn kill_experience(
     mut players: LevelUpQuery,
     mut leveled: LevelUpOut,
     (spots, mut texts, mut cinematic): (
-        Query<(Entity, &Transform), With<crate::player::Player>>,
+        Query<(Entity, &Transform), With<gd_game_core::player::Player>>,
         MessageWriter<crate::floating::FloatingText>,
-        MessageWriter<crate::story::CinematicText>,
+        MessageWriter<gd_game_core::story::CinematicText>,
     ),
     (rt, monsters, credit, attackers): (
-        Option<NonSend<crate::story::StoryRuntime>>,
-        Query<&crate::monsters::Monster>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        Query<&gd_game_core::monsters::Monster>,
         crate::combat::KillCredit,
-        Query<&crate::combat::Attackers>,
+        Query<&gd_game_core::combat::Attackers>,
     ),
 ) {
     for ev in events.read() {
         // Experience only for the player's or his pets' kill, his DoTs' included ([`crate::combat::KillCredit`]:
         // nothing for a leaderless defense turret or guard, a trap, a hostile monster killing an `Allied` guard),
-        // and not for a monster of the Shattered Realm's dungeon (`PlayerManagerServer::HandleBonus`
-        // @0x1803f97f0: the monster's own XP is zeroed by its in-dungeon flag).
+        // and not for a monster of the Shattered Realm's dungeon (`PlayerManagerServer::HandleBonus`:
+        // the monster's own XP is zeroed by its in-dungeon flag).
         // The reward × the player's damage share, truncated (`HandleBonus`: `(int64)(xp × GetExperienceMultiplier)`,
-        // [`crate::combat::Attackers`]: his and his pets' hits and DoTs).
+        // [`gd_game_core::combat::Attackers`]: his and his pets' hits and DoTs).
         let by_ally = !credit.of(ev);
         let share = spots
             .single()
@@ -184,7 +134,7 @@ pub fn kill_experience(
             session.mode(),
         );
         let xp = (xp as f32 * share) as i64 as u32;
-        // Then + round(xp × `GameEngine` +0x3E68 = `GetAscendantExperienceMod` @0x1802e9f30: `HandleBonus`
+        // Then + round(xp × `GameEngine.ascendantExperienceMod` = `GetAscendantExperienceMod`: `HandleBonus`
         // reads it there; 0 in the Shattered Realm's dungeon and treasure rooms).
         let xp = gd_sim::ascendant::apply_bonus(xp as u64, session.ascendant().experience) as _;
         let xp = if by_ally || in_dungeon { 0 } else { xp };
@@ -207,7 +157,7 @@ pub fn kill_experience(
                 .db
                 .get(&ev.record)
                 .is_some_and(|r| r.str("monsterClassification") == Some("Hero"));
-            cinematic.write(crate::story::CinematicText {
+            cinematic.write(gd_game_core::story::CinematicText {
                 head: if hero {
                     "tagHeroKilled"
                 } else {
@@ -215,7 +165,7 @@ pub fn kill_experience(
                 }
                 .into(),
                 sub: "tagXPAwarded".into(),
-                sub_args: vec![crate::floating::TextArg::Num(xp as f32)],
+                sub_args: vec![gd_game_core::floating::TextArg::Num(xp as f32)],
                 kind: 5,
                 front: false,
             });
@@ -236,7 +186,7 @@ pub fn kill_experience(
     }
 }
 
-/// `Character::ReceiveExperience` @0x18005fe30: every experience
+/// `Character::ReceiveExperience`: every experience
 /// gain + (int)(xp × `CharAttributeAccumulator::GetValue(55)` % + 0.5), the
 /// sheet's Experience Gained row (`CharacterSheet::experience_bonus`).
 fn xp_bonus(players: &LevelUpQuery) -> f32 {
@@ -249,8 +199,8 @@ fn xp_bonus(players: &LevelUpQuery) -> f32 {
 /// Story rewards that change progress (`ScriptableAction_Give*`, Lua
 /// `Player:Give*`): experience, levels, money (`GiveMoney`: negative
 /// amounts take money, never below 0) and points. Items are the game's.
-/// Experience: `ScriptableAction_GiveExperience::Execute` @0x18046b000 ->
-/// `GameEngine::CharacterExperienceOutbound` @0x1802ed8f0 (a `Bonus` of source 2, no monster) straight to the
+/// Experience: `ScriptableAction_GiveExperience::Execute` ->
+/// `GameEngine::CharacterExperienceOutbound` (a `Bonus` of source 2, no monster) straight to the
 /// client (`HandleBonusToClient` -> `PlayerManagerClient::HandleBonus` -> `Character::TakeBonus`, which takes a
 /// source-2 gain even while dead) -> `ReceiveExperience`: the character's bonus % ([`xp_bonus`]); no damage
 /// share and no ascendant modifier (those are the server's `HandleBonus`, kills only).
@@ -262,7 +212,7 @@ pub fn story_progress(
     mut players: LevelUpQuery,
     mut leveled: LevelUpOut,
 ) {
-    use gd_sim::story::Effect;
+    use gd_story::story::Effect;
     for ev in events.read() {
         match &ev.0 {
             Effect::GiveExperience(xp) => {
@@ -313,9 +263,9 @@ pub fn story_progress(
 /// After `gained` levels were gained: logs, refills life and marks the player [`ProfileDirty`] so
 /// `player::rebuild_profile` rebuilds it at the new level (with the challenge area's mutators; life keeps its
 /// fraction, so the refill stays full), and sends event 49 when one of the levels gave skill points
-/// (sub_18028E990: the `skillModifierPoints` entry min(level − 2, last), > 0).
-/// `Character::ReceiveExperience` @0x18005fe30 sets the `CharacterBio` reload flag, on which
-/// `CharacterBio::Update` @0x18008aa70 sets current life and energy to their maximums (energy:
+/// (`ExperienceLevelControl::AddExperience`: the `skillModifierPoints` entry min(level − 2, last), > 0).
+/// `Character::ReceiveExperience` sets the `CharacterBio` reload flag, on which
+/// `CharacterBio::Update` sets current life and energy to their maximums (energy:
 /// `loot::refill_energy` on [`LeveledUp`]).
 pub(crate) fn level_up(
     gained: i32,

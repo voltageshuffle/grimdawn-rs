@@ -1,17 +1,17 @@
 //! Looping 3D sounds: placed emitters (a `SoundObject`'s, a monster's or a decoration's `ambientSound`, a riftgate's
-//! state sound) and gameplay's [`SoundLoop`](gd_game::visuals::SoundLoop)s, started and stopped by [`loop_rule`].
+//! state sound) and gameplay's [`SoundLoop`](gd_game_core::visuals::SoundLoop)s, started and stopped by [`loop_rule`].
 use super::Sounds;
 use super::listener::{SoundClass, VOICES};
 use super::mixer::{EarGains, OnEnd, Voice, Voice3d, VoiceStart, attach_voice};
 use super::pak::{audible_gain, could_possibly_hear, volume_set};
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
 use gd_sim::sound3d::distance_gain;
 
 /// A placed looping sound: attenuated by [`distance_gain`], panned, and started / stopped by [`loop_rule`]. Spawned
 /// when its level loads, gone with it. A stereo file's loop (no 3D buffer, `pak` module doc) is not cut by the d²
-/// limit of [`loop_rule`] (`SoundManager::Update` checks the buffer's 3D flag +12); `spawnAtCameraY` is not
-/// applied to loops (no stock looping pak has it).
+/// limit of [`loop_rule`] (`SoundManager::Update` checks the buffer's 3D flag `SoundBuffer.is3d`); `spawnAtCameraY`
+/// is not applied to loops (no stock looping pak has it).
 #[derive(Component)]
 pub struct Emitter {
     pak: String,
@@ -76,7 +76,7 @@ pub fn spawn_loop(commands: &mut Commands, data: &GameData, pak: &str, at: Vec3)
     )
 }
 
-/// The [`Emitter`] of a gameplay [`SoundLoop`](gd_game::visuals::SoundLoop).
+/// The [`Emitter`] of a gameplay [`SoundLoop`](gd_game_core::visuals::SoundLoop).
 #[derive(Component)]
 pub(super) struct LoopOf {
     source: Entity,
@@ -84,15 +84,18 @@ pub(super) struct LoopOf {
     fade: f32,
 }
 
-/// Gameplay's looping sounds ([`SoundLoop`](gd_game::visuals::SoundLoop)): an [`Emitter`] of its own, so the fade
+/// Gameplay's looping sounds ([`SoundLoop`](gd_game_core::visuals::SoundLoop)): an [`Emitter`] of its own, so the fade
 /// outlives the source, kept at the entity it tracks (`SoundPak::Track`: where it was once that is gone). When the
 /// source goes it fades over the source's time (`FadeLastPlayedSound`) and is removed; one never started (out of
 /// hearing) is removed at once.
 pub(super) fn skill_loops(
     mut commands: Commands,
     data: Res<GameData>,
-    added: Query<(Entity, &gd_game::visuals::SoundLoop), Added<gd_game::visuals::SoundLoop>>,
-    sources: Query<(), With<gd_game::visuals::SoundLoop>>,
+    added: Query<
+        (Entity, &gd_game_core::visuals::SoundLoop),
+        Added<gd_game_core::visuals::SoundLoop>,
+    >,
+    sources: Query<(), With<gd_game_core::visuals::SoundLoop>>,
     at: Query<&GlobalTransform, Without<LoopOf>>,
     mut q: Query<(Entity, &mut LoopOf, &mut Transform, &mut Emitter)>,
 ) {
@@ -142,17 +145,18 @@ pub enum LoopStep {
     Stop,
 }
 
-/// The engine's looping 3D sounds `d` metres from the ears. `SoundAmbient::Update` @0x18055f030 (Game.dll;
+/// The engine's looping 3D sounds `d` metres from the ears. `SoundAmbient::Update` (Game.dll;
 /// `SoundObject`, `Monster` and `Decoration` `ambientSound`, every update; Engine.dll's `SoundEntity::UpdateSelf`
-/// @0x1801b2d60 alike): a pak not playing is played again (`Play3D` with loop, so only while [`could_possibly_hear`]);
+/// alike): a pak not playing is played again (`Play3D` with loop, so only while [`could_possibly_hear`]);
 /// one playing farther than 8 × `fallOff` fades out over 500 ms (`FadeLastPlayedSound` → `SoundManager::FadeSound`,
-/// which also clears the instance's distance check). `SoundManager::Update` @0x1801b5b10 (with
+/// which also clears the instance's distance check). `SoundManager::Update` (with
 /// `EnableDistanceCheck`, on from the constructor, never switched off): every looping 3D instance with its distance
 /// check farther than d² = 5000 (70.7 m; fade value (d² − 5000) × 0.0004 ≥ 1e-4) is stopped at once
 /// ([`LOOP_STOP_D2`]), so a loop with 8 × `fallOff` beyond 70.7 m is silent there.
 ///
-/// `three_d`: the d² cut is skipped for a stereo file (no 3D buffer: `SoundManager::Update` tests the buffer's +12
-/// flag first); the hearing check and the 8 × `fallOff` fade are `Play3D`'s / `SoundAmbient`'s and apply to both.
+/// `three_d`: the d² cut is skipped for a stereo file (no 3D buffer: `SoundManager::Update` tests the buffer's
+/// `SoundBuffer.is3d` flag first); the hearing check and the 8 × `fallOff` fade are `Play3D`'s / `SoundAmbient`'s
+/// and apply to both.
 pub fn loop_rule(playing: bool, three_d: bool, falloff: f32, d: f32) -> LoopStep {
     let cut = three_d && d * d > LOOP_STOP_D2 && (d * d - LOOP_STOP_D2) * 0.0004 >= 0.0001;
     match playing {

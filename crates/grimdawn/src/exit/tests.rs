@@ -20,8 +20,9 @@ const HANDLERS: &[(&str, &str)] = &[
     ("grimdawn::exit", "fn end_session("),
     ("gd_game::session", "fn end_session_state("),
     ("grimdawn::ui", "fn reset_session("),
+    ("gd_ui", "fn reset_session("),
     // `OnExit(AppState::InGame)`.
-    ("grimdawn::ui::loading", "fn teardown_hud("),
+    ("gd_ui::loading", "fn teardown_hud("),
     // Run by `end_session` (through `open_world`): the map's resources.
     ("grimdawn::world", "fn install_world("),
 ];
@@ -171,6 +172,11 @@ const CRATES: &[&str] = &[
     "gd_formats",
     "gd_sim",
     "gd_game",
+    "gd_game_core",
+    "gd_rules",
+    "gd_story",
+    "gd_ui",
+    "gd_ui_kit",
     "gd_render",
     "grimdawn",
     "bevy",
@@ -415,6 +421,9 @@ fn every_registered_resource_is_reset_or_kept() {
     let mut files = Vec::new();
     for (krate, dir) in [
         ("gd_game", "gd-game"),
+        ("gd_game_core", "gd-game-core"),
+        ("gd_ui_kit", "gd-ui-kit"),
+        ("gd_ui", "gd-ui"),
         ("grimdawn", "grimdawn"),
         ("gd_render", "gd-render"),
     ] {

@@ -1,5 +1,5 @@
-//! `.fnt` fonts. Two kinds ship (loader `GAME::GraphicsFont2::Initialize`,
-//! Engine.dll 0x1800afc90):
+//! `.fnt` fonts. Two kinds ship (loader `GraphicsFont2::Initialize`,
+//! Engine.dll):
 //! - `FNTX` v2: pre-rasterised bitmap font — styles (size + flags) with glyph
 //!   metrics, kerning pairs, and the glyph atlas embedded at the end of the
 //!   file (stock: DXT5, glyph coverage in alpha).
@@ -223,20 +223,15 @@ impl BitmapFont {
     /// Decode the atlas to straight RGBA8 (BC formats only).
     pub fn atlas_rgba8(&self) -> Result<Vec<u8>> {
         let (w, h) = (self.atlas_width as usize, self.atlas_height as usize);
-        let mut px = vec![0u32; w * h];
-        let r = match self.atlas_format {
-            AtlasFormat::Dxt1 => texture2ddecoder::decode_bc1a(&self.atlas, w, h, &mut px),
-            AtlasFormat::Dxt3 => texture2ddecoder::decode_bc2(&self.atlas, w, h, &mut px),
-            AtlasFormat::Dxt5 => texture2ddecoder::decode_bc3(&self.atlas, w, h, &mut px),
+        let (block_bytes, decode): (_, crate::tex::BlockDecoder) = match self.atlas_format {
+            AtlasFormat::Dxt1 => (8, texture2ddecoder::decode_bc1a_block),
+            AtlasFormat::Dxt3 => (16, texture2ddecoder::decode_bc2_block),
+            AtlasFormat::Dxt5 => (16, texture2ddecoder::decode_bc3_block),
             AtlasFormat::Raw(c) => bail!("raw atlas format {c} not supported"),
         };
-        r.map_err(|e| anyhow::anyhow!("atlas decode: {e}"))?;
-        Ok(px
-            .iter()
-            .flat_map(|p| {
-                let [b, g, r, a] = p.to_le_bytes();
-                [r, g, b, a]
-            })
-            .collect())
+        let mut out = vec![0u8; w * h * 4];
+        crate::tex::bc_rgba8_into(&self.atlas, w, h, block_bytes, decode, &mut out)
+            .map_err(|e| anyhow::anyhow!("atlas decode: {e}"))?;
+        Ok(out)
     }
 }

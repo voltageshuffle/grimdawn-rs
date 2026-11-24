@@ -1,10 +1,10 @@
 //! The order in which `ItemEquipment::InitializeItem` creates an item's
 //! attributes, store by store. Field names / class names only.
 //!
-//! `ItemEquipment::InitializeItem` @0x18033c240: it loads the
+//! `ItemEquipment::InitializeItem`: it loads the
 //! stores in [`StoreKind`] order (character, skill, damage, retaliation,
 //! defense, conversion), and each store's `Load` (e.g.
-//! `DamageAttributeStore_Equipment::Load` @0x1801a8150) calls its class
+//! `DamageAttributeStore_Equipment::Load`) calls its class
 //! creators (`Create_*`) in a fixed order. Each entry is one such creator
 //! call; `jitter` says whether the store passed the 20% base jitter
 //! (`0x41A00000`) to it.

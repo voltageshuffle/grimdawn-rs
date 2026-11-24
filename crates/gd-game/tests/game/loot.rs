@@ -2,13 +2,13 @@
 //! item is walked to and put in the bags, kills drop loot.
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
-use gd_game::inventory::Inventory;
 use gd_game::loot::{GroundItem, drop_loot};
 use gd_game::movement::MovePath;
 use gd_game::nav::Nav;
 use gd_game::player_orders::InteractTarget;
-use gd_game::progress::PlayerProgress;
 use gd_game::testing::TestGame;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::progress::PlayerProgress;
 
 fn game() -> Option<(TestGame, Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;
@@ -20,7 +20,8 @@ fn game() -> Option<(TestGame, Entity)> {
 
 fn drop(g: &mut TestGame, at: Vec3, items: Vec<Item>, gold: &[u32]) {
     let world = g.app.world_mut();
-    let idb = gd_sim::items::ItemDb::new(world.resource::<gd_game::data::GameData>().db.clone());
+    let idb =
+        gd_sim::items::ItemDb::new(world.resource::<gd_game_core::data::GameData>().db.clone());
     {
         let mut commands = world.commands();
         drop_loot(&mut commands, &idb, at, items, gold);
@@ -70,7 +71,7 @@ fn gold_nearby_is_picked_up() {
         ),
         (
             "GiveMoneyFormat",
-            &[gd_game::floating::TextArg::Num(25.0)][..],
+            &[gd_game_core::floating::TextArg::Num(25.0)][..],
             28
         )
     );

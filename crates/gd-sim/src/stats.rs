@@ -1,9 +1,9 @@
 //! Character stats: the attribute accumulator, base stats from character and
 //! bio records, level/XP tables and the derived OA/DA (Game.dll).
 use crate::attributes::{AttrFamily, CHAR_ATTR_SLOTS, CharAttr, CombatType, family};
-use crate::expr::Expr;
 use anyhow::{Context, Result, bail};
 use gd_formats::arz::{RawValue, Record};
+use gd_rules::expr::Expr;
 
 /// `0.0099999998f` — the f32 the engine multiplies by for "/100".
 pub const PCT: f32 = 0.01;
@@ -31,8 +31,8 @@ impl CharAttrAccumulator {
     pub fn add_value(&mut self, a: CharAttr, v: f32) {
         self.value[a as usize] += v;
     }
-    /// `characterTotalSpeedModifier` (`CharAttributeMod_TotalSpeed::
-    /// AddToAccumulator` @0x1800cee20) adds its value to the run,
+    /// `characterTotalSpeedModifier` (`CharAttributeMod_TotalSpeed::AddToAccumulator`)
+    /// adds its value to the run,
     /// attack and cast speed modifiers; the slot itself stays unused.
     pub fn add_modifier(&mut self, a: CharAttr, v: f32) {
         if a == CharAttr::TotalSpeed {
@@ -51,7 +51,7 @@ impl CharAttrAccumulator {
         self.multiplier[a as usize] += v;
     }
 
-    /// `CharAttributeAccumulator::GetValue` @0x1800cf6e0 (exact f32
+    /// `CharAttributeAccumulator::GetValue` (exact f32
     /// order): `m = max((mult + 1) * 100, 0)`; positive values become
     /// `max(((mod * 0.01 + 1) * v * m) * 0.01, 0)`, negative ones
     /// `min(((|v| * mod) * 0.01 + v) * m * 0.01, 0)`.
@@ -108,9 +108,34 @@ pub fn level_value(rec: &Record, field: &str, level_index: usize) -> Option<f32>
     last
 }
 
+/// Per-record parsed field equations ([`Record::derived`] slot 2): a field's equation string
+/// parsed once and shared by the record's clones. Bio, proxy and loot equations are otherwise
+/// re-parsed per spawn / roll. A parse failure is cached as `None`.
+#[derive(Default)]
+pub(crate) struct RecordExprs(
+    parking_lot::Mutex<gd_formats::collections::HashMap<Box<str>, Option<std::sync::Arc<Expr>>>>,
+);
+
+/// [`Expr::parse`] of `src` cached on `rec` under `field` (slot 2); `None` on a parse error. The
+/// caller reads the field's string first (absent / empty fields are not cached here).
+pub(crate) fn record_expr(rec: &Record, field: &str, src: &str) -> Option<std::sync::Arc<Expr>> {
+    match rec.derived::<2, _>(RecordExprs::default) {
+        Some(cache) => {
+            let mut m = cache.0.lock();
+            if let Some(e) = m.get(field) {
+                return e.clone();
+            }
+            let e = Expr::parse(src).ok().map(std::sync::Arc::new);
+            m.insert(field.into(), e.clone());
+            e
+        }
+        None => Expr::parse(src).ok().map(std::sync::Arc::new),
+    }
+}
+
 /// Life/energy granted per point of Physique/Cunning/Spirit gained from a
 /// contribution source, computed at load from `playerlevels.dbr`
-/// (`sub_18028E1D0`): `lifeIncrement/strengthIncrement`,
+/// (`ExperienceLevelControl::Load`): `lifeIncrement/strengthIncrement`,
 /// `lifeIncrementDexterity/dexterityIncrement`,
 /// `lifeIncrementIntelligence * (1/intelligenceIncrement)`,
 /// `manaIncrement * (1/intelligenceIncrement)`.
@@ -123,9 +148,9 @@ pub struct AttributeRates {
 }
 
 impl CharAttrAccumulator {
-    /// Applies one contribution source the way `Character::GetSkillCharAttributes`
-    /// @0x180069780, `GetEquipCharAttributes` @0x1800695e0 and
-    /// `ContributeMiscCharAttributes` @0x18006a6b0 do: the change in
+    /// Applies one contribution source the way `Character::GetSkillCharAttributes`,
+    /// `GetEquipCharAttributes` and
+    /// `ContributeMiscCharAttributes` do: the change in
     /// *effective* Physique/Cunning/Spirit caused by the source is converted
     /// to flat life/energy, in this exact order.
     pub fn contribute(&mut self, rates: &AttributeRates, source: impl FnOnce(&mut Self)) {
@@ -144,7 +169,7 @@ impl CharAttrAccumulator {
 }
 
 /// `records/creatures/pc/playerlevels.dbr` (the engine's experience level
-/// control, loaded by `sub_18028E1D0` from `levelFileName`).
+/// control, loaded by `ExperienceLevelControl::Load` from `levelFileName`).
 #[derive(Debug, Clone)]
 pub struct LevelTable {
     pub strength_increment: i32,
@@ -207,7 +232,7 @@ impl LevelTable {
         })
     }
 
-    /// Exact f32 rates (`sub_18028E1D0` +100..+112).
+    /// Exact f32 rates (the `ExperienceLevelControl.*Increment` fields).
     pub fn rates(&self) -> AttributeRates {
         let inv_int = 1.0 / self.intelligence_increment as f32;
         AttributeRates {
@@ -220,9 +245,9 @@ impl LevelTable {
     }
 
     /// Experience listed for `level` by `Player::DumpExperienceLevels`
-    /// (`sub_18028EDD0`): `(int)(eq(playerLevel = level - 1) + 0.5)`,
+    /// (`ExperienceLevelControl::GetExperienceForLevel`): `(int)(eq(playerLevel = level - 1) + 0.5)`,
     /// i.e. the cumulative total needed to *reach* `level` (the
-    /// level-up loop `sub_18028E990`; see
+    /// level-up loop `ExperienceLevelControl::AddExperience`; see
     /// `progress::Progress::threshold`).
     pub fn experience_for_level(&self, level: i32) -> i64 {
         let pl = (level - 1) as f32;
@@ -234,7 +259,7 @@ impl LevelTable {
 }
 
 /// Combat formula record (`records/game/combatformulas.dbr`), loaded by
-/// `CombatManager::LoadRecord` @0x18011c380.
+/// `CombatManager::LoadRecord`.
 #[derive(Debug, Clone)]
 pub struct CombatFormulas {
     pub offensive_ability: Option<Expr>,
@@ -246,8 +271,8 @@ pub struct CombatFormulas {
     pub pierce_damage: Option<Expr>,
     pub magical_damage: Option<Expr>,
     pub magical_duration_damage: Option<Expr>,
-    /// `physicalDamagePercentage` / `physicalDamageBonus` (slots +504 / +512,
-    /// `CombatManager::LoadRecord`): only the character window's
+    /// `physicalDamagePercentage` / `physicalDamageBonus` (`CombatManager.physicalDamagePercentage` /
+    /// `CombatManager.physicalDamageBonus`, `CombatManager::LoadRecord`): only the character window's
     /// Cunning rollover reads them (`DesignerCalculatePhysicalDamagePercentage`
     /// / `DesignerCalculatePhysicalDamageBonus`).
     pub physical_damage_percentage: Option<Expr>,
@@ -411,8 +436,8 @@ impl CombatFormulas {
     }
 }
 
-/// Values the `CombatManager` equations can see (`ResolveEquationVariable`
-/// @0x180120e70). Unset variables read 0 like the engine.
+/// Values the `CombatManager` equations can see (`ResolveEquationVariable`).
+/// Unset variables read 0 like the engine.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CombatVars {
     pub physical_damage: f32,
@@ -528,7 +553,7 @@ impl CombatVars {
 }
 
 impl CombatFormulas {
-    /// `DesignerCalculateOffensiveAbility(bonus)` @0x180121630:
+    /// `DesignerCalculateOffensiveAbility(bonus)`:
     /// `max(eq - offensiveAbilityDebuff, 0)` where the debuff is the
     /// duration-damage manager's `OffensiveAbility` (22) total.
     pub fn offensive_ability(
@@ -546,7 +571,7 @@ impl CombatFormulas {
         (r - debuff).max(0.0)
     }
 
-    /// `DesignerCalculateDefensiveAbility(bonus)` @0x1801216e0;
+    /// `DesignerCalculateDefensiveAbility(bonus)`;
     /// `TakeAttack` always passes bonus 0.
     pub fn defensive_ability(
         &self,
@@ -568,7 +593,7 @@ impl CombatFormulas {
 #[derive(Debug, Clone)]
 pub struct EngineConstants {
     /// Resistance cap per difficulty (`playerDefenseCap`, Normal/Elite/Ultimate);
-    /// returned by `Player::GetDefenseAttributeCap` @0x1803e59f0.
+    /// returned by `Player::GetDefenseAttributeCap`.
     pub player_defense_cap: [f32; 3],
     pub monster_defense_cap: [f32; 3],
     pub player_pet_defense_cap: [f32; 3],
@@ -610,7 +635,7 @@ pub struct BioStore {
     pub mana_regen_equation: Option<Expr>,
 }
 
-/// Slots `CharacterBio::EvaluateEquations` @0x18008b6a0 fills from the bio
+/// Slots `CharacterBio::EvaluateEquations` fills from the bio
 /// equation record, in order.
 pub const BIO_EQUATION_SLOTS: [(CharAttr, &str); 9] = [
     (CharAttr::Physique, "characterStrength"),
@@ -646,7 +671,9 @@ impl BioStore {
         // number is a constant one); `GetLifeRegenValue` returns 0 without
         // an equation, so the flat attribute alone regens nothing.
         let equation = |field: &str| match rec.get(field).and_then(|v| v.first()) {
-            Some(RawValue::Str(s)) if !s.is_empty() => Expr::parse(s).ok(),
+            Some(RawValue::Str(s)) if !s.is_empty() => {
+                record_expr(rec, field, s).map(|e| (*e).clone())
+            }
             Some(other) => Some(Expr::Num(other.as_f32().unwrap_or(0.0))),
             None => None,
         };
@@ -666,9 +693,10 @@ impl BioStore {
                 continue;
             };
             let e = match src {
-                RawValue::Str(s) if !s.is_empty() => {
-                    Expr::parse(&s).with_context(|| field.to_owned())?
-                }
+                RawValue::Str(s) if !s.is_empty() => match record_expr(bio, field, &s) {
+                    Some(e) => (*e).clone(),
+                    None => Expr::parse(&s).with_context(|| field.to_owned())?,
+                },
                 RawValue::Str(_) => continue,
                 other => Expr::Num(other.as_f32().unwrap_or(0.0)),
             };
@@ -685,12 +713,12 @@ impl BioStore {
         Ok(())
     }
 
-    /// `CharacterBio::GetLifeRegenValue` @0x18008b020 at elapsedTime 1: the
-    /// life regen equation with `ResolveEquationVariable` @0x18008d190's
+    /// `CharacterBio::GetLifeRegenValue` at elapsedTime 1: the
+    /// life regen equation with `CharacterBio::ResolveEquationVariable`'s
     /// variables — `lifeRegen` the total regen attribute
     /// (`GetValue(6)`), `lifeRegenMod` its modifier %, `lifeTotal` the total
     /// life, `physique` / `intelligence` the totals, `charLevel`. No
-    /// equation: 0. `CharacterBio::Update` @0x18008aa70 adds the value every
+    /// equation: 0. `CharacterBio::Update` adds the value every
     /// update for every character (no player gate); the player's sheet uses
     /// `playerresourcebehavior.dbr`'s equations instead
     /// ([`CharacterSheet::apply_player_regen`]).
@@ -723,7 +751,7 @@ pub struct AllocatedPoints {
 
 impl BioStore {
     /// `Character::IncrementBase{Strength,Dexterity,Intelligence}`
-    /// @0x18006b4c0.. add `*Increment` to the bio store. The life
+    /// add `*Increment` to the bio store. The life
     /// and energy that come with a point are separate `IncrementBaseLife(n)` /
     /// `IncrementBaseMana(n)` commands issued by the UI in Grim Dawn.exe with
     /// `GetStrengthLifeIncrement()` etc. (the getters are only
@@ -763,8 +791,8 @@ pub struct CharacterSheet {
     pub spirit: f32,
     pub life: f32,
     pub energy: f32,
-    /// Energy held by active toggled skills (`Character::GetReserveMana`
-    /// @0x18006b0f0: reserve × (1 − reduction %)).
+    /// Energy held by active toggled skills (`Character::GetReserveMana`:
+    /// reserve × (1 − reduction %)).
     pub energy_reserve: f32,
     /// Raw `characterLifeRegen` / `characterManaRegen` attributes (inputs of
     /// the regen equations, not per-second values).
@@ -782,31 +810,31 @@ pub struct CharacterSheet {
     pub defensive_ability: f32,
     pub dodge: f32,
     pub deflect: f32,
-    /// `characterHealIncreasePercent` (bio +428, `CharacterBio::TakeBonus`):
+    /// `characterHealIncreasePercent` (`CharacterBio.healIncreasePercent`, `CharacterBio::TakeBonus`):
     /// flat, % and over-time heals × (1 + this %).
     pub heal_increase: f32,
     /// `characterEnergyAbsorptionPercent` total (`Character::GetTotalCharAttribute(26)`,
-    /// the sheet's Energy Absorption row `sub_14014CEC0`).
+    /// the sheet's Energy Absorption row `CharacterWindow::UpdatePage2`).
     pub energy_absorption: f32,
     /// `characterDefensiveBlockRecoveryReduction` total (the sheet's Block
     /// Recovery row, `GetTotalCharAttribute(25)` capped at 100;
-    /// `sub_14015C5D0`).
+    /// `CharacterWindow::UpdatePage3`).
     pub block_recovery_reduction: f32,
-    /// `characterPercentHealIncreaseModifier` (bio +432): adds to the above
+    /// `characterPercentHealIncreaseModifier` (`CharacterBio.percentHealIncreaseModifier`): adds to the above
     /// for the instant % heal only.
     pub percent_heal_increase: f32,
     /// `characterConstitutionModifier` total (`GetTotalCharModifier(10)`, the
-    /// sheet's Constitution Bonus row `sub_14014CEC0`).
+    /// sheet's Constitution Bonus row `CharacterWindow::UpdatePage2`).
     pub constitution_modifier: f32,
-    /// Constitution limit (`GetConstitutionLimit` @0x18008a460 = `CharAttributeAccumulator::GetValue(10)`).
+    /// Constitution limit (`GetConstitutionLimit` = `CharAttributeAccumulator::GetValue(10)`).
     pub constitution: f32,
     /// `characterIncreasedExperience` (`CharAttributeAccumulator::GetValue(55)`):
     /// every experience gain + round(xp × this %) (
-    /// `Character::ReceiveExperience` @0x18005fe30).
+    /// `Character::ReceiveExperience`).
     pub experience_bonus: f32,
     /// `characterIncreasedGold` (`CharAttributeAccumulator::GetValue(56)`):
     /// every gold pickup + floor(gold × this % + 0.5) (
-    /// `Character::TakeBonus` @0x180067e30, the bonus's gold).
+    /// `Character::TakeBonus`, the bonus's gold).
     pub gold_bonus: f32,
     /// `characterLightRadius` total (`GetTotalCharAttribute(57)`, the sheet's
     /// Light Radius row), a percentage on the player light's radius
@@ -818,11 +846,11 @@ pub struct CharacterSheet {
 }
 
 /// The player bio's own values next to the totals (Game.dll):
-/// `Character::GetBaseCharAttributes` @0x180069590 reads the bio's base store
-/// (+112 of `CharacterBio`: the pc record, the save's values and the points
+/// `Character::GetBaseCharAttributes` reads the bio's base store
+/// (`CharacterBio.baseAttributes`: the pc record, the save's values and the points
 /// spent, `IncrementBase*`); `CharacterBio::GetOriginalCharAttribute`
-/// @0x18008ba10 the store at +72, loaded from the same pc record
-/// (`CharacterBio::Load` @0x18008ba20) and never incremented.
+/// the store `CharacterBio.originalAttributes`, loaded from the same pc record
+/// (`CharacterBio::Load`) and never incremented.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BioBase {
     /// Base Physique, Cunning, Spirit, Life, Energy (`GetValue` 1, 2, 3, 4, 5).
@@ -836,7 +864,7 @@ pub struct BioBase {
 /// One contribution (adds a record's attributes to the accumulator).
 pub type Source<'a> = Box<dyn Fn(&mut CharAttrAccumulator) + 'a>;
 
-/// Accumulation order of `CharacterBio::UpdateResources` @0x18008b520:
+/// Accumulation order of `CharacterBio::UpdateResources`:
 /// bio store -> skills -> misc (item sets) -> game balance ->
 /// mutators -> equipment. Sources are closures that add their records; the
 /// profile builders put mutators in `game_balance` after the paks (same
@@ -902,7 +930,7 @@ impl PlayerRegen {
         })
     }
 
-    /// `CharacterBio::GetLifeRegenValue(regen, mod, 1)` @0x18008b020: the
+    /// `CharacterBio::GetLifeRegenValue(regen, mod, 1)`: the
     /// life equation at elapsedTime 1 with `lifeRegen` = `regen` (no equation: 0).
     pub fn life_value(&self, regen: f32, physique: f32, intelligence: f32) -> f32 {
         self.life.as_ref().map_or(0.0, |e| {
@@ -910,8 +938,8 @@ impl PlayerRegen {
         })
     }
 
-    /// `CharacterBio::GetManaRegenValue(regen, mod, 1, intelligence)`
-    /// @0x18008b080: the mana equation with `manaRegen` = `regen`; a non-zero
+    /// `CharacterBio::GetManaRegenValue(regen, mod, 1, intelligence)`:
+    /// the mana equation with `manaRegen` = `regen`; a non-zero
     /// `intelligence` replaces the bio's for the call.
     pub fn mana_value(&self, regen: f32, physique: f32, intelligence: f32) -> f32 {
         self.mana.as_ref().map_or(0.0, |e| {
@@ -966,8 +994,8 @@ impl CharacterSheet {
 }
 
 /// The player light's radius: its record's `radius` (`Light::GetRadius`,
-/// kept by `Player::Load` at +8020) × (1 + `characterLightRadius` total %
-/// / 100). `Player::UpdateSelf` @0x1803d24a0: every update
+/// kept by `Player::Load` in `Player.baseLightRadius`) × (1 + `characterLightRadius` total %
+/// / 100). `Player::UpdateSelf`: every update
 /// `Light::SetRadius(((GetValue(57) × 0.01) + 1) × base)`; it is the only
 /// consumer of attribute 57 besides the sheet. Nothing clamps it (a
 /// negative total shrinks the light).

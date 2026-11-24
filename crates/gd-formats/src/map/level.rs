@@ -52,8 +52,8 @@ impl Entity {
 
     /// A `TerrainDecoration`'s painted terrain layers (its extra data after the scale), if it has some.
     ///
-    /// Game.dll `TerrainDecoration::Read` @0x180583ab0 (after `Actor::Read`, the scale): u32 has-patch;
-    /// then Engine.dll `TerrainPatch::Read` @0x1801d27e0: u32 version, i32 width, i32 depth (none when
+    /// Game.dll `TerrainDecoration::Read` (after `Actor::Read`, the scale): u32 has-patch;
+    /// then Engine.dll `TerrainPatch::Read`: u32 version, i32 width, i32 depth (none when
     /// width·depth ≤ 0), u32 layer count; version 2: per layer u32 used, then width·depth bytes when used;
     /// other versions: per layer width·depth bytes, then u32 used. Layer i is the level terrain's layer i.
     pub fn terrain_patch(&self) -> Option<TerrainPatch> {

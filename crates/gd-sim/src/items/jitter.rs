@@ -1,10 +1,10 @@
 //! Per-stat randomisation ("jitter") of item attributes. Every variant draws
 //! from the item's Park–Miller stream ([`Rng`], the same `RandomUniform` the
 //! combat code uses). All arithmetic is f32 in the engine's order.
-use crate::combat::Rng;
 use crate::stats::PCT;
+use gd_rules::Rng;
 
-/// The item's attribute stream: `ItemEquipment::InitializeItem` (0x18033c240)
+/// The item's attribute stream: `ItemEquipment::InitializeItem`
 /// advances the saved seed once (`16807*s - 0x7fffffff*(s/127773)`, i.e. one
 /// Schrage step) and hands that state to every attribute store.
 pub fn item_stream(seed: u32) -> Rng {
@@ -13,7 +13,7 @@ pub fn item_stream(seed: u32) -> Rng {
     r
 }
 
-/// `DefenseAttribute::Jitter` (0x18018aa50; shared by every damage,
+/// `DefenseAttribute::Jitter` (shared by every damage,
 /// retaliation and defense attribute class) and, with `skip_zero_pct`,
 /// `CharAttribute::Jitter`, which additionally returns `v` untouched when the
 /// percentage is 0:
@@ -51,7 +51,7 @@ pub fn jitter_skill(v: f32, pct: f32, rng: &mut Rng) -> f32 {
     if d.abs() < 1.0 { v } else { d }
 }
 
-/// Conversion percentages (`sub_18017C6F0`): continuous,
+/// Conversion percentages (`ConversionAttribute::Jitter`): continuous,
 /// `v * (1 + unit*2p - p)` clamped to [0, 100], one draw per value.
 // `max().min()`, not `clamp`: a NaN becomes 0.
 #[allow(clippy::manual_clamp)]
@@ -66,10 +66,10 @@ pub fn jitter_continuous(v: f32, pct: f32, rng: &mut Rng) -> f32 {
 }
 
 /// `MinJitter` / `MaxJitter` (`max`) of one value: the smallest / largest value
-/// the roll can give. `DefenseAttribute::MinJitter` / `MaxJitter`
-/// @0x18018ab10 / @0x18018ab70 (COMDAT-shared by the damage, retaliation,
+/// the roll can give. `DefenseAttribute::MinJitter` / `MaxJitter` (exported as
+/// `SkillAttribute::MinJitter` / `MaxJitter`; COMDAT-shared by the damage, retaliation,
 /// defense and skill classes) and `CharAttribute::MinJitter` / `MaxJitter`
-/// @0x1800cc010 / @0x1800cc070 (`skip_zero_pct`: a 0 % keeps the value):
+/// (`skip_zero_pct`: a 0 % keeps the value):
 /// `n = (int)(v * pct * 0.01)` (1 when 0; negative for a negative value, so
 /// the "min" of a negative value is the one nearer 0), `v -/+ n` only when its
 /// magnitude stays >= 1, else `v`; 0 stays 0.
@@ -88,7 +88,7 @@ pub fn jitter_bound(v: f32, pct: f32, max: bool, skip_zero_pct: bool) -> f32 {
 
 /// What a jitter site of the attribute loaders produces: the seeded roll (the
 /// `_Equipment` stores) or the `_Min` / `_Max` stores' bound
-/// (`ItemEquipment::InitializeItem` @0x18033c240 loads the same records into
+/// (`ItemEquipment::InitializeItem` loads the same records into
 /// three store sets; the `_Min` / `_Max` loaders call `MinJitter` /
 /// `MaxJitter` where the equipment one draws `Jitter`).
 pub enum Roll<'a> {
@@ -106,7 +106,7 @@ impl Roll<'_> {
     }
 
     /// [`jitter_skill`], or the bound with the "at least 1" rule (
-    /// `SkillAttribute::LoadPrefixTableMin` @0x18051cc30: no percentage check).
+    /// `SkillAttribute::LoadPrefixTableMin`: no percentage check).
     pub fn skill(&mut self, v: f32, pct: f32) -> f32 {
         match self {
             Roll::Seeded(rng) => jitter_skill(v, pct, rng),
@@ -115,8 +115,8 @@ impl Roll<'_> {
     }
 
     /// A skill attribute's base value under the store's `AddJitter` (seeded:
-    /// [`jitter_skill`] `SkillAttribute::AddJitter` @0x18051e670) or
-    /// `AddMinJitter` / `AddMaxJitter` (the bound @0x18051e6f0:
+    /// [`jitter_skill`] `SkillAttribute::AddJitter`) or
+    /// `AddMinJitter` / `AddMaxJitter` (the bound `SkillAttribute::AddMinJitter`:
     /// at least 1, kept when the result drops under 1). The caller clamps `pct`.
     pub fn skill_base(&mut self, v: f32, pct: f32) -> f32 {
         match self {
@@ -126,7 +126,7 @@ impl Roll<'_> {
     }
 
     /// [`jitter_continuous`], or `v * (1 -/+ pct/100)` clamped to [0, 100]
-    /// (`sub_18017C810` / `sub_18017C880`, the conversion `_Min` /
+    /// (`ConversionAttribute::MinJitter` / `ConversionAttribute::MaxJitter`, the conversion `_Min` /
     /// `_Max` stores).
     // `max().min()`, not `clamp`: a NaN becomes 0.
     #[allow(clippy::manual_clamp)]

@@ -2,40 +2,40 @@
 //! ritual: the wraith `witchritual_spirit` animates the stone basilisk
 //! `basilisk_witchritual`, whose class is `SpiritHost`). Game.dll:
 //!
-//! The host (`ControllerSpiritHost`, load `spiritThatCanAnimateMe` @0x18016c750,
+//! The host (`ControllerSpiritHost`, load `spiritThatCanAnimateMe` in `ControllerSpiritHost::Load`,
 //! `numSpiritsToAnimateMe`):
-//! - "Startup" `OnBegin` @0x18016c040: a host not yet animated (`SpiritHost`
-//!   +21400, a save flag; the port keeps none) plays animation type 18
+//! - "Startup" `OnBegin`: a host not yet animated (`SpiritHost.animated`,
+//!   a save flag; the port keeps none) plays animation type 18
 //!   ("StatueSit"), `SetCausesAnger(false)` and `SetInvincible(true)`. It
 //!   does nothing else: the Startup state is the stub with only `Attacked`.
-//! - `ControllerSpiritHostStateStartup::Attacked` @0x18016c180: the attacker
+//! - `ControllerSpiritHostStateStartup::Attacked`: the attacker
 //!   must be a Character, and (when `spiritThatCanAnimateMe` is set) its
 //!   record must be that record, else "failed to animate"; it must be a
-//!   `Monster`; it is added once to the host's list of attackers (+2200) and
+//!   `Monster`; it is added once to the host's list of attackers (`ControllerSpiritHost.attackers`) and
 //!   when that list holds `numSpiritsToAnimateMe` of them (0: at once) the
-//!   host is animated (`SetAnimated` @0x18016bf60), going to "Animate".
-//! - "Animate" `OnBegin` @0x18016c520: `SetCausesAnger(true)`,
+//!   host is animated (`ControllerSpiritHostState::SetAnimated`), going to "Animate".
+//! - "Animate" `OnBegin`: `SetCausesAnger(true)`,
 //!   `SetInvincible(false)`; its other handlers are `ControllerMonster`'s.
 //!
 //! The spirit (`ControllerSpirit`, load `spiritTarget`; its record is
 //! `invincible`, with no attack skill):
-//! - "Startup" `OnBegin` @0x18016f7a0: `SetMyTeam` @0x18016f9d0 (faction
-//!   -2), animation type 20, `FindNewAnimateTarget` @0x18016f190: the allies
-//!   in sight that are `SpiritHost`s, can still be animated (`sub_18016C930`:
+//! - "Startup" `OnBegin`: `SetMyTeam` (faction
+//!   -2), animation type 20, `FindNewAnimateTarget`: the allies
+//!   in sight that are `SpiritHost`s, can still be animated (`ControllerSpiritHost::CanBeAnimated`:
 //!   not animated and fewer living monsters among the host's assigned
-//!   spirits (+2232) than `numSpiritsToAnimateMe`) and whose record is
-//!   `spiritTarget` (an empty one: any); the nearest is kept (+2160) and the
+//!   spirits (`ControllerSpiritHost.assignedSpirits`) than `numSpiritsToAnimateMe`) and whose record is
+//!   `spiritTarget` (an empty one: any); the nearest is kept (`ControllerSpirit.animateTarget`) and the
 //!   spirit joins its assigned list. The animation's "End"
-//!   (`HandleEvent` @0x18016f7f0) goes to "PursueToAnimate" with that host
+//!   (`HandleEvent`) goes to "PursueToAnimate" with that host
 //!   (`ChooseBestSkill`), or "Idle" when none was found.
-//! - "PursueToAnimate" @0x18016fa20 / `OnUpdate` @0x18016fd20: a host that
+//! - "PursueToAnimate" `OnBegin` / `OnUpdate`: a host that
 //!   is alive and already in reach: "AttackToAnimate"; else moves to it. A
 //!   host that became animated: a new `FindNewAnimateTarget`, none: the spirit
-//!   kills itself (`KillMe(false)`, vt+272). `EndOfPathReached` @0x18016ffc0:
-//!   "AttackToAnimate". `PathFailed` @0x1801700a0: "PursueToAnimate" again.
-//! - "AttackToAnimate" `OnBegin` @0x180170460: `UseSkill` on the host (the
+//!   kills itself (`KillMe(false)`). `EndOfPathReached`:
+//!   "AttackToAnimate". `PathFailed`: "PursueToAnimate" again.
+//! - "AttackToAnimate" `OnBegin`: `UseSkill` on the host (the
 //!   chosen skill, none here: the plain attack); no host: "Idle". Its
-//!   `HandleEvent` "End" @0x1801705f0 kills the spirit.
+//!   `HandleEvent` "End" kills the spirit.
 //!
 //! PORT: monsters never hit monsters (the port's sides), so the spirit's
 //! swing is its Attack animation played at the host and `Attacked` runs when
@@ -47,12 +47,13 @@
 //! on spawn). `SetCausesAnger` is the host's [`MonsterAi::as_target`]
 //! `causes_anger`: a dormant host is not seen by its foes' sight
 //! (`combat::sight`) and draws no anger when it is hit.
-use crate::character::{CharState, Character};
-use crate::combat::{Combatant, ControllerClass, Dead, Invincible, MonsterAi, Suicide};
-use crate::data::GameData;
-use crate::monsters::Monster;
+use crate::combat::{Invincible, MonsterAi, Suicide};
 use crate::nav::Nav;
 use bevy::prelude::*;
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::{Combatant, ControllerClass, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::monsters::Monster;
 use gd_sim::anim::AnimType;
 
 pub struct SpiritPlugin;
@@ -79,9 +80,9 @@ pub struct SpiritHost {
     pub spirit: String,
     /// `numSpiritsToAnimateMe`.
     pub needed: usize,
-    /// The spirits that attacked it (+2200).
+    /// The spirits that attacked it (`ControllerSpiritHost.attackers`).
     pub attackers: Vec<Entity>,
-    /// The spirits assigned to it (+2232).
+    /// The spirits assigned to it (`ControllerSpiritHost.assignedSpirits`).
     pub assigned: Vec<Entity>,
 }
 
@@ -91,7 +92,7 @@ fn same_record(a: &str, b: &str) -> bool {
 }
 
 impl SpiritHost {
-    /// `ControllerSpiritHostStateStartup::Attacked` @0x18016c180: true when
+    /// `ControllerSpiritHostStateStartup::Attacked`: true when
     /// the attack by `by` (a monster of `record`) animates the host.
     pub fn attacked(&mut self, by: Entity, record: &str) -> bool {
         if !self.spirit.is_empty() && !same_record(&self.spirit, record) {
@@ -122,7 +123,7 @@ enum Stage {
 pub struct Spirit {
     /// `spiritTarget`.
     target_record: String,
-    /// The host it animates (+2160).
+    /// The host it animates (`ControllerSpirit.animateTarget`).
     pub host: Option<Entity>,
     stage: Stage,
     begun: bool,
@@ -152,7 +153,7 @@ fn init_hosts(
         let Some(ctl) = rec.str("controller").and_then(|c| data.db.get(c)) else {
             continue;
         };
-        // "Startup" `OnBegin` @0x18016c040: StatueSit (type 18),
+        // "Startup" `OnBegin`: StatueSit (type 18),
         // `SetCausesAnger(false)`, invincible.
         ch.play_scripted(AnimType::Special);
         ai.as_target.causes_anger = false;
@@ -206,7 +207,7 @@ type HostRow<'a> = (
     Has<Dormant>,
 );
 
-/// `ControllerSpiritState::FindNewAnimateTarget` @0x18016f190: the nearest
+/// `ControllerSpiritState::FindNewAnimateTarget`: the nearest
 /// host that can be animated; the spirit joins its list.
 fn find_host(
     spirit: Entity,
@@ -220,7 +221,7 @@ fn find_host(
     let mut best: Option<(Entity, f32)> = None;
     for (e, h, tf, _, m, dormant) in hosts.iter() {
         let d = tf.translation.distance(me);
-        // `sub_18016C930`: not animated, room for another spirit.
+        // `ControllerSpiritHost::CanBeAnimated`: not animated, room for another spirit.
         let room = h.assigned.iter().filter(|a| living.contains(**a)).count() < h.needed;
         if !dormant
             || !room
@@ -386,7 +387,7 @@ fn spirits(
                     && host.attacked(e, &m.record)
                 {
                     debug!("spirit {e} animates host {h}");
-                    // "Animate" `OnBegin` @0x18016c520: `SetCausesAnger(true)`,
+                    // "Animate" `OnBegin`: `SetCausesAnger(true)`,
                     // `SetInvincible(false)`.
                     if let Ok(mut hai) = host_ai.get_mut(h) {
                         hai.as_target.causes_anger = true;

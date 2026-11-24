@@ -1,8 +1,8 @@
 //! What a second session in the same process relies on (`grimdawn::exit`): `NewSession` fires once per
 //! teardown, and systems gated on session resources run before any session exists.
 use bevy::prelude::*;
-use gd_game::session::{NewSession, SessionEpoch};
 use gd_game::testing::{data, headless_app};
+use gd_game_core::session::{NewSession, SessionEpoch};
 
 #[derive(Resource, Default)]
 struct Begun(u32);
@@ -46,12 +46,12 @@ fn systems_run_before_a_session_starts() {
     }
     assert!(
         app.world()
-            .get_resource::<gd_game::inventory::Inventory>()
+            .get_resource::<gd_game_core::inventory::Inventory>()
             .is_none()
     );
     assert!(
         app.world()
-            .get_resource::<gd_game::rules::CombatRules>()
+            .get_resource::<gd_game_core::rules::CombatRules>()
             .is_none()
     );
 }

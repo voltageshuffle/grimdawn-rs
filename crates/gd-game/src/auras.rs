@@ -11,7 +11,7 @@
 //!   1.5 s ([`BUFF_SECS`]). It is refreshed while in range.
 //! - The activation's pass (and a toggle's switch-on pass) of a non-debuff skill gives each target
 //!   the skill's bonus first ([`crate::casting::Bonus`]). A skill without a duration has only that pass.
-//! - A new buff goes to the front of [`ReceivedBuffs::list`](crate::skill_buffs::ReceivedBuffs). A new
+//! - A new buff goes to the front of [`ReceivedBuffs::list`](gd_game_core::skill_buffs::ReceivedBuffs). A new
 //!   buff on another character starts the record's `charFxPakOtherNames` there.
 //!
 //! Emitters ([`pulse_auras`]): the player (switched-on toggles with `SkillLinks` modifiers, running
@@ -20,30 +20,33 @@
 //!
 //! PORT: the player is never its own target here; its own auras and timed buffs count through
 //! `SkillBook::stat_sources` / `Loadout::buffs`, and [`Activated`] gives it the bonus alone.
-use crate::casting::{Bonus, level_f};
-use crate::combat::{Combatant, Dead, Side};
-use crate::data::GameData;
+use crate::casting::Bonus;
+use crate::combat::Side;
 use crate::monster_skills::MonsterSkills;
 use crate::pets::Pet;
-use crate::player::{Loadout, Player};
-use crate::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
+use gd_game_core::casting::level_f;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player};
+use gd_game_core::skill_buffs::{ReceivedBuff, ReceivedBuffs};
+use std::sync::Arc;
 
-/// `Skill_BuffRadius` +383: ms between passes.
+/// `Skill_BuffRadius.pulseInterval`: ms between passes.
 pub const PULSE_SECS: f32 = 1.0;
-/// `Skill_BuffRadius` +384: how long one pass's buff lasts on a target.
+/// `Skill_BuffRadius.buffDuration`: how long one pass's buff lasts on a target.
 pub const BUFF_SECS: f32 = 1.5;
 
 /// An aura a character has on: what each pass puts on its targets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Emission {
-    pub skill: String,
+    pub skill: Arc<str>,
     pub level_index: usize,
-    pub buff: String,
+    pub buff: Arc<str>,
     pub radius: f32,
-    pub mods: Vec<(String, usize)>,
+    pub mods: Arc<[(String, usize)]>,
     /// The caster is its own target (module docs; not for the player, never
     /// for a debuff).
     pub on_self: bool,
@@ -55,7 +58,7 @@ pub struct Emission {
 }
 
 /// Whether a radius-buff skill is a debuff aura (`debufSkill` of its buff
-/// record, +1576; also read from the skill record).
+/// record, `Skill_BuffRadius.debufSkill`; also read from the skill record).
 pub fn is_debuf(db: &Database, rec: &Record) -> bool {
     rec.bool("debufSkill")
         || gd_sim::skills::profile_name(rec)
@@ -73,16 +76,16 @@ pub fn emission(
     on_self: bool,
 ) -> Option<Emission> {
     let rec = db.get(skill)?;
-    let buff = gd_sim::skills::profile_name(rec)?.to_owned();
+    let buff: Arc<str> = Arc::from(gd_sim::skills::profile_name(rec)?);
     let brec = db.get(&buff)?;
     let debuf = brec.bool("debufSkill") || rec.bool("debufSkill");
     let radius = level_f(brec, "skillTargetRadius", li).max(level_f(rec, "skillTargetRadius", li));
     (radius > 0.0).then_some(Emission {
-        skill: skill.to_owned(),
+        skill: Arc::from(skill),
         level_index: li,
         buff,
         radius,
-        mods,
+        mods: mods.into(),
         on_self: on_self && !debuf,
         debuf,
         devotion: 0,
@@ -97,7 +100,7 @@ pub fn player_emissions(
     db: &Database,
     loadout: &Loadout,
     effective: &gd_sim::skills::SkillBook,
-    links: Option<&crate::weapon_pool::SkillLinks>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     devotion: Option<&crate::devotion::DevotionState>,
 ) -> Vec<Emission> {
     let mods = |s: &str| links.map_or_else(Vec::new, |l| l.mods_of(s).to_vec());
@@ -165,11 +168,11 @@ pub struct Activated {
 
 /// Seconds to the next pass of each aura a character has on.
 #[derive(Component, Default, Debug)]
-pub struct AuraPulse(Vec<(String, f32)>);
+pub struct AuraPulse(Vec<(Arc<str>, f32)>);
 
 /// An emitter's auras on, cached ([`pulse_auras`]). The player's: [`player_emissions`] clones
 /// the skill book and scans the worn items, so it runs only when what it reads
-/// changes (the [`Loadout`], the [`Caster`]'s timed buffs, the [`crate::weapon_pool::SkillLinks`]
+/// changes (the [`Loadout`], the [`Caster`]'s timed buffs, the [`gd_game_core::weapon_pool::SkillLinks`]
 /// modifiers, the devotion levels), not every frame. A pet's / monster's depend only on its
 /// switched-on toggles and timed buffs (skill and level; their timers change every frame, so
 /// change detection would always fire): `from` keeps those, compared each frame.
@@ -183,6 +186,20 @@ pub struct CachedEmissions {
 /// The aura pulse ([`pulse_auras`]): what adds buffs to be counted by the profile rebuilds runs `.before`, what reads them `.after`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AurasSet;
+
+/// [`pulse_auras`]'s per-frame scratch: the allocations are reused, the contents rebuilt every frame.
+#[derive(Default)]
+pub struct AuraScratch {
+    activated: Vec<Activated>,
+    // (emitter, at, side, aura, `ActivateNow`'s pass).
+    passes: Vec<(Entity, Vec3, Side, Emission, bool)>,
+    now: Vec<Emission>,
+    ids: Vec<Entity>,
+    /// Entity → index into [`Self::ids`] / the grid's bodies (the targets' query order).
+    index: bevy::ecs::entity::EntityHashMap<usize>,
+    grid: crate::combat::grid::BodyGrid,
+    near: Vec<usize>,
+}
 
 /// The passes (module docs): every [`PULSE_SECS`] each emitter's auras buff
 /// the friendly (debuff auras: hostile) characters in their radius; buffs
@@ -199,9 +216,9 @@ pub fn pulse_auras(
             Entity,
             &Transform,
             Option<Ref<Loadout>>,
-            Option<Ref<crate::weapon_pool::SkillLinks>>,
+            Option<Ref<gd_game_core::weapon_pool::SkillLinks>>,
             // The player's effective skill levels (absent until derived).
-            Option<Ref<crate::player::EffectiveSkills>>,
+            Option<Ref<gd_game_core::player::EffectiveSkills>>,
             Option<&Pet>,
             Option<&MonsterSkills>,
             crate::combat::SideData,
@@ -222,7 +239,7 @@ pub fn pulse_auras(
             Has<Player>,
             crate::combat::VictimSide,
         ),
-        (Without<Dead>, Without<crate::world::Breakable>),
+        (Without<Dead>, Without<gd_game_core::world::Breakable>),
     >,
     // Whether a buff's previous caster is still a live target (`land`'s alive
     // test), asked per replacement instead of collecting every combatant.
@@ -231,20 +248,22 @@ pub fn pulse_auras(
         (
             With<Combatant>,
             Without<Dead>,
-            Without<crate::world::Breakable>,
+            Without<gd_game_core::world::Breakable>,
         ),
     >,
     // Option: devotion is optional input (no devotion auras without it).
     devotion: Option<Res<crate::devotion::DevotionState>>,
     mut activated: MessageReader<Activated>,
     players: Query<Entity, (With<Player>, With<ReceivedBuffs>)>,
+    mut scratch: Local<AuraScratch>,
 ) {
+    let sc = &mut *scratch;
     let dt = time.delta_secs();
-    let activated: Vec<Activated> = activated.read().cloned().collect();
+    sc.activated.clear();
+    sc.activated.extend(activated.read().cloned());
     // Buffs ran out already (`crate::skill_buffs::run_buffs`); a pass this
     // frame lands on the ones in range.
-    // (emitter, at, side, aura, `ActivateNow`'s pass).
-    let mut passes: Vec<(Entity, Vec3, Side, Emission, bool)> = Vec::new();
+    sc.passes.clear();
     for (e, tf, loadout, links, effective, pet, ms, sd, pulse, mut cache) in &mut emitters {
         // The auras on, cached (`CachedEmissions`): the player's rebuilt when what they read
         // changed, a pet's / monster's when its toggles or timed buffs did.
@@ -315,36 +334,39 @@ pub fn pulse_auras(
             }
         };
         // Activations now: their pass, and a lasting one's next pass a second later.
-        let now: Vec<Emission> = activated
-            .iter()
-            .filter(|a| a.caster == e)
-            .filter_map(|a| {
-                emission(
-                    &data.db,
-                    &a.skill,
-                    a.level_index,
-                    a.mods.clone(),
-                    loadout.is_none(),
-                )
-            })
-            .collect();
-        for em in &now {
-            passes.push((e, tf.translation, sd.side(), em.clone(), true));
+        sc.now.clear();
+        sc.now.extend(
+            sc.activated
+                .iter()
+                .filter(|a| a.caster == e)
+                .filter_map(|a| {
+                    emission(
+                        &data.db,
+                        &a.skill,
+                        a.level_index,
+                        a.mods.clone(),
+                        loadout.is_none(),
+                    )
+                }),
+        );
+        for em in &sc.now {
+            sc.passes
+                .push((e, tf.translation, sd.side(), em.clone(), true));
         }
         let Some(mut pulse) = pulse else {
-            if !on.is_empty() || !now.is_empty() {
-                let next = now.iter().map(|em| (em.skill.clone(), PULSE_SECS));
+            if !on.is_empty() || !sc.now.is_empty() {
+                let next = sc.now.iter().map(|em| (em.skill.clone(), PULSE_SECS));
                 commands.entity(e).try_insert(AuraPulse(next.collect()));
             }
             continue;
         };
-        for em in &now {
+        for em in &sc.now {
             pulse.0.retain(|(s, _)| *s != em.skill);
             pulse.0.push((em.skill.clone(), PULSE_SECS + dt));
         }
-        pulse
-            .0
-            .retain(|(s, _)| on.iter().any(|o| &o.skill == s) || now.iter().any(|o| &o.skill == s));
+        pulse.0.retain(|(s, _)| {
+            on.iter().any(|o| &o.skill == s) || sc.now.iter().any(|o| &o.skill == s)
+        });
         for em in on {
             // A new aura passes at once (`ActivateNow`), then every second.
             let t = match pulse.0.iter_mut().find(|(s, _)| *s == em.skill) {
@@ -361,7 +383,7 @@ pub fn pulse_auras(
                 continue;
             }
             // A toggle's first pass is its `ActivateNow` / `AutoActivateNow` one (the bonus flag set,
-            // `Skill_BuffRadiusToggled::ActivateNow` @0x1804e9fa0, `AutoActivateNow` @0x1804e9c50); a timed
+            // `Skill_BuffRadiusToggled::ActivateNow`, `AutoActivateNow`); a timed
             // buff's came with its [`Activated`].
             let first = *t == 0.0
                 && data
@@ -369,7 +391,8 @@ pub fn pulse_auras(
                     .get(&em.skill)
                     .is_some_and(|r| r.class == "Skill_BuffRadiusToggled");
             *t += PULSE_SECS;
-            passes.push((e, tf.translation, sd.side(), em.clone(), first));
+            sc.passes
+                .push((e, tf.translation, sd.side(), em.clone(), first));
         }
     }
     // Characters' first buffs (inserted after the passes).
@@ -377,17 +400,20 @@ pub fn pulse_auras(
         std::collections::BTreeMap::new();
     // The targets' bodies in query order, indexed (`crate::combat::grid`): a pass scans the ones near it, plus
     // its emitter (whose bonus needs no radius), in that order.
-    let (ids, grid): (Vec<Entity>, _) = if passes.is_empty() {
-        (Vec::new(), None)
+    let grid = if sc.passes.is_empty() {
+        None
     } else {
-        let (ids, boxes) = targets
-            .iter()
-            .map(|(t, ttf, cb, ..)| (t, cb.body_box(&ttf.compute_affine())))
-            .unzip();
-        (ids, Some(crate::combat::grid::BodyGrid::new(boxes)))
+        sc.ids.clear();
+        sc.index.clear();
+        sc.grid
+            .rebuild(targets.iter().enumerate().map(|(i, (t, ttf, cb, ..))| {
+                sc.index.insert(t, i);
+                sc.ids.push(t);
+                cb.body_box(&ttf.compute_affine())
+            }));
+        Some(&sc.grid)
     };
-    let mut near = Vec::new();
-    for (from, at, side, em, activation) in passes {
+    for (from, at, side, em, activation) in sc.passes.drain(..) {
         // `ActivateNow`'s pass gives each friend the skill's bonus (`Character::TakeBonus`, module docs).
         let bonus = data
             .db
@@ -396,15 +422,15 @@ pub fn pulse_auras(
             .map_or_else(Bonus::default, |r| {
                 Bonus::of_record(&data.db, r, em.level_index, &em.mods)
             });
-        let grid = grid.as_ref().expect("built for the passes");
-        grid.near(at, em.radius, &mut near);
-        if let Some(i) = ids.iter().position(|&t| t == from)
-            && let Err(k) = near.binary_search(&i)
+        let grid = grid.expect("built for the passes");
+        grid.near(at, em.radius, &mut sc.near);
+        if let Some(&i) = sc.index.get(&from)
+            && let Err(k) = sc.near.binary_search(&i)
         {
-            near.insert(k, i);
+            sc.near.insert(k, i);
         }
-        for &i in &near {
-            let Ok((t, ttf, _, buffs, _, tv)) = targets.get_mut(ids[i]) else {
+        for &i in &sc.near {
+            let Ok((t, ttf, _, buffs, _, tv)) = targets.get_mut(sc.ids[i]) else {
                 continue;
             };
             if t == from {
@@ -433,7 +459,7 @@ pub fn pulse_auras(
                     &em.skill,
                     em.level_index,
                     from,
-                    em.mods.clone(),
+                    em.mods.to_vec(),
                     BUFF_SECS,
                 )
             };

@@ -3,8 +3,9 @@
 //! then the UI over the gamma values and gamma → linear.
 //!
 //! UI: the engine draws the UI last, alpha-blended (source-alpha / inverse source-alpha) onto its back buffer, a
-//! B8G8R8A8_UNORM target holding gamma values (`GraphicsDeferredRenderer::CreateRenderTargets` @0x1800ad850,
-//! Direct3D11.dll sub_1800142F0: format 2, textures UNORM, no sRGB conversion on read or write), so every blend
+//! B8G8R8A8_UNORM target holding gamma values (`GraphicsDeferredRenderer::CreateRenderTargets`,
+//! Direct3D11.dll `RenderDevice::GetDxgiFormat`: format 2, textures UNORM, no sRGB conversion on read or write), so
+//! every blend
 //! (colour alphas, fades, textures' own alpha: glows, soft shadows, glyph edges) mixes gamma values. Here the chain's
 //! last pass leaves gamma values in the frame, Bevy's UI pass draws over them, and [`ui_to_linear`] (after `ui_pass`,
 //! before `upscaling`) turns the frame to linear for the sRGB swapchain, which encodes it back. Bevy's UI shaders work in
@@ -16,16 +17,18 @@
 //! (the UNORM back buffer does; only additive draws can exceed 1, clamped once at the end); the patch matches the
 //! shaders' text, so a Bevy update that changes it falls back to wrapping the fragment (warned once if not even that).
 //!
-//! Ambient occlusion (`ambientocclusion`, `Options` 30 → `SetAmbientOcclusionEnabled`, renderer +484, Grim Dawn.exe
-//! sub_1400BF650 / sub_140028D10), Engine.dll: `RenderFinalScene` @0x1800adeb0 calls
-//! `GraphicsCanvas::ApplySSAO(depth, zNear, zFar)` @0x1800a2460 right after the ambient / sun / point lights, before the
+//! Ambient occlusion (`ambientocclusion` → `SetAmbientOcclusionEnabled`, `GraphicsMTRenderer.ambientOcclusion`,
+//! Grim Dawn.exe `MainMenu::Render` / `Ui::ApplyVideoOptions`), Engine.dll: `RenderFinalScene` calls
+//! `GraphicsCanvas::ApplySSAO(depth, zNear, zFar)` right after the ambient / sun / point lights, before the
 //! forward passes, fog and glow. postprocessing/ssao.ssh `create` (createPS) draws a full-size temporary (format 2):
-//! per pixel a rotation vector r from a 4 × 4 texture tiled one texel per pixel (sub_1800A2230: 16 random unit
+//! per pixel a rotation vector r from a 4 × 4 texture tiled one texel per pixel
+//! (`GraphicsCanvas::CreateSsaoRotationTexture`: 16 random unit
 //! vectors from `rand()`, B8G8R8A8), the 8 kernel vectors k reflected about it (k − 2(k·r)r), each sample at
 //! uv + reflected.xy · ssaoScale; with depths linearised to view depth / zFar, a sample farther than the centre adds
 //! 1 − min(12·|Δ|, 1); occ = min(¼·Σ, 1), out = lerp(ssaoStrength, 1, occ). ssaoStrength = 0.7, ssaoScale = 0.015
-//! (`Engine` +3064 / +3068, Engine ctor @0x180072930; nothing else writes them). Then sub_1800A48A0 blurs it (gain 1,
-//! spread `Engine` +3072 = 1: the 8-tap blur below, vertical into w × h/2, horizontal into w/2 × h/2) and ssao.ssh
+//! (`Engine.ssaoStrength` / `Engine.ssaoScale`, Engine ctor; nothing else writes them). Then
+//! `GraphicsCanvas_Blur8Tap` blurs it (gain 1, spread `Engine.ssaoBlurSpread` = 1: the 8-tap blur below, vertical
+//! into w × h/2, horizontal into w/2 × h/2) and ssao.ssh
 //! `render` (renderPS: a plain sample) multiplies it onto the light target (blend Dst / Zero, the states of
 //! multiplyscroll*.ssh). So it only darkens: flat ground ~4 % on average (about half the reflected samples land
 //! farther), creases and the feet of walls up to 30 %. The engine's rotation vectors depend on the `rand()`
@@ -35,12 +38,12 @@
 //! neither occluded nor part of the depth it reads. The decals' base layer and the grass fringe, which the engine
 //! blends into the G-buffer, are drawn before it (`gbuffer_blend.rs`), so they are occluded (a few % on flat ground).
 //!
-//! Fog, `GraphicsDeferredRenderer::RenderFog` @0x1800ac690 and
+//! Fog, `GraphicsDeferredRenderer::RenderFog` and
 //! deferred.ssh `fog` (fogPS, SrcAlpha / OneMinusSrcAlpha), drawn by
 //! `RenderFinalScene` after the scene passes and before the scene glow when
-//! the renderer's fog flag (+440) is set and a depth or height density is
-//! positive. The flag is the `fog` option (`Options` 61, Grim Dawn.exe sub_140028D10
-//! `SetFogEnabled(GraphicsEngine fog && option 61)`; [`VideoOptions`], `GD_FOG=1`
+//! the renderer's fog flag (`GraphicsMTRenderer.fogEnabled`) is set and a depth or height density is
+//! positive. The flag is the `fog` option (Grim Dawn.exe `Ui::ApplyVideoOptions`
+//! `SetFogEnabled(GraphicsEngine fog && fog option)`; [`VideoOptions`], `GD_FOG=1`
 //! forces it on). Where geometry
 //! was drawn, a = max(sat((z − start)·inv)·density, sat((h − start)·inv)·
 //! density) for the depth (view depth z) and height (world height h) fog,
@@ -50,59 +53,60 @@
 //! upper part of the screen, as in the real game's fog-on shots). [`fog_and_glow`] draws it in the engine's
 //! place: after the scene passes (particles, decals, blended meshes), before the scene glow and the distortion.
 //!
-//! Tone map (`hdrLighting`, `Options` 70, `SetHDRLighting(on, factor)` → renderer +1968 / +1972),
-//! Engine.dll: `GraphicsDeferredRenderer::RenderFinalScene` @0x1800adeb0 then lights and draws the whole
-//! scene (ambient, lights, forward passes, fog, glow) into renderer +254, a float target (format 13 =
-//! R16G16B16A16_FLOAT, `CreateRenderTargets` @0x1800ad850), instead of the back buffer; the lights are
+//! Tone map (`hdrLighting`, `SetHDRLighting(on, factor)` → `GraphicsDeferredRenderer.hdrLighting` /
+//! `hdrLightingFactor`), Engine.dll: `GraphicsDeferredRenderer::RenderFinalScene` then lights and draws the whole
+//! scene (ambient, lights, forward passes, fog, glow) into `GraphicsDeferredRenderer.hdrTarget`, a float target
+//! (format 13 = R16G16B16A16_FLOAT, `CreateRenderTargets`), instead of the back buffer; the lights are
 //! scaled by `GetHdrLightingFactor` (render/env.rs `HDR_LIGHTING_FACTOR`). `GraphicsMTRenderer::Render`
-//! @0x1800d5830 then calls `PerformTonemapping` (vtable +24, @0x1800ad170) before `RenderPostEffects`: a
+//! then calls `PerformTonemapping` (a virtual) before `RenderPostEffects`: a
 //! fullscreen deferred.ssh `tonemap` (tonemapPS) from that target into the back buffer: per channel, with
 //! l = log2 c, x = 0.2314·l + ½, t = x / 1.5: y = 1.5·(t³ − 2t² + t) − ½·(2t³ − 3t² + 1), or 0.2314·l
 //! below l = −2.161; out = 2^min(4.3219·y, 0) (c ≤ 0 → 0): unchanged below 0.224, a shoulder above
 //! (1 → 0.64, 2 → 0.82, 4 → 0.93). The bloom and enhancement below then read the tone-mapped UNORM frame.
 //!
-//! `GraphicsMTRenderer::RenderPostEffects` @0x1800cc200 (Engine.dll),
+//! `GraphicsMTRenderer::RenderPostEffects` (Engine.dll),
 //! run after the scene (glow and outline included) while post effects are on
-//! (renderer +481, the `advancedEffects` option, bool 10) and the AmbianceManager's
-//! environment effects are enabled (+177, on by default), with the outdoor
+//! (`GraphicsMTRenderer.advancedEffects`, the `advancedEffects` option) and the AmbianceManager's
+//! environment effects are enabled (`AmbianceManager.environmentEffects`, on by default), with the outdoor
 //! slot's values ([`super::env::Ambiance`]):
 //! 1. Bloom, `GraphicsCanvas::HotBlurFrameBuffer(512, 512, a, gain, sat)`
-//!    @0x1800a3760 when a > 0 and gain > 0.25: the frame is copied to 512²,
+//!    when a > 0 and gain > 0.25: the frame is copied to 512²,
 //!    filter.ssh `extractHot` renders it into 256² (4 taps at ±½ texel of
 //!    512, `extractConst` = (1 − a, 1 − a, 1 − a, ½ / a)):
 //!    h = sat(avg − (1 − a)) · ½ / a, r = 2h, m = mean(r), out = m + sat·(r − m);
-//!    then the 8-tap blur sub_1800A48A0 (weights gain·{.10,.11,.14,.15,.15,
+//!    then the 8-tap blur `GraphicsCanvas_Blur8Tap` (weights gain·{.10,.11,.14,.15,.15,
 //!    .14,.11,.10} at ±{0.5..3.5} texels, vertical into 256 × 128, horizontal
 //!    into 128²), added to the frame (composite.ssh `lighten`: One / One).
 //! 2. Enhancement, `GraphicsCanvas::ApplyEnhancement(contrast, brightness,
-//!    −saturation, tint)` @0x1800a12e0 with postprocessing/enhance.ssh:
+//!    −saturation, tint)` with postprocessing/enhance.ssh:
 //!    c += s·(lum − c) (lum = .3 r + .59 g + .11 b, s = −saturation),
 //!    c += (c − ½)·contrast, out = sat(c + brightness)·tint; skipped when all
 //!    are neutral.
-//! 3. Depth of field (renderer +483, the `depthOfField` option,
+//! 3. Depth of field (`GraphicsMTRenderer.depthOfField`, the `depthOfField` option,
 //!    `GD_DOF=0` turns it off),
-//!    `GraphicsCanvas::ApplyDepthOfField` @0x1800a1ab0: the frame is copied
+//!    `GraphicsCanvas::ApplyDepthOfField`: the frame is copied
 //!    to a full-size temporary (format 2), downsample.ssh `normal` draws it
 //!    into a half-size one (one bilinear tap per texel: the 2 × 2 mean), then
 //!    depthoffield.ssh draws lerp(frame, blur, sat((1.27·z − dofDistance) /
 //!    dofRange)) over the frame, z the linear view depth; dofDistance = eye to
 //!    camera target + [`DOF_DISTANCE`], dofRange = [`DOF_RANGE`]
-//!    (`RenderPostEffects`, `Engine` +3076 / +3080). Pixels with nothing
+//!    (`RenderPostEffects`, `Engine.dofDistance` / `Engine.dofRange`). Pixels with nothing
 //!    drawn (cleared depth) take the blur.
-//! 4. FXAA (renderer +485, [`Fxaa`]: `SetFXAAEnabled(deferredrendering && device generation 7 / 8 && fxaa), the port always renders deferred so it is `fxaa``, Grim
-//!    Dawn.exe sub_140028D10 every frame, so the option applies live), `GraphicsCanvas::ApplyFXAA`
-//!    @0x1800a2ce0, the last call of `RenderPostEffects` and not gated by `advancedEffects` (+481): the frame is
+//! 4. FXAA (`GraphicsMTRenderer.fxaa`, [`Fxaa`]: `SetFXAAEnabled(deferredrendering && device generation 7 / 8 && fxaa), the port always renders deferred so it is `fxaa``, Grim
+//!    Dawn.exe `Ui::ApplyVideoOptions` every frame, so the option applies live), `GraphicsCanvas::ApplyFXAA`,
+//!    the last call of `RenderPostEffects` and not gated by `advancedEffects`: the frame is
 //!    copied into a full-size temporary (format 2) and postprocessing/fxaa.ssh `normal` draws it back with
 //!    `pixelSize` = 1 / its size (gd_post.wesl `fxaa`, transcribed from the shader's DXBC). PORT: the colour-blind
 //!    remap (`Display::Render`, after the world render) is applied before it, in the grading.
 //!
-//! Multisampling (`antiAliasing`, int 1: the literal sample count, 0 / 1 off), Engine.dll sub_180093240
-//! (`RenderDeviceSettings` +24, built by `GraphicsEngine::UpdateFromOptions`): with `deferredrendering` (bool 51) on a
+//! Multisampling (`antiAliasing`: the literal sample count, 0 / 1 off), Engine.dll
+//! `GraphicsEngine::BuildDeviceSettings` (`RenderDeviceSettings.multisampleCount`, built by
+//! `GraphicsEngine::UpdateFromOptions`): with `deferredrendering` on a
 //! generation 7 / 8 (D3D11) device the count is forced to 0, so the deferred renderer never multisamples and FXAA is
 //! its only anti-aliasing. PORT: the port always renders the engine's deferred way (no `deferredrendering` option, no
 //! forward renderer), so MSAA never applies; the main camera is `Msaa::Off`.
 //!
-//! The `brightness` / `contrast` / `gamma` options (`Options` floats 6 / 7 / 8) drive only the hardware gamma
+//! The `brightness` / `contrast` / `gamma` options drive only the hardware gamma
 //! ramp of exclusive fullscreen ([`GammaOut::with_gamma_ramp`], applied by the last pass, [`ui_to_linear`]);
 //! `GraphicsCanvas::GammaCorrect` (gammacorrect.ssh) has no caller and `WinWindow::SetGammaRamp`
 //! (SetDeviceGammaRamp) is only a vtable slot.
@@ -145,7 +149,7 @@ use bevy::render::view::{
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderRef;
 use bevy::ui_render::ui_pass;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
 
 const POST_SHADER: &str = "embedded://gd_render/render/shaders/gd_post.wesl";
 /// Bloom temporaries (engine format 2; see the module doc).
@@ -226,7 +230,7 @@ pub struct GammaOut {
     pub height_fog: Vec4,
     /// Depth of field: dofDistance, dofRange, unused, 1 = on.
     pub dof: Vec4,
-    /// The colour-blind remap (`GraphicsCanvas::ApplyColorRemap` @0x1800a3180): the rows of the 3 x 3 matrix
+    /// The colour-blind remap (`GraphicsCanvas::ApplyColorRemap`): the rows of the 3 x 3 matrix
     /// (xyz) applied to the final colour; `w` of the first row 1 = on.
     pub remap_r: Vec4,
     pub remap_g: Vec4,
@@ -240,8 +244,8 @@ pub struct GammaOut {
 }
 
 impl GammaOut {
-    /// `advancedEffects` (bool 10, "Post Processing"): off skips the bloom / contrast / colour-grade chain
-    /// (`RenderPostEffects` @0x1800CC213).
+    /// `advancedEffects` ("Post Processing"): off skips the bloom / contrast / colour-grade chain
+    /// (`RenderPostEffects`).
     pub fn with_post_effects(mut self, on: bool) -> Self {
         if !on {
             self.bloom.w = 0.0;
@@ -250,7 +254,7 @@ impl GammaOut {
         self
     }
 
-    /// The `colorblind` option's remap (matrices @0x18033F6D0: 1 protanopia,
+    /// The `colorblind` option's remap (matrices `Engine::ColorBlindMatrices`: 1 protanopia,
     /// 2 deuteranopia, 3 tritanopia; 0 off). PORT: applied to the world view only (the UI is drawn after this chain).
     pub fn with_colorblind(mut self, mode: i32) -> Self {
         let rows = match mode {
@@ -266,10 +270,10 @@ impl GammaOut {
     }
 
     /// The hardware gamma ramp of exclusive fullscreen (`screenMode` 0):
-    /// `GraphicsEngine::UpdateFromOptions` (Engine.dll @0x180093194) takes gamma = lerp(0.25, 1.75, `gamma`
-    /// float 8, the "Fullscreen Gamma" slider), brightness = lerp(0.25, 0.75, float 6), contrast = lerp(0.25,
-    /// 0.75, float 7) to `RenderDevice::SetBrightnessContrastGamma` (Direct3D11.dll @0x180007350), which in
-    /// exclusive fullscreen writes the 256-entry ramp of `UpdateGammaRamp` @0x180001E40,
+    /// `GraphicsEngine::UpdateFromOptions` (Engine.dll) takes gamma = lerp(0.25, 1.75, `gamma`, the
+    /// "Fullscreen Gamma" slider), brightness = lerp(0.25, 0.75, `brightness`), contrast = lerp(0.25,
+    /// 0.75, `contrast`) to `RenderDevice::SetBrightnessContrastGamma` (Direct3D11.dll), which in
+    /// exclusive fullscreen writes the 256-entry ramp of `RenderDevice::UpdateGammaRamp`,
     /// `out = sat(((x − ½)·2c + ½ + 2b − 1)^(1/g))` per channel, into `IDXGIOutput::SetGammaControl`; windowed
     /// it restores the default ramp. The ramp acts on the whole output (the UI too): here the last pass
     /// ([`ui_to_linear`]) applies it to the gamma values. PORT: the curve itself, not a 256-step table.
@@ -296,17 +300,17 @@ impl GammaOut {
     }
 }
 
-/// The video options the final image reads (Grim Dawn.exe sub_140028D10 pushes them to the renderer every
+/// The video options the final image reads (Grim Dawn.exe `Ui::ApplyVideoOptions` pushes them to the renderer every
 /// frame).
 #[derive(Clone, Copy, Debug)]
 pub struct VideoOptions {
-    /// `fog` (61): `SetFogEnabled` (renderer +440).
+    /// `fog`: `SetFogEnabled` (`GraphicsMTRenderer.fogEnabled`).
     pub fog: bool,
-    /// `depthOfField` (19): renderer +483.
+    /// `depthOfField`: `GraphicsMTRenderer.depthOfField`.
     pub depth_of_field: bool,
-    /// `hdrLighting` (70): `SetHDRLighting` (renderer +1968).
+    /// `hdrLighting`: `SetHDRLighting` (`GraphicsDeferredRenderer.hdrLighting`).
     pub hdr: bool,
-    /// `ambientocclusion` (30): `SetAmbientOcclusionEnabled` (renderer +484).
+    /// `ambientocclusion`: `SetAmbientOcclusionEnabled` (`GraphicsMTRenderer.ambientOcclusion`).
     pub ambient_occlusion: bool,
 }
 
@@ -323,7 +327,7 @@ impl Default for VideoOptions {
 }
 
 impl VideoOptions {
-    pub fn from_options(o: &gd_game::options::GameOptions) -> Self {
+    pub fn from_options(o: &gd_game_core::options::GameOptions) -> Self {
         Self {
             fog: o.flag("fog"),
             depth_of_field: o.flag("depthOfField"),
@@ -333,15 +337,16 @@ impl VideoOptions {
     }
 }
 
-/// `GraphicsMTRenderer::SetFXAAEnabled` (renderer +485) on a main camera: on with the `fxaa` option (bool 52) (the engine also
-/// needs `deferredrendering`, always on here), Grim Dawn.exe sub_140028D10 (every frame, module doc).
+/// `GraphicsMTRenderer::SetFXAAEnabled` (`GraphicsMTRenderer.fxaa`) on a main camera: on with the `fxaa` option (the
+/// engine also needs `deferredrendering`, always on here), Grim Dawn.exe `Ui::ApplyVideoOptions` (every frame, module
+/// doc).
 #[derive(Component, ExtractComponent, Clone, Copy, PartialEq, Debug)]
 #[extract_app(RenderApp)]
 pub struct Fxaa(pub bool);
 
 /// The options' FXAA flag onto the main cameras (no options file: the `Options` default, on).
 fn apply_fxaa_option(
-    options: Option<Res<gd_game::options::GameOptions>>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     mut cams: Query<&mut Fxaa>,
 ) {
     let on = options.as_ref().is_none_or(|o| o.flag("fxaa"));
@@ -350,24 +355,24 @@ fn apply_fxaa_option(
     }
 }
 
-/// `Engine` +3076 / +3080 (constructor; nothing else writes them): the depth
+/// `Engine.dofDistance` / `Engine.dofRange` (constructor; nothing else writes them): the depth
 /// of field starts 8 m behind the camera target and ramps over 20 m.
 pub const DOF_DISTANCE: f32 = 8.0;
 pub const DOF_RANGE: f32 = 20.0;
 
-/// `Engine` +3064 / +3068 (ctor @0x180072930): ssao.ssh `ssaoStrength` (the darkest the occlusion gets) and
+/// `Engine.ssaoStrength` / `Engine.ssaoScale` (ctor): ssao.ssh `ssaoStrength` (the darkest the occlusion gets) and
 /// `ssaoScale` (the kernel radius in UV).
 pub const SSAO_STRENGTH: f32 = 0.7;
 pub const SSAO_SCALE: f32 = 0.015;
 
 impl GammaOut {
-    /// `cam_distance`: eye to camera target (the depth of field's focus). `video`: the `fog` (`Options` 61),
-    /// `depthOfField` (19) and `hdrLighting` (70) options (`GD_FOG=1` forces the fog on, `GD_DOF=0` the depth
+    /// `cam_distance`: eye to camera target (the depth of field's focus). `video`: the `fog`,
+    /// `depthOfField` and `hdrLighting` options (`GD_FOG=1` forces the fog on, `GD_DOF=0` the depth
     /// of field off).
     pub fn from_ambiance(
         a: &super::env::Ambiance,
         cam_distance: f32,
-        hooks: &gd_game::hooks::RenderHooks,
+        hooks: &gd_game_core::hooks::RenderHooks,
         video: VideoOptions,
     ) -> Self {
         let (b, adj) = (a.bloom, a.adjust);
@@ -375,7 +380,7 @@ impl GammaOut {
         let k = b.x.clamp(0.0, 1.0);
         let enhance_on =
             adj.x != 0.0 || adj.y != 0.0 || adj.z != 0.0 || a.tint.cmplt(Vec3::ONE).any();
-        // RenderFinalScene: the fog pass needs the option (renderer +440)
+        // RenderFinalScene: the fog pass needs the option (`GraphicsMTRenderer.fogEnabled`)
         // and a depth or height density > 0.
         let fog_on = (video.fog || hooks.fog) && (a.depth_fog.z > 0.0 || a.height_fog.z > 0.0);
         // SetDepthFogParams / SetHeightFogParams store 1 / (end − start).
@@ -404,7 +409,7 @@ impl GammaOut {
                 },
             ),
             hdr: Vec4::new(if video.hdr { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
-            // zFar: the scene camera's far plane (`ApplySSAO`'s a4 = scene +204).
+            // zFar: the scene camera's far plane (`ApplySSAO`'s a4 = `GraphicsScene.farPlane`).
             ao: Vec4::new(
                 if video.ambient_occlusion { 1.0 } else { 0.0 },
                 SSAO_STRENGTH,
@@ -429,7 +434,8 @@ fn setup_cameras(
             Hdr,
             Tonemapping::None,
             DebandDither::Disabled,
-            // sub_180093240: the deferred renderer zeroes the device's multisample count (module doc).
+            // `GraphicsEngine::BuildDeviceSettings`: the deferred renderer zeroes the device's multisample count
+            // (module doc).
             Msaa::Off,
             GammaOut::default(),
             Fxaa(true),
@@ -716,7 +722,7 @@ impl<'a> PostBindings<'a> {
 
 /// `ApplySSAO` (module doc): create (reads only the depth), blur, multiply onto the light target. Runs between the
 /// opaque pass (the engine's deferred lights) and the transparent one, so the forward passes are not occluded.
-/// `GraphicsDeferredRenderer::RenderFinalScene` @0x1800adeb0: ApplySSAO after the lights, before the
+/// `GraphicsDeferredRenderer::RenderFinalScene`: ApplySSAO after the lights, before the
 /// forward groups (water, alpha-blended meshes, effects).
 fn apply_ssao(
     view: ViewQuery<(
@@ -920,22 +926,24 @@ fn hold_composite(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldComposite>,
     entities: Res<CompositeEntities>,
+    mut take: Local<SortedRenderPhase<Transparent3d>>,
 ) {
     for (view, phase) in phases.iter_mut() {
-        let keys: Vec<_> = (phase.items.keys())
-            .filter(|k| entities.0.contains(&k.1.id()))
-            .copied()
-            .collect();
-        if keys.is_empty() {
+        if !(phase.items.keys()).any(|k| entities.0.contains(&k.1.id())) {
             continue;
         }
-        let mut composite = SortedRenderPhase::<Transparent3d>::default();
-        for k in keys {
-            if let Some(item) = phase.items.shift_remove(&k) {
+        // PERF-27: reuse the taken map and the held phase's map across frames. Drain in
+        // order so the composite keeps its sorted order and the rest stays in its order.
+        let composite = held.0.entry(*view).or_default();
+        composite.items.clear();
+        std::mem::swap(&mut phase.items, &mut take.items);
+        for (k, item) in take.items.drain(..) {
+            if entities.0.contains(&k.1.id()) {
                 composite.items.insert(k, item);
+            } else {
+                phase.items.insert(k, item);
             }
         }
-        held.0.insert(*view, composite);
     }
 }
 
@@ -943,12 +951,16 @@ fn restore_composite(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldComposite>,
 ) {
-    for (view, composite) in held.0.drain() {
-        if let Some(p) = phases.get_mut(&view) {
-            p.items.extend(composite.items);
-            p.transient_items.extend(composite.transient_items);
-        }
-    }
+    // Back for the next frame's queue and batching; keep the now-empty maps for reuse,
+    // dropping only views that are gone.
+    held.0.retain(|view, composite| {
+        let Some(p) = phases.get_mut(view) else {
+            return false;
+        };
+        p.items.extend(composite.items.drain(..));
+        p.transient_items.append(&mut composite.transient_items);
+        true
+    });
 }
 
 /// The engine's fog and scene glow, in `RenderFinalScene`'s order (module doc):
@@ -1184,14 +1196,14 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Scene glow (GraphicsDeferredRenderer::RenderSceneGlow 0x1800ace20).
+// Scene glow (GraphicsDeferredRenderer::RenderSceneGlow).
 //
-// The G-buffer glow target (glow.rgb·glow.a; renderer +253, format 2 like the
-// other G-buffer targets, `CreateRenderTargets` @0x1800ad850, so at most 1;
+// The G-buffer glow target (glow.rgb·glow.a; `GraphicsDeferredRenderer.glowTarget`, format 2 like the
+// other G-buffer targets, `CreateRenderTargets`, so at most 1;
 // no glow scale in the material programs or glowPS) is added once unblurred (the
 // deferred `glow` technique; done in the material shaders) and once through
 // GraphicsCanvas::ApplyGlow(glow, 0.75, 4.0): a separable 8-tap blur
-// (sub_1800A48A0) with weights 0.75·{.10,.11,.14,.15,.15,.14,.11,.10} at
+// (`GraphicsCanvas_Blur8Tap`) with weights 0.75·{.10,.11,.14,.15,.15,.14,.11,.10} at
 // ±{0.5..3.5}·4 texels, vertical into a half-height then horizontal into a
 // half-size target, composited additively (postprocessing/glow.ssh `normal`).
 //
@@ -1200,20 +1212,20 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // triangle on the main camera adds the blurred result before GammaOut.
 //
 // Hover outline, per GraphicsDeferredRenderer::RenderFinalScene
-// @0x1800adeb0 (after RenderSceneGlow / RenderPostObjects): the outlined
+// (after RenderSceneGlow / RenderPostObjects): the outlined
 // meshes' `deferredOutlineStyle` passes are drawn into a cleared full-size
 // temporary target (format 2), depth-tested LessEqual against the scene
 // depth without depth writes, cull none; their outlinePS (standard*.ssh)
 // writes `outlineColor.rgb` flat with alpha 1 where the base texture's alpha
 // is >= 0.01 (blend SrcAlpha / Zero). Then ApplyGlow(target, 1.25, 1.0)
-// @0x1800a17c0 → sub_1800A48A0: the same 8-tap blur with weights
+// → `GraphicsCanvas_Blur8Tap`: the same 8-tap blur with weights
 // 1.25·{.10 … .10} at ±{0.5..3.5}·1 source texel (vertical into w × h/2,
 // horizontal into w/2 × h/2), added with postprocessing/glow.ssh `normal`
 // (One / One, StencilFunc NotEqual, ref 255). Stencil 255 is written by the
 // outlined meshes' own `deferredStencilStyle` pass (ref 255, Replace,
-// LessEqual; drawn last among the scene passes, ExecutePrepareScene
-// @0x1800adbc0 group +518, enabled by GraphicsMeshInstance::
-// GetNumRenderPasses @0x1800c3bd0 only while outlined), so the blurred outline (and the
+// LessEqual; drawn last among the scene passes, ExecutePrepareScene's
+// stencil group `GraphicsDeferredRenderer.stencilGroup`, enabled by GraphicsMeshInstance::
+// GetNumRenderPasses only while outlined), so the blurred outline (and the
 // scene glow's blur too) is added only around the object's visible pixels,
 // never over them: a soft halo of about 4 px.
 //
@@ -1466,7 +1478,7 @@ fn setup_glow(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<GlowComposite>>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if hooks.render.no_glow {
         return;

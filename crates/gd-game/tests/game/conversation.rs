@@ -3,9 +3,9 @@
 //! advance it, and walking away or `Close` ends it.
 use bevy::prelude::*;
 use gd_game::conversation::{Conversation, ConversationRequest};
-use gd_game::story::{StoryActor, StoryRuntime};
 use gd_game::testing::TestGame;
-use gd_sim::story::state::{Coords, ObjClass, WorldObject};
+use gd_game_core::story::{StoryActor, StoryRuntime};
+use gd_story::story::state::{Coords, ObjClass, WorldObject};
 
 const NPC: u32 = 900_100;
 
@@ -54,7 +54,7 @@ fn setup() -> Option<(TestGame, Entity)> {
     Some((g, npc))
 }
 
-fn view(g: &TestGame) -> Option<gd_sim::story::DialogView> {
+fn view(g: &TestGame) -> Option<gd_story::story::DialogView> {
     g.app.world().resource::<Conversation>().view.clone()
 }
 

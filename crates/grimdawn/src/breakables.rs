@@ -1,15 +1,15 @@
 //! The dressing of broken breakables: their pieces' physics and fade (the rules: `gd_game::breakables`).
 //!
-//! The pieces (Game.dll `Destructible::PhysicsSetup` @0x18025f420):
+//! The pieces (Game.dll `Destructible::PhysicsSetup`):
 //! every bone of the broken mesh with a hit box becomes a Bullet box body at
 //! the bone's frame (its origin × the mesh scale, placed by the object), the
 //! box the hit box's half sizes × 0.75, each at least 0.1 m, of the record's
 //! `physicsMass`, `physicsFriction` and `physicsRestitution`, with the items'
 //! damping and sleeping thresholds (the description's (1.6, 2.5, 0.05, 0.95),
-//! `gd_sim::drop_body`). The bones `PickStatics` @0x1802608a0 names are static
+//! `gd_sim::drop_body`). The bones `PickStatics` names are static
 //! bodies: every `fixedStatics` bone plus min..max (`minNumRandomStatics` /
 //! `maxNumRandomStatics`, max below min: min) of the shuffled `randomStatics`.
-//! A bone without a hit box gets no body. `Destructible::Load` @0x180261530
+//! A bone without a hit box gets no body. `Destructible::Load`
 //! keeps `breakForceMin..Max` × 0.02 ([`FORCE_SCALE`]); each body gets its own
 //! roll as a central impulse (Bullet `applyCentralImpulse`: velocity = impulse /
 //! mass) and a torque impulse (`applyTorqueImpulse`: angular velocity = the
@@ -34,8 +34,8 @@
 //! one landing (`Destructible::CollisionCallback`, at most every 250 ms in the
 //! engine).
 //!
-//! `Destructible::UpdateSelf` @0x180260a80 / `BreakApart`
-//! @0x18025edb0: the pieces lie for `rubbleLife`, then every dynamic piece
+//! `Destructible::UpdateSelf` / `BreakApart`:
+//! the pieces lie for `rubbleLife`, then every dynamic piece
 //! bone's transparency is `remaining / rubbleFade` (`SetBoneTransparancies`),
 //! which `bonefadeskinned.ssh` draws as `base.a · factor` (render/material.rs
 //! `FLAG_BONE_FADE`), while the static ones stay opaque; the port fades the
@@ -48,7 +48,7 @@
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 pub use gd_game::breakables::*;
-pub use gd_game::world::Breakable;
+pub use gd_game_core::world::Breakable;
 use gd_render::character::CharAssets;
 use gd_render::model::Ready;
 use gd_render::render::material::{FLAG_BONE_FADE, GdMaterial};
@@ -127,9 +127,9 @@ struct Debris {
     dir: Vec3,
     /// The bones that stay (`PickStatics`, module doc).
     statics: Vec<String>,
-    /// The record's `impactSound`: each piece plays it once, where it first lands (`Destructible::CollisionCallback`
-    /// @0x180262d50; at the destructible's own position). PORT: a piece's landing is its
-    /// first contact. `Destructible::PlayBodyFallSound` @0x180263260: a landing on water (surface 7) plays
+    /// The record's `impactSound`: each piece plays it once, where it first lands (`Destructible::CollisionCallback`;
+    /// at the destructible's own position). PORT: a piece's landing is its
+    /// first contact. `Destructible::PlayBodyFallSound`: a landing on water (surface 7) plays
     /// `splashSound` instead. PORT: the piece's surface is the one under it at its landing (`surface_below`).
     impact: Option<String>,
     splash: Option<String>,
@@ -175,8 +175,8 @@ impl Debris {
     /// The pieces of the broken mesh `msh` placed by `root` (`Destructible::PhysicsSetup`, module doc).
     fn launch(&self, msh: &gd_formats::msh::Mesh, root: &GlobalTransform) -> Vec<Piece> {
         let (lo, hi) = self.force;
-        let roll = || lo + (hi - lo).max(0.0) * gd_game::rng::f32();
-        let sym = || gd_game::rng::f32() * 2.0 - 1.0;
+        let roll = || lo + (hi - lo).max(0.0) * gd_game_core::rng::f32();
+        let sym = || gd_game_core::rng::f32() * 2.0 - 1.0;
         let dir = self.dir;
         let (p1, p2) = {
             let a = if dir.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
@@ -212,8 +212,8 @@ impl Debris {
                         }
                         3 => {
                             let t = (dir
-                                + p1 * (gd_game::rng::f32() * 0.6 - 0.3)
-                                + p2 * (gd_game::rng::f32() * 0.6 - 0.3))
+                                + p1 * (gd_game_core::rng::f32() * 0.6 - 0.3)
+                                + p2 * (gd_game_core::rng::f32() * 0.6 - 0.3))
                                 .normalize_or(dir);
                             (t * roll(), Vec3::new(sym(), sym(), sym()) * roll() * 0.025)
                         }
@@ -330,13 +330,13 @@ fn fly_debris(
                 let (vel, spin) = (Vec3::from(body.vel), Vec3::from(body.spin));
                 if body.step(&tris) && !p.landed {
                     p.landed = true;
-                    // `Destructible::CollisionCallback` @0x180262d50: a piece's contact (at most every
+                    // `Destructible::CollisionCallback`: a piece's contact (at most every
                     // 250 ms) disturbs the grass and water there, radius 1, strength √(|v|² + |ω|²), falloff,
                     // splash 2 on water (surface 7). PORT: the first contact is the piece's one landing.
                     let at = Vec3::from(body.pos);
                     let surface = coll.surface_below(at);
                     let water = surface == gd_sim::surface::Surface::Water as u32;
-                    commands.write_message(gd_game::visuals::PointDisturbance {
+                    commands.write_message(gd_game_core::visuals::PointDisturbance {
                         pos: at,
                         radius: 1.0,
                         strength: (vel.length_squared() + spin.length_squared()).sqrt(),
@@ -344,7 +344,7 @@ fn fly_debris(
                         splash: if water { 2 } else { 0 },
                     });
                     if let Some(pak) = fall_pak(surface, d.impact.as_deref(), d.splash.as_deref()) {
-                        commands.write_message(gd_game::visuals::PlaySound {
+                        commands.write_message(gd_game_core::visuals::PlaySound {
                             pak: pak.to_owned(),
                             at: Some(root.translation()),
                         });
@@ -420,10 +420,10 @@ fn spawn_debris(
             Ready::Failed => {}
         }
     }
-    // `Destructible::BreakApart` @0x18025edb0: `breakSound` once at the break
+    // `Destructible::BreakApart`: `breakSound` once at the break
     // position, after the break effects. PORT: the looping `intactSound` (no stock record sets it) is not played.
     if let Some(pak) = rec.str("breakSound").filter(|p| !p.is_empty()) {
-        commands.write_message(gd_game::visuals::PlaySound {
+        commands.write_message(gd_game_core::visuals::PlaySound {
             pak: pak.to_owned(),
             at: Some(tf.translation),
         });
@@ -508,11 +508,11 @@ fn spawn_broken(
     let n = if (hi.wrapping_sub(lo) as u32) > 0x7FFD {
         lo
     } else {
-        lo + gd_game::rng::i32(0..=hi - lo)
+        lo + gd_game_core::rng::i32(0..=hi - lo)
     };
     let n = usize::try_from(n).unwrap_or(0);
     if n < random.len() {
-        gd_game::rng::shuffle(&mut random);
+        gd_game_core::rng::shuffle(&mut random);
     }
     statics.extend(random.into_iter().take(n).map(str::to_owned));
     let ne = commands
@@ -550,7 +550,7 @@ fn spawn_broken(
     commands.entity(ne).try_insert(debris);
     // The broken pieces cast sun shadows only with the record's `brokenCastShadows` (default 0):
     // `Destructible::PhysicsSetup` / `ReplicateBreakApart` (Game.dll) set `Actor::SetCastsShadows` from it
-    // once there are pieces (render/shadow.rs: casters need Actor +584).
+    // once there are pieces (render/shadow.rs: casters need `Actor.castsShadow`).
     if rec.i32("brokenCastShadows").unwrap_or(0) == 0 {
         for p in parts {
             commands.entity(p).try_insert(bevy::light::NotShadowCaster);
@@ -562,11 +562,11 @@ fn spawn_broken(
 /// front of the player every 3 s.
 #[cfg(feature = "dev")]
 fn test_debris(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
     mut timer: Local<f32>,
-    players: Query<&Transform, With<crate::player::Player>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
     mut assets: CharAssets,
 ) {
     let Some(rec) = hooks.gameplay.debris_test.clone() else {

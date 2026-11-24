@@ -3,7 +3,7 @@
 //! Lives in gd-sim (optimised in dev builds too) because it is hot pixel code: a full local map image is millions
 //! of texels.
 //!
-//! `Grim Dawn.exe` sub_140175D00 (the detail-map widget's map pass):
+//! `Grim Dawn.exe` `DetailMapWidget::DrawMapPass` (the detail-map widget's map pass):
 //! every region's image is drawn as a ground quad over its bounding box
 //! (`Region::GetBoundingBox`, region-local centre ± half extents in x / z)
 //! with texture u 0 → 1 along +x and v 1 → 0 along +z (the image's top row is
@@ -11,12 +11,12 @@
 //! `shaders/detailmapshader.ssh` (blend One / Zero, alpha 1: the image's
 //! alpha, 255 on walkable ground and 0 elsewhere, is not used). Its second
 //! texture is the fog mask: on the local map the region's session fog
-//! (`Region::GetFogOfWar(region, true)`, Region +320: created fully fogged on
+//! (`Region::GetFogOfWar(region, true)`, `Region.sessionFog`: created fully fogged on
 //! first use and revealed only by this session's `World::AddFOWVisibility`,
-//! never saved; Engine.dll 0x180194880 / 0x180219f50 / sub_18008B5F0,
+//! never saved; Engine.dll `Region::GetFogOfWar` / `World::AddFOWVisibility` / `FogOfWar::Reveal`,
 //! which reveals it and the saved fog together), so ground explored in an
 //! earlier session shows greyed until walked again. `FogOfWar::UpdateTexture`
-//! (Engine.dll 0x18008c0a0) puts the grid's byte in the texel's alpha
+//! (Engine.dll) puts the grid's byte in the texel's alpha
 //! (255 = fogged) with the rows flipped (texture row 0 = the grid's last row =
 //! low z); its coordinates are packed in the vertex colour (green u, blue v):
 //! u from 1/w to 1 − 1/w along x, v from 1/h at low z to 1 − 1/h at high z
@@ -24,10 +24,10 @@
 //! minimap `system/textures/invisible.tex` (alpha 0). The DirectX11 pixel
 //! shader greys the colour by the mask's alpha `a`:
 //! `lerp(c, luma(c), saturate(2a − 1) × 2/3)`, luma = (0.2126, 0.7152,
-//! 0.0722) · c. sub_140175700 (the fog pass, after the map pass,
-//! widget byte +352, set on both widgets): each region of the pass is drawn
-//! again with its saved fog (`GetFogOfWar(region, false)`, Region +312, which
-//! always exists: `sub_1801952C0` takes it from the `FOWManager` (`map.fow`)
+//! 0.0722) · c. `DetailMapWidget::DrawFogPass` (the fog pass, after the map pass,
+//! `DetailMapWidget.drawSavedFog`, set on both widgets): each region of the pass is drawn
+//! again with its saved fog (`GetFogOfWar(region, false)`, `Region.savedFog`, which
+//! always exists: `Region::LoadSavedFog` takes it from the `FOWManager` (`map.fow`)
 //! or creates it fully fogged, so a region never visited is black) through
 //! `shaders/fow.ssh` (black at alpha `a`, blend SrcAlpha / OneMinusSrcAlpha:
 //! `c × (1 − a)`; its DirectX11 shader leaves the noise texture `fow.tex`

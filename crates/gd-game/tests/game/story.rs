@@ -1,9 +1,9 @@
 //! Headless checks of the story runtime: it loads the save's quest states
 //! and tokens, and its scripts run with the player in the world.
 use bevy::prelude::*;
-use gd_game::progress::PlayerProgress;
-use gd_game::story::StoryRuntime;
 use gd_game::testing::TestGame;
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::story::StoryRuntime;
 
 const TOKEN: &str = "TEST_STORY_TOKEN";
 

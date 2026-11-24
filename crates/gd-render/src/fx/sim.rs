@@ -1,7 +1,6 @@
 //! CPU particle simulation, a port of `GAME::Emitter` (Engine.dll):
-//! `Update` 0x18006d420, `EmitParticles` 0x18006bd90, `EmitParticle`
-//! 0x180069a00, particle init 0x180185200, `UpdateParticles` 0x18006c6c0,
-//! `UpdateLight` 0x18006b670, `Reset` 0x18006a510.
+//! `Update`, `EmitParticles`, `EmitParticle`, particle init (`Particle::Init`),
+//! `UpdateParticles`, `UpdateLight`, `Reset`.
 //!
 //! Matrices: the engine uses row vectors (`p' = p·M`); here everything is in
 //! glam's column form, so an engine product `R·M` becomes `M * R`.
@@ -10,7 +9,7 @@ use gd_formats::pfx::{Emitter as Data, Shape, curve as c};
 
 /// MSVC `rand()`: 0..=32767.
 fn rand() -> u32 {
-    gd_game::rng::u32(0..=32767)
+    gd_game_core::rng::u32(0..=32767)
 }
 
 /// `rand() * (1/32767)`.
@@ -19,7 +18,7 @@ fn rand01() -> f32 {
 }
 
 const DEG: f32 = 0.017_453_292;
-/// The `fxQuality` option's particle density (`Engine::SetFxQualityModifier` @0x180079480:
+/// The `fxQuality` option's particle density (`Engine::SetFxQualityModifier`:
 /// low 0.33, medium 0.66, high and above 1.0), read by each emitter when it is created. PORT: a display
 /// setting kept here; emitters already running keep theirs.
 static DENSITY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
@@ -61,24 +60,23 @@ impl Coords {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Particle {
-    /// +0 seconds.
+    /// Seconds.
     pub life: f32,
-    /// +4 seconds.
+    /// Seconds.
     pub age: f32,
-    /// +8 degrees.
+    /// Degrees.
     pub rotation: f32,
-    /// +12 billboard half-size.
+    /// Billboard half-size.
     pub size: f32,
-    /// +16 velocity stretch.
+    /// Velocity stretch.
     pub stretch: f32,
-    /// +20 flipbook frame.
+    /// Flipbook frame.
     pub frame: u32,
-    /// +24 position in the emitter's simulation space (world, or emitter-local
+    /// Position in the emitter's simulation space (world, or emitter-local
     /// for local emitters).
     pub pos: Vec3,
-    /// +36
     pub vel: Vec3,
-    /// +48 rgba (gamma space).
+    /// Rgba (gamma space).
     pub color: Vec4,
 }
 
@@ -87,35 +85,35 @@ pub struct Particle {
 pub struct EmitterState {
     pub particles: Vec<Particle>,
     capacity: usize,
-    /// Emitter time (+52), wraps for looping emitters.
+    /// Emitter time, wraps for looping emitters.
     pub time: f32,
-    /// Fractional particle budget (+56) and particles emitted so far (+60).
+    /// Fractional particle budget and particles emitted so far.
     accum: f32,
     emitted: i32,
-    /// Non-looping emitter reached its duration (+38).
+    /// Non-looping emitter reached its duration.
     pub done: bool,
-    /// `StopEmitting` (+37).
+    /// `StopEmitting`.
     pub stopped: bool,
-    /// Cleared by `DisableLooping` (+747).
+    /// Cleared by `DisableLooping`.
     pub loop_allowed: bool,
-    /// Emitter orientation (+400), spun by curves 18–20.
+    /// Emitter orientation, spun by curves 18–20.
     pub rot: Mat3,
-    /// Emitter offset (+64), curves 9–11.
+    /// Emitter offset, curves 9–11.
     pub offset: Vec3,
-    /// `SetScale` (+748).
+    /// `SetScale`.
     pub scale: f32,
     /// Coords of the previous update, for spawn interpolation.
     prev_pos: Option<Vec3>,
-    /// Highest particle alpha of the last update (+752), drives the light.
+    /// Highest particle alpha of the last update, drives the light.
     pub max_alpha: f32,
     /// Texture frames (flipbook length).
     pub frames: u32,
-    /// Particle density setting (gEngine+3096; 1.0 = default).
+    /// Particle density setting (`Engine.fxDensity`; 1.0 = default).
     pub density: f32,
     /// Particles of an emitter with a drop decal that died since the caller
     /// last drained this: (sim-space position, yaw in degrees).
-    /// `Emitter::UpdateParticles` @0x18006c6c0: a dying particle of an emitter
-    /// whose `DecalType` (+592) is set places that decal on the ground at its
+    /// `Emitter::UpdateParticles`: a dying particle of an emitter
+    /// whose `DecalType` is set places that decal on the ground at its
     /// world position (`World::PlaceDecalOnGround`), yawed `rand() % 360`°.
     pub dropped: Vec<(Vec3, f32)>,
     /// `SetAnchored` emitters: the anchor history (anchor 1, anchor 2),
@@ -169,7 +167,7 @@ impl EmitterState {
         }
     }
 
-    /// `Emitter::SetAnchor1` / `SetAnchor2` (@0x180069040): the
+    /// `Emitter::SetAnchor1` / `SetAnchor2`: the
     /// anchors (world) join the history; from then on the emitter is
     /// anchored ([`Self::update`]).
     pub fn set_anchors(&mut self, a: Vec3, b: Vec3) {
@@ -256,10 +254,10 @@ impl EmitterState {
                 self.rot *= Mat3::from_axis_angle(axis, a);
             }
         }
-        // `Emitter::EmitParticles` @0x18006bd90: an anchored emitter
+        // `Emitter::EmitParticles`: an anchored emitter
         // emits particle i of n between the two anchors' Catmull-Rom points
-        // at i / n (sub_180070CB0: from the history's second entry to its
-        // third). PORT: the engine skips this while gEngine +0x293 is set
+        // at i / n (`Emitter::CatmullRomPoint`: from the history's second entry to its
+        // third). PORT: the engine skips this while `Engine.skipAnchoredEmit` is set
         // (unidentified).
         if let Some([p1, p2]) = self.anchor_points() {
             for i in 0..n.max(0) {
@@ -287,7 +285,7 @@ impl EmitterState {
         }
     }
 
-    /// `Emitter::EmitAnchoredParticle` @0x18006acf0: at a random
+    /// `Emitter::EmitAnchoredParticle`: at a random
     /// point between `a` and `b` (in steps of 0.001; equal anchors: `b` 1 cm
     /// along x), moving in a random direction (a normalised cube sample) at
     /// the speed curve's value; the emitter's shape, spread, offset and
@@ -417,9 +415,9 @@ impl EmitterState {
         let local = d.local();
         let frames = self.frames as i32;
         // Drag is applied once per engine update (no dt): the engine
-        // has no fixed simulation rate: `Engine::Update` (Engine.dll
-        // 0x1800752f0) runs once per frame with the frame's elapsed ms
-        // (`GAME::UpdateTime`, 0x1801e96b0) and effects update in it
+        // has no fixed simulation rate: Engine.dll `Engine::Update`
+        // runs once per frame with the frame's elapsed ms
+        // (`Engine::UpdateTime`) and effects update in it
         // (`EffectEntity::UpdateSelf` → `Effect::Update` → `Emitter::Update`).
         // The port also updates once per rendered frame, so once per call.
         let drag_steps = 1.0;
@@ -486,7 +484,7 @@ impl EmitterState {
     }
 }
 
-/// sub_180070CB0: the Catmull-Rom point at `t` between `p[1]` and `p[2]`.
+/// `Emitter::CatmullRomPoint`: the Catmull-Rom point at `t` between `p[1]` and `p[2]`.
 fn catmull_rom(p: [Vec3; 4], t: f32) -> Vec3 {
     let [p0, p1, p2, p3] = p;
     (p1 * 2.0

@@ -1,65 +1,5 @@
 use super::*;
 
-/// `Skill_AttackWeaponCharge` / `Skill_AttackWeaponBlink` warmed up: the
-/// caster pushes through characters (`WarmUpStart` sets
-/// `Character::SetPathingPushThru`'s flag) and runs at its warmed-up run
-/// speed (`crate::combat::charge_move`). Two forms:
-/// - a monster's Pursue to the weapon charge it chose ([`ChargePursuit`]):
-///   its AI moves it, on the Run clip at the warmed-up rate, and its Attack
-///   uses the skill at the end of the path (the engine's warm-up move, see
-///   [`begin_pursuit_charge`]);
-/// - a dash after the cast (the port's: a use within the skill's range out of
-///   weapon reach, a monster's or pet's hit whose target stepped out of
-///   reach): the caster paths to the target, the player on the Charge clip
-///   (ChargeToUseSkill), an AI on the Run clip, at the warmed-up rate, stops
-///   at reach and hits it on arrival.
-///
-/// The dash gives up once it has run
-/// farther from its start than the target is plus `maxDistanceBuffer`
-/// (`Skill_AttackWeaponCharge::MaxSkillDistance` @0x1804e4a00, asked by the
-/// controller's `MaxSkillDistance`; no check when the buffer is 0); no time
-/// limit. A blink hides the caster meanwhile (`Skill_AttackWeaponBlink::
-/// WarmUpStart`). It ends without its hit when the target dies (`ControllerPlayerStateChargeToUseSkill::
-/// OnUpdate` @0x180167f80 → Idle, and `WarmUpEnd` cancels the skill unless the target is a living character or a
-/// breakable: [`warms_up`]) and when the caster dies or is stunned ([`stop_skills`]). The skill's
-/// `skillTargetNumber` / `skillTargetAngle` sweep along the way is not done.
-#[derive(Component)]
-pub struct Charge {
-    pub(super) target: Entity,
-    /// `characterRunSpeedModifier` % of the skill.
-    pub(super) bonus: f32,
-    pub(super) skill: String,
-    pub(super) level_index: usize,
-    pub(super) start: Vec3,
-    pub(super) buffer: f32,
-    pub(super) path: Vec<Vec3>,
-    pub(super) repath: f32,
-}
-
-impl Charge {
-    /// The warmed-up charge of `skill` (level index `li`, its `characterRunSpeedModifier` % `bonus`) from `at` at
-    /// `target`.
-    pub(super) fn new(
-        rec: &Record,
-        skill: &str,
-        li: usize,
-        bonus: f32,
-        at: Vec3,
-        target: Entity,
-    ) -> Self {
-        Charge {
-            target,
-            bonus,
-            skill: skill.to_owned(),
-            level_index: li,
-            start: at,
-            buffer: rec.f32("maxDistanceBuffer").unwrap_or(0.0),
-            path: Vec::new(),
-            repath: 0.0,
-        }
-    }
-}
-
 /// The [`Charge`] is a monster's Pursue warm-up: its AI moves it (`combat::monster_ai`), its pace's clip at the
 /// warmed-up rate (`crate::combat::charge_move` with `bonus` and `cap`), and ends it with the Pursue's move.
 #[derive(Component)]
@@ -71,15 +11,15 @@ pub struct ChargePursuit {
 }
 
 /// A monster's Pursue warms up the weapon charge it pursues to use; false (nothing done) for any other skill.
-/// `ControllerMonsterStatePursue::OnBegin` @0x18013f6d0 runs `ControllerAI::MoveTo` @0x180124340 with the chosen
+/// `ControllerMonsterStatePursue::OnBegin` runs `ControllerAI::MoveTo` with the chosen
 /// skill: Run (animation 5) at `GetRunSpeed` for a weapon charge (move type 1; the Charge animation at 1.0 is
-/// move type 2's, `Skill_AttackPathCharge`). `MoveToAction::Execute` @0x180082c00 then calls the skill's
-/// `WarmUpStart` (vtable 214): `Skill_AttackWeaponCharge::WarmUpStart` @0x1804e4800 sets the push-through flag and
-/// the charge start (`MaxSkillDistance`'s, [`ChargeStarts`]), and `Skill_AttackWeapon::WarmUpStart` @0x1804e40b0,
+/// move type 2's, `Skill_AttackPathCharge`). `MoveToAction::Execute` then calls the skill's
+/// `Skill::WarmUpStart`: `Skill_AttackWeaponCharge::WarmUpStart` sets the push-through flag and
+/// the charge start (`MaxSkillDistance`'s, [`ChargeStarts`]), and `Skill_AttackWeapon::WarmUpStart`,
 /// when the profile allows a warm-up, plays the warm-up sound and effects ([`WarmUp`]) and starts the cooldown;
 /// true sets the warm-up flag and `ForceSpeedUpdate`s the run (`crate::combat::charge_move`). The hit is the Attack
 /// state's use of the skill at the path's end (`AttackAction`).
-/// The warm-up ends with the move (`MoveToAction::Finish` @0x180082ef0: `WarmUpEnd`): the path's end (Attack), a
+/// The warm-up ends with the move (`MoveToAction::Finish`: `WarmUpEnd`): the path's end (Attack), a
 /// re-chosen skill's new Pursue, another state. PORT: the cooldown starts at the AI's use as for every monster
 /// skill (`monster_skills`).
 pub fn begin_pursuit_charge(
@@ -108,15 +48,6 @@ pub fn begin_pursuit_charge(
     commands.entity(caster).try_insert((charge, pursuit));
     true
 }
-
-/// Where each charge skill of a character last started (`Skill_AttackWeaponCharge`,
-/// `...Blink`, `Skill_AttackPathCharge`): `WarmUpStart` stores the caster's
-/// coordinates at skill+1560, which `MaxSkillDistance` measures from.
-/// Per skill (record name) as each skill object has its own copy.
-/// PORT: a dash's when it starts to move, not at the warm-up start (the
-/// caster stands still in between); a monster's Pursue warm-up's at its start.
-#[derive(Component, Default)]
-pub struct ChargeStarts(pub HashMap<String, Vec3>);
 
 pub(super) fn note_charge_starts(
     mut commands: Commands,
@@ -164,7 +95,7 @@ pub(super) fn charges(
             Entity,
             &mut Transform,
             &Combatant,
-            &mut crate::character::Character,
+            &mut gd_game_core::character::Character,
             Has<Player>,
             &mut Charge,
         ),

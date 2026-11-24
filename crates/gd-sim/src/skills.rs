@@ -6,20 +6,20 @@
 //! level `skillMasteryTierLevel[tier - 1]` (`gameengine.dbr`, read by
 //! `SkillProfile::LoadProfile` / `GameEngine::GetSkillMasteryTierLevels`);
 //! `skillMaxLevel` caps it.
-//! Parents (`SkillManager::CreateAndLoadSkill` @0x18052f300):
+//! Parents (`SkillManager::CreateAndLoadSkill`):
 //! loading a tree in order, a mastery clears the current base skill, any
 //! other skill that is neither a `Skill_Modifier` (transmuters and
 //! `Skill_ProjectileModifier` derive from it) nor a `SkillSecondary` becomes
 //! it; a modifier's base is its `subSkillName` when set, else the current
 //! base, and a secondary's the current base (`Skill::AddBaseSkill` list),
-//! whose secondary list (`Skill` +368) it joins: that list is what
-//! `Skill::GetSecondarySkills` @0x180490080 returns. Gear skill modifiers
-//! that are secondaries go to a second list (+392,
+//! whose secondary list (`Skill.secondarySkills`) it joins: that list is what
+//! `Skill::GetSecondarySkills` returns. Gear skill modifiers
+//! that are secondaries go to a second list (`Skill.itemSecondarySkills`,
 //! `Skill::AddToItemSecondarySkills` from `SkillManager::
-//! AddItemSkillModifiers`); `Skill::ActivateSecondarySkills` @0x18049ce60
-//! runs both, the sheet's skill rollovers read only +368. A
+//! AddItemSkillModifiers`); `Skill::ActivateSecondarySkills`
+//! runs both, the sheet's skill rollovers read only the first. A
 //! skill with base skills can take points only while one of them has a
-//! level (`Skill::IsBaseSkillEnabled` @0x180490bf0, checked by the skill
+//! level (`Skill::IsBaseSkillEnabled`, checked by the skill
 //! window in GrimDawn.exe); one without (e.g. right after the mastery)
 //! always can. Masteries allowed
 //! = 1 from player level 2, 2 from level 10 (`masteryIncrementLevel`
@@ -33,9 +33,9 @@
 //! database (`gd_game::data::GameData::skill_trees`); every rule that needs a
 //! tree takes it. A skill class's constructor facts are one table ([`class_info`]).
 use gd_formats::arz::Record;
+use gd_formats::collections::HashMap;
 use gd_formats::vfs::Database;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Class trees of the six base-game masteries and the expansions'.
@@ -96,13 +96,13 @@ pub fn display_record(db: &Database, skill: &str) -> Option<Record> {
 /// The record a skill's `SkillProfile` (duration, radius, cost, cooldown,
 /// values, sounds) is loaded from: a buff wrapper's `buffSkillName`, else the
 /// skill's own. Game.dll: the `Load` of `Skill_BuffRadius`
-/// @0x1804e8350 (`Skill_BuffRadiusToggled` inherits it), `Skill_BuffOther`
-/// @0x1804e71f0 (`Skill_ChargedBuffOther` inherits it), `Skill_AttackBuff`
-/// @0x1804b1630 (`Skill_AttackBuffRadius::Load` calls it),
-/// `Skill_AttackProjectileDebuf` @0x1804c0540, `SkillSecondary_BuffSelfDuration`
-/// @0x1804aab60, `SkillSecondary_OnHitBuffRadius`, `SkillSecondary_BuffRadius`
+/// (`Skill_BuffRadiusToggled` inherits it), `Skill_BuffOther`
+/// (`Skill_ChargedBuffOther` inherits it), `Skill_AttackBuff`
+/// (`Skill_AttackBuffRadius::Load` calls it),
+/// `Skill_AttackProjectileDebuf`, `SkillSecondary_BuffSelfDuration`,
+/// `SkillSecondary_OnHitBuffRadius`, `SkillSecondary_BuffRadius`
 /// and `SkillSecondary_PetModifier` read `buffSkillName`, load that table and
-/// run `LoadResources` (vtable +176) on it instead of their own, so
+/// run `Skill::LoadResources` on it instead of their own, so
 /// `GetCooldownTime`, `skillActiveDuration` etc. of the skill object (the
 /// wrapper, however it was cast: hot slot, proc, item) are the buff record's.
 /// The wrappers' own records carry only `instantCast` / `pointBlank` (stock
@@ -130,8 +130,8 @@ pub fn profile_name(rec: &Record) -> Option<&str> {
 
 /// The record [`profile_name`] names for skill `skill` (its own when it is no
 /// wrapper or the buff record is missing). A `SkillSecondary_PetModifier`'s
-/// profile is its pet skill's (`SkillSecondary_PetModifier::Load`
-/// @0x180556440: `petSkillName`, then that table's `buffSkillName` when set,
+/// profile is its pet skill's (`SkillSecondary_PetModifier::Load`:
+/// `petSkillName`, then that table's `buffSkillName` when set,
 /// loaded as the modifier's own).
 pub fn profile_record(db: &Database, skill: &str) -> Option<Record> {
     let r = db.get_owned(skill)?;
@@ -176,19 +176,19 @@ pub fn summed_attribute(rec: &Record, li: usize, mods: &[(Record, usize)], key: 
     lf(rec, li) + mods.iter().map(|(r, l)| lf(r, *l)).sum::<f32>()
 }
 
-/// `Skill::GetPetLimit` @0x180493880: the modifier-summed
+/// `Skill::GetPetLimit`: the modifier-summed
 /// `petLimit` (0 = unlimited); `petBurstSpawn` sums the same way
-/// (`SkillProfile_Modifiers` +124). The summon spawn and the HUD's count
+/// (`SkillProfile_Modifiers.petBurstSpawn`). The summon spawn and the HUD's count
 /// share it.
 pub fn pet_limit(rec: &Record, li: usize, mods: &[(Record, usize)]) -> f32 {
     summed_attribute(rec, li, mods, "petLimit")
 }
 
 /// Seconds a summon of `skill` at `level_index` lives, None = forever
-/// (`Skill::GetSpawnObjectTimeToLive` @0x180493660; `gd_game::pets`
+/// (`Skill::GetSpawnObjectTimeToLive`; `gd_game::pets`
 /// docs): the skill's `spawnObjectsTimeToLive` at its level plus that of each
 /// of its modifiers at theirs (`mods`: record, level index, learned; the
-/// learned list +320 and the gear's +344, both summed by
+/// learned list `Skill.modifiers` and the gear's `Skill.itemModifiers`, both summed by
 /// `GetSkillModifierData`), in whole ms; then each learned
 /// `Skill_SpawnPetTransmuter`'s `modSpawnObjectsTimeToLive` at the skill's
 /// level, when not 0, replaces it (the last one wins). Only a time > 0 is
@@ -219,11 +219,11 @@ pub fn spawn_time_to_live(
 
 /// Whether a summon class asks `Skill::GetWeightedSpawnObject` and
 /// `Skill::AddModifierPetChanges` for its pet (their only callers:
-/// `Skill_SpawnPet::SpawnPet` @0x180509450 (with the classes using it),
-/// `Skill_TargetedSpawnPet::SpawnPet` @0x18050a560 and
-/// `SkillSecondary_TargetedSpawnPet::SpawnPet` @0x1804ad700). The others take
+/// `Skill_SpawnPet::SpawnPet` (with the classes using it),
+/// `Skill_TargetedSpawnPet::SpawnPet` and
+/// `SkillSecondary_TargetedSpawnPet::SpawnPet`). The others take
 /// `spawnObjects` alone: `Skill_MonsterGenerator::SkillSpawnObject`
-/// @0x1804fd560 (its stock `spawnObjectWeights` are dead data), the
+/// (its stock `spawnObjectWeights` are dead data), the
 /// projectile / chaos / lightning spawners' `SpawnPet`.
 pub fn spawn_picks_weighted(class: &str) -> bool {
     !matches!(
@@ -236,19 +236,19 @@ pub fn spawn_picks_weighted(class: &str) -> bool {
 }
 
 /// The record one summon of `skill` at `level_index` spawns:
-/// - With [`spawn_picks_weighted`], `Skill::GetWeightedSpawnObject`
-///   @0x1804930a0: the lists `spawnObjects{,2,3,4}` whose
+/// - With [`spawn_picks_weighted`], `Skill::GetWeightedSpawnObject`:
+///   the lists `spawnObjects{,2,3,4}` whose
 ///   `spawnObjectWeights{,2,3,4}` at the level (integers, the last entry past
 ///   the end, missing 0) is not 0 and whose name at the level is not empty
 ///   take part with their weights summed in that order; `roll(total)` (the
 ///   engine's two Park–Miller steps from a fresh seed, `% total`) picks the
 ///   first whose running sum exceeds it. None take part: `spawnObjects` at
 ///   the level.
-/// - Then `Skill::AddModifierPetChanges` @0x180494ce0: the `petChanges` of
+/// - Then `Skill::AddModifierPetChanges`: the `petChanges` of
 ///   every enabled `SkillSecondary_PetModifier` among the skill's learned
-///   secondaries (`Skill` +368, `secondaries`, in their order;
-///   `CollectModifierPetChanges` @0x180556df0) joined into one list, and only
-///   when that gives none the gear-granted ones' (+392, `item_secondaries`:
+///   secondaries (`Skill.secondarySkills`, `secondaries`, in their order;
+///   `SkillSecondary_PetModifier::CollectModifierPetChanges`) joined into one list, and only
+///   when that gives none the gear-granted ones' (`Skill.itemSecondarySkills`, `item_secondaries`:
 ///   a legendary's `modifierSkillName`); not empty, it replaces the pick by
 ///   its entry at the level (the last past the end): the legendary pet
 ///   variants (Mortar Trap b, Thermite Mine c, ...).
@@ -342,17 +342,62 @@ pub fn pet_skill_level(
     if let Some((_, l)) = mods.iter().find(|(s, _)| s.eq_ignore_ascii_case(name)) {
         return *l;
     }
-    match pet
-        .get(&format!("skillLevel{slot}"))
-        .and_then(|v| v.first())
-    {
-        Some(gd_formats::arz::RawValue::Str(s)) => crate::expr::Expr::parse(s)
-            .map(|x| x.eval(&|n| n.eq_ignore_ascii_case("charLevel").then_some(level)))
-            .unwrap_or(0.0)
-            .max(0.0) as u32,
-        Some(v) => v.as_f32().unwrap_or(0.0).max(0.0) as u32,
-        None => 0,
+    skill_level_eq(pet, slot, level).max(0.0) as u32
+}
+
+/// One slot's `skillLevel{slot}` at `char_level`: a number or an equation in
+/// `charLevel` (`SkillManager::LoadSkills`); 0 when absent or unparsable.
+/// Shared by monster ([`crate::actor::monster_skill_levels`]) and pet
+/// ([`pet_skill_level`]) skill loading; the caller truncates.
+pub fn skill_level_eq(rec: &Record, slot: usize, char_level: f32) -> f32 {
+    let read = |key: &str| match rec.get(key).and_then(|v| v.first()) {
+        Some(gd_formats::arz::RawValue::Str(s)) => {
+            gd_rules::expr::eval_var(s, "charLevel", char_level).unwrap_or(0.0)
+        }
+        Some(v) => v.as_f32().unwrap_or(0.0),
+        None => 0.0,
+    };
+    let Some(i) = slot.checked_sub(1) else {
+        return 0.0;
+    };
+    if i >= SKILL_LEVEL_KEYS.len() {
+        return read(&format!("skillLevel{slot}"));
     }
+    match rec.derived::<3, _>(|| skill_levels(rec)) {
+        Some(cache) => match &cache[i] {
+            SkillLevel::Num(v) => *v,
+            SkillLevel::Eq(e) => e.as_ref().map_or(0.0, |e| {
+                e.eval(&|n| n.eq_ignore_ascii_case("charLevel").then_some(char_level))
+            }),
+            SkillLevel::Absent => 0.0,
+        },
+        None => read(&SKILL_LEVEL_KEYS[i]),
+    }
+}
+
+/// A record's `skillLevelN` parsed once ([`Record::derived`] slot 3): a number, an equation in
+/// `charLevel`, or absent. Monster / pet skill loading otherwise re-parses per spawn.
+enum SkillLevel {
+    Absent,
+    Num(f32),
+    /// `None`: a parse error (reads 0, as [`gd_rules::expr::eval_var`]).
+    Eq(Option<gd_rules::expr::Expr>),
+}
+
+/// `skillLevel1..=64` keys (a static table, no per-call `format!`).
+static SKILL_LEVEL_KEYS: LazyLock<[String; 64]> =
+    LazyLock::new(|| std::array::from_fn(|i| format!("skillLevel{}", i + 1)));
+
+fn skill_levels(rec: &Record) -> [SkillLevel; 64] {
+    std::array::from_fn(
+        |i| match rec.get(&SKILL_LEVEL_KEYS[i]).and_then(|v| v.first()) {
+            Some(gd_formats::arz::RawValue::Str(s)) => {
+                SkillLevel::Eq(gd_rules::expr::Expr::parse(s).ok())
+            }
+            Some(v) => SkillLevel::Num(v.as_f32().unwrap_or(0.0)),
+            None => SkillLevel::Absent,
+        },
+    )
 }
 
 /// Whether a pet bonus record reaches a pet of `pet_types` (`petTypeNames` of
@@ -381,7 +426,7 @@ pub fn is_modifier_class(class: &str) -> bool {
 }
 
 /// `SkillSecondary` and its subclasses (`SkillSecondary_*`): a base skill's
-/// separate effects (`Skill` +368, see the module docs), not damage
+/// separate effects (`Skill.secondarySkills`, see the module docs), not damage
 /// modifiers.
 pub fn is_secondary_class(class: &str) -> bool {
     class.starts_with("SkillSecondary")
@@ -403,9 +448,9 @@ pub fn is_tooltip_modifier_class(class: &str) -> bool {
 
 /// Base skills of every tree entry, in tree order
 /// (`SkillManager::CreateAndLoadSkill`, see the module docs). Also the rule
-/// for a monster's `skillName1..N` (`SkillManager::LoadSkills` @0x18052ef00
-/// calls `CreateAndLoadSkill` @0x18052f300 in that order: a `SkillSecondary`
-/// joins the last ordinary skill's +368 list).
+/// for a monster's `skillName1..N` (`SkillManager::LoadSkills`
+/// calls `CreateAndLoadSkill` in that order: a `SkillSecondary`
+/// joins the last ordinary skill's `Skill.secondarySkills`).
 pub fn tree_bases(db: &Database, skills: &[String]) -> Vec<Option<String>> {
     let mut last: Option<String> = None;
     skills
@@ -459,9 +504,9 @@ pub fn masteries_allowed(player_level: i32) -> usize {
 }
 
 /// A skill class's hot slot flags `(IsPrimary, IsSecondary, IsAutoToggle)`:
-/// `Skill::IsPrimary` / `IsSecondary` (bytes +172 / +173) are set by each
+/// `Skill::IsPrimary` / `IsSecondary` (`Skill.isPrimary` / `Skill.isSecondary`) are set by each
 /// class's constructor (a subclass overrides its base), `IsAutoToggle`
-/// (vtable +1552; `SkillActivatedBuffSelf` +0x5F1, the flag
+/// (`Skill::IsAutoToggle`; `SkillActivatedBuffSelf.autoToggle`, the flag
 /// `AutoActivateNow` needs) is on for every `SkillActivatedBuffSelf`
 /// unless the class clears it. Game.dll constructors; classes not listed
 /// (passives, modifiers, transmuters, buffs, secondary skills, masteries,
@@ -471,8 +516,8 @@ pub fn hot_slot_flags(class: &str) -> (bool, bool, bool) {
     (i.primary, i.secondary, i.auto_toggle)
 }
 
-/// What a skill targets (`SkillTargetType`, `SkillActivated` +1472 read by
-/// `GetTargetType`, vtable +1744), set by each class's constructor, a
+/// What a skill targets (`SkillTargetType`, `SkillActivated.targetType` read by
+/// `Skill::GetTargetType`), set by each class's constructor, a
 /// subclass keeping its base's. Game.dll constructors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetType {
@@ -496,8 +541,8 @@ pub fn target_type(class: &str) -> TargetType {
     class_info(class).target
 }
 
-/// Whether disruption puts the skill on cooldown (`Skill` +262, read by `Skill::ApplyDisruptionCooldownTime`
-/// @0x180491ad0). The constructors set it: `Skill::Skill` 0, `SkillActivated` (every active skill, the
+/// Whether disruption puts the skill on cooldown (`Skill.disruptable`, read by `Skill::ApplyDisruptionCooldownTime`).
+/// The constructors set it: `Skill::Skill` 0, `SkillActivated` (every active skill, the
 /// default attacks too), `SkillBuff_Passive`, `SkillSecondary` and the odd specials (`Skill_BuffOther`,
 /// `Skill_GiveBonus`, `Skill_Kick`, `Skill_Move`, `Skill_PetAttack`, ...) 1; these stock classes end at 0 (their own
 /// constructor's 0, or a base without the flag: `Skill_Passive`, modifiers, transmuters, buffs and debuffs a skill
@@ -508,9 +553,9 @@ pub fn disruptable(rec: &Record) -> bool {
     class_info(&rec.class).disruptable && rec.i32("ignoreDisruption").unwrap_or(0) == 0
 }
 
-/// How a skill gets to its target (`Skill_MoveType`, `Skill::GetMoveType` = Skill +196, vtable +600), set by the
+/// How a skill gets to its target (`Skill_MoveType`, `Skill::GetMoveType` = `Skill.moveType`), set by the
 /// constructors of these final classes, 1 for every other (Game.dll constructors, names from
-/// `Skill::GetMoveTypeStateString` @0x180490fc0).
+/// `Skill::GetMoveTypeStateString`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveType {
     /// 1 `MoveToUseSkill`.
@@ -549,15 +594,15 @@ pub fn move_type(class: &str) -> MoveType {
 }
 
 impl MoveType {
-    /// `Skill::MoveToPointSkill` (vtable +616 @0x180491090): move types 2 to 5 and 7.
+    /// `Skill::MoveToPointSkill`: move types 2 to 5 and 7.
     pub fn to_point(self) -> bool {
         !matches!(self, MoveType::MoveTo | MoveType::MoveAndUse)
     }
 }
 
-/// The distance profile of `Skill::GetGamepadRange` (vtable +584 @0x180490fa0 and overrides): the skill's
-/// own (`GetRange`, None) except `Skill_AttackRadiusSpin` / `Skill_TargetedSpawnPet` (GameEngine +4980, the Short
-/// profile's range) and `Skill_AttackPathCharge` (+4988, Long).
+/// The distance profile of `Skill::GetGamepadRange` (and overrides): the skill's
+/// own (`GetRange`, None) except `Skill_AttackRadiusSpin` / `Skill_TargetedSpawnPet` (`GameEngine.shortRangeProfile`,
+/// the Short profile's range) and `Skill_AttackPathCharge` (`GameEngine.longRangeProfile`, Long).
 pub fn gamepad_range_profile(class: &str) -> Option<&'static str> {
     let is = |c: &str| class.eq_ignore_ascii_case(c);
     if is("Skill_AttackRadiusSpin") || is("Skill_TargetedSpawnPet") {
@@ -569,11 +614,11 @@ pub fn gamepad_range_profile(class: &str) -> Option<&'static str> {
     }
 }
 
-/// A skill's `targetingMode` (`SkillProfile` +0xE80, `GetTargetingMode`
-/// @0x180549590), read from its profile record (a wrapper's `buffSkillName`
+/// A skill's `targetingMode` (`SkillProfile.targetingMode`, `SkillProfile::GetTargetingMode`),
+/// read from its profile record (a wrapper's `buffSkillName`
 /// record, [`profile_record`]).
 ///
-/// Game.dll `SkillProfile::LoadProfile` (sub_180549BE0) and
+/// Game.dll `SkillProfile::LoadProfile` (`SkillProfile::LoadTargetingMode`) and
 /// `ResolveEnum_TargetingMode`: the exact strings `Default` 0, `Point` 1,
 /// `Object` 2, `Target` 3; anything else (a missing key, the templates'
 /// list `Default;Point;Object;Target` that ~900 modifiers / passives carry)
@@ -582,19 +627,19 @@ pub fn gamepad_range_profile(class: &str) -> Option<&'static str> {
 /// - the player's request ([`request_aim`]) and its out-of-range check
 ///   ([`refused_out_of_range`]);
 /// - `Skill_BuffAttackRadiusDrop` / `SkillSecondary_…` `ActivateNow` /
-///   `Update` (sub_1804D5740 / sub_1804D58B0): `Point` drops around the
-///   cast point (put on the floor, kept in range and on the path mesh), any
+///   `Update` (`Skill_BuffAttackRadiusDrop::StartDrop` / `Skill_BuffAttackRadiusDrop::Update`): `Point` drops around
+///   the cast point (put on the floor, kept in range and on the path mesh), any
 ///   other mode around the caster's current coordinates, every interval;
-/// - `Skill_AttackSpellTeleportSelf::ActivateNow` @0x1804dd7e0: `Target`
+/// - `Skill_AttackSpellTeleportSelf::ActivateNow`: `Target`
 ///   with a target lands short of it (`CharacterMovementManager::
-///   GetPointAwayFromGoal` @0x18008e6f0: caster + target radius before it,
+///   GetPointAwayFromGoal`: caster + target radius before it,
 ///   along the path), else on the point;
-/// - `Skill_TargetedSpawnPet::ActivateNow` @0x18050acf0, its secondary
-///   @0x1804addd0 and `Skill_AttackProjectileSpawnPet::TargetInformation`
-///   @0x1804c3650: any mode but `Point` with a target blocks the target's
+/// - `Skill_TargetedSpawnPet::ActivateNow`, its secondary's
+///   (`SkillSecondary_TargetedSpawnPet::ActivateNow`) and `Skill_AttackProjectileSpawnPet::TargetInformation`:
+///   any mode but `Point` with a target blocks the target's
 ///   footprint before picking spawn spots (`gd_game::pets::placement`);
-/// - `Skill_AttackProjectileBurst::ActivateNow` @0x1804be1a0 and
-///   `Skill_WPAttack_ProjectileBurst::ExecuteRangedAttack` @0x180515390:
+/// - `Skill_AttackProjectileBurst::ActivateNow` and
+///   `Skill_WPAttack_ProjectileBurst::ExecuteRangedAttack`:
 ///   `Target` aims at the target's `Target` attach point, else its feet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetingMode {
@@ -627,15 +672,15 @@ pub enum RequestAim {
     Foe,
 }
 
-/// Game.dll `SkillActivatedSpell::GetValidTarget` @0x1804a8850
+/// Game.dll `SkillActivatedSpell::GetValidTarget`
 /// (the `GetValidTarget` of the classes below; only the player's
-/// `ControllerPlayerState::DefaultRequestSkillAction` @0x180163c30 and
+/// `ControllerPlayerState::DefaultRequestSkillAction` and
 /// `DefaultRequestInstantSkillAction` call it, a false return refuses the
 /// request): `targetingMode` `Point`, `skillProjectileTargetGroundOnly` or
-/// activation mode 1 (`Skill` +168, of these classes only
+/// activation mode 1 (`Skill.activationMode`, of these classes only
 /// `Skill_DefensiveWall`'s) clear the target and pass; otherwise
-/// `Skill::GetValidRangedTarget` @0x1804975c0 with radius 0 passes only for
-/// a target `Skill::ValidateEnemy` @0x180497270 accepts (a `Destructible`,
+/// `Skill::GetValidRangedTarget` with radius 0 passes only for
+/// a target `Skill::ValidateEnemy` accepts (a `Destructible`,
 /// or a foe by faction). So a `Default` / `Target` spell needs a foe under
 /// the cursor (Bloody Pox, Lightning Net, Aegis of Menhir); a `Point` one
 /// (Doom Bolt, Arcane Missile, the summons) goes to the ground point even
@@ -657,8 +702,8 @@ pub fn request_aim(class: &str, profile: &Record) -> RequestAim {
 /// Whether a ranged skill requested beyond its range is refused rather than
 /// cast at its range along the line.
 ///
-/// Game.dll `ControllerPlayerStateUseSkill::OnBegin` @0x180169250:
-/// with a range profile (`Skill::GetRangeProfile`, `Skill` +188) and the
+/// Game.dll `ControllerPlayerStateUseSkill::OnBegin`:
+/// with a range profile (`Skill::GetRangeProfile`, `Skill.rangeProfile`) and the
 /// target beyond the skill's distance, `targetingMode` `Target` sets the
 /// `Idle` state (nothing is cast or paid); any other mode drops the target
 /// and moves the point to the range along the line.
@@ -669,8 +714,8 @@ pub fn refused_out_of_range(profile: &Record) -> bool {
 /// Whether a hot slot's skill is used at once when its button is clicked
 /// (`true`) or arms the slot for a target click (`false`).
 ///
-/// Game.dll `HotSlotOptionSkill::Activate` @0x18031bbc0: the
-/// skill's activation mode (`Skill` +168) 1 or 2 requests the skill at the
+/// Game.dll `HotSlotOptionSkill::Activate`: the
+/// skill's activation mode (`Skill.activationMode`) 1 or 2 requests the skill at the
 /// player's coordinates whatever the press; any other mode, from the
 /// button, asks for a target (`PlayerHotSlotCtrl::ActivateHotSlot` keeps the
 /// slot armed). The mode, set by the constructors (a subclass keeping its
@@ -695,8 +740,8 @@ pub fn used_at_once(class: &str, instant_cast: bool, point_blank: bool) -> bool 
 }
 
 /// Whether a held hot slot key repeats the skill (`Skill::IsRepeatable`
-/// @0x180497250 = `Skill` +180, read by `HotSlotOptionSkill::IsRepeatable`
-/// @0x18031cce0 for the skill, potion and evade options; the scroll option's
+/// = `Skill.repeatable`, read by `HotSlotOptionSkill::IsRepeatable`
+/// for the skill, potion and evade options; the scroll option's
 /// is false).
 ///
 /// Game.dll: `Skill::Skill` sets it to 1, no loader writes it, and
@@ -712,9 +757,9 @@ pub fn repeatable(class: &str) -> bool {
     class_info(class).repeatable
 }
 
-/// The skill classes whose `Skill` vtable +64 answers 1 (Game.dll: the weapon-attack family, the weapon
+/// The skill classes whose `Skill::ChainsAtEnd` answers 1 (Game.dll: the weapon-attack family, the weapon
 /// pools and the `Skill_AttackProjectile` family; every other class's slot is `return 0`). The action matrix reads
-/// it (`AttackAction::QueryActionPermission` @0x180084380): a skill of this kind requested during another one's
+/// it (`AttackAction::QueryActionPermission`): a skill of this kind requested during another one's
 /// cast waits for its "End" even past `AllowInterrupt`, and is dropped while another skill request is queued.
 pub fn chains_at_end(class: &str) -> bool {
     class_info(class).chains_at_end
@@ -732,7 +777,7 @@ pub struct ClassInfo {
     /// [`hot_slot_flags`]: `IsAutoToggle`.
     pub auto_toggle: bool,
     /// `SkillActivatedBuffSelf` or a subclass (Game.dll RTTI): the skills whose running cost
-    /// `actor::active_cost` counts and whose tooltip says "auto-toggled" (vtable +1552).
+    /// `actor::active_cost` counts and whose tooltip says "auto-toggled" (`Skill::IsAutoToggle`).
     pub buff_self: bool,
     /// [`target_type`].
     pub target: TargetType,
@@ -1168,7 +1213,7 @@ const SPELLS: &[&str] = &[
 /// Skills switched on and off from the hotbar: the toggled auras and the
 /// on-hit retaliation skills (`Skill_OnHitAttackRadius` derives
 /// from `SkillActivatedBuffSelf` like `Skill_BuffSelfToggled`, its
-/// `ActivateNow` @0x1804fe910 flips its on flag, its passive attributes —
+/// `ActivateNow` flips its on flag, its passive attributes —
 /// `characterManaLimitReserve` among them — count only while on, sharing
 /// `Skill_BuffAttackRadiusToggled::CollectPassiveCharAttributes`).
 pub fn is_toggle(class: &str) -> bool {
@@ -1254,7 +1299,7 @@ fn load_trees(db: &Database) -> Vec<ClassTree> {
 
 /// [`SkillTrees::parents`] of loaded trees.
 fn parents_of(trees: &[ClassTree]) -> HashMap<String, String> {
-    let mut parent = HashMap::new();
+    let mut parent = HashMap::default();
     for t in trees {
         for (sk, base) in t.skills.iter().zip(&t.bases) {
             if let Some(b) = base {
@@ -1270,9 +1315,9 @@ fn parents_of(trees: &[ClassTree]) -> HashMap<String, String> {
 /// The potion modifiers' and containers' potion (lower-case path → the potion's path): the player
 /// record's `customPotionTree1/2`, each entry that is a modifier or potion class belonging to the
 /// tree's last other entry, the potion (`Player::Load` → `SkillManager::LoadSkills`; the potion's
-/// +320 like any learned modifier).
+/// `Skill.modifiers` like any learned modifier).
 fn potion_parents(db: &Database) -> HashMap<String, String> {
-    let mut parents = HashMap::new();
+    let mut parents = HashMap::default();
     let Some(pc) = db.get("records/creatures/pc/malepc01.dbr") else {
         return parents;
     };
@@ -1334,7 +1379,7 @@ impl SkillTrees {
             .map(String::as_str)
     }
 
-    /// `Skill_Mastery::Load`'s `MasteryEnumeration` (`SkillClassNN` → NN − 1, Skill_Mastery +1480)
+    /// `Skill_Mastery::Load`'s `MasteryEnumeration` (`SkillClassNN` → NN − 1, `Skill_Mastery.masteryEnumeration`)
     /// of the mastery whose class tree holds `skill` (the tree's first skill is the mastery
     /// bar); None outside every tree (an item or devotion skill).
     pub fn mastery_enumeration(&self, skill: &str) -> Option<u32> {
@@ -1368,13 +1413,13 @@ impl SkillTrees {
     }
 }
 
-/// What `Skill::ExclusiveSkillCheck` @0x18049ad60 compares between an
+/// What `Skill::ExclusiveSkillCheck` compares between an
 /// exclusive skill coming on and the manager's current exclusive skill:
-/// the level +200 (`SetSkillLevel`: the points spent, no item
-/// bonus), then the mastery's enumeration (+316 mastery id →
-/// `Skill_Mastery` +1480), then the augmented level +508
+/// the level `Skill.level` (`SetSkillLevel`: the points spent, no item
+/// bonus), then the mastery's enumeration (`Skill.masteryId` →
+/// `Skill_Mastery.masteryEnumeration`), then the augmented level `Skill.augmentedLevel`
 /// (`SetAugmentedSkillLevel`: the item bonus levels; `GetCurrentLevel` is
-/// +200 + +508 capped).
+/// the two summed, capped).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExclusiveRank {
     pub level: u32,
@@ -1403,7 +1448,7 @@ impl ExclusiveRank {
 /// `Skill_AttackWeaponBlink` (RTTI: Blink's `classInfo` parent).
 /// The player's out-of-range use of one goes to "ChargeToUseSkill" instead
 /// of "MoveToUseSkill" (`ControllerPlayerState::DefaultRequestSkillAction`
-/// @0x180163c30 tests `IsKindOf(Skill_AttackWeaponCharge)`).
+/// tests `IsKindOf(Skill_AttackWeaponCharge)`).
 /// Players' records: Blitz, Shadow Strike, the Blitz / Shadow Strike runes,
 /// Blazing Charge, Chaos Strike, Alkamos' Shadow Strike.
 pub fn is_weapon_charge(class: &str) -> bool {
@@ -1418,7 +1463,7 @@ pub fn is_weapon_charge(class: &str) -> bool {
 /// % (`Skill_AttackWeapon::CollectPassiveCharAttributes` counts the profile's
 /// stats while the warm-up flag is on), held under `absoluteRunSpeedCapMax` %
 /// instead of the normal cap (`Character::GetRunSpeed` uses
-/// `CapAbsoluteRunSpeed` while `Character + 9907` is set, which
+/// `CapAbsoluteRunSpeed` while `Character.skillWarmUp` is set, which
 /// `MoveToAction::Execute` / `Character::SkillWarmUp` set).
 pub fn warmup_run_multiplier(run: f32, bonus_pct: f32, cap_pct: f32) -> f32 {
     (run + bonus_pct * 0.01).min(cap_pct * 0.01)
@@ -1431,18 +1476,18 @@ pub struct SkillBook {
     /// Toggled skills that are off (lower-case; save: `skill_active` 0):
     /// newly learned, stopped by weapons, death or a use; the player's auto
     /// toggle switches them on again (`gd_game::skill_buffs` docs).
-    pub inactive: std::collections::BTreeSet<String>,
+    pub inactive: gd_formats::collections::HashSet<String>,
     /// Toggled skills a dispel stopped (lower-case; not saved): off like
     /// [`Self::inactive`] until the character's auto toggle turns them on
     /// again (`gd_game::skill_buffs` docs, Dispels).
-    pub dispelled: std::collections::BTreeSet<String>,
+    pub dispelled: gd_formats::collections::HashSet<String>,
     /// Bonus levels from equipment, per skill record (lower-case).
-    pub bonus: std::collections::HashMap<String, u32>,
+    pub bonus: gd_formats::collections::HashMap<String, u32>,
     /// Locked skills (lower-case; save `unk_205`): potion modifiers until
     /// unlocked (`potions`).
-    pub locked: std::collections::BTreeSet<String>,
+    pub locked: gd_formats::collections::HashSet<String>,
     /// Potion containers' unlock levels (lower-case; save `sublevel`).
-    pub unlock: std::collections::HashMap<String, u32>,
+    pub unlock: gd_formats::collections::HashMap<String, u32>,
     /// The worn gear's pet modifiers ([`gear_pet_modifiers`]: lower-case pet skill, level), set by
     /// [`Self::with_item_bonuses`].
     pub gear_pet_mods: Vec<(String, u32)>,
@@ -1602,8 +1647,7 @@ pub fn item_skill_grants(
             });
             let lv = r
                 .str("itemSkillLevelEq")
-                .and_then(|e| crate::expr::Expr::parse(e).ok())
-                .map(|e| e.eval(&|n| n.eq_ignore_ascii_case("itemLevel").then_some(item_level)))
+                .and_then(|e| gd_rules::expr::eval_var(e, "itemLevel", item_level))
                 .or(r.f32("itemSkillLevel"))
                 .unwrap_or(1.0);
             out.push(ItemSkillGrant {
@@ -1656,7 +1700,7 @@ impl SkillBook {
         trees: &SkillTrees,
         items: &[gd_formats::save::item::Item],
     ) -> SkillBook {
-        let mut bonus: HashMap<String, u32> = HashMap::new();
+        let mut bonus: HashMap<String, u32> = HashMap::default();
         let (sk, ms, all) = item_augments(db, items);
         for (s, l) in sk {
             *bonus.entry(s).or_insert(0) += l;
@@ -1704,8 +1748,8 @@ impl SkillBook {
     }
 
     /// `Skill::GetUltimateLevel`: `SkillProfile::LoadProfile` stores
-    /// `max(skillUltimateLevel, skillMaxLevel)` of the skill's own record
-    /// (@0x180545900); u32::MAX when neither is set.
+    /// `max(skillUltimateLevel, skillMaxLevel)` of the skill's own record;
+    /// u32::MAX when neither is set.
     pub fn ultimate_level(&self, db: &Database, skill: &str) -> u32 {
         let own = db.get(skill);
         let both = |r: &Record| {
@@ -1740,7 +1784,7 @@ impl SkillBook {
         }
     }
 
-    /// The skill window's f5 flag (`sub_140249440`): the dependency is unmet
+    /// The skill window's f5 flag (`UISkillPane::GetRequirementFlags`): the dependency is unmet
     /// (`SkillProfile::GetSkillDependancies`: `skillDependancy` names; with `skillDependancyAll` any listed skill at level
     /// 0 fails it, else it fails only when none of them is learned; an empty list never fails). It also refuses the "+"
     /// click ([`Self::cannot_raise`]).
@@ -1770,8 +1814,9 @@ impl SkillBook {
         }
     }
 
-    /// `sub_140248B80` (the skill window's f6 flag and the skill tooltip's reason `[6]`): when `skill` is
-    /// `exclusiveSkill` (its profile's `IsExclusiveSkill`), the first other exclusive skill of the skill manager's
+    /// `UISkillPane::HasExclusiveConflict` (the skill window's f6 flag and the skill tooltip's reason `[6]`): when
+    /// `skill` is `exclusiveSkill` (its profile's `IsExclusiveSkill`), the first other exclusive skill of the skill
+    /// manager's
     /// active list (`SkillManager::GetActiveSkillList`; here a learned toggle that is on) that beats it as
     /// `ExclusiveSkillCheck` would ([`ExclusiveRank::beats`]: the higher level, on equal levels the higher mastery
     /// enumeration, both resolved, then the higher augmented level).
@@ -1810,9 +1855,10 @@ impl SkillBook {
     }
 
     /// Why one more point cannot go into `skill` of `tree`, if it cannot: the skill window's flags f1..f6
-    /// (`sub_140249440`; f0, no points left, is the caller's). `sub_140247890`: outside reclamation any of
-    /// f0..f6 sets the skill button's disabled byte (+641), and the button group (`sub_14012AB70`) sends a disabled
-    /// button's listeners nothing, so the click callback (`sub_140248510`, which itself tests only the points left
+    /// (`UISkillPane::GetRequirementFlags`; f0, no points left, is the caller's). `UISkillPane::Update`:
+    /// outside reclamation any of f0..f6 sets the skill button's disabled byte (`UIButton.disabled`), and the button
+    /// group (`UIPushButtonGroup::HandleMouseEvent`) sends a disabled button's listeners nothing, so the click callback
+    /// (`UISkillPane::OnButtonClick`, which itself tests only the points left
     /// and the maximum level) never runs. So an exclusive conflict refuses the point like an unmet dependency.
     /// `tree` is one of `trees`.
     pub fn cannot_raise(
@@ -1901,25 +1947,25 @@ impl SkillBook {
     /// switched on contribute their per-level fields, and so do modifiers
     /// (`Skill_Modifier`) of those skills (parent = [`SkillTrees::parents`]).
     /// The toggles' `CollectPassiveCharAttributes`
-    /// (`Skill_BuffSelfToggled` @0x1804ec1e0, `Skill_BuffRadius` @0x1804e99c0,
-    /// `Skill_BuffAttackRadiusToggled` @0x1804aa5d0) add the skill's and its
+    /// (`Skill_BuffSelfToggled`, `Skill_BuffRadius`,
+    /// `Skill_BuffAttackRadiusToggled`) add the skill's and its
     /// modifiers' attributes only while its active flag is set; the save
     /// keeps that flag (`SkillActiveState` `skillActive` → `inactive`).
     ///
     /// A radius aura's own cost and the buff it emits are two stores of one
-    /// profile: `Skill_BuffRadius::Load` @0x1804e8350 builds the
+    /// profile: `Skill_BuffRadius::Load` builds the
     /// toggle's `SkillProfile` from its `buffSkillName` table, and its
-    /// `CollectPassiveCharAttributes` @0x1804e99c0 adds only the profile's
-    /// `CharAttributeStore_SkillPenalty` (+536, [`PENALTY_FIELDS`]) and its
+    /// `CollectPassiveCharAttributes` adds only the profile's
+    /// `CharAttributeStore_SkillPenalty` (`SkillProfile.penaltyStore`, [`PENALTY_FIELDS`]) and its
     /// modifiers' penalty stores (`AddModifierCharAttributes(.., 0, 1)`); the
-    /// rest (`CharAttributeStore_Skill` +496) reaches characters only as the
+    /// rest (`CharAttributeStore_Skill`, `SkillProfile.skillStore`) reaches characters only as the
     /// `SkillBuff` the aura puts on them (`SkillBuff::
-    /// CollectPassiveCharAttributes` @0x180526a20: +496 and the modifiers'
-    /// +496, never the reserve), the caster included only for a non-debuff
+    /// CollectPassiveCharAttributes`: the skill store and the modifiers'
+    /// skill stores, never the reserve), the caster included only for a non-debuff
     /// aura (`gd_game::auras`). So a debuff aura (`debufSkill` buff record)
     /// costs its caster the reserve and nothing else; a buff aura's caster
     /// gets both halves = the whole record. `Skill_BuffSelfToggled`
-    /// (@0x1804ec1e0) adds +496 and +536 and its modifiers' both: the whole
+    /// adds both stores and its modifiers' both: the whole
     /// record too.
     pub fn stat_sources(&self, db: &Database, trees: &SkillTrees) -> Vec<(Record, usize)> {
         const STAT: [&str; 5] = [
@@ -1972,12 +2018,13 @@ impl SkillBook {
 }
 
 /// What a `Skill_WeaponPool_ChargedScaling` (Savagery, Righteous Fervor, item skills) adds to its character
-/// while it has charges: `Skill_WeaponPool_ChargedScaling::CollectPassive*` @0x180511b20 …
-/// @0x180511f40 run only while charged (+1552 > 0; +216 is a potion container's unlock level, 0 here) and add
-/// the record's character, skill, offensive modifier, retaliation, defense and racial attributes at the skill's
+/// while it has charges: `Skill_WeaponPool_ChargedScaling::CollectPassive*` run only while charged
+/// (`Skill_WeaponPool_ChargedScaling.charges` > 0; `Skill.unlockLevel` is a potion container's unlock level, 0
+/// here) and add the record's character, skill, offensive modifier, retaliation, defense and racial attributes at
+/// the skill's
 /// level with its modifiers' (`AddModifier*`), not its offensive damage (no `CollectPassiveOffensiveDamage`
-/// override); `CollectPassiveOffensiveModifierAttributes` @0x180511c50 sets the accumulator's
-/// `IgnoreDamageMultiplier` (+121) around the modifiers' part, so a modifier's `offensiveDamageMultModifier`
+/// override); `CollectPassiveOffensiveModifierAttributes` sets the accumulator's
+/// `IgnoreDamageMultiplier` around the modifiers' part, so a modifier's `offensiveDamageMultModifier`
 /// (Savagery's transmuter) counts only in the skill's own attack. Returns the records filtered so (own record
 /// first, at `li`), and the offensive modifier fields' values they add (the skill's own attack leaves those
 /// out, [`crate::actor::Attacker::without_skill`]).
@@ -2006,8 +2053,8 @@ pub fn charged_scaling_passive(
                             | F::OffenseCrowdControl
                             | F::WeaponBase
                     )
-                ) && k != "weaponDamagePct"
-                    && (own || k != "offensiveDamageMultModifier")
+                ) && k.as_ref() != "weaponDamagePct"
+                    && (own || k.as_ref() != "offensiveDamageMultModifier")
             })
             .cloned()
             .collect();
@@ -2020,10 +2067,10 @@ pub fn charged_scaling_passive(
         for (k, _) in r.fields.iter() {
             let fam = lookup(k).map(|d| d.family);
             if matches!(fam, Some(F::OffenseModifier | F::OffenseDurationModifier))
-                || k == "offensiveDamageMultModifier"
+                || k.as_ref() == "offensiveDamageMultModifier"
             {
                 let v = crate::stats::level_value(r, k, *l).unwrap_or(0.0);
-                *offensive.entry(k.clone()).or_insert(0.0) += v;
+                *offensive.entry(k.to_string()).or_insert(0.0) += v;
             }
         }
     }
@@ -2052,7 +2099,7 @@ impl SkillBook {
     }
 
     /// The special animation a cast of `skill` plays
-    /// (`Skill::StartSpecialAnimation` @0x180495540): the first learned
+    /// (`Skill::StartSpecialAnimation`): the first learned
     /// modifier of it that names one (`skillSpecialAnimationName`), else the
     /// skill's own. Modifiers = [`SkillTrees::parents`].
     pub fn special_animation(
@@ -2079,9 +2126,9 @@ impl SkillBook {
     }
 }
 
-/// `CharAttributeStore_SkillPenalty` (`SkillProfile` +536): the cost fields a
-/// skill keeps on its caster, the energy reserve (`Load`
-/// @0x1800d2970 reads exactly these two). `CharAttributeStore_Skill` (+496,
+/// `CharAttributeStore_SkillPenalty` (`SkillProfile.penaltyStore`): the cost fields a
+/// skill keeps on its caster, the energy reserve (`CharAttributeStore_SkillPenalty::Load`
+/// reads exactly these two). `CharAttributeStore_Skill` (`SkillProfile.skillStore`,
 /// what a `SkillBuff` gives) reads none of the `characterManaLimitReserve…`
 /// fields.
 pub const PENALTY_FIELDS: [&str; 2] = [
@@ -2105,7 +2152,7 @@ pub fn penalty_only(r: Record) -> Record {
 }
 
 /// A radius-buff skill whose buff record sets `debufSkill` (the flag
-/// `Skill_BuffRadius::Load` reads from the buff's table into +1576).
+/// `Skill_BuffRadius::Load` reads from the buff's table into `Skill_BuffRadius.debuff`).
 pub fn is_debuff_aura(db: &Database, r: &Record) -> bool {
     matches!(
         r.class.as_str(),

@@ -1,8 +1,8 @@
 //! The base visuals of the channelled cone / spin / grow skills and the charged-scaling charge effect (their records:
 //! [`crate::skill_fx`]'s `cone_effect` / `spin_aura` / `grow_effect` / `charge_aura`, which apply the modifiers'
 //! `fxChanges`). Game.dll:
-//! - Cone (`Skill_AttackSpellCone::ActivateNow` @0x1804cd370, `Update` @0x1804cdab0, `StopEmitting` @0x1804ce8b0,
-//!   `GetValidTarget` @0x1804cd870, `GetMaxConeLength` @0x1804cc560, `Load` @0x1804cd0a0): the cone effect is created
+//! - Cone (`Skill_AttackSpellCone::ActivateNow`, `Update`, `StopEmitting`,
+//!   `GetValidTarget`, `GetMaxConeLength`, `Load`): the cone effect is created
 //!   at the activation and starts emitting after `coneDelay` s (the main player's; others' at once). Every update
 //!   while it runs it is set in the world (`World::SetCoords`, not attached) at the caster's `emitPointName` (default
 //!   `L Hand`, `GetAttachPointCoords`), with the caster's coords whose forward (Z) row is `(fwd.x, slope, fwd.z)`:
@@ -12,19 +12,19 @@
 //!   to `GetMaxConeLength` ([`super::max_beam_length`]). The channel's stop puts it in state 3, then retracting
 //!   (state 4): the placement stops (it stays where it was, still emitting) while the retract grows
 //!   `travelSpeed * 0.002` m per ms until it reaches the length; then `StopEmitting` + `SetSelfRemove` ([`ConeFx`]).
-//!   Strikes (`Update` / `GetTargets` @0x1804ce270): the entry's timer (`timeBetweenAttacks` / cast speed, armed by
-//!   `ActivateNow` @0x1804cd370, which also pays the energy once) runs while it emits and while it retracts; each
+//!   Strikes (`Update` / `GetTargets`): the entry's timer (`timeBetweenAttacks` / cast speed, armed by
+//!   `ActivateNow`, which also pays the energy once) runs while it emits and while it retracts; each
 //!   strike hits the foes in the frustum from the retract to the grown length ([`ConeFx`]) with no secondaries; the
 //!   current (not retracting) entry pays each strike and stops the channel when the energy left is under the cost.
-//! - Spin (`Skill_AttackRadiusSpin::ApplyCastVisualEffects` @0x1804c9c70, from `ActivateNow` @0x1804c9f20 / off from
-//!   `StopSpinning` @0x1804ca6f0): `Character::AddParticleEffect(aura, "")` once (attached at the character's
+//! - Spin (`Skill_AttackRadiusSpin::ApplyCastVisualEffects`, from `ActivateNow` / off from
+//!   `StopSpinning`): `Character::AddParticleEffect(aura, "")` once (attached at the character's
 //!   origin), `StartParticleEffect` while spinning, `RemoveParticleEffect` at the stop.
-//! - Grow (`Skill_AttackRadiusGrow::ApplyCastVisualEffects` @0x1804c6a80, after the activation and each growth in
-//!   `Update` @0x1804c7130, off from `StopEmitting` @0x1804c77c0): when the radius reaches another
+//! - Grow (`Skill_AttackRadiusGrow::ApplyCastVisualEffects`, after the activation and each growth in
+//!   `Update`, off from `StopEmitting`): when the radius reaches another
 //!   `radiusEffectSize` step the old effect stops emitting (self-removing) and the step's effect is added to the
 //!   world at the caster's coords, rotation cleared (not attached); off stops it.
-//! - Charge (`Skill_WeaponPool_ChargedScaling::SetChargeEffect` @0x180510c00, from `ReceiveActiveUpdate`
-//!   @0x180511400 with the charge level): the effect shown stops (`StopParticleEffect`); with charges the level's
+//! - Charge (`Skill_WeaponPool_ChargedScaling::SetChargeEffect`, from `ReceiveActiveUpdate`
+//!   with the charge level): the effect shown stops (`StopParticleEffect`); with charges the level's
 //!   effect is added once per name (`AddParticleEffect(name, "")`, cached) and started.
 //!
 //! The chaos skills' beams: `super::chaos`.
@@ -35,140 +35,7 @@
 //! `Transform` cannot hold (the same direction; the engine's axis is `sqrt(1 + slope²)` long and its up row stays the
 //! caster's).
 use super::*;
-use crate::visuals::{BuffFx, EffectSpec, StopEmitting};
-
-/// The height of the cone's damage frustum (`Skill_AttackSpellCone` +1848, set to 5.0 by the constructor
-/// @0x1804cc920 and read by nothing else).
-const CONE_HEIGHT: f32 = 5.0;
-
-/// A cone entry (`Skill_AttackSpellCone`'s cone list, its own entity): created by the activation, it starts its
-/// effect after the delay, grows, strikes and retracts (module doc). The one source of the cone's length.
-#[derive(Component, Debug)]
-pub struct ConeFx {
-    owner: Entity,
-    skill: String,
-    level_index: usize,
-    /// The cone effect record (`coneName` / `fxChanges`, resolved by the activation).
-    record: String,
-    /// The effect entity once emitting (state 2).
-    effect: Option<Entity>,
-    /// Seconds before it starts emitting (state 1).
-    delay: f32,
-    /// Seconds to the next strike.
-    tick: f32,
-    /// The grown length and the retract (m), `travelSpeed`.
-    len: f32,
-    retract: Option<f32>,
-    speed: f32,
-    /// The last placement (frozen once retracting): the emit point, the aim point (`+1736`), the effect's rotation,
-    /// the caster's rotation and `GetMaxConeLength`.
-    emit: Vec3,
-    aim: Vec3,
-    rotation: Quat,
-    caster_rot: Quat,
-    max: f32,
-}
-
-impl ConeFx {
-    /// One retracting update of `dt` s (state 4: `dt` ms × 0.002 × `travelSpeed`): true when the retract reached
-    /// the length (state 5).
-    fn retract(&mut self, dt: f32) -> bool {
-        let r = self.retract.get_or_insert(0.0);
-        *r += dt * 2.0 * self.speed;
-        if *r >= self.len {
-            *r = self.len;
-            return true;
-        }
-        false
-    }
-
-    /// The damage frustum (`GetTargets` @0x1804ce270): from `emit + dir * retract` to `emit + dir * len` along `dir`
-    /// = the normalised aim - emit, `startWidth` wide at the near face and the width the length reached at the far
-    /// one (`startWidth + len / maxRange * (endWidth - startWidth)`), [`CONE_HEIGHT`] high, faced along the
-    /// caster's axes. `foe_box` meets it.
-    fn strikes(&self, rec: &Record, foe_box: &gd_sim::bounds::Aabb) -> bool {
-        let li = self.level_index;
-        let (w0, w1, range) = (
-            level_f(rec, "startWidth", li),
-            level_f(rec, "endWidth", li),
-            level_f(rec, "maxRange", li),
-        );
-        let far_w = if range > 0.0 {
-            w0 + self.len / range * (w1 - w0)
-        } else {
-            w0
-        };
-        let dir = (self.aim - self.emit).normalize_or_zero();
-        super::cone_frustum_meets_box(
-            self.emit + dir * self.retract.unwrap_or(0.0),
-            self.emit + dir * self.len,
-            self.caster_rot * Vec3::Z,
-            self.caster_rot * Vec3::X,
-            self.caster_rot * Vec3::Y,
-            w0,
-            far_w,
-            CONE_HEIGHT,
-            foe_box,
-        )
-    }
-
-    /// One running update (state 2): the length grows `travelSpeed` m/s up to `max` (`GetMaxConeLength`).
-    fn grow(&mut self, dt: f32, max: f32) {
-        if self.len < max {
-            self.len += dt * self.speed;
-        }
-        if max <= self.len {
-            self.len = max;
-        }
-    }
-}
-
-/// The cone's slope: the y of the normalised `aim - emit` (`Update` / `GetMaxConeLength`).
-pub fn cone_slope(emit: Vec3, aim: Vec3) -> f32 {
-    (aim - emit).normalize_or_zero().y
-}
-
-/// The cone's rotation: the caster's with its forward turned up to `slope` (module doc, PORT).
-pub fn cone_rotation(caster: Quat, slope: f32) -> Quat {
-    caster * Quat::from_rotation_x(-slope.atan())
-}
-
-/// The running channel's base visual on its caster (module doc).
-#[derive(Component, Debug)]
-pub struct ChannelFx {
-    skill: String,
-    /// The effect entity, once created (a cone: its [`ConeFx`] entry).
-    fx: Option<Entity>,
-    /// Grow: the step shown.
-    step: Option<usize>,
-    /// Cone: the caster's emit point.
-    point: String,
-}
-
-/// The charge effect each charged-scaling skill shows on its caster: (skill, charges, effect).
-#[derive(Component, Default, Debug)]
-pub struct ChargeFx(Vec<(String, u32, Entity)>);
-
-fn spawn_on(commands: &mut Commands, owner: Entity, skill: &str, record: &str, at: Vec3) -> Entity {
-    crate::visuals::notify(commands, record);
-    let f = commands
-        .spawn((
-            EffectSpec {
-                despawn_when_complete: true,
-                ..EffectSpec::record(record)
-            },
-            Transform::from_translation(at),
-            BuffFx {
-                owner,
-                skill: skill.to_owned(),
-                toggled: false,
-                point: None,
-            },
-        ))
-        .id();
-    commands.entity(owner).add_child(f);
-    f
-}
+use gd_game_core::visuals::{EffectSpec, StopEmitting};
 
 /// The channel's visual ends: a cone entry retracts ([`ConeFx`]; one not emitting yet goes), the others stop
 /// emitting.
@@ -250,7 +117,7 @@ pub(super) fn channel_fx(
         &Character,
         Option<&Channel>,
         Option<&mut ChannelFx>,
-        Option<&crate::weapon_pool::SkillLinks>,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
         Option<&Loadout>,
         Option<&mut Caster>,
     )>,
@@ -290,8 +157,12 @@ pub(super) fn channel_fx(
         let Some(rec) = data.db.get(&ch.skill) else {
             continue;
         };
-        let mods =
-            crate::skill_fx::override_mods(&data.db, links, loadout.map(|l| &l.skills), &ch.skill);
+        let mods = gd_game_core::skill_fx::override_mods(
+            &data.db,
+            links,
+            loadout.map(|l| &l.skills),
+            &ch.skill,
+        );
         // `GetValidTarget`: a living character target's `Target` point.
         let target = ch
             .target
@@ -310,14 +181,16 @@ pub(super) fn channel_fx(
                     point: rec.str("emitPointName").unwrap_or("L Hand").to_owned(),
                 };
                 if rec.class == "Skill_AttackRadiusSpin"
-                    && let Some(aura) = crate::skill_fx::spin_aura(rec, ch.level_index, &mods)
+                    && let Some(aura) =
+                        gd_game_core::skill_fx::spin_aura(rec, ch.level_index, &mods)
                 {
                     new.fx = Some(spawn_on(&mut commands, e, &ch.skill, &aura, Vec3::ZERO));
                 }
                 // `Skill_AttackSpellCone::ActivateNow`: pays the energy once and adds the cone entry (none without
                 // a cone effect record).
                 if rec.class == "Skill_AttackSpellCone"
-                    && let Some(record) = crate::skill_fx::cone_effect(rec, ch.level_index, &mods)
+                    && let Some(record) =
+                        gd_game_core::skill_fx::cone_effect(rec, ch.level_index, &mods)
                 {
                     let cost = level_f(rec, "skillManaCost", ch.level_index);
                     if let Some(c) = caster.as_deref_mut() {
@@ -385,12 +258,12 @@ pub(super) fn channel_fx(
             }
             "Skill_AttackRadiusGrow" => {
                 let radius = grow_radius(rec, ch.level_index, ch.held, character.spell_speed);
-                let step = crate::skill_fx::grow_step(rec, radius);
+                let step = gd_game_core::skill_fx::grow_step(rec, radius);
                 if fx.step != Some(step) {
                     fx.step = Some(step);
                     stop(&mut commands, &mut cones, fx.fx.take());
-                    if let Some(n) = crate::skill_fx::grow_effect(rec, step, &mods) {
-                        crate::visuals::notify(&mut commands, &n);
+                    if let Some(n) = gd_game_core::skill_fx::grow_effect(rec, step, &mods) {
+                        gd_game_core::visuals::notify(&mut commands, &n);
                         fx.fx = Some(
                             commands
                                 .spawn((
@@ -433,7 +306,7 @@ pub(super) fn channel_fx(
             if c.delay > 0.0 {
                 continue;
             }
-            crate::visuals::notify(&mut commands, &c.record);
+            gd_game_core::visuals::notify(&mut commands, &c.record);
             c.effect = Some(
                 commands
                     .spawn((
@@ -492,7 +365,7 @@ pub(super) fn channel_fx(
                 });
             }
         }
-        crate::visuals::notify(&mut commands, &c.skill);
+        gd_game_core::visuals::notify(&mut commands, &c.skill);
         if c.retract.is_none()
             && let Some(mut caster) = caster
         {
@@ -511,9 +384,9 @@ pub(super) fn charge_fx(
     data: Res<GameData>,
     mut q: Query<(
         Entity,
-        &crate::weapon_pool::PoolCharges,
+        &gd_game_core::weapon_pool::PoolCharges,
         Option<&mut ChargeFx>,
-        Option<&crate::weapon_pool::SkillLinks>,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
         Option<&Loadout>,
     )>,
 ) {
@@ -549,9 +422,13 @@ pub(super) fn charge_fx(
             let Some(rec) = data.db.get(skill) else {
                 continue;
             };
-            let mods =
-                crate::skill_fx::override_mods(&data.db, links, loadout.map(|l| &l.skills), skill);
-            if let Some(aura) = crate::skill_fx::charge_aura(rec, count, &mods) {
+            let mods = gd_game_core::skill_fx::override_mods(
+                &data.db,
+                links,
+                loadout.map(|l| &l.skills),
+                skill,
+            );
+            if let Some(aura) = gd_game_core::skill_fx::charge_aura(rec, count, &mods) {
                 let f = spawn_on(&mut commands, e, skill, &aura, Vec3::ZERO);
                 shown.0.push((skill.clone(), count, f));
             }

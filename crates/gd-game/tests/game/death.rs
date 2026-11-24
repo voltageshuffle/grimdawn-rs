@@ -1,13 +1,13 @@
 //! Headless checks of dying: the experience penalty and the gravestone that
 //! gives part of it back, and the respawn.
 use bevy::prelude::*;
-use gd_game::combat::{Combatant, Dead};
 use gd_game::death::Gravestone;
 use gd_game::play_stats::PlayCounts;
 use gd_game::player_orders::InteractTarget;
-use gd_game::progress::PlayerProgress;
-use gd_game::session::PlayerStart;
 use gd_game::testing::TestGame;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::session::PlayerStart;
 
 fn game() -> Option<(TestGame, Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;

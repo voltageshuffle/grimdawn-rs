@@ -1,11 +1,11 @@
 //! Per-record facts the mouse hover (`crate::hover`) and the controller targeting (`crate::controller_target`)
 //! share: one cache, resolved on first use, cleared when the mod data changes.
 
-use crate::data::GameData;
-use crate::hover::Interact;
-use crate::ui::text::FontCache;
+use gd_ui::state::hover::Interact;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
+use gd_game_core::data::GameData;
+use gd_ui_kit::text::FontCache;
 use std::sync::Arc;
 
 const ENGINE: &str = "records/game/gameengine.dbr";
@@ -30,7 +30,7 @@ pub struct RecordFacts {
 }
 
 pub struct RecordFact {
-    /// `Actor::GetRadius` (`gd_game::combat::get_radius`; the record's `scale` counts).
+    /// `Actor::GetRadius` (`gd_game_core::combat::get_radius`; the record's `scale` counts).
     pub radius: f32,
     /// Record `Class` starts with `Npc`.
     pub npc: bool,
@@ -40,7 +40,7 @@ pub struct RecordFact {
     pub npc_subclass: bool,
     /// Record `Class` is `FixedItemBlastContainer`.
     pub blast: bool,
-    /// `FixedActor::GetUsableRange`'s record term (`gd_game::combat::fixed_usable_range`).
+    /// `FixedActor::GetUsableRange`'s record term (`gd_game_core::combat::fixed_usable_range`).
     pub usable: f32,
     pub invincible: bool,
     /// Record `interactIconOverride`.
@@ -157,12 +157,12 @@ fn resolve(data: &GameData, fonts: &FontCache, record: &str) -> RecordFact {
         .collect::<Vec<_>>()
         .join(" - ");
     RecordFact {
-        radius: gd_game::combat::get_radius(r, gd_game::combat::ACTOR_RADIUS),
+        radius: gd_game_core::combat::get_radius(r, gd_game_core::combat::ACTOR_RADIUS),
         npc,
         merchant: class == "NpcMerchant",
         npc_subclass: npc && class != "Npc",
         blast: class == "FixedItemBlastContainer",
-        usable: gd_game::combat::fixed_usable_range(r),
+        usable: gd_game_core::combat::fixed_usable_range(r),
         invincible: r.is_some_and(|r| r.bool("invincible")),
         icon: icon_override(s("interactIconOverride")),
         classification: cls,

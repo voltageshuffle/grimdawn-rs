@@ -2,11 +2,11 @@
 //!
 //! The cache holds its files weakly ([`WeakLoaded`]): a file stays while a voice plays it or a creature holds it
 //! ([`HeldSounds`]), and goes with the last of them (PORT: the engine unloads a sound 5 s after its last release,
-//! `gd_game::weak_cache`). The last files used — played or preloaded — stay loaded too, up to 96 MB
+//! `gd_game_core::weak_cache`). The last files used — played or preloaded — stay loaded too, up to 96 MB
 //! (`Sounds::recent`), so a sound used now and then is not read and decoded again each time.
 //!
 //! Preload: [`preload_sounds`] warms the cache in background tasks when a creature spawns or the player's equipment /
-//! skills change (`SoundPak::PreLoad` @0x1801baf20 → the background `ResourceLoader`), so a first play does
+//! skills change (`SoundPak::PreLoad` → the background `ResourceLoader`), so a first play does
 //! not read and parse the archive on the game thread. The creature holds what was preloaded for it ([`HeldSounds`],
 //! as the engine's `SoundPak`s hold their sounds) until it goes or its kit changes. A one-shot whose file is not
 //! loaded starts its read in the background and plays when it lands ([`Sounds::file_or_fetch`],
@@ -17,12 +17,12 @@ use super::Sounds;
 use super::listener::{SoundClass, sound};
 use super::mixer::{BUFFER_BYTES, OnEnd, Pcm, Voice3d, VoiceStart, attach_voice};
 use super::pak::ENGINE_HZ;
-use crate::data::GameData;
 use bevy::audio::{Decodable, Source};
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
 use gd_formats::vfs::normalized;
+use gd_game_core::data::GameData;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 /// The entries the file cache holds before it first drops the dead ones ([`Sounds::insert`]).
@@ -48,7 +48,7 @@ impl Loaded {
     }
 }
 
-impl gd_game::weak_cache::Shared for Loaded {
+impl gd_game_core::weak_cache::Shared for Loaded {
     /// The recently used files stay loaded up to 96 MB (file bytes + decoded samples).
     const BUDGET: usize = 96 << 20;
     fn id(&self) -> usize {
@@ -232,7 +232,7 @@ impl Sounds {
         }
     }
 
-    /// Preloads the sound files `paths` for `owner` (`SoundPak::PreLoad` @0x1801baf20 enqueues to the
+    /// Preloads the sound files `paths` for `owner` (`SoundPak::PreLoad` enqueues to the
     /// background `ResourceLoader`): the loaded ones at once, the rest read in a background task (one read per file
     /// however many owners wait for it); [`collect_preload`] hands `owner` the whole set ([`HeldSounds`]), replacing
     /// its older one.
@@ -392,7 +392,7 @@ fn with_pcm(mut l: Loaded) -> Loaded {
 pub(super) fn reset_sounds(
     mut mod_changed: MessageReader<gd_render::model::ModChanged>,
     mut sounds: ResMut<Sounds>,
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     if fresh.begun() {
         sounds.recent.clear();
@@ -405,12 +405,13 @@ pub(super) fn reset_sounds(
 /// Drains the background preload tasks ([`Sounds::warm`]) into the cache and hands each complete preload to its
 /// owner ([`HeldSounds`]).
 pub(super) fn collect_preload(mut commands: Commands, mut sounds: ResMut<Sounds>) {
-    use bevy::tasks::{block_on, futures_lite::future};
+    use bevy::tasks::block_on;
+    use bevy::tasks::futures_lite::future;
     if sounds.holds.is_empty() && sounds.preload.is_empty() {
         return;
     }
     let sounds = &mut *sounds;
-    let mut landed: HashMap<String, Option<Loaded>> = HashMap::new();
+    let mut landed: HashMap<String, Option<Loaded>> = HashMap::default();
     let mut i = 0;
     while i < sounds.preload.len() {
         if let Some(result) = block_on(future::poll_once(&mut sounds.preload[i])) {
@@ -492,11 +493,11 @@ const CALLBACK_PAKS: [&str; 8] = [
 pub(super) fn preload_sounds(
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,
-    new_chars: Query<Entity, Added<gd_game::character::Character>>,
-    chars: Query<&gd_game::character::Character>,
+    new_chars: Query<Entity, Added<gd_game_core::character::Character>>,
+    chars: Query<&gd_game_core::character::Character>,
     holdings: gd_game::combat_sounds::Holdings,
-    mut equip: MessageReader<gd_game::inventory::EquipmentChanged>,
-    loadouts: Query<&gd_game::player::Loadout>,
+    mut equip: MessageReader<gd_game_core::inventory::EquipmentChanged>,
+    loadouts: Query<&gd_game_core::player::Loadout>,
 ) {
     let mut owners: Vec<Entity> = new_chars.iter().collect();
     owners.extend(equip.read().map(|ev| ev.player));

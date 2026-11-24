@@ -1,11 +1,12 @@
 //! Headless checks of experience, level-ups and story progress rewards.
 use bevy::prelude::*;
-use gd_game::combat::{Combatant, MonsterKilled};
-use gd_game::progress::{LeveledUp, PlayerProgress};
-use gd_game::story::StoryEffect;
+use gd_game::combat::MonsterKilled;
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
+use gd_game_core::progress::{LeveledUp, PlayerProgress};
+use gd_game_core::story::StoryEffect;
 use gd_sim::progress::Progress;
-use gd_sim::story::Effect;
+use gd_story::story::Effect;
 
 use crate::common::ZOMBIE;
 
@@ -25,11 +26,11 @@ fn kill(g: &mut TestGame, record: &str, level: i32) {
     let p = g
         .app
         .world_mut()
-        .query_filtered::<Entity, With<gd_game::player::Player>>()
+        .query_filtered::<Entity, With<gd_game_core::player::Player>>()
         .single(g.app.world())
         .unwrap();
     // A body all of whose damage was the player's (the experience share, `combat::Attackers`).
-    let mut by = gd_game::combat::Attackers::default();
+    let mut by = gd_game_core::combat::Attackers::default();
     by.register(p, p, 1.0, true);
     let entity = g.app.world_mut().spawn(by).id();
     g.app.world_mut().write_message(MonsterKilled {
@@ -46,7 +47,8 @@ fn kill(g: &mut TestGame, record: &str, level: i32) {
 /// a monster that kills itself (`SkillActivated_Suicide`) is its last attacker's kill.
 #[test]
 fn experience_is_the_damage_share() {
-    use gd_game::combat::{Attackers, Suicide};
+    use gd_game::combat::Suicide;
+    use gd_game_core::combat::Attackers;
     let Some(mut g) = new_game() else {
         return;
     };

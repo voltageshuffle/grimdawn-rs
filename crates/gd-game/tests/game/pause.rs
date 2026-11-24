@@ -2,9 +2,9 @@
 //! system advances (regeneration, a monster's attack, the game clock); after
 //! unpausing they run again.
 use bevy::prelude::*;
-use gd_game::combat::Combatant;
-use gd_game::pause::GamePause;
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
+use gd_game_core::pause::GamePause;
 
 use crate::common::ZOMBIE;
 

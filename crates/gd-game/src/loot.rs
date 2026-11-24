@@ -4,7 +4,7 @@
 //! Gold is picked up automatically within 4 m
 //! ([`GOLD_PICKUP_RADIUS`]); the label colour is the drop classification's
 //! `gameiteminfo.dbr` colour (grimdawn `loot::item_color`). Drops are thrown (`gd_sim::loot_toss`,
-//! `sub_180358B20`): a [`Dropper`] releases them 250 ms after the kill or
+//! `ItemDropper::Update`): a [`Dropper`] releases them 250 ms after the kill or
 //! the opening (monsters and destructibles all at once, chests one every
 //! 200 ms), each one leaves the drop point with the engine's toss speed
 //! ([`Tossed`]: not pickable until released) and flies as a rigid body
@@ -23,22 +23,23 @@
 //! hooks) starts 1 m above the given ground point. The game gives ground
 //! items their model and name label.
 //!
-//! Picking up (`CharPickUpConfigCmd::Execute` @0x1800ea480,
+//! Picking up (`CharPickUpConfigCmd::Execute`,
 //! [`pick_up`]): a Broken or already-carried `cannotPickUpMultiple` item is refused
 //! (`Inventory::refuses_pickup`); otherwise the item's `OnPickup` text and beam end fire and it leaves the
-//! ground BEFORE it is placed, then [`give_item`] (`Player::GiveItemToCharacter` @0x1803d3fc0), which story
+//! ground BEFORE it is placed, then [`give_item`] (`Player::GiveItemToCharacter`), which story
 //! gives use too. Auto-pickup (gold / potions / components) is instant; a clicked item is taken through the
 //! pickup action (face the item, the Pickup animation, take at its "Pickup" event —
-//! `PickUpAction::Execute` @0x1800834a0 / `AnimationCallback` @0x180083930), [`pick_up`].
-use crate::combat::{Combatant, MonsterKilled};
-use crate::data::GameData;
+//! `PickUpAction::Execute` / `AnimationCallback`), [`pick_up`].
+use crate::combat::MonsterKilled;
 use crate::movement::MovePath;
 use crate::nav::Nav;
-use crate::player::{Loadout, Player};
-use crate::progress::PlayerProgress;
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
-use gd_sim::combat::Rng;
+use gd_game_core::combat::Combatant;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player};
+use gd_game_core::progress::PlayerProgress;
+use gd_rules::Rng;
 use gd_sim::items::loot::{auto_pickup_radius, drop_sound, gold_with_bonus, rarity};
 use gd_sim::items::{Classification, ItemDb};
 
@@ -55,15 +56,15 @@ pub struct ContainerLoot<'w> {
     pub session: crate::session::Session<'w>,
     pub dropped: ResMut<'w, DroppedEpics>,
     /// Option: the blueprints known are optional input (no stash before `init_stash`).
-    pub stash: Option<Res<'w, crate::stash::Stash>>,
+    pub stash: Option<Res<'w, gd_game_core::stash::Stash>>,
     /// Option: without loaded levels (tests) no container is in a challenge area.
-    pub levels: Option<Res<'w, crate::levels::Levels>>,
+    pub levels: Option<Res<'w, gd_game_core::levels::Levels>>,
 }
 
 impl ContainerLoot<'_> {
     /// `container`'s drops at `level` for a player of `player_level`, the container standing at `at`
-    /// ([`gd_sim::items::loot::container_drops_in`]: the challenge area there, `sub_18003DB20`, takes
-    /// the loaded level covering `at`).
+    /// ([`gd_sim::items::loot::container_drops_in`]: the challenge area there, `LootContainer::GenerateFixedItem`,
+    /// takes the loaded level covering `at`).
     #[allow(clippy::too_many_arguments)]
     pub fn drops(
         &mut self,
@@ -114,7 +115,7 @@ impl Plugin for LootPlugin {
             Update,
             on_kill
                 .run_if(resource_exists::<PlayerProgress>)
-                .after(crate::player::PlayerSet)
+                .after(gd_game_core::player::PlayerSet)
                 .after(init_progress)
                 .before(kill_experience),
         )
@@ -123,13 +124,13 @@ impl Plugin for LootPlugin {
             (
                 story_rewards
                     .run_if(resource_exists::<PlayerProgress>)
-                    .run_if(resource_exists::<crate::inventory::Inventory>),
+                    .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                 refill_energy.after(crate::player::rebuild_profile),
                 pick_up.run_if(resource_exists::<PlayerProgress>),
             )
                 .chain()
                 .after(story_progress)
-                .after(crate::inventory::InventorySet),
+                .after(gd_game_core::inventory::InventorySet),
         )
         .add_systems(Update, (toss_flight, pickup_delay).before(pick_up));
     }
@@ -156,7 +157,7 @@ pub struct GroundItem {
 /// items here, `on_kill`) and its next load puts them back (`crate::levels` module doc). Session state
 /// (`crate::session::end_session_state`).
 #[derive(Resource, Default)]
-pub struct LevelItems(pub std::collections::HashMap<usize, Vec<SavedItem>>);
+pub struct LevelItems(pub gd_formats::collections::HashMap<usize, Vec<SavedItem>>);
 
 /// A ground item out of the world with its level: where it lay, still in flight or not, and its markers.
 pub struct SavedItem {
@@ -173,7 +174,7 @@ pub struct SavedItem {
 #[allow(clippy::type_complexity)]
 pub fn stash_ground_items(
     mut commands: Commands,
-    levels: Res<crate::levels::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
     items: Query<(
         Entity,
         &GroundItem,
@@ -197,7 +198,7 @@ pub fn stash_ground_items(
             no_beam,
             by_player,
         });
-        commands.entity(e).try_insert(crate::levels::Unload);
+        commands.entity(e).try_insert(gd_game_core::levels::Unload);
     }
 }
 
@@ -209,7 +210,7 @@ pub struct Restored;
 /// A level that loaded again gets its saved ground items back (`Level::RestoreState`), where they lay.
 pub fn restore_ground_items(
     mut commands: Commands,
-    levels: Res<crate::levels::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
     mut saved: ResMut<LevelItems>,
 ) {
     if !levels.is_changed() || saved.0.is_empty() {
@@ -250,17 +251,23 @@ pub fn on_kill(
     players: Query<&Loadout, With<Player>>,
     data: Res<GameData>,
     mut rng: Local<Option<Rng>>,
+    mut fresh: gd_game_core::session::NewSession,
     worn: Query<&crate::monsters::Worn>,
     session: crate::session::Session,
     (rt, monsters, challenged, bodies): (
-        Option<NonSend<crate::story::StoryRuntime>>,
-        Query<&crate::monsters::Monster>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        Query<&gd_game_core::monsters::Monster>,
         Query<&crate::challenge_areas::InChallengeArea>,
-        Query<(&Transform, &crate::character::Character)>,
+        Query<(&Transform, &gd_game_core::character::Character)>,
     ),
 ) {
+    // The loot stream is session state: a new session rolls a fresh one from the seeded generator
+    // (the session-Local rule; `weapon_pool::PoolRng` resets the same way).
+    if fresh.begun() {
+        *rng = None;
+    }
     let idb = &data.item_db();
-    let rng = rng.get_or_insert_with(|| Rng(crate::rng::u32(1..0x7FFF_FFFF)));
+    let rng = rng.get_or_insert_with(|| Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF)));
     for ev in events.read() {
         // Experience is `gd_game::progress::kill_experience` (after this:
         // the drops use the level before the kill).
@@ -282,7 +289,7 @@ pub fn on_kill(
                 .collect(),
             Err(_) => Vec::new(),
         };
-        // In a challenge area (`Monster` +8344): its weights and extra drop.
+        // In a challenge area (`Monster.challengeArea`): its weights and extra drop.
         let area = challenged.get(ev.entity).ok().map(|a| a.record.as_str());
         items.extend(
             gd_sim::items::loot::monster_misc_in(idb, &ev.record, &params, area, rng)
@@ -293,7 +300,7 @@ pub fn on_kill(
         // Lore notes (`lore::monster_note_drops`, `rand() % 101`).
         if let Some(r) = &rec {
             items.extend(
-                crate::lore::monster_note_drops(r, || crate::rng::u32(0..101))
+                crate::lore::monster_note_drops(r, || gd_game_core::rng::u32(0..101))
                     .into_iter()
                     .map(|n| Item {
                         base_name: n,
@@ -304,7 +311,7 @@ pub fn on_kill(
             );
         }
         let drops = items;
-        // A monster of the Shattered Realm's dungeon (`ControllerMonster::DropLoot` @0x18013a3d0): with the
+        // A monster of the Shattered Realm's dungeon (`ControllerMonster::DropLoot`): with the
         // ruleset's `disableMonsterDrops` only the `allowedItems` drop and no gold;
         // essence items are not dropped but used at once; no ascended drops and no Ascension reagents.
         let dungeon = rt.as_ref().and_then(|rt| {
@@ -319,10 +326,10 @@ pub fn on_kill(
             {
                 return None;
             }
-            gd_sim::endless::Ruleset::load(
+            gd_story::endless::Ruleset::load(
                 &data.db,
                 &d.ruleset,
-                gd_sim::endless::Ruleset::slot(&session.mode()),
+                gd_story::endless::Ruleset::slot(&session.mode()),
             )
         });
         let mut drops = drops;
@@ -437,7 +444,7 @@ pub fn on_kill(
 /// it, else its coordinates (position and rotation, no scale) moved by its body's centre of mass.
 pub fn monster_drop_point(
     tf: &Transform,
-    ch: &crate::character::Character,
+    ch: &gd_game_core::character::Character,
     attach: Option<&str>,
 ) -> Vec3 {
     if let Some(name) = attach.filter(|n| !n.is_empty()) {
@@ -447,7 +454,7 @@ pub fn monster_drop_point(
             .attach_points()
             .iter()
             .any(|p| p.name == name)
-            .then(|| crate::casting::attach_point_bind(&ch.body, name))
+            .then(|| gd_game_core::casting::attach_point_bind(&ch.body, name))
             .flatten()
             .map_or(tf.translation, |l| tf.transform_point(l));
     }
@@ -473,7 +480,7 @@ pub fn fixed_drop_point(
         .attach_points()
         .iter()
         .any(|p| p.name == "LootDrop")
-        .then(|| crate::casting::attach_point_bind(body, "LootDrop"))
+        .then(|| gd_game_core::casting::attach_point_bind(body, "LootDrop"))
         .flatten()
         .unwrap_or_else(|| crate::monster_skills::center_of_mass(false, 0.0, 1.0, body));
     let p = pos + rot * local;
@@ -484,7 +491,7 @@ pub fn fixed_drop_point(
 /// How a container releases its drops (`gd_sim::loot_toss`).
 #[derive(Clone, Copy, Debug)]
 pub struct Dropper {
-    /// Items per release (`sub_180358B20` dropper +220).
+    /// Items per release (`ItemDropper.batchSize`).
     pub batch: usize,
     /// `GetLootDropRadius`: the start's offset along the toss and up.
     pub radius: f32,
@@ -547,12 +554,12 @@ impl Tossed {
 /// is not decompiled).
 pub const GOLD_RECORD: &str = "records/items/misc/moneyobject01.dbr";
 
-/// `Entity::PhysicsUpdate` @0x18007e020: a body is taken out of the simulation after 2000 physics
-/// updates (`PhysicsSystem2` +8, counted by `PhysicsEngine2::EndUpdate`).
+/// `Entity::PhysicsUpdate`: a body is taken out of the simulation after 2000 physics
+/// updates (`PhysicsSystem2.updateCount`, counted by `PhysicsEngine2::EndUpdate`).
 pub const MAX_PHYSICS_UPDATES: u32 = 2000;
 
-/// `Actor::PhysicsUpdate` @0x180026f00: a body falling faster than this (m/s) is put to sleep (so taken
-/// out of the simulation) and `Item::PhysicsPost` @0x180325610 puts the item on the ground under it.
+/// `Actor::PhysicsUpdate`: a body falling faster than this (m/s) is put to sleep (so taken
+/// out of the simulation) and `Item::PhysicsPost` puts the item on the ground under it.
 pub const FALL_LIMIT: f32 = 25.0;
 
 /// A ground item that left the simulation without landing ([`toss_flight`]): it never gets a loot beam.
@@ -565,7 +572,7 @@ pub struct NoBeam;
 /// mesh, a 0.1 m box at the origin.
 pub fn item_box(
     data: &GameData,
-    bodies: &mut crate::creature::BodyCache,
+    bodies: &mut gd_game_core::creature::BodyCache,
     ground: &GroundItem,
 ) -> (Vec3, [f32; 3], f32) {
     let record = ground
@@ -598,7 +605,7 @@ pub fn item_box(
     )
 }
 
-/// `NavManager::FindClosestPointOnPathMesh(p, 3)` (@0x180150a40: Detour's nearest polygon within
+/// `NavManager::FindClosestPointOnPathMesh(p, 3)` (Detour's nearest polygon within
 /// (3, 10, 3) m and the closest point on it): the walkable ground under `p`, else the nearest walkable cell
 /// within 3 m, its closest point to `p`.
 pub fn path_mesh_point(nav: &Nav, p: Vec3) -> Option<Vec3> {
@@ -689,7 +696,7 @@ pub fn spawn_thrown(
     wait: f32,
     ground: GroundItem,
 ) -> Entity {
-    let yaw = gd_sim::loot_toss::random_yaw(crate::rng::u32(0..=0x7FFF));
+    let yaw = gd_sim::loot_toss::random_yaw(gd_game_core::rng::u32(0..=0x7FFF));
     // With its GlobalTransform: pickup reads it before transform propagation.
     let tf = Transform::from_translation(start).with_rotation(Quat::from_rotation_y(yaw));
     commands
@@ -706,8 +713,8 @@ pub fn spawn_thrown(
 /// Thrown items wait for their release, fly as a rigid body and land ([`Tossed`], `gd_sim::drop_body`).
 ///
 /// Each frame runs the body's fixed steps against the terrain and the static scenery near it
-/// ([`crate::collision::WorldCollision::triangles_near`]; a contact in any of them lands it), then, as `Item::PhysicsUpdate`
-/// @0x180325460, puts the item where its body is and moves it by the offset `d` from its centre of
+/// ([`crate::collision::WorldCollision::triangles_near`]; a contact in any of them lands it), then, as
+/// `Item::PhysicsUpdate`, puts the item where its body is and moves it by the offset `d` from its centre of
 /// mass to the closest path-mesh point ([`path_mesh_point`]): horizontally only while that point is below the
 /// centre, and landed with the lift when it is at or above it. So an item always comes to rest over the path
 /// mesh when one is within 3 m of its centre of mass (a drop against a wall or over a cliff edge is pulled back
@@ -727,9 +734,9 @@ pub fn toss_flight(
         &GroundItem,
     )>,
     data: Res<GameData>,
-    mut bodies: ResMut<crate::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     (coll, nav): (Res<crate::collision::WorldCollision>, Res<Nav>),
-    mut sounds: MessageWriter<crate::visuals::PlaySoundOn>,
+    mut sounds: MessageWriter<gd_game_core::visuals::PlaySoundOn>,
     mut tris: Local<Vec<gd_sim::drop_body::Tri>>,
 ) {
     for (e, mut toss, mut tf, mut gt, ground) in &mut items {
@@ -810,7 +817,7 @@ pub fn toss_flight(
         if let Some(item) = ground.item.as_ref() {
             let idb = &data.item_db();
             if let Some(pak) = drop_sound(idb, item) {
-                sounds.write(crate::visuals::PlaySoundOn {
+                sounds.write(gd_game_core::visuals::PlaySoundOn {
                     pak,
                     on: e,
                     at: origin,
@@ -822,9 +829,10 @@ pub fn toss_flight(
 
 /// The auto-pickup delay of a new ground item (s). Every class that can be auto-picked
 /// (`OneShot_Potion` / `PotionHealth` / `PotionMana` / `Scroll` / `Gold` / `Food` / `Skill`, `ItemRelic`,
-/// `QuestItem`) sets a 750 ms countdown in its constructor (e.g. `OneShot_Potion` +0xD88, `ItemRelic` +0x143C,
-/// `QuestItem` +0xCC8), its `UpdateSelf` takes the frame's ms off while it is above 0, and its `CanAutoPickup`
-/// (@0x1803bfac0, @0x18034a9c0, @0x180428390, @0x1803c1e60) refuses until it reaches 0. A click pickup ignores it.
+/// `QuestItem`) sets a 750 ms countdown in its constructor (e.g. `OneShot_Potion.autoPickupDelay`,
+/// `ItemRelic.autoPickupDelay`, `QuestItem.autoPickupDelay`), its `UpdateSelf` takes the frame's ms off while it is
+/// above 0, and its `CanAutoPickup` (`OneShot_Potion::CanAutoPickup`, `ItemRelic::CanAutoPickup`,
+/// `QuestItem::CanAutoPickup`, `OneShot_Skill::CanAutoPickup`) refuses until it reaches 0. A click pickup ignores it.
 pub const PICKUP_DELAY: f32 = 0.75;
 
 /// A ground item still in its [`PICKUP_DELAY`] (seconds left).
@@ -862,18 +870,18 @@ pub fn add_gold(gold: &mut u64, amount: i64) {
     *gold = (*gold as i64 + amount).clamp(0, MAX_GOLD as i64) as u64;
 }
 
-/// `OneShot_Gold::GetAutoPickupRadius` @0x1803c0f50 (4 m, see
+/// `OneShot_Gold::GetAutoPickupRadius` (4 m, see
 /// `gd_sim::items::loot::auto_pickup_radius`).
 pub const GOLD_PICKUP_RADIUS: f32 = 4.0;
 
-/// `Player::kAutoPickupPeriod` @0x1806d3c94 (50 ms).
+/// `Player::kAutoPickupPeriod` (50 ms).
 pub const AUTO_PICKUP_PERIOD: f32 = 0.05;
 
 /// Level-ups refill energy (`CharacterBio::Update`, see `gd_game::progress::level_up` for life). Runs after
 /// `player::rebuild_profile` so the refill is the new level's maximum.
 pub fn refill_energy(
-    mut leveled: MessageReader<crate::progress::LeveledUp>,
-    mut players: Query<(&Combatant, &mut crate::casting::Caster)>,
+    mut leveled: MessageReader<gd_game_core::progress::LeveledUp>,
+    mut players: Query<(&Combatant, &mut gd_game_core::casting::Caster)>,
 ) {
     for ev in leveled.read() {
         if let Ok((cb, mut c)) = players.get_mut(ev.player) {
@@ -884,29 +892,30 @@ pub fn refill_energy(
 
 /// Quest/conversation/script rewards (`ScriptableAction_Give*`,
 /// Lua `Player:Give*`). Items: `GiveItem` creates `count` separate items with
-/// fresh seeds; a negative count takes that many (`ScriptableAction_GiveItem::Execute` @0x18046b890 ->
-/// `Player::TakeItemFromStashes` @0x1803e4b50: the character's items, then the materials storage, the private and
-/// the transfer stash, as [`crate::stash::take`]; a Waystone kept in the stash pays for a checkpoint start); `GiveRandomItem` rolls
+/// fresh seeds; a negative count takes that many (`ScriptableAction_GiveItem::Execute` ->
+/// `Player::TakeItemFromStashes`: the character's items, then the materials storage, the private and
+/// the transfer stash, as [`gd_game_core::stash::take`]; a Waystone kept in the stash pays for a checkpoint start); `GiveRandomItem` rolls
 /// the loot table at the player's level and difficulty
 /// (`ScriptableAction_GiveRandomItem::GenerateItem`). The engine rolls in the action's `OnActivate` before
 /// `Execute` gives the items, and the reward window reads the same rolls back (`GetInfoItem`); the port rolls
 /// here when the effect runs and hands the items to the window through [`crate::quest_reward::RandomRewardRolls`].
 /// Items are equipped as any given item ([`give_item`]). No completion bonus on a given component:
-/// `ScriptableAction_GiveItem::GenerateItem` @0x18046bde0 rolls one (an `ItemRelic`'s vtable +1712 / +1696) only
-/// under the action's byte +20, which `ScriptableAction::Create` and the constructor clear and `Read` never sets.
+/// `ScriptableAction_GiveItem::GenerateItem` rolls one (`ItemRelic::RollCompletionBonus` /
+/// `ItemRelic::SetCompletionBonus`) only under the action's `ScriptableAction_GiveItem.rollBonus`, which
+/// `ScriptableAction::Create` and the constructor clear and `Read` never sets.
 #[allow(clippy::too_many_arguments)]
 pub fn story_rewards(
     mut commands: Commands,
-    mut events: MessageReader<crate::story::StoryEffect>,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
     progress: Res<PlayerProgress>,
-    mut inv: ResMut<crate::inventory::Inventory>,
+    mut inv: ResMut<gd_game_core::inventory::Inventory>,
     // Option: the stash is optional input (before `init_stash`).
-    mut stash: Option<ResMut<crate::stash::Stash>>,
+    mut stash: Option<ResMut<gd_game_core::stash::Stash>>,
     players: Query<
         (
             &Transform,
-            &crate::character::Character,
-            &crate::inventory::Requirements,
+            &gd_game_core::character::Character,
+            &gd_game_core::inventory::Requirements,
         ),
         With<Player>,
     >,
@@ -914,7 +923,7 @@ pub fn story_rewards(
     session: crate::session::Session,
     mut rolls: ResMut<crate::quest_reward::RandomRewardRolls>,
 ) {
-    use gd_sim::story::Effect;
+    use gd_story::story::Effect;
     let idb = &data.item_db();
     let Ok((t, ch, req)) = players.single() else {
         return;
@@ -933,7 +942,12 @@ pub fn story_rewards(
                 if removed < n
                     && let Some(stash) = stash.as_deref_mut()
                 {
-                    crate::stash::take(std::slice::from_ref(record), n - removed, &mut inv, stash);
+                    gd_game_core::stash::take(
+                        std::slice::from_ref(record),
+                        n - removed,
+                        &mut inv,
+                        stash,
+                    );
                 }
                 info!("story: took {n} x {record} ({removed} from the bags)");
             }
@@ -941,7 +955,7 @@ pub fn story_rewards(
                 for _ in 0..*count {
                     items.push(Item {
                         base_name: record.clone(),
-                        seed: crate::rng::u32(1..0x7FFF_FFFF),
+                        seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
                         stack_count: 1,
                         ..Default::default()
                     });
@@ -950,7 +964,7 @@ pub fn story_rewards(
             Effect::GiveRandomItem { table, count } => {
                 let level = progress.progress.level.max(1) as u32;
                 let params = session.loot(level, level);
-                let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+                let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
                 let mut rolled = Vec::new();
                 for _ in 0..*count {
                     match gd_sim::items::loot::story_random_item(idb, table, &params, &mut rng) {
@@ -973,17 +987,17 @@ pub fn story_rewards(
 #[derive(Clone, Copy)]
 pub struct Receiver<'a> {
     pub center: Vec3,
-    pub req: &'a crate::inventory::Requirements,
+    pub req: &'a gd_game_core::inventory::Requirements,
 }
 
-/// `Player::GiveItemToCharacter` @0x1803d3fc0: [`Inventory::give`]; when nothing takes the item the
+/// `Player::GiveItemToCharacter`: [`Inventory::give`]; when nothing takes the item the
 /// player says so (`InventoryFull` vox, `crate::error_vox`), tutorial page 33 unlocks, and the item is destroyed
 /// when soulbound or untradeable (`SendRemoveItemFromInventory`), else re-thrown from the player's centre
 /// `center` (`SendDropItemRandom`, as [`crate::item_drop`]: dropped by the player, so never auto-picked
 /// again). Never onto the cursor. True when the inventory took it.
 pub fn give_item(
     commands: &mut Commands,
-    inv: &mut crate::inventory::Inventory,
+    inv: &mut gd_game_core::inventory::Inventory,
     data: &GameData,
     to: Receiver,
     item: Item,
@@ -1008,7 +1022,7 @@ pub fn give_item(
         return false;
     }
     info!("inventory full: {} is thrown down", item.base_name);
-    let v = crate::item_drop::drop_velocity(crate::rng::u32(0..=0x7FFF));
+    let v = crate::item_drop::drop_velocity(gd_game_core::rng::u32(0..=0x7FFF));
     let e = spawn_thrown(
         commands,
         center,
@@ -1029,17 +1043,17 @@ pub fn give_item(
 #[allow(clippy::too_many_arguments)]
 fn take_ground_item(
     commands: &mut Commands,
-    inv: &mut Option<ResMut<crate::inventory::Inventory>>,
+    inv: &mut Option<ResMut<gd_game_core::inventory::Inventory>>,
     progress: &mut PlayerProgress,
     data: &GameData,
     cb: &Combatant,
-    req: &crate::inventory::Requirements,
-    ch: &crate::character::Character,
+    req: &gd_game_core::inventory::Requirements,
+    ch: &gd_game_core::character::Character,
     tf: &Transform,
     player: Entity,
     texts: &mut MessageWriter<crate::floating::FloatingText>,
     picked: &mut MessageWriter<ItemPickedUp>,
-    taken: &mut crate::world::ChestStates,
+    taken: &mut gd_game_core::world::ChestStates,
     e: Entity,
     gt: &GlobalTransform,
     gi: &GroundItem,
@@ -1097,13 +1111,13 @@ fn take_ground_item(
 
 /// Picking up (module doc). Auto-pickup (gold / potions / components) is instant; a clicked item
 /// (`player_orders::InteractTarget`) is taken through the pickup action: in reach the player faces the item
-/// (`LookAtNoLean`), plays the Pickup slot ([`crate::character::CharState::Pickup`]) and takes the item at its
-/// "Pickup" animation event (`PickUpAction::Execute` @0x1800834a0 / `AnimationCallback` @0x180083930); the action
-/// ends at "End". Cursor pickup reach (`MoveAndPickUpItem` @0x180162930): player radius + item radius +
+/// (`LookAtNoLean`), plays the Pickup slot ([`gd_game_core::character::CharState::Pickup`]) and takes the item at its
+/// "Pickup" animation event (`PickUpAction::Execute` / `AnimationCallback`); the action
+/// ends at "End". Cursor pickup reach (`MoveAndPickUpItem`): player radius + item radius +
 /// 1.0, 3D (the Pickup key uses +2.0, `loot_filter::pick_up_nearest`).
 #[allow(clippy::too_many_arguments)]
 pub fn pick_up(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut commands: Commands,
     mut progress: ResMut<PlayerProgress>,
@@ -1114,8 +1128,8 @@ pub fn pick_up(
             &mut crate::player_orders::InteractTarget,
             &mut MovePath,
             &Combatant,
-            &mut crate::character::Character,
-            &crate::inventory::Requirements,
+            &mut gd_game_core::character::Character,
+            &gd_game_core::inventory::Requirements,
         ),
         With<Player>,
     >,
@@ -1131,16 +1145,20 @@ pub fn pick_up(
     nav: Res<Nav>,
     (mut inv, mut taken): (
         // Option: without an inventory the pickup is skipped entirely (the item stays on the ground).
-        Option<ResMut<crate::inventory::Inventory>>,
-        ResMut<crate::world::ChestStates>,
+        Option<ResMut<gd_game_core::inventory::Inventory>>,
+        ResMut<gd_game_core::world::ChestStates>,
     ),
     (data, mut texts, mut picked): (
         Res<GameData>,
         MessageWriter<crate::floating::FloatingText>,
         MessageWriter<ItemPickedUp>,
     ),
-    (time, options, mut period): (Res<Time>, Res<crate::options::GameOptions>, Local<f32>),
-    mut callbacks: MessageReader<crate::character::AnimCallback>,
+    (time, options, mut period): (
+        Res<Time>,
+        Res<gd_game_core::options::GameOptions>,
+        Local<f32>,
+    ),
+    mut callbacks: MessageReader<gd_game_core::character::AnimCallback>,
 ) {
     let Ok((player, tf, mut interact, mut path, cb, mut ch, req)) = players.single_mut() else {
         return;
@@ -1291,13 +1309,13 @@ pub fn pick_up(
             interact.0 = None;
             path.points.clear();
         }
-    } else if ch.state != crate::character::CharState::Pickup {
+    } else if ch.state != gd_game_core::character::CharState::Pickup {
         // Start the pickup: face the item (`WorldCoords::LookAtNoLean`), play the Pickup slot once.
         let dir = (gt.translation() - tf.translation).with_y(0.0);
         if dir.length_squared() > 1e-4 {
             ch.turn.face_now(dir);
         }
-        ch.state = crate::character::CharState::Pickup;
+        ch.state = gd_game_core::character::CharState::Pickup;
         ch.playing = gd_sim::anim::AnimType::None;
         path.points.clear();
     }

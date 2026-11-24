@@ -3,23 +3,23 @@
 //!
 //! Engine.dll (Bullet 2.8x behind `PhysicsEngine2`):
 //! - The world steps at a fixed 1/60 s ([`STEP`]), at most 4 steps a frame
-//!   ([`MAX_SUBSTEPS`]; `PhysicsEngine2Impl` ctor sub_180102450,
-//!   `stepSimulation` sub_1802DBC40 drops the time beyond them: [`Clock`]),
-//!   gravity (0, −14, 0) (`PhysicsEngine2::kGravity`, world init sub_180102B20).
-//! - The body (`Entity::PhysicsSetup` @0x18007db10): a box (`collisionShape`,
+//!   ([`MAX_SUBSTEPS`]; `PhysicsEngine2Impl::PhysicsEngine2Impl`,
+//!   `btDiscreteDynamicsWorld::stepSimulation` drops the time beyond them: [`Clock`]),
+//!   gravity (0, −14, 0) (`PhysicsEngine2::kGravity`, world init `PhysicsEngine2Impl::CreateWorld`).
+//! - The body (`Entity::PhysicsSetup`): a box (`collisionShape`,
 //!   default `Box`) of the mesh bounding box's half extents times the item's
-//!   `scale`, each at least 0.1 m (`Actor::GetCollisionBox` @0x180026300,
+//!   `scale`, each at least 0.1 m (`Actor::GetCollisionBox`,
 //!   [`half_extents`]), centred on the coordinates moved by the turned, unscaled
 //!   centre of mass (the bounding-box centre, `Actor::GetCenterOfMass`); its
 //!   velocity the item's motion, its angular velocity 20 × the item's Z axis
-//!   (`Item::PhysicsSetup` @0x1803253a0, [`SPIN`]); damping 0.05 linear and 0.95
+//!   (`Item::PhysicsSetup`, [`SPIN`]); damping 0.05 linear and 0.95
 //!   angular ([`LINEAR_DAMPING`], [`ANGULAR_DAMPING`]: the description's
-//!   (1.6, 2.5, 0.05, 0.95) = sleeping thresholds and `setDamping`, sub_1802C3E80);
+//!   (1.6, 2.5, 0.05, 0.95) = sleeping thresholds and `setDamping`, `btRigidBody::setupRigidBody`);
 //!   its friction the record's `physicsFriction` (items 5, shields and off-hands 1),
 //!   its inertia the box's (`btBoxShape::calculateLocalInertia`, mass 1).
 //! - Items collide with the terrain and the static scenery only: their
 //!   collision type is 1 (Game.dll `Item::GetCollisionType`, folded with
-//!   `HotSlotOption::Validate` @0x1800167c0) = group 32, mask 1, and only the
+//!   `HotSlotOption::Validate`) = group 32, mask 1, and only the
 //!   terrain (`TerrainBase::PhysicsSetup`, a heightfield) and static meshes
 //!   (`Actor::PhysicsSetup`) are in group 1 (mask 0x7C). Drops do not touch
 //!   each other or characters (group 4, mask 0x6D). The world's restitution is
@@ -30,16 +30,16 @@
 //! - A step ([`DropBody::step`]) is Bullet's discrete one: damping
 //!   (`v · (1 − d)^dt`) and gravity into the velocity, contacts found at the
 //!   pose the last step left (points closer than 0.02 m, [`CONTACT_THRESHOLD`]),
-//!   the sequential-impulse solver (`btDynamicsWorld` ctor sub_1802D6CC0: 10
+//!   the sequential-impulse solver (`btDiscreteDynamicsWorld::btDiscreteDynamicsWorld`: 10
 //!   iterations, erp 0.2, split impulse below −0.04 m penetration with erp2 0.8
 //!   and turn erp 0.1, one friction direction along the sliding velocity), then
 //!   position and orientation (exponential map) from the solved velocities.
-//! - A contact lands the item: the physics tick callback (sub_1801028B0)
+//! - A contact lands the item: the physics tick callback (`PhysicsEngine2Impl::TickCallback`)
 //!   reports a pair that has a new contact point, the frame's
-//!   `Entity::PhysicsCollision` @0x18007e2e0 calls `Item::CollisionCallback`
+//!   `Entity::PhysicsCollision` calls `Item::CollisionCallback`
 //!   (landed flag, drop sound with the surface), the frame's remaining steps
 //!   still run with the contact solved (the box pivots on its touching corner),
-//!   and the frame's `Item::PhysicsUpdate` @0x180325460 takes it out of the
+//!   and the frame's `Item::PhysicsUpdate` takes it out of the
 //!   simulation. The item rests in that pose: nothing lays it flat. It also lands
 //!   when its centre of mass reaches the path mesh (gd-game).
 //! - Contacts persist between steps as Bullet's `btPersistentManifold`: per
@@ -100,7 +100,8 @@ const SPLIT_TURN_ERP: f32 = 0.1;
 const MAX_FRICTION: f32 = 10.0;
 /// Points a contact manifold keeps per world object (`MANIFOLD_CACHE_SIZE`).
 const MANIFOLD_POINTS: usize = 4;
-/// `btContactSolverInfo::m_warmstartingFactor` (sub_1802D6CC0: 0.85, `SOLVER_USE_WARMSTARTING` set).
+/// `btContactSolverInfo::m_warmstartingFactor` (`btDiscreteDynamicsWorld::btDiscreteDynamicsWorld`: 0.85,
+/// `SOLVER_USE_WARMSTARTING` set).
 const WARMSTARTING: f32 = 0.85;
 
 fn add(a: V3, b: V3) -> V3 {

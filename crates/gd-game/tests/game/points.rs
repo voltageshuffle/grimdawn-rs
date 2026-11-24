@@ -1,10 +1,10 @@
 //! Headless checks of point spending (the UI sends requests; the rules are
 //! applied here).
-use gd_game::combat::Combatant;
-use gd_game::player::{EffectiveSkills, Loadout};
 use gd_game::points::{Attribute, RaiseSkill, SpendAttribute};
-use gd_game::progress::PlayerProgress;
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
+use gd_game_core::player::{EffectiveSkills, Loadout};
+use gd_game_core::progress::PlayerProgress;
 
 fn game() -> Option<(TestGame, bevy::prelude::Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;

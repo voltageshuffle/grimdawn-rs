@@ -1,13 +1,13 @@
 //! Unique entity groups: the map's `Unique Entities` / `Inverse Unique Entities` instance groups place one
 //! member (or all but one) per group, and the Chthonic rifts' `Any Entity` groups activate one rift.
 //!
-//! The choice, Game.dll `GameEngine::IsUniqueEntitySelected(entity, excludeArrivals)`
-//! @0x1802e70c0: of the groups holding the entity's uid (map order,
+//! The choice, Game.dll `GameEngine::IsUniqueEntitySelected(entity, excludeArrivals)`:
+//! of the groups holding the entity's uid (map order,
 //! `gd_formats::map::sector::InstanceGroups::containing`) the first of type `Unique Entities` or `Inverse
 //! Unique Entities`, else the last one (no group: not selected). The engine keeps one chosen uid per group
-//! *name* (GameEngine +6648): a known name answers "is it this uid"; else `SelectSingleEntityFromGroup`
-//! @0x1802e7400 draws a random member (`RandomUniformLocked::IGenerate(0, n - 1)` on the engine's shared
-//! RNG, `GetRandomGen`), leaving out with the flag the rift arrival points (+6720,
+//! *name* (`GameEngine.uniqueSelections`): a known name answers "is it this uid"; else `SelectSingleEntityFromGroup`
+//! draws a random member (`RandomUniformLocked::IGenerate(0, n - 1)` on the engine's shared
+//! RNG, `GetRandomGen`), leaving out with the flag the rift arrival points (`GameEngine.riftArrivals`,
 //! [`UniqueSelection::arrivals`]), and remembers it (nothing is remembered when no member is left). The
 //! draw happens when the first member of the group loads.
 //!
@@ -16,27 +16,27 @@
 //! and not seeded, so the next session draws again (session state, reset by `session::end_session_state`).
 //!
 //! The loaders (all skipped in the editor) — [`Loader`]:
-//! - `Proxy::InitializePools` @0x180414580 (`Proxy`, `ProxyAmbush`): the first group of type `Unified
+//! - `Proxy::InitializePools` (`Proxy`, `ProxyAmbush`): the first group of type `Unified
 //!   Entities` or `Unique Entities` ends the scan; in a `Unique Entities` group and not selected the proxy
 //!   builds no pools: no monsters, no accessory chest (the treasure troves `chestproxy_treasuretrove_*`, sand
 //!   sacrifices, trap chests). `Inverse Unique Entities` is not read for proxies.
-//! - `ScriptEntity::Load` @0x1804752d0: in any `Unique Entities` group and not selected,
-//!   `Actor::LoadLite(table, false)` (Engine @0x180029a30) skips `Entity::Load` @0x18007d6e0, so the entity
+//! - `ScriptEntity::Load`: in any `Unique Entities` group and not selected,
+//!   `Actor::LoadLite(table, false)` (Engine) skips `Entity::Load`, so the entity
 //!   has no `entityHooks`: its script (bounty targets, secret and bonus chests) never runs. Inverse: not read.
-//! - `SetPiece::Load` (@0x18047b820): flags from all its groups (`Unified` 2, `Unique` 1, `Inverse` 4);
+//! - `SetPiece::Load`: flags from all its groups (`Unified` 2, `Unique` 1, `Inverse` 4);
 //!   (Unique and not selected) or (Inverse and selected): state 1, spent, no `placementChance` roll and no
 //!   `Generate`: the barriers, Nemesis spawns (`setpiece_nemesis_*`), monster totems and one-shot chests
 //!   (`d*_setpiece_oneshotchest_*`). So "Inverse" places every member but the chosen one.
-//! - `DynamicTeleporter::Load` @0x180282770: a grouped rift asks with the flag set; unselected, state 1
+//! - `DynamicTeleporter::Load`: a grouped rift asks with the flag set; unselected, state 1
 //!   (`crate::riftgates::DynamicRift`).
 //!
 //! Other classes in these groups (a few `Destructible`, `Decoration`, `TerrainDecoration`, `AreaOfInterest`
-//! in stock data) are not filtered by the engine. PORT: the draw uses the port's RNG ([`crate::rng`]).
+//! in stock data) are not filtered by the engine. PORT: the draw uses the port's RNG ([`gd_game_core::rng`]).
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::map::Uid;
 use gd_formats::map::sector::InstanceGroup;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub const UNIQUE: &str = "Unique Entities";
@@ -99,7 +99,7 @@ impl UniqueSelection {
         if free.is_empty() {
             return false;
         }
-        let pick = free[crate::rng::usize(0..free.len())];
+        let pick = free[gd_game_core::rng::usize(0..free.len())];
         debug!(
             "group {:?} ({}): {} members, chose {pick:?}",
             g.name,

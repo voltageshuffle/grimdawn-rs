@@ -5,10 +5,10 @@
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game::crafting::{CraftRequest, SlotReturn};
-use gd_game::inventory::Inventory;
-use gd_game::progress::PlayerProgress;
-use gd_game::stash::Stash;
 use gd_game::testing::{TestGame, first_blueprint};
+use gd_game_core::inventory::Inventory;
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::stash::Stash;
 
 fn item(rec: &str) -> Item {
     Item {
@@ -49,7 +49,7 @@ fn craft_request_pays_and_takes_reagents() {
     w.resource_scope(|w, mut inv: Mut<Inventory>| {
         let stash = w.resource::<Stash>();
         for (names, _) in &bp.reagents {
-            let n = gd_game::stash::count(names, &inv, stash);
+            let n = gd_game_core::stash::count(names, &inv, stash);
             inv.remove_by_record(&names[0], n);
         }
         for (names, n) in &bp.reagents {
@@ -70,7 +70,7 @@ fn craft_request_pays_and_takes_reagents() {
     let left: u32 = bp
         .reagents
         .iter()
-        .map(|(names, _)| gd_game::stash::count(names, w.resource(), w.resource()))
+        .map(|(names, _)| gd_game_core::stash::count(names, w.resource(), w.resource()))
         .sum();
     assert_eq!(left, 0, "reagents taken");
     assert!(

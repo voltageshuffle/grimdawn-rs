@@ -3,13 +3,13 @@
 //! `inventory::InvRequest`); the gd-game systems apply them. The messages go
 //! through the schedule here.
 use bevy::prelude::*;
+use gd_formats::inventory::{EquipSlot, Footprint, Sack, drop_cell};
 use gd_formats::save::item::Item;
-use gd_game::inventory::{InvRequest, Inventory, slot_index};
-use gd_game::progress::PlayerProgress;
-use gd_game::stash::{Stash, StashRequest};
 use gd_game::testing::TestGame;
 use gd_game::trade::{BuyRequest, Markets, SellRequest, Shop, TradeDone};
-use gd_sim::items::inventory::{EquipSlot, Footprint, Sack, drop_cell};
+use gd_game_core::inventory::{InvRequest, Inventory, slot_index};
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::stash::{Stash, StashRequest};
 use gd_sim::items::market::{BUYBACK_TAB, VENDOR_TABS};
 
 const MARKET: &str = "records/creatures/npcs/merchants/merchanttbl_a101.dbr";

@@ -7,34 +7,36 @@
 //! loot filter window sends [`LootFilterRequest`]s; the game reads
 //! [`LootFilter::passes`] for each ground item's label and pick.
 //!
-//! The `ItemIgnore` mode each reader passes (`Item::PassLootFilter` @0x1803278c0, modes
+//! The `ItemIgnore` mode each reader passes (`Item::PassLootFilter`, modes
 //! [`Mode`]) comes from the held keys 35 "Show Items (No Filter)" / 37 "Show Items (Filter Common)"
 //! and the HUD's "Toggle Hide All Items" flag (UI state, `grimdawn::loot`):
-//! - the ground label and loot beam: [`label_mode`] (GrimDawn.exe `sub_14028BF40`);
-//! - the cursor pick and the Pickup key: [`pick_mode`] (GrimDawn.exe `sub_140020F60`), which
-//!   adds the `lockItemPickup` option (bool 17): off, every item but Broken ones can be picked unless
-//!   key 37 is held. Its callers: the world mouse handler `sub_140021000` (cursor pick,
-//!   `grimdawn::loot`), the HUD's Pickup key `sub_14021C850` ([`PickUpNearest`]) and the controller
-//!   targeting of `sub_14002BC00` (stored at +2696 for `sub_1400318C0`; PORT: the port has no
+//! - the ground label and loot beam: [`label_mode`] (GrimDawn.exe `UIWorldDescManager::ApplyLootFilter`);
+//! - the cursor pick and the Pickup key: [`pick_mode`] (GrimDawn.exe `InGameUI::GetPickFilterMode`), which
+//!   adds the `lockItemPickup` option: off, every item but Broken ones can be picked unless
+//!   key 37 is held. Its callers: the world mouse handler `InGameUI::HandleMouseEvent` (cursor pick,
+//!   `grimdawn::loot`), the HUD's Pickup key `UIPlayerHud::PickUpNearest` ([`PickUpNearest`]) and the controller
+//!   targeting of `InGameUI::Update` (stored in `InGameUI.controllerTarget` for
+//!   `InGameUI::CollectEnemyCandidates`; PORT: the port has no
 //!   controller targeting).
 //!
 //! [`PickUpNearest`], key action 55 "Pickup" (`tagPickup`, no default key), GrimDawn.exe
-//! `sub_14021C850` (HUD key handler `sub_140211AF0`): of the items within the 10 m sphere around the
+//! `UIPlayerHud::PickUpNearest` (HUD key handler `UIPlayerHud::HandleKeyAction`): of the items within the 10 m
+//! sphere around the
 //! player, the nearest whose distance is at most the player's radius + the item's radius + 2 m and
 //! which passes the filter in the pick mode; the player controller is ordered to pick it up (walks
-//! over: [`crate::player_orders::InteractTarget`]). The item's radius is `Actor::GetRadius` @0x18002b410: the length of
+//! over: [`crate::player_orders::InteractTarget`]). The item's radius is `Actor::GetRadius`: the length of
 //! its scale vector (`Actor::Load` passes the record's `scale` three times to `SetScale`) x `actorRadius`
-//! ([`item_radius`]). The engine also skips an item that is not of interest (`Item::IsOfInterest` @0x180325360:
+//! ([`item_radius`]). The engine also skips an item that is not of interest (`Item::IsOfInterest`:
 //! the record's `cannotPickUp` is clear and `SetPickupOk` was called with true: PORT: a [`crate::loot::Tossed`]
 //! item is pickable once released, like the cursor pick) or not visible (a thrown item waiting for its release
 //! is hidden), one the player already has that cannot be picked up twice (`Character::HasItem` by record name
 //! && `cannotPickUpMultiple`, [`Inventory::has_record`]) and one that belongs to another player (single player
 //! here). PORT: a gold pile's radius is 0 (its record is not kept).
-use crate::inventory::Inventory;
-use crate::player::{Loadout, Player};
-use crate::session::MessageDrain;
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::{Loadout, Player};
+use gd_game_core::session::MessageDrain;
 use gd_sim::items::loot_filter::{COUNT, ItemFacts, Masteries, Mode, defaults, passes};
 
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -105,7 +107,7 @@ impl LootFilter {
     }
 }
 
-/// The ground label's mode (module doc; GrimDawn.exe `sub_14028BF40`): key 37 held wins
+/// The ground label's mode (module doc; GrimDawn.exe `UIWorldDescManager::ApplyLootFilter`): key 37 held wins
 /// over key 35, then the hide-all toggle.
 pub fn label_mode(show_all: bool, hide_common: bool, items_hidden: bool) -> Mode {
     if hide_common {
@@ -119,7 +121,7 @@ pub fn label_mode(show_all: bool, hide_common: bool, items_hidden: bool) -> Mode
     }
 }
 
-/// The pick mode (module doc; GrimDawn.exe `sub_140020F60`): `lockItemPickup` on, the
+/// The pick mode (module doc; GrimDawn.exe `InGameUI::GetPickFilterMode`): `lockItemPickup` on, the
 /// label's mode; off, `ShowAll`; the held keys override either way (37 over 35).
 pub fn pick_mode(
     lock_item_pickup: bool,
@@ -141,10 +143,10 @@ pub struct PickUpNearest(pub Mode);
 /// The engine's search sphere around the player (`World::GetEntitiesInSphere`, 10 m).
 const PICKUP_SPHERE: f32 = 10.0;
 
-/// A ground item's `Actor::GetRadius` (module doc) from its base record: [`crate::combat::get_radius`] with the
+/// A ground item's `Actor::GetRadius` (module doc) from its base record: [`gd_game_core::combat::get_radius`] with the
 /// engine's `actorRadius` default (a missing `scale` is 1, `Actor::Load`).
 pub fn item_radius(rec: &gd_formats::arz::Record) -> f32 {
-    crate::combat::get_radius(Some(rec), crate::combat::ACTOR_RADIUS)
+    gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS)
 }
 
 /// Walks the player over to the nearest item the filter lets it pick (module doc).
@@ -155,12 +157,12 @@ pub fn pick_up_nearest(
     mut scratch: Local<gd_sim::nav::PathScratch>,
     filter: Res<LootFilter>,
     inv: Option<Res<Inventory>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     nav: Res<crate::nav::Nav>,
     mut players: Query<
         (
             &Transform,
-            &mut crate::combat::Combatant,
+            &mut gd_game_core::combat::Combatant,
             Option<&Loadout>,
             &mut crate::player_orders::InteractTarget,
             &mut crate::movement::MovePath,
@@ -233,7 +235,7 @@ pub fn init_loot_filter(
     mut commands: Commands,
     // Option: `have` is the existence check (this system creates the filter); `loaded` is absent for a new character.
     have: Option<Res<LootFilter>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     players: Query<(), With<Player>>,
 ) {
     if have.is_some() || players.is_empty() {
@@ -279,13 +281,13 @@ impl Plugin for LootFilterPlugin {
                         .run_if(resource_exists::<LootFilter>),
                 )
                     .chain()
-                    .after(crate::inventory::InventorySet),
+                    .after(gd_game_core::inventory::InventorySet),
             )
             .add_systems(
                 Update,
                 pick_up_nearest
                     .after(LootFilterStage::Apply)
-                    .after(crate::player::PlayerSet)
+                    .after(gd_game_core::player::PlayerSet)
                     .before(crate::loot::pick_up)
                     .run_if(resource_exists::<LootFilter>),
             );

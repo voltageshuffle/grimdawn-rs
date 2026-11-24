@@ -2,39 +2,39 @@
 //! reanimators of the Enclave and the roguelike dungeon): sisters sharing one
 //! eye. Game.dll:
 //!
-//! - The constructor @0x18012d1a0 adds the controller to the class's one
-//!   list (`s_vGraeaes`, `AddToList` @0x18012d300; the destructor removes
+//! - The constructor adds the controller to the class's one
+//!   list (`s_vGraeaes`, `AddToList`; the destructor removes
 //!   it), so every Graeae in the world is a sister of every other; a
 //!   Graeae made while the list is empty sets `s_bFirstFire`.
-//! - `Load` @0x18012d800: `eyeTimeMin` / `eyeTimeMax` (s), `eyeFleeChance`,
+//! - `Load`: `eyeTimeMin` / `eyeTimeMax` (s), `eyeFleeChance`,
 //!   `eyeDodgeChance`, `eyeLeadChance` (x 0.01), `eyeRandomRepositionChance`.
-//! - `InitialUpdate` @0x18012d8d0 keeps the attack skill (+1256) and the
-//!   eight special slots (+1304, 28 bytes each) aside, empties every slot and
+//! - `InitialUpdate` keeps the attack skill (`ControllerMonster.attackSkill`) and the
+//!   eight special slots (`ControllerMonster.specialAttacks`, 28 bytes each) aside, empties every slot and
 //!   puts back only slot 3 (`specialAttack4`, its delay at 0 and its timeout
 //!   whole); the controller's `FleeChance`, `DodgeChance`, the difficulty's
 //!   `LeadChance` and `randomRepositionChance` are kept aside too.
-//! - `GetEye` @0x18012dee0: the eye flag (+2388) is set and its timer
-//!   (+2392) zeroed; the attack becomes slot 0's skill (`specialAttack`),
+//! - `GetEye`: the eye flag (`ControllerGraeae.hasEye`) is set and its timer
+//!   (`ControllerGraeae.eyeTimer`) zeroed; the attack becomes slot 0's skill (`specialAttack`),
 //!   slots 1 and 4 (`specialAttack2` / `5`) come back rearmed and slot 3
 //!   goes; the chances become the `eye*` ones; `ToggleEyeSkill(true)`.
-//!   `LoseEye` @0x18012e040 is the reverse (the record's attack, slot 3 back
+//!   `LoseEye` is the reverse (the record's attack, slot 3 back
 //!   rearmed, slots 1 and 4 gone, the kept chances, `ToggleEyeSkill(false,
 //!   force)`).
-//! - `ToggleEyeSkill` @0x18012dbe0 pushes the "ToggleEye" temporary state
+//! - `ToggleEyeSkill` pushes the "ToggleEye" temporary state
 //!   (`ControllerGraeaeStateToggleEye`: 2000 ms doing nothing,
-//!   `OnBegin` @0x18012e470 / `OnUpdate` @0x18012e480), then uses the eye
+//!   `OnBegin` / `OnUpdate`), then uses the eye
 //!   skill, slot 2's (`specialAttack3`, a toggle) when it is enabled and its
 //!   on state differs from the wanted one (or forced): an
 //!   `ActivateSkillConfigCmd` at once for an `instantCast` skill (activation
 //!   type 2), else `UseSkill` on itself. With the eye given, unless
-//!   `s_bFirstFire`, it also uses `chainNextSkill` (+1664) on itself; the
+//!   `s_bFirstFire`, it also uses `chainNextSkill` on itself; the
 //!   flag is cleared.
-//! - `Update` @0x18012d720: when no sister holds the eye this one takes it;
+//! - `Update`: when no sister holds the eye this one takes it;
 //!   the holder's timer counts up and from `eyeTimeMin` on, each update
 //!   with `IGenerate(0, 100) == 0` or past `eyeTimeMax`, the eye goes to
-//!   `GetNextGraeae` @0x18012d460 (a random other living sister,
+//!   `GetNextGraeae` (a random other living sister,
 //!   `IGenerate(0, n - 1)`; none: kept).
-//! - "Dying" (`ControllerGraeaeStateDying::OnBegin` @0x18012e2e0) and "Dead"
+//! - "Dying" (`ControllerGraeaeStateDying::OnBegin`) and "Dead"
 //!   pass a held eye on the same way.
 //!
 //! The port: [`Graeae`] holds the kept kit (`MonsterSkills::set_kit`
@@ -44,13 +44,15 @@
 //! non-instant one with its cast animation); the random draws use the
 //! port's RNG; the lead chance is set for every difficulty (the engine
 //! writes the current one's, the only one read).
-use crate::casting::{Kind, kind_of};
-use crate::character::Character;
-use crate::combat::{ControllerClass, Dead, MonsterAi};
-use crate::data::GameData;
-use crate::monster_skills::{MonsterSkills, Special};
-use crate::monsters::Monster;
+use crate::combat::MonsterAi;
+use crate::monster_skills::MonsterSkills;
 use bevy::prelude::*;
+use gd_game_core::casting::{Kind, kind_of};
+use gd_game_core::character::Character;
+use gd_game_core::combat::{ControllerClass, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::monster_skills::Special;
+use gd_game_core::monsters::Monster;
 
 pub struct GraeaePlugin;
 
@@ -108,9 +110,9 @@ impl Chances {
 /// A Graeae's controller state (module docs).
 #[derive(Component, Debug)]
 pub struct Graeae {
-    /// Holds the eye (+2388).
+    /// Holds the eye (`ControllerGraeae.hasEye`).
     pub eye: bool,
-    /// Seconds with the eye (+2392).
+    /// Seconds with the eye (`ControllerGraeae.eyeTimer`).
     timer: f32,
     /// `eyeTimeMin`, `eyeTimeMax` (s).
     time: (f32, f32),
@@ -232,7 +234,7 @@ fn set_eye(
     g: &mut Graeae,
     ai: &mut MonsterAi,
     ms: &mut MonsterSkills,
-    cb: &crate::combat::Combatant,
+    cb: &gd_game_core::combat::Combatant,
     tf: &mut Transform,
     ch: &mut Character,
     on: bool,
@@ -281,7 +283,7 @@ fn next_sister(me: Entity, sisters: &[(Entity, bool)]) -> Option<Entity> {
         .filter(|(e, alive)| *e != me && *alive)
         .map(|s| s.0)
         .collect();
-    (!others.is_empty()).then(|| others[crate::rng::usize(0..others.len())])
+    (!others.is_empty()).then(|| others[gd_game_core::rng::usize(0..others.len())])
 }
 
 #[allow(clippy::type_complexity)]
@@ -295,7 +297,7 @@ fn update(
         &mut Graeae,
         &mut MonsterAi,
         &mut MonsterSkills,
-        &crate::combat::Combatant,
+        &gd_game_core::combat::Combatant,
         &mut Transform,
         &mut Character,
         Has<Dead>,
@@ -340,7 +342,7 @@ fn update(
         }
         g.timer += dt;
         if g.timer >= g.time.0
-            && (crate::rng::i32(0..101) == 0 || g.timer > g.time.1)
+            && (gd_game_core::rng::i32(0..101) == 0 || g.timer > g.time.1)
             && let Some(n) = next_sister(e, &sisters)
         {
             pass.push((e, n));

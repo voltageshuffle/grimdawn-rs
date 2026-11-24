@@ -10,18 +10,16 @@
 //!   (`Levels`, `StreamedMap` and `StreamFocus` are rebuilt by `world::open_world` → `world::install_world`).
 //!
 //! Caches (models, textures, fonts, animations, sounds) stay; what the ended session alone used leaves them
-//! with its last holder (`gd_game::weak_cache`), and the freed memory goes back to the system (`heap.rs`). System
+//! with its last holder (`gd_game_core::weak_cache`), and the freed memory goes back to the system (`heap.rs`). System
 //! `Local`s cannot be reset from outside:
-//! version counters they compare for equality start from [`gd_game::session::SessionEpoch`] so a stale
+//! version counters they compare for equality start from [`gd_game_core::session::SessionEpoch`] so a stale
 //! one never matches a new session's resource; the other latches left are test hooks (they do not
 //! fire twice) and signature caches that differ from the reset state.
-use crate::session::AppState;
+use gd_ui::state::session::AppState;
+use gd_ui::state::exit::ExitToMenu;
 use bevy::prelude::*;
-use std::collections::HashSet;
+use gd_formats::collections::HashSet;
 
-/// Sent by the game menu's Exit (after its save): ends the session and shows the main menu.
-#[derive(Message)]
-pub struct ExitToMenu;
 
 pub struct ExitPlugin;
 
@@ -75,7 +73,7 @@ fn end_session(world: &mut World) {
     let mut doomed = doomed;
     doomed.extend(
         world
-            .resource::<gd_game::levels::Levels>()
+            .resource::<gd_game_core::levels::Levels>()
             .loaded
             .values()
             .copied()
@@ -83,7 +81,7 @@ fn end_session(world: &mut World) {
     );
     doomed.extend(
         world
-            .resource::<crate::doll::Dolls>()
+            .resource::<gd_ui::doll::Dolls>()
             .entities()
             .into_iter()
             .filter(|e| baseline.contains(e)),
@@ -97,21 +95,21 @@ fn end_session(world: &mut World) {
     gd_game::session::end_session_state(world);
     // The same in this crate.
     remove::<gd_game::compass::CompassMode>(world);
-    reset::<crate::death::GameOverBox>(world);
+    reset::<gd_ui::state::death::GameOverBox>(world);
     reset::<gd_game::quest_reward::RandomRewardRolls>(world);
-    // The entrance ↔ exit pairs the player took (`Player` +18992, freed with the `Player`).
+    // The entrance ↔ exit pairs the player took (`Player.dungeonExits`, freed with the `Player`).
     reset::<gd_game::doors::DungeonExits>(world);
     remove::<gd_render::render::env::Ambiance>(world);
     remove::<gd_render::render::shadow::SunShadowSettings>(world);
-    remove::<crate::crafting::CraftList>(world);
-    world.remove_non_send::<gd_game::story::StoryRuntime>();
+    remove::<gd_ui::state::crafting::CraftList>(world);
+    world.remove_non_send::<gd_game_core::story::StoryRuntime>();
     // Startup resources that hold session state.
-    reset::<crate::trade::Trade>(world);
+    reset::<gd_ui::state::trade::Trade>(world);
     reset::<crate::casting::MoveKeyHeld>(world);
     reset::<gd_game::movement::MouseCommand>(world);
     reset::<gd_render::decal::DecalReceivers>(world);
-    reset::<crate::pets::PetSelection>(world);
-    reset::<crate::ascendant::AltarMenu>(world);
+    reset::<gd_ui::state::pets::PetSelection>(world);
+    reset::<gd_ui::state::ascendant::AltarMenu>(world);
     reset::<crate::doors::PendingTravel>(world);
     reset::<gd_game::teleport::TeleportActivity>(world);
     reset::<crate::world::TravelPreload>(world);
@@ -119,11 +117,11 @@ fn end_session(world: &mut World) {
     reset::<gd_render::render::env::TimeOfDay>(world);
     reset::<gd_render::camera::ShakeState>(world);
     gd_render::camera::reset_cameras(world);
-    reset::<crate::hover::Hovered>(world);
+    reset::<gd_ui::state::hover::Hovered>(world);
     reset::<crate::controller_target::ControllerPick>(world);
-    reset::<crate::loot::HoveredLabel>(world);
+    reset::<gd_ui::state::loot::HoveredLabel>(world);
     reset::<crate::loot::ListedLabels>(world);
-    reset::<crate::loot::ItemsHidden>(world);
+    reset::<gd_ui::state::loot::ItemsHidden>(world);
     reset::<crate::loot::LabelMode>(world);
     reset::<crate::loot::PickMode>(world);
     reset::<crate::audio::Ambience>(world);
@@ -137,10 +135,12 @@ fn end_session(world: &mut World) {
     // The sound cache stays; the listener's voice count and ears describe despawned entities.
     world.resource_mut::<crate::audio::Sounds>().listener = Default::default();
     crate::ui::reset_session(world);
-    let _ = world.run_system_cached(crate::world::open_world);
-    world.resource_mut::<gd_game::session::SessionEpoch>().0 += 1;
+    let _opened = world.run_system_cached(crate::world::open_world);
+    world
+        .resource_mut::<gd_game_core::session::SessionEpoch>()
+        .0 += 1;
     // The main menu again.
-    let _ = world.run_system_cached(crate::menu::setup);
+    let _menu = world.run_system_cached(crate::menu::setup);
 }
 
 /// Resources that deliberately survive a session: caches of loaded data, settings, the process's own state.
@@ -151,28 +151,28 @@ fn end_session(world: &mut World) {
 const KEEP: &[&str] = &[
     // The achievement manager is the game engine's: it lives for the process (`gd_game::achievements`).
     "gd_game::achievements::Achievements",
-    "grimdawn::ui::additive::AdditiveCache",
-    "gd_game::character::AnimCache",
+    "gd_ui_kit::additive::AdditiveCache",
+    "gd_game_core::character::AnimCache",
     // Parsed meshes by path (creature bodies and the meshes of render models); `session::set_mod_data` drops them
     // when the mounted mod changes.
-    "gd_game::creature::BodyCache",
+    "gd_game_core::creature::BodyCache",
     // Bevy's, set once in main.rs.
     "ClearColor",
     // The edit boxes' clipboard (trade.rs): stands in for the OS clipboard, which outlives sessions.
-    "grimdawn::trade::Clipboard",
+    "gd_ui::state::trade::Clipboard",
     // `GD_CENSUS`: the entities alive when the census began (dev/audit.rs); its `OnEnter(Loading)` takes it again.
     "grimdawn::dev::audit::Baseline",
     // Bevy's, shadow settings (render/shadow.rs).
     "bevy::light::DirectionalLightShadowMap",
-    "grimdawn::ui::text::FontCache",
+    "gd_ui_kit::text::FontCache",
     "gd_render::fx::FxAssets",
     // `GD_FPS`: the last effect update's time (dev/fx.rs).
     "gd_render::fx::FxStats",
     // Render world: kept in sync from the main world (rebuilt on change, render/gbuffer_blend.rs).
     "gd_render::render::gbuffer_blend::GBufferBlendEntities",
     // The archives and the database; `end_session_state` unmounts the mod (`session::set_mod_data`).
-    "gd_game::data::GameData",
-    "gd_game::options::GameOptions",
+    "gd_game_core::data::GameData",
+    "gd_game_core::options::GameOptions",
     // The engine's default textures and environment (render/mod.rs).
     "gd_render::render::GdDefaults",
     // The grass offset fields' shared buffer and its ranges: a field's range is freed by the
@@ -189,10 +189,10 @@ const KEEP: &[&str] = &[
     // Render world: the G-buffer blend items held between two systems of one frame (render/gbuffer_blend.rs).
     "gd_render::render::gbuffer_blend::HeldGBufferBlend",
     // The process's test hooks.
-    "gd_game::hooks::Hooks",
-    "grimdawn::ui::keys::KeyBindings",
+    "gd_game_core::hooks::Hooks",
+    "gd_ui_kit::keys::KeyBindings",
     // The achievement manager is the game engine's: kill counts persist across sessions of the process
-    // (sub_1803559E0, gd-game achievements.rs).
+    // (`AchievementKill::OnCreatureKilled`, gd-game achievements.rs).
     "gd_game::achievements::KillCounts",
     // The CRT `rand()` stream of the FireLights (world.rs): the process's, never reseeded.
     "gd_render::render::lights::LightRand",
@@ -209,7 +209,7 @@ const KEEP: &[&str] = &[
     // The `detailLevel` render setting (settings.rs writes it); not session state.
     "gd_render::render::grass::GrassQuality",
     // The UI-scale slider (`settings::apply_ui_scale` writes it from the options and the app state).
-    "grimdawn::settings::UiScaleOption",
+    "gd_ui_kit::state::settings::UiScaleOption",
     "gd_render::render::post::OutlineGlow",
     // Render world: refilled from the main world at every extract (render/distort.rs).
     "gd_render::render::distort::PostObjectEntities",
@@ -217,19 +217,23 @@ const KEEP: &[&str] = &[
     "gd_render::render::post::CompositeEntities",
     // Render pipelines and shader handles (render/post.rs).
     "gd_render::render::post::PostPipelines",
-    "gd_game::session::SaveDir",
+    "gd_game_core::session::SaveDir",
     // Dev scenes (`GD_MODELS`, `GD_CHARS`) that place the camera themselves (dev/mod.rs): no session.
     "grimdawn::dev::SceneCamera",
     // The teardown count itself: `end_session` advances it.
-    "gd_game::session::SessionEpoch",
+    "gd_game_core::session::SessionEpoch",
     // The shared files this process must not write (unreadable, stash.rs): keyed by the write target,
-    // brought up to date by every `read_shared`, not session state.
-    "gd_game::stash::SharedFiles",
+    // brought up to date by every `read_guarded`, not session state.
+    "gd_game_core::stash::SharedFiles",
     // `GD_SHOT` / `GD_SHOT_ON`: one screenshot per process (dev/autoshot.rs, gd-game visuals.rs).
     "grimdawn::dev::autoshot::Shot",
-    "gd_game::visuals::ShotTrigger",
+    "gd_game_core::visuals::ShotTrigger",
     // The sound cache; `end_session` resets its listener by hand.
     "grimdawn::audio::Sounds",
+    // The OS device list (audio/devices.rs): the host's, not session state; the options window refreshes it.
+    "grimdawn::audio::devices::AudioDevices",
+    // The GPU adapter list (render_devices.rs): the host's, not session state; the options window refreshes it.
+    "grimdawn::render_devices::RenderAdapters",
     // `GD_CHARS`: the character test scene (dev/chars.rs).
     "grimdawn::dev::chars::TestScene",
     "gd_render::textures::Textures",
@@ -242,7 +246,7 @@ const KEEP: &[&str] = &[
     "gd_render::render::reflection::ReflectionTarget",
     // The window manager's close-table: invariant config, `Default` builds the same rows every session
     // (ui/window.rs); no session state.
-    "grimdawn::ui::window::WindowPolicy",
+    "gd_ui::window::WindowPolicy",
     // The `ProcCast` read position (casting/mod.rs): a cursor into a process-lifetime message queue, no
     // session data (a proc left unread names a despawned caster and is skipped).
     "gd_game::casting::ProcCursor",

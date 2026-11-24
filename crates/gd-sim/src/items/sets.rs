@@ -9,20 +9,20 @@
 //! (`ContributeMiscCharAttributes`).
 //!
 //! A set's skills (Game.dll): the set record holds an
-//! `ItemSkillAugment` (+1600, loaded like an item's, `sub_18034C880`):
+//! `ItemSkillAugment` (`ItemSet.skillAugment`, loaded like an item's, `ItemSkillAugment::Load`):
 //! `augmentSkillName/Level{n}`, `augmentMasteryName/Level{n}`,
-//! `augmentAllLevel` (each per count, `sub_18034D4F0`), the granted
+//! `augmentAllLevel` (each per count, `ItemSkillAugment::ApplyAugments`), the granted
 //! skill `itemSkillName` with `itemSkillLevel` (per count) and
 //! `itemSkillAutoController`, and `itemSkillLevelEq` (the granted level;
 //! evaluated once at load with the owner's variables, a parse failure or an
 //! empty one = 1; stock sets: the constants 1, 2 or 3).
 //! `ItemEquipment::AttachItem` / `DetachItem` run `ItemSet::
-//! SkillAugmentInstall` @0x18034b540 / `SkillAugmentRemove` @0x18034b5d0
+//! SkillAugmentInstall` / `SkillAugmentRemove`
 //! with the new piece count: the previous count's skill bonuses come off
-//! (`sub_18034D680`, `RemoveSkillLevelAugment`), the set's item skills go
+//! (`ItemSkillAugment::RemoveAugments`, `RemoveSkillLevelAugment`), the set's item skills go
 //! (`SkillManager::RemoveItemSkills` with the set's id: an active one starts
 //! its cooldown and stops), then the bonuses of the new count go on
-//! (`sub_18034D4F0`) and `sub_18034DCB0` grants the skill when
+//! (`ItemSkillAugment::ApplyAugments`) and `ItemSkillAugment::GrantItemSkills` grants the skill when
 //! `itemSkillLevel[min(count − 1, len − 1)]` ≠ 0 (or the array is empty):
 //! `SkillManager::AddItemSkills` with the set's id, so the skill is an item
 //! skill like a worn item's (`gd_game::player` docs, item toggles). So
@@ -30,7 +30,7 @@
 //! granted with all four pieces worn, at level 1, and goes when one comes
 //! off. [`set_skills`], [`set_skill_bonuses`].
 //! PORT: an equation with variables takes the set record's `itemLevel` as
-//! `itemLevel` (the set's variable table, +1408, is not traced; no stock
+//! `itemLevel` (the set's variable table, `ItemSet.variableTable`, is not traced; no stock
 //! set uses one).
 use super::db::ItemDb;
 use super::resolve::{Attr, ResolvedItem, Source, record_attrs_at};
@@ -93,7 +93,7 @@ pub fn set_skills(db: &Database, items: &[Item]) -> Vec<SetSkill> {
         let item_level = rec.f32("itemLevel").unwrap_or(1.0);
         let level = rec
             .str("itemSkillLevelEq")
-            .and_then(|e| crate::expr::Expr::parse(e).ok())
+            .and_then(|e| gd_rules::expr::Expr::parse(e).ok())
             .map(|e| e.eval(&|v| v.eq_ignore_ascii_case("itemLevel").then_some(item_level)))
             .unwrap_or(1.0);
         out.push(SetSkill {
@@ -111,7 +111,7 @@ pub fn set_skills(db: &Database, items: &[Item]) -> Vec<SetSkill> {
 
 /// The set skills granted again on a piece-count change (module docs:
 /// `SkillAugmentInstall` / `SkillAugmentRemove` remove the set's item skills
-/// on every count change from a non-zero one, `sub_18034DCB0` grants them
+/// on every count change from a non-zero one, `ItemSkillAugment::GrantItemSkills` grants them
 /// anew): the `granted` skills (now, [`set_skills`]) whose set was
 /// worn `before` with another count. A set's skill that is granted at both
 /// counts is a new item skill: an active one's cooldown started, then off

@@ -61,14 +61,14 @@ fn dress_shrines(
 /// A script's `shrine:SetLocked` names a story object: its record and spot.
 /// A riftgate's `SetLocked` likewise (`gd_game::riftgates::RiftgateLock`).
 fn story_locks(
-    mut events: MessageReader<crate::story::StoryEffect>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut out: MessageWriter<ShrineLock>,
     mut gates: MessageWriter<gd_game::riftgates::RiftgateLock>,
 ) {
-    use gd_sim::story::ObjClass;
+    use gd_story::story::ObjClass;
     for ev in events.read() {
-        let gd_sim::story::Effect::SetLocked { id, locked } = ev.0 else {
+        let gd_story::story::Effect::SetLocked { id, locked } = ev.0 else {
             continue;
         };
         let Some(rt) = rt.as_ref() else { continue };

@@ -1,16 +1,16 @@
 //! The game camera's view: `GAME::WorldCamera` (vertical FOV 30°, near 1, far 250) orbiting a target, with the
 //! distance/pitch limits from `records/game/gameengine.dbr`, its placement and the shake. The input that moves it
 //! (zoom, rotation, follow) is `camera_input.rs`'s. (Game.dll `GameCamera`):
-//! - Defaults (`GameEngine::LoadFromDatabase`, `GameCamera::ResetToDefaults` @0x1802be990, also run by
+//! - Defaults (`GameEngine::LoadFromDatabase`, `GameCamera::ResetToDefaults`, also run by
 //!   `GameEngine::ExitPlayingMode`): distance `CameraDistanceDefault`, yaw 50° (0.8726646 rad), the pitch of that distance.
-//! - The pitch follows the distance (`GameCamera::UpdatePitch` @0x1802bfcd0, [`pitch_for`]): linear from
+//! - The pitch follows the distance (`GameCamera::UpdatePitch`, [`pitch_for`]): linear from
 //!   `CameraPitchMin` at `CameraDistanceMin` to `CameraPitchDefault` at `CameraDistanceDefault`, then to
 //!   `CameraPitchMax` at `CameraDistanceMax` (stock 20 m 38°, 36 m 46°, 48 m 52°).
-//! - Target (`GameCamera::GetTarget` @0x1802be6e0): the player's "Camera" attach point (the hero mesh has none, so
-//!   its origin, `GraphicsMesh::GetAttachedCoords` @Engine 0x1800b8460) raised 1 m; the eye is `distance` from it
-//!   along yaw / pitch (`WorldCamera::CalculateViewPosition` @Engine 0x180229580, [`GameCamera::eye`]).
-use crate::data::GameData;
+//! - Target (`GameCamera::GetTarget`): the player's "Camera" attach point (the hero mesh has none, so
+//!   its origin, Engine.dll `GraphicsMesh::GetAttachedCoords`) raised 1 m; the eye is `distance` from it
+//!   along yaw / pitch (Engine.dll `WorldCamera::CalculateViewPosition`, [`GameCamera::eye`]).
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
 
 #[derive(Component)]
 pub struct GameCamera {
@@ -26,9 +26,9 @@ pub struct GameCamera {
     pub pitch_limits: [f32; 3],
     /// The distance a wheel zoom eases to (`None` once reached).
     pub zoom: Option<f32>,
-    /// The yaw [`GameCamera::yaw`] eases to (`GameCamera` +359).
+    /// The yaw [`GameCamera::yaw`] eases to (`GameCamera.wantedYaw`).
     pub wanted_yaw: f32,
-    /// A held rotate key (+358): 1 left (the wanted yaw grows), -1 right, 0 none.
+    /// A held rotate key (`GameCamera.rotation`): 1 left (the wanted yaw grows), -1 right, 0 none.
     pub rotation: i8,
 }
 
@@ -76,8 +76,9 @@ impl Plugin for CameraPlugin {
     }
 }
 
-/// The world camera's projection (module doc). WorldCamera::WorldCamera @0x180228cf0:
-/// fov 0.5236 (30°), near 1, far 250 (copied to +176 by `WorldCamera::Update`; Game.dll never changes it).
+/// The world camera's projection (module doc). `WorldCamera::WorldCamera`:
+/// fov 0.5236 (30°), near 1, far 250 (copied to `WorldCamera.farPlane` by `WorldCamera::Update`; Game.dll never
+/// changes it).
 pub fn world_projection() -> PerspectiveProjection {
     PerspectiveProjection {
         fov: std::f32::consts::FRAC_PI_6,
@@ -87,7 +88,11 @@ pub fn world_projection() -> PerspectiveProjection {
     }
 }
 
-fn spawn_camera(mut commands: Commands, data: Res<GameData>, hooks: Res<crate::hooks::Hooks>) {
+fn spawn_camera(
+    mut commands: Commands,
+    data: Res<GameData>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+) {
     let eng = data.db.get("records/game/gameengine.dbr");
     let get = |k: &str, d: f32| eng.as_ref().and_then(|r| r.f32(k)).unwrap_or(d);
     let mut cam = GameCamera {
@@ -181,7 +186,7 @@ pub fn apply_camera(mut cams: Query<(&GameCamera, &mut Transform)>) {
     }
 }
 
-pub use gd_game::visuals::CameraShake;
+pub use gd_game_core::visuals::CameraShake;
 
 /// The running shake: milliseconds left, the total (1.25 x the duration) and the amplitude.
 #[derive(Resource, Default)]
@@ -191,7 +196,7 @@ pub struct ShakeState {
     amp: f32,
 }
 
-/// `GameCamera::Update` @0x1802bf870: with `r` ms left of `total`, `q = total / 4`: the envelope is
+/// `GameCamera::Update`: with `r` ms left of `total`, `q = total / 4`: the envelope is
 /// `r / q` below `q`, 1 above, and `1 - (r - (total - q)) / q` above `total - q` (a fade in from 0.8); the camera
 /// is shifted by `amp * env * (B cos(0.02 r) + 0.5 A sin(0.02 r))` metres, A and B the camera's two axes (PORT:
 /// A = right, B = up; the engine's pair is not resolved), a pure translation that ends with the timer.
@@ -199,7 +204,7 @@ pub struct ShakeState {
 fn apply_shake(
     mut events: MessageReader<CameraShake>,
     mut state: ResMut<ShakeState>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     time: Res<Time>,
     mut cams: Query<(&Camera, &GlobalTransform, &mut Transform), With<GameCamera>>,
 ) {

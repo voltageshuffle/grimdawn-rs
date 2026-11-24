@@ -1,24 +1,24 @@
 //! The credits roll (the main menu's Credits button, menu state 9).
 //!
-//! Grim Dawn.exe (sub_1400BE320 case 9, sub_1400A6440 window, parser sub_1400A6AF0, draw sub_1400A7620, update
-//! sub_1400A7B30): the file `text_en/credits` (UTF-8, not localised), one entry per line,
-//! its first four characters `<h1>` .. `<h5>` pick the style (`style_mainmenu_creditsh1` .. `h4`, `creditsbody1` for h5;
-//! sizes 40, 34, 34, 32, 24) and are stripped, any other line (blank ones too) is the default style; a line advances
-//! `floor(size * 1.1)` px (a blank line 17), centred on the screen's middle. The roll starts with the first line at
-//! the screen's height and rises 0.05994 px/ms; Space toggles 4x; lines fade in over y/H 0.2 to 0.4 and out over 0.7 to
-//! 0.9; it starts again when the last line has left the top (never ends by itself). The 3D menu scene stays behind. The
-//! menu music fades out over 2.5 s while `Sound/Music/Music_Credits.ogg` loops; leaving (the Back button, `tagMenuButton04`,
-//! or Esc) fades it back in. A mouse click elsewhere does nothing. Back activates on the left press (the shared rule,
-//! `widgets::button_pressed`), read from the raw mouse messages: the menu's `swallow_input` has already reset this
-//! frame's `ButtonInput` when the roll runs.
+//! Grim Dawn.exe (`MainMenu::SetState` case 9, `CreditsWindow::CreditsWindow` window, parser `CreditsWindow::Parse`,
+//! draw `CreditsWindow::Render`, update `CreditsWindow::Update`): the file `text_en/credits` (UTF-8, not localised),
+//! one entry per line, its first four characters `<h1>` .. `<h5>` pick the style (`style_mainmenu_creditsh1` .. `h4`,
+//! `creditsbody1` for h5; sizes 40, 34, 34, 32, 24) and are stripped, any other line (blank ones too) is the default
+//! style; a line advances `floor(size * 1.1)` px (a blank line 17), centred on the screen's middle. The roll starts
+//! with the first line at the screen's height and rises 0.05994 px/ms; Space toggles 4x; lines fade in over y/H 0.2 to
+//! 0.4 and out over 0.7 to 0.9; it starts again when the last line has left the top (never ends by itself). The 3D menu
+//! scene stays behind. The menu music fades out over 2.5 s while `Sound/Music/Music_Credits.ogg` loops; leaving (the
+//! Back button, `tagMenuButton04`, or Esc) fades it back in. A mouse click elsewhere does nothing. Back activates on
+//! the left press (the shared rule, `widgets::button_pressed`), read from the raw mouse messages: the menu's
+//! `swallow_input` has already reset this frame's `ButtonInput` when the roll runs.
 //! PORT: the clip band (80 px from the top, 100 from the bottom) skips whole lines; the Back button is a text button in
 //! the h2 style at the bottom left; a closed roll keeps nothing (the offset restarts at the screen height).
 use super::UiAssets;
-use crate::data::GameData;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::Rect as URect;
+use gd_game_core::data::GameData;
 
 const STYLES: [&str; 5] = [
     "records/ui/styles/text/style_mainmenu_creditsh1.dbr",
@@ -105,7 +105,7 @@ fn advance(style: Option<usize>, s: f32) -> f32 {
     ((style.map_or(BLANK, |i| SIZES[i] * 1.1)) * s).floor()
 }
 
-/// The roll's alpha at `y / H` (`sub_1400A7620`).
+/// The roll's alpha at `y / H` (`CreditsWindow::Render`).
 fn alpha(r: f32) -> f32 {
     if r > 0.7 {
         1.0 - ((r - 0.7) * 5.0).min(1.0)
@@ -130,11 +130,11 @@ fn roll(
     mut sounds: ResMut<crate::audio::Sounds>,
     roots: Query<Entity, With<CreditsRoot>>,
     mut assets: UiAssets,
-    (hooks, mut hooked): (Res<crate::hooks::Hooks>, Local<bool>),
+    (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
     (mut built, mut fader, mut nodes): (
         Local<Option<Built>>,
-        super::quicktip::Fader,
-        Query<&mut Node, With<super::quicktip::FadeGroup>>,
+        gd_ui::fade::Fader,
+        Query<&mut Node, With<gd_ui::fade::FadeGroup>>,
     ),
 ) {
     // `GD_MENU_CREDITS` (hooks.rs): opens the roll once.
@@ -244,8 +244,8 @@ fn roll(
         if let Some(b) = built.take() {
             commands.entity(b.root).try_despawn();
         }
-        let root = crate::ui::spawn_root(&mut commands, CreditsRoot, 121);
-        commands.entity(root).insert(super::hud::KeepsShown);
+        let root = gd_ui_kit::spawn_root(&mut commands, CreditsRoot, 121);
+        commands.entity(root).insert(gd_ui::hud::KeepsShown);
         let mut ui = assets.ui(&mut commands, &data, root, s, inv, Vec2::new(w, h));
         // The Back button (drawn whether or not the text loaded: it is the way out besides Esc).
         let back = ui.fonts.tag("tagMenuButton04").to_owned();
@@ -319,7 +319,7 @@ fn roll(
         for (i, top, a) in missing {
             let (style, text) = &lines[i];
             let st = STYLES[style.unwrap_or(4)];
-            let g = super::quicktip::fade_group(&mut ui, b.root, a);
+            let g = gd_ui::fade::fade_group(&mut ui, b.root, a);
             ui.commands.entity(g).insert(Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
@@ -329,7 +329,7 @@ fn roll(
             });
             let tw = ui.text_width(st, text);
             ui.text_line(st, Vec2::new((w * 0.5 - tw * 0.5).round(), 0.0), text, 1.0);
-            super::quicktip::seal_fade_group(ui.commands, g);
+            gd_ui::fade::seal_fade_group(ui.commands, g);
             b.shown.push((i, g));
         }
     }

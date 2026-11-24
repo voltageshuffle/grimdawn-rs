@@ -1,62 +1,29 @@
-//! Single-player pause: gameplay time stops while the game menu, the
-//! options window or the pause key holds it.
+//! The pause systems: applying [`PauseKey`] requests and pausing Bevy's
+//! virtual clock to match [`GamePause`] (the pause data is
+//! [`gd_game_core::pause`]).
 //!
-//! Grim Dawn.exe:
-//! - `GAME::PauseGameTime` / `UnpauseGameTime` (Engine.dll) set one global
-//!   flag the engine's game clock reads; every pause path is skipped when
-//!   `Engine::IsNetworkEnabled` (multiplayer), so this is single player only;
-//! - the game window's pause (sub_14020A480, vtable +232): `(pause, sound,
-//!   banner)`; pausing sets the screen dim's target to 0.6, pauses game time,
-//!   pauses the `SoundManager` when `sound`, and shows the "Game Paused"
-//!   banner when `banner`; unpausing sets the target to 0 and unpauses;
-//! - the game menu (`hudExitWindow`, show sub_14026E820) pauses with
-//!   `(1, sound 1, banner 0)` and on hiding unpauses (sound only if it paused
-//!   it); opening the options from it pauses `(1, 0, 0)` (sub_14021BD50);
-//! - the pause key (key action 40, `tagKeybind37` "Pause Game (Single Player
-//!   Only)", default `P`; handler sub_140026910 → sub_140026860) toggles
-//!   `(1, 1, 1)` / `(0, 1, 0)`, only while neither the options nor the game
-//!   menu window is shown;
-//! - losing the window focus with `inactiveUpdateRate` <= 0 (sub_140011AC0)
-//!   pauses game time and every sound; regaining it (sub_140011B20)
-//!   unpauses unless another pause holds (`grimdawn/src/audio/mixer.rs`
-//!   `unfocused_mute`).
-//!
-//! Here the pause is the [`GamePause`] resource; [`apply_pause`] (in `Last`)
-//! pauses Bevy's virtual clock, so the next frame's `Time` delta is zero for
-//! every gameplay system and `FixedUpdate` does not run. Systems that act
-//! without time (requests from input) are fed nothing while paused: the
-//! game's input layer swallows world input (`grimdawn::ui::gamemenu`).
+//! The binary schedules [`apply_pause_key`] in `Update` after its UI input
+//! set and before `PlayerSet` (gd-game cannot name the UI sets), so a request
+//! holds the game the same frame; the clock still follows from the next frame.
 use bevy::prelude::*;
+use gd_game_core::pause::{GamePause, PauseKey};
 
 pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GamePause>()
+            .add_message::<PauseKey>()
             .add_systems(Last, apply_pause);
     }
 }
 
-/// Why the game is paused (none: running).
-#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GamePause {
-    /// The game menu or the options window opened from it.
-    pub menu: bool,
-    /// The pause key ("Game Paused" banner).
-    pub key: bool,
-    /// The window lost the focus (set on focus changes only).
-    pub unfocused: bool,
-}
-
-impl GamePause {
-    pub fn paused(&self) -> bool {
-        self.menu || self.key || self.unfocused
+/// Applies the [`PauseKey`] requests to [`GamePause::key`] (module doc: the
+/// binary schedules this after its UI input, before `PlayerSet`).
+pub fn apply_pause_key(mut msgs: MessageReader<PauseKey>, mut pause: ResMut<GamePause>) {
+    for m in msgs.read() {
+        pause.key = m.0.unwrap_or(!pause.key);
     }
-}
-
-/// Run condition: gameplay is not paused.
-pub fn running(pause: Res<GamePause>) -> bool {
-    !pause.paused()
 }
 
 /// Pauses / unpauses the virtual clock (`Time` in the gameplay schedules)

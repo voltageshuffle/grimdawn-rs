@@ -23,7 +23,7 @@ fn fog_reveals_after_a_one_metre_move() {
     let at = (lo + hi) * 0.5;
     g.app
         .world_mut()
-        .insert_resource(gd_game::save::MapLayout(map.clone()));
+        .insert_resource(gd_game_core::save::MapLayout(map.clone()));
     let player = g.player();
     let put = |g: &mut TestGame, p: Vec3| {
         g.get_mut::<Transform>(player).translation = p;

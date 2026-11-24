@@ -243,7 +243,7 @@ fn main() -> Result<()> {
         }
         Cmd::Save { path } => {
             let save = gd_formats::save::gdd::Quests::parse(&std::fs::read(&path)?)?;
-            let mut defs = std::collections::HashMap::new();
+            let mut defs = gd_formats::collections::HashMap::default();
             for (_, n, data) in entries(&args.game, "Quests.arc", ".qst")? {
                 let q = Quest::parse(&data)?;
                 defs.insert(q.id, (n, q));

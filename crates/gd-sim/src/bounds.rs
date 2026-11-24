@@ -1,14 +1,14 @@
 //! The volumes skill target queries test an actor by: its axis-aligned bounding box
 //! (`ABBox`: centre + half extents), not its radius (`Actor::GetRadius` is the crowd / reach radius only).
 //!
-//! Engine.dll `GraphicsMeshInstance::UpdateBoundingBox` @0x1800c3230: the object-space box
+//! Engine.dll `GraphicsMeshInstance::UpdateBoundingBox`: the object-space box
 //! (`GetObjectSpaceBoundingBox`, [`Aabb::object`]) is the box around the mesh's posed hit boxes
 //! (`GraphicsMesh::GetHitBox(i, pose)`), else the mesh's bounds (msh chunk 10), else (no mesh) a point at the
-//! origin; its centre and half extents × the actor's scale vector. `Actor::UpdateBoundingBox` @0x18002a990 puts
+//! origin; its centre and half extents × the actor's scale vector. `Actor::UpdateBoundingBox` puts
 //! it in the world by the entity's coords (position, rotation): centre = R c + t, half = |R| h
-//! ([`Aabb::transformed`]). That box (`Entity::GetRegionBoundingBox(true)`, Entity +92) is what
-//! `GameEngine::GetTargetsInRadius` @0x1802ebe50 (`World::GetEntitiesInSphere`: [`Aabb::meets_sphere`]) and
-//! `GetTargetsAroundRay` @0x1802ec0b0 (`World::GetEntitiesAroundRay`: [`Aabb::around_ray`]) test.
+//! ([`Aabb::transformed`]). That box (`Entity::GetRegionBoundingBox(true)`, `Entity.regionBoundingBox`) is what
+//! `GameEngine::GetTargetsInRadius` (`World::GetEntitiesInSphere`: [`Aabb::meets_sphere`]) and
+//! `GameEngine::GetTargetsAroundRay` (`World::GetEntitiesAroundRay`: [`Aabb::around_ray`]) test.
 //! The hit boxes take the actor's current pose ([`Aabb::posed`], `GetHitBox(i, pose)`: the bones'
 //! `GetAbsCoords(pose, bone)`; gd-game `combat::posed_bounds` per frame); [`Aabb::object`] is the bind pose.
 //!
@@ -41,7 +41,7 @@ pub fn ray_sphere(o: [f32; 3], d: [f32; 3], c: [f32; 3], r: f32) -> Option<f32> 
 }
 
 impl Aabb {
-    /// A point at the origin (no mesh: `GraphicsMeshInstance` +56 is 0).
+    /// A point at the origin (no mesh: `GraphicsMeshInstance.mesh` is null).
     pub const POINT: Aabb = Aabb {
         center: [0.0; 3],
         half: [0.0; 3],
@@ -134,8 +134,8 @@ impl Aabb {
         }
     }
 
-    /// Whether the sphere at `c` of radius `r` meets the box (sub_18027E1F0: the squared distance from `c` to
-    /// the box ≤ r²).
+    /// Whether the sphere at `c` of radius `r` meets the box (`ABBox::IntersectsSphere`: the squared distance from
+    /// `c` to the box ≤ r²).
     pub fn meets_sphere(&self, c: [f32; 3], r: f32) -> bool {
         let d = sub(c, self.center);
         let s: f32 = (0..3)
@@ -144,7 +144,7 @@ impl Aabb {
         r * r >= s
     }
 
-    /// Where the ray `o + t d` enters the box (sub_18003D780, Woo's test): 0 from inside, `INFINITY` on a miss
+    /// Where the ray `o + t d` enters the box (`ABBox::RayEntry`, Woo's test): 0 from inside, `INFINITY` on a miss
     /// (behind the origin too). `t` is in units of `d`.
     pub fn ray_entry(&self, o: [f32; 3], d: [f32; 3]) -> f32 {
         let lo = sub(self.center, self.half);

@@ -2,8 +2,8 @@
 //! a new prefix / suffix (`gd_sim::ascendant::reroll_affix`) or a new
 //! ascendant affix (`gd_sim::ascendant::reroll_ascended`).
 //!
-//! The reroll panel (GrimDawn.exe `sub_1401B4E60` / `sub_1401B7BA0` /
-//! `sub_1401B7CD0`, Game.dll `ItemArtifactFormula::GetRerollCost` /
+//! The reroll panel (GrimDawn.exe `UIEnchanterRerollTab::Update` / `UIEnchanterRerollTab::SelectFormula` /
+//! `UIEnchanterRerollTab::Reroll`, Game.dll `ItemArtifactFormula::GetRerollCost` /
 //! `GetReagent<n>QuantityForReroll`): the panel (`reroll_table.dbr`) names a
 //! `seedRecipe` (`ItemRerollFormula`), an `affixRecipe` and
 //! `ascended<Rarity>Recipe`s (`ItemAscensionFormula`); the cost (`rerollCost`) and each reagent's
@@ -14,17 +14,17 @@
 //! and ascendant share `affix_rerolls`). Items whose record sets
 //! `preventReroll` are refused. Using the panel needs the `gameengine.dbr`
 //! `rerollToken` (`MainPlayerCanUseReroll`).
-//! Reroll tab button states (`sub_1401B83C0`): the seed button
+//! Reroll tab button states (`UIEnchanterRerollTab::UpdateButtonStates`): the seed button
 //! needs an item; the prefix / suffix buttons need the item to have that
 //! affix and are off for Epic and Legendary items
 //! (`GetItemClassification`); the ascendant button needs an ascendant affix.
 //! Reagents are taken from the bags, the material store, the personal stash
 //! and the transfer stash, in that order (`CreateArtifactConfigCmd::
-//! TakeReagents` @0x1800e7d80), as for crafting.
-//! Reroll tab (GrimDawn.exe `sub_1401B59A0` loader, `sub_1401B4E60`
-//! update, `sub_1401B5750` button handler): the item goes into the tab's item
+//! TakeReagents`), as for crafting.
+//! Reroll tab (GrimDawn.exe `UIEnchanterRerollTab::Load` loader, `UIEnchanterRerollTab::Update`
+//! update, `UIEnchanterRerollTab::HandleButton` button handler): the item goes into the tab's item
 //! slot (`reagentBaseBox`; only `ItemEquipment` with `Item::CanReroll`,
-//! `sub_1401B79B0`); a new item resets the kind; `rerollSeedButton` /
+//! `UIEnchanterRerollTab::AcceptsItem`); a new item resets the kind; `rerollSeedButton` /
 //! `rerollPrefixButton` / `rerollSuffixButton` / `rerollAscendedAffixButton`
 //! pick the kind (1..4) and its formula, which fills the reagent boxes and
 //! the `rerollCost` number (red `tooExpensiveCostNumber` when short; the
@@ -33,27 +33,27 @@
 //! `CreateArtifactCmd` at once (no confirm prompt; the item stays in the slot
 //! and is changed in place). Window UI in `ui/trade.rs` (`reroll_panel`).
 //! The Runekeeper (`NpcItemAscension`, GrimDawn.exe
-//! `sub_140112610` / `sub_140114680`): the item's rarity picks the window's
+//! `UIItemAscensionWindow::Update` / `UIItemAscensionWindow::AscendItem`): the item's rarity picks the window's
 //! `<rarity>Recipe`, which costs its `creationCost` and first reagent
 //! quantities and draws the affix as an ascended reroll does (no counter, no
 //! token). Only items without an ascendant affix (the window's
-//! ready test `sub_140114C40` → item slot `sub_1401B1890`: the item's
-//! ascendant name, replica +288, must be empty); `preventReroll` is not
-//! checked (`Item::CanReroll` is used by the reroll tab only, `sub_1401B79B0`).
-//! The ascend button (`sub_1401132C0`, `sub_140114680`) runs at
-//! once, no prompt; enabled by `sub_140114C40` (item, all reagent boxes,
+//! ready test `UIItemAscensionWindow::IsReady` → item slot `AscensionSlot::IsEmpty`: the item's
+//! ascendant name, in its replica, must be empty); `preventReroll` is not
+//! checked (`Item::CanReroll` is used by the reroll tab only, `UIEnchanterRerollTab::AcceptsItem`).
+//! The ascend button (`UIItemAscensionWindow::Ascend`, `UIItemAscensionWindow::AscendItem`) runs at
+//! once, no prompt; enabled by `UIItemAscensionWindow::IsReady` (item, all reagent boxes,
 //! enough money, ascendant name empty). Window UI in `ui/trade.rs`
 //! (`ascension_window`). Shift + left click on a bag item moves it into the
-//! slot (`BagWidget_HandleMouseEvent` sub_1401EA910, `grimdawn` `inventory.rs`).
+//! slot (`BagWidget_HandleMouseEvent`, `grimdawn` `inventory.rs`).
 //! Hook `GD_REROLL=seed|prefix|suffix|ascended|ascend` (`ascend` with
 //! `GD_TRADE=ascension`): once the crafter (`GD_TRADE=crafter` or
 //! `enchanter`) is open, puts the first bag item into the slot and presses
 //! the button (reagents and money provided; `ascended` also works on an item
 //! without an ascendant affix).
-use crate::inventory::Inventory;
-use crate::stash::Stash;
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::stash::Stash;
 use gd_sim::items::ItemDb;
 use gd_sim::items::resolve::Classification;
 
@@ -83,7 +83,7 @@ pub fn index(count: u32, len: usize) -> usize {
     }
 }
 
-/// Whether the item may go into the slot (`sub_1401B79B0`: equipment
+/// Whether the item may go into the slot (`UIEnchanterRerollTab::AcceptsItem`: equipment
 /// that can be rerolled; the Runekeeper only needs equipment).
 pub fn accepts(idb: &ItemDb, item: &Item, ascension: bool) -> Result<(), String> {
     let resolved = gd_sim::items::resolve(idb, item);
@@ -103,7 +103,7 @@ pub fn accepts(idb: &ItemDb, item: &Item, ascension: bool) -> Result<(), String>
     }
 }
 
-/// Whether `kind` can be used on the item (`sub_1401B83C0` button
+/// Whether `kind` can be used on the item (`UIEnchanterRerollTab::UpdateButtonStates` button
 /// states; the Runekeeper needs no ascendant affix yet).
 pub fn kind_state(idb: &ItemDb, item: &Item, kind: Kind, test: bool) -> Result<(), String> {
     let epic = gd_sim::items::resolve(idb, item).is_some_and(|r| {
@@ -129,7 +129,12 @@ pub fn kind_state(idb: &ItemDb, item: &Item, kind: Kind, test: bool) -> Result<(
 }
 
 /// The cost and reagents of `kind` for the item (`None` without a recipe).
-pub fn plan(data: &crate::data::GameData, idb: &ItemDb, item: &Item, kind: Kind) -> Option<Plan> {
+pub fn plan(
+    data: &gd_game_core::data::GameData,
+    idb: &ItemDb,
+    item: &Item,
+    kind: Kind,
+) -> Option<Plan> {
     let class = gd_sim::items::resolve(idb, item)
         .map(|r| format!("{:?}", r.classification))
         .unwrap_or_default();
@@ -170,7 +175,7 @@ pub fn shortfall(
     plan: &Plan,
     gold: u64,
     inv: &Inventory,
-    stash: &crate::stash::Stash,
+    stash: &gd_game_core::stash::Stash,
 ) -> Option<String> {
     if gold < plan.cost {
         return Some(format!("Rerolling costs {} iron bits", plan.cost));
@@ -178,7 +183,7 @@ pub fn shortfall(
     // A reagent listed twice needs both amounts.
     crate::crafting::summed_reagents(plan.reagents.iter().map(|(r, q)| (r, *q)))
         .into_iter()
-        .find(|(r, q)| crate::stash::count(std::slice::from_ref(*r), inv, stash) < *q)
+        .find(|(r, q)| gd_game_core::stash::count(std::slice::from_ref(*r), inv, stash) < *q)
         .map(|(r, q)| {
             format!(
                 "Rerolling needs {q} x {}",
@@ -192,7 +197,7 @@ pub fn shortfall(
 /// known (the story's); `test`: a test hook that also gets the costs.
 #[allow(clippy::too_many_arguments)]
 pub fn reroll_item(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     idb: &ItemDb,
     item: &mut Item,
     kind: Kind,
@@ -231,10 +236,10 @@ pub fn reroll_item(
         .as_ref()
         .map(|r| format!("{:?}", r.classification))
         .unwrap_or_default();
-    let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     match kind {
         Kind::Seed => {
-            item.seed = crate::rng::u32(1..0x7FFF_FFFF);
+            item.seed = gd_game_core::rng::u32(1..0x7FFF_FFFF);
             item.seed_rerolls += 1;
         }
         Kind::Prefix | Kind::Suffix => {
@@ -294,7 +299,7 @@ pub fn reroll_item(
     }
     *gold -= plan.cost;
     for (r, q) in &plan.reagents {
-        crate::stash::take(std::slice::from_ref(r), *q, inv, stash);
+        gd_game_core::stash::take(std::slice::from_ref(r), *q, inv, stash);
     }
     let affix = match kind {
         Kind::Seed => String::new(),
@@ -321,10 +326,10 @@ impl Plugin for RerollPlugin {
             apply_reroll
                 .run_if(resource_exists::<Inventory>)
                 .run_if(resource_exists::<Stash>)
-                .run_if(resource_exists::<crate::progress::PlayerProgress>)
-                .run_if(resource_exists::<crate::data::GameData>)
-                .after(crate::inventory::InventorySet)
-                .before(crate::player::PlayerSet),
+                .run_if(resource_exists::<gd_game_core::progress::PlayerProgress>)
+                .run_if(resource_exists::<gd_game_core::data::GameData>)
+                .after(gd_game_core::inventory::InventorySet)
+                .before(gd_game_core::player::PlayerSet),
         );
     }
 }
@@ -342,14 +347,14 @@ pub struct RerollRequest {
 fn apply_reroll(
     mut msgs: MessageReader<RerollRequest>,
     mut back: MessageWriter<crate::crafting::SlotReturn>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut inv: ResMut<Inventory>,
     mut stash: ResMut<Stash>,
-    mut progress: ResMut<crate::progress::PlayerProgress>,
+    mut progress: ResMut<gd_game_core::progress::PlayerProgress>,
     // Option: the story (the unlock token) exists only in a session.
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    mut notify: MessageWriter<crate::story::Notify>,
-    players: Query<&crate::player::Loadout, With<crate::player::Player>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    mut notify: MessageWriter<gd_game_core::story::Notify>,
+    players: Query<&gd_game_core::player::Loadout, With<gd_game_core::player::Player>>,
 ) {
     for m in msgs.read() {
         let mut item = m.item.clone();
@@ -380,7 +385,7 @@ fn apply_reroll(
         );
         let text = result.unwrap_or_else(|e| e);
         info!("reroll: {text}");
-        notify.write(crate::story::Notify(text));
+        notify.write(gd_game_core::story::Notify(text));
         inv.changed();
         back.write(crate::crafting::SlotReturn {
             item: Some(item),

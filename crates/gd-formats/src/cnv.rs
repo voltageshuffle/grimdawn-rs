@@ -1,8 +1,8 @@
 //! Conversation files (`Conversations.arc`, `*.cnv`).
 //!
-//! Per Game.dll: `Conversation::Build(BinaryReader&)` 0x180178a20,
-//! `ConversationStep::Read` 0x18017a100, `EstablishLinks` 0x180178f60,
-//! `ConversationStep::IsAvailable` 0x18017a640, `GetTypeTag` 0x18017a470.
+//! Per Game.dll: `Conversation::Build(BinaryReader&)`,
+//! `ConversationStep::Read`, `Conversation::EstablishLinks`,
+//! `ConversationStep::IsAvailable`, `ConversationStep::GetTypeTag`.
 //!
 //! Layout: `"CNV "`, u32 version (>=5; stock 6), u32 (skipped), u32 id, the
 //! root step (recursive), then the text block ([`crate::qst::Texts`]).
@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 
 pub const MAGIC: u32 = 0x2056_4E43; // "CNV "
 
-/// `ConversationStep::Type`. Names from `GetTypeTag` (2 Continue, 3 Accept,
+/// `ConversationStep::GetType`. Names from `GetTypeTag` (2 Continue, 3 Accept,
 /// 4 Decline, 6 EndConversation, 7 link → tag of the target) and the
 /// conversation logic (1 = NPC speech node, tracked as "used" per player).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub struct Step {
     /// Bit 0: only available while unused (`IsAvailable`); bit 1 ("merge"):
     /// when an earlier sibling speech is shown, this one's actions run too
     /// and its responses are listed after the earlier one's
-    /// (`Grim Dawn.exe` 0x14016f7c0, see gd-sim `story/dialog.rs`). No stock
+    /// (`ConversationWindow::UpdateStep`, see gd-sim `story/dialog.rs`). No stock
     /// conversation sets bit 0 or bit 1; speeches use 4, 8, 16 and 32;
     /// bit 2: an unused available speech with it clear makes
     /// `Conversation::GetPunctuation` return 6 instead of 5

@@ -1,6 +1,6 @@
-//! `.anm` skeletal animations. Layout from `GAME::GraphicsAnim::LoadANMData`
-//! (Engine.dll 0x180096180) and the per-bone reader sub_180095390; sampling
-//! follows sub_180095800.
+//! `.anm` skeletal animations. Layout from `GraphicsAnim::LoadANMData` and the
+//! per-bone reader `GraphicsAnim::ReadBoneKeys`; sampling follows
+//! `GraphicsAnim::SampleBone`.
 //!
 //! Each frame is a full TRS key per bone ("AffineParts"). Rotations here are in
 //! the engine's in-memory convention: the file stores the conjugate, and the
@@ -26,7 +26,7 @@ pub const IDENTITY_KEY: Key = Key {
     scale_rotation: [0.0, 0.0, 0.0, 1.0],
 };
 
-/// Row-major 3x3 rotation of a unit quaternion (engine sub_1802811A0, the
+/// Row-major 3x3 rotation of a unit quaternion (engine `Quaternion::ToMatrix3`, the
 /// standard column-vector rotation matrix).
 pub fn quat_to_mat3(q: [f32; 4]) -> [[f32; 3]; 3] {
     let [x, y, z, w] = q;
@@ -50,14 +50,28 @@ pub fn quat_to_mat3(q: [f32; 4]) -> [[f32; 3]; 3] {
 }
 
 impl Key {
-    /// `T * R(rotation) * S * R(scale_rotation)` exactly as
-    /// `SkeletalPose::CacheCoords` (0x1801b02c0) builds it.
+    /// `T * R(rotation) * R(scale_rotation) * S` exactly as
+    /// `SkeletalPose::CacheCoords` builds it: the scale scales SR's columns
+    /// (post-multiplied), not its rows.
     pub fn to_coords(&self) -> Coords {
+        // Fast path: unit scale and no stretch rotation (version-1 files have identity
+        // `scale_rotation`; most keys only rotate + translate). `T*R*SR*S` then collapses to
+        // `T*R`, skipping a quaternion conversion, the scale loop and a 3x3 multiply. With
+        // SR = I and S = 1 the general path below reduces to exactly this (×1/×0 are exact).
+        if self.scale == [1.0, 1.0, 1.0] && self.scale_rotation == [0.0, 0.0, 0.0, 1.0] {
+            let m = quat_to_mat3(self.rotation);
+            return Coords {
+                x: [m[0][0], m[1][0], m[2][0]],
+                y: [m[0][1], m[1][1], m[2][1]],
+                z: [m[0][2], m[1][2], m[2][2]],
+                origin: self.translation,
+            };
+        }
         let r = quat_to_mat3(self.rotation);
         let mut sr = quat_to_mat3(self.scale_rotation);
-        for (row, s) in sr.iter_mut().zip(self.scale) {
-            for v in row.iter_mut() {
-                *v *= s;
+        for (j, s) in self.scale.iter().enumerate() {
+            for row in sr.iter_mut() {
+                row[j] *= s;
             }
         }
         let mut m = [[0.0f32; 3]; 3];
@@ -84,7 +98,7 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-/// Shortest-path slerp, linear when nearly parallel (engine sub_180095010).
+/// Shortest-path slerp, linear when nearly parallel (engine `Quaternion::Slerp`).
 pub fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let mut d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
     let mut b = b;
@@ -194,7 +208,7 @@ pub struct Animation {
     pub trailer: Vec<MifBlock>,
     /// Each skeleton's bone → track map, built once per (clip, skeleton) for [`pose_mesh_abs_into`]
     /// instead of a name scan per bone per pose. Entries of dropped skeletons are dropped with them.
-    bone_maps: std::sync::Mutex<Vec<BoneMap>>,
+    bone_maps: parking_lot::Mutex<Vec<BoneMap>>,
 }
 
 /// One skeleton's entry of [`Animation::bone_maps`]: per bone, its track index (`u16::MAX`: none).
@@ -318,7 +332,7 @@ impl Animation {
     }
     /// `RagDollData { effectType, direction (Push|Pull), elevation (Upward|Downward), push (Left|Right) }`:
     /// `GraphicsAnim::GetRagDollEffectType` & co. A skill captures the block of the clip it starts with
-    /// (`Skill::CaptureAnimationRagDollInfo` @Game 0x18049d6d0); its `effectType` is the hit's ragdoll effect
+    /// (`Skill::CaptureAnimationRagDollInfo`); its `effectType` is the hit's ragdoll effect
     /// when the skill names none (`gd_game::ragdoll`).
     pub fn ragdoll(&self) -> Option<&MifBlock> {
         self.trailer.iter().find(|b| b.kind == "RagDollData")
@@ -326,7 +340,7 @@ impl Animation {
 }
 
 /// Mesh-space skinning matrices for a pose, as `GraphicsMesh::GetAbsCoords`
-/// (sub_1800B8710) computes them:
+/// computes them:
 /// `anim_abs[i] = anim_abs[parent] * bone.local * key(i)`,
 /// `skin[i] = anim_abs[i] * inverse(bone.abs)`. Bones without a track use an
 /// identity key (i.e. stay at their bind pose relative to the parent).
@@ -358,7 +372,7 @@ pub fn pose_mesh_abs_into(
     let n = mesh.bones.len();
     abs.clear();
     abs.resize(n, Coords::IDENTITY);
-    let mut maps = anim.bone_maps.lock().unwrap();
+    let mut maps = anim.bone_maps.lock();
     maps.retain(|m| m.mesh.strong_count() > 0);
     let at = maps.iter().position(|m| {
         m.mesh

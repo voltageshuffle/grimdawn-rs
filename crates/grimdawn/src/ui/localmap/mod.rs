@@ -1,20 +1,21 @@
 //! The HUD minimap and the local (aerial) map of the map window, one engine
-//! widget (`Grim Dawn.exe` detail-map widget: constructor 0x140172F50, update
-//! 0x140174FE0, map pass 0x140175D00, draw 0x1401769A0, minimap icons
-//! 0x140177010, local-map icons 0x1401786D0, icon names 0x140178100; window
-//! `records/ui/mapaerial/aerialmapconfiguration.dbr`, loader 0x14017AF20,
-//! input 0x14017AE00 / 0x14017A660):
+//! widget (`Grim Dawn.exe` detail-map widget: constructor `DetailMapWidget::DetailMapWidget`, update
+//! `DetailMapWidget::Update`, map pass `DetailMapWidget::DrawMapPass`, draw `DetailMapWidget::Render`, minimap icons
+//! `DetailMapWidget::RenderMinimapIcons`, local-map icons `DetailMapWidget::RenderLocalMapIcons`, icon names
+//! `DetailMapWidget::GetIconName`; window `records/ui/mapaerial/aerialmapconfiguration.dbr`, loader
+//! `LocalMap::Load`, input `LocalMap::HandleInput` / `LocalMap::OnLegendButton`):
 //! - the map is a top-down orthographic view of the regions' minimap images
 //!   (`gd_formats::map::minimap`): centred on the camera's target (+ the
 //!   local map's pan), screen up = the camera's horizontal forward (fixed to
-//!   world (−1, 0, −1)/√2 on both maps by `Options` bool 23, `lockMapRotation`), view height
+//!   world (−1, 0, −1)/√2 on both maps by the option `lockMapRotation`), view height
 //!   `zoom × 3` m over the widget's height. Minimap zoom 20 (30 in HUD
-//!   mode 4); local map zoom `Options` float 5 (default 65, 40..135), ±30 per
+//!   mode 4); local map zoom the option `mapZoom` (factory default 0.5, clamped
+//!   to 40..135 on read), ±30 per
 //!   zoom button, ±10 per `+` / `−` key, eased toward the target at 0.06 m per
 //!   ms. Regions drawn: those in the view connected to the player's (stock
 //!   regions never overlap in x / z, so PORT: every region in the view);
 //! - fog of war ([`gd_sim::minimap_raster`] module doc): the fog pass
-//!   (sub_140175700) darkens unexplored ground (saved fog; a region never
+//!   (`DetailMapWidget::DrawFogPass`) darkens unexplored ground (saved fog; a region never
 //!   visited is black) on both, except in the running Shattered Realm
 //!   dungeon's regions; the local map's map pass also greys the ground not
 //!   explored this session (session fog; the minimap's mask is
@@ -22,24 +23,24 @@
 //!   ground greyed and the minimap shows it whole. Local-map icons hide in fog there too (`World::IsInFog`,
 //!   no dungeon test), and the fog keeps being revealed and saved there
 //!   (`Player::UpdateSelf` calls `World::AddFOWVisibility` unconditionally);
-//! - the widget keeps one render texture (+360), created once at the widget's
-//!   size and redrawn by the map pass on every draw (sub_1401769A0): moving
+//! - the widget keeps one render texture (`DetailMapWidget.renderTexture`), created once at the widget's
+//!   size and redrawn by the map pass on every draw (`DetailMapWidget::Render`): moving
 //!   the player rebuilds nothing;
 //! - the minimap's render is composited through
 //!   `system/textures/circlemask.tex` (`shaders/basictexturemasked.ssh`
 //!   style `normal`: colour = map rgb, alpha = mask alpha × the widget's
-//!   alpha +7024, blended src-alpha over the scene; sub_1401769A0). That alpha
+//!   alpha `DetailMapWidget.mapAlpha`, blended src-alpha over the scene; `DetailMapWidget::Render`). That alpha
 //!   is 1 (constructor) except in the floating compass modes 3 / 4, where
-//!   `UIPlayerHud::ToggleCompass` (0x140209DB0) sets it to the HUD table's
-//!   `floatingMapTransparency` (stock 0.65) and +7028 to
+//!   `UIPlayerHud::ToggleCompass` sets it to the HUD table's
+//!   `floatingMapTransparency` (stock 0.65) and `DetailMapWidget.markerAlpha` to
 //!   `floatingMarkerTransparency` (stock 1); the minimap's icons
-//!   (sub_140177010) are drawn in the map's alpha, its north marker in the
-//!   marker's ([`map_alphas`]); the local map's mouse (sub_14017A7F0):
+//!   (`DetailMapWidget::RenderMinimapIcons`) are drawn in the map's alpha, its north marker in the
+//!   marker's ([`map_alphas`]); the local map's mouse (`LocalMap::HandleMouseEvent`):
 //!   the wheel zooms (target − delta / 30), a left drag in the pane pans
 //!   (px × zoom × 3 / the pane's width / height, along the camera's axes,
 //!   added on release or leaving the window), the centre button resets the
 //!   pan (the gamepad's sticks pan 12.5 px per unit and its triggers zoom
-//!   ±10, sub_14017AE00);
+//!   ±10, `LocalMap::HandleInput`);
 //! - icons (`MinimapGameNugget`s from `GameEngine::GetDetailMapData`, the
 //!   entities' `AppendDetailMapData`): the main player (type 0,
 //!   `mapsymbol_herodirectionalover.tex` on the minimap, `..._herodirectional`
@@ -52,15 +53,15 @@
 //!   (18, `NpcTransmuter`); a quest marker (8, `mapsymbol_mission.tex`, the
 //!   star) instead of the entity's own icon while one of the record's
 //!   `questFile<n>` / `taskUid<n>` tasks is in progress (within `markerRange`
-//!   of the player when set; Game.dll sub_180428A00). Minimap icons are
+//!   of the player when set; Game.dll `QuestMarkerArea::Test`). Minimap icons are
 //!   16 × s px (boss 22) centred on their point; outside the circle (radius
 //!   − 2) they are pinned to its edge, except NPCs (2), food (5) and Custom
 //!   (14), which are dropped. Local-map icons are 24 × s px and hidden in fog;
 //!   the hero, party members, NPCs and Custom quads turn with their facing,
-//!   the rest stand upright (sub_140177010 / sub_1401786D0);
+//!   the rest stand upright (`DetailMapWidget::RenderMinimapIcons` / `DetailMapWidget::RenderLocalMapIcons`);
 //! - more nuggets (Game.dll `AppendDetailMapData`s; each tries the quest
 //!   marker first): any Actor's `mapNuggetType` / `mapNuggetCustom` (Engine.dll
-//!   `Actor::Load` / `Actor::AppendDetailMapData` 0x18002a730: "Boss" 17 on
+//!   `Actor::Load` / `Actor::AppendDetailMapData`: "Boss" 17 on
 //!   nemeses and the Dread, "Custom" 14 = the bitmap at 0.75 as a quad turned
 //!   with the entity, "Regular" 19 = the bitmap as an icon), used by
 //!   monsters (`Monster::AppendDetailMapData`, campaign: alive, not hiding; in the running Shattered Realm
@@ -77,7 +78,7 @@
 //!   nugget of their own (no `Pet::AppendDetailMapData`: `Monster`'s, i.e.
 //!   the record's `mapNuggetType`, which none of the 1413 stock `Pet`
 //!   records sets), so the player's pets don't show;
-//! - a quest marker (sub_180428A00) counts a task in progress when
+//! - a quest marker (`QuestMarkerArea::Test`) counts a task in progress when
 //!   `Quest2Task::InProgress` (state 2, not MP-blocked); with the record's
 //!   `areaBitmap` it pushes a Custom quad first (under the star): scale 1,
 //!   turned by `areaRotation` degrees when `areaRotate` is set, else with the
@@ -91,20 +92,20 @@
 //!   the circle in the direction of world (−1, 0, −1)/√2, turned that way;
 //! - the icon under the mouse (within half its width of its centre, the
 //!   last drawn first) shows its name (`style_defaultwhite_sizen`,
-//!   sub_140178100): on the minimap left of the icon, on the local map 3 px
+//!   `DetailMapWidget::GetIconName`): on the minimap left of the icon, on the local map 3 px
 //!   right of it, 5 px below its top; no background (the widget's background
-//!   pointer, +7000, is never set);
+//!   pointer, `DetailMapWidget.background`, is never set);
 //! - legend buttons (`ButtonStatic`, round): `bitmapNameInFocus` under the
 //!   mouse, their `iconbutton_<kind>rollover` (`ui/rollover.rs`); a click
 //!   makes that type's icons blink for 1000 ms on the local map
-//!   (sub_14017A660: their `...over` bitmap, grown by ms left / 1000 × 20 × s);
+//!   (`LocalMap::OnLegendButton`: their `...over` bitmap, grown by ms left / 1000 × 20 × s);
 //! - the local map's window: `backgroundImage` over the map pane
 //!   (`MapPaneX/Y/Width/Height`), the area name
 //!   (`map_regionnamedisplayaerial.dbr`), the legend buttons and labels
 //!   (`iconbutton_<kind>.dbr` / `iconbutton_<kind>text.dbr`), the zoom buttons
 //!   (`map_buttonzoomin/out.dbr`), then the map window's centre, switch
 //!   ("Local Map", `tagMapWindowName`) and close buttons. The switch toggles
-//!   to the world map (`riftmap.rs`) and back (sub_1401F4E40); `M` (port key)
+//!   to the world map (`riftmap.rs`) and back (`UIWorldMap::OnButtonClick`); `M` (port key)
 //!   opens the window on the page shown last. Every button plays its record's
 //!   `soundNameDown` on press (the shared `ButtonSound`, `ui/widgets.rs`).
 //!
@@ -123,9 +124,10 @@ mod input;
 mod local;
 mod minimap;
 
-use super::{Ui, text::FontCache};
-use crate::data::GameData;
-use crate::inventory::UiCapture;
+use super::Ui;
+use gd_ui::state::map::MapWindow;
+use super::text::FontCache;
+use gd_ui::state::inventory::UiCapture;
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
@@ -136,6 +138,7 @@ pub use gather::{MapIcon, MapPoint, MapSources};
 use gd_formats::map::minimap::MinimapImage;
 use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
 use gd_game::riftgates::{RiftgateMap, RiftgateRequest, WaypointKind};
+use gd_game_core::data::GameData;
 use gd_sim::minimap_raster::{FogMask, RegionDraw, RegionFog, View, draw_regions};
 pub(super) use input::center_map_key;
 use input::*;
@@ -148,12 +151,12 @@ const AREA_TITLE: &str = "records/ui/mapaerial/map_regionnamedisplayaerial.dbr";
 const NAME_STYLE: &str = "records/ui/styles/text/style_defaultwhite_sizen.dbr";
 
 /// The minimap's (map and icons, north marker) alphas in HUD modes 3 / 4: the HUD table's `floatingMapTransparency` /
-/// `floatingMarkerTransparency` (`UIPlayerHud::ToggleCompass` 0x140209DB0, loaded by sub_1402139D0; module
+/// `floatingMarkerTransparency` (`UIPlayerHud::ToggleCompass`, loaded by `UIPlayerHud::Load`; module
 /// doc), 1 when the field is missing.
-fn map_alphas(data: &GameData, options: &gd_game::options::GameOptions) -> (f32, f32) {
+fn map_alphas(data: &GameData, options: &gd_game_core::options::GameOptions) -> (f32, f32) {
     let rec = data
         .db
-        .get(super::hud::master(super::hud::classic(Some(options))));
+        .get(gd_ui_kit::master(gd_ui_kit::classic(Some(options))));
     let f = |k: &str| rec.as_ref().and_then(|r| r.f32(k)).unwrap_or(1.0);
     (
         f("floatingMapTransparency"),
@@ -163,23 +166,7 @@ fn map_alphas(data: &GameData, options: &gd_game::options::GameOptions) -> (f32,
 /// PORT: how far past the minimap's view icons are gathered (the engine
 /// inflates the view frustum by `Engine::GetLevelLoadInflation`).
 const GATHER_MARGIN: f32 = 10.0;
-/// Legend buttons in the record's order (`iconbutton_party` is left out:
-/// single player).
-const LEGEND: [&str; 12] = [
-    "hero",
-    "mission",
-    "riftgate",
-    "npc",
-    "shrine",
-    "transmutenpc",
-    "aoi",
-    "caravan",
-    "inventor",
-    "vendor",
-    "witch",
-    "smith",
-];
-/// The nugget type each legend button blinks (sub_14017A660).
+/// The nugget type each legend button blinks (`LocalMap::OnLegendButton`).
 const LEGEND_KIND: [u8; 12] = [0, 8, 3, 2, 16, 18, 6, 13, 11, 7, 10, 15];
 
 pub struct LocalMapPlugin;
@@ -191,10 +178,10 @@ impl Plugin for LocalMapPlugin {
             .add_systems(
                 Update,
                 (
-                    keys.in_set(crate::ui::UiPlaySet),
-                    minimap.in_set(crate::ui::UiPlaySet),
-                    local_map.in_set(crate::ui::UiPlaySet),
-                    clicks.in_set(crate::ui::UiInputSet),
+                    keys.in_set(gd_ui_kit::UiPlaySet),
+                    minimap.in_set(gd_ui_kit::UiPlaySet),
+                    local_map.in_set(gd_ui_kit::UiPlaySet),
+                    clicks.in_set(gd_ui_kit::UiInputSet),
                 )
                     .chain(),
             )
@@ -204,8 +191,8 @@ impl Plugin for LocalMapPlugin {
 }
 
 /// `GD_UI_OPEN=localmap` / `worldmap` (hooks.rs): the map window at start; `GD_MAP_ZOOM` is the local map's
-/// zoom (`Options` float 5).
-fn start_window(mut commands: Commands, hooks: Res<crate::hooks::Hooks>) {
+/// zoom (the option `mapZoom`).
+fn start_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let zoom = hooks.ui.map_zoom.map_or(65.0, |z| z.clamp(40.0, 135.0));
 
     let (open, local) = match hooks.ui.open.as_deref() {
@@ -222,16 +209,16 @@ fn start_window(mut commands: Commands, hooks: Res<crate::hooks::Hooks>) {
     });
 }
 
-/// The local map's zoom is the option `mapZoom` (`Options` float 5): the window starts at the stored value (unless
+/// The local map's zoom is the option `mapZoom`: the window starts at the stored value (unless
 /// `GD_MAP_ZOOM` is set), again in every session (Exit to Main Menu puts `MapWindow::default()` back, whose 65 is
 /// not a zoom the player chose), and a change is written back to the port's options file once the zoom has stopped
 /// changing for a second (PORT: the engine saves the options on exit; the port has no exit hook for that).
 fn persist_zoom(
     mut win: ResMut<MapWindow>,
-    mut options: ResMut<gd_game::options::GameOptions>,
-    hooks: Res<crate::hooks::Hooks>,
+    mut options: ResMut<gd_game_core::options::GameOptions>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time<Real>>,
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     // (the stored zoom is loaded into this session's window, seconds the zoom has differed from the stored one)
     mut state: Local<(bool, f32)>,
 ) {
@@ -255,93 +242,13 @@ fn persist_zoom(
     if state.1 >= 1.0 && hooks.ui.map_zoom.is_none() {
         state.1 = 0.0;
         options.set("mapZoom", gd_formats::options::Value::Float(win.zoom_to));
-        crate::settings::store(&options);
+        gd_ui_kit::state::settings::store(&options);
     }
 }
 
-/// The map window opened with `M` (or showing the local page over a
-/// riftgate's map): open, which page, the local map's zoom / pan (metres along
-/// the screen's right / up) and its built layout.
-#[derive(Resource)]
-pub struct MapWindow {
-    pub open: bool,
-    /// The local (aerial) map shows; else the world map (`riftmap.rs`).
-    pub local: bool,
-    zoom: f32,
-    zoom_to: f32,
-    pan: Vec2,
-    layout: LocalLayout,
-    /// Per nugget type: ms left of the legend click's blink.
-    blink: [f32; 21],
-    /// The legend button under the mouse (index into [`LEGEND`]).
-    legend_hover: Option<usize>,
-    /// The window button under the mouse (0 close, 1 centre, 2 switch).
-    pub button_hover: Option<usize>,
-    /// A mouse drag of the map: (start px, pan at the start).
-    drag: Option<(Vec2, Vec2)>,
-}
 
-impl Default for MapWindow {
-    fn default() -> Self {
-        Self {
-            open: false,
-            local: true,
-            zoom: 65.0,
-            zoom_to: 65.0,
-            pan: Vec2::ZERO,
-            layout: LocalLayout::default(),
-            blink: [0.0; 21],
-            legend_hover: None,
-            button_hover: None,
-            drag: None,
-        }
-    }
-}
 
-impl MapWindow {
-    /// The world (riftgate) map page shows: opened at a riftgate or from `M`.
-    pub fn world_shown(&self, rift: &RiftgateMap) -> bool {
-        (rift.open || self.open) && !self.local
-    }
-    pub fn local_shown(&self, rift: &RiftgateMap) -> bool {
-        (rift.open || self.open) && self.local
-    }
-    /// The local map window's rect contains `p` (physical px) while it shows.
-    pub fn covers(&self, rift: &RiftgateMap, p: Vec2) -> bool {
-        self.local_shown(rift) && self.layout.window.is_some_and(|r| super::contains(&r, p))
-    }
-    /// The hovered legend button and its rollover record (`ui/rollover.rs`).
-    pub fn legend_rollover(&self, rift: &RiftgateMap) -> Option<(URect, String)> {
-        let i = self.legend_hover.filter(|_| self.local_shown(rift))?;
-        let r = self.layout.legend.iter().find(|(k, _)| *k == i)?.1;
-        Some((
-            r,
-            format!("records/ui/mapaerial/iconbutton_{}rollover.dbr", LEGEND[i]),
-        ))
-    }
 
-    /// The switch tab: the other page.
-    pub fn switch(&mut self, rift: &RiftgateMap) {
-        self.local = !self.local;
-        if !rift.open {
-            self.open = true;
-        }
-    }
-}
-
-#[derive(Default, Clone, PartialEq)]
-struct LocalLayout {
-    window: Option<URect>,
-    pane: URect,
-    close: Option<URect>,
-    center: Option<URect>,
-    switch: Option<URect>,
-    zoom: [Option<URect>; 2],
-    /// Legend buttons (index into [`LEGEND`], rect).
-    legend: Vec<(usize, URect)>,
-    /// Metres per px of the drawn map.
-    mpp: f32,
-}
 
 /// Decoded region minimap images and the two render targets. A region's image decodes in the background the first time
 /// a map needs it; the maps draw it once it lands ([`MapTiles::landed`]), so entering a new area does not stall a frame
@@ -355,9 +262,9 @@ pub struct MapTiles {
     /// Per map region: `None` never decoded, `Some(None)` no image (or unreadable), else the decoded image.
     regions: Vec<Option<Option<Weak<MinimapImage>>>>,
     /// Regions decoding in the background.
-    loading: std::collections::HashMap<usize, bevy::tasks::Task<Option<MinimapImage>>>,
+    loading: gd_formats::collections::HashMap<usize, bevy::tasks::Task<Option<MinimapImage>>>,
     /// The images drawn (or landed) last, held.
-    kept: gd_game::weak_cache::Recent<Arc<MinimapImage>>,
+    kept: gd_game_core::weak_cache::Recent<Arc<MinimapImage>>,
     /// The regions whose image landed, the last [`LANDED_LOG`] in order: the `landed - log.len()`th landing onward.
     landed_log: std::collections::VecDeque<usize>,
     /// Landings so far: a map drawn before redraws the landed regions' boxes ([`MapCache::update`]).
@@ -372,7 +279,7 @@ impl Default for MapTiles {
             map: 0,
             regions: Vec::new(),
             loading: Default::default(),
-            kept: gd_game::weak_cache::Recent::new(TILES_KEPT),
+            kept: gd_game_core::weak_cache::Recent::new(TILES_KEPT),
             landed_log: Default::default(),
             landed: 0,
             mini: None,
@@ -389,7 +296,8 @@ const LANDED_LOG: usize = 64;
 impl MapTiles {
     /// Files the images decoded in the background.
     fn poll(&mut self) {
-        use bevy::tasks::{block_on, futures_lite::future};
+        use bevy::tasks::block_on;
+        use bevy::tasks::futures_lite::future;
         if self.loading.is_empty() {
             return;
         }
@@ -508,12 +416,13 @@ fn axes(cam: &Transform) -> Axes {
     Axes { right, up }
 }
 
-/// The axes of both maps: `lockMapRotation` (bool 23, "Force the map to always point north") fixes them to the
-/// default 45 degree camera's basis, else they follow the camera's yaw. `sub_140175D00` (the map pass, run
-/// by the widget's draw sub_1401769A0 for the minimap and the local map alike: it builds the map camera at +368 from
-/// the fixed vectors or the live camera's axes) and the icons projected through that camera (sub_1401786D0, local
-/// map) or drawn with a fixed (0, −1) up (sub_140177010, minimap).
-fn map_axes(cam: &Transform, options: &gd_game::options::GameOptions) -> Axes {
+/// The axes of both maps: `lockMapRotation` (an `Options` bool, "Force the map to always point north") fixes them to
+/// the default 45 degree camera's basis, else they follow the camera's yaw. `DetailMapWidget::DrawMapPass` (the map
+/// pass, run by the widget's draw `DetailMapWidget::Render` for the minimap and the local map alike: it builds the map
+/// camera `DetailMapWidget.mapCamera` from the fixed vectors or the live camera's axes) and the icons projected through
+/// that camera (`DetailMapWidget::RenderLocalMapIcons`, local map) or drawn with a fixed (0, −1) up
+/// (`DetailMapWidget::RenderMinimapIcons`, minimap).
+fn map_axes(cam: &Transform, options: &gd_game_core::options::GameOptions) -> Axes {
     if options.flag("lockMapRotation") {
         let up = Vec2::new(-1.0, -1.0).normalize();
         Axes {
@@ -538,10 +447,11 @@ fn view_of(centre: Vec2, a: Axes, mpp: f32, w: f32, h: f32) -> View {
     }
 }
 
-/// What a map image is drawn from. The fog passes ([`gd_sim::minimap_raster`] module doc, sub_140175D00 /
-/// sub_140175700): the local map greys unexplored ground and the minimap does not; both darken it to black except in
-/// regions of the running Shattered Realm dungeon (`in_dungeon`, by map region index); a region without a fog grid is
-/// fully fogged (the engine creates it on first use).
+/// What a map image is drawn from. The fog passes ([`gd_sim::minimap_raster`] module doc,
+/// `DetailMapWidget::DrawMapPass` /
+/// `DetailMapWidget::DrawFogPass`): the local map greys unexplored ground and the minimap does not; both darken it to
+/// black except in regions of the running Shattered Realm dungeon (`in_dungeon`, by map region index); a region without
+/// a fog grid is fully fogged (the engine creates it on first use).
 struct MapSource<'a> {
     tiles: &'a mut MapTiles,
     map: &'a Arc<gd_formats::map::MapFile>,
@@ -837,7 +747,7 @@ fn icon_node(ui: &mut Ui, img: Handle<Image>, c: Vec2, size: Vec2, angle: f32, a
 }
 
 /// An icon's bitmap: the nugget's own (Custom, Regular) or its type's
-/// (`blink`: its `...over` variant, sub_1401786D0).
+/// (`blink`: its `...over` variant, `DetailMapWidget::RenderLocalMapIcons`).
 fn icon_image(
     ui: &mut Ui,
     i: &MapIcon,
@@ -865,7 +775,7 @@ fn icon_image(
     }
 }
 
-/// Icons turned by their facing (sub_140177010: the hero, party members,
+/// Icons turned by their facing (`DetailMapWidget::RenderMinimapIcons`: the hero, party members,
 /// NPCs, and Custom quads); the rest stand upright.
 fn turns(kind: u8) -> bool {
     matches!(kind, 0 | 1 | 2 | 14)
@@ -887,7 +797,7 @@ type Scene<'w, 's> = (
         's,
         &'static Transform,
         (
-            With<crate::player::Player>,
+            With<gd_game_core::player::Player>,
             Without<gd_render::camera::GameCamera>,
         ),
     >,

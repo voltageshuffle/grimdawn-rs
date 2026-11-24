@@ -1,30 +1,30 @@
 //! Illusions (`transmutes`): an equipped item drawn with another item's look.
 //!
-//! - The item type of a record class ([`item_type`], `GAME::Item_Type`, Item
-//!   vtable +1360; also the stash sort's rank), from the per-class
+//! - The item type of a record class ([`item_type`], `GAME::Item_Type`, the
+//!   `Item::GetItemType` virtual; also the stash sort's rank), from the per-class
 //!   constants of Game.dll.
 //! - Which types take illusions ([`takes_illusion`]):
 //!   `Item::IsTransmuteCompatible` (head 1, chest 3, legs 4, feet 5, hands 7,
 //!   off-hands / shields 8, weapons 9, shoulders 14, medals 15).
 //! - Which unlocked appearance fits a worn item ([`fits`]):
-//!   GrimDawn.exe transmuter page builder `sub_1402817E0`: the list of the
+//!   GrimDawn.exe transmuter page builder `TransmuteWindow::BuildPage`: the list of the
 //!   worn item's type; weapons by `GetWeaponType` ([`weapon_type`]): one-handed
 //!   melee 2..=6 (axe, sword, mace, dagger, scepter) take each other, 15..=18
 //!   (two-handed melee) take each other, 7..=14 (spear, guns, staff, shield,
 //!   off-hand) only their own type.
-//! - List order ([`sort_key`]): comparator `sub_140282080`: the three
+//! - List order ([`sort_key`]): comparator `TransmuteWindow::CompareAppearances`: the three
 //!   `records/items/transmutes/invisible_*` first, then by classification,
 //!   item level, then the full display name (`GetGameDescription` without
 //!   colour: `Armor::GetGameDescription` joins quality, style and base tags,
 //!   so "Empowered Skytear Hat" precedes "Praetorian Faceguard";
 //!   `naming::record_description`), all ascending, UTF-16 code unit order.
-//! - Gender: page builder `sub_1402817E0` skips a look when
+//! - Gender: page builder `TransmuteWindow::BuildPage` skips a look when
 //!   `Item::IsMaleCompatible` is false: `preventMaleTransmute` set and the
 //!   look's gender (the main player's, `AddItemToTransmutes` calls
 //!   `SetGender(GetGender())`; 1 = male) is male.
-//! - Cost ([`cost`]): `sub_140282C30`: the window record's
+//! - Cost ([`cost`]): `TransmuteWindow::GetCost`: the window record's
 //!   `transmuteCost` equation (`playerLevel`, `itemLevel`), `floor(max(v, 1) +
-//!   0.5)` per changed item; apply `sub_140282880`: a pick whose look matches
+//!   0.5)` per changed item; apply `TransmuteWindow::Apply`: a pick whose look matches
 //!   the item's own ([`same_look`], `HasMatchingAppearance(id, true)`) clears
 //!   the illusion for free, any other pick costs one `cost`.
 //! - Unlocking ([`same_look`] dedupes):
@@ -42,14 +42,14 @@ use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
 
 /// `records/items/transmutes/invisible_{head,shoulders,medal}.dbr`: listed
-/// first (`sub_140282080`).
+/// first (`TransmuteWindow::CompareAppearances`).
 pub const INVISIBLE: [&str; 3] = [
     "records/items/transmutes/invisible_head.dbr",
     "records/items/transmutes/invisible_shoulders.dbr",
     "records/items/transmutes/invisible_medal.dbr",
 ];
 
-/// `GAME::Item_Type` of a record class (Item vtable +1360), 0 for none.
+/// `GAME::Item_Type` of a record class (`Item::GetItemType` virtual), 0 for none.
 pub fn item_type(class: &str) -> u32 {
     match class {
         "ArmorProtective_Head" => 1,
@@ -91,7 +91,7 @@ pub fn takes_illusion(item_type: u32) -> bool {
 }
 
 /// `GetWeaponType` of a weapon class (0 for non-weapons), from the
-/// per-class constants (Game.dll vtable +1712).
+/// per-class constants (Game.dll, the `GetWeaponType` virtual).
 pub fn weapon_type(class: &str) -> u32 {
     match class {
         "WeaponMelee_Axe" => 2,
@@ -199,7 +199,7 @@ pub fn sort_key(record: &str, rec: &Record, name: String) -> (bool, u32, i32, Ve
 /// The cost of one changed item: the `transmuteCost` equation at the
 /// player's level.
 pub fn cost(equation: &str, player_level: u32, item_level: u32) -> u64 {
-    let v = crate::expr::Expr::parse(equation).ok().map(|e| {
+    let v = gd_rules::expr::Expr::parse(equation).ok().map(|e| {
         e.eval(&|n: &str| match n {
             "playerLevel" => Some(player_level as f32),
             "itemLevel" => Some(item_level as f32),

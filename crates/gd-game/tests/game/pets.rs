@@ -1,11 +1,13 @@
 //! Pet orders (`gd_game::pets` module docs): the Pet Attack skill sets the
 //! pet's target.
 use bevy::prelude::*;
-use gd_game::casting::{CastRequest, Caster, SpawnPet};
-use gd_game::combat::{Combatant, Invincible};
+use gd_game::combat::Invincible;
 use gd_game::pets::Pet;
-use gd_game::player::Loadout;
 use gd_game::testing::TestGame;
+use gd_game_core::casting::CastRequest;
+use gd_game_core::casting::{Caster, SpawnPet};
+use gd_game_core::combat::Combatant;
+use gd_game_core::player::Loadout;
 
 use crate::common::{HOUND, ZOMBIE};
 /// The Hellhound modifier that gives it Hellfire Aura (its `buffSelfSkillName`).
@@ -72,8 +74,10 @@ fn pet_attack_skill_sets_the_target() {
     // the cast animation) first.
     let buffed = g.run_until(300, |w| {
         !w.get::<Pet>(hound).unwrap().toggled().is_empty()
-            && w.get::<gd_game::character::Character>(hound).unwrap().state
-                != gd_game::character::CharState::Cast
+            && w.get::<gd_game_core::character::Character>(hound)
+                .unwrap()
+                .state
+                != gd_game_core::character::CharState::Cast
     });
     assert!(buffed.is_some(), "the hound's self buff");
     g.get_mut::<Caster>(p).slots[3] = Some(PET_ATTACK.into());

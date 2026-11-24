@@ -1,5 +1,5 @@
 //! Item instance → attribute values, exactly as `ItemEquipment::InitializeItem`
-//! (Game.dll 0x18033c240) builds them from the base / prefix / suffix /
+//! (Game.dll) builds them from the base / prefix / suffix /
 //! modifier records and the saved seed.
 //!
 //! (decompiled): store order (char, char penalty reduction, skill,
@@ -18,10 +18,10 @@ use super::jitter::{Roll, item_stream, scale};
 use super::order::EQUIPMENT_ORDER;
 use crate::attributes::{AttrFamily, FieldDef, class_def};
 use crate::catalog::FIELDS;
-use crate::expr::Expr;
 use crate::stats::CharAttrAccumulator;
 use gd_formats::arz::{RawValue, Record};
 use gd_formats::save::item::Item;
+use gd_rules::expr::Expr;
 use std::collections::BTreeMap;
 
 /// Attribute store of `ItemEquipment` (creation order = this order).
@@ -53,9 +53,9 @@ pub enum Creator {
     Armor,
     /// `ConversionAttributeStore` (two conversions per source).
     Conversion,
-    /// Only when the item is a weapon (`ItemEquipment + 3456 == 0`).
+    /// Only when the item is a weapon (`ItemEquipment.isArmor == 0`).
     WeaponOnly(&'static Creator),
-    /// Only for armor/jewelry (`Armor` ctor sets `+3456 = 1`).
+    /// Only for armor/jewelry (`Armor` ctor sets `isArmor = 1`).
     NonWeaponOnly(&'static Creator),
 }
 
@@ -63,10 +63,10 @@ pub enum Creator {
 pub const STORE_JITTER: f32 = 20.0;
 
 /// The cap every attribute class's `AddJitter` / `MinJitter` / `MaxJitter`
-/// puts on its percentage (`fminf(fmaxf(pct, 0), 50)`, `dword_1807A8110`,
+/// puts on its percentage (`fminf(fmaxf(pct, 0), 50)`, `Game::JitterCapPercent`,
 /// in each class's `AddJitter`). The loaders that call the plain
 /// `Jitter` directly do not clamp: `CharAttribute::LoadPrefixTable`
-/// @0x1800cab40 and `SkillAttribute::LoadPrefixTable` @0x18051ca80 (affix
+/// and `SkillAttribute::LoadPrefixTable` (affix
 /// percentages of the character and skill classes) and the conversion store.
 /// The only stock affix above it is `ao009b_energydrain_01` (55 %,
 /// `offensiveManaBurnDrainMin` 6: the span is 3 either way).
@@ -100,14 +100,14 @@ pub struct Attr {
     pub global: Option<Global>,
 }
 
-/// A global-chance damage attribute (`DamageAttribute::HasGlobalChance`,
-/// +153): the store's global chance and whether `<stem>XOR` puts it in the
+/// A global-chance damage attribute (`DamageAttribute::HasGlobalChance`):
+/// the store's global chance and whether `<stem>XOR` puts it in the
 /// "one of" list (`DamageAttributeDur::AddToStore` and siblings →
 /// `AddGlobalXorAttribute`, else `AddGlobalAndAttribute`). The
 /// store's chance is `offensiveGlobalChance` of the base table, replaced by
 /// each of prefix, suffix, modifier that has one above 0
-/// (`DamageAttributeStore::SetGlobalChance` @0x1801a4fb0 / `GetGlobalChance`
-/// @0x1801a5060 at level 1); a component / augment record has its
+/// (`DamageAttributeStore::SetGlobalChance` / `GetGlobalChance`
+/// at level 1); a component / augment record has its
 /// own store and chance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Global {
@@ -125,7 +125,7 @@ impl Attr {
 }
 
 /// `GameEngine::ResolveItemClassificationEnum` (names/values for 0..=13; 7 and 12 unused). 14 has no
-/// name there: only `ItemEnchantment::Load` @0x1803396c0 sets it (augments), whatever the record says.
+/// name there: only `ItemEnchantment::Load` sets it (augments), whatever the record says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Classification {
     Common = 0,
@@ -264,7 +264,7 @@ pub fn engine_max_stack(info: Option<&Record>) -> u32 {
         .unwrap_or(1000) as u32
 }
 
-/// `Item::GetMaxStackSize` @0x180328980: the record's `maxStackSize` (`Item::Load`, Item+0x890) when it is not 0,
+/// `Item::GetMaxStackSize`: the record's `maxStackSize` (`Item::Load`, `Item.maxStackSize`) when it is not 0,
 /// else `engine` ([`engine_max_stack`]). Equipment, relics (`ItemArtifact`) and the formula classes never stack
 /// (their `IncrementStack` slot returns false); components and charms (`ItemRelic` / `ItemCharm`) stack only when
 /// complete ([`super::components::is_complete`]), else 1. The one source of the rule (`gd_game::stack` delegates).
@@ -455,11 +455,11 @@ fn load_dmg(def: &FieldDef, kind: DmgKind, t: &Record, source: Source) -> Option
 
 impl DmgInst {
     /// `AddJitter(pct, rng)` of each class (`DamageAttributeAbs` /
-    /// `…Dur` @0x18018dc80, `…AbsMod` @0x18018a850, `…DurMod` @0x18018c120,
-    /// `DamageAttribute_Physical` @0x1801a2590): nothing unless pct > 0, then
+    /// `…Dur`, `…AbsMod`, `…DurMod`,
+    /// `DamageAttribute_Physical`): nothing unless pct > 0, then
     /// the percentage clamped to [0, 50] (the base's store 20 % and the
     /// affixes' `lootRandomizerJitter` alike: the creators pass the affix value
-    /// to this virtual, e.g. `sub_1801ADB20`). The `MinJitter` / `MaxJitter`
+    /// to this virtual, e.g. `DamageAttributeStore::CreateAttribute`). The `MinJitter` / `MaxJitter`
     /// siblings clamp the same way.
     fn add_jitter(&mut self, pct: f32, rng: &mut Roll) {
         if pct <= 0.0 {
@@ -617,7 +617,7 @@ impl DmgInst {
 }
 
 /// Loads, jitters and merges one damage/retaliation class (the creator
-/// template of `sub_1801ADB20` and siblings).
+/// template of `DamageAttributeStore::CreateAttribute` and siblings).
 fn create_dmg(
     class: &'static str,
     jitter: bool,
@@ -668,8 +668,8 @@ struct DefInst {
 
 /// `DefenseAttribute_Typical` creators (value array, base jitter
 /// with the store's 20% when passed, affixes with their `lootRandomizerJitter`,
-/// both through `DefenseAttribute_Typical::AddJitter` @0x1801fc750: pct > 0,
-/// then clamped to [0, 50]; e.g. creator `sub_180209CA0`).
+/// both through `DefenseAttribute_Typical::AddJitter`: pct > 0,
+/// then clamped to [0, 50]; e.g. creator `DefenseAttributeStore::CreateAttribute`).
 fn create_def(
     class: &'static str,
     jitter: bool,
@@ -753,8 +753,7 @@ pub struct AttrBounds {
 }
 
 /// [`AttrBounds`] of an equipment item (`None` for other classes: only
-/// `ItemEquipment` builds the stores `ItemEquipment::InitializeItem`
-/// @0x18033c240).
+/// `ItemEquipment` builds the stores `ItemEquipment::InitializeItem`).
 pub fn attr_bounds(db: &ItemDb, item: &Item) -> Option<AttrBounds> {
     let base = db.get(&item.base_name)?;
     if !is_equipment_class(&base.class) {
@@ -790,7 +789,7 @@ pub fn resolve_records(
 ) -> ResolvedItem {
     let class = base.class.clone();
     let is_weapon = is_weapon_class(&class);
-    // `ItemArtifact::InitializeItem` @0x18032a0c0: a relic loads only
+    // `ItemArtifact::InitializeItem`: a relic loads only
     // its own table (and the completion bonus below); the save's prefix /
     // suffix / modifier names (a saved relic can carry `ac04_energyregen`)
     // never reach its attributes.
@@ -803,7 +802,7 @@ pub fn resolve_records(
     let mut rng = item_stream(item.seed);
     let mut attrs = Vec::new();
     // Relics (`ItemArtifact`) roll their own attributes like equipment
-    // (`InitializeItem` @0x18032a0c0 seeds an `AttributePak` from the item
+    // (`InitializeItem` seeds an `AttributePak` from the item
     // seed; with the store jitter a saved relic gives the game's exact Spirit).
     if is_equipment_class(&class) || class == "ItemArtifact" {
         let relic = class == "ItemArtifact";
@@ -824,8 +823,8 @@ pub fn resolve_records(
     // Component, relic completion bonus, augment. The completion bonus
     // belongs to relics only and rolls its own `lootRandomizerJitter` on a
     // fresh stream from the relic's seed (`ItemArtifact::
-    // InitializeItem` @0x18032a0c0 → `AttributePak::LoadFromDatabase(bonus,
-    // seed, true)` @0x1800445f0). Equipment ignores its `relic_bonus`
+    // InitializeItem` → `AttributePak::LoadFromDatabase(bonus,
+    // seed, true)`). Equipment ignores its `relic_bonus`
     // (`ItemEquipment::InitializeItem` only hands it to
     // `AddRelic`, which stores it in the inner `ItemRelic`'s replica; no
     // `ItemRelic`/`ItemEquipment` code builds attributes from it). The
@@ -875,19 +874,22 @@ pub fn resolve_records(
     for c in [pc, sc].into_iter().flatten() {
         classification = classification.max(c);
     }
-    // `ItemRelic::Load` @0x180347670: a component's classification
+    // `ItemRelic::Load`: a component's classification
     // is always Relic (8), whatever its record's `itemClassification`;
     // likewise `ItemArtifact::Load` sets 10 (a relic's record says Rare /
     // Epic / Legendary, which would send it through the loot filter's
     // quality and type checks and hide it) and `ItemArtifactFormula::Load`
-    // 11, `ItemEnchantment::Load` @0x1803396c0 14 (an augment: the loot
+    // 11, `ItemEnchantment::Load` 14 (an augment: the loot
     // filter always passes it, its colour index and beam are gameiteminfo's
     // `enchantment*` entries, its name draws in `ItemNameEnchantment`; not
-    // being equipment, it drops with its record's `dropSound3D`).
+    // being equipment, it drops with its record's `dropSound3D`), and
+    // `ItemNote::Load` 13 (a lore note's record says Common, which the loot
+    // filter's equipment gate rejects: no ground label, no pickup).
     classification = match class.as_str() {
         "ItemRelic" => Classification::Relic,
         "ItemArtifact" => Classification::Artifact,
         "ItemArtifactFormula" => Classification::ArtifactFormula,
+        "ItemNote" => Classification::Lore,
         "ItemEnchantment" => Classification::Enchantment,
         _ => classification,
     };
@@ -925,7 +927,7 @@ pub fn resolve_records(
         item_set: base.str("itemSetName").map(str::to_string),
         // Components (`ItemRelic`) have no `bitmap`: `relicBitmap` when
         // complete, `shardBitmap` while partial (`ItemRelic::
-        // GetBitmap` @0x180347ec0: relic level ≥ `completedRelicLevel`; the
+        // GetBitmap`: relic level ≥ `completedRelicLevel`; the
         // level is `var1`, 1 when `var1` is 0, see `components::is_complete`).
         bitmap: {
             let b = base.string("bitmap");
@@ -934,11 +936,11 @@ pub fn resolve_records(
             if !b.is_empty() {
                 b.to_string()
             } else if !formula.is_empty() {
-                // `ItemArtifactFormula::Load` @0x18032d4a0: the
+                // `ItemArtifactFormula::Load`: the
                 // blueprint's texture is `artifactFormulaBitmapName`.
                 formula.to_string()
             } else if !art.is_empty() {
-                // `ItemArtifact::Load` @0x180329df3: `artifactBitmap`.
+                // `ItemArtifact::Load`: `artifactBitmap`.
                 art.to_string()
             } else {
                 let need = base.int("completedRelicLevel").max(1) as u32;
@@ -974,8 +976,8 @@ pub fn resolve_records(
 fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: &mut Vec<Attr>) {
     // The equipment stores pass 20 %; the `_Min` / `_Max` stores pass 0, so
     // their `Load` falls back to the base record's `lootRandomizerJitter`,
-    // default 20 (`CharAttributeStore_Min::Load` @0x1800d2cf0,
-    // `DamageAttributeStore_Min::Load` @0x1801a97c0 and the retaliation /
+    // default 20 (`CharAttributeStore_Min::Load`,
+    // `DamageAttributeStore_Min::Load` and the retaliation /
     // defense / penalty-reduction siblings: `GetFloat(.., 20.0)`; no stock
     // base record has the field, so it is 20 there too).
     let store_pct = if rng.seeded() {
@@ -1016,7 +1018,7 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
                 });
             }
             (StoreKind::Char, Creator::Char { field, jitter }) => {
-                // CharAttribute template (sub_1800D3DD0): affixes load (and
+                // CharAttribute template (`CharAttributeStore::CreateAttribute`): affixes load (and
                 // jitter with their lootRandomizerJitter if the store passed a
                 // percentage) BEFORE the base array is jittered.
                 let mut base = t.base.values(field);
@@ -1026,7 +1028,7 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
                         let v = a.float(field);
                         // `_Min` / `_Max`: gated by the store percentage, the
                         // affix's own one applied (`CharAttribute::
-                        // LoadPrefixTableMin` @0x1800cacf0).
+                        // LoadPrefixTableMin`).
                         parts[i] = if *jitter && store_pct > 0.0 {
                             rng.int(v, a.float("lootRandomizerJitter"), true)
                         } else {
@@ -1062,18 +1064,18 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
                     continue;
                 }
                 // The base array (`LoadBaseTable`, no RNG) takes the store's
-                // `AddJitter(20)`: `SkillAttributeStore::AddJitter` @0x18051fc80
-                // → `SkillAttribute::AddJitter` @0x18051e670 (pct clamped to
+                // `AddJitter(20)`: `SkillAttributeStore::AddJitter`
+                // → `SkillAttribute::AddJitter` (pct clamped to
                 // [0, 50], `SkillAttribute::Jitter` on every base entry; the affix
-                // parts at +64/+72/+80 are not touched). Call sites:
-                // `ItemEquipment::InitializeItem` @0x18033cd2c, after every store
+                // parts are not touched). Call sites:
+                // `ItemEquipment::InitializeItem`, after every store
                 // has loaded and the damage scale ran, so its draws come last on
                 // the item stream (nothing reads the stream afterwards); the
                 // `_Min` / `_Max` stores take `AddMinJitter` / `AddMaxJitter`(20)
-                // @0x18051fce0 / @0x18051fd40 there (the bound). A relic's
-                // `SkillAttributeStore_Skill::Load` @0x18051ff00 calls it at the end
+                // there (the bound). A relic's
+                // `SkillAttributeStore_Skill::Load` calls it at the end
                 // of its own load (`AttributePak::LoadFromTable`, pct 20 from
-                // `ItemArtifact::InitializeItem` @0x18032a1d3): in place, before
+                // `ItemArtifact::InitializeItem`): in place, before
                 // the damage store.
                 let pct = STORE_JITTER.clamp(0.0, JITTER_CAP);
                 if relic || !rng.seeded() {
@@ -1227,7 +1229,7 @@ fn armor(t: &Tables, store_pct: f32, rng: &mut Roll) -> Attr {
     }
 }
 
-/// Conversion store (`sub_18017E3E0`: base 1, base 2 at 20%,
+/// Conversion store (`ConversionAttributeStore::Load`: base 1, base 2 at 20%,
 /// then per affix 1, 2 at its `lootRandomizerJitter`).
 fn conversions(t: &Tables, rng: &mut Roll) -> Vec<Attr> {
     let mut out = Vec::new();
@@ -1344,20 +1346,20 @@ pub fn record_attrs_at(r: &Record, source: Source, level_index: usize) -> Vec<At
 }
 
 /// Variables for the requirement/cost equations (`ItemEquipment::
-/// ResolveEquationVariable` 0x18033eb20: `itemLevel` from the item, the rest
+/// ResolveEquationVariable`: `itemLevel` from the item, the rest
 /// from the cost-info totals that `ItemEquipment::DumpCostAttributes`
-/// @0x18033f790 gathers from every store's `GetCostInfo`):
+/// gathers from every store's `GetCostInfo`):
 /// `damageAvgBase` sums `DamageAttribute_BasePhysical` (min + max) / 2
-/// (@0x1801a0550) and every `DamageAttributeAbsBase*` (@0x18018f470: the
+/// and every `DamageAttributeAbsBase*` (`DamageAttributeAbsBase::GetCostInfo`: the
 /// mean of min and max when both are positive, else their sum, × chance / 100
 /// when it has a chance); `damageAvgPierceRatio` sums the pierce ratio of
-/// base and bonus physical damage (@0x1801a0550, @0x1801a28c0);
+/// base and bonus physical damage (`DamageAttribute_BasePhysical` / `DamageAttribute_Physical::GetCostInfo`);
 /// `defenseAttrArmor` sums the first value of each
-/// `DefenseAttribute_BaseProtectionAbsorption` (@0x180205120);
+/// `DefenseAttribute_BaseProtectionAbsorption` (`GetCostInfo`);
 /// `charAttackSpeed` the base attack speed values (`CharAttributeVal_
-/// BaseAttackSpeed::GetCostInfo` @0x1800cc9e0); `shieldBlockChance` /
+/// BaseAttackSpeed::GetCostInfo`); `shieldBlockChance` /
 /// `shieldBlockDefense` are the shield record's `defensiveBlockChance` /
-/// `defensiveBlock` (`WeaponArmor_Shield::Load` @0x18058cd70), 0 elsewhere.
+/// `defensiveBlock` (`WeaponArmor_Shield::Load`), 0 elsewhere.
 /// `ItemEquipment::InitializeItem`: the equation is evaluated (and
 /// the cost cached, nothing else writes it) right after the base, prefix,
 /// suffix and modifier stores load and before `AddRelic` /
@@ -1404,7 +1406,7 @@ fn equation_var(item: &ResolvedItem, base: &Record, name: &str) -> Option<f32> {
             })
             .sum(),
         "damageAvgPierceRatio" => total("offensivePierceRatioMin"),
-        // `ItemEquipment::GetTotalAttrCostCount` @0x18033f720: every attribute
+        // `ItemEquipment::GetTotalAttrCostCount`: every attribute
         // the item's stores count, base ones included (weapons' cost
         // equations subtract 2 for damage and speed, armour's 1).
         "totalAttCount" => own().count() as f32,
@@ -1429,7 +1431,7 @@ fn equation_var(item: &ResolvedItem, base: &Record, name: &str) -> Option<f32> {
 }
 
 /// The item's requirements; the level one is raised to its component's and
-/// augment's (`ItemEquipment::GetLevelRequirement` @0x180343ab0).
+/// augment's (`ItemEquipment::GetLevelRequirement`).
 fn requirements(
     db: &ItemDb,
     saved: &Item,
@@ -1530,7 +1532,7 @@ impl ResolvedItem {
 }
 
 /// The item's value (`Item::GetItemCost`, `ItemEquipment::GetItemCost`
-/// @0x180343760 / `InitializeItem` / `Load`): equipment uses its class's cost
+/// / `InitializeItem` / `Load`): equipment uses its class's cost
 /// equation (named by the class constructor: `Armor` armour,
 /// `ArmorJewelry` jewelry (waist is armour), shield, `offhandCostEquation`
 /// for off-hands, melee 2h, `weaponRangedCostEquation` for 1h ranged and
@@ -1543,7 +1545,7 @@ impl ResolvedItem {
 /// the base / affix / modifier attributes only, see `equation_var`), plus the inserted
 /// component's and augment's own costs. Other items: `itemCost` × (1 +
 /// `itemCostScalePercent` / 100), rounded, × stack size. The costs are
-/// unsigned 32-bit: the stack product (`Item::GetItemCost` @0x180327040) and
+/// unsigned 32-bit: the stack product (`Item::GetItemCost`) and
 /// the sum with the inserted costs wrap.
 pub fn item_cost(db: &ItemDb, item: &Item) -> u32 {
     let Some(base) = db.get(&item.base_name) else {
@@ -1576,7 +1578,7 @@ pub fn item_cost(db: &ItemDb, item: &Item) -> u32 {
     let market = |a: Option<&Record>| a.map_or(0.0, |a| a.float("marketAdjustmentPercent"));
     let scale = market(prefix) + market(suffix) + base.float("itemCostScalePercent");
     let fixed = first_cost(base);
-    // `ItemEquipment::GetItemCost` @0x180343760: a fixed `itemCost`
+    // `ItemEquipment::GetItemCost`: a fixed `itemCost`
     // truncates its scale term before adding it (the equation cost, cached
     // by `InitializeItem`, does not).
     let own = if fixed != 0.0 {
@@ -1604,8 +1606,8 @@ pub fn item_cost(db: &ItemDb, item: &Item) -> u32 {
 }
 
 /// The inserted component's and augment's costs.
-/// `ItemRelic::GetItemCost` @0x180349a70 / `ItemEnchantment::GetItemCost`
-/// @0x1803395f0: the `itemCost` entry of the component's (augment's)
+/// `ItemRelic::GetItemCost` / `ItemEnchantment::GetItemCost`:
+/// the `itemCost` entry of the component's (augment's)
 /// level minus 1, clamped to the last entry (level 0 wraps to it), plus the
 /// `petBonusCost` of its `petBonusName` record, scaled by 1 + (that record's
 /// `marketAdjustmentPercent` + `itemCostScalePercent`) / 100, truncated. The

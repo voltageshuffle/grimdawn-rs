@@ -1,33 +1,36 @@
 //! The item-slot panels' input (Runekeeper, crafter dismantle / reroll / salvage / convert tabs).
 use super::*;
+use gd_ui::state::trade::{Button, Panel, Trade, TradeLayout};
+use gd_ui_kit::contains;
 
 /// The item-slot windows (Runekeeper, crafter dismantle / reroll tabs): tab
 /// buttons, the slot, kind buttons, the action button and the dismantle prompt.
-/// The slot (`ItemBox_HandleMouseEvent` @0x1401AE6F0 -> `AscensionItemBox_HandleClick` @0x1401B15C0,
-/// the Inventor boxes' sub_1401B0750 / B0060 / AFAB0 / B0BD0): with an item
-/// on the cursor that the slot accepts, ANY press swaps (the old item onto the cursor, `InvRequest::Exchange`);
+/// The slot (`ItemBox_HandleMouseEvent` -> `AscensionItemBox_HandleClick`, the Inventor boxes'
+/// `InventorItemBox::HandleClick` / `InventorItemBox::HandleMouseEvent` / `InventorItemBox::AcceptItem` /
+/// `InventorItemBox::ReturnItem`): with an item on the cursor that the slot accepts, ANY press swaps (the old item
+/// onto the cursor, `InvRequest::Exchange`);
 /// empty cursor: left takes the item onto the cursor, Shift + left gives it back to the player
-/// (`ItemBox_ReturnItemToPlayer` @0x1401AEB20, `InvRequest::Stow`: equip-empty, bags, else the ground), right
+/// (`ItemBox_ReturnItemToPlayer`, `InvRequest::Stow`: equip-empty, bags, else the ground), right
 /// does nothing. Closing the window or switching tab gives it back the same way (each tab's / the window's
 /// show(false)). The slot state stays here (UI); the give rules are gd-game's (`InvRequest::Stow`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn panel_clicks(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<TradeLayout>,
     mut trade: ResMut<Trade>,
     inv: Option<Res<Inventory>>,
-    data: Res<crate::data::GameData>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    mut notify: MessageWriter<gd_game::story::Notify>,
+    data: Res<gd_game_core::data::GameData>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    mut notify: MessageWriter<gd_game_core::story::Notify>,
     mut capture: ResMut<UiCapture>,
-    mut sound: MessageWriter<gd_game::visuals::PlaySound>,
-    mut requests: MessageWriter<crate::inventory::InvRequest>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
+    mut requests: MessageWriter<gd_game_core::inventory::InvRequest>,
     (confirm, stack): (
-        Res<crate::ui::apply::InvConfirm>,
-        Res<crate::ui::stack::StackWindow>,
+        Res<gd_ui::apply::InvConfirm>,
+        Res<gd_ui::stack::StackWindow>,
     ),
 ) {
     let Some(inv) = inv else { return };
@@ -47,7 +50,7 @@ pub(super) fn panel_clicks(
     }
     if !trade.slot_panel() {
         for it in trade.take_boxes() {
-            requests.write(crate::inventory::InvRequest::Stow(it));
+            requests.write(gd_game_core::inventory::InvRequest::Stow(it));
         }
         trade.kind = None;
         trade.confirm = false;
@@ -59,7 +62,7 @@ pub(super) fn panel_clicks(
         trade.hover = None;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = crate::ui::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
         return;
     };
     // The dismantle warning (the dialog manager's Yes / No box) takes every click while up.
@@ -75,11 +78,11 @@ pub(super) fn panel_clicks(
         if buttons.just_pressed(MouseButton::Left)
             && let Some(hit) = rects.hit(p)
         {
-            use crate::ui::confirm::Hit;
+            use gd_ui_kit::confirm::Hit;
             if hit == Hit::Close
-                && let Some(pak) = crate::ui::confirm::close_sound(&data)
+                && let Some(pak) = gd_ui_kit::confirm::close_sound(&data)
             {
-                sound.write(gd_game::visuals::PlaySound { pak, at: None });
+                sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
             }
             trade.confirm = false;
             trade.go = hit == Hit::Yes;
@@ -90,7 +93,7 @@ pub(super) fn panel_clicks(
     }
     // The stack window takes its own clicks (`ui/stack.rs`); a modal question (`inventory::question_up`) takes
     // every click: none reaches the window under it (as `trade_clicks`).
-    if stack.covers(p) || crate::inventory::question_up(&inv, &trade, &confirm) {
+    if stack.covers(p) || gd_ui::apply::question_up(&inv, &trade, &confirm) {
         return;
     }
     let Some(wr) = layout.window.filter(|w| contains(w, p)) else {
@@ -124,7 +127,7 @@ pub(super) fn panel_clicks(
         match *b {
             Button::Tab(t) => {
                 for it in trade.take_boxes() {
-                    requests.write(crate::inventory::InvRequest::Stow(it));
+                    requests.write(gd_game_core::inventory::InvRequest::Stow(it));
                 }
                 trade.panel = t;
                 trade.kind = None;
@@ -154,7 +157,7 @@ pub(super) fn panel_clicks(
         trade.version += 1;
         return;
     }
-    // A result box (`ResultItemBox_HandleClick` @0x1401b0510): take only. A held item is refused;
+    // A result box (`ResultItemBox_HandleClick`): take only. A held item is refused;
     // empty cursor, left: Shift gives it back to the player (`ItemBox_ReturnItemToPlayer`), else it goes onto
     // the cursor; right does nothing.
     if let Some(i) = result
@@ -164,9 +167,9 @@ pub(super) fn panel_clicks(
             info!("trade: a dismantle result box takes no item");
         } else if left && let Some(it) = trade.results[i].take() {
             if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                requests.write(crate::inventory::InvRequest::Stow(it));
+                requests.write(gd_game_core::inventory::InvRequest::Stow(it));
             } else {
-                requests.write(crate::inventory::InvRequest::Exchange(Some(it)));
+                requests.write(gd_game_core::inventory::InvRequest::Exchange(Some(it)));
             }
             trade.version += 1;
         }
@@ -178,17 +181,19 @@ pub(super) fn panel_clicks(
         if let Some(h) = &inv.held {
             if let Err(why) = trade.accepts(h, &data) {
                 info!("trade: {why}");
-                notify.write(gd_game::story::Notify(why));
+                notify.write(gd_game_core::story::Notify(why));
                 return;
             }
             trade.kind = None;
-            requests.write(crate::inventory::InvRequest::Exchange(trade.slot.take()));
+            requests.write(gd_game_core::inventory::InvRequest::Exchange(
+                trade.slot.take(),
+            ));
         } else if left && trade.slot.is_some() {
             let it = trade.slot.take();
             if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                requests.write(crate::inventory::InvRequest::Stow(it.unwrap()));
+                requests.write(gd_game_core::inventory::InvRequest::Stow(it.unwrap()));
             } else {
-                requests.write(crate::inventory::InvRequest::Exchange(it));
+                requests.write(gd_game_core::inventory::InvRequest::Exchange(it));
             }
         } else {
             return;

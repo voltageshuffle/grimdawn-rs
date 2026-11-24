@@ -1,9 +1,9 @@
 //! Headless checks of the player's derived state: one source for each
 //! derived value, kept current when the raw state changes.
 use gd_formats::save::item::Item;
-use gd_game::combat::Combatant;
-use gd_game::player::{EffectiveSkills, Loadout, ProfileDirty};
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
+use gd_game_core::player::{EffectiveSkills, Loadout, ProfileDirty};
 
 fn game() -> Option<(TestGame, bevy::prelude::Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;

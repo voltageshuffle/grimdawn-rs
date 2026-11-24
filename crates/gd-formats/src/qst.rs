@@ -1,13 +1,13 @@
 //! Quest files (`Quests.arc`, `*.qst`) and the scriptable condition/action
 //! objects they share with conversations (`.cnv`).
 //!
-//! Per Game.dll (x64): `Quest2::Load` 0x1804206d0,
-//! `Quest2Task::Read` 0x1804256d0, `Quest2Objective::Read` 0x1804220a0,
-//! `Quest2Event::Read` 0x180421c20, `ScriptableConditionCollection::Read`
-//! 0x180474560, `ScriptableActionCollection::Read` 0x18046e280,
-//! `ScriptableCondition::Create` 0x18046ec30, `ScriptableAction::Create`
-//! 0x18046e130 and each type's virtual `Read`. Text block:
-//! Engine.dll `PortableLocalization::Read` 0x180189680.
+//! Per Game.dll (x64): `Quest2::Load`,
+//! `Quest2Task::Read`, `Quest2Objective::Read`,
+//! `Quest2Event::Read`, `ScriptableConditionCollection::Read`,
+//! `ScriptableActionCollection::Read`,
+//! `ScriptableCondition::Create`, `ScriptableAction::Create`
+//! and each type's virtual `Read`. Text block:
+//! Engine.dll `PortableLocalization::Read`.
 //!
 //! Type *names* come from exported class names where they exist
 //! (`ScriptableAction_GiveItem`, `ScriptableCondition_HasFaction`, ...), from
@@ -88,7 +88,7 @@ impl Comparator {
 
 /// One argument of a Lua condition/action (48-byte engine record:
 /// `{u32 kind, u8, f32, string}`) (the arg→Lua conversion shared by
-/// `ScriptableAction_LuaScript` and condition 12, Game.dll 0x18036af60): kind
+/// `ScriptableAction_LuaScript` and condition 12, Game.dll `ScriptableLua::ArgumentsToValues`): kind
 /// 0/1 push the number 0, 2 pushes `flag` as a boolean, 3 pushes `int`
 /// reinterpreted as an `f32` number, 4 pushes `text`; any other kind is nil.
 #[derive(Debug, Clone, PartialEq)]
@@ -113,7 +113,7 @@ fn lua_args(r: &mut Reader) -> Result<Vec<LuaArg>> {
         .collect()
 }
 
-/// Typed condition payload, by `ScriptableCondition::Type`.
+/// Typed condition payload, by `ScriptableCondition::GetType`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Condition {
     /// 0 `ScriptableCondition_OnQuest`: quest started (in progress or done) == value.
@@ -124,9 +124,9 @@ pub enum Condition {
         task: u32,
         value: bool,
     },
-    /// 2 player experience (`Character+1497*4`, `GetExperiencePoints`) <op> value. No class name exists.
+    /// 2 player experience (`Character.experiencePoints`, `GetExperiencePoints`) <op> value. No class name exists.
     Experience { value: u32 },
-    /// 3 player level (`Character+1496*4`, `SetCharLevel`) <op> value. No class name exists.
+    /// 3 player level (`Character.charLevel`, `SetCharLevel`) <op> value. No class name exists.
     Level { value: u32 },
     /// 4 game difficulty: `value <op> difficulty`.
     Difficulty { value: u32 },
@@ -146,7 +146,7 @@ pub enum Condition {
     },
     /// 10 `ScriptableCondition_HasKilled`: counter over a list of creature
     /// records (lower-cased, `/`), stored progress `u32` (`numKilled`) in the
-    /// save. Its vtable (0x1807968e8) registers with the
+    /// save. Its vtable (`ScriptableCondition_HasKilled::vftable`) registers with the
     /// `EventManager` and localizes `tagConditionHasKilled`.
     KillCreature { records: Vec<String>, count: u32 },
     /// 11 `ScriptableCondition_HasQuestObjective`; `objective` only for variant 1.
@@ -157,7 +157,7 @@ pub enum Condition {
         value: bool,
     },
     /// 12 Lua function returning a value compared against `compare` fields.
-    /// Return value check (`Evaluate` 0x1804736c0): `ret_type` 0 bool, 1 number,
+    /// Return value check (`ScriptableCondition_LuaScript::Evaluate`): `ret_type` 0 bool, 1 number,
     /// 2 string (0 reads the result as a boolean against `want_bool`,
     /// 1 as a number against `want_int` reinterpreted as an `f32`, 2 as a
     /// string; 3 is a nil/type check no shipped file uses); `ret_cmp` is a
@@ -182,10 +182,10 @@ pub enum Condition {
     /// 15 `ScriptableCondition_UsedQuestItem`: use count of a quest item with
     /// stored progress (`count`). Named from its debug text
     /// (`UsedQuestItem '%s' ...`, `tagQuestObjectiveUsedQuestItem*`, vtable
-    /// 0x180797110). No shipped quest uses it.
+    /// `ScriptableCondition_UsedQuestItem::vftable`). No shipped quest uses it.
     UsedQuestItem { name: String, count: u32 },
     /// 16 a `HasKilled` subclass (same vtable slots plus an event handler,
-    /// 0x180796a50): it also listens for spawned monsters and remembers the
+    /// `ScriptableCondition_HasKilledSpawned::vftable`): it also listens for spawned monsters and remembers the
     /// ids of those whose spawn source matches `records`, counting their
     /// deaths. Class name not tied (likely `HasKilledProxy`); no shipped quest
     /// uses it, so the port counts it like 10.
@@ -214,18 +214,20 @@ pub enum Condition {
     /// 27 `SkillManager::IsSkillToggled(skill) == value`.
     SkillToggled { skill: String, value: bool },
     /// 28 kill counter by monster classification (`ScriptableCondition::Create`
-    /// @0x18046ec30 case 28, vtable 0x1807969d8: `Read` sub_1804714C0 = `u32 class0, class1, count`
-    /// at +32 / +36 / +40; the counter `numKilled` +44 is the saved word; `Evaluate` sub_180471640
-    /// = `numKilled <op> count`; text `tagConditionHasKilled`). The death handler (sub_180471E30, event
-    /// 11, only with `IsExpansion3Loaded`) counts a `Monster` whose `GetClassification` (+20212,
+    /// case 28, vtable `ScriptableCondition_KillClassification::vftable`: `Read`
+    /// `ScriptableCondition_KillClassification::Read` = `u32 class0, class1, count` into `class0` / `class1` /
+    /// `count`; the counter `numKilled` is the saved word; `Evaluate`
+    /// `ScriptableCondition_KillClassification::Evaluate` = `numKilled <op> count`; text
+    /// `tagConditionHasKilled`). The death handler (`ScriptableCondition_KillClassification::OnCreatureDeath`, event
+    /// 11, only with `IsExpansion3Loaded`) counts a `Monster` whose `GetClassification` (`Monster.classification`,
     /// `GameEngine::ResolveMonsterClassificationEnum`: Common 0, Champion 1, Hero 2, Boss 3, Quest 4,
-    /// SuperBoss 5) is either class; the killer and victim rules are `gd_sim::story::Kill`'s.
+    /// SuperBoss 5) is either class; the killer and victim rules are `gd_story::story::Kill`'s.
     /// Stock: `bq_av06` (Boss / Quest, 8 kills).
     KillClassification { classes: [u32; 2], count: u32 },
-    /// 29 kill counter by faction (`Create` case 29, vtable 0x180796960, same layout and
-    /// `Read`; the constructor sets both factions to -1000 = none): the death handler (sub_1804718F0)
-    /// counts a `Character` whose `GetOriginalFaction` (vtable +1192; `Monster` +19460 = the
-    /// `myFaction` of its record's `factions` pack, `FactionPack::GetFactionFromString` order:
+    /// 29 kill counter by faction (`Create` case 29, vtable `ScriptableCondition_KillFaction::vftable`, same
+    /// layout and `Read`; the constructor sets both factions to -1000 = none): the death handler
+    /// (`ScriptableCondition_KillFaction::OnCreatureDeath`) counts a `Character` whose `GetOriginalFaction`
+    /// (`Monster.myFaction` = the `myFaction` of its record's `factions` pack, `FactionPack::GetFactionFromString` order:
     /// Player 0, Survivors 1, Aetherials 2 ... User0 6 ... User12 18) is not -1000 and is either
     /// faction. Stock (200 kills each): `bq_av07` Aetherials or User12 (Aetherial Vanguard),
     /// `bq_av08` Cthonians or User18 (Chthonic Kurn), `bq_av09` User16 (Eldritch) only (second -1000).
@@ -245,7 +247,7 @@ pub struct ConditionEntry {
 
 impl ConditionEntry {
     /// Number of `u32` progress words this condition writes into a save's
-    /// task block (`WriteProperties`, vtable slot 4; only 10/15/16/28/29).
+    /// task block (virtual `WriteProperties`; only 10/15/16/28/29).
     pub fn saved_words(&self) -> usize {
         matches!(self.kind, 10 | 15 | 16 | 28 | 29) as usize
     }
@@ -409,12 +411,12 @@ impl Conditions {
     }
 }
 
-/// Typed action payload, by `ScriptableAction::Type`.
+/// Typed action payload, by `ScriptableAction::GetType`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// 1 `ScriptableAction_BeginQuestTask`.
     BeginQuestTask { quest: String, task: u32 },
-    /// 2 quest file handed to a GameEngine subsystem (+0x40e0 vtbl+576), always
+    /// 2 quest file handed to a GameEngine subsystem (`GameEngine.outboundInterface`), always
     /// the last reward of a quest's final task. The slot is
     /// `QuestCommandCompleteQuest`, whose handler
     /// (`GameEngineOutboundInterface::QuestCommandCompleteQuest`) runs
@@ -608,7 +610,7 @@ pub struct Task {
     pub rewards: Vec<Event>,
     /// v>=8 (`IsBlocker`).
     pub blocker: bool,
-    /// v>=9, field +194 (unknown).
+    /// v>=9, `Quest2Task.flag194` (unknown).
     pub flag194: bool,
     /// MD5 of the task's bytes (uid .. rewards, without the v8/v9 flags):
     /// the task uid stored in `quests.gdd`; a mismatch makes the engine drop
@@ -634,7 +636,18 @@ impl Texts {
         }
         Ok(Self { languages })
     }
-    /// Text `i` of the first (English) table; `{^n}` etc. markup kept.
+    /// A text table from a line-ordered override file
+    /// ([`crate::text::load_text_override`], Engine.dll
+    /// `PortableLocalization::Read`): the lines replace the embedded tables
+    /// wholesale; [`Self::get`] serves them.
+    pub fn from_lines(lines: Vec<String>) -> Self {
+        Self {
+            languages: vec![("override".into(), lines)],
+        }
+    }
+    /// Text `i` of the first table — the embedded English, or the session
+    /// language's override ([`Self::from_lines`]); out-of-range → `""`
+    /// (`Quest2::GetText` → noTag). `{^n}` etc. markup kept.
     pub fn get(&self, i: u32) -> &str {
         self.languages
             .first()
@@ -649,7 +662,7 @@ pub struct Quest {
     pub header_unknown: u32,
     /// Quest id (save files key quests by it).
     pub id: u32,
-    /// `Quest2::GetFlags` (+72): bit 2 (value 4) = repeatable (Quest2::Update
+    /// `Quest2.flags`: bit 2 (value 4) = repeatable (Quest2::Update
     /// resets the quest when all tasks are complete).
     pub flags: u32,
     pub tasks: Vec<Task>,

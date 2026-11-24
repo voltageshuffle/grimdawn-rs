@@ -1,27 +1,27 @@
 //! Experience, levelling and gold drops (Game.dll).
 //!
-//! - `Monster::GetExperienceReward` 0x18037e8c0 → `GameEngine::CalculateExperienceReward`
-//!   0x1802e8010: equation from `records/game/experienceformulas.dbr` by
+//! - `Monster::GetExperienceReward` → `GameEngine::CalculateExperienceReward`:
+//!   equation from `records/game/experienceformulas.dbr` by
 //!   difficulty (`experienceEquation`, `eliteExperienceEquation`,
 //!   `ultimateExperienceEquation`; challenge mode `challengeExperienceEquation`),
 //!   variables `monsterLevel`, `monsterExperience`, `averagePartyLevel`;
 //!   reward `(int)(max(v, 0) + 0.5)`. Only monsters with `giveXP`.
-//! - `Character::ReceiveExperience` 0x18005fe30: `+ (int)(bonus% * 0.01 * xp + 0.5)`
-//!   (CharAttr 55), then `sub_18028E990`: the total is cumulative; while
+//! - `Character::ReceiveExperience`: `+ (int)(bonus% * 0.01 * xp + 0.5)`
+//!   (CharAttr 55), then `ExperienceLevelControl::AddExperience`: the total is cumulative; while
 //!   `level < maxLevel` and `total >= (int)(eq(playerLevel = level) + 0.5)`,
 //!   level up, `+characterModifierPoints` attribute points and
 //!   `skillModifierPoints[min(newLevel - 2, len - 1)]` skill points.
-//! - `GoldGenerator::RunGenerator` 0x180319680: with chance `goldGeneratorChance`
+//! - `GoldGenerator::RunGenerator`: with chance `goldGeneratorChance`
 //!   (default 100, ≤ 0 = always), amount `IGenerate` between the two
 //!   `goldAmountEquation`s (each `(int)(v + 0.5)` clamped to
-//!   `[goldValueMin, goldValueMax]`), split by `SplitGold` 0x180319a00 into
+//!   `[goldValueMin, goldValueMax]`), split by `GoldGenerator::SplitGold` into
 //!   `rand[goldSplitMin, goldSplitMax]` piles of at least `goldSplitSizeMin`.
-//! - [`class_tag`]: the class name tag (`Player::GetClassTag` @0x1803ceb60), the one source for the save
-//!   header (`WriteNewFormatHeader` @0x1803d9270 writes it on every save) and the character window.
-use crate::combat::Rng;
-use crate::expr::Expr;
+//! - [`class_tag`]: the class name tag (`Player::GetClassTag`), the one source for the save
+//!   header (`Player::WriteNewFormatHeader` writes it on every save) and the character window.
 use crate::stats::LevelTable;
 use gd_formats::vfs::Database;
+use gd_rules::Rng;
+use gd_rules::expr::Expr;
 
 fn irange(rng: &mut Rng, lo: i32, hi: i32) -> i32 {
     if hi <= lo {
@@ -39,7 +39,7 @@ pub fn experience_reward(
     monster: &str,
     monster_level: i32,
     player_level: i32,
-    mode: crate::mode::Mode,
+    mode: gd_rules::mode::Mode,
 ) -> u32 {
     let difficulty = mode.difficulty;
     let Some(rec) = db.get(monster) else { return 0 };
@@ -215,7 +215,7 @@ pub fn gold_drop(
     out
 }
 
-/// The character's class name tag (`Player::GetClassTag` @0x1803ceb60): the masteries with a
+/// The character's class name tag (`Player::GetClassTag`): the masteries with a
 /// point (`SkillManager::GetSkillMasteries`, each `Skill_Mastery`'s `MasteryEnumeration`, 0-based), looked
 /// up in the table `GameEngine::FillClassArray` fills: one mastery `tagSkillClassName<NN>`, two
 /// `tagSkillClassName<NN><MM>` (the table is symmetric, the lower number first; NN = enumeration + 1); none

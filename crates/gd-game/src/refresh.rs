@@ -4,8 +4,8 @@
 //! `refreshDurationSkill` cuts another skill's cooldown or lengthens its
 //! running buff on a trigger.
 //!
-//! Fields (`Skill::LoadResources` @0x18048e810 reads the names and triggers,
-//! gdx3 only; the profile `sub_18054a660` the per-level values):
+//! Fields (`Skill::LoadResources` reads the names and triggers,
+//! gdx3 only; the profile's `SkillProfile_Modifiers::Load` the per-level values):
 //! `refreshCooldownSkill` / `refreshCooldownTrigger` /
 //! `refreshCooldownChance` (integer %) / `refreshCooldownAmount` (s), and
 //! `refreshDurationSkill` / `refreshDurationTrigger` /
@@ -13,59 +13,60 @@
 //! `refreshDurationMax` (s). Triggers in stock: `AttackEnemy`,
 //! `AttackEnemyCrit`, `HitByEnemy`, `Block`, `OnKill`.
 //!
-//! `Skill::Install` @0x1804813f0: when the character's skill
+//! `Skill::Install`: when the character's skill
 //! manager knows the named skill (`SkillManager::FindSkillId`, the player
-//! only: `RegisterRefreshSkillCooldown` @0x18053e040 / `…Duration`), it
-//! registers a `RefreshSkillCooldownController` @0x1805244d0 /
-//! `RefreshSkillDurationController` @0x180523d90 with the chance and amount
+//! only: `RegisterRefreshSkillCooldown` / `…Duration`), it
+//! registers a `RefreshSkillCooldownController` /
+//! `RefreshSkillDurationController` with the chance and amount
 //! of the installing skill's level. Both are `SkillAutoCastController`s:
 //! the same trigger objects as the procs (`crate::autocast`, whose trigger
 //! events [`crate::autocast::Triggered`] this module reads), the same
-//! `AppraiseAndExecute` @0x180523440: a chance ≤ 0 always passes, else
+//! `AppraiseAndExecute`: a chance ≤ 0 always passes, else
 //! `RandomUniform(0, 100) ≤ chance`; no cooldown of their own (the action
 //! never sets its block flag for a non-zero amount).
 //!
 //! Whose events count (controller type 2, a skill's): the controller's
-//! skill list is the installing modifier's parents (`Skill` +440, the base
+//! skill list is the installing modifier's parents (`Skill.parentSkills`, the base
 //! skill before it in the tree or the gear's `modifiedSkillName`,
-//! `SkillManager::CreateAndLoadSkill` @0x18052f300), else the skill itself.
-//! `AttackingEnemy` @0x180522810 / `EnemyDeath` @0x180522ae0 take the
+//! `SkillManager::CreateAndLoadSkill`), else the skill itself.
+//! `AttackingEnemy` / `EnemyDeath` take the
 //! attacking / killing skill when it is one of them, or granted by one
-//! (`IsGrantingSkill` @0x180522c80: its buff, pool attack, secondary or
-//! sub-skill), or while one of them is active (`Skill` +0xDC:
-//! [`crate::player::Loadout::skill_active`]): an aura's modifier fires on
-//! any attack while the aura runs. `HitByEnemy` @0x180522580 (hits taken,
+//! (`IsGrantingSkill`: its buff, pool attack, secondary or
+//! sub-skill), or while one of them is active (`Skill.active`:
+//! [`gd_game_core::player::Loadout::skill_active`]): an aura's modifier fires on
+//! any attack while the aura runs. `HitByEnemy` (hits taken,
 //! blocks) needs one of them active. A refresh may fire from attacks of
 //! the skill it refreshes (`SkillServices_Character::AttackingEnemy`
-//! @0x180559ab0 skips that only for procs).
+//! skips that only for procs).
 //!
-//! The effect (`sub_1805257b0`): a cooldown refresh is ready only while the
+//! The effect (`RefreshSkillController::Execute`): a cooldown refresh is ready only while the
 //! skill cools down and runs `Skill::EndCooldown(amount × 1000 ms)`
-//! ([`crate::casting::Cooldowns::shorten`]: the time left only). A
+//! ([`gd_game_core::casting::Cooldowns::shorten`]: the time left only). A
 //! duration refresh is ready only while the skill's buff runs
 //! (`SkillManager::IsSkillBuffActive`) and sends the buff an update with
-//! the amount (`sub_1805258f0` → `SkillServices_Character::
-//! CreateUpdateSkillBuff` @0x1805586f0 → `SkillBuff::AddTimeToLive`
-//! @0x180526f90): the time left grows by the amount, not capped at the
-//! buff's full duration. `refreshDurationMax` is a budget per buff
-//! instance (`Skill::GetRefreshDurationModifierData` @0x1804903d0, filled
-//! when the buff starts): per key, the skill's own max under its own id and
-//! each registered modifier's under its parent; an update from source `s`
-//! adds at most what is left of `s`'s budget and spends it, a source with no
-//! budget adds the full amount. The source is the attacking skill for
-//! `AttackEnemy(Crit)` only (the action's +32, set by `AttackingEnemy`);
-//! other triggers pass none, so their extensions are never capped.
+//! the amount (`RefreshSkillDurationController::Update` → `SkillServices_Character::
+//! CreateUpdateSkillBuff` → `SkillBuff::AddTimeToLive`). The update does nothing unless the whole
+//! amount fits: time left + amount ≤ the buff's full duration (a life monitor's buff held at full by
+//! `thresholdDuration` waits for its countdown, `crate::autocast`), and the time left never passes the full
+//! duration. `refreshDurationMax` is a budget per buff instance (`Skill::GetRefreshDurationModifierData`, filled
+//! when the buff starts): the skill's own max under its own id, each registered modifier's under its parent, or
+//! summed under key 0 when the parent is a self buff (`SkillActivatedBuffSelf` / `Skill_PassiveOnHitBuffSelf` or
+//! derived, [`POOLED`]). An update from source `s` is cut to what is left of `s`'s entry and spends it, then to what
+//! is left of key 0's and spends that; a key with no entry cuts nothing. The source is the attacking skill for
+//! `AttackEnemy(Crit)` only (the action's `sourceSkill`, set by `AttackingEnemy`); other triggers pass none (key
+//! 0), so their extension is cut by the pool, which it spends twice.
 //!
 //! PORT: `LowHealth` / `LowMana` refreshes are not raised (no stock record
 //! uses them; `crate::autocast` raises those only for its procs);
 //! the hits taken by a `Monster` the controller may ignore (`HitByEnemy`'s
-//! vtable +1128 / +2256 test) are not told apart; the budget's buff
+//! `IsMonster` / `IsPet` test) are not told apart; the budget's buff
 //! instance is told by its time left jumping up (a recast).
 use crate::autocast::{Trigger, Triggered};
-use crate::casting::{Caster, level_f};
-use crate::player::{EffectiveSkills, Loadout, Player};
-use crate::weapon_pool::SkillLinks;
 use bevy::prelude::*;
+use gd_game_core::casting::Caster;
+use gd_game_core::casting::level_f;
+use gd_game_core::player::{EffectiveSkills, Loadout, Player};
+use gd_game_core::weapon_pool::SkillLinks;
 use gd_sim::skills::SkillBook;
 
 pub struct RefreshPlugin;
@@ -98,14 +99,81 @@ struct Refresher {
     skills: Vec<String>,
 }
 
-/// A running buff's `refreshDurationMax` budget: what each source spent.
+/// A running buff's `refreshDurationMax` budget: what is left per key (a skill's lower-case name; `""` the pool
+/// shared by the modifiers of self buffs).
 #[derive(Clone, Debug)]
 struct Budget {
     /// The buff's entry name in `Loadout::buffs`.
     buff: String,
     /// Its time left after the last extension (a recast makes it jump up).
     seen: f32,
-    spent: Vec<(String, f32)>,
+    left: Vec<(String, f32)>,
+}
+
+/// `Skill::GetRefreshDurationModifierData`: the modifiers of a skill of these classes (or one derived from them)
+/// pool their `refreshDurationMax` under key 0 instead of their parent's id.
+const POOLED: &[&str] = &[
+    "Skill_BuffAttackRadiusDuration",
+    "Skill_BuffAttackRadiusLightning",
+    "Skill_BuffAttackRadiusToggled",
+    "Skill_BuffRadius",
+    "Skill_BuffRadiusToggled",
+    "Skill_BuffSelfColossus",
+    "Skill_BuffSelfDuration",
+    "Skill_BuffSelfImmobilize",
+    "Skill_BuffSelfInvulnerable",
+    "Skill_BuffSelfShield",
+    "Skill_BuffSelfSick",
+    "Skill_BuffSelfToggled",
+    "Skill_ChargePotion",
+    "Skill_OnHitAttackRadius",
+    "Skill_OnHitBuffSelf",
+    "Skill_PassiveOnCritBuffSelf",
+    "Skill_PassiveOnHitBuffSelf",
+    "Skill_PassiveOnHitBuffShield",
+    "Skill_RefreshCooldown",
+    "Skill_Shapeshift",
+    "Skill_Teleport",
+    "SkillActivatedBuffSelf",
+];
+
+/// The budget entries of a buff instance (`Skill::GetRefreshDurationModifierData`, filled when the buff starts):
+/// the target's own `refreshDurationMax` under its own name, then each registered modifier's under its parent, or
+/// summed under `""` when the parent is a self buff ([`POOLED`]).
+fn budget_entries(
+    db: &gd_formats::vfs::Database,
+    list: &[Refresher],
+    r: &Refresher,
+    own: f32,
+) -> Vec<(String, f32)> {
+    let mut left: Vec<(String, f32)> = Vec::new();
+    let mut add = |key: String, secs: f32| match left.iter_mut().find(|e| e.0 == key) {
+        Some(e) => e.1 += secs,
+        None => left.push((key, secs)),
+    };
+    if own > 0.0 {
+        add(r.target[0].clone(), own);
+    }
+    for o in list
+        .iter()
+        .filter(|o| o.duration && o.target == r.target && o.max > 0.0)
+    {
+        let Some(parent) = o.skills.first() else {
+            continue;
+        };
+        let pooled = db
+            .get(parent)
+            .is_some_and(|p| POOLED.contains(&p.class.as_str()));
+        add(
+            if pooled {
+                String::new()
+            } else {
+                parent.clone()
+            },
+            o.max,
+        );
+    }
+    left
 }
 
 /// The player's refresh controllers and the budgets of the buffs they
@@ -168,9 +236,9 @@ fn controllers(
 #[allow(clippy::type_complexity)]
 fn collect_refreshers(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     // Option: without an inventory only the worn items' refreshers are skipped.
-    inv: Option<Res<crate::inventory::Inventory>>,
+    inv: Option<Res<gd_game_core::inventory::Inventory>>,
     mut players: Query<
         (
             Entity,
@@ -254,7 +322,7 @@ fn collect_refreshers(
 }
 
 fn apply_refreshes(
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut events: MessageReader<Triggered>,
     mut players: Query<
         (
@@ -295,7 +363,7 @@ fn apply_refreshes(
                 let used = ev
                     .used
                     .as_deref()
-                    .unwrap_or(crate::casting::DEFAULT_ATTACK)
+                    .unwrap_or(gd_game_core::casting::DEFAULT_ATTACK)
                     .to_ascii_lowercase();
                 r.skills.contains(&used)
                     || r.skills.iter().any(|s| {
@@ -328,7 +396,7 @@ fn apply_refreshes(
             if !ready {
                 continue;
             }
-            if r.chance > 0.0 && crate::rng::u32(0..=100) as f32 > r.chance {
+            if r.chance > 0.0 && gd_game_core::rng::u32(0..=100) as f32 > r.chance {
                 continue;
             }
             if !r.duration {
@@ -344,71 +412,64 @@ fn apply_refreshes(
             }
             let i = buff.expect("ready");
             let name = loadout.buffs.list[i].0.clone();
-            let mut add = r.amount.max(0.0);
-            // The source's budget: attacks only.
-            if let Some(src) = ev
+            let amount = r.amount.max(0.0);
+            // Only when the whole amount fits under the buff's full duration (a life monitor's buff held at full
+            // waits for its countdown).
+            let time_left = loadout.buffs.list[i].2;
+            let full = loadout.buffs.full(&name).unwrap_or(time_left);
+            if amount <= 0.0 || time_left + amount > full + 1e-4 {
+                continue;
+            }
+            // The source: the attacking skill for attacks, else none (key 0, the pool).
+            let src = ev
                 .used
                 .as_deref()
                 .filter(|_| matches!(ev.trigger, Trigger::AttackEnemy | Trigger::AttackEnemyCrit))
+                .map(str::to_ascii_lowercase)
+                .map(|s| {
+                    if r.target.contains(&s) {
+                        r.target[0].clone()
+                    } else {
+                        s
+                    }
+                })
+                .unwrap_or_default();
+            let b = match refreshers
+                .budgets
+                .iter()
+                .position(|b| b.buff.eq_ignore_ascii_case(&name))
             {
-                let src = src.to_ascii_lowercase();
-                let own = if r.target.contains(&src) {
-                    data.db.get(&r.target[0]).map_or(0.0, |t| {
-                        level_f(
-                            t,
-                            "refreshDurationMax",
-                            effective
-                                .map_or(1, |e| loadout.skill_level(&data.db, e, &r.target[0]))
-                                .max(1) as usize
-                                - 1,
-                        )
-                    })
-                } else {
-                    0.0
-                };
-                let total = own
-                    + refreshers
-                        .list
-                        .iter()
-                        .filter(|o| o.duration && o.target == r.target && o.skills.contains(&src))
-                        .map(|o| o.max)
-                        .sum::<f32>();
-                if total > 0.0 {
-                    let b = match refreshers
-                        .budgets
-                        .iter()
-                        .position(|b| b.buff.eq_ignore_ascii_case(&name))
-                    {
-                        Some(j) => j,
-                        None => {
-                            refreshers.budgets.push(Budget {
-                                buff: name.clone(),
-                                seen: loadout.buffs.list[i].2,
-                                spent: Vec::new(),
-                            });
-                            refreshers.budgets.len() - 1
-                        }
-                    };
-                    let spent = &mut refreshers.budgets[b].spent;
-                    let j = spent.iter().position(|s| s.0 == src).unwrap_or_else(|| {
-                        spent.push((src.clone(), 0.0));
-                        spent.len() - 1
+                Some(j) => j,
+                None => {
+                    let own = data.db.get(&r.target[0]).map_or(0.0, |t| {
+                        let level =
+                            effective.map_or(1, |e| loadout.skill_level(&data.db, e, &r.target[0]));
+                        level_f(t, "refreshDurationMax", level.max(1) as usize - 1)
                     });
-                    add = add.min(total - spent[j].1).max(0.0);
-                    spent[j].1 += add;
+                    refreshers.budgets.push(Budget {
+                        buff: name.clone(),
+                        seen: time_left,
+                        left: budget_entries(&data.db, &refreshers.list, r, own),
+                    });
+                    refreshers.budgets.len() - 1
+                }
+            };
+            // The source's entry, then the pool's (for no source the same entry, spent twice).
+            let mut add = amount;
+            for key in [src.as_str(), ""] {
+                if add <= 0.0 {
+                    break;
+                }
+                if let Some(e) = refreshers.budgets[b].left.iter_mut().find(|e| e.0 == key) {
+                    add = add.min(e.1).max(0.0);
+                    e.1 -= add;
                 }
             }
             if add <= 0.0 {
                 continue;
             }
-            loadout.buffs.list[i].2 += add;
-            if let Some(b) = refreshers
-                .budgets
-                .iter_mut()
-                .find(|b| b.buff.eq_ignore_ascii_case(&name))
-            {
-                b.seen = loadout.buffs.list[i].2;
-            }
+            loadout.buffs.list[i].2 = (time_left + add).min(full);
+            refreshers.budgets[b].seen = loadout.buffs.list[i].2;
             if let Some(a) = autocasts.as_mut() {
                 a.extend_block(&name, add);
             }

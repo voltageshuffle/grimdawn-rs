@@ -2,35 +2,35 @@
 //! the ground (the Conclave's dry shrubs and grass tufts, meadows, ...).
 //!
 //! Engine.dll:
-//! - `TerrainType::Load` @0x1801e1940 (fields): `BladeTextureFileName` (the
+//! - `TerrainType::Load` (fields): `BladeTextureFileName` (the
 //!   blade atlas; a layer without one has no grass), `BladeWidth`,
-//!   `BladeHeight`, `BladeSpacing` (+59, int), `BladeVariations` (+60, int,
-//!   default 1), `MinimumBladeOpacity` (+58, int), `VariationProbability` (int
+//!   `BladeHeight`, `BladeSpacing` (int), `BladeVariations` (int,
+//!   default 1), `MinimumBladeOpacity` (int), `VariationProbability` (int
 //!   list, its sum kept), `VariationClumpiness` (int list), `affectedByWind`.
-//! - `GrassObject::CreateGrassBuffers` @0x180112bd0: with the terrain quality
-//!   (`Terrain::GetQuality` @0x1801cd8b0 = `GraphicsEngine+336`, from the
+//! - `GrassObject::CreateGrassBuffers`: with the terrain quality
+//!   (`Terrain::GetQuality` = `GraphicsEngine.terrainQuality`, from the
 //!   `detailLevel` option in `GraphicsEngine::UpdateFromOptions`: low 0, medium
 //!   1, else ≥ 2) above 0 the spacing is `kGrassHighQualitySpacing` 0.58 m,
 //!   else 1.16 m and only the layers whose blades are ≥ 1.65 m high and that
 //!   have no `clutterMesh` grow; a terrain block holds at most 350 blades per
 //!   layer. Read when a level's terrain is built (levels loaded later follow a
 //!   changed option).
-//! - `GrassObject::SetupGrassGeometry` @0x180113370, per 9 × 9-cell terrain
+//! - `GrassObject::SetupGrassGeometry`, per 9 × 9-cell terrain
 //!   block (`TerrainBase::ConstructBlocks`: vertices 9i ..= min(9i + 9, w − 1))
 //!   and per grass layer, over the points x = x0, x0 + s, … ≤ x1 (z outer, x
 //!   inner, f32 steps):
 //!   1. a variation per point: `wang(int(x·12343 + z·7873)) % (variations +
 //!      BladeSpacing) ≥ variations` → none, else `GetRandomTexture`
-//!      @0x1801e30f0 of that int (`v % sum`, then the first i whose running sum
+//!      of that int (`v % sum`, then the first i whose running sum
 //!      of probabilities reaches it);
-//!   2. with more than one variation, `PerformClumping` @0x1801e34f0
+//!   2. with more than one variation, `PerformClumping`
 //!      (seed `wang(13·(x0 + 871·z0))`; ≤ 256 Park–Miller-picked swaps of two
-//!      points `ClumpFind` @0x1801e3180 returns: from a start, the first point
+//!      points `ClumpFind` returns: from a start, the first point
 //!      whose variation has fewer equal 8-neighbours (wrapping) than its
 //!      clumpiness; only when there are as many clumpiness values as
 //!      variations);
-//!   3. per point, the layer's opacity o (`Terrain::GetLayerOpacityInterpolated`
-//!      @0x1801cc140: bilinear over the cell weights, truncated) times
+//!   3. per point, the layer's opacity o (`Terrain::GetLayerOpacityInterpolated`:
+//!      bilinear over the cell weights, truncated) times
 //!      Π (255 − o_above) / 255 over the layers above; o < int(MinimumBladeOpacity
 //!      · 2.55) → no blade; else a vertical quad at the point on the ground
 //!      (`GetHeightInterpolated`), turned by `wang(int(x·3219 + z·23113))`
@@ -46,8 +46,8 @@
 //!   z += 0.025a + 0.075b; then the offset field d (characters pushing blades)
 //!   moves xz by h·d and lowers y by H − √(H² − |h·d|²), H = `bladeHeight`.
 //!   `TerrainType::SetGrassShaderParams`: `windStrength` = the
-//!   `WeatherManager` wind strength (PORT: carried in the entity's `MeshTag`; +0x4CC, `GetWindStrength`: 1 by default, the
-//!   weather's eased 1..3 factor) when `affectedByWind` (+448), else 0.
+//!   `WeatherManager` wind strength (PORT: carried in the entity's `MeshTag`; `WeatherManager.windStrength`,
+//!   `GetWindStrength`: 1 by default, the weather's eased 1..3 factor) when `affectedByWind`, else 0.
 //! - The grass is part of the terrain, which casts no sun shadow
 //!   (render/terrain.rs).
 //!
@@ -56,47 +56,47 @@
 //!   corner (w, h its size); a blade reads the point `clamp(int((x − x0) / s))`,
 //!   `clamp(int((z − z0) / s))` (`SetupGrassGeometry`), the same for its 4
 //!   vertices. A point holds a disturbance offset / velocity and a wind offset /
-//!   velocity. `Terrain::CreateGrassWind` @0x1801cb170 (the gusts,
-//!   `World::CreateDirectionalWind`) calls `GrassObject::AddWind` @0x180111b00
+//!   velocity. `Terrain::CreateGrassWind` (the gusts,
+//!   `World::CreateDirectionalWind`) calls `GrassObject::AddWind`
 //!   on each block whose box meets the cube of the radius about the point: every
 //!   point closer than r gets wind velocity += (1 − d / r)·strength·(dir.x,
 //!   dir.y) (dir.y of the gusts' (x, 0, z) is 0: they push along x only),
 //!   clamped to ±0.3, and is held 0.1 s; the block animates the rectangle of
-//!   pushed points for 5000 ms. `UpdateOffsetField` @0x180114360 (each frame
+//!   pushed points for 5000 ms. `UpdateOffsetField` (each frame
 //!   while animating) first writes the vertex offsets (disturbance + wind on a
 //!   layer `affectedByWind`, else disturbance only), then steps each point with
 //!   h = min(dt, 0.05 s): hold −= h; unheld: wind velocity = (v − 50·offset·h)·0.91;
 //!   wind offset = clamp(v·h + offset, ±0.5); disturbance velocity = (v −
 //!   50·offset·h)·0.95, offset likewise. The VS applies it (gd_wind.wesl, UV_1).
 //! - Characters push the blades aside ([`character_disturbances`],
-//!   Game.dll `CharacterMovementManager::Update` @0x18008ee30): each update of a
+//!   Game.dll `CharacterMovementManager::Update`: each update of a
 //!   character in action state Move (5), Walk (6), Jump (19), 20 or Evade (21)
-//!   calls `World::CreatePointDisturbance` @0x18021fd90 (Engine.dll) at its coords
-//!   with radius `Character::GetExtents` @0x18005dd50 (`pathingSize` Small 0.5,
+//!   calls `World::CreatePointDisturbance` (Engine.dll) at its coords
+//!   with radius `Character::GetExtents` (`pathingSize` Small 0.5,
 //!   Medium 1, Large 1.75), strength 3, falloff on, splash type 1 for the player
 //!   (0 else; water ripples only). Per region whose box grown by the radius holds
-//!   the point, the terrain's `CreatePointDisturbance` @0x1801cae00 walks the
-//!   blocks like the wind (cube of the radius) into `GrassObject::AddDisturbance`
-//!   @0x180112040: every point 0.0001 ≤ d < r from it gets disturbance velocity +=
+//!   the point, the terrain's `Terrain::CreateGrassDisturbance` walks the
+//!   blocks like the wind (cube of the radius) into `GrassObject::AddDisturbance`:
+//!   every point 0.0001 ≤ d < r from it gets disturbance velocity +=
 //!   (dx, dz) / d · strength · (1 − d / r) (outwards), clamped to ±2, no hold; the
 //!   same rectangle growth and 5000 ms timer as the wind.
-//!   The message is [`gd_game::visuals::PointDisturbance`]; its water half
+//!   The message is [`gd_game_core::visuals::PointDisturbance`]; its water half
 //!   (`Water::CreateRipple`) is `water.rs`'s. The other callers (all
 //!   Game.dll, falloff on):
-//!   - `FxPak::OnAddToLevel` @0x1802bd910: `disturbanceRadius` > 0.0001, strength
-//!     5, splash 0 (`gd_game::visuals::spawn_fx`);
-//!   - `Destructible::CollisionCallback` @0x180262d50: a debris piece's contact
+//!   - `FxPak::OnAddToLevel`: `disturbanceRadius` > 0.0001, strength
+//!     5, splash 0 (`gd_game_core::visuals::spawn_fx`);
+//!   - `Destructible::CollisionCallback`: a debris piece's contact
 //!     at most every 250 ms, radius 1, strength √(|v|² + |ω|²), splash 2 on water
 //!     (surface 7), else 0 (`breakables.rs`);
-//!   - `Floater::UpdateSelf` sub_1802b9410: each bob turn, radius |the region box's
+//!   - `Floater::UpdateSelf`: each bob turn, radius |the region box's
 //!     half extents|, strength 1, splash 0 (`decoration_anim.rs`);
-//!   - `World::CreateLineDisturbance` @0x180220430 (a wave's front each frame,
+//!   - `World::CreateLineDisturbance` (a wave's front each frame,
 //!     strength 2, splash 0: `gd_game::waves`): radius-1 point disturbances 1 m
 //!     apart along the line ([`line_disturbances`]);
-//!   - `Skill_AttackLine::Update` sub_1804b4c50 (each `hitPeriod` at the travelling
+//!   - `Skill_AttackLine::Update` (each `hitPeriod` at the travelling
 //!     point, radius `attackRadius`, strength 5, splash 1: `gd_game::casting::attack_line`);
 //!   - not ported: `Character::CollisionCallback` (ragdolls: radius 1, strength
-//!     the impact speed; the port has none), and `Fx::AnimationCallback` @0x1802b99c0 ("DisplaceGrass", radius
+//!     the impact speed; the port has none), and `Fx::AnimationCallback` ("DisplaceGrass", radius
 //!     the `FxMesh`'s `disturbanceRadius`, strength 5: no stock `FxMesh` animation
 //!     has that callback, only creature ones, which `Fx` never plays).
 //!
@@ -109,7 +109,6 @@
 //! blocks' points are written to the GPU (rewriting the meshes made Bevy re-extract and
 //! re-allocate every animated chunk each frame: a third of the frame time in a gust).
 use super::material::MaterialAssets;
-use crate::data::GameData;
 use crate::textures::Textures;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology};
@@ -118,8 +117,9 @@ use bevy::render::Extract;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
+use gd_formats::collections::HashMap;
 use gd_formats::map::terrain::Terrain;
-use std::collections::HashMap;
+use gd_game_core::data::GameData;
 
 /// `kGrassHighQualitySpacing`.
 const SPACING: f32 = 0.58;
@@ -401,7 +401,7 @@ pub fn spawn(
     let mut field = grass.field;
     field.origin = origin;
     // One material pair per layer texture, shared by its chunks (and by every level: `MaterialAssets::grass`).
-    let mut materials: HashMap<(String, u32, bool), Handle<super::GdMaterial>> = HashMap::new();
+    let mut materials: HashMap<(String, u32, bool), Handle<super::GdMaterial>> = HashMap::default();
     for g in grass.batches {
         let mesh = meshes.add(g.mesh);
         for fringe in [false, true] {
@@ -478,46 +478,93 @@ pub struct GrassWindPush {
     pub falloff: bool,
 }
 
-use gd_game::visuals::PointDisturbance;
+use gd_game_core::visuals::PointDisturbance;
 
-/// Game.dll `CharacterMovementManager::Update` @0x18008ee30's strength (flt @0x1807a80b8).
+/// Game.dll `CharacterMovementManager::Update`'s strength (`Game::MoveDisturbanceStrength`).
 const MOVE_STRENGTH: f32 = 3.0;
 
-/// Game.dll `CharacterMovementManager::Update` @0x18008ee30 (module doc): every update of a character in
+/// A character's grass-disturbance facts (PERF-26), derived once by [`character_disturbances`]
+/// instead of a database lookup per mover per frame: the `GetExtents` radius (the record is fixed
+/// for the character's life) and a memo of the last cast skill's leap-class verdict, re-derived
+/// only when the cast skill changes.
+#[derive(Component)]
+pub struct MoveDisturbance {
+    radius: f32,
+    leap: Option<(String, bool)>,
+}
+
+/// Game.dll `CharacterMovementManager::Update` (module doc): every update of a character in
 /// action state Move, Walk, Jump, Evade (or the unnamed 20) disturbs the grass at its coords with its
 /// `GetExtents` radius, strength 3, falloff on, splash 1 for the player, else 0 (its ms timer is reset to 1, so it
-/// fires each update). Jump (19) is a leap's: `JumpAttackAction::Execute` @0x1800849f0 →
-/// `Character::JumpToUseSkill` @0x18006b8e0 sets it, and it holds until the next action's (the jump's `StopJump`
+/// fires each update). Jump (19) is a leap's: `JumpAttackAction::Execute` →
+/// `Character::JumpToUseSkill` sets it, and it holds until the next action's (the jump's `StopJump`
 /// only stops the move), so the whole leap cast disturbs. PORT: the port's states Run, Walk, Charge (a move),
-/// Evade, and Cast while its skill (the [`gd_game::casting::Casting`], after the hit the
-/// [`gd_game::casting::LastCast`]) is a leap class.
+/// Evade, and Cast while its skill (the [`gd_game_core::casting::Casting`], after the hit the
+/// [`gd_game_core::casting::LastCast`]) is a leap class.
 pub fn character_disturbances(
     data: Res<GameData>,
-    chars: Query<(
-        &gd_game::character::Character,
+    mut commands: Commands,
+    mut chars: Query<(
+        Entity,
+        &gd_game_core::character::Character,
         &GlobalTransform,
-        Option<&gd_game::casting::Casting>,
-        Option<&gd_game::casting::LastCast>,
+        Option<&gd_game_core::casting::Casting>,
+        Option<&gd_game_core::casting::LastCast>,
+        Option<&mut MoveDisturbance>,
     )>,
     mut out: MessageWriter<PointDisturbance>,
 ) {
-    use gd_game::character::CharState;
-    for (c, tf, cast, last) in &chars {
-        let moving = match c.state {
-            CharState::Run | CharState::Walk | CharState::Charge | CharState::Evade => true,
-            CharState::Cast => cast
-                .map(|k| &k.skill)
-                .or(last.map(|l| &l.skill))
-                .and_then(|s| data.db.get(s))
-                .is_some_and(|r| gd_game::casting::is_leap(&r.class)),
-            _ => false,
+    use gd_game_core::character::CharState;
+    for (e, c, tf, cast, last, mut dist) in &mut chars {
+        let moving_state = matches!(
+            c.state,
+            CharState::Run | CharState::Walk | CharState::Charge | CharState::Evade
+        );
+        if !moving_state && !matches!(c.state, CharState::Cast) {
+            continue;
+        }
+        // The record radius is derived once per character (the record is fixed), not per frame.
+        let radius = match dist.as_mut() {
+            Some(d) => d.radius,
+            None => {
+                let r = gd_game_core::pets::placement::extents(data.db.get(&c.record));
+                commands.entity(e).insert(MoveDisturbance {
+                    radius: r,
+                    leap: None,
+                });
+                r
+            }
         };
+        let moving = moving_state
+            || match cast.map(|k| &k.skill).or(last.map(|l| &l.skill)) {
+                Some(skill) => {
+                    let memo = dist
+                        .as_ref()
+                        .and_then(|d| d.leap.as_ref())
+                        .filter(|(s, _)| s.as_str() == skill.as_str())
+                        .map(|(_, leap)| *leap);
+                    match memo {
+                        Some(leap) => leap,
+                        None => {
+                            let leap = data
+                                .db
+                                .get(skill)
+                                .is_some_and(|r| gd_game_core::casting::is_leap(&r.class));
+                            if let Some(d) = dist.as_mut() {
+                                d.leap = Some((skill.clone(), leap));
+                            }
+                            leap
+                        }
+                    }
+                }
+                None => false,
+            };
         if !moving {
             continue;
         }
         out.write(PointDisturbance {
             pos: tf.translation(),
-            radius: gd_game::pets::placement::extents(data.db.get(&c.record)),
+            radius,
             strength: MOVE_STRENGTH,
             falloff: true,
             splash: c.is_player as u8,
@@ -525,9 +572,9 @@ pub fn character_disturbances(
     }
 }
 
-/// `World::CreateLineDisturbance` @0x180220430: its point disturbances (module doc), for the grass and the water.
+/// `World::CreateLineDisturbance`: its point disturbances (module doc), for the grass and the water.
 pub fn line_disturbances(
-    mut lines: MessageReader<gd_game::visuals::LineDisturbance>,
+    mut lines: MessageReader<gd_game_core::visuals::LineDisturbance>,
     mut out: MessageWriter<PointDisturbance>,
 ) {
     for l in lines.read() {
@@ -538,15 +585,15 @@ pub fn line_disturbances(
 /// One point of a block's offset field (`GrassObject`, 36 bytes).
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 struct FieldPoint {
-    /// +0: the disturbance offset ([`PointDisturbance`]).
+    /// `GrassPoint.offset`: the disturbance offset ([`PointDisturbance`]).
     off: Vec2,
-    /// +8: its velocity.
+    /// `GrassPoint.velocity`: its velocity.
     vel: Vec2,
-    /// +16: the wind offset.
+    /// `GrassPoint.windOffset`: the wind offset.
     woff: Vec2,
-    /// +24: its velocity.
+    /// `GrassPoint.windVelocity`: its velocity.
     wvel: Vec2,
-    /// +32: seconds the wind still holds it.
+    /// `GrassPoint.windHold`: seconds the wind still holds it.
     hold: f32,
 }
 
@@ -562,7 +609,7 @@ struct FieldBlock {
     heights: (f32, f32),
     /// x0, x1, z0, z1 of the points being animated (`NONE` in x0: none).
     rect: [i32; 4],
-    /// ms the field still animates (+92).
+    /// ms the field still animates (`GrassObject.animTimer`).
     timer_ms: i32,
 }
 
@@ -588,6 +635,13 @@ pub struct GrassField {
     base: Option<u32>,
     /// The meshes whose `UV_1` gets the points' indices once placed.
     meshes: Vec<FieldMesh>,
+    /// Blocks per row / column of the layout grid (PERF-26: the push's block-index walk).
+    blocks_x: u32,
+    blocks_z: u32,
+    /// The terrain's max xz corner and the ground height range over all blocks, for
+    /// rejecting a push that meets no block (PERF-26). Derived once in [`Self::layout`].
+    extent: Vec2,
+    heights: (f32, f32),
 }
 
 impl GrassField {
@@ -597,6 +651,7 @@ impl GrassField {
             spacing,
             ..default()
         };
+        let mut gh = (f32::INFINITY, f32::NEG_INFINITY);
         for j in 0..bz {
             for i in 0..bx {
                 let (x0, z0) = (BLOCK * i, BLOCK * j);
@@ -614,6 +669,7 @@ impl GrassField {
                         heights = (heights.0.min(y), heights.1.max(y));
                     }
                 }
+                gh = (gh.0.min(heights.0), gh.1.max(heights.1));
                 f.blocks.push(FieldBlock {
                     start: f.points.len(),
                     cols,
@@ -630,6 +686,10 @@ impl GrassField {
                 );
             }
         }
+        f.blocks_x = bx;
+        f.blocks_z = bz;
+        f.extent = Vec2::new((t.width - 1) as f32, (t.height - 1) as f32);
+        f.heights = gh;
         f
     }
 
@@ -641,55 +701,81 @@ impl GrassField {
         (b.start + (c + b.cols * r) as usize) as u32
     }
 
-    /// The pushes' shared walk (`Terrain::CreateGrassWind` @0x1801cb170 / `CreatePointDisturbance` @0x1801cae00, then
-    /// `GrassObject::AddWind` @0x180111b00 / `AddDisturbance` @0x180112040): every block whose box (ground heights)
+    /// The pushes' shared walk (`Terrain::CreateGrassWind` / `Terrain::CreateGrassDisturbance`, then
+    /// `GrassObject::AddWind` / `AddDisturbance`): every block whose box (ground heights)
     /// meets the cube of `r` about `p` (terrain-local) grows its animated rectangle by the points
     /// `int((p − r) / s)` ..= `int((p + r) / s + 1)` (clamped), `push` runs on each of them closer than `r` with
     /// its offset from `p` (dx, dz) and distance, and the block animates for 5000 ms.
     fn push_points(&mut self, p: Vec3, r: f32, mut push: impl FnMut(&mut FieldPoint, Vec2, f32)) {
         let s = self.spacing;
         let inv = 1.0 / s;
-        for b in &mut self.blocks {
-            let (lo, hi) = (b.corner, b.corner + b.size);
-            let centre_y = (b.heights.0 + b.heights.1) * 0.5;
-            let half_y = (b.heights.1 - b.heights.0) * 0.5;
-            if p.x + r < lo.x
-                || p.x - r > hi.x
-                || p.z + r < lo.y
-                || p.z - r > hi.y
-                || (p.y - centre_y).abs() > half_y + r
-            {
-                continue;
-            }
-            let (px, pz) = (p.x - b.corner.x, p.z - b.corner.y);
-            let c0 = (((px - r) * inv) as i32).max(0);
-            let c1 = (((px + r) * inv + 1.0) as i32).min(b.cols - 1);
-            let r0 = (((pz - r) * inv) as i32).max(0);
-            let r1 = (((pz + r) * inv + 1.0) as i32).min(b.rows - 1);
-            b.rect = [
-                b.rect[0].min(c0),
-                b.rect[1].max(c1),
-                b.rect[2].min(r0),
-                b.rect[3].max(r1),
-            ];
-            for row in r0..=r1 {
-                for col in c0..=c1 {
-                    let off = Vec2::new(col as f32 * s - px, row as f32 * s - pz);
-                    let d = off.length();
-                    if d < r {
-                        push(
-                            &mut self.points[b.start + (row * b.cols + col) as usize],
-                            off,
-                            d,
-                        );
+        // PERF-26: walk only the grid cells that can meet the push cube, not every block.
+        // Block (i, j) spans x [9i, min(9i+9, w−1)] (z likewise); the −1 slackens the lower
+        // bound for the clipped edge block — the exact box test below still gates each one.
+        let bx = self.blocks_x as i32;
+        let bz = self.blocks_z as i32;
+        let cell = BLOCK as f32;
+        let i0 = (((p.x - r) / cell).floor() as i32).saturating_sub(1).max(0);
+        let i1 = (((p.x + r) / cell).floor() as i32).min(bx - 1);
+        let j0 = (((p.z - r) / cell).floor() as i32).saturating_sub(1).max(0);
+        let j1 = (((p.z + r) / cell).floor() as i32).min(bz - 1);
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let b = &mut self.blocks[(j * bx + i) as usize];
+                let (lo, hi) = (b.corner, b.corner + b.size);
+                let centre_y = (b.heights.0 + b.heights.1) * 0.5;
+                let half_y = (b.heights.1 - b.heights.0) * 0.5;
+                if p.x + r < lo.x
+                    || p.x - r > hi.x
+                    || p.z + r < lo.y
+                    || p.z - r > hi.y
+                    || (p.y - centre_y).abs() > half_y + r
+                {
+                    continue;
+                }
+                let (px, pz) = (p.x - b.corner.x, p.z - b.corner.y);
+                let c0 = (((px - r) * inv) as i32).max(0);
+                let c1 = (((px + r) * inv + 1.0) as i32).min(b.cols - 1);
+                let r0 = (((pz - r) * inv) as i32).max(0);
+                let r1 = (((pz + r) * inv + 1.0) as i32).min(b.rows - 1);
+                b.rect = [
+                    b.rect[0].min(c0),
+                    b.rect[1].max(c1),
+                    b.rect[2].min(r0),
+                    b.rect[3].max(r1),
+                ];
+                for row in r0..=r1 {
+                    for col in c0..=c1 {
+                        let off = Vec2::new(col as f32 * s - px, row as f32 * s - pz);
+                        let d = off.length();
+                        if d < r {
+                            push(
+                                &mut self.points[b.start + (row * b.cols + col) as usize],
+                                off,
+                                d,
+                            );
+                        }
                     }
                 }
+                b.timer_ms = 5000;
             }
-            b.timer_ms = 5000;
         }
     }
 
-    /// `Terrain::CreateGrassWind` @0x1801cb170 → `GrassObject::AddWind` @0x180111b00 (module doc).
+    /// Whether a push at terrain-local `p` with radius `r` can meet any block: the cube
+    /// against the field's whole box (PERF-26: skip a far field without walking its blocks).
+    /// A superset of the per-block tests, so it never rejects a push that moves a point.
+    fn touches(&self, p: Vec3, r: f32) -> bool {
+        let centre_y = (self.heights.0 + self.heights.1) * 0.5;
+        let half_y = (self.heights.1 - self.heights.0) * 0.5;
+        p.x + r >= 0.0
+            && p.x - r <= self.extent.x
+            && p.z + r >= 0.0
+            && p.z - r <= self.extent.y
+            && (p.y - centre_y).abs() <= half_y + r
+    }
+
+    /// `Terrain::CreateGrassWind` → `GrassObject::AddWind` (module doc).
     fn add_wind(&mut self, p: Vec3, w: &GrassWindPush) {
         let r = w.radius;
         self.push_points(p, r, |pt, _, d| {
@@ -706,7 +792,7 @@ impl GrassField {
         });
     }
 
-    /// `Terrain::CreatePointDisturbance` @0x1801cae00 → `GrassObject::AddDisturbance` @0x180112040 (module doc):
+    /// `Terrain::CreateGrassDisturbance` → `GrassObject::AddDisturbance` (module doc):
     /// points 0.0001 ≤ d < r get disturbance velocity += (dx, dz) / d · strength (· (1 − d / r) with the falloff),
     /// clamped to ±2; no hold.
     fn add_disturbance(&mut self, p: Vec3, g: &PointDisturbance) {
@@ -723,7 +809,7 @@ impl GrassField {
         });
     }
 
-    /// `GrassObject::UpdateOffsetField` @0x180114360's integration of the animated points.
+    /// `GrassObject::UpdateOffsetField`'s integration of the animated points.
     fn step(&mut self, dt_ms: i32) {
         let h = (dt_ms as f32 * 0.001).min(0.05);
         for b in &mut self.blocks {
@@ -898,7 +984,7 @@ pub fn grass_offsets(
         f.base = Some(base);
         for m in std::mem::take(&mut f.meshes) {
             if let Some(mut mesh) = meshes.get_mut(&m.mesh) {
-                // Only a layer `affectedByWind` (TerrainType +448) adds the wind offset.
+                // Only a layer `affectedByWind` (`TerrainType.affectedByWind`) adds the wind offset.
                 let wind = if m.wind { 1.0 } else { 0.0 };
                 let uv: Vec<[f32; 2]> =
                     m.index.iter().map(|&i| [(base + i) as f32, wind]).collect();
@@ -933,23 +1019,27 @@ pub fn grass_offsets(
     for mut f in &mut fields {
         for w in pushes {
             let p = w.pos - f.origin;
-            f.add_wind(p, w);
+            if f.touches(p, w.radius) {
+                f.add_wind(p, w);
+            }
         }
         for g in disturbances {
             let p = g.pos - f.origin;
-            f.add_disturbance(p, g);
+            if f.touches(p, g.radius) {
+                f.add_disturbance(p, g);
+            }
         }
         if f.blocks.iter().all(|b| b.rect[0] == NONE) {
             continue;
         }
         if !pushes.is_empty() || !disturbances.is_empty() {
-            let live = f.blocks.iter().filter(|b| b.rect[0] != NONE).count();
             let peak = |o: fn(&FieldPoint) -> f32| f.points.iter().map(o).fold(0.0, f32::max);
             debug!(
-                "grass field: {} pushes, {} disturbances, {live} blocks animated, peak wind offset {:.3}, \
+                "grass field: {} pushes, {} disturbances, {} blocks animated, peak wind offset {:.3}, \
                  disturbance offset {:.3}",
                 pushes.len(),
                 disturbances.len(),
+                f.blocks.iter().filter(|b| b.rect[0] != NONE).count(),
                 peak(|p| p.woff.length()),
                 peak(|p| p.off.length()),
             );

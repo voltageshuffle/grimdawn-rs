@@ -6,15 +6,15 @@
 //! by [`NavBlock`].
 //!
 //! (Game.dll):
-//! - `ResolveEnum_Pattern` @0x180100660: `Grid` 0, `Lines` 1, `Ring` 2,
+//! - `ResolveEnum_Pattern`: `Grid` 0, `Lines` 1, `Ring` 2,
 //!   `Circle` 3, anything else `Ring`.
-//! - `Load` @0x1804bbdd0: `pattern`, `placementRadius` (R), `spawnRadius`,
+//! - `Load`: `pattern`, `placementRadius` (R), `spawnRadius`,
 //!   `spawnLocations` (a list, one per level: the count is the entry at
 //!   min(level, len) − 1), `selfTarget`, `forceCenterPoint`, `randomPoints`,
 //!   `alternateSpawn`, `minDelay` / `maxDelay` (s → whole ms),
 //!   `groundEffect`.
 //! - Spacing s = max(2 × `spawnRadius`, 2) (2 m for the even grid).
-//! - `PickGridPoints` @0x1804ba030: random: the grid of step s over
+//! - `PickGridPoints`: random: the grid of step s over
 //!   [−R, R]² (rows of z, x inside) inside the disk of R; `forceCenterPoint`
 //!   first requests the centre (one fewer); then, until the count is met or
 //!   no candidate is left, a uniform candidate (`IGenerate(0, left − 1)`,
@@ -23,18 +23,18 @@
 //!   ones are taken (index 0, 2, 4, …; from 1 with `alternateSpawn`), each
 //!   requested near (2 m); `forceCenterPoint` then moves the spot nearest the
 //!   centre onto it and every other spot by the same offset.
-//! - `PickLinePoints` @0x1804bac80: four arms at 0°, 90°, 180°, 270° about
+//! - `PickLinePoints`: four arms at 0°, 90°, 180°, 270° about
 //!   +Y from the centre's facing (45° on with `alternateSpawn`);
 //!   `forceCenterPoint` adds the centre first (one fewer). Even: ⌊count / 4⌋
 //!   per arm; random: arms 1–3 take `IGenerate(1, count − 4)` (at least 1, at
 //!   most what is left), the 4th the rest. An arm of k spots starts at
 //!   2 × `spawnRadius` from the centre and steps (R − that) / k. No nav
 //!   requests.
-//! - `PickRingPoints` @0x1804bb220: random: count × a random point on the
+//! - `PickRingPoints`: random: count × a random point on the
 //!   circle of R (`RequestAndBlockRandomPointOnRadius`, s); even: count spots
 //!   at angles i × 2π / count (+ half a step with `alternateSpawn`) on R,
 //!   each requested near (s).
-//! - `PickCirclePoints` @0x1804bb4d0: `forceCenterPoint` requests the centre
+//! - `PickCirclePoints`: `forceCenterPoint` requests the centre
 //!   first (one fewer); random: count × a random point in the disk of R
 //!   (`RequestAndBlockRandomPointInRadius`, s); even: k = ⌈√count⌉, step
 //!   2R / k, every grid point inside the disk requested near (s), however
@@ -274,17 +274,17 @@ fn len(o: (f32, f32)) -> f32 {
     (o.0 * o.0 + o.1 * o.1).sqrt()
 }
 
-/// `NavManager`'s blocked circles (Engine.dll, impl +30208): a transient
+/// `NavManager`'s blocked circles (Engine.dll, `NavManagerImpl.blockedPoints`): a transient
 /// list of (x, z, r) read only while a skill picks its spots (never by
 /// path-finding or movement); the pickers empty it when they finish
 /// (`ClearRequestPointData`), so one `NavBlock` lives for one activation.
-/// `ground(x, z)` is the nav probe (sub_1802610F0, flag 0x40000000): the
+/// `ground(x, z)` is the nav probe (`NavManager::ProbeWalkableHeight`, flag 0x40000000): the
 /// floor height where there is walkable ground; `rand()` in [0, 1) is the
-/// engine's `rand() / 32767`. Engine: `IsBlocked` (sub_18010D6B0),
-/// `BlockPoint` (sub_18010D770), `RequestAndBlockNearPoint`
-/// (sub_18010CD00), `RequestAndBlockRandomPointInRadius` (sub_18010D070),
-/// `RequestAndBlockRandomPointOnRadius` (sub_18010D2E0). PORT: the on-radius
-/// request's `needPath` reachability test (sub_18010C6C0) and sector layer
+/// engine's `rand() / 32767`. Engine: `NavManager::IsBlocked`,
+/// `NavManager::BlockPoint`, `NavManager::RequestAndBlockNearPoint`,
+/// `NavManager::RequestAndBlockRandomPointInRadius`,
+/// `NavManager::RequestAndBlockRandomPointOnRadius`. PORT: the on-radius
+/// request's `needPath` reachability test (`NavManager::HasPathTo`) and sector layer
 /// test are not made (`PickRingPoints` passes `false, -1`).
 #[derive(Clone, Debug, Default)]
 pub struct NavBlock {
@@ -428,7 +428,7 @@ impl NavBlock {
     }
 }
 
-/// `NavManager::FillPointSet` @0x180150650 (Engine.dll, the
+/// `NavManager::FillPointSet` (Engine.dll, the
 /// non-random variant `Skill_SpawnPet::ActivateNow` asks for): one point per
 /// radius in `radii`, in order, each by [`NavBlock::near_point`]. Any radius
 /// that finds no place empties the whole set.

@@ -1,5 +1,5 @@
 //! Sector data (map chunk 0x18, `SectorDataManager::Load`), per-level sector
-//! layers (level chunk 23, `SectorLayers::Load` @0x18019D0E0) and instance
+//! layers (level chunk 23, `SectorLayers::Load`) and instance
 //! groups (map chunk 0x11, `InstanceGroupManager::Load`/`InstanceGroup::Load`).
 use crate::util::Reader;
 use anyhow::{Result, bail};
@@ -65,14 +65,14 @@ impl SectorEntry {
 }
 
 /// The `FogSectorData` (layer 0, "environment") fields, per
-/// `SectorDataManager::ReadFogData` (22 dwords stored in order at +88) and
-/// their consumer `AmbianceManager` sub_180033E90: +88 fog colour (rgba),
-/// +104 light-colour modifier, +120 sky-ambient modifier, +136
-/// ground-ambient modifier (rgba each; multiplied into the day/night
+/// `SectorDataManager::ReadFogData` (22 dwords stored in order after the common header) and
+/// their consumer `AmbianceManager::UpdateModifierSlot`: `fogColor` (rgba),
+/// `lightColorMod`, `skyAmbientMod`,
+/// `groundAmbientMod` (rgba each; multiplied into the day/night
 /// colours by `GetLightColor` / `GetSkyAmbientColor` /
-/// `GetGroundAmbientColor`), +152 / +156 the depth / height fog densities,
-/// +160..+172 the depth fog start / end and height fog start / end (ints,
-/// metres; the constructor defaults 10, 50, 10, 0). Fog: sub_180033E90 and
+/// `GetGroundAmbientColor`), `depthFogDensity` / `heightFogDensity`,
+/// then the depth fog start / end and height fog start / end (ints,
+/// metres; the constructor defaults 10, 50, 10, 0). Fog: `AmbianceManager::UpdateModifierSlot` and
 /// `GraphicsDeferredRenderer::RenderFog` (grimdawn `render/post.rs`).
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentFields {
@@ -296,14 +296,14 @@ impl InstanceGroup {
 #[derive(Debug, Clone, Default)]
 pub struct InstanceGroups {
     groups: Vec<InstanceGroup>,
-    by_uid: std::collections::HashMap<[u32; 4], Vec<u32>>,
-    by_group_id: std::collections::HashMap<[u32; 4], u32>,
+    by_uid: crate::collections::HashMap<[u32; 4], Vec<u32>>,
+    by_group_id: crate::collections::HashMap<[u32; 4], u32>,
 }
 
 impl InstanceGroups {
     pub fn new(groups: Vec<InstanceGroup>) -> Self {
-        let mut by_uid: std::collections::HashMap<[u32; 4], Vec<u32>> = Default::default();
-        let mut by_group_id: std::collections::HashMap<[u32; 4], u32> = Default::default();
+        let mut by_uid: crate::collections::HashMap<[u32; 4], Vec<u32>> = Default::default();
+        let mut by_group_id: crate::collections::HashMap<[u32; 4], u32> = Default::default();
         for (i, g) in groups.iter().enumerate() {
             if let Some(id) = g.group_id {
                 by_group_id.entry(id).or_insert(i as u32);
@@ -323,7 +323,7 @@ impl InstanceGroups {
     }
 
     /// The groups holding `uid`, in map order (Engine.dll
-    /// `InstanceGroupManager::GetGroupsThatContain` @0x180127420: a scan of the group list).
+    /// `InstanceGroupManager::GetGroupsThatContain`: a scan of the group list).
     pub fn containing(&self, uid: &[u32; 4]) -> impl Iterator<Item = &InstanceGroup> {
         self.by_uid
             .get(uid)
@@ -338,8 +338,8 @@ impl InstanceGroups {
     }
 
     /// `uid`'s member entry: its record, region and position (Engine.dll
-    /// `InstanceGroupManager::GetEntityData` @0x180127cc0: the first group of `GetGroupsThatContain`, then
-    /// `InstanceGroup::GetEntityData` @0x180125a70, that group's first entry with the uid).
+    /// `InstanceGroupManager::GetEntityData`: the first group of `GetGroupsThatContain`, then
+    /// `InstanceGroup::GetEntityData`, that group's first entry with the uid).
     pub fn entity_data(&self, uid: &[u32; 4]) -> Option<&InstanceGroupEntry> {
         self.containing(uid)
             .next()?
@@ -458,7 +458,7 @@ pub struct LaterLayers {
     pub challenge: Vec<Challenge>,
 }
 
-/// One `DamageSectorData` entry (`SectorDataManager::ReadDamageData` @0x1801a3c40, Engine.dll: the common
+/// One `DamageSectorData` entry (`SectorDataManager::ReadDamageData`, Engine.dll: the common
 /// header, then a float at +88, an int at +92 and a u32-length record path at +96): the share of max life a
 /// player standing in the sector loses each tick, its combat type (`CombatType` id) and the effect spawned on it.
 #[derive(Debug, Clone)]
@@ -469,7 +469,7 @@ pub struct DamageSector {
     pub record: String,
 }
 
-/// One challenge-layer entry (`SectorDataManager::ReadChallengeData` @0x1801a44c0: the common header,
+/// One challenge-layer entry (`SectorDataManager::ReadChallengeData`: the common header,
 /// then a u32-length record path at +88, normalised): the `ChallengeArea` record (`records/game/challengeareas/`)
 /// of that sector, read by `Player::UpdateSelf` (`GameEngine::GetChallengeArea`).
 #[derive(Debug, Clone)]
@@ -573,7 +573,7 @@ pub fn read_later_layers(r: &mut Reader, layer_count: i32) -> Result<LaterLayers
 }
 
 /// One `DayNightCycleSectorData` entry's cycle, as stored (`DayNightCycle::Read`
-/// Engine.dll 0x1800503b0): "DNC" + version (2 or 3), sunset, sunrise,
+/// Engine.dll): "DNC" + version (2 or 3), sunset, sunrise,
 /// v3: night start / end, sun azimuth, sun min angle, moon azimuth, moon min
 /// angle, then the keys (time + light, sky, ground rgb). Zero azimuths and the
 /// v2 night times keep the engine defaults (`render::env` in grimdawn).

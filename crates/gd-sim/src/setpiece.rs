@@ -2,17 +2,17 @@
 //! chests, ...). A set piece picks one `SetPiecePool` and places a few of its
 //! objects (creatures, props, chests) around itself.
 //!
-//! * `SetPiece::Load` @0x18047b820: with `FGenerate(0, 100) <= placementChance`
+//! * `SetPiece::Load`: with `FGenerate(0, 100) <= placementChance`
 //!   the pools `pool1..5` with a non-zero `weight1..5` are collected.
-//! * `SetPiece::Generate` @0x1804792e0: a pool by `IGenerate(0, Σw)` (first
+//! * `SetPiece::Generate`: a pool by `IGenerate(0, Σw)` (first
 //!   cumulative weight ≥ the roll); from it `placementRadius`,
 //!   `placementScheme` (Random 0, Grid 1, Camp 2, Ring 3), `minToPlace`,
 //!   `maxToPlace` and entries 1..10: `objectN` (a list), `limitN`, `weightN`,
 //!   `forceN`, `rotationN`, `scaleMinN/MaxN`, `tagsN`, `bufferN`,
 //!   `blockPathingN`.
-//! * `SetPiece::Pick` @0x180479f70, on the set piece's own Park–Miller stream:
+//! * `SetPiece::Pick`, on the set piece's own Park–Miller stream:
 //!   the count is `min + r % (max - min + 1)`; each object is a
-//!   `PickEntry` @0x180479c30: `r % (Σw + 1)` over the entries with uses left
+//!   `PickEntry`: `r % (Σw + 1)` over the entries with uses left
 //!   (`limit` 0 = unlimited; first cumulative weight ≥ the roll), then one of
 //!   the entry's objects by `r % len`; an entry whose limit runs out leaves
 //!   the total.
@@ -22,17 +22,17 @@
 //!
 //! Parts (`SetPiecePart`) are added after the objects (see `run_set_piece`).
 //!
-//! Entity groups (`SetPiece::Load` @0x18047b820): the host spends a set piece its `Unique Entities` /
+//! Entity groups (`SetPiece::Load`): the host spends a set piece its `Unique Entities` /
 //! `Inverse Unique Entities` group leaves out before the placement-chance roll
 //! (`gd_game::unique::Loader::SetPiece`: Unique and not chosen, or Inverse and
 //! chosen); the `Unified Entities` flag shares one pool index across the group
-//! ([`run_set_piece_shared`]'s `pick`, `SetPiece::Generate` @0x1804792e0's
+//! ([`run_set_piece_shared`]'s `pick`, `SetPiece::Generate`'s
 //! `GetEntityUnificationIndex` / `SetEntityUnificationIndex`). Placement itself
 //! is the host's (see [`Placement`]); [`SetPieceRun::stream`] is the set piece's
 //! own stream after the picks, which the positioning continues (scale and
 //! rotation rolls, `SetPiece::Apply*Positioning` / `ApplyRotation`).
-use crate::combat::Rng;
 use gd_formats::vfs::Database;
+use gd_rules::Rng;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheme {
@@ -123,8 +123,8 @@ fn tag(s: &str) -> u32 {
     }
 }
 
-/// `r % n` with the engine's guard against n = 0 (`SetPiece::Pick`
-/// @0x180479f70); a negative span (bad data: max below min) counts as 1
+/// `r % n` with the engine's guard against n = 0 (`SetPiece::Pick`); a
+/// negative span (bad data: max below min) counts as 1
 /// instead of wrapping to a huge unsigned modulus. Widened to `i64` so the
 /// callers' `hi - lo + 1` / `total + 1` cannot overflow (bad data: counts or
 /// weights near `i32::MAX`); identical to the engine's 32-bit maths on stock data.
@@ -154,9 +154,9 @@ pub fn run_set_piece(
 }
 
 /// [`run_set_piece`] for a set piece of a "Unified Entities" group (
-/// `SetPiece::Generate` @0x1804792e0's use of `GameEngine::
-/// GetEntityUnificationIndex` @0x1802e78e0 / `SetEntityUnificationIndex`
-/// @0x1802e7c30): `pick` is the group's stored
+/// `SetPiece::Generate`'s use of `GameEngine::
+/// GetEntityUnificationIndex` / `SetEntityUnificationIndex`): `pick` is the
+/// group's stored
 /// index into this set piece's pools (the non-zero `weight1..5` columns, in
 /// order); with `None` the pool is chosen by weight. An index past the pool
 /// list falls back to the weighted choice. Either way the chosen index goes
@@ -287,14 +287,14 @@ pub fn run_set_piece_shared(
             }
         }
     }
-    // Parts (`SetPiece::Pick` @0x180479f70): `minParts +
+    // Parts (`SetPiece::Pick`): `minParts +
     // r % (maxParts - minParts + 1)` picks, each `r % (budget + 1)` over the
     // cumulative `weight`s, the picked part's weight leaving the budget
     // (parts may repeat); `CreateParts` creates every one of its `names`.
-    // Each name becomes an entry holding the part (`CreateParts`
-    // @0x1804761c0: no tags, rotation or force; the part's `buffer` and
+    // Each name becomes an entry holding the part (`CreateParts`:
+    // no tags, rotation or force; the part's `buffer` and
     // `blockPathing`); positioning puts it at the part's `positionX/Y/Z`
-    // (`SetPiecePart` load @0x18047d3d0) from the set piece.
+    // (`SetPiecePart::Load`) from the set piece.
     let parts: Vec<(gd_formats::arz::Record, i32)> = p
         .strs("parts")
         .iter()

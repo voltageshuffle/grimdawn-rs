@@ -3,8 +3,9 @@
 //! Portraits and their stance menu: `ui::pets`.
 //!
 //! Selection, `Grim Dawn.exe` (the player input object's pet list,
-//! toggle sub_1402053F0, order sub_1402056D0, clear sub_140205600, world
-//! click sub_140021000, keys sub_140026910 / sub_140211AF0): the selected
+//! toggle `InGameUI::TogglePetSelection`, order `InGameUI::OrderSelectedPets`, clear
+//! `InGameUI::ClearPetSelection`, world click `InGameUI::HandleMouseEvent`, keys `InGameUI::HandleKeyEvent` /
+//! `UIPlayerHud::HandleKeyAction`): the selected
 //! pets are UI state ([`PetSelection`], in selection order). A pet of the
 //! player is toggled by a left click on its portrait, by a left click on the
 //! pet in the world while the Target Pet key is held (action 38
@@ -23,20 +24,21 @@
 //! gives the selected pets (else the first portrait's) the order of a world
 //! click on the monster nearest the pet or at a point (the monster within
 //! 1.5 m of it, else the ground).
-use crate::inventory::UiCapture;
-use crate::player::Player;
-use crate::world::Nav;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::pets::{PetSelection, PetInputSet};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use gd_game::combat::{Combatant, Dead};
+use gd_game::nav::Nav;
 use gd_game::pets::{Pet, PetCommand, portrait_pets};
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::player::Player;
 
 pub struct PetInputPlugin;
 
 impl Plugin for PetInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PetSelection>()
-            .add_plugins(crate::ui::pets::PetPortraitPlugin)
+            .add_plugins(gd_ui::pets::PetPortraitPlugin)
             .add_systems(
                 Update,
                 (
@@ -44,34 +46,20 @@ impl Plugin for PetInputPlugin {
                     stance_hook,
                     world_input
                         .in_set(PetInputSet)
-                        .in_set(crate::ui::UiInputSet)
-                        .before(crate::casting::CastInputStage::Cast),
+                        .in_set(gd_ui_kit::UiInputSet)
+                        .before(gd_ui::state::casting::CastInputStage::Cast),
                 )
                     .before(gd_game::casting::CastingSet),
             );
     }
 }
 
-/// The selected pets, in selection order (module docs).
-#[derive(Resource, Default, Clone, PartialEq)]
-pub struct PetSelection(pub Vec<Entity>);
 
-impl PetSelection {
-    /// Selects the pet, or deselects it if it was selected (sub_1402053F0).
-    pub fn toggle(&mut self, pet: Entity) {
-        match self.0.iter().position(|e| *e == pet) {
-            Some(i) => {
-                self.0.remove(i);
-            }
-            None => self.0.push(pet),
-        }
-    }
-}
 
 /// `GD_PET_STANCE`: sets every pet's stance once the first pet exists.
 #[cfg(feature = "dev")]
 fn stance_hook(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     players: Query<Entity, With<Player>>,
     pets: Query<(Entity, &Pet)>,
     mut hook: Local<Option<Option<gd_game::pets::Stance>>>,
@@ -106,7 +94,7 @@ fn stance_hook(
 /// Pet selection keys and world clicks (module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn world_input(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -130,7 +118,7 @@ pub fn world_input(
     (time, mut hook, bindings): (
         Res<Time>,
         Local<Option<Vec<(f32, Option<Vec2>)>>>,
-        Res<crate::ui::keys::KeyBindings>,
+        Res<gd_ui_kit::keys::KeyBindings>,
     ),
 ) {
     let Ok(owner) = players.single() else { return };
@@ -159,12 +147,12 @@ pub fn world_input(
     }
     let order = || portrait_pets(owner, pets.iter().map(|(e, p, _, _)| (e, p)));
     if let Some(i) =
-        (0..5).position(|i| bindings.just_pressed(crate::ui::keys::PET_SELECT_FIRST + i, &keys))
+        (0..5).position(|i| bindings.just_pressed(gd_ui_kit::keys::PET_SELECT_FIRST + i, &keys))
     {
         if let Some(&pet) = order().get(i) {
             selection.toggle(pet);
         }
-    } else if bindings.just_pressed(crate::ui::keys::PET_SELECT_ALL, &keys) {
+    } else if bindings.just_pressed(gd_ui_kit::keys::PET_SELECT_ALL, &keys) {
         selection.0.clear();
         for pet in order().into_iter().take(5) {
             selection.toggle(pet);
@@ -211,7 +199,7 @@ pub fn world_input(
         give_order(owner, &mut selection, target, point, &mut out);
         return;
     }
-    let pet_key = bindings.pressed(crate::ui::keys::TARGET_PET, &keys);
+    let pet_key = bindings.pressed(gd_ui_kit::keys::TARGET_PET, &keys);
     if capture.0 || !buttons.just_pressed(MouseButton::Left) || (!pet_key && selection.0.is_empty())
     {
         return;
@@ -249,7 +237,8 @@ pub fn world_input(
     give_order(owner, &mut selection, target, point, &mut out);
 }
 
-/// One order per selected pet, then the selection clears (sub_1402056D0).
+/// One order per selected pet (`InGameUI::OrderSelectedPets`), then the selection clears
+/// (`InGameUI::ClearPetSelection`).
 fn give_order(
     owner: Entity,
     selection: &mut PetSelection,
@@ -272,6 +261,3 @@ fn give_order(
     selection.0.clear();
 }
 
-/// The pet orders given by clicking the world.
-#[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PetInputSet;

@@ -10,9 +10,9 @@
 //! Dynamic obstacles (`NavManager::AddDynamicObstacle`: closed doors' mesh hit
 //! boxes, `NavBlocker` cylinders, blocking set-piece objects) make the cells
 //! whose centre they cover unenterable ([`NavWorld::set_obstacles`]); a cell
-//! already inside one can still be left. (Engine `NavManager::
-//! AddDynamicObstacle` 0x180150da0.. → 0x18010b340 / 0x18010b4a0, tile build
-//! 0x1801e7f10): the obstacle areas are marked after the walkable erosion,
+//! already inside one can still be left. (Engine `NavManager::AddDynamicObstacle`
+//! → `NavMesh::AddObstacleCylinder` / `NavMesh::AddObstacleBox`, tile build
+//! `NavMesh::BuildTile`): the obstacle areas are marked after the walkable erosion,
 //! so they get no agent margin; a cylinder spans `max(height, 3)` from half
 //! of that below its base to that above it; a box marks its xz footprint
 //! (the parallelogram of its first axis and the sum of the other two) from
@@ -26,7 +26,7 @@
 //! cell search's (worst 22 %), strict searches half the time, detours past the old budget found. Dynamic obstacles
 //! are seen by the cell search only: a corridor that does not reach the goal falls back to the whole nav. A
 //! strict search toward another component fails at once ([`NavWorld::connected`]).
-use rustc_hash::FxHashMap;
+use gd_formats::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::marker::PhantomData;
@@ -149,13 +149,13 @@ struct CellKey {
 pub struct NavWorld {
     layers: Vec<Option<NavLayer>>,
     free: Vec<u32>,
-    by_tile: FxHashMap<(i32, i32), Vec<u32>>,
+    by_tile: HashMap<(i32, i32), Vec<u32>>,
     /// Owner key (e.g. region index) → layer slots, for unloading.
-    owners: FxHashMap<u64, Vec<u32>>,
+    owners: HashMap<u64, Vec<u32>>,
     /// Owner key → dynamic obstacles.
-    obstacles: FxHashMap<u64, Vec<Obstacle>>,
+    obstacles: HashMap<u64, Vec<Obstacle>>,
     /// 4 m grid cell → (owner, index) of the obstacles overlapping it.
-    obstacle_grid: FxHashMap<(i32, i32), Vec<(u64, usize)>>,
+    obstacle_grid: HashMap<(i32, i32), Vec<(u64, usize)>>,
     /// Which components the loaded layers form ([`NavWorld::settle`]).
     conn: Conn,
 }
@@ -241,6 +241,7 @@ enum ConnJob {
 
 /// A labelled exit: (slot, generation, exit index).
 type ExitRef = (u32, u32, u32);
+type TileSlots<'a> = Option<((i32, i32), &'a [u32])>;
 
 /// The loaded nav's components (module doc of [`NavWorld::settle`]).
 #[derive(Default)]
@@ -249,9 +250,9 @@ struct Conn {
     slots: Vec<(u32, Option<LayerConn>)>,
     pending: std::collections::VecDeque<ConnJob>,
     /// Target tile → the labelled exits stepping into it.
-    into: FxHashMap<(i32, i32), Vec<ExitRef>>,
+    into: HashMap<(i32, i32), Vec<ExitRef>>,
     /// (slot, component) → its component's root; `None` until rebuilt after a change.
-    roots: Option<FxHashMap<(u32, u8), (u32, u8)>>,
+    roots: Option<HashMap<(u32, u8), (u32, u8)>>,
 }
 
 /// Obstacle grid cell size.
@@ -374,12 +375,12 @@ impl<K: PartialEq> PartialOrd for Open<K> {
 pub struct PathScratch {
     open: BinaryHeap<Open<CellKey>>,
     /// Cell → (cost so far, parent) of the cell search.
-    seen: FxHashMap<CellKey, (f32, CellKey)>,
+    seen: HashMap<CellKey, (f32, CellKey)>,
     coarse_open: BinaryHeap<Open<BlockKey>>,
     /// Block node → (cost so far, parent) of the coarse search.
-    coarse: FxHashMap<BlockKey, (f32, BlockKey)>,
+    coarse: HashMap<BlockKey, (f32, BlockKey)>,
     /// The block nodes the cell search may enter.
-    corridor: rustc_hash::FxHashSet<BlockKey>,
+    corridor: HashSet<BlockKey>,
 }
 
 impl NavWorld {
@@ -690,8 +691,8 @@ impl NavWorld {
 
     /// Joins the components along every live link.
     fn rebuild_roots(&mut self) {
-        let mut parent: FxHashMap<(u32, u8), (u32, u8)> = FxHashMap::default();
-        fn find(p: &mut FxHashMap<(u32, u8), (u32, u8)>, mut k: (u32, u8)) -> (u32, u8) {
+        let mut parent: HashMap<(u32, u8), (u32, u8)> = HashMap::default();
+        fn find(p: &mut HashMap<(u32, u8), (u32, u8)>, mut k: (u32, u8)) -> (u32, u8) {
             while let Some(&up) = p.get(&k) {
                 if up == k {
                     break;
@@ -717,7 +718,7 @@ impl NavWorld {
             }
         }
         let keys: Vec<(u32, u8)> = parent.keys().copied().collect();
-        let mut roots = FxHashMap::default();
+        let mut roots = HashMap::default();
         for k in keys {
             let r = find(&mut parent, k);
             roots.insert(k, r);
@@ -820,8 +821,13 @@ impl NavWorld {
     /// Walkable cell under world (x, z) whose height is closest to `y`.
     pub fn locate(&self, p: [f32; 3]) -> Option<Cell<'_>> {
         let tile = ((p[0] / TILE).floor() as i32, (p[2] / TILE).floor() as i32);
+        self.locate_in(self.by_tile.get(&tile)?, p)
+    }
+
+    /// [`Self::locate`] over an already-resolved tile's layer slots.
+    fn locate_in(&self, slots: &[u32], p: [f32; 3]) -> Option<Cell<'_>> {
         let mut best: Option<(f32, Cell<'_>)> = None;
-        for &slot in self.by_tile.get(&tile)? {
+        for &slot in slots {
             let l = self.layer(slot);
             let x = ((p[0] - l.bmin[0]) / l.cs).floor() as i32;
             let z = ((p[2] - l.bmin[2]) / l.cs).floor() as i32;
@@ -857,19 +863,42 @@ impl NavWorld {
         best.map(|b| b.1)
     }
 
-    /// Nearest walkable cell within `radius` metres (spiral search).
+    /// Nearest walkable cell within `radius` metres (spiral search). The
+    /// spiral's points share a handful of tiles (`radius` ≪ [`TILE`]), so the
+    /// tile → layers lookup is memoized (empty tiles included) instead of
+    /// hashed per point: a failed endpoint (scenery / void) costs a few
+    /// lookups, not one per probe. Probe order and results are unchanged.
     pub fn nearest(&self, p: [f32; 3], radius: f32) -> Option<Cell<'_>> {
         if let Some(c) = self.locate(p) {
             return Some(c);
         }
         let step = 0.25;
         let rings = (radius / step).ceil() as i32;
+        let mut tiles: [TileSlots<'_>; 4] = [None; 4];
+        let mut next = 0;
         for r in 1..=rings {
             let mut best: Option<(f32, Cell<'_>)> = None;
             for i in -r..=r {
                 for (dx, dz) in [(i, -r), (i, r), (-r, i), (r, i)] {
                     let q = [p[0] + dx as f32 * step, p[1], p[2] + dz as f32 * step];
-                    if let Some(c) = self.locate(q) {
+                    let tile = ((q[0] / TILE).floor() as i32, (q[2] / TILE).floor() as i32);
+                    let slots = match tiles.iter().find_map(|t| match *t {
+                        Some((k, slots)) if k == tile => Some(slots),
+                        _ => None,
+                    }) {
+                        Some(slots) => slots,
+                        None => {
+                            let slots = self
+                                .by_tile
+                                .get(&tile)
+                                .map(Vec::as_slice)
+                                .unwrap_or_default();
+                            tiles[next] = Some((tile, slots));
+                            next = (next + 1) % tiles.len();
+                            slots
+                        }
+                    };
+                    if let Some(c) = self.locate_in(slots, q) {
                         let d = (dx * dx + dz * dz) as f32;
                         if best.is_none_or(|(b, _)| d < b) {
                             best = Some((d, c));
@@ -961,7 +990,7 @@ impl NavWorld {
     /// smoothed by line of sight. When `to` cannot be reached (an obstacle, a
     /// gap) the path leads to the explored cell closest to it; `None` only
     /// without a start cell or when no step is possible. This is the game's
-    /// partial mode (Engine `NavManager::FindPath` → 0x18010c6c0:
+    /// partial mode (Engine `NavManager::FindPath` → `NavManager::HasPathTo`:
     /// Detour `findPath` keeps the path to the explored polygon nearest the
     /// goal, accepted only with the `allowPartial` flag, which Game.dll passes
     /// from `GetFurthestMoveToPoint`, `ControllerMonster::AngerUpdate` and
@@ -979,7 +1008,7 @@ impl NavWorld {
 
     /// [`NavWorld::find_path`] without the partial result: `None` when `to`
     /// is not reached (`CharacterMovementManager::FindPath`
-    /// @0x18008e2c9.. passes `allowPartial` false, failing the move; the
+    /// passes `allowPartial` false, failing the move; the
     /// player then walks to `NavManager::FindStraightMovePoint` instead,
     /// `ControllerPlayerState::DefaultRequestMoveAction`).
     pub fn find_path_strict(

@@ -2,12 +2,12 @@
 //! overlay on for the binary's shared `GameData` (every test here runs in the Crucible).
 //! `cargo test -p gd-game --test crucible`.
 use bevy::prelude::*;
-use gd_game::combat::Combatant;
 use gd_game::conversation::{Conversation, ConversationRequest};
-use gd_game::skill_buffs::ReceivedBuffs;
-use gd_game::story::{StoryActor, StoryRuntime};
 use gd_game::testing::TestGame;
-use gd_sim::story::state::{Coords, ObjClass, WorldObject};
+use gd_game_core::combat::Combatant;
+use gd_game_core::skill_buffs::ReceivedBuffs;
+use gd_game_core::story::{StoryActor, StoryRuntime};
+use gd_story::story::state::{Coords, ObjClass, WorldObject};
 
 mod arenas;
 mod defenses;
@@ -60,13 +60,15 @@ fn setup() -> Option<(TestGame, Entity, Entity)> {
     g.app
         .world_mut()
         .spawn((Transform::from_xyz(2.0, 0.0, 0.0), StoryActor(NPC)));
-    g.app.world_mut().write_message(gd_game::casting::SpawnPet {
-        owner: p,
-        skill: HOUND.into(),
-        level_index: 0,
-        point: Vec3::new(-2.0, 0.0, 2.0),
-        target: None,
-    });
+    g.app
+        .world_mut()
+        .write_message(gd_game_core::casting::SpawnPet {
+            owner: p,
+            skill: HOUND.into(),
+            level_index: 0,
+            point: Vec3::new(-2.0, 0.0, 2.0),
+            target: None,
+        });
     g.steps(3);
     let mut q = g.app.world_mut().query::<(Entity, &gd_game::pets::Pet)>();
     let hound = q.iter(g.app.world()).next().expect("the hound").0;

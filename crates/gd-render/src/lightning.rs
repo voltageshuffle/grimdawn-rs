@@ -5,10 +5,8 @@
 //! `TextureStretch` metres, coloured `Red/Green/Blue/Alpha256`, living
 //! `timeMin..timeMax` seconds.
 //!
-//! Game.dll `Lightning` (`Load` 0x1803560e0, `SetTarget`
-//! 0x1803564f0, `Generate` 0x180356670, `RecursiveGenerate` 0x1803569e0,
-//! `UpdateSelf` 0x180357020) and Engine.dll `LineEffect::RenderPass`
-//! 0x180139fb0:
+//! Game.dll `Lightning` (`Load`, `SetTarget`, `Generate`, `RecursiveGenerate`,
+//! `UpdateSelf`) and Engine.dll `LineEffect::RenderPass`:
 //! - with `fromSky` a bolt starts 20 m straight above the target;
 //! - the path halves every segment of 2 m or more, 4 levels deep: the
 //!   midpoint moves perpendicular to the segment, in a random direction
@@ -25,17 +23,17 @@
 //!
 //! Lightning2: `lightningName` records of class `Lightning2` (Engine.dll; `lightning2*.dbr`: devotion and item
 //! procs, Storm Caller, `Skill_AttackRadiusLightning2` / `Skill_BuffAttackRadiusLightning`) are another
-//! object ([`Bolt2`]). `Lightning2::Load` @0x180136b00: `fromSky`, `color.r/g/b/a`, `texture`
+//! object ([`Bolt2`]). `Lightning2::Load`: `fromSky`, `color.r/g/b/a`, `texture`
 //! (default `FX/Textures/lightningbolt128_02.tex`), `shader` (`TrailAdditive.ssh`), `lineWidth`,
 //! `textureLength`, `strikeEffect` (default `records/fx/ambient/fx_lightningblast.dbr`), `strikeDecal`
 //! (default `records/fx/decals/decal_blackchar.dbr`); the record's `life` is not read: every bolt lives
-//! `lightningLife` = 200 ms. `SetEnd` @0x180136e00 with `fromSky` starts it 20 m above the end (Game.dll
-//! `Skill_AttackRadiusLightning2::CreateVisualEffect` @0x1804d7e50 calls `SetEnd` then `SetFromSky(true)`,
+//! `lightningLife` = 200 ms. `SetEnd` with `fromSky` starts it 20 m above the end (Game.dll
+//! `Skill_AttackRadiusLightning2::CreateVisualEffect` calls `SetEnd` then `SetFromSky(true)`,
 //! so it is the record's flag that counts; every stock record has it). The path is regenerated every
 //! 50–100 ms ([`update_bolts2`]) as a main tendril and sub-tendrils ([`generate`], [`generate_tendril`],
 //! [`generate_sub_tendril`]) and drawn as camera-facing ribbons ([`bolt2_mesh`]). The strike decal is dynamic
-//! (`Decal` +499) and its +524 (π/2 − `maxAngle`) is set to −π/2, so it keeps every mesh face whatever its
-//! slope (`Lightning2::Generate` @0x180137850; grimdawn `casting.rs` `fx_decals`). PORT: the `rand()`
+//! (`Decal.dynamic`) and its `Decal.faceAngle` (π/2 − `maxAngle`) is set to −π/2, so it keeps every mesh face
+//! whatever its slope (`Lightning2::Generate`; grimdawn `casting.rs` `fx_decals`). PORT: the `rand()`
 //! calls use the port's stream; the scene's camera axis is the camera's forward.
 use bevy::prelude::*;
 
@@ -47,7 +45,7 @@ impl Plugin for LightningPlugin {
     }
 }
 
-pub use gd_game::visuals::PendingBolt;
+pub use gd_game_core::visuals::PendingBolt;
 
 #[derive(Component)]
 struct Bolt {
@@ -61,12 +59,12 @@ struct Bolt {
 }
 
 /// `RecursiveGenerate`: `from`..`to` split `depth` more times; `game_ms` is
-/// the game clock in ms (`GAME::GetGameTime`, Engine.dll 0x1801e9400: the
+/// the game clock in ms (Engine.dll `Engine::GetGameTime`: the
 /// pausable, scaled game time as an int of milliseconds).
 ///
-/// 0x1803569e0, per split, three `rand()` calls in this order:
+/// `Lightning::RecursiveGenerate`, per split, three `rand()` calls in this order:
 /// angle = rand × 2π/32767 (0.00019175345) around the segment, the axes being
-/// `p` = normalised dir × Y (dir × X when |dir.y| > 0.9999, sub_1805915E0) and
+/// `p` = normalised dir × Y (dir × X when |dir.y| > 0.9999, `Game::PerpendicularAxis`) and
 /// normalised dir × p, direction = cos·p + sin·(dir × p); u = rand / 32767 −
 /// 0.5; t = (double)game_ms × 0.02 + rand × 100/32767 (0.0030518509);
 /// offset = (noise1(t) × 0.25 + u) × 0.2 × length.
@@ -99,7 +97,7 @@ fn subdivide(from: Vec3, to: Vec3, depth: u32, game_ms: i32, out: &mut Vec<Vec3>
 /// process-wide CRT stream shared with everything else, so its values cannot
 /// be reproduced; the port's shared RNG stands in, with the same range.
 fn rand() -> i32 {
-    gd_game::rng::i32(0..=32767)
+    gd_game_core::rng::i32(0..=32767)
 }
 
 /// MSVC CRT `rand()` from its per-thread start state 1 (used to rebuild the
@@ -113,10 +111,10 @@ impl MsvcRand {
     }
 }
 
-/// Game.dll's 1D gradient noise table (0x180a66c00: 514 permutation entries,
+/// Game.dll's 1D gradient noise table (`Game::Noise1Table`: 514 permutation entries,
 /// then 514 gradients).
 ///
-/// sub_180598570, run by the static initialiser sub_180015400 with
+/// `Game::InitNoise1`, run by the static initialiser `Game::StaticInitNoise1` with
 /// the CRT `rand`: for i in 0..256, perm[i] = i and grad[i] = (rand % 512 −
 /// 256) / 256, normalised to ±1 when its square exceeds 1e-4; then for i =
 /// 255 down to 1 perm[i] swaps with perm[rand as u8]; then entries 256..514
@@ -155,7 +153,7 @@ static NOISE1: std::sync::LazyLock<Noise1> = std::sync::LazyLock::new(|| {
     Noise1 { perm, grad }
 });
 
-/// sub_180598370 (Perlin's `noise1`): i = floor(t) & 255, f = t −
+/// `Game::Noise1` (Perlin's `noise1`): i = floor(t) & 255, f = t −
 /// floor(t), s = (3 − 2f)·f²; lerp(grad[perm[i]]·f, grad[perm[i+1]]·(f − 1), s).
 fn noise1(t: f32) -> f32 {
     let n = &*NOISE1;
@@ -178,7 +176,7 @@ fn spawn_bolts(
     let cam = cams.iter().next().map(|c| c.translation());
     for (e, b) in &new {
         commands.entity(e).try_despawn();
-        gd_game::visuals::notify(&mut commands, &b.record);
+        gd_game_core::visuals::notify(&mut commands, &b.record);
         // The database by its own handle: the record stays borrowed while `assets` spawns.
         let db = assets.data.db.clone();
         let Some(rec) = db.get(&b.record) else {
@@ -273,7 +271,7 @@ fn spawn_bolts(
                 bevy::camera::visibility::NoFrustumCulling,
                 Bolt {
                     age: 0.0,
-                    life: lo + gd_game::rng::f32() * (hi - lo).max(0.0),
+                    life: lo + gd_game_core::rng::f32() * (hi - lo).max(0.0),
                     color,
                     mesh,
                     points: n,
@@ -338,18 +336,18 @@ fn fade_bolts(
 #[derive(Component)]
 struct Bolt2 {
     start: Vec3,
-    /// End − start (`SetEnd`, +536).
+    /// End − start (`SetEnd`, `Lightning2.delta`).
     delta: Vec3,
     color: Vec3,
     line_width: f32,
     texture_length: f32,
     strike_effect: String,
     strike_decal: String,
-    /// `lightningLife` left, ms (+592).
+    /// `lightningLife` left, ms (`Lightning2.lifeLeft`).
     life_ms: i32,
-    /// Until the next `Generate`, ms (+580).
+    /// Until the next `Generate`, ms (`Lightning2.regenTimer`).
     regen_ms: i32,
-    /// The texture's v offset (+576).
+    /// The texture's v offset (`Lightning2.textureOffset`).
     tex_offset: f32,
     /// The tendrils: points relative to `start` and their width factor.
     tendrils: Vec<(Vec<Vec3>, f32)>,
@@ -445,7 +443,7 @@ fn tendril_axes(dir: Vec3, rand: &mut impl FnMut() -> i32) -> (Vec3, Vec3) {
     }
 }
 
-/// `Lightning2::GenerateTendril` @0x180136e90: the points from `from` towards `to`, width factor `a`.
+/// `Lightning2::GenerateTendril`: the points from `from` towards `to`, width factor `a`.
 fn generate_tendril(from: Vec3, to: Vec3, a: f32, rand: &mut impl FnMut() -> i32) -> Vec<Vec3> {
     let d = to - from;
     let len2 = d.length_squared();
@@ -473,7 +471,7 @@ fn generate_tendril(from: Vec3, to: Vec3, a: f32, rand: &mut impl FnMut() -> i32
     pts
 }
 
-/// `Lightning2::GenerateSubTendril` @0x180137560 (`Generate` passes `a = 0.5` and no random length): a
+/// `Lightning2::GenerateSubTendril` (`Generate` passes `a = 0.5` and no random length): a
 /// tendril from `at` half the bolt's length along `dir`, offset sideways by `4a` along the tendril axes.
 fn generate_sub_tendril(
     at: Vec3,
@@ -496,7 +494,7 @@ fn generate_sub_tendril(
     generate_tendril(at, end, a, rand)
 }
 
-/// `Lightning2::Generate` @0x180137850: the main tendril from the start to the end (width 1), then from
+/// `Lightning2::Generate`: the main tendril from the start to the end (width 1), then from
 /// every 1st to 3rd of its points (`i = floor(i + 1 + 2u)`) within the first half of the bolt a sub-tendril
 /// (width 0.5); the texture offset is drawn anew. Returns the strike point relative to the start (the main
 /// tendril's last point).
@@ -526,7 +524,7 @@ fn generate(
     strike
 }
 
-/// `Lightning2::RenderPass` @0x180138060: each tendril a ribbon facing the camera (side = view axis × the
+/// `Lightning2::RenderPass`: each tendril a ribbon facing the camera (side = view axis × the
 /// segment direction, the first point using the tendril's first-to-last direction), `lineWidth / 2 × width`
 /// to each side; u 0 / 1 across, v = the offset plus the straight distance from the tendril's first point /
 /// `textureLength`; vertex colour the record's rgb (`color.a` is unused) with alpha 0 at both ends; at most
@@ -577,7 +575,7 @@ fn bolt2_mesh(b: &Bolt2, view: Vec3) -> Mesh {
     m
 }
 
-/// `Lightning2::UpdateSelf` @0x180137da0 every update of `dt` ms: the life counts down (gone at 0); the
+/// `Lightning2::UpdateSelf` every update of `dt` ms: the life counts down (gone at 0); the
 /// regeneration timer too, and at 0 the texture offset moves on by 0.25 + u / 4 (wrapping past 1), the
 /// timer restarts at 50 + 50u ms and the bolt is generated again (so the first update generates it),
 /// each time with its strike effect and decal at the strike point (`strikeEffect`, default
@@ -589,7 +587,7 @@ fn update_bolts2(
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     mut bolts: Query<(Entity, &mut Bolt2)>,
     mut meshes: ResMut<Assets<Mesh>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
 ) {
     let view = cams.iter().next().map_or(Vec3::NEG_Y, |c| *c.forward());
     let mut rng = rand;
@@ -613,14 +611,14 @@ fn update_bolts2(
             b.regen_ms = (unit(&mut rng) * 50.0 + 50.0) as i32;
             let b = &mut *b;
             let strike = b.start + generate(b.delta, &mut b.tendrils, &mut b.tex_offset, &mut rng);
-            gd_game::visuals::spawn_fx(
+            gd_game_core::visuals::spawn_fx(
                 &mut commands,
                 &data,
                 &b.strike_effect,
                 Transform::from_translation(strike),
             );
             commands.spawn((
-                gd_game::visuals::PendingDecal(b.strike_decal.clone()),
+                gd_game_core::visuals::PendingDecal(b.strike_decal.clone()),
                 Transform::from_translation(strike),
             ));
         }

@@ -2,8 +2,10 @@
 //! each `gd_game::loot::GroundItem` (drops and pickups are gameplay,
 //! `gd_game::loot`), labels placed over their items, cursor picking.
 //!
-//! Labels as `UIWorldDescManager` (GrimDawn.exe, ctor sub_14028A4F0, update sub_14028AE50, placement
-//! sub_14028C070 / sub_14028C430, draw sub_14028A9E0): a box in the `uiGroundItemRolloverStyle` style (background,
+//! Labels as `UIWorldDescManager` (GrimDawn.exe, ctor `UIWorldDescManager::UIWorldDescManager`, update
+//! `UIWorldDescManager::Update`, placement `UIWorldDescManager::FindWorldPosition` /
+//! `UIWorldDescManager::StackLabel`, draw `UIWorldDescManager::Draw`): a box in the `uiGroundItemRolloverStyle`
+//! style (background,
 //! border, the name in its font tinted by rarity; [`label_box`]), centred 40 px above the item, stacked upwards
 //! over earlier labels with 4 px gaps ([`stack_label`]) and eased into place ([`animate_offset`]). The cursor
 //! selects the label whose drawn (stacked, eased) rect it is on, the last placed first ([`label_at`],
@@ -12,29 +14,29 @@
 //! The loot filter (`gd_game::loot_filter`, rules
 //! `gd_sim::items::loot_filter`) hides the labels of the items it rejects
 //! ([`FilteredOut`]: no label). The label mode ([`LabelMode`],
-//! `gd_game::loot_filter::label_mode`, GrimDawn.exe `sub_14028BF40`
-//! and the key actions 35 / 37, held flags set by `sub_14028ADA0`): "Show
+//! `gd_game::loot_filter::label_mode`, GrimDawn.exe `UIWorldDescManager::ApplyLootFilter`
+//! and the key actions 35 / 37, held flags set by `UIWorldDescManager::HandleHeldKeys`): "Show
 //! Items (No Filter)" (Left Alt) shows every label while held, "Show Items
 //! (Filter Common)" (Z) every label but Common ones; with both held, Z wins.
 //! The cursor pick and the Pickup key (action 55, unbound by default) use the
 //! pick mode ([`PickMode`], `gd_game::loot_filter::pick_mode`,
-//! `sub_140020F60`, adds `lockItemPickup`): [`Unpickable`] marks what the
+//! `InGameUI::GetPickFilterMode`, adds `lockItemPickup`): [`Unpickable`] marks what the
 //! cursor cannot pick (`player.rs`); the Pickup key sends
 //! `gd_game::loot_filter::PickUpNearest`.
 //!
 //! "Toggle Hide All Items" (key action 57, no key in the engine's default
-//! table `sub_1401F54E0`, so unbound until the player binds one;
-//! GrimDawn.exe HUD key handler `sub_1402110D0`) flips the HUD's
+//! table `KeyMap::SetDefaultBindings`, so unbound until the player binds one;
+//! GrimDawn.exe HUD key handler `UIPlayerHud::HandleKey`) flips the HUD's
 //! items-shown flag ([`ItemsHidden`]) on the key press and shows
 //! `tagLootFilterToggleOff` / `tagLootFilterToggleOn` with
 //! `Engine::ShowCinematicText` (type 9, empty subline, not in front:
-//! [`gd_game::story::CinematicText`]); while hidden the label mode is
+//! [`gd_game_core::story::CinematicText`]); while hidden the label mode is
 //! `ItemIgnore` mode 3 ([`Mode::HideAll`](gd_sim::items::loot_filter::Mode),
-//! `sub_14028BF40`: below the two held keys) and the HUD loot filter button
+//! `UIWorldDescManager::ApplyLootFilter`: below the two held keys) and the HUD loot filter button
 //! is disabled (`ui/lootfilter.rs`). The loot filter window: `ui/lootfilter.rs`.
 //!
-//! Loot beams, Game.dll `Item::CreateBeamLoop` @0x1803247d0 /
-//! `CreateBeamEnd` @0x180324a00, `GameEngine::LoadFromDatabase`: the
+//! Loot beams, Game.dll `Item::CreateBeamLoop` /
+//! `CreateBeamEnd`, `GameEngine::LoadFromDatabase`: the
 //! `records/game/gameiteminfo.dbr` `<class>ItemBeamLoop` / `<class>ItemBeamEnd`
 //! effects of the item's display class (the classification; both affixes
 //! rare: doubleRare 16, or monsterDoubleRare 17; `ui::character::rarity_key`,
@@ -43,16 +45,17 @@
 //! (`Item::PhysicsUpdate`, retried in `UpdateSelf`; the throw:
 //! `gd_sim::loot_toss`, [`gd_game::loot::Tossed`]) and destroyed on pickup
 //! (`Item::OnPickup`), which spawns the end effect at the item. It sits at
-//! the item's centre of mass (vfunc +264 = `Actor::GetCenterOfMass`, Engine.dll:
+//! the item's centre of mass (`Actor::GetCenterOfMass`, Engine.dll:
 //! the centre of the mesh's chunk-10 bounding box, `GraphicsMesh::Initialize`)
 //! in the item's frame ([`CentreOfMass`]). The beam shows exactly when the
-//! label does (GrimDawn.exe `sub_14028BF40` → `Item::ToggleLootBeam`):
+//! label does (GrimDawn.exe `UIWorldDescManager::ApplyLootFilter` → `Item::ToggleLootBeam`):
 //! hidden while [`FilteredOut`]. A thrown item is hidden until its release
 //! (`GameEngineInboundInterface::CreateItem` adds it to the world then).
-use crate::player::Player;
 use bevy::prelude::*;
+use gd_ui::state::loot::{FilteredOut, HoveredLabel, ItemsHidden};
 pub use gd_game::loot::*;
-pub use gd_game::progress::PlayerProgress;
+use gd_game_core::player::Player;
+pub use gd_game_core::progress::PlayerProgress;
 use gd_render::character::CharAssets;
 use gd_render::hover::LabelGlow;
 use gd_render::model::Ready;
@@ -67,7 +70,7 @@ impl Plugin for LootPlugin {
             .init_resource::<ItemsHidden>()
             .init_resource::<HoveredLabel>()
             .init_resource::<ListedLabels>()
-            .add_plugins(crate::ui::lootfilter::LootFilterWindowPlugin)
+            .add_plugins(gd_ui::lootfilter::LootFilterWindowPlugin)
             .add_systems(
                 Update,
                 (
@@ -94,9 +97,6 @@ impl Plugin for LootPlugin {
     }
 }
 
-/// The ground item whose label the cursor is on ([`label_at`]), set by [`place_labels`] every frame.
-#[derive(Resource, Default)]
-pub struct HoveredLabel(pub Option<Entity>);
 
 /// The ground items whose label is listed this frame (in view, not filtered out; drawn or pushed off by the
 /// stacking) and the selected one when its outline shows (no button held on), set by [`place_labels`]: the label
@@ -104,9 +104,6 @@ pub struct HoveredLabel(pub Option<Entity>);
 #[derive(Resource, Default)]
 pub struct ListedLabels(pub Vec<Entity>, pub Option<Entity>);
 
-/// A ground item the loot filter hides in the current [`LabelMode`].
-#[derive(Component)]
-pub struct FilteredOut;
 
 /// A ground item the cursor cannot pick in the current [`PickMode`].
 #[derive(Component)]
@@ -121,26 +118,22 @@ pub struct LabelMode(pub gd_sim::items::loot_filter::Mode);
 #[derive(Resource, Default, PartialEq)]
 pub struct PickMode(pub gd_sim::items::loot_filter::Mode);
 
-/// "Toggle Hide All Items" is on (module doc; the engine's HUD flag +29429
-/// is the opposite, items shown).
-#[derive(Resource, Default)]
-pub struct ItemsHidden(pub bool);
 
 #[allow(clippy::too_many_arguments)]
 fn label_mode(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
-    options: Res<gd_game::options::GameOptions>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
+    options: Res<gd_game_core::options::GameOptions>,
     mut hidden: ResMut<ItemsHidden>,
-    mut cinematic: MessageWriter<gd_game::story::CinematicText>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
     mut pickup: MessageWriter<gd_game::loot_filter::PickUpNearest>,
     (mut mode, mut pick): (ResMut<LabelMode>, ResMut<PickMode>),
 ) {
     use gd_game::loot_filter::{label_mode, pick_mode};
-    if bindings.just_pressed(crate::ui::keys::HIDE_ALL_ITEMS, &keys) {
+    if bindings.just_pressed(gd_ui_kit::keys::HIDE_ALL_ITEMS, &keys) {
         hidden.0 = !hidden.0;
-        cinematic.write(gd_game::story::CinematicText {
+        cinematic.write(gd_game_core::story::CinematicText {
             head: if hidden.0 {
                 "tagLootFilterToggleOff"
             } else {
@@ -155,9 +148,9 @@ fn label_mode(
     }
     // Test hook `GD_LABEL_MODE=all|common` holds the key.
     let hook = hooks.items.label_mode.as_deref();
-    let show_all = bindings.pressed(crate::ui::keys::SHOW_ALL_ITEMS, &keys) || hook == Some("all");
+    let show_all = bindings.pressed(gd_ui_kit::keys::SHOW_ALL_ITEMS, &keys) || hook == Some("all");
     let hide_common =
-        bindings.pressed(crate::ui::keys::HIDE_COMMON_ITEMS, &keys) || hook == Some("common");
+        bindings.pressed(gd_ui_kit::keys::HIDE_COMMON_ITEMS, &keys) || hook == Some("common");
     mode.set_if_neq(LabelMode(label_mode(show_all, hide_common, hidden.0)));
     let p = pick_mode(
         options.flag("lockItemPickup"),
@@ -166,7 +159,7 @@ fn label_mode(
         hidden.0,
     );
     pick.set_if_neq(PickMode(p));
-    if bindings.just_pressed(crate::ui::keys::PICKUP, &keys) {
+    if bindings.just_pressed(gd_ui_kit::keys::PICKUP, &keys) {
         pickup.write(gd_game::loot_filter::PickUpNearest(p));
     }
 }
@@ -187,9 +180,9 @@ fn filter_labels(
     mut commands: Commands,
     filter: Option<Res<gd_game::loot_filter::LootFilter>>,
     (mode, pick): (Res<LabelMode>, Res<PickMode>),
-    inv: Option<Res<gd_game::inventory::Inventory>>,
-    data: Res<crate::data::GameData>,
-    players: Query<&gd_game::player::Loadout, With<Player>>,
+    inv: Option<Res<gd_game_core::inventory::Inventory>>,
+    data: Res<gd_game_core::data::GameData>,
+    players: Query<&gd_game_core::player::Loadout, With<Player>>,
     items: Query<(Entity, &GroundItem, Has<FilteredOut>, Has<Unpickable>)>,
     pending: Query<Entity, With<Unfiltered>>,
     new: Query<Entity, Added<GroundItem>>,
@@ -264,7 +257,7 @@ struct LootBeam(Entity);
 #[derive(Component)]
 struct PendingBeam(String);
 
-/// A ground item's centre of mass in its frame (vfunc +264 = `Actor::GetCenterOfMass`: the centre of the mesh's
+/// A ground item's centre of mass in its frame (`Actor::GetCenterOfMass`: the centre of the mesh's
 /// bounding box, module doc), where its beam sits and its label is projected from ([`label_anchor`]); the origin
 /// without a model.
 #[derive(Component)]
@@ -279,11 +272,13 @@ struct ItemDressed;
 struct ModelBounds(gd_sim::bounds::Aabb);
 
 /// The pickable ground item (of `drawn`: its label is shown) whose model the cursor ray meets, the nearest along the
-/// ray. `Grim Dawn.exe` world mouse handler sub_140021000: the object under the cursor (sub_140030D80: the
-/// candidates' mesh hit (vfunc +304), nearest; the lists of sub_14002FF80 keep items that are of interest and pass
+/// ray. `Grim Dawn.exe` world mouse handler `InGameUI::HandleMouseEvent`: the object under the cursor
+/// (`InGameUIActorCapture::PickObjectUnderCursor`: the candidates' mesh hit (`Actor::HitTestMesh`), nearest; the
+/// lists of `InGameUIActorCapture::CollectCandidates` keep items that are of interest and pass
 /// the pick mode's loot filter), when it is a visible `Item` and the command is not repeated (no button held on
-/// from an earlier event), is outlined and becomes the label manager's world-hovered item (+312, cleared after each
-/// label update sub_14028AE50). PORT: the model's bounding box in the item's frame stands in for its triangles.
+/// from an earlier event), is outlined and becomes the label manager's world-hovered item
+/// (`UIWorldDescManager.worldHoveredItem`, cleared after each label update `UIWorldDescManager::Update`). PORT: the
+/// model's bounding box in the item's frame stands in for its triangles.
 fn model_under(
     ray: Ray3d,
     drawn: &[(Entity, LabelRect)],
@@ -345,7 +340,7 @@ fn beam_record(
     r: &gd_sim::items::ResolvedItem,
     which: &str,
 ) -> Option<String> {
-    let key = crate::ui::character::rarity_key(r.display_color_index())?;
+    let key = gd_ui::character::rarity_key(r.display_color_index())?;
     db.get("records/game/gameiteminfo.dbr")?
         .str(&format!("{key}ItemBeam{which}"))
         .filter(|s| !s.is_empty())
@@ -379,7 +374,7 @@ fn beam_visibility(
 fn beam_ends(
     mut commands: Commands,
     mut picked: MessageReader<gd_game::loot::ItemPickedUp>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
 ) {
     for p in picked.read() {
         let idb = &data.item_db();
@@ -387,7 +382,7 @@ fn beam_ends(
             gd_sim::items::resolve(idb, &p.item).and_then(|r| beam_record(&data.db, &r, "End"))
         {
             // `GD_SHOT_ON=lootbeamend` shoots it.
-            gd_game::visuals::notify(&mut commands, &rec);
+            gd_game_core::visuals::notify(&mut commands, &rec);
             gd_render::fx::spawn_effect_record(
                 &mut commands,
                 &rec,
@@ -412,13 +407,15 @@ pub struct ItemLabel {
 }
 
 /// `records/ui/styles/rollover/style_itemsground.dbr` → `uiGroundItemRolloverStyle` (GrimDawn.exe
-/// sub_140020C20 → `UIWorldDescManager` load sub_14028A920).
+/// `InGameUI::LoadWorldDescStyle` → `UIWorldDescManager` load `UIWorldDescManager::Load`).
 const LABEL_STYLE_HOLDER: &str = "records/ui/styles/rollover/style_itemsground.dbr";
-/// `UIWorldDescManager` +352 (ctor sub_14028A4F0: 40.0): the label's centre sits this far above the projected item.
+/// `UIWorldDescManager.labelLift` (ctor `UIWorldDescManager::UIWorldDescManager`: 40.0): the label's centre sits this
+/// far above the projected item.
 const LABEL_LIFT: f32 = 40.0;
-/// Text size + 6 (`FindWorldPosition` sub_14028C070).
+/// Text size + 6 (`UIWorldDescManager::FindWorldPosition`).
 const LABEL_PAD: f32 = 3.0;
-/// Gap between stacked labels and the snap distance (sub_14028C070 / sub_14028C430).
+/// Gap between stacked labels and the snap distance (`UIWorldDescManager::FindWorldPosition` /
+/// `UIWorldDescManager::StackLabel`).
 const LABEL_GAP: f32 = 4.0;
 
 /// New ground items get their model and their label: the item's name in its
@@ -432,10 +429,10 @@ const LABEL_GAP: f32 = 4.0;
 fn dress_ground_items(
     mut commands: Commands,
     new: Query<(Entity, &GroundItem), Without<ItemDressed>>,
-    mut fonts: ResMut<crate::ui::text::FontCache>,
+    mut fonts: ResMut<gd_ui_kit::text::FontCache>,
     mut font_assets: ResMut<Assets<Font>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    ui_scale: Res<crate::settings::UiScaleOption>,
+    ui_scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
     mut a: CharAssets,
 ) {
     let Ok(win) = windows.single() else { return };
@@ -466,7 +463,7 @@ fn dress_ground_items(
                 let name = gd_sim::items::naming::item_name(&fonts.tags, &r);
                 (
                     name,
-                    crate::ui::character::name_color(&a.data.db, r.display_color_index()),
+                    gd_ui::character::name_color(&a.data.db, r.display_color_index()),
                 )
             }
             None => {
@@ -498,28 +495,37 @@ fn dress_ground_items(
         // scaled by the record's `scale`.
         let body_tf = Transform::from_scale(Vec3::splat(scale));
         // The mesh's bounding box centre (`Actor::GetCenterOfMass`) in the item's frame, unscaled: the beam turns
-        // with the item (`Item::CreateBeamLoop` @0x1803247d0 attaches it there without the mesh scale).
+        // with the item (`Item::CreateBeamLoop` attaches it there without the mesh scale).
         let com = model.as_ref().map_or(Vec3::ZERO, |m| {
             m.msh.bounding_box.map_or(Vec3::ZERO, |(lo, hi)| {
                 (Vec3::from(lo) + Vec3::from(hi)) * 0.5
             })
         });
         commands.entity(e).try_insert(CentreOfMass(com));
-        if let Some(m) = &model
-            && !m.msh.vertices.positions.is_empty()
-        {
-            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-            for v in &m.msh.vertices.positions {
-                let q = body_tf.transform_point(Vec3::from(*v));
-                lo = lo.min(q);
-                hi = hi.max(q);
+        if let Some(m) = &model {
+            // The mesh's own AABB (chunk 10) under the uniform scale; the vertex scan only for a mesh
+            // without one.
+            let bounds = match m.msh.bounding_box {
+                Some((lo, hi)) => Some((Vec3::from(lo) * scale, Vec3::from(hi) * scale)),
+                None if !m.msh.vertices.positions.is_empty() => {
+                    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+                    for v in &m.msh.vertices.positions {
+                        let q = body_tf.transform_point(Vec3::from(*v));
+                        lo = lo.min(q);
+                        hi = hi.max(q);
+                    }
+                    Some((lo, hi))
+                }
+                None => None,
+            };
+            if let Some((lo, hi)) = bounds {
+                commands
+                    .entity(e)
+                    .try_insert(ModelBounds(gd_sim::bounds::Aabb {
+                        center: ((lo + hi) * 0.5).to_array(),
+                        half: ((hi - lo) * 0.5).to_array(),
+                    }));
             }
-            commands
-                .entity(e)
-                .try_insert(ModelBounds(gd_sim::bounds::Aabb {
-                    center: ((lo + hi) * 0.5).to_array(),
-                    half: ((hi - lo) * 0.5).to_array(),
-                }));
         }
         if let Some(record) = beam {
             commands.entity(e).try_insert(PendingBeam(record));
@@ -553,20 +559,21 @@ fn dress_ground_items(
     }
 }
 
-/// The label box (`UIWorldDescManager` draw sub_14028A9E0 / `FindWorldPosition` sub_14028C070): the
-/// rollover style's background ([`label_background`]; `backgroundHighlightColor` for the selected label, entry +84 →
-/// widget +280) and border bitmaps around the name in the style's font (`style`, centred), tinted with the rarity
+/// The label box (`UIWorldDescManager::Draw` / `UIWorldDescManager::FindWorldPosition`): the
+/// rollover style's background ([`label_background`]; `backgroundHighlightColor` for the selected label,
+/// `LabelEntry.highlighted` → `UIRolloverWidget.useHighlightColor`) and border bitmaps around the name in the style's
+/// font (`style`, centred), tinted with the rarity
 /// colour; text size + 6 (sized by the 3 px padding). PORT: the border pieces lie inside the box as the tooltip's.
 fn label_box(
     commands: &mut Commands,
     a: &mut CharAssets,
-    fonts: &mut crate::ui::text::FontCache,
+    fonts: &mut gd_ui_kit::text::FontCache,
     font_assets: &mut Assets<Font>,
     (s, inv): (f32, f32),
     text: &str,
     tint: Color,
 ) -> (Entity, [[f32; 4]; 2]) {
-    use crate::ui::text::LoadedFont;
+    use gd_ui_kit::text::LoadedFont;
     let rec = a
         .data
         .db
@@ -611,7 +618,7 @@ fn label_box(
     let text_node = match (style, font.as_deref()) {
         (Some(style), Some(LoadedFont::Bitmap { font, atlas })) => {
             let size = style.scaled_size(s);
-            let ti = crate::ui::text::rasterize(font, atlas, &style, size, text);
+            let ti = gd_ui_kit::text::rasterize(font, atlas, &style, size, text);
             let (w, h) = ti.as_ref().map_or((0.0, 0.0), |t| {
                 (t.layout.width as f32, t.layout.height as f32)
             });
@@ -769,10 +776,12 @@ fn label_box(
     (root, backgrounds)
 }
 
-/// The label's background (rollover widget draw sub_14025B890, colours loaded by sub_14025BAB0): a vertical
+/// The label's background (rollover widget draw `UIRolloverWidget::Draw`, colours loaded by
+/// `UIRolloverWidget::LoadColors`): a vertical
 /// gradient over the box, from the colour at the top to it + 0.2 per channel (at most 1) at the bottom, same alpha
 /// (`GraphicsCanvas::RenderVerticalGradient`, Engine.dll: top vertices the first colour). The alpha is scaled by the
-/// widget's colour alpha (+108: 1 with the mouse, 0.55 for an out-of-reach label with a gamepad).
+/// widget's colour alpha (`UIRolloverWidget.colorAlpha`: 1 with the mouse, 0.55 for an out-of-reach label with a
+/// gamepad).
 fn label_background(c: [f32; 4]) -> BackgroundGradient {
     let top = Color::srgba(c[0], c[1], c[2], c[3]);
     let bottom = Color::srgba(
@@ -801,8 +810,8 @@ fn drop_orphan_labels(
     }
 }
 
-/// The point an item's label is projected from, `FindWorldPosition` sub_14028C070: the item's vfunc +264
-/// (`Actor::GetCenterOfMass`, [`CentreOfMass`]) through its coords (region rotation + translation).
+/// The point an item's label is projected from, `UIWorldDescManager::FindWorldPosition`: the item's
+/// `Actor::GetCenterOfMass` ([`CentreOfMass`]) through its coords (region rotation + translation).
 fn label_anchor(gt: &GlobalTransform, com: Option<&CentreOfMass>) -> Vec3 {
     gt.transform_point(com.map_or(Vec3::ZERO, |c| c.0))
 }
@@ -814,7 +823,7 @@ fn overlaps(a: &LabelRect, b: &LabelRect) -> bool {
     b[0] + b[2] > a[0] && b[0] < a[0] + a[2] && b[1] + b[3] > a[1] && b[1] < a[1] + a[3]
 }
 
-/// `UIWorldDescManager::FindWorldPosition` sub_14028C070 / sub_14028C430: a label that overlaps one placed
+/// `UIWorldDescManager::FindWorldPosition` / `UIWorldDescManager::StackLabel`: a label that overlaps one placed
 /// before it goes above it (`y = other.y − 4 − h`), again while it overlaps any (`placed` are the earlier labels'
 /// stacked rects); off the top of the screen it is not shown (`None`). Within 4 px of its natural place it stays there.
 fn stack_label(natural: LabelRect, placed: &[LabelRect]) -> Option<LabelRect> {
@@ -831,7 +840,7 @@ fn stack_label(natural: LabelRect, placed: &[LabelRect]) -> Option<LabelRect> {
     Some(r)
 }
 
-/// `UIWorldDescManager` update sub_14028AE50: per label id, last frame's offsets from the natural y (the
+/// `UIWorldDescManager::Update`: per label id, last frame's offsets from the natural y (the
 /// smoothed stacked offset `t`, the shown one `c`); the new stacked offset is approached by min(5·dt, 1) of the gap,
 /// and the shown one moves towards that by min((d²·0.2 + 50)·dt, 400·dt, d). A new label shows at its natural y
 /// with `t` = its stacked offset.
@@ -845,14 +854,15 @@ fn animate_offset(prev: Option<(f32, f32)>, stacked: f32, dt: f32) -> (f32, f32)
     (t, if t <= c { c - step } else { c + step })
 }
 
-/// Places the labels in the engine's order (object id ascending, `sub_1402874C0`; PORT: entity index): natural
+/// Places the labels in the engine's order (object id ascending, `UIWorldDescManager::SortLabels`; PORT: entity
+/// index): natural
 /// rect centred `LABEL_LIFT` px above the projected item (floored), stacked ([`stack_label`]) and animated
 /// ([`animate_offset`]); then the label under the cursor ([`label_at`], [`HoveredLabel`]), else the world-hovered
 /// item's (in Keyboard Only the controller targeting's item, `crate::controller_target`; else the model under the
 /// cursor, [`model_under`]).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn place_labels(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     (mut hovered, mut listed): (ResMut<HoveredLabel>, ResMut<ListedLabels>),
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
@@ -875,13 +885,13 @@ fn place_labels(
         &mut BackgroundGradient,
     )>,
     (options, controller): (
-        Res<gd_game::options::GameOptions>,
+        Res<gd_game_core::options::GameOptions>,
         Res<crate::controller_target::ControllerPick>,
     ),
     (models, buttons, capture): (
         Query<(&GlobalTransform, &ModelBounds), (With<GroundItem>, Without<Unpickable>)>,
         Res<ButtonInput<MouseButton>>,
-        Res<crate::inventory::UiCapture>,
+        Res<gd_ui::state::inventory::UiCapture>,
     ),
     (mut commands, glow): (Commands, Query<Entity, With<LabelGlow>>),
     mut scratch: Local<LabelScratch>,
@@ -952,9 +962,10 @@ fn place_labels(
     let cursor = windows
         .single()
         .ok()
-        .and_then(|w| crate::ui::cursor_px(&hooks, w).map(|p| p / w.scale_factor()));
-    // No label under the cursor: the world-hovered item (+312) when its label is drawn: in Keyboard Only the
-    // controller targeting's item (sub_14002BC00, after the mouse events), else the item model under the cursor
+        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w).map(|p| p / w.scale_factor()));
+    // No label under the cursor: the world-hovered item (`UIWorldDescManager.worldHoveredItem`) when its label is
+    // drawn: in Keyboard Only the controller targeting's item (`InGameUI::Update`, after the mouse events), else
+    // the item model under the cursor
     // (`model_under`; only when the event is no repeat: no button held on, the world got the mouse).
     let ko_item = match controller.0 {
         gd_game::controller_target::Pick::Item(e) if options.int("movementType") == 2 => Some(e),
@@ -973,7 +984,8 @@ fn place_labels(
         .or_else(model);
     hovered.0 = cursor.and_then(|c| label_at(c * sf, drawn)).or(world);
     listed.1 = hovered.0.filter(|_| fresh);
-    // The selected label is drawn in the highlight colour (sub_14028A9E0: entry +84 → widget +280).
+    // The selected label is drawn in the highlight colour (`UIWorldDescManager::Draw`: `LabelEntry.highlighted` →
+    // `UIRolloverWidget.useHighlightColor`).
     for (_, mut l, _, _, _, mut bg) in &mut labels {
         let lit = hovered.0 == Some(l.owner);
         if l.lit != lit {
@@ -1018,11 +1030,13 @@ fn sync_label_glow(
     }
 }
 
-/// The ground item whose label is under the cursor (physical px), `UIWorldDescManager` update
-/// sub_14028AE50 (mouse path, flag +753): the labels are tested from the last placed to the first against their
-/// drawn rect (the shown, eased position: entry +16), half-open `[x, x + w) × [y, y + h)`; the first hit is the
-/// selected label (+316), which a click uses (sub_14028AC60 → `ControllerPlayer::HandleActionFromMouse`) and whose
-/// tooltip shows. With no label hit the label of the world-hovered item (+312, [`model_under`]; in Keyboard Only the
+/// The ground item whose label is under the cursor (physical px), `UIWorldDescManager::Update` (mouse path,
+/// `UIWorldDescManager.mousePath`): the labels are tested from the last placed to the first against their
+/// drawn rect (the shown, eased position: `LabelEntry.shownRect`), half-open `[x, x + w) × [y, y + h)`; the first
+/// hit is the selected label (`UIWorldDescManager.selectedLabel`), which a click uses
+/// (`UIWorldDescManager::HandleClick` → `ControllerPlayer::HandleActionFromMouse`) and whose tooltip shows. With no
+/// label hit the label of the
+/// world-hovered item (`UIWorldDescManager.worldHoveredItem`, [`model_under`]; in Keyboard Only the
 /// controller targeting's item) is selected, when it is in the list.
 fn label_at(cursor: Vec2, drawn: &[(Entity, LabelRect)]) -> Option<Entity> {
     drawn
@@ -1040,7 +1054,7 @@ fn label_at(cursor: Vec2, drawn: &[(Entity, LabelRect)]) -> Option<Entity> {
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_drops(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut done: Local<bool>,
     mut since: Local<f32>,

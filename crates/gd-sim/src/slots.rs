@@ -13,7 +13,7 @@
 //! `(cos * d, 0, sin * d)`; positions are recalculated when the spacing or the
 //! owner's spot changed (`CalculateSlotPositions`).
 //!
-//! `RequestSlot` @0x18055d540: per ring in order it refreshes the positions,
+//! `SlotManager::RequestSlot`: per ring in order it refreshes the positions,
 //! frees the slots held by the requester or by gone / dead characters
 //! (`CleanupRing`) and looks for a free slot (`SearchRingForFreeSlot`); free
 //! slots are tried nearest to the requester first and the first on the path

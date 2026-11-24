@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use gd_formats::save::gdc::Gdc;
-use gd_game::inventory::Inventory;
-use gd_game::progress::PlayerProgress;
-use gd_game::session::{self, Choice, SessionReady};
+use gd_game::session;
 use gd_game::testing::{TempDir, TestGame};
+use gd_game_core::inventory::Inventory;
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::session::{Choice, SessionReady};
 
 /// A port-written save of a new character raised to level 7, in `tmp`.
 fn saved_character(tmp: &TempDir) -> Option<PathBuf> {
@@ -28,7 +29,9 @@ fn end_session(g: &mut TestGame, entities: &[bevy::prelude::Entity]) {
         world.entity_mut(*e).despawn();
     }
     session::end_session_state(world);
-    world.resource_mut::<session::SessionEpoch>().0 += 1;
+    world
+        .resource_mut::<gd_game_core::session::SessionEpoch>()
+        .0 += 1;
     g.steps(3);
 }
 
@@ -43,7 +46,7 @@ fn begin_saved(g: &mut TestGame, path: &Path, difficulty: usize) {
         survival: None,
         custom: None,
     };
-    let veteran = session::is_veteran(&gdc);
+    let veteran = gd_game_core::session::is_veteran(&gdc);
     session::begin(
         &mut g.app.world_mut().commands(),
         choice,
@@ -72,7 +75,9 @@ fn begin_end_begin() {
     let world = g.app.world_mut();
     world.entity_mut(p).despawn();
     session::end_session_state(world);
-    world.resource_mut::<session::SessionEpoch>().0 += 1;
+    world
+        .resource_mut::<gd_game_core::session::SessionEpoch>()
+        .0 += 1;
     assert!(world.get_resource::<SessionReady>().is_none());
     assert!(world.get_resource::<PlayerProgress>().is_none());
     assert!(world.get_resource::<Inventory>().is_none());
@@ -123,7 +128,7 @@ fn exit_in_a_fight_then_create() {
     assert!(
         g.app
             .world()
-            .get_resource::<session::LoadedCharacter>()
+            .get_resource::<gd_game_core::session::LoadedCharacter>()
             .is_none()
     );
 }
@@ -132,8 +137,8 @@ fn exit_in_a_fight_then_create() {
 /// session: a Normal session followed by an Ultimate one spawns the Ultimate monster, not the cached Normal one.
 #[test]
 fn second_session_builds_its_own_monster_profiles() {
-    use gd_game::combat::Combatant;
     use gd_game::monsters::ProfileCache;
+    use gd_game_core::combat::Combatant;
     const RECORD: &str = "records/creatures/enemies/hero/zombie_h01.dbr";
     let at = bevy::prelude::Vec3::new(3.0, 0.0, 0.0);
     let life = |g: &mut TestGame| -> f32 {

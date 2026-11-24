@@ -3,11 +3,11 @@
 //! Game.dll `Item::PassLootFilter(ItemIgnore)` and the options
 //! (`Player::GetLootFilter` / `SetLootFilter`: a 42-bit set, saved in the
 //! character file `CharacterInfo` `loot_filters`; GrimDawn.exe loot filter
-//! window `sub_1401C86C0` binds each checkbox to an option, [`OPTIONS`]).
+//! window `LootFilterWindow::Initialize` binds each checkbox to an option, [`OPTIONS`]).
 //!
 //! Classification `c` = `GetItemClassification(true)` (the base record's
 //! raised by its affixes', [`super::Classification`]); Broken items never
-//! pass. The [`Mode`] (GrimDawn.exe `sub_14028BF40`): `ShowAll` while
+//! pass. The [`Mode`] (GrimDawn.exe `UIWorldDescManager::ApplyLootFilter`): `ShowAll` while
 //! "Show Items (No Filter)" is held, `HideCommon` while "Show Items (Filter
 //! Common)" is held (everything but Common), `HideAll` after "Toggle Hide
 //! All Items" (only Quest and Lore items), else `Filter`:
@@ -48,7 +48,7 @@ use super::resolve::{ResolvedItem, Source, StoreKind};
 pub const COUNT: usize = 42;
 
 /// The window's checkboxes: (option, label tag), per column in the window's
-/// order (`sub_1401C86C0`; the Ascended box only with the third
+/// order (`LootFilterWindow::Initialize`; the Ascended box only with the third
 /// expansion; `None`: a spacer line).
 pub const OPTIONS: [&[Option<(usize, &str)>]; 4] = [
     &[
@@ -116,7 +116,7 @@ pub fn defaults() -> [bool; COUNT] {
     std::array::from_fn(|i| i <= 17 || i == 39)
 }
 
-/// `InGameUIActorCapture::ItemIgnore`.
+/// The pick filter mode (`InGameUI::GetPickFilterMode`, passed to `Item::PassLootFilter`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]

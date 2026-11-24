@@ -31,7 +31,7 @@ pub struct Achievement {
     /// Text tags.
     pub title: String,
     pub description: String,
-    /// Not listed while locked (the window, sub_14010B0B0).
+    /// Not listed while locked (the window, `AchievementWindow::RefreshList`).
     pub hidden: bool,
     pub locked_icon: String,
     pub unlocked_icon: String,
@@ -128,16 +128,16 @@ impl Achievements {
     }
 }
 
-/// The `Kill` achievements' kill counters by id (sub_1803559E0: the counter lives in the achievement
-/// object; the manager is the game engine's, so it keeps counting across sessions of the process).
+/// The `Kill` achievements' kill counters by id (`AchievementKill::OnCreatureKilled`: the counter lives in the
+/// achievement object; the manager is the game engine's, so it keeps counting across sessions of the process).
 #[derive(Resource, Default)]
-pub struct KillCounts(pub std::collections::HashMap<String, u32>);
+pub struct KillCounts(pub gd_formats::collections::HashMap<String, u32>);
 
 /// Unlocks an achievement by id (`GameEngine::UnlockAchievement`).
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct UnlockAchievement(pub String);
 
-/// Marks an achievement unlocked without the text or event 62 (`Achievement::Sync` 0x180015890; the module doc's
+/// Marks an achievement unlocked without the text or event 62 (`Achievement::Sync`; the module doc's
 /// PORT note: the loaded save stands in for Steam).
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct SyncAchievement(pub String);
@@ -146,13 +146,13 @@ pub struct SyncAchievement(pub String);
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct AchievementUnlocked(pub String);
 
-/// The ids `GameEngine::ScriptEvent` unlocks for event `name` (0x1802ee170). `mode`: the session's
-/// difficulty (0 Normal, 1 Elite, 2 Ultimate) and challenge; `level`: the player's (`Player` +1496). The displayed
-/// difficulties (`GameInfo::GetIsPlayingAtLeastThisDifficulty`, Engine.dll 0x18008ea60): 1 Veteran = Elite or above
+/// The ids `GameEngine::ScriptEvent` unlocks for event `name`. `mode`: the session's
+/// difficulty (0 Normal, 1 Elite, 2 Ultimate) and challenge; `level`: the player's (`Player.level`). The displayed
+/// difficulties (`GameInfo::GetIsPlayingAtLeastThisDifficulty`, Engine.dll): 1 Veteran = Elite or above
 /// or the Veteran challenge, 2 Elite = difficulty above Normal, 3 Ultimate.
 pub fn script_event_unlocks(
     name: &str,
-    mode: gd_sim::mode::Mode,
+    mode: gd_rules::mode::Mode,
     hardcore: bool,
     level: u32,
 ) -> Vec<&'static str> {
@@ -206,10 +206,10 @@ pub fn token_unlocks<'a>(groups: &'a [Group], token: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// `GameInfo::GetIsPlayingAtLeastThisDifficulty` (Engine.dll 0x18008ea60): the displayed difficulties —
+/// `GameInfo::GetIsPlayingAtLeastThisDifficulty` (Engine.dll): the displayed difficulties —
 /// 0 any, 1 Veteran (Elite or above, or the Veteran challenge), 2 Elite (above Normal), 3 Ultimate, 4 Ascendant
 /// (Ultimate Veteran); anything else is false.
-pub fn at_least_difficulty(mode: gd_sim::mode::Mode, displayed: u32) -> bool {
+pub fn at_least_difficulty(mode: gd_rules::mode::Mode, displayed: u32) -> bool {
     match displayed {
         0 => true,
         1 => mode.difficulty != 0 || mode.challenge == 1,
@@ -220,13 +220,13 @@ pub fn at_least_difficulty(mode: gd_sim::mode::Mode, displayed: u32) -> bool {
     }
 }
 
-/// The `Kill` achievements a kill of `record` counts for (sub_1803559E0): the record in `killDbrs`,
-/// `killHardcore` matching the session and the session at least `killDifficulty`. The caller keeps the counters
-/// ([`KillCounts`]) and unlocks at `kill_count`.
+/// The `Kill` achievements a kill of `record` counts for (`AchievementKill::OnCreatureKilled`): the record in
+/// `killDbrs`, `killHardcore` matching the session and the session at least `killDifficulty`. The caller keeps the
+/// counters ([`KillCounts`]) and unlocks at `kill_count`.
 pub fn kill_matches<'a>(
     groups: &'a [Group],
     record: &str,
-    mode: gd_sim::mode::Mode,
+    mode: gd_rules::mode::Mode,
     hardcore: bool,
 ) -> Vec<&'a Achievement> {
     groups
@@ -241,8 +241,8 @@ pub fn kill_matches<'a>(
         .collect()
 }
 
-/// The player's counters the `Stat` achievements read (sub_18056C450): the loaded save's play stats plus
-/// this session's [`crate::play_stats::PlayCounts`], the level, the Crucible records and the live pets / buffs.
+/// The player's counters the `Stat` achievements read (`AchievementStat::CheckUnlocks`): the loaded save's play stats
+/// plus this session's [`crate::play_stats::PlayCounts`], the level, the Crucible records and the live pets / buffs.
 pub struct StatContext<'a> {
     /// The loaded character's stats; `None` for a new character (every counter 0).
     pub stats: Option<&'a gd_formats::save::gdc::PlayStats>,
@@ -251,7 +251,7 @@ pub struct StatContext<'a> {
     pub hardcore: bool,
     pub difficulty: usize,
     /// The story's Crucible records (`story.game.survival`), when a story runs.
-    pub survival: Option<&'a gd_sim::story::state::Survival>,
+    pub survival: Option<&'a gd_story::story::state::Survival>,
     /// The player's live pets (`NUM_PETS_ACTIVE`).
     pub pets: u32,
     /// The player's active buff records and their profile names, lower-case (`NUM_BUFFS_ACTIVE`).
@@ -259,14 +259,14 @@ pub struct StatContext<'a> {
 }
 
 impl StatContext<'_> {
-    /// The counter of `statName` (the `Stat` loader's name → enum map, sub_18056BDA0).
+    /// The counter of `statName` (the `Stat` loader's name → enum map, `AchievementStat::Load`).
     fn value(&self, name: &str) -> u32 {
         let s = self.stats;
         let f = |k: fn(&gd_formats::save::gdc::PlayStats) -> u32| s.map_or(0, k);
         match name {
             "ENEMY_MONSTERS_KILLED" => f(|p| p.kills) + self.counts.kills,
             "ENEMY_HEROES_KILLED" => f(|p| p.hero_kills) + self.counts.hero_kills,
-            // `GetNumberOfBossKills` (0x180402040): the current difficulty's boss kills.
+            // `GetNumberOfBossKills`: the current difficulty's boss kills.
             "ENEMY_BOSSES_KILLED" => {
                 s.map_or(0, |p| {
                     p.boss_kills.get(self.difficulty).copied().unwrap_or(0)
@@ -304,7 +304,7 @@ impl StatContext<'_> {
             "NUM_HIDDENCHESTS_OPENED" => {
                 f(|p| p.hidden_chests_opened) + self.counts.hidden_chests_opened
             }
-            // `GetGreatestSurvivalScore` (0x180402110): the greater of the stored greatest and the run's score.
+            // `GetGreatestSurvivalScore`: the greater of the stored greatest and the run's score.
             "SURVIVALMODE_SCORE" => {
                 let mut v = f(|p| p.survival_greatest_score);
                 if let Some(sv) = self.survival {
@@ -325,7 +325,7 @@ impl StatContext<'_> {
     }
 }
 
-/// The `Stat` achievements whose counter reached `statCount` (sub_18056C450).
+/// The `Stat` achievements whose counter reached `statCount` (`AchievementStat::CheckUnlocks`).
 pub fn stat_unlocks<'a>(groups: &'a [Group], ctx: &StatContext<'_>) -> Vec<&'a str> {
     groups
         .iter()
@@ -370,14 +370,14 @@ pub fn stat_unlocks<'a>(groups: &'a [Group], ctx: &StatContext<'_>) -> Vec<&'a s
         .collect()
 }
 
-/// The `Faction` achievements reached (sub_18028F290): `factionCount` of the listed factions (empty:
-/// every faction but the player's, the loader sub_18028F000's 1..46) at `factionValue` reputation — at most when
-/// negative. The reputation is truncated to an integer first (`GetValue`'s float cast).
+/// The `Faction` achievements reached (`AchievementFaction::CheckUnlocks`): `factionCount` of the listed factions
+/// (empty: every faction but the player's, the loader `AchievementFaction::Load`'s 1..46) at `factionValue`
+/// reputation — at most when negative. The reputation is truncated to an integer first (`GetValue`'s float cast).
 pub fn faction_unlocks<'a>(
     groups: &'a [Group],
     factions: &crate::factions::PlayerFactions,
 ) -> Vec<&'a str> {
-    let all = gd_sim::faction::FACTION_COUNT;
+    let all = gd_rules::faction::FACTION_COUNT;
     groups
         .iter()
         .flat_map(|g| &g.achievements)
@@ -390,7 +390,7 @@ pub fn faction_unlocks<'a>(
             } else {
                 a.faction_names
                     .iter()
-                    .filter_map(|n| crate::factions::index_of_name(n))
+                    .filter_map(|n| gd_game_core::factions::index_of_name(n))
                     .collect()
             };
             let mut count = 0u32;
@@ -427,12 +427,12 @@ impl Plugin for AchievementsPlugin {
                 Update,
                 (
                     (
-                        script_events.run_if(resource_exists::<crate::session::GameMode>),
+                        script_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
                         token_events,
-                        kill_events.run_if(resource_exists::<crate::session::GameMode>),
-                        periodic_events.run_if(resource_exists::<crate::session::GameMode>),
+                        kill_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
+                        periodic_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
                     )
-                        .after(crate::story::StoryStage::Tick),
+                        .after(gd_game_core::story::StoryStage::Tick),
                     unlock,
                 )
                     .chain(),
@@ -442,21 +442,21 @@ impl Plugin for AchievementsPlugin {
 
 /// The scripts' events ([`script_event_unlocks`]).
 fn script_events(
-    mut effects: MessageReader<crate::story::StoryEffect>,
-    mode: Res<crate::session::GameMode>,
+    mut effects: MessageReader<gd_game_core::story::StoryEffect>,
+    mode: Res<gd_game_core::session::GameMode>,
     // Option: a new character has no loaded save; the progress exists once the player does.
     (loaded, choice, progress): (
-        Option<Res<crate::session::LoadedCharacter>>,
-        Res<crate::session::Choice>,
-        Option<Res<crate::progress::PlayerProgress>>,
+        Option<Res<gd_game_core::session::LoadedCharacter>>,
+        Res<gd_game_core::session::Choice>,
+        Option<Res<gd_game_core::progress::PlayerProgress>>,
     ),
     mut out: MessageWriter<UnlockAchievement>,
 ) {
     for e in effects.read() {
-        let gd_sim::story::state::Effect::ScriptEvent(name) = &e.0 else {
+        let gd_story::story::state::Effect::ScriptEvent(name) = &e.0 else {
             continue;
         };
-        let hardcore = crate::session::is_hardcore(loaded.as_deref(), &choice);
+        let hardcore = gd_game_core::session::is_hardcore(loaded.as_deref(), &choice);
         let level = progress
             .as_ref()
             .map_or(1, |p| p.progress.level.max(1) as u32);
@@ -469,8 +469,8 @@ fn script_events(
 /// The achievement list ([`groups`]) built once per session (a session may mount another mod).
 #[derive(bevy::ecs::system::SystemParam)]
 struct GroupList<'w, 's> {
-    data: Res<'w, crate::data::GameData>,
-    fresh: crate::session::NewSession<'w, 's>,
+    data: Res<'w, gd_game_core::data::GameData>,
+    fresh: gd_game_core::session::NewSession<'w, 's>,
     cached: Local<'s, Option<Vec<Group>>>,
 }
 
@@ -487,10 +487,10 @@ impl GroupList<'_, '_> {
 /// Tokens the player newly holds ([`token_unlocks`]; the module doc's PORT note). The ones held when the session's
 /// story starts are synced.
 fn token_events(
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut list: GroupList,
-    mut seen: Local<Option<std::collections::HashSet<String>>>,
-    mut fresh: crate::session::NewSession,
+    mut seen: Local<Option<gd_formats::collections::HashSet<String>>>,
+    mut fresh: gd_game_core::session::NewSession,
     mut out: MessageWriter<UnlockAchievement>,
     mut sync: MessageWriter<SyncAchievement>,
 ) {
@@ -527,16 +527,16 @@ fn token_events(
 #[allow(clippy::too_many_arguments)]
 fn kill_events(
     mut killed: MessageReader<crate::combat::MonsterKilled>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut list: GroupList,
-    mode: Res<crate::session::GameMode>,
+    mode: Res<gd_game_core::session::GameMode>,
     (loaded, choice): (
-        Option<Res<crate::session::LoadedCharacter>>,
-        Res<crate::session::Choice>,
+        Option<Res<gd_game_core::session::LoadedCharacter>>,
+        Res<gd_game_core::session::Choice>,
     ),
     credit: crate::combat::KillCredit,
-    monsters: Query<&crate::monsters::Monster>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    monsters: Query<&gd_game_core::monsters::Monster>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     state: Res<Achievements>,
     mut counts: ResMut<KillCounts>,
     mut out: MessageWriter<UnlockAchievement>,
@@ -569,7 +569,7 @@ fn kill_events(
             continue;
         }
         let groups = list.get();
-        let hardcore = crate::session::is_hardcore(loaded.as_deref(), &choice);
+        let hardcore = gd_game_core::session::is_hardcore(loaded.as_deref(), &choice);
         for a in kill_matches(groups, &k.record, mode.0, hardcore) {
             if state.is_unlocked(&a.id) {
                 continue;
@@ -584,30 +584,31 @@ fn kill_events(
 }
 
 /// The periodic `Stat` / `Faction` checks ([`stat_unlocks`], [`faction_unlocks`]; the manager update
-/// sub_180017DE0's 3000 ms, the module doc's PORT note on the Steam gate). A session's first check is the sync.
+/// `AchievementManager::Update`'s 3000 ms, the module doc's PORT note on the Steam gate). A session's first check is
+/// the sync.
 #[allow(clippy::too_many_arguments)]
 fn periodic_events(
     time: Res<Time>,
     (mut timer, mut synced): (Local<f32>, Local<bool>),
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut list: GroupList,
-    mode: Res<crate::session::GameMode>,
+    mode: Res<gd_game_core::session::GameMode>,
     (loaded, choice, progress): (
-        Option<Res<crate::session::LoadedCharacter>>,
-        Res<crate::session::Choice>,
-        Option<Res<crate::progress::PlayerProgress>>,
+        Option<Res<gd_game_core::session::LoadedCharacter>>,
+        Res<gd_game_core::session::Choice>,
+        Option<Res<gd_game_core::progress::PlayerProgress>>,
     ),
     counts: Res<crate::play_stats::PlayCounts>,
     factions: Option<Res<crate::factions::PlayerFactions>>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    players: Query<Entity, With<crate::player::Player>>,
-    pets: Query<&crate::pets::Pet, Without<crate::combat::Dead>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    players: Query<Entity, With<gd_game_core::player::Player>>,
+    pets: Query<&crate::pets::Pet, Without<gd_game_core::combat::Dead>>,
     buffed: Query<
         (
-            Option<&crate::skill_buffs::ReceivedBuffs>,
-            Option<&crate::player::Loadout>,
+            Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
+            Option<&gd_game_core::player::Loadout>,
         ),
-        With<crate::player::Player>,
+        With<gd_game_core::player::Player>,
     >,
     state: Res<Achievements>,
     (mut out, mut sync): (
@@ -658,7 +659,7 @@ fn periodic_events(
         level: progress
             .as_ref()
             .map_or(1, |p| p.progress.level.max(1) as u32),
-        hardcore: crate::session::is_hardcore(loaded.as_deref(), &choice),
+        hardcore: gd_game_core::session::is_hardcore(loaded.as_deref(), &choice),
         difficulty: mode.0.difficulty,
         survival: story.as_ref().map(|s| &s.game.survival),
         pets: pets.iter().filter(|p| p.owner == player).count() as u32,
@@ -694,7 +695,7 @@ fn unlock(
     mut requests: MessageReader<UnlockAchievement>,
     mut list: GroupList,
     mut state: ResMut<Achievements>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
     mut events: MessageWriter<AchievementUnlocked>,
 ) {
     for SyncAchievement(id) in syncs.read() {
@@ -716,7 +717,7 @@ fn unlock(
         };
         info!("achievements: {id} unlocked");
         state.unlocked.push(id.clone());
-        cinematic.write(crate::story::CinematicText {
+        cinematic.write(gd_game_core::story::CinematicText {
             head: "tagAchievementUnlocked".into(),
             sub: a.title.clone(),
             sub_args: Vec::new(),

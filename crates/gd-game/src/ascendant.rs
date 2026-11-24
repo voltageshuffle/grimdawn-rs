@@ -11,143 +11,32 @@
 //! the installed formulas are cleared only by
 //! `GameEngine::ClearAltarFormulas`, called from `ExitPlayingMode` and the
 //! engine's destructor, and `AscendantAltar::UpdateSelf` has no timer).
-use crate::combat::{Combatant, MonsterAi, MonsterKilled};
+use crate::combat::{MonsterAi, MonsterKilled};
 use crate::nav::Nav;
-use crate::player::Player;
-use crate::session::MessageDrain;
 use bevy::prelude::*;
+use gd_game_core::ascendant::{AltarState, Offering, formula_levels, reagent_quantity};
+use gd_game_core::combat::Combatant;
+use gd_game_core::player::Player;
+use gd_game_core::session::MessageDrain;
 
 #[derive(Resource, Default)]
 pub struct DreadCount(pub u32, pub Option<Entity>);
 
-/// Reagent → (formula record, exclusive).
-pub fn formula_of(db: &gd_formats::vfs::Database, reagent: &str) -> Option<(String, bool)> {
-    let g = db.get(gd_sim::ascendant::GAME_ASCENDANT)?;
-    for (field, excl) in [
-        ("altarExclusiveRecipes", true),
-        ("altarInclusiveRecipes", false),
-    ] {
-        for f in g.strs(field) {
-            if db
-                .get(f)
-                .and_then(|r| {
-                    r.str("reagentBaseBaseName")
-                        .map(|n| n.eq_ignore_ascii_case(reagent))
-                })
-                .unwrap_or(false)
-            {
-                return Some((f.to_string(), excl));
-            }
-        }
-    }
-    None
-}
-
-/// The formula reagents the altar takes: the exclusive (centre) formulas'
-/// then the inclusive ones (`altarExclusiveRecipes`, `altarInclusiveRecipes`).
-pub fn formula_reagents(db: &gd_formats::vfs::Database) -> Vec<String> {
-    let Some(g) = db.get(gd_sim::ascendant::GAME_ASCENDANT) else {
-        return Vec::new();
-    };
-    g.strs("altarExclusiveRecipes")
-        .into_iter()
-        .chain(g.strs("altarInclusiveRecipes"))
-        .filter_map(|f| {
-            db.get(f)
-                .and_then(|r| r.str("reagentBaseBaseName").map(str::to_owned))
-        })
-        .collect()
-}
-
-/// The altar's boxes: the centre (an exclusive formula's reagent) and five
-/// boxes (inclusive formulas' reagents).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Offering {
-    pub center: Option<String>,
-    pub boxes: [Option<String>; 5],
-}
-
-impl Offering {
-    /// Puts `reagent` in its box: an exclusive formula's in the free centre,
-    /// an inclusive one's in the first free box. False when it is no
-    /// formula's reagent or its box is taken.
-    pub fn place(&mut self, db: &gd_formats::vfs::Database, reagent: &str) -> bool {
-        let Some((_, excl)) = formula_of(db, reagent) else {
-            return false;
-        };
-        if excl {
-            if self.center.is_none() {
-                self.center = Some(reagent.to_owned());
-                return true;
-            }
-        } else if let Some(b) = self.boxes.iter_mut().find(|b| b.is_none()) {
-            *b = Some(reagent.to_owned());
-            return true;
-        }
-        info!("ascendant: no free box for {reagent}");
-        false
-    }
-
-    /// Takes back the last reagent of the boxes, else the centre's.
-    pub fn take_last(&mut self) {
-        if let Some(b) = self.boxes.iter_mut().rev().find(|b| b.is_some()) {
-            *b = None;
-        } else {
-            self.center = None;
-        }
-    }
-
-    /// The placed reagents, the centre first ([`activate_altar`]'s order).
-    pub fn placed(&self) -> Vec<String> {
-        self.center
-            .iter()
-            .chain(self.boxes.iter().flatten())
-            .cloned()
-            .collect()
-    }
-}
-
-/// The formulas the `placed` reagents install and their levels (the number of boxes holding the formula's reagent),
-/// in first-placed order: the altar window's bonus lists and [`activate_altar`].
-pub fn formula_levels(db: &gd_formats::vfs::Database, placed: &[String]) -> Vec<(String, u32)> {
-    let mut levels: Vec<(String, u32)> = Vec::new();
-    for r in placed {
-        let Some((f, _)) = formula_of(db, r) else {
-            continue;
-        };
-        match levels.iter_mut().find(|l| l.0 == f) {
-            Some(l) => l.1 += 1,
-            None => levels.push((f, 1)),
-        }
-    }
-    levels
-}
-
-/// The reagents one box of `reagent`'s formula takes (`reagentBaseQuantity`, at least 1;
-/// `ItemArtifactFormula::GetReagentBaseQuantityForFormula`).
-pub fn reagent_quantity(db: &gd_formats::vfs::Database, reagent: &str) -> u32 {
-    formula_of(db, reagent)
-        .and_then(|(f, _)| db.get(&f))
-        .and_then(|f| f.i32("reagentBaseQuantity"))
-        .unwrap_or(1)
-        .max(1) as u32
-}
-
 /// The Dread (see the module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn dread(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut killed: MessageReader<MonsterKilled>,
     mut count: ResMut<DreadCount>,
-    rules: Res<crate::combat::CombatRules>,
+    rules: Res<gd_game_core::rules::CombatRules>,
     session: crate::session::Session,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     nav: Res<Nav>,
     mut assets: crate::creature::Spawner,
     players: Query<(Entity, &Transform, &Combatant), With<Player>>,
     credit: crate::combat::KillCredit,
-    alive: Query<(), (With<Combatant>, Without<crate::combat::Dead>)>,
+    alive: Query<(), (With<Combatant>, Without<gd_game_core::combat::Dead>)>,
 ) {
     let Ok((player, ptf, pcb)) = players.single() else {
         killed.clear();
@@ -179,7 +68,7 @@ pub fn dread(
     if count.0 < need || chance <= 0.0 {
         return;
     }
-    let roll = crate::rng::f32() * 100.0;
+    let roll = gd_game_core::rng::f32() * 100.0;
     debug!("ascendant: dread roll {roll:.2} vs {chance:.2} %");
     if roll > chance && hooks.gameplay.dread_kills.is_none() {
         return;
@@ -188,9 +77,9 @@ pub fn dread(
         return;
     };
     let dir = Vec3::new(
-        crate::rng::f32() * 2.0 - 1.0,
+        gd_game_core::rng::f32() * 2.0 - 1.0,
         0.0,
-        crate::rng::f32() * 2.0 - 1.0,
+        gd_game_core::rng::f32() * 2.0 - 1.0,
     )
     .normalize_or(Vec3::X);
     let Some(at) = [20.0, 15.0, 10.0, 5.0].iter().find_map(|d| {
@@ -225,14 +114,14 @@ pub fn dread(
     // `OnCreatureDeath`: `EnableSpawnAnimation` before `FastSpawnEntity`.
     ai.enable_spawn_animation();
     commands.entity(e).insert((
-        crate::monsters::Monster {
+        gd_game_core::monsters::Monster {
             record: record.clone(),
             level,
             slot: (usize::MAX, 0, 0),
         },
         Combatant::new(
             std::sync::Arc::new(prof),
-            crate::combat::get_radius(Some(rec), 0.5),
+            gd_game_core::combat::get_radius(Some(rec), 0.5),
         ),
         ai,
     ));
@@ -244,18 +133,6 @@ pub fn dread(
     );
 }
 
-/// The altar this session: whether it was activated, the reagents it was
-/// activated with and the formulas installed (session state).
-#[derive(Resource, Default)]
-pub struct AltarState {
-    pub activated: bool,
-    /// The boxes as activated (`GameEngine::GetActivatedAltarReagents`, an
-    /// `AltarOfferConfigInfo`: the centre and the five boxes; the altar
-    /// window's show `Grim Dawn.exe` sub_140119450 fills its boxes from it).
-    pub reagents: Offering,
-    pub formulas: gd_sim::ascendant::Ascendant,
-}
-
 /// Activates the altar with the reagents `placed` in its boxes (the centre
 /// first): each box needs its formula's `reagentBaseQuantity` in the bags,
 /// which are taken; each formula installs at the level of the boxes holding
@@ -264,9 +141,9 @@ pub struct AltarState {
 /// and the story.
 pub fn activate_altar(
     db: &gd_formats::vfs::Database,
-    mode: gd_sim::mode::Mode,
+    mode: gd_rules::mode::Mode,
     placed: &[String],
-    inv: &mut crate::inventory::Inventory,
+    inv: &mut gd_game_core::inventory::Inventory,
     state: &mut AltarState,
 ) -> Result<Vec<(String, u32)>, String> {
     let mut need: Vec<(String, u32)> = Vec::new();
@@ -324,7 +201,7 @@ impl Plugin for AscendantPlugin {
                 Update,
                 use_altar
                     .in_set(AscendantStage::Use)
-                    .after(crate::player::PlayerSet)
+                    .after(gd_game_core::player::PlayerSet)
                     .before(AscendantStage::Altar),
             )
             .add_message::<AltarOffer>()
@@ -332,20 +209,20 @@ impl Plugin for AscendantPlugin {
             .add_systems(
                 Update,
                 offer_to_altar
-                    .run_if(resource_exists::<crate::inventory::Inventory>)
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet),
+                    .run_if(resource_exists::<gd_game_core::inventory::Inventory>)
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet),
             )
             .drain_messages_unless::<MonsterKilled, _>(
-                resource_exists::<crate::combat::CombatRules>,
+                resource_exists::<gd_game_core::rules::CombatRules>,
             )
             .add_systems(
                 Update,
                 (
-                    dread.run_if(resource_exists::<crate::combat::CombatRules>),
+                    dread.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     apply_altar
                         .in_set(AscendantStage::Altar)
-                        .before(crate::story::StoryStage::Tick)
+                        .before(gd_game_core::story::StoryStage::Tick)
                         .before(crate::monsters::MonsterStage::Proxies),
                 ),
             );
@@ -369,9 +246,9 @@ pub struct AltarAnswer(pub Result<Vec<(String, u32)>, String>);
 fn offer_to_altar(
     mut msgs: MessageReader<AltarOffer>,
     mut answers: MessageWriter<AltarAnswer>,
-    data: Res<crate::data::GameData>,
-    mode: Res<crate::session::GameMode>,
-    mut inv: ResMut<crate::inventory::Inventory>,
+    data: Res<gd_game_core::data::GameData>,
+    mode: Res<gd_game_core::session::GameMode>,
+    mut inv: ResMut<gd_game_core::inventory::Inventory>,
     mut altar: ResMut<AltarState>,
 ) {
     for m in msgs.read() {
@@ -384,7 +261,7 @@ fn offer_to_altar(
             inv.add_to_bags(gd_formats::save::item::Item {
                 base_name: r.clone(),
                 stack_count: 1,
-                seed: crate::rng::u32(1..0x7FFF_FFFF),
+                seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
                 ..Default::default()
             });
         }
@@ -411,7 +288,7 @@ pub fn spawn_altar(
     record: &str,
 ) -> Option<Entity> {
     let rec = db.get(record)?;
-    let radius = crate::combat::get_radius(Some(rec), crate::combat::ACTOR_RADIUS);
+    let radius = gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS);
     Some(
         commands
             .spawn((
@@ -432,18 +309,18 @@ pub fn spawn_altar(
 #[derive(Message, Clone, Copy, Debug)]
 pub struct AltarOpen(pub Entity);
 
-/// How far the open altar window stays open (Grim Dawn.exe sub_140118D20: the window hides itself once
+/// How far the open altar window stays open (`AltarWindow::CloseIfFar`: the window hides itself once
 /// the player is farther from its altar than the altar's use distance): the use range at the walk's end
 /// (`player_orders::usable_range`).
 pub fn altar_reach(db: &gd_formats::vfs::Database, a: &Altar, player_radius: f32) -> f32 {
-    let usable = crate::combat::fixed_usable_range(db.get(&a.record));
-    crate::player_orders::usable_range(player_radius, a.radius, usable, true)
+    let usable = gd_game_core::combat::fixed_usable_range(db.get(&a.record));
+    gd_game_core::player_orders::usable_range(player_radius, a.radius, usable, true)
 }
 
 /// Within reach of the interacted altar (`player_orders::InteractTarget`): stop and use it (module doc).
 #[allow(clippy::too_many_arguments)]
 pub fn use_altar(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     altar: Res<AltarState>,
     altars: Query<(Entity, &GlobalTransform, &Altar)>,
@@ -456,8 +333,8 @@ pub fn use_altar(
         ),
         With<Player>,
     >,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    data: Res<crate::data::GameData>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    data: Res<gd_game_core::data::GameData>,
     nav: Res<Nav>,
     mut open: MessageWriter<AltarOpen>,
     mut tested: Local<bool>,
@@ -492,9 +369,13 @@ pub fn use_altar(
     let Ok((_, gt, a)) = altars.get(e) else {
         return;
     };
-    let usable = crate::combat::fixed_usable_range(data.db.get(&a.record));
-    let range =
-        crate::player_orders::usable_range(pcb.radius, a.radius, usable, path.points.is_empty());
+    let usable = gd_game_core::combat::fixed_usable_range(data.db.get(&a.record));
+    let range = gd_game_core::player_orders::usable_range(
+        pcb.radius,
+        a.radius,
+        usable,
+        path.points.is_empty(),
+    );
     if ptf.translation.distance(gt.translation()) > range {
         return;
     }
@@ -510,12 +391,12 @@ pub fn use_altar(
     open.write(AltarOpen(e));
 }
 
-/// `MainPlayerCanUseAscendantAltar`: the `ascendantToken` (@0x1802c75a0: no token in the game engine
+/// `MainPlayerCanUseAscendantAltar`: the `ascendantToken` (no token in the game engine
 /// record, or the main player holds it). The `GD_ALTAR_OFFER` hook allows it.
 pub fn may_use_altar(
-    hooks: &crate::hooks::Hooks,
+    hooks: &gd_game_core::hooks::Hooks,
     db: &gd_formats::vfs::Database,
-    rt: Option<&crate::story::StoryRuntime>,
+    rt: Option<&gd_game_core::story::StoryRuntime>,
 ) -> bool {
     let token = db
         .get("records/game/gameengine.dbr")
@@ -533,23 +414,23 @@ pub fn may_use_altar(
 /// The installed formulas reach monster profiles (their attribute paks,
 /// `CombatRules`) and Lua (`Game.GetAscendantTokenModifier`).
 ///
-/// `Monster::ContributeGameBalance*Attributes` @0x18037b7ae..: a monster of
+/// `Monster::ContributeGameBalance*Attributes`: a monster of
 /// the Shattered Realm's dungeon gets no Ascendant bonus; the ruleset's `difficultyAdjustment*` pak (a
 /// `GameAdjustment`, by game difficulty) is read in its place at the index `dungeonsGenerated` (the tier). PORT: it
 /// replaces the Ascendant paks for every monster while a dungeon exists (outside it nothing fights).
-/// `CharAttributeVal::AddToAccumulator` @0x1800cc380: the index is 1-based (`gd_sim::ascendant::adjustment_column`:
+/// `CharAttributeVal::AddToAccumulator`: the index is 1-based (`gd_sim::ascendant::adjustment_column`:
 /// tier 0 adds nothing), and one past the table's end takes its last row (`stats::level_value`).
 pub fn apply_altar(
     // The mode (the dungeon ruleset's slot) and the altar's formulas.
     session: crate::session::Session,
     // Option: the story half still runs without rules.
-    rules: Option<ResMut<crate::combat::CombatRules>>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
-    data: Res<crate::data::GameData>,
+    rules: Option<ResMut<gd_game_core::rules::CombatRules>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    data: Res<gd_game_core::data::GameData>,
     profiles: Option<ResMut<crate::monsters::ProfileCache>>,
     // (dungeon stamp, ruleset slot) -> the adjustment pak of its ruleset.
     mut pak: Local<Option<((u32, u32), Option<String>)>>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     let state = &session.altar;
     if fresh.begun() {
@@ -558,10 +439,10 @@ pub fn apply_altar(
     let dungeon = rt.as_ref().and_then(|rt| {
         let s = rt.story.borrow();
         let d = s.endless.dungeon.as_ref()?;
-        let slot = gd_sim::endless::Ruleset::slot(&session.mode());
+        let slot = gd_story::endless::Ruleset::slot(&session.mode());
         let key = (d.id, slot as u32);
         if pak.as_ref().is_none_or(|(k, _)| *k != key) {
-            let name = gd_sim::endless::Ruleset::load(&data.db, &d.ruleset, slot)
+            let name = gd_story::endless::Ruleset::load(&data.db, &d.ruleset, slot)
                 .and_then(|r| r.difficulty_adjustment);
             *pak = Some((key, name));
         }

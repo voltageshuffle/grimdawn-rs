@@ -3,10 +3,11 @@
 //! a value table (shader objects + literal state values), parameter
 //! declarations, and techniques ("styles") made of passes of render states.
 //!
-//! Loader: `GAME::GraphicsShader2::Initialize` (Engine.dll 0x1800e5890) picks
+//! Loader: `GraphicsShader2::Initialize` (Engine.dll) picks
 //! the profile named by the device (D3D11 renderer → "DirectX11"); chunk
-//! readers 0x1800e77c0 (values), 0x1800e7b90/0x1800e7cd0 (params),
-//! 0x1800e7e60/0x1800e7fc0 (techniques); state application 0x1800e6e00.
+//! readers `GraphicsShader2::ReadValues` (values), `GraphicsShader2::ReadParams` /
+//! `GraphicsShader2::ReadParamBlock` (params), `GraphicsShader2::ReadTechniques` /
+//! `GraphicsShader2::ReadPass` (techniques); state application `GraphicsShader2::ApplyStates`.
 //! DirectX11 bytecode is DXBC (vs_5_0/ps_5_0) with RDEF reflection intact;
 //! the GeForce*/Radeon*/R200 profiles carry D3D9 SM1–3 bytecode.
 use crate::util::{Reader, latin1};
@@ -375,7 +376,7 @@ impl Profile {
     }
 }
 
-/// Engine `RenderBlendFactor` → name (Direct3D11.dll ConvertRenderBlendFactor 0x180001bb0).
+/// Engine `RenderBlendFactor` → name (Direct3D11.dll `ConvertRenderBlendFactor`).
 pub fn blend_factor(v: i32) -> &'static str {
     match v {
         0 => "One",
@@ -392,7 +393,7 @@ pub fn blend_factor(v: i32) -> &'static str {
         _ => "Zero",
     }
 }
-/// Depth/stencil test function (SetDepthTestFunction 0x180009420). 7+ disables the test.
+/// Depth/stencil test function (`SetDepthTestFunction`). 7+ disables the test.
 pub fn compare_func(v: i32) -> &'static str {
     match v {
         0 => "Never",
@@ -405,7 +406,7 @@ pub fn compare_func(v: i32) -> &'static str {
         _ => "Always",
     }
 }
-/// SetCullingMode 0x180009660 (D3D11 default winding: clockwise = front).
+/// `SetCullingMode` (D3D11 default winding: clockwise = front).
 pub fn cull_mode(v: i32) -> &'static str {
     match v {
         1 => "Front",
@@ -413,7 +414,7 @@ pub fn cull_mode(v: i32) -> &'static str {
         _ => "None",
     }
 }
-/// Sampler address mode (SetSamplerState 0x1800099a0).
+/// Sampler address mode (`SetSamplerState`).
 pub fn address_mode(v: i32) -> &'static str {
     match v {
         1 => "Clamp",
@@ -434,7 +435,7 @@ pub fn blend_op(v: i32) -> &'static str {
         _ => "Add",
     }
 }
-/// SetStencilWriteMode 0x1800095b0.
+/// `SetStencilWriteMode`.
 pub fn stencil_op(v: i32) -> &'static str {
     match v {
         1 => "Replace",

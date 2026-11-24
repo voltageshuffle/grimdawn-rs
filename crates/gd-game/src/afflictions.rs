@@ -4,8 +4,8 @@
 //!   slot for the duration; the same source keeps the larger value, different
 //!   sources stack (`gd_sim::combat::DotManager`). The source is the
 //!   owning object + attribute — the item instance / skill record / passive,
-//!   not the attacker (`DamageAttributeDur::AddDamageToAccumulator`
-//!   @0x180190560: `(GetObjectId(owner), attribute_index)`;
+//!   not the attacker (`DamageAttributeDur::AddDamageToAccumulator`:
+//!   `(GetObjectId(owner), attribute_index)`;
 //!   `gd_sim::actor::Profile::dot_sources`), so weapon + skill + passive DoTs
 //!   of one type add up and only a re-application of the same source keeps
 //!   max. The attacker rides along for the kill credit (below).
@@ -13,10 +13,10 @@
 //!   reductions, fumble): per type every slot keeps the largest value, so the
 //!   effect is the largest active one (`GetFixedDamage`). They are
 //!   not scaled by critical hits (`CombatAttributeDurFixedDamage`).
-//! - Type 61 (`offensiveSlowDamageMult*`, `CombatAttributeDur_DamageMultiplier::Execute` @0x180114dd0):
+//! - Type 61 (`offensiveSlowDamageMult*`, `CombatAttributeDur_DamageMultiplier::Execute`):
 //!   a fixed entry of value % and duration s. Every application is its own
 //!   entry and the active value is the largest (`GetFixedDamage`'s per-slot
-//!   `fmaxf`, `AddFixedDamage` @0x18027a270 → `sub_180280810`): a weaker /
+//!   `fmaxf`, `AddFixedDamage` → `DurationDamageManager::AddFixedSlot`): a weaker /
 //!   shorter one never lowers or truncates a stronger / longer, and they do
 //!   not stack. Its value is never scaled by the damage-taken multiplier
 //!   (`TakeAttack` passes `includeType61 = false` to `ScaleDamage`). It adds
@@ -25,38 +25,38 @@
 //!   sundered overlay (`GetFixedDamage(61)`); the tick deals no damage.
 //! - Crowd control (`CombatAttributeReflexDamage`): a re-application keeps
 //!   `max(remaining, new)` — the fixed timeline only grows and every covered
-//!   slot keeps `fmaxf` (`AddFixedDamage` @0x18027a270 → `sub_180280810`),
+//!   slot keeps `fmaxf` (`AddFixedDamage` → `DurationDamageManager::AddFixedSlot`),
 //!   so a short roll never truncates a long control, and it never
 //!   stacks. One involuntary effect at a time, by priority immobilize >
 //!   petrify > freeze > trap > sleep > stun > knockdown > take-hit, then confusion >
-//!   fear while none of those runs (`UpdateFxAndInfluence` @0x18027b8a0).
+//!   fear while none of those runs (`UpdateFxAndInfluence`).
 //!   Stun, sleep, knockdown, freeze, petrify and immobilize stop
 //!   all actions (freeze/petrify also stop the pose); trap stops movement
 //!   only (`ControllerMonsterStateTrapped::EnemyFound` still picks
 //!   and uses a skill, `ControllerMonsterStateImmobile` keeps the no-op
 //!   `EnemyFound` and `ImmobilizeAction::Execute` stops the current skill).
 //!   A knockdown lays the body down and throws it (`StartInvoluntaryEffect`
-//!   @0x18006f260 → `BeginKnockdown`, [`crate::ragdoll::KnockedDown`]); its end
+//!   → `BeginKnockdown`, [`crate::ragdoll::KnockedDown`]); its end
 //!   gets it up. A take-hit (type 49, `BeginTakeHit` → `TakeHitAction::Execute`
-//!   @0x1800864d0 → `Character::ExecuteTakeHit` @0x18005d650) plays the flinch
+//!   → `Character::ExecuteTakeHit`) plays the flinch
 //!   once (`CharState::TakeHit`, animation type 46; no stun: the clip is the
 //!   action that blocks the next); no stock record applies one.
 //! - Sleep wake: `DurationDamageManager::BeginNewAttack`
-//!   @0x18027a1e0 (called at `TakeAttack`'s start, before the hit roll):
+//!   (called at `TakeAttack`'s start, before the hit roll):
 //!   every attack style other than retaliation (3) / debuff (4) /
 //!   reflection (6) removes the type-43 entries and runs their End — any
 //!   melee / ranged / direct attack wakes a sleeper, a miss too
 //!   ([`Afflictions::receive`]).
 //! - Fear / confusion: `UpdateFxAndInfluence` exerts them through
 //!   the controller only while no hard crowd control runs —
-//!   `Monster::CombatExertInfluenceConfusion` @0x18037b2e0 →
-//!   `ControllerMonster::Confuse` @0x180135970 → the Confused state
-//!   (`WalkRandomly` @0x18014a1c0: a random point 2 r..7 m from home;
-//!   `OnUpdate` @0x180149f70: every `rand() % 2000 + 1000` ms a random
+//!   `Monster::CombatExertInfluenceConfusion` →
+//!   `ControllerMonster::Confuse` → the Confused state
+//!   (`WalkRandomly`: a random point 2 r..7 m from home;
+//!   `OnUpdate`: every `rand() % 2000 + 1000` ms a random
 //!   attack, `UseSkillOnPoint` at a point 2 r..5 m from home), and
-//!   `Character::CombatExertInfluenceFear` @0x180068ee0 →
-//!   `ControllerMonster::ScareMe` @0x180135cb0 → the Scared state
-//!   (`PickRunToPoint` @0x18014b090: `max(fleeDistance, 5)` m away from the
+//!   `Character::CombatExertInfluenceFear` →
+//!   `ControllerMonster::ScareMe` → the Scared state
+//!   (`PickRunToPoint`: `max(fleeDistance, 5)` m away from the
 //!   last attacker, ±1 m jitter, re-picked every 1–2 s and on the path's
 //!   end). [`crate::combat::cc_states`] drives both for monsters after `CombatSet`
 //!   (the `Stunned` component keeps the normal AI off them). The player's
@@ -74,7 +74,7 @@
 //!   its max cap absorbs part of the slow (`gd_sim::actor::SpeedCap`). The
 //!   animation factor is that slowed capped speed / the unslowed one.
 //! - Effects: `gameengine.dbr` `<type>DamageFxPak` character FX while active.
-//! - DoT combat numbers: `DurationDamageManager::Update` @0x180279170
+//! - DoT combat numbers: `DurationDamageManager::Update`
 //!   adds each update's damage from the main player's own DoTs
 //!   (`ExecuteDamage`: entries whose attacker id, `TakeAttack`'s
 //!   `ParametersCombat` +8, is the main player's; not its pets') and the
@@ -82,26 +82,27 @@
 //!   clock from spawn) it sends the sum when it is ≥ 1, then zeroes both
 //!   ([`DotNumbers`] → `crate::floating`).
 //! - Kill credit: every DoT entry keeps its attacker (the hit's attacker; a reflected / retaliated hit's DoTs
-//!   the reflecting defender). `DurationDamageManager::ExecuteDamage` @0x1802796b0: before each
+//!   the reflecting defender). `DurationDamageManager::ExecuteDamage`: before each
 //!   entry's `CombatManager::ApplyDamage` (types other than 21, mana leech) the defender's `CombatManager`
-//!   attacker (+364, `Character` +1692) is set to the entry's attacker; `ApplyDamage` @0x18011d340 registers the
-//!   damage for it (`GameEngine::RegisterDamage`) and, on the death, runs that attacker's `OnEnemyDeath` with
-//!   the entry's skills; `Character::ImDying` → `CharacterIsDying` @0x180068db0 sends the creature-death event
-//!   with +1692 as the killer (`TakeAttack` @0x18011d950 sets it too, early, for every hit). So a DoT kill is
+//!   attacker (`CombatManager.attacker`, `Character.lastAttacker`) is set to the entry's attacker; `ApplyDamage`
+//!   registers the damage for it (`GameEngine::RegisterDamage`) and, on the death, runs that attacker's
+//!   `OnEnemyDeath` with
+//!   the entry's skills; `Character::ImDying` → `CharacterIsDying` sends the creature-death event
+//!   with `Character.lastAttacker` as the killer (`TakeAttack` sets it too, early, for every hit). So a DoT kill is
 //!   the DoT's applier's kill and scores / pays / procs as his (`crate::combat::KillCredit`); the killer is the
 //!   last entry that dealt damage in the killing update (life leech included). The entry keeps its hit's skill (PORT: a
 //!   same-source stack keeps the stronger application's), so the kill reports it
 //!   (`ActivateOnEnemyDeathSecondarySkills`); a reflected hit's DoT has none. PORT: the port's entry
 //!   order (`gd_sim::combat::DotTick::last_source`) and leech-before-DoT order differ from the engine's list.
 //! - Stun sound: `UpdateFxAndInfluence` calls the old effect's
-//!   `End*` and the new one's `Begin*` only when the effect changes (+40);
+//!   `End*` and the new one's `Begin*` only when the effect changes (`DurationDamageManager.involuntaryEffect`);
 //!   `Character::BeginStun` / `BeginSleep` → the controller's `BeginStun` /
 //!   `BeginSleep` → the `Stunned` / `Sleep` state (`ControllerPlayerState::
 //!   DefaultBeginStunAction`, `ControllerMonsterState::BeginStun`), whose
 //!   `OnBegin` makes a `TakeStunAction` / `TakeSleepAction`; its `Execute`
-//!   @0x180086180 / @0x180086660 on a living (`IsAlive`) character stops
+//!   on a living (`IsAlive`) character stops
 //!   its skill, runs `ExecuteStun` / `ExecuteSleep` and `Character::
-//!   PlayStunSound` @0x18005c9d0 (`crate::combat_sounds::StunSound`). So
+//!   PlayStunSound` (`crate::combat_sounds::StunSound`). So
 //!   once per entry into the stun or sleep state, not on a refresh (also
 //!   again after a higher one, e.g. a trap, ends on a running stun).
 //!   `TakeTrapAction::Execute` and `BeginFreeze` play no sound (freeze
@@ -110,44 +111,51 @@
 //!   `BeginStun`; not decompiled).
 //! - Sickness (`Skill_BuffSelfSick`, the Burr witch brew; Game.dll):
 //!   a `Skill_BuffSelfDuration` (its stats for `skillActiveDuration`;
-//!   `crate::casting::Kind::Buff`) whose `Load` @0x1804eb3d0 reads
+//!   `gd_game_core::casting::Kind::Buff`) whose `Load` reads
 //!   `stunDuration` / `stunPeriod` (s → whole ms) and `stunChance` (an int,
-//!   × 0.01); `ActivateNow` @0x1804eb470 zeroes its timer (+401); `Update`
-//!   @0x1804eb4a0 while active: timer -= frame ms, at ≤ 0 a `rand()` /
+//!   × 0.01); `ActivateNow` zeroes its timer (`Skill_BuffSelfSick.stunTimer`); `Update`
+//!   while active: timer -= frame ms, at ≤ 0 a `rand()` /
 //!   32767 < chance stuns a player holder (`ControllerAI::StunMe`, only for a
 //!   `ControllerPlayer`: `ClearTemporaryStates`, the `Stunned` state for
 //!   `stunDuration` ms), timer = `stunPeriod`. So the first roll comes with
 //!   the first update ([`Sickness`], [`sick_stuns`]). PORT: the stun is the
 //!   afflictions' stun entry ([`Afflictions::hold`], its state and sound);
-//!   the roll is the port's `crate::rng`.
-//! - Icy look ([`Icy`], drawn by grimdawn `icy.rs`): `Character::BeginFreeze` @0x18006f690 /
-//!   `BeginPetrify` @0x18006f850 make the `gameengine.dbr` `freezeDamageHandler` / `petrifyDamageHandler`
-//!   (`SpecialCharHandler::CreateHandler` @0x180562e30, `handlerType` Freeze → `SpecialCharHandler_IcyCharacter`)
-//!   and `Enable` it; `EndFreeze` / `EndPetrify` `Disable` it. `Start` @0x1805634b0 plays `freezeSound` at the
+//!   the roll is the port's `gd_game_core::rng`.
+//! - Icy look ([`Icy`], drawn by grimdawn `icy.rs`): `Character::BeginFreeze` /
+//!   `BeginPetrify` make the `gameengine.dbr` `freezeDamageHandler` / `petrifyDamageHandler`
+//!   (`SpecialCharHandler::CreateHandler`, `handlerType` Freeze → `SpecialCharHandler_IcyCharacter`)
+//!   and `Enable` it; `EndFreeze` / `EndPetrify` `Disable` it. `Start` plays `freezeSound` at the
 //!   character and gives its mesh and every attached item the `icyEffectName` texture with a `GMIEffectIcey`;
-//!   `Disable` @0x180563f90 → `End` @0x180563940 plays `shatterSound` when the character is dead
+//!   `Disable` → `End` plays `shatterSound` when the character is dead
 //!   (`IsAlive`), else `thawSound`, and takes the look off. On a death the look stays 250 ms
-//!   (`Character::ImDying` arms +4475 with 250 ms; the dead `UpdateSelf` counts it down and runs
-//!   `ClearDamageFxs` @0x18005c350, which disables both handlers): it then shatters ([`shatter_icy`]).
-//!   The handler's `iceCubeName` (a `GMIActor_Icy`) is loaded but never spawned: its actor list (+240) is
-//!   only read by `End`, nothing fills it (no other code touches it), so no chunk shows in the game.
-//!   PORT: `Disable`'s second shatter condition (every entry of Character +9912, not decompiled) is
+//!   (`Character::ImDying` arms `Character.damageFxLinger` with 250 ms; the dead `UpdateSelf` counts it down and runs
+//!   `ClearDamageFxs`, which disables both handlers): it then shatters ([`shatter_icy`]).
+//!   The handler's `iceCubeName` (a `GMIActor_Icy`) is loaded but never spawned: its actor list
+//!   (`SpecialCharHandler_IcyCharacter.iceCubes`) is only read by `End`, nothing fills it (no other code touches
+//!   it), so no chunk shows in the game.
+//!   PORT: `Disable`'s second shatter condition (every entry of `Character.damageFxHandlers`, not decompiled) is
 //!   taken as true; the death timer counts from the first frame the port sees `Dead`.
-//! - Death ([`clear_on_death`]): `Character::ImDying` @0x18005c0a0 → `DurationDamageManager::ImDead`
-//!   @0x18027b7b0: both entry lists are emptied (+72 the damage over time, +96 the fixed entries: debuffs and
-//!   crowd control), the involuntary effect (+40) is zeroed without its `End*` call (so the icy handler stays
-//!   for the 250 ms above) and every running damage effect is stopped (`Character::StopDamageEffect`
-//!   @0x18006e8a0 per entry of the +48 map, which is then cleared). So nothing a character suffered outlives
-//!   its death; `Character::StartRespawn` @0x18005af90 (teleport, the handlers' `Reset`, visible, life state
+//! - Death ([`clear_on_death`]): `Character::ImDying` → `DurationDamageManager::ImDead`:
+//!   both entry lists are emptied (`dotEntries` the damage over time, `fixedEntries` the fixed entries: debuffs
+//!   and crowd control), the involuntary effect (`involuntaryEffect`) is zeroed without its `End*` call (so the icy
+//!   handler stays for the 250 ms above) and every running damage effect is stopped (`Character::StopDamageEffect`
+//!   per entry of the `damageEffects` map, which is then cleared). So nothing a character suffered outlives
+//!   its death; `Character::StartRespawn` (teleport, the handlers' `Reset`, visible, life state
 //!   5, the spawn effect) has nothing left to clear. A [`tick`] never touches a character whose life is
 //!   already 0 (`DurationDamageManager::Update` runs for the living only; a script kill in the same frame
 //!   has not marked it `Dead` yet).
-use crate::character::{CharState, Character};
-use crate::combat::{Combatant, Dead, MonsterKilled, kill};
-use crate::data::GameData;
-use crate::monsters::{Monster, ProxyStates};
-use crate::player::Player;
+use crate::combat::{MonsterKilled, kill};
+use crate::monsters::ProxyStates;
 use bevy::prelude::*;
+use gd_game_core::afflictions::{
+    AfflictionStage, BUFF_SELF_SICK, DotNumbers, ICY_DEATH_MS, Icy, Sickness, icy_handler,
+    icy_kind, sick_profile,
+};
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::monsters::Monster;
+use gd_game_core::player::Player;
 use gd_sim::actor::{Debuffs, Hit, is_dot_damage};
 use gd_sim::attributes::CombatType as T;
 use gd_sim::combat::{AttackKind, DotManager};
@@ -166,7 +174,7 @@ impl Plugin for AfflictionsPlugin {
                 shatter_icy,
             )
                 .chain()
-                .after(crate::combat::CombatSet),
+                .after(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -180,7 +188,7 @@ pub struct Afflictions {
     fixed: Vec<(T, f32, f32)>,
     /// (type, seconds left).
     cc: Vec<(T, f32)>,
-    /// `DurationDamageManager` +40: the involuntary effect it last switched
+    /// `DurationDamageManager.involuntaryEffect`: the involuntary effect it last switched
     /// to (`UpdateFxAndInfluence`'s End / Begin calls run on a change).
     state: Option<T>,
     /// Attached FX per type.
@@ -188,7 +196,7 @@ pub struct Afflictions {
     /// Life / mana leech over time (`offensiveSlowLifeLeach` /
     /// `offensiveSlowManaLeach`): (type, per second, seconds left, source).
     leech: Vec<(T, f32, f32, Entity)>,
-    /// `DurationDamageManager` +120 / +124 / +128: the text clock (ms), the
+    /// `DurationDamageManager.textClock` / `.textDamage` / `.textMultiplier`: the text clock (ms), the
     /// player's DoT damage and the largest multiplier since it last ran out.
     text: (i32, f32, f32),
     /// Damage applied once without an attacker (`CombatManager::ApplyDamage` straight, no `TakeAttack`: no
@@ -203,67 +211,10 @@ impl Afflictions {
     }
 }
 
-/// One second's DoT damage of the main player on `target` (module docs).
-#[derive(Message, Clone, Debug, PartialEq)]
-pub struct DotNumbers {
-    pub target: Entity,
-    pub damage: f32,
-    pub multiplier: f32,
-}
-
-/// The dressing request of a frozen / petrified character's icy look (module docs, "Icy look"): on the
-/// character while its freeze / petrify handler is enabled. grimdawn draws it from [`icy_texture`].
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Icy {
-    /// The petrify handler's look (stone), else the freeze handler's (ice).
-    pub petrify: bool,
-    /// Milliseconds since the death (`ClearDamageFxs` at [`ICY_DEATH_MS`]).
-    dead_ms: i32,
-}
-
-impl Icy {
-    pub fn new(petrify: bool) -> Self {
-        Self {
-            petrify,
-            dead_ms: 0,
-        }
-    }
-}
-
-/// `Character::Character` (+4474 = 250): how long a dead character keeps its damage effects.
-pub const ICY_DEATH_MS: i32 = 250;
-
-/// The handler record of the freeze / petrify look (`BeginFreeze` / `BeginPetrify` defaults).
-pub fn icy_handler(data: &GameData, petrify: bool) -> Option<gd_formats::arz::Record> {
-    let engine = data.engine();
-    data.db.get_owned(if petrify {
-        &engine.petrify_handler
-    } else {
-        &engine.freeze_handler
-    })
-}
-
-/// The look's texture, `icyEffectName` (`SpecialCharHandler_IcyCharacter::LoadFromTable`
-/// @0x180563e20, default `xpack/effects/textures/icy.tex`).
-pub fn icy_texture(data: &GameData, petrify: bool) -> String {
-    icy_handler(data, petrify)
-        .and_then(|r| r.str("icyEffectName").map(str::to_owned))
-        .unwrap_or_else(|| "xpack/effects/textures/icy.tex".to_owned())
-}
-
 /// Plays the handler's `freezeSound` / `thawSound` / `shatterSound` at `at` (`SoundPak::Play3D`).
 fn icy_sound(commands: &mut Commands, data: &GameData, petrify: bool, field: &str, at: Vec3) {
     if let Some(pak) = icy_handler(data, petrify).and_then(|r| r.str(field).map(str::to_owned)) {
-        commands.write_message(crate::visuals::PlaySound { pak, at: Some(at) });
-    }
-}
-
-/// The involuntary effect's handler: `Some(petrify)` for freeze / petrify.
-fn icy_kind(cc: Option<T>) -> Option<bool> {
-    match cc {
-        Some(T::Freeze) => Some(false),
-        Some(T::Petrify) => Some(true),
-        _ => None,
+        commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
     }
 }
 
@@ -287,7 +238,7 @@ fn shatter_icy(
     mut q: Query<(Entity, &mut Icy, &Transform), With<Dead>>,
     mut carry: Local<f32>,
 ) {
-    let ms = crate::session::frame_ms(&mut carry, &time);
+    let ms = gd_game_core::session::frame_ms(&mut carry, &time);
     for (e, mut icy, tf) in &mut q {
         icy.bypass_change_detection().dead_ms += ms;
         if icy.dead_ms >= ICY_DEATH_MS {
@@ -303,7 +254,7 @@ fn shatter_icy(
     }
 }
 
-/// `DurationDamageManager::UpdateFxAndInfluence` @0x18027b8a0: the
+/// `DurationDamageManager::UpdateFxAndInfluence`: the
 /// hard crowd control first (immobilize > petrify > freeze > trap > sleep >
 /// stun > knockdown > take-hit: 47, 46, 45, 44, 43, 42, 48, 49), then — only
 /// while none of those is active — confusion (53) before fear (52), the
@@ -360,17 +311,17 @@ impl Afflictions {
     /// A fixed crowd-control entry `ty` for `secs` (`AddFixedDamage`: the
     /// duration only grows, [`Self::refresh_cc`]): a trap / freeze debuff's
     /// hold (`SkillBuff_DebufTrap::ApplyBuffDamage`, `crate::skill_buffs`),
-    /// Blade Barrier's refresh (`crate::casting::ImmobilizeRefresh`).
+    /// Blade Barrier's refresh (`gd_game_core::casting::ImmobilizeRefresh`).
     pub(crate) fn hold(&mut self, ty: T, secs: f32) {
         self.refresh_cc(ty, secs);
     }
 
-    /// `DurationDamageManager::AddFixedDamage` @0x18027a270 → the
-    /// fixed slot adder `sub_180280810`: the fixed timeline only grows
+    /// `DurationDamageManager::AddFixedDamage` → the
+    /// fixed slot adder `DurationDamageManager::AddFixedSlot`: the fixed timeline only grows
     /// (`slot_count < (int)(duration * 10)` extends it, never shortens) and
     /// every covered slot keeps `fmaxf(old, new)`. So a re-application keeps
     /// `max(remaining, new)` — a shorter roll never truncates a longer
-    /// control — and never stacks. `ModifyDuration` @0x18027b6d0 scales
+    /// control — and never stacks. `ModifyDuration` scales
     /// types 42..49 only when `FactionManager::GetPvpIds` holds (a joined
     /// PvP game): by design not here (no multiplayer / PvP).
     fn refresh_cc(&mut self, ty: T, secs: f32) {
@@ -402,7 +353,7 @@ impl Afflictions {
     }
 
     /// The type-61 duration-damage value, which lights the HUD's `sundered`
-    /// overlay (`Character::GetDamageMultiplier` @0x180069510 =
+    /// overlay (`Character::GetDamageMultiplier` =
     /// `DurationDamageManager::GetFixedDamage(61)`, the HUD tests it `!= 0`):
     /// the largest active `offensiveSlowDamageMult*` entry (the fixed slots
     /// keep `fmaxf`, module doc), 0 without one.
@@ -412,7 +363,7 @@ impl Afflictions {
 
     /// The DoTs, debuffs and crowd control a hit carries.
     pub fn receive(&mut self, hit: &Hit, source: Entity, skill: Option<&str>) {
-        // `DurationDamageManager::BeginNewAttack` @0x18027a1e0 (called
+        // `DurationDamageManager::BeginNewAttack` (called
         // at `TakeAttack`'s start, before the hit roll): every attack style
         // other than retaliation (3), debuff (4) and reflection (6) removes
         // the type-43 (Sleep) entries and runs their End — any melee / ranged
@@ -432,7 +383,7 @@ impl Afflictions {
                 // skill record / passive, `gd_sim::actor::dot_source_key`),
                 // not the attacker: distinct sources stack, the same source's
                 // re-application keeps max
-                // (`DamageAttributeDur::AddDamageToAccumulator` @0x180190560).
+                // (`DamageAttributeDur::AddDamageToAccumulator`).
                 // The attacker rides along for the kill credit (module docs).
                 self.dots.add_hit(
                     d.ty,
@@ -450,10 +401,10 @@ impl Afflictions {
                 // is its own entry; the active value is the largest
                 // (`Debuffs::get`, `damage_multiplier`) and a shorter / weaker
                 // one never truncates a longer / stronger (the fixed slots'
-                // `fmaxf`, `sub_180280810`). Type 61's value is never scaled
+                // `fmaxf`, `DurationDamageManager::AddFixedSlot`). Type 61's value is never scaled
                 // by the damage-taken multiplier
-                // (`CombatManager::TakeAttack` @0x18011d950:
-                // `ScaleDamage(.., includeType61 = false, ..)` @0x18011af00
+                // (`CombatManager::TakeAttack`:
+                // `ScaleDamage(.., includeType61 = false, ..)`
                 // skips type 61; `gd_sim::combat::Damage::scale`).
                 // `ModifyDuration` leaves type 61 alone (only 42..49, in PvP,
                 // see `refresh_cc`).
@@ -465,8 +416,8 @@ impl Afflictions {
         }
     }
 
-    /// [`Self::status`] with each type's magnitude for the buff bar's tooltip (`sub_14024F890`: a DoT's damage per
-    /// second, a debuff's value; 0 for crowd control).
+    /// [`Self::status`] with each type's magnitude for the buff bar's tooltip (`PlayerStatusIcons::AddDotIcon` keeps
+    /// it on the icon: a DoT's damage per second, a debuff's value; 0 for crowd control).
     pub fn status_detail(&self) -> Vec<(T, f32, i32)> {
         self.status()
             .into_iter()
@@ -494,7 +445,7 @@ impl Afflictions {
             Some(x) => x.1 = x.1.max(secs),
             None => v.push((t, secs)),
         };
-        // `DurationDamageManager::GetDamageData` @0x18027ab50: the
+        // `DurationDamageManager::GetDamageData`: the
         // normal duration-damage list in insertion order, then the fixed-damage
         // list (never sorted by type or time).
         for t in self.dots.types() {
@@ -570,7 +521,7 @@ fn fx_field(ty: T) -> Option<&'static str> {
 }
 
 fn add_afflictions(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     q: Query<(Entity, Has<Player>), (With<Combatant>, Without<Afflictions>)>,
 ) {
@@ -605,10 +556,10 @@ pub(crate) fn tick(
             Has<Player>,
             Has<Stunned>,
             Has<Rooted>,
-            Option<&mut crate::casting::Caster>,
-            Option<&mut crate::casting::Shields>,
+            Option<&mut gd_game_core::casting::Caster>,
+            Option<&mut gd_game_core::casting::Shields>,
             Has<Icy>,
-            &mut crate::combat::Attackers,
+            &mut gd_game_core::combat::Attackers,
             Has<crate::combat::MonsterAi>,
         ),
         Without<Dead>,
@@ -620,16 +571,16 @@ pub(crate) fn tick(
         Query<Entity, With<Player>>,
         MessageWriter<DotNumbers>,
         Query<(), With<crate::combat::Invincible>>,
-        Query<&crate::reflect_link::ReflectLinks>,
+        Query<&gd_game_core::reflect_link::ReflectLinks>,
         Query<&crate::pets::Pet>,
-        Query<(), With<crate::world::Dummy>>,
+        Query<(), With<gd_game_core::world::Dummy>>,
     ),
 ) {
     let player = players.single().ok().map(Entity::to_bits);
     let dt = time.delta_secs();
-    let ms = crate::session::frame_ms(&mut carry, &time);
+    let ms = gd_game_core::session::frame_ms(&mut carry, &time);
     // Read only when an effect is attached.
-    let mut engine: Option<std::sync::Arc<crate::rules::GameEngineRules>> = None;
+    let mut engine: Option<std::sync::Arc<gd_game_core::rules::GameEngineRules>> = None;
     // Leeched life / energy for the sources: (source, type, amount).
     let mut credits: Vec<(Entity, T, f32)> = Vec::new();
     for (
@@ -677,7 +628,7 @@ pub(crate) fn tick(
         // The killer if this update kills (module docs, "Kill credit").
         let mut last: Option<Entity> = None;
         let mut last_skill: Option<String> = None;
-        // What each source took this update (`ApplyDamage` → `RegisterDamage`, [`crate::combat::Attackers`]).
+        // What each source took this update (`ApplyDamage` → `RegisterDamage`, [`gd_game_core::combat::Attackers`]).
         let mut took: Vec<(Entity, f32)> = Vec::new();
         // Leech over time: drained from this character, given to the source
         // 1:1, the gain capped at the life / energy the target has left
@@ -738,7 +689,7 @@ pub(crate) fn tick(
                 _ => v,
             };
             // A reflect link's filter cuts the tick too (`ApplyDamage` runs
-            // every filter; `ModifyDamage` @0x1804d3d40); a DoT is
+            // every filter; `ModifyDamage`); a DoT is
             // not passed on (only `TakeAttack` does that).
             let v = links.get(e).map_or(v, |l| {
                 l.0.iter().fold(v, |v, l| {
@@ -858,7 +809,9 @@ pub(crate) fn tick(
         if no_act != stunned {
             if no_act {
                 commands.entity(e).try_insert(Stunned);
-                commands.entity(e).try_remove::<crate::casting::Casting>();
+                commands
+                    .entity(e)
+                    .try_remove::<gd_game_core::casting::Casting>();
             } else {
                 commands.entity(e).try_remove::<Stunned>();
                 if ch.state == CharState::Stunned {
@@ -908,15 +861,16 @@ pub(crate) fn tick(
             };
             let fx = commands
                 .spawn((
-                    crate::visuals::EffectSpec::record(name),
+                    gd_game_core::visuals::EffectSpec::record(name),
                     Transform::from_xyz(0.0, 1.0, 0.0),
                     ChildOf(e),
                 ))
                 .id();
             a.fx.push((t, fx));
-            let sounds = crate::casting::char_pak_sounds(&data, std::slice::from_ref(&pak.name));
+            let sounds =
+                gd_game_core::casting::char_pak_sounds(&data, std::slice::from_ref(&pak.name));
             commands.queue(move |w: &mut World| {
-                crate::casting::start_char_pak_sounds(w, &sounds, e, &[fx])
+                gd_game_core::casting::start_char_pak_sounds(w, &sounds, e, &[fx])
             });
         }
 
@@ -929,7 +883,7 @@ pub(crate) fn tick(
                 attackers.last = last;
             }
             cb.life -= lost;
-            // A training dummy never dies (`crate::world::Dummy`).
+            // A training dummy never dies (`gd_game_core::world::Dummy`).
             if dummies.contains(e) {
                 cb.life = cb.life.max(1.0);
             }
@@ -964,26 +918,6 @@ pub(crate) fn tick(
     }
 }
 
-/// The sick buff class (module docs).
-pub const BUFF_SELF_SICK: &str = "Skill_BuffSelfSick";
-
-/// The player's running `Skill_BuffSelfSick` timers (module docs): skill,
-/// seconds to the next roll, its time left last frame (a recast restarts
-/// it: `ActivateNow`).
-#[derive(Component, Default, Debug)]
-pub struct Sickness(pub Vec<(String, f32, f32)>);
-
-/// A sick buff's `stunDuration`, `stunPeriod` (s, whole ms) and
-/// `stunChance` (0..1).
-pub fn sick_profile(rec: &gd_formats::arz::Record) -> (f32, f32, f32) {
-    let ms = |k: &str| (rec.f32(k).unwrap_or(0.0) * 1000.0) as i32 as f32 / 1000.0;
-    (
-        ms("stunDuration"),
-        ms("stunPeriod"),
-        rec.f32("stunChance").unwrap_or(0.0) as i32 as f32 * 0.01,
-    )
-}
-
 /// `Skill_BuffSelfSick::Update` for the player's timed buffs (module docs).
 fn sick_stuns(
     mut commands: Commands,
@@ -992,7 +926,7 @@ fn sick_stuns(
     mut q: Query<
         (
             Entity,
-            &crate::player::Loadout,
+            &gd_game_core::player::Loadout,
             &mut Afflictions,
             Option<&mut Sickness>,
         ),
@@ -1036,17 +970,11 @@ fn sick_stuns(
             t.1 -= dt;
             if t.1 <= 0.0 {
                 let (stun, period, chance) = sick_profile(rec);
-                if crate::rng::f32() < chance {
+                if gd_game_core::rng::f32() < chance {
                     aff.hold(T::Stun, stun);
                 }
                 t.1 = period;
             }
         }
     }
-}
-
-/// Afflictions tick: what reacts to a status running out orders after `Tick`.
-#[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AfflictionStage {
-    Tick,
 }

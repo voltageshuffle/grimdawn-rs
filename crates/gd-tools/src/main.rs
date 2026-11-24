@@ -37,7 +37,7 @@ fn fmt_val(v: &RawValue) -> String {
     match v {
         RawValue::Int(i) => i.to_string(),
         RawValue::Float(f) => format!("{f}"),
-        RawValue::Str(s) => s.clone(),
+        RawValue::Str(s) => s.to_string(),
         RawValue::Bool(b) => (*b as i32).to_string(),
     }
 }

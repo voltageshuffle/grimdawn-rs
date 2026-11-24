@@ -25,8 +25,8 @@
 //! on the render thread (the engine pre-loads through its resource manager).
 //!
 //! PORT: an effect whose files are still loading holds its pfx and the flipbooks already in, and a finished
-//! background read is held for [`gd_game::weak_cache::FRESH_FRAMES`] (`FxAssets::fresh_*`), so a fight with more
-//! than [`gd_game::weak_cache::RECENT`] flipbooks in play cannot evict an effect's early files before its last one
+//! background read is held for [`gd_game_core::weak_cache::FRESH_FRAMES`] (`FxAssets::fresh_*`), so a fight with more
+//! than [`gd_game_core::weak_cache::RECENT`] flipbooks in play cannot evict an effect's early files before its last one
 //! arrives (the engine's resource manager keeps a released resource 5 s instead).
 pub mod enchant;
 pub mod items;
@@ -34,7 +34,6 @@ pub mod mesh;
 pub mod render;
 pub mod sim;
 
-use crate::data::GameData;
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::embedded_asset;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
@@ -42,16 +41,17 @@ use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
+use gd_formats::collections::HashMap;
 use gd_formats::pfx::Pfx;
+use gd_game_core::data::GameData;
 use render::ParticleMaterial;
 use sim::{Coords, EmitterState, fx_density};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Effects beyond this distance from the camera's focus are not simulated.
 pub const SIM_RADIUS: f32 = 90.0;
 
-/// On a [`gd_game::visuals::PendingDecal`]: the decal of an effect spawned with
+/// On a [`gd_game_core::visuals::PendingDecal`]: the decal of an effect spawned with
 /// [`WithDecal`] (level-placed, mesh- or gate-attached), kept while that effect
 /// lives (and by its own `life`).
 #[derive(Component, Clone, Copy)]
@@ -61,7 +61,7 @@ pub struct DecalOwner(pub Entity);
 /// transform (`sim::EmitterState::dropped`): the blood splatters of the
 /// death / gib blood clouds.
 #[derive(Component)]
-pub struct DropDecal(pub String);
+pub struct DropDecal(pub Arc<str>);
 
 /// On a particle's [`DropDecal`]: its quad is tilted to the terrain normal
 /// under it (`Emitter::UpdateParticles`: the coords' Y is the level
@@ -78,7 +78,12 @@ impl Plugin for FxPlugin {
         // Gameplay spawns bare effect requests (`gd_game::visuals`).
         app.register_required_components::<EffectSpec, Visibility>();
         // `GD_NO_FX`: leave effects out (A/B frame-time checks).
-        if app.world().resource::<crate::hooks::Hooks>().render.no_fx {
+        if app
+            .world()
+            .resource::<gd_game_core::hooks::Hooks>()
+            .render
+            .no_fx
+        {
             return;
         }
         app.add_plugins(MaterialPlugin::<ParticleMaterial>::default())
@@ -87,8 +92,8 @@ impl Plugin for FxPlugin {
             .add_systems(
                 Update,
                 preload_effects
-                    .run_if(resource_exists::<gd_game::session::SessionReady>)
-                    .run_if(not(gd_game::session::in_game)),
+                    .run_if(resource_exists::<gd_game_core::session::SessionReady>)
+                    .run_if(not(gd_game_core::session::in_game)),
             )
             .add_systems(
                 PostUpdate,
@@ -107,7 +112,7 @@ impl Plugin for FxPlugin {
     }
 }
 
-pub use gd_game::visuals::{EffectSource, EffectSpec, Restart, StopEmitting};
+pub use gd_game_core::visuals::{EffectSource, EffectSpec, Restart, StopEmitting};
 
 /// CPU time of the last [`update_effects`] (simulation + mesh building), for `GD_FPS` (`dev::fx`).
 #[cfg(feature = "dev")]
@@ -143,7 +148,7 @@ pub fn spawn_effect_record(commands: &mut Commands, record: &str, transform: Tra
 /// On an effect entity: its record's `decal` is placed when the effect
 /// starts and kept while it lives ([`DecalOwner`]). Set by
 /// [`spawn_effect_record`] (level-placed, mesh-, gate- and shrine-attached
-/// effects); gameplay effects (`gd_game::visuals::spawn_fx`) place their
+/// effects); gameplay effects (`gd_game_core::visuals::spawn_fx`) place their
 /// own timed decal.
 #[derive(Component)]
 pub struct WithDecal;
@@ -174,6 +179,9 @@ pub struct EmitterRuntime {
     /// Mesh entity (None for emitters that are not drawn: no texture).
     pub draw: Option<Draw>,
     pub light: Option<Entity>,
+    /// The emitter's `dropDecal` record path, normalized once (constant per
+    /// emitter): a dying particle's [`DropDecal`] clones the Arc, no String.
+    pub drop_decal: Option<Arc<str>>,
 }
 
 /// An emitter's mesh entity: a shared static quad mesh of `cap` particles and
@@ -191,22 +199,22 @@ const PARTICLE_POOL_CAP: usize = 128;
 #[derive(Resource, Default)]
 pub struct FxAssets {
     /// Parsed effect files and flipbook textures (with their frame count), held weakly: a running effect holds
-    /// its `.pfx` and its emitters' materials the textures (`gd_game::weak_cache`, `textures::WeakHandles`); the
+    /// its `.pfx` and its emitters' materials the textures (`gd_game_core::weak_cache`, `textures::WeakHandles`); the
     /// last effect files used stay parsed (the cache's recent set), so a monster's now-and-then cast is not parsed
     /// again each time.
-    pfx: gd_game::weak_cache::WeakCache<Pfx>,
+    pfx: gd_game_core::weak_cache::WeakCache<Pfx>,
     textures: crate::textures::WeakHandles<Image, u32>,
     /// Effect files and flipbook textures read and decoded in the background on their first use during play
     /// ([`FxAssets::pfx_ready`], [`collect_fx_loads`]): an effect waits for them instead of stalling the frame.
     /// While it waits it holds those already in ([`init_effects`]' `FxWaiting`), and a just-finished read is held
-    /// by `fresh_pfx` / `fresh_textures` for [`gd_game::weak_cache::FRESH_FRAMES`] until its waiter takes it: the
+    /// by `fresh_pfx` / `fresh_textures` for [`gd_game_core::weak_cache::FRESH_FRAMES`] until its waiter takes it: the
     /// recent sets alone let a busy fight evict an effect's early files before its last one arrives.
     loading: Vec<bevy::tasks::Task<(String, FxLoad)>>,
     /// The just-finished background reads, held for their waiters (see `loading`).
-    fresh_pfx: gd_game::weak_cache::Fresh<Arc<Pfx>>,
-    fresh_textures: gd_game::weak_cache::Fresh<Handle<Image>>,
+    fresh_pfx: gd_game_core::weak_cache::Fresh<Arc<Pfx>>,
+    fresh_textures: gd_game_core::weak_cache::Fresh<Handle<Image>>,
     /// The keys of `loading`, so a file is read once.
-    in_flight: std::collections::HashSet<String>,
+    in_flight: gd_formats::collections::HashSet<String>,
     /// Static quad meshes by particle capacity.
     quads: HashMap<usize, Handle<Mesh>>,
     /// Finished emitters' (material, buffer) pairs, ready for the next emitter ([`cleanup_effect`]).
@@ -419,12 +427,12 @@ fn preload_effects(
     mut assets: ResMut<FxAssets>,
     mut images: ResMut<Assets<Image>>,
     players: Query<(
-        &gd_game::player::Loadout,
-        Option<&gd_game::weapon_pool::SkillLinks>,
+        &gd_game_core::player::Loadout,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
     )>,
     placed: Query<(Entity, &EffectSpec), (Without<Effect>, Without<WarmFx>)>,
     mut skills: Local<Option<WarmFx>>,
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     if fresh.begun() {
         *skills = None;
@@ -438,24 +446,28 @@ fn preload_effects(
                     continue;
                 };
                 let li = book.effective_level(&data.db, skill).max(1) as usize - 1;
-                let mods =
-                    gd_game::skill_fx::override_mods(&data.db, links, Some(&loadout.skills), skill);
+                let mods = gd_game_core::skill_fx::override_mods(
+                    &data.db,
+                    links,
+                    Some(&loadout.skills),
+                    skill,
+                );
                 let mut records: Vec<String> = Vec::new();
                 let mut push = |r: Option<String>| {
                     if let Some(r) = r {
                         records.push(r);
                     }
                 };
-                push(gd_game::skill_fx::target_fx(rec, li, &mods));
-                push(gd_game::skill_fx::particle_effect1(rec, &mods));
-                push(gd_game::skill_fx::radius_effect(rec, li, &mods));
-                push(gd_game::skill_fx::cone_effect(rec, li, &mods));
-                push(gd_game::skill_fx::spin_aura(rec, li, &mods));
-                push(gd_game::skill_fx::lightning(rec, &mods));
-                for r in gd_game::skill_fx::beam_effects(rec, &mods) {
+                push(gd_game_core::skill_fx::target_fx(rec, li, &mods));
+                push(gd_game_core::skill_fx::particle_effect1(rec, &mods));
+                push(gd_game_core::skill_fx::radius_effect(rec, li, &mods));
+                push(gd_game_core::skill_fx::cone_effect(rec, li, &mods));
+                push(gd_game_core::skill_fx::spin_aura(rec, li, &mods));
+                push(gd_game_core::skill_fx::lightning(rec, &mods));
+                for r in gd_game_core::skill_fx::beam_effects(rec, &mods) {
                     push(r);
                 }
-                for r in gd_game::skill_fx::projectile_effects(
+                for r in gd_game_core::skill_fx::projectile_effects(
                     &data.db,
                     links,
                     Some(&loadout.skills),
@@ -465,7 +477,7 @@ fn preload_effects(
                 ) {
                     push(Some(r));
                 }
-                push(gd_game::skill_fx::projectile_name(rec, li, &mods));
+                push(gd_game_core::skill_fx::projectile_name(rec, li, &mods));
                 for r in records {
                     warm_record(&mut assets, &data, &mut images, &r, warm);
                 }
@@ -483,7 +495,7 @@ fn preload_effects(
 }
 
 /// The effect's coords: the entity's frame without its scale, a mirror kept.
-/// `Emitter::Update` @0x18006d420 / `EmitParticle` / `RenderPass`: the
+/// `Emitter::Update` / `EmitParticle` / `RenderPass`: the
 /// emitter takes the entity's `WorldCoords` matrix as it is, so a frame that
 /// mirrors (a weapon on the body's "R Hand" point, whose basis has det −1)
 /// mirrors the particles' spawn points and velocities, and local particles are
@@ -557,7 +569,7 @@ struct FxWaiting {
 
 #[allow(clippy::too_many_arguments)]
 fn init_effects(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     q: Query<
         (
@@ -651,7 +663,7 @@ fn init_effects(
         {
             let (_, rotation, translation) = gt.to_scale_rotation_translation();
             commands.spawn((
-                gd_game::visuals::PendingDecal(r.clone()),
+                gd_game_core::visuals::PendingDecal(r.clone()),
                 Transform {
                     translation,
                     rotation,
@@ -752,14 +764,21 @@ fn init_effects(
                 if d.light_simple() {
                     commands.entity(l).insert(crate::render::env::SimpleLight);
                 } else if d.light_shadows() {
-                    // `Emitter::UpdateLight` @0x18006b670 (priority = bools[7]) and
-                    // `Light::AddToScene` @0x1801363a0 (no shadow in simple mode, +518).
+                    // `Emitter::UpdateLight` (priority = bools[7]) and
+                    // `Light::AddToScene` (no shadow in simple mode, `Light.simpleMode`).
                     commands
                         .entity(l)
                         .insert(crate::render::point_shadow::ShadowPriority(1));
                 }
             }
-            emitters.push(EmitterRuntime { state, draw, light });
+            let drop_decal = (!d.drop_decal.is_empty())
+                .then(|| Arc::from(gd_formats::vfs::normalize(&d.drop_decal)));
+            emitters.push(EmitterRuntime {
+                state,
+                draw,
+                light,
+                drop_decal,
+            });
         }
         commands.entity(e).insert(Effect {
             pfx,
@@ -812,7 +831,7 @@ pub fn simulated(
 
 #[allow(clippy::too_many_arguments)]
 fn update_effects(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
     mut fx: Query<(
@@ -823,7 +842,7 @@ fn update_effects(
         Option<&Restart>,
         Has<StopEmitting>,
         Has<FxView>,
-        Option<&gd_game::visuals::EffectAnchors>,
+        Option<&gd_game_core::visuals::EffectAnchors>,
     )>,
     mut draws: Query<
         (&mut Transform, &mut GlobalTransform, &mut Visibility),
@@ -884,6 +903,9 @@ fn update_effects(
             // Dead particles' drop decals (sim space → world: local emitters
             // live in the effect's coords).
             for (p, yaw) in em.state.dropped.drain(..) {
+                let Some(decal) = &em.drop_decal else {
+                    continue;
+                };
                 let world = if d.local() {
                     if effect.local_orient_fix {
                         coords.pos + p
@@ -895,7 +917,7 @@ fn update_effects(
                 };
                 let rot = Quat::from_rotation_y(yaw.to_radians());
                 commands.spawn((
-                    DropDecal(gd_formats::vfs::normalize(&d.drop_decal)),
+                    DropDecal(decal.clone()),
                     GroundTilt,
                     Transform::from_translation(world).with_rotation(rot),
                 ));
@@ -946,13 +968,15 @@ fn update_effects(
                         b.resize_buffer(render::buffer_bytes(dr.cap));
                     }
                     // The draw entity sits at the effect origin (the sort centre of the
-                    // static mesh); the particles are relative to it.
-                    *t = Transform {
+                    // static mesh); the particles are relative to it. Write only on change:
+                    // a stationary placed effect flags nothing changed each frame.
+                    let new = Transform {
                         translation: coords.pos,
                         rotation: frame.rotation,
                         scale: frame.scale,
                     };
-                    *gt = GlobalTransform::from(*t);
+                    t.set_if_neq(new);
+                    gt.set_if_neq(GlobalTransform::from(new));
                     vis.set_if_neq(Visibility::Visible);
                 }
             }
@@ -991,7 +1015,7 @@ pub fn collect_placed(
     data: &GameData,
     origin: Vec3,
 ) -> Vec<PlacedEffect> {
-    let mut is_fx: HashMap<u32, bool> = HashMap::new();
+    let mut is_fx: HashMap<u32, bool> = HashMap::default();
     let mut out = Vec::new();
     for e in &level.entities {
         let rec = level.record_of(e);
@@ -1024,7 +1048,7 @@ pub fn collect_placed(
 /// per render model from its parsed mesh and kept on it
 /// ([`crate::model::ModelAsset::creations`]).
 ///
-/// Engine.dll `Actor::CreateAttachmentsFromMesh` @0x18002c4e0
+/// Engine.dll `Actor::CreateAttachmentsFromMesh`
 /// (called once from `Actor::UpdateSelf` / `FastUpdate` when the actor's
 /// mesh has loaded): every actor, whatever its class (decorations, doors,
 /// chests, set-piece objects, breakables …), creates each

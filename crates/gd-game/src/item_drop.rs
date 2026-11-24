@@ -1,49 +1,49 @@
 //! Dropping the item on the cursor onto the ground.
 //!
-//! GrimDawn.exe sub_1401ED7C0, Game.dll `CursorHandlerItemMove::ActivateWorld` @0x1801845f0: a
+//! GrimDawn.exe `CursorHandlerMgr::HandleMouseEvent`, Game.dll `CursorHandlerItemMove::ActivateWorld`: a
 //! left or right press on the world (no window took it) with an item on the cursor drops it, the whole
 //! stack ([`DropHeld`], sent by `grimdawn` `ui/apply.rs` `world_click`). Quest items drop like any other.
-//! An item whose record is `soulbound` or `untradeable` (`Item::Load` @0x180324c60, Item +3072 / +3074) is
+//! An item whose record is `soulbound` or `untradeable` (`Item::Load`, `Item.soulbound` / `Item.untradeable`) is
 //! not dropped: the Yes / No question `tagDestroySoulbound` (`tagDestroyUntradeable` when it is only
 //! untradeable; `DialogManager::AddDialog` type 21) comes up ([`Inventory::destroying`]) and the press
 //! does nothing else; while it is up further presses do nothing and Escape does not put the item back
-//! (`CursorHandlerItemMove::Escape` @0x180187140). `CursorHandlerItemMove::Update` @0x180186f20 reads the
+//! (`CursorHandlerItemMove::Escape`). `CursorHandlerItemMove::Update` reads the
 //! answer ([`DestroyAnswer`]): Yes destroys the item (`SendRemoveItemFromInventory`), No puts it back
 //! (the handler's `Cancel`, [`Inventory::cancel_held`]: back to its bag cell, else `GiveItemToPlayer`:
 //! equip-empty, bags, else thrown down).
 //!
-//! Where it lands (`ControllerCharacter::SendDropItemRandom` @0x18012b990): from the player's
-//! centre of mass (`Player::GetCenterOfMass` @0x1803e3830: half its height over its feet) with velocity
+//! Where it lands (`ControllerCharacter::SendDropItemRandom`): from the player's
+//! centre of mass (`Player::GetCenterOfMass`: half its height over its feet) with velocity
 //! `1.5 · (cos a, 0, sin a)`, `a = rand() · 2π / 32767` ([`drop_velocity`]), through
 //! `GameEngine::CreateItemCopy` (a random yaw, the item's rigid body until it touches the world or the path
-//! mesh: `gd_sim::loot_toss`, [`crate::loot::spawn_thrown`]). `Item::OnDropped` @0x180328710 records the
-//! dropper (Item +1728, carried by the replica info into the ground copy): every `CanAutoPickup`
+//! mesh: `gd_sim::loot_toss`, [`crate::loot::spawn_thrown`]). `Item::OnDropped` records the
+//! dropper (`Item.dropper`, carried by the replica info into the ground copy): every `CanAutoPickup`
 //! (potions, food, gold, components, quest items) refuses an item the main player dropped, so the player's
 //! own drop is only picked up by clicking it ([`DroppedByPlayer`], `crate::loot::pick_up`).
 //!
-//! The drop key (GrimDawn.exe `CursorHandlerMgr_OnKeyAction` (exe sub_1401ED880)):
+//! The drop key (GrimDawn.exe `CursorHandlerMgr_OnKeyAction`):
 //! key action 32 `DropItem` on key down ([`DropKey`], sent by `grimdawn` `ui/apply.rs` `drop_key`) gives the
 //! active cursor handler its `ActivateWorld`, as a world press does but with no mouse-position test (any
 //! window may be open; only the chat window blocks it, PORT: the port has none). So an item on the cursor
 //! drops exactly as [`DropHeld`] (`CursorHandlerItemMove::ActivateWorld`); the relic combine / enchant /
-//! transmute mode (`CursorHandlerRelicCombine::ActivateWorld` @0x180181dd0, `CursorHandlerTransmute::ActivateWorld`
-//! @0x180189200: the right-click mode of an `ItemTransmuter`, `crate::illusion` docs) is cancelled
+//! transmute mode (`CursorHandlerRelicCombine::ActivateWorld`, `CursorHandlerTransmute::ActivateWorld`:
+//! the right-click mode of an `ItemTransmuter`, `crate::illusion` docs) is cancelled
 //! ([`Inventory::cancel_apply`], the item stays in its cell; PORT: like the world press, not while its
 //! confirmation is up); with an empty cursor nothing happens. The hot-slot-option mode
-//! (`CursorHandlerHotSlotOption::ActivateWorld` @0x180183eb0: deletes the dragged option) never occurs:
+//! (`CursorHandlerHotSlotOption::ActivateWorld`: deletes the dragged option) never occurs:
 //! nothing creates that handler (its constructors are referenced only by Game.dll's export table, and
 //! GrimDawn.exe imports no `CursorHandler` of that class), so stock has no hot-slot drag to drop.
 //!
 //! PORT: a dropped item is a ground item like any drop: it stays while the session runs (the port keeps
 //! ground items across level streaming; `grimdawn` `exit.rs` despawns them with the session) and is not
 //! saved (the save holds no world items; it has left the inventory).
-use crate::character::Character;
-use crate::data::GameData;
-use crate::inventory::Inventory;
 use crate::loot::GroundItem;
-use crate::player::Player;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
+use gd_game_core::character::Character;
+use gd_game_core::data::GameData;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::player::Player;
 
 pub struct ItemDropPlugin;
 
@@ -56,8 +56,8 @@ impl Plugin for ItemDropPlugin {
                 Update,
                 apply_drops
                     .run_if(resource_exists::<Inventory>)
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet)
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet)
                     .before(crate::loot::pick_up),
             );
     }
@@ -107,10 +107,17 @@ pub fn apply_drops(
     mut keys: MessageReader<DropKey>,
     mut answers: MessageReader<DestroyAnswer>,
     mut inv: ResMut<Inventory>,
-    players: Query<(&Transform, &Character, &crate::inventory::Requirements), With<Player>>,
+    players: Query<
+        (
+            &Transform,
+            &Character,
+            &gd_game_core::inventory::Requirements,
+        ),
+        With<Player>,
+    >,
     data: Res<GameData>,
     // Option: the stash loads after the inventory.
-    mut stash: Option<ResMut<crate::stash::Stash>>,
+    mut stash: Option<ResMut<gd_game_core::stash::Stash>>,
 ) {
     for DestroyAnswer(yes) in answers.read() {
         if inv.destroying.take().is_none() {
@@ -167,7 +174,7 @@ pub fn apply_drops(
         };
         inv.changed();
         let drop = tf.translation + crate::monster_skills::character_center(&data, ch);
-        let v = drop_velocity(crate::rng::u32(0..=0x7FFF));
+        let v = drop_velocity(gd_game_core::rng::u32(0..=0x7FFF));
         info!("dropped {} x{}", item.base_name, item.stack_count.max(1));
         let e = crate::loot::spawn_thrown(
             &mut commands,

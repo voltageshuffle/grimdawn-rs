@@ -14,11 +14,12 @@
 //!   attacker's tag and OA; pets record nothing.
 //! - One `max_level` per level gained; potions, crafts, one-shot / hidden chests, shrines restored and
 //!   Shattered Realm souls / essence come as [`PlayStat`] messages. The essence is a maximum.
-use crate::combat::{AttackMade, Combatant, MonsterKilled};
-use crate::data::GameData;
-use crate::player::Player;
+use crate::combat::{AttackMade, MonsterKilled};
 use bevy::prelude::*;
 use gd_formats::save::gdc::PlayStats;
+use gd_game_core::combat::Combatant;
+use gd_game_core::data::GameData;
+use gd_game_core::player::Player;
 
 pub struct PlayStatsPlugin;
 
@@ -31,8 +32,8 @@ impl Plugin for PlayStatsPlugin {
                 Update,
                 (count_attacks, count_kills, count_levels, count_events)
                     .chain()
-                    .after(crate::combat::CombatSet)
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::combat::CombatSet)
+                    .after(gd_game_core::player::PlayerSet),
             );
     }
 }
@@ -231,8 +232,8 @@ impl PlayCounts {
     }
 }
 
-/// A monster's count of attacks taken (`Character::TakeAttack`'s `PlayStats` +104), inserted on its first hit and
-/// read when it dies.
+/// A monster's count of attacks taken (`Character::TakeAttack`'s `PlayStats.attacksTaken`), inserted on its first
+/// hit and read when it dies.
 #[derive(Component, Default)]
 pub struct AttacksTaken(u32);
 
@@ -268,8 +269,8 @@ fn count_attacks(
     mut commands: Commands,
     mut taken: Query<&mut AttacksTaken>,
     players: Query<(), With<Player>>,
-    monsters: Query<&crate::monsters::Monster>,
-    (data, mode): (Res<GameData>, Res<crate::session::GameMode>),
+    monsters: Query<&gd_game_core::monsters::Monster>,
+    (data, mode): (Res<GameData>, Res<gd_game_core::session::GameMode>),
 ) {
     use gd_sim::combat::MissReason as M;
     let difficulty = mode.0.difficulty;
@@ -335,11 +336,11 @@ fn count_kills(
     credit: crate::combat::KillCredit,
     data: Res<GameData>,
     session: crate::session::Session,
-    choice: Res<crate::session::Choice>,
+    choice: Res<gd_game_core::session::Choice>,
     // Option: absent before the player exists / for a new character.
     (progress, loaded): (
-        Option<Res<crate::progress::PlayerProgress>>,
-        Option<Res<crate::session::LoadedCharacter>>,
+        Option<Res<gd_game_core::progress::PlayerProgress>>,
+        Option<Res<gd_game_core::session::LoadedCharacter>>,
     ),
     bodies: Query<&Combatant>,
 ) {
@@ -409,7 +410,7 @@ fn count_kills(
 
 /// `Character::ReceiveExperience`'s `max_level` count.
 fn count_levels(
-    mut leveled: MessageReader<crate::progress::LeveledUp>,
+    mut leveled: MessageReader<gd_game_core::progress::LeveledUp>,
     mut counts: ResMut<PlayCounts>,
 ) {
     for l in leveled.read() {

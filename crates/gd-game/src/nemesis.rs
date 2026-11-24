@@ -1,10 +1,10 @@
 //! Faction nemeses: a faction the player is at "nemesis" standing with
 //! sends one of its nemesis bosses after enough kills of its monsters.
 //!
-//! Game.dll: `FactionPack::Adjust` @0x1802a3620 (the player's
+//! Game.dll: `FactionPack::Adjust` (the player's
 //! pack, after a kill's reputation change) calls `NemesisSpawn` when the
 //! player's value for the victim's faction is at or below the "nemesis"
-//! level; `FactionPack::IncrementNemesisSpawnCounter` @0x1802a5630 (the
+//! level; `FactionPack::IncrementNemesisSpawnCounter` (the
 //! victim faction's pack) then does nothing while its nemesis lives, else
 //! adds `GameEngine::GetNemesisKillCount` (`gamefactions.dbr`
 //! `nemesisSpawnKillCountCommon` for Common/Champion, `…Hero`, `…Boss` for
@@ -31,17 +31,19 @@
 //! Kills by the player's pets count (`GameEngine::OnCreatureDeath`
 //! swaps the killer for its controller's master before `HandleFaction`);
 //! the nemesis level comes from its record like any monster's
-//! (`ExperienceLevelControl`, `sub_18028ED10`: the `charLevel` equation of
+//! (`ExperienceLevelControl`, `ExperienceLevelControl::ApplyLevel`: the `charLevel` equation of
 //! the player level, clamped to `minLevel..maxLevel`); the kill counters
 //! live in the factions' `FactionPack` (`nemesisSpawnCounter`, threshold),
 //! which `FactionPack::WriteProperties` does not save — they start over each
 //! session. Hooks `GD_FACTION`, `GD_NEMESIS_KILLS` (hooks.rs).
-use crate::combat::{CombatRules, Combatant, MonsterAi, MonsterKilled};
-use crate::monsters::Monster;
-use crate::player::Player;
-use crate::session::MessageDrain;
+use crate::combat::{MonsterAi, MonsterKilled};
 use bevy::prelude::*;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
+use gd_game_core::combat::Combatant;
+use gd_game_core::monsters::Monster;
+use gd_game_core::player::Player;
+use gd_game_core::rules::CombatRules;
+use gd_game_core::session::MessageDrain;
 
 pub struct NemesisPlugin;
 
@@ -66,7 +68,11 @@ struct NemesisState {
 pub struct Nemeses(HashMap<String, NemesisState>);
 
 /// `GD_NEMESIS_KILLS` (hooks.rs) overrides the kill threshold.
-fn roll(pack: &gd_formats::arz::Record, difficulty: usize, hooks: &crate::hooks::Hooks) -> u32 {
+fn roll(
+    pack: &gd_formats::arz::Record,
+    difficulty: usize,
+    hooks: &gd_game_core::hooks::Hooks,
+) -> u32 {
     if let Some(n) = hooks.gameplay.nemesis_kills {
         return n;
     }
@@ -83,7 +89,7 @@ fn roll(pack: &gd_formats::arz::Record, difficulty: usize, hooks: &crate::hooks:
     if lo == 0 {
         return 0;
     }
-    crate::rng::u32(lo..=hi)
+    gd_game_core::rng::u32(lo..=hi)
 }
 
 /// The Ascendant `nemesisSpawnModifier` cuts a threshold (t − t × mod, at
@@ -121,8 +127,8 @@ fn nemesis_kills(
     >,
     credit: crate::combat::KillCredit,
     session: crate::session::Session,
-    hooks: Res<crate::hooks::Hooks>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
     let Ok((player, ptf, pcb, challenged)) = players.single() else {
         killed.clear();
@@ -160,7 +166,7 @@ fn nemesis_kills(
         };
         let Some(me) = pack
             .str("myFaction")
-            .and_then(crate::factions::index_of_name)
+            .and_then(gd_game_core::factions::index_of_name)
         else {
             continue;
         };
@@ -218,11 +224,11 @@ fn nemesis_kills(
         }
         // Spawn one of the faction's nemeses at a random point 40 m away
         // (12 tries; none = no spawn this kill).
-        let i = crate::rng::usize(..list.len());
+        let i = gd_game_core::rng::usize(..list.len());
         let record = list[i].clone();
         let mut at = None;
         for _ in 0..12 {
-            let a = crate::rng::f32() * std::f32::consts::TAU;
+            let a = gd_game_core::rng::f32() * std::f32::consts::TAU;
             let p = ptf.translation + Vec3::new(a.cos(), 0.0, a.sin()) * 40.0;
             if let Some(g) = nav.0.ground((p + Vec3::Y * 2.0).to_array()) {
                 at = Some(Vec3::new(p.x, g, p.z));
@@ -233,7 +239,7 @@ fn nemesis_kills(
         let Some(nrec) = db.get(&record) else {
             continue;
         };
-        // `ExperienceLevelControl` (`sub_18028ED10`): the record's `charLevel`
+        // `ExperienceLevelControl` (`ExperienceLevelControl::ApplyLevel`): the record's `charLevel`
         // equation with `charLevel` = the player level, truncated, clamped
         // to `minLevel..maxLevel` (both default 1); no equation = `minLevel`.
         let (lo, hi) = (
@@ -242,7 +248,7 @@ fn nemesis_kills(
         );
         let eq = nrec
             .str("charLevel")
-            .and_then(|s| gd_sim::expr::Expr::parse(s).ok());
+            .and_then(|s| gd_rules::expr::Expr::parse(s).ok());
         let level = match eq {
             Some(e) => (e.eval(&|n| {
                 n.eq_ignore_ascii_case("charLevel")
@@ -271,7 +277,7 @@ fn nemesis_kills(
         ) else {
             continue;
         };
-        let radius = crate::combat::get_radius(Some(nrec), 0.5);
+        let radius = gd_game_core::combat::get_radius(Some(nrec), 0.5);
         let mut ai = MonsterAi::from_record(&assets.data, &record, at);
         ai.aggro = true;
         ai.add_anger(player, 1000.0);
@@ -292,9 +298,9 @@ fn nemesis_kills(
             nrec.str("description").unwrap_or(""),
             s.counter
         );
-        // `GameEngine::SuperBossNotificationInbound` @0x1802f4ea0: type 10,
+        // `GameEngine::SuperBossNotificationInbound`: type 10,
         // pushed to the front of the queue.
-        cinematic.write(crate::story::CinematicText {
+        cinematic.write(gd_game_core::story::CinematicText {
             head: "tagFactionNemesisSpawned".into(),
             sub: String::new(),
             sub_args: Vec::new(),

@@ -4,6 +4,8 @@ A re-implementation of Grim Dawn in Rust and Bevy. It covers the base game, all 
 and runs on the data from your own copy of the game. The repo holds no game assets. You need a legal copy of
 Grim Dawn installed.
 
+Targets Grim Dawn **1.3.1.2**. Other game versions may have different data and rules, and may not work.
+
 ## Goals
 1. **Plays like Grim Dawn.** Stats, damage, skills, loot, quests and saves follow the original rules. They come
    from the stock game database, and from decompiling the game where the data leaves a rule open.
@@ -50,6 +52,7 @@ Tests: `scripts/with-env cargo test --workspace`. To skip the tests that read th
 - [`docs/architecture.md`](docs/architecture.md): how the systems are structured
 - [`docs/running.md`](docs/running.md): running the game, test hooks and tests
 - [`docs/reverse-engineering.md`](docs/reverse-engineering.md): how to decompile the original game
+- [`docs/updating.md`](docs/updating.md): porting the project to a new game version
 
 ## Legal
 This is a fan project. It is not affiliated with Crate Entertainment. Grim Dawn and its assets belong to

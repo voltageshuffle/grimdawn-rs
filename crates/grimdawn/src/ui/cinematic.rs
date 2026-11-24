@@ -1,7 +1,7 @@
-//! The cinematic text (`Engine::ShowCinematicText`, [`gd_game::story::CinematicText`]): the big announcement near the
+//! The cinematic text (`Engine::ShowCinematicText`, [`gd_game_core::story::CinematicText`]): the big announcement near the
 //! top of the screen (new mutators, bonus texts, lore bonus, difficulty unlocked, ...).
 //!
-//! Grim Dawn.exe update `sub_1401669B0` / draw `sub_140167430`: texts wait in a FIFO
+//! Grim Dawn.exe update `CinematicText::Update` / draw `CinematicText::Render`: texts wait in a FIFO
 //! and show one at a time. Per type (scale of the headline font, hold ms): 1 and 7: 1.5, 3000, and the camera shakes
 //! `ShakeCamera(0.5, 0.5)` when the hold starts; 2 to 6: 1.5, 3000; 8 and 9: 1.25, 3000; 10: 1.6, 3000 (pushed to the
 //! front); every type grows in. Fade-in 150 ms (alpha 0 to 1, the size shrinks from 2x to 1x), the hold, fade-out 250 ms
@@ -10,24 +10,24 @@
 //! (0.9, 0.9, 1) for types 2, 8, 9), each line over a `skills_leveltextshadow01.tex` strip ((line width + 200) x (line
 //! height + 40), white at 0.7 alpha). The subline (32 px unscaled, 0.75 alpha, same strips) appears under the headline
 //! once the fade-in is over (its `^X` colour codes apply). No sound.
-//! Headline glow (`sub_140167430`, Engine.dll `BlurFrameBuffer2` / `sub_1800A48A0`): the lines are drawn
-//! white (one colour, not the style's) and centred into a temporary surface cleared to opaque black, (wrap width +
-//! 20) x (lines x line height + 20), line i at y = 10 + i x line height; the surface is blurred (a vertical then a
+//! Headline glow (`CinematicText::Render`, Engine.dll `BlurFrameBuffer2` / `GraphicsCanvas_Blur8Tap`): the lines are
+//! drawn white (one colour, not the style's) and centred into a temporary surface cleared to opaque black, (wrap
+//! width + 20) x (lines x line height + 20), line i at y = 10 + i x line height; the surface is blurred (a vertical then a
 //! horizontal pass of eight taps 0.1, 0.11, 0.14, 0.15, 0.15, 0.14, 0.11, 0.1 at -3.5 ... 3.5 texels, into half-size
 //! surfaces) and drawn additive tinted by the event colour at 0.75 alpha, then the sharp surface additive at 0.35, both
 //! stretched over the block size x the grow factor centred at (W/2, 0.15 H). The strips are sized by the grow factor
 //! too, their centres stepped by the unscaled line height from the scaled block's top + 10. Here the surface is built
 //! on the CPU once per headline ([`headline_surface`], [`blur`]) and drawn with `ui/additive.rs`.
 //! Type 0 (the challenge-area name, `gd_game::challenge_areas`, and the area name, [`area_names`]): only the frame's last type-0 text is kept, queued
-//! only into an empty queue (none showing) and dropped while a big window is open (sub_140219E20 /
-//! sub_140219F40, [`BigWindows`]).
+//! only into an empty queue (none showing) and dropped while a big window is open (`UIPlayerHud::IsBigWindowOpen` /
+//! `UIPlayerHud::IsBigWindowOpenEx`, [`BigWindows`]).
 //! PORT: the 10 / 20 / 200 / 40 px paddings are multiplied by the UI scale like the font size; a TrueType (FNTD) font
 //! is drawn as plain text (no CPU glyphs to blur).
 use super::UiAssets;
-use crate::data::GameData;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::Rect as URect;
+use gd_game_core::data::GameData;
 use std::collections::VecDeque;
 
 const STYLE: &str = "records/ui/styles/text/style_cinematictext.dbr";
@@ -55,7 +55,7 @@ fn colour(kind: u32) -> Color {
 
 #[derive(Resource, Default)]
 pub struct CinematicQueue {
-    queue: VecDeque<gd_game::story::CinematicText>,
+    queue: VecDeque<gd_game_core::story::CinematicText>,
     /// Ms into the current text (the head of the queue).
     age: f32,
     shaken: bool,
@@ -64,7 +64,9 @@ pub struct CinematicQueue {
 #[derive(Component)]
 struct CinematicRoot;
 
-/// The big windows that drop a type-0 text (Grim Dawn.exe sub_140219E20 / sub_140219F40: the HUD's party,
+/// The big windows that drop a type-0 text (Grim Dawn.exe `UIPlayerHud::IsBigWindowOpen` /
+/// `UIPlayerHud::IsBigWindowOpenEx`: the
+/// HUD's party,
 /// character, quest, market / faction market / smith, trade, caravan, map, skills, factions, achievements, shrine,
 /// devotion, transmuter, altar, potions, item ascension and loot filter windows, each `IsVisible`). The port's
 /// windows: the character / skills / devotion panels, any NPC trade window (markets, smiths, caravan,
@@ -72,11 +74,11 @@ struct CinematicRoot;
 /// window.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct BigWindows<'w> {
-    panels: Res<'w, super::UiPanels>,
-    trade: Res<'w, crate::trade::Trade>,
-    journal: Res<'w, super::quests::QuestJournal>,
-    map: Res<'w, super::localmap::MapWindow>,
-    filter: Res<'w, super::lootfilter::LootFilterView>,
+    panels: Res<'w, gd_ui::UiPanels>,
+    trade: Res<'w, gd_ui::state::trade::Trade>,
+    journal: Res<'w, gd_ui::quests::QuestJournal>,
+    map: Res<'w, gd_ui::state::map::MapWindow>,
+    filter: Res<'w, gd_ui::lootfilter::LootFilterView>,
     shrine: Res<'w, gd_game::devotion::ShrineWindow>,
     potions: Res<'w, gd_game::cauldron::PotionWindow>,
 }
@@ -101,31 +103,31 @@ impl Plugin for CinematicPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CinematicQueue>().add_systems(
             Update,
-            (area_names, show).chain().in_set(crate::ui::UiPlaySet),
+            (area_names, show).chain().in_set(gd_ui_kit::UiPlaySet),
         );
     }
 }
 
 /// The area name's banner: a type-0 cinematic text when the name sector (layer 1) under the ambiance target changes.
-/// Engine.dll `AmbianceManager::Update` @0x1800320c0: the name sector at the target (`NameSectorData`: tag,
-/// +121 "show" = the entry's first flag, +120 "once" = the second, 1 when the level's sector version has none,
-/// `SectorDataManager::ReadNameData` @0x1801a3320) is compared with the last name seen; when it differs it becomes the
-/// last one, and it counts as new when not yet in the session's list of shown names (added then) or when "once" is 0.
-/// A new name of a sector with "show" set queues `ShowCinematicText(Localize(tag), "", 0, white)` (not in editor mode);
-/// every update also writes the area name (engine +2880: the sector's tag, empty with no name sector; the last name
-/// seen is kept: `ui/view.rs`). `AmbianceManager::Reset` (world
+/// Engine.dll `AmbianceManager::Update`: the name sector at the target (`NameSectorData`: tag,
+/// `NameSectorData.show` = the entry's first flag, `NameSectorData.once` = the second, 1 when the level's sector
+/// version has none, `SectorDataManager::ReadNameData`) is compared with the last name seen; when it differs it becomes
+/// the last one, and it counts as new when not yet in the session's list of shown names (added then) or when "once" is
+/// 0. A new name of a sector with "show" set queues `ShowCinematicText(Localize(tag), "", 0, white)` (not in editor
+/// mode); every update also writes the area name (`Engine.areaName`: the sector's tag, empty with no name sector; the
+/// last name seen is kept: `ui/view.rs`). `AmbianceManager::Reset` (world
 /// unload) clears the list and the last name. Type 0 draws per the module doc (dropped while a big window is open or
 /// another text is queued). PORT: the target is the player in its own region (the engine's is the camera's target,
-/// `Grim Dawn.exe` sub_1400BABE0, which follows the player).
+/// `Grim Dawn.exe` `CameraController::FollowPlayer`, which follows the player).
 #[allow(clippy::too_many_arguments)]
 fn area_names(
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     world: Option<Res<crate::world::StreamedMap>>,
     levels: Res<crate::world::Levels>,
-    rt: Option<NonSend<gd_game::story::StoryRuntime>>,
-    player: Query<&Transform, With<crate::player::Player>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    player: Query<&Transform, With<gd_game_core::player::Player>>,
     mut seen: Local<(String, Vec<String>)>,
-    mut out: MessageWriter<gd_game::story::CinematicText>,
+    mut out: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
     if fresh.begun() {
         *seen = Default::default();
@@ -161,7 +163,7 @@ fn area_names(
     }
     if new && *flag_a != 0 {
         info!("area name: {tag}");
-        out.write(gd_game::story::CinematicText {
+        out.write(gd_game_core::story::CinematicText {
             head: tag.clone(),
             sub: String::new(),
             sub_args: Vec::new(),
@@ -207,12 +209,12 @@ fn grow_rect(base: URect, centre: Vec2, grow: f32) -> URect {
 
 #[allow(clippy::too_many_arguments)]
 fn show(
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
     mut state: ResMut<CinematicQueue>,
-    mut events: MessageReader<gd_game::story::CinematicText>,
-    mut levels: MessageReader<gd_game::progress::LeveledUp>,
-    mut shake: MessageWriter<gd_game::visuals::CameraShake>,
+    mut events: MessageReader<gd_game_core::story::CinematicText>,
+    mut levels: MessageReader<gd_game_core::progress::LeveledUp>,
+    mut shake: MessageWriter<gd_game_core::visuals::CameraShake>,
     clock: Res<Time<Real>>,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -225,7 +227,7 @@ fn show(
                 u32,
                 String,
                 String,
-                Vec<gd_game::floating::TextArg>,
+                Vec<gd_game_core::floating::TextArg>,
                 u32,
             )>,
         >,
@@ -234,7 +236,7 @@ fn show(
     ),
     windows: BigWindows,
     mut mats: ResMut<Assets<super::additive::AdditiveMaterial>>,
-    mut fader: super::quicktip::Fader,
+    mut fader: gd_ui::fade::Fader,
     (mut nodes, mut subs): (
         Query<
             (&mut Node, Option<&CinematicGrow>, Option<&CinematicGlow>),
@@ -251,10 +253,10 @@ fn show(
     }
     // `Character::ReceiveExperience`: type 5, `tagLevelUp` over `tagLevelReached(level)`, once per gain.
     for l in levels.read() {
-        state.queue.push_back(gd_game::story::CinematicText {
+        state.queue.push_back(gd_game_core::story::CinematicText {
             head: "tagLevelUp".into(),
             sub: "tagLevelReached".into(),
-            sub_args: vec![gd_game::floating::TextArg::Num(l.level as f32)],
+            sub_args: vec![gd_game_core::floating::TextArg::Num(l.level as f32)],
             kind: 5,
             front: false,
         });
@@ -279,7 +281,7 @@ fn show(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let clear = |commands: &mut Commands| super::window::despawn_all(commands, &roots);
+    let clear = |commands: &mut Commands| gd_ui::window::despawn_all(commands, &roots);
     state.age += clock.delta_secs() * 1000.0;
     // The head ends: the next starts this frame.
     while let Some(head) = state.queue.front() {
@@ -304,7 +306,7 @@ fn show(
     if age >= FADE_IN && shakes && !state.shaken {
         state.shaken = true;
         // `ShakeCamera(0.5, 0.5)` at the start of the hold.
-        shake.write(gd_game::visuals::CameraShake {
+        shake.write(gd_game_core::visuals::CameraShake {
             ms: 500.0,
             amp: 0.5,
             at: Vec3::ZERO,
@@ -320,7 +322,7 @@ fn show(
         ((FADE_IN + hold + FADE_OUT - age) / FADE_OUT, 1.0)
     };
     // Build once per (screen, scale, kind, headline, subline); the fade alpha and the grow move in place, not by a
-    // rebuild per step: the strips / text in a [`super::quicktip::FadeGroup`], the additive glow's own
+    // rebuild per step: the strips / text in a [`gd_ui::fade::FadeGroup`], the additive glow's own
     // material alpha, the grow scaling the rects about the block centre.
     let phase = if age < FADE_IN {
         0
@@ -348,8 +350,8 @@ fn show(
         *drawn = Some(key);
         clear(&mut commands);
         *group = None;
-        let root = crate::ui::spawn_root(&mut commands, CinematicRoot, 206);
-        commands.entity(root).insert(super::hud::KeepsShown);
+        let root = gd_ui_kit::spawn_root(&mut commands, CinematicRoot, 206);
+        commands.entity(root).insert(gd_ui::hud::KeepsShown);
         // Headline (the font size is 32 x scale x `scale`), measured at its final size; the grow factor
         // only stretches the drawn rects.
         let head_text = gd_formats::text::strip_markup(assets.fonts.tag(&head.head));
@@ -360,7 +362,7 @@ fn show(
         let pad = 10.0 * base;
         let block = Vec2::new(max_w + 2.0 * pad, lh * lines.len() as f32 + 2.0 * pad);
         let block_h = block.y;
-        let g = super::quicktip::fade_group(&mut ui, root, alpha);
+        let g = gd_ui::fade::fade_group(&mut ui, root, alpha);
         let top = centre.y - block.y * 0.5;
         let first = (top + pad).floor();
         // The strips: built at grow 1, faded by the group, grown in place.
@@ -424,10 +426,10 @@ fn show(
             }
         }
         // Subline: under the headline block, shown once the fade-in is over (32 px, unscaled). Built
-        // hidden; `subs` shows it. Per sub_140167430, its `^X` colour codes apply (over the event
+        // hidden; `subs` shows it. Per `CinematicText::Render`, its `^X` colour codes apply (over the event
         // colour at 0.75 alpha).
         if !head.sub.is_empty() {
-            let sub = super::floating::format_text(ui.fonts, &head.sub, &head.sub_args);
+            let sub = gd_ui::floating::format_text(ui.fonts, &head.sub, &head.sub_args);
             // The subline is unscaled (32 px); the headline nodes are already spawned, so reuse the
             // same builder at the base scale (a second `Ui` would double-borrow the assets).
             ui.s = base;
@@ -456,7 +458,7 @@ fn show(
                 y += slh;
             }
         }
-        super::quicktip::seal_fade_group(ui.commands, g);
+        gd_ui::fade::seal_fade_group(ui.commands, g);
         *group = Some(g);
     }
     // In place: the fade alpha, the grow, the subline's visibility.
@@ -506,13 +508,13 @@ fn strip(
     Some((e, r))
 }
 
-/// The headline's surfaces (`sub_140167430`): the text and its blur.
+/// The headline's surfaces (`CinematicText::Render`): the text and its blur.
 struct Glow {
     sharp: Handle<Image>,
     blur: Handle<Image>,
 }
 
-/// The blur's eight taps (`GraphicsCanvas::BlurFrameBuffer2` -> Engine.dll `sub_1800A48A0`).
+/// The blur's eight taps (`GraphicsCanvas::BlurFrameBuffer2` -> Engine.dll `GraphicsCanvas_Blur8Tap`).
 const TAPS: [f32; 8] = [0.1, 0.11, 0.14, 0.15, 0.15, 0.14, 0.11, 0.1];
 
 /// The temporary surface the headline is drawn into: opaque black, `block` px, each line white (the one-colour
@@ -570,7 +572,7 @@ fn headline_surface(
     Some(Glow { sharp, blur })
 }
 
-/// `sub_1800A48A0` (`BlurFrameBuffer`, scale 1): a vertical pass into a (w, h/2) surface, then a horizontal
+/// `GraphicsCanvas_Blur8Tap` (`BlurFrameBuffer`, scale 1): a vertical pass into a (w, h/2) surface, then a horizontal
 /// one into (w/2, h/2), each eight taps of [`TAPS`] at -3.5 ... 3.5 texels of the full-size surface. A half-size
 /// pixel's centre lies between two source texels, so the taps fall on texels 2j-3 ... 2j+4 (clamped).
 fn blur(px: &[[f32; 3]], w: usize, h: usize) -> (Vec<[f32; 3]>, usize, usize) {

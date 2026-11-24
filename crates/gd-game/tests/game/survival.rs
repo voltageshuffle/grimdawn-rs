@@ -5,9 +5,9 @@ use gd_game::testing::TestGame;
 /// A Merit item (`ItemDifficultyUnlock`, game mode Survival) unlocks its Crucible difficulty once.
 #[test]
 fn a_merit_unlocks_the_crucible_difficulty() {
-    use gd_game::inventory::Inventory;
-    use gd_game::session::Choice;
-    use gd_game::story::StoryRuntime;
+    use gd_game_core::inventory::Inventory;
+    use gd_game_core::session::Choice;
+    use gd_game_core::story::StoryRuntime;
     const MERIT: &str = "records/items/misc/dlc_crucible_epicunlock.dbr";
     let Some(mut g) = TestGame::new_character("Tester", false, false) else {
         return;
@@ -54,8 +54,8 @@ fn a_merit_unlocks_the_crucible_difficulty() {
 #[test]
 fn crucible_story_state_saves_into_the_arena_folder() {
     use gd_formats::save::gdd::Quests;
-    use gd_game::session::Choice;
-    use gd_game::story::StoryRuntime;
+    use gd_game_core::session::Choice;
+    use gd_game_core::story::StoryRuntime;
     // A character the port saved, loaded (a new character's creation save would write the campaign folder).
     let Some(mut new) = TestGame::new_character("Tester", false, false) else {
         return;

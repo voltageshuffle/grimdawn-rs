@@ -3,9 +3,9 @@
 //! (drawn by `grimdawn::ui::floating`).
 //!
 //! The event: object id, world position, font style record, text, flags,
-//! scale (constructor sub_18007E300: flags 6, scale 1). Senders (Game.dll,
+//! scale (constructor `FloatingTextEvent::FloatingTextEvent`: flags 6, scale 1). Senders (Game.dll,
 //! every one only for the main player or its pets):
-//! - money: `Character::TakeBonus` @0x180067e30: the amount (raised by the
+//! - money: `Character::TakeBonus`: the amount (raised by the
 //!   gold bonus %, attribute 56) at the character with its object id,
 //!   `GiveMoneyFormat` ("+{%d0} Iron"), gameengine.dbr `moneyPickupStyle`,
 //!   flags 28, scale 1 ([`FloatingText::money`]);
@@ -18,7 +18,7 @@
 //!   unused `_oldpotion` records) `tagHUD_PotionHealth` / `tagHUD_PotionEnergy`
 //!   in `health…` / `manaPotionPickupStyle`; all at the player with its
 //!   object id, flags 28, scale 1; other items say nothing;
-//! - experience: `GameEngine::HandleExperienceNotification` @0x1802c5e40
+//! - experience: `GameEngine::HandleExperienceNotification`
 //!   (from `PlayerManagerServer::HandleBonus` on a kill): only for a Hero
 //!   (classification 2: "Enemy Hero Killed") or Boss / Quest / SuperBoss
 //!   (3..5: "Enemy Boss Killed") kill with experience, `tagXPAwarded`
@@ -26,9 +26,9 @@
 //!   `style_experiencebarpopup.dbr`, flags 6 ([`FloatingText::experience`]);
 //!   the cinematic text (type 5, `tagHeroKilled` / `tagBossKilled` over the same line) goes out with it
 //!   ([`crate::progress::kill_experience`]);
-//! - combat numbers: `CombatManager::TakeAttack` @0x18011d950 when the
-//!   `displayDamage` option (bool 2, on by default: `Options::Options`,
-//!   Engine.dll; [`crate::options::GameOptions`]) is on and the attacker is the main player or a monster whose
+//! - combat numbers: `CombatManager::TakeAttack` when the
+//!   `displayDamage` option (on by default: `Options::Options`,
+//!   Engine.dll; [`gd_game_core::options::GameOptions`]) is on and the attacker is the main player or a monster whose
 //!   `GetLeader` is the main player (its pets); style names below are the
 //!   player's, the `pet…` variants for a pet ([`combat_text`]):
 //!   - fumble `tagFumble` at the attacker's `HeadEffect` point; dodge
@@ -39,7 +39,7 @@
 //!   - damage < 1: nothing; a normal hit `HitFormat` in `hitStyle`, flags 70,
 //!     scale `Player::RegisterCombatTextHit(damage)`;
 //!   - a critical (multiplier > 1) `CriticalHitFormatMult` ("{%.0f0}
-//!     (x{%.2f1})") with the `critMultipliers` option (bool 3, off by
+//!     (x{%.2f1})") with the `critMultipliers` option (off by
 //!     default), else `CriticalHitFormat` ("{%.0f0}"), with
 //!     the defender's object id, flags 133, the style `critStyle[tier − 1]`
 //!     (`GameEngine::GetCritTextStyle`: an index past the list → the first),
@@ -47,7 +47,7 @@
 //!   - a pet's hit or critical takes `petHitStyle` / `petCritStyle` and its
 //!     leader's (the player's) `RegisterCombatTextCrit(damage)` as scale.
 //!
-//!   `Player::RegisterCombatTextHit` @0x1803e36e0 / `…Crit` @0x1803e3740
+//!   `Player::RegisterCombatTextHit` / `…Crit`
 //!   keep a running sum and count of the damage (one pair each) and return
 //!   0.8 + 0.4 × (clamp(damage / mean, 0.5, 1.5) − 0.5) ([`CombatTextMeans`]).
 //!   Retaliation (style 3) and reflection (style 6) hits run the same code
@@ -56,16 +56,16 @@
 //!   ([`crate::combat::CounterHit`]).
 //!
 //!   Invulnerable (`TakeAttack`): a living attacker whose racial
-//!   list one of the defender's `CombatFilter`s (+688) refuses
+//!   list one of the defender's `CombatFilter`s (`Character.combatFilters`) refuses
 //!   (`ProvidesInvulnerability`: only `Skill_BuffSelfInvulnerable` while
 //!   active, every race or its own list; every other filter class says no)
 //!   deals nothing, and `tagInvulnerable` rises at the defender in
 //!   `(pet)InvulnerableStyle`, flags 70. PORT: not sent: stock data has no
 //!   `Skill_BuffSelfInvulnerable` record (only its template, listed in
 //!   `skillTemplates`), so it never shows in vanilla.
-//! - DoT numbers: `DurationDamageManager::Update` @0x180279170
+//! - DoT numbers: `DurationDamageManager::Update`
 //!   once a second per character with ≥ 1 damage of the main player's own
-//!   DoTs ([`crate::afflictions::DotNumbers`]), same option: at the victim's
+//!   DoTs ([`gd_game_core::afflictions::DotNumbers`]), same option: at the victim's
 //!   `HeadEffect`, no object, flags 6, scale `RegisterCombatTextHit(damage)`
 //!   (even for a critical); the largest multiplier ≤ 1 `HitFormat` in
 //!   `hitStyle`, else `CriticalHitFormat(Mult)` (damage, multiplier) in
@@ -74,6 +74,7 @@
 //!   PORT: `ProjectileBase::ApplyFumbleDamage` is not ported.
 use bevy::prelude::*;
 use gd_formats::vfs::Database;
+use gd_game_core::floating::TextArg;
 use gd_sim::combat::MissReason;
 
 /// Event 27's flags for a money pickup (`Character::TakeBonus`): 0x04 fade
@@ -95,18 +96,10 @@ impl Plugin for FloatingTextPlugin {
         app.add_message::<FloatingText>().add_systems(
             Update,
             combat_texts
-                .after(crate::combat::CombatSet)
-                .after(crate::afflictions::AfflictionStage::Tick),
+                .after(gd_game_core::combat::CombatSet)
+                .after(gd_game_core::afflictions::AfflictionStage::Tick),
         ); // reads the AttackMade / CounterHit / DotNumbers those write this frame
     }
-}
-
-/// An argument of the text's format tag.
-#[derive(Clone, Debug, PartialEq)]
-pub enum TextArg {
-    Num(f32),
-    /// A text tag, localised by the reader.
-    Tag(String),
 }
 
 /// A floating text request (event 27).
@@ -205,7 +198,7 @@ impl FloatingText {
 }
 
 /// `Player::RegisterCombatTextHit` / `…Crit`: running damage sums and
-/// counts (Player +19688.. +19700) that size the numbers.
+/// counts (`Player.combatTextHitSum` .. `Player.combatTextCritCount`) that size the numbers.
 #[derive(Component, Default, Clone, Debug)]
 pub struct CombatTextMeans {
     hit: (f32, f32),
@@ -372,8 +365,8 @@ pub fn dot_text(
 }
 
 /// A character's `HeadEffect` attach point in the world, else 1.6 m up.
-pub fn head_point(tf: &Transform, ch: Option<&crate::character::Character>) -> Vec3 {
-    ch.and_then(|c| crate::casting::attach_point_bind(&c.body, "HeadEffect"))
+pub fn head_point(tf: &Transform, ch: Option<&gd_game_core::character::Character>) -> Vec3 {
+    ch.and_then(|c| gd_game_core::casting::attach_point_bind(&c.body, "HeadEffect"))
         .map_or(tf.translation + Vec3::Y * 1.6, |l| tf.transform_point(l))
 }
 
@@ -385,15 +378,15 @@ fn combat_texts(
     (mut made, mut counters, mut dots): (
         MessageReader<crate::combat::AttackMade>,
         MessageReader<crate::combat::CounterHit>,
-        MessageReader<crate::afflictions::DotNumbers>,
+        MessageReader<gd_game_core::afflictions::DotNumbers>,
     ),
-    data: Res<crate::data::GameData>,
-    players: Query<Entity, With<crate::player::Player>>,
+    data: Res<gd_game_core::data::GameData>,
+    players: Query<Entity, With<gd_game_core::player::Player>>,
     pets: Query<&crate::pets::Pet>,
     mut means: Query<&mut CombatTextMeans>,
-    chars: Query<(&Transform, Option<&crate::character::Character>)>,
+    chars: Query<(&Transform, Option<&gd_game_core::character::Character>)>,
     mut texts: MessageWriter<FloatingText>,
-    options: Res<crate::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
 ) {
     if made.is_empty() && counters.is_empty() && dots.is_empty() {
         return;

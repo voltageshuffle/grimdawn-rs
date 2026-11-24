@@ -1,54 +1,54 @@
 //! Secondary skills (`SkillSecondary_*` modifiers: Explosive Strike, the
 //! chain lightning of Savage Strike, Judgment's flames …): extra effects of
-//! their parent skill, not damage modifiers (`Skill` +368 list).
+//! their parent skill, not damage modifiers (`Skill.secondarySkills` list).
 //!
-//! Game.dll: `Skill::ActivateSecondarySkills` @0x18049ce60 (vtable
-//! +0x538) runs every enabled secondary without `specialSecondaryActivation`
-//! of both lists (+368 learned, +392 gear) through the secondary's
-//! `ActivateNow` (vtable +1664) with (target, target list, coordinates);
-//! `SpecialActivateSecondarySkills` (+0x540) the special ones (Leap's
+//! Game.dll: `Skill::ActivateSecondarySkills` (virtual)
+//! runs every enabled secondary without `specialSecondaryActivation`
+//! of both lists (`Skill.secondarySkills` learned, `Skill.gearSecondarySkills` gear) through the secondary's
+//! `ActivateNow` (virtual) with (target, target list, coordinates);
+//! `SpecialActivateSecondarySkills` (virtual) the special ones (Leap's
 //! landing, Vire's Might's arrival: `Skill_AttackPathCharge::Update`,
 //! `ProjectileBase::SpecialSecondaryActivation`); Cadence's finale runs all
 //! of them from its `HitAction` whatever it hits
 //! (`Skill_WeaponPool_ChargedFinale::AlternateActivateSecondarySkills`).
 //! The only check is `Skill::IsSkillEnabled`: no chance roll.
-//! `PrimaryActivateSecondarySkills` @0x18049ccd0 runs from the parents'
+//! `PrimaryActivateSecondarySkills` runs from the parents'
 //! `ActivateNow` (the cast: `Skill_AttackRadius`, `…Wave`, `Skill_BuffRadius`,
 //! `Skill_BuffSelfDuration`, `…DefensiveWall`, `…Shapeshift`), but only
 //! `SkillSecondary_BuffRadius::PrimaryActivateNow` acts there (the base
 //! `SkillSecondary::PrimaryActivateNow` just recurses).
 //!
-//! When (the callers of vtable +0x538): the parents call it from
+//! When (the callers of `ActivateSecondarySkills`): the parents call it from
 //! their `TargetResult`, i.e. when the attack resolves on its target list,
 //! after the damage, and only with a non-empty list:
-//! - weapon attacks (`Skill_AttackWeapon::TargetResult` @0x1804e3d70, the
+//! - weapon attacks (`Skill_AttackWeapon::TargetResult`, the
 //!   charges / blinks / `Skill_AttackWeaponRadius` share it): the melee hit
-//!   point's targets (`SkillActivated::ExecuteMeleeAttack` @0x180518320 sends
+//!   point's targets (`SkillActivated::ExecuteMeleeAttack` sends
 //!   no result without one: a target out of reach or an interrupted swing
 //!   runs nothing); a pool skill's hit runs the pool parent's
 //!   (`Skill_WPAttack_BasicAttack::TargetResult`: Fire Strike's Explosive
 //!   Strike); the coordinates are the attacker's;
-//! - projectiles (`SkillActivatedSpell::TargetResult` @0x1804a3ad0 via
-//!   `TargetInformation` @0x1804a3950 from `ProjectileBase::ProcessPathTargets`):
+//! - projectiles (`SkillActivatedSpell::TargetResult` via
+//!   `TargetInformation` from `ProjectileBase::ProcessPathTargets`):
 //!   at each impact on what it hit, at the projectile's coordinates; a
 //!   projectile hitting nothing runs none;
-//! - radius attacks (`Skill_AttackRadius::TargetResult` @0x1804c5970, `…Leap`,
+//! - radius attacks (`Skill_AttackRadius::TargetResult`, `…Leap`,
 //!   `…Spin`, `…Grow` pulses, `Skill_AttackSpell`, `Skill_AttackWave` (each
 //!   band its front sweeps, `waves.rs`),
 //!   `Skill_AttackPathCharge` path hits, `ProjectileAreaEffect` ticks): the
 //!   foes hit; `Skill_AttackRadius` / `…Leap` then run the special ones with
 //!   an empty list whatever they hit;
-//! - `Skill_AttackBuff::TargetResult` @0x1804b1cc0: once per target, that
+//! - `Skill_AttackBuff::TargetResult`: once per target, that
 //!   target passed explicitly (Lightning Net's tethers);
 //! - self buffs / toggles / potions (`Skill_ChargePotion::TargetResult`,
 //!   `Skill_BuffSelfToggled::ReceiveActiveUpdate`): on use.
 //!
 //! The hit / miss roll is later, in `Character::AttackTarget` per target:
 //! a dodged swing still runs them. Where each class acts
-//! (`ActivateNow`): `AttackRadius` @0x1805505c0 around the
+//! (`ActivateNow`): `AttackRadius` around the
 //! explicit target, else the list's first, else the coordinates;
 //! `AttackRadiusLightning`, `AttackProjectileRing`, `…AreaEffect`, `…Drop`
-//! (sub_1804A40E0) at the explicit target else the coordinates (so a melee
+//! (`SkillSecondary::GetActivationPoint`) at the explicit target else the coordinates (so a melee
 //! parent's ring starts at the attacker, a projectile's at the impact);
 //! `ChainLightning` / `ForkLightning` / `ChainBonus` from the list (and the
 //! explicit target); `Bonus` on each listed character; `Tether` on the
@@ -72,16 +72,18 @@
 //! own duration, the engine's `PrimaryStop` at the parent's end not sent: by
 //! design, no stock record has the class (base … gdx3, `survivalmode*`: only
 //! the `base_template skills` template); the `DefensiveWall` / `Shapeshift` casts do not
-//! run the Primary pair. `AttackInfo` +151 ([`Activate::replica`]) skips a
+//! run the Primary pair. `AttackInfo.replica` ([`Activate::replica`]) skips a
 //! `Skill_AttackWeapon`'s ordinary activation. Writers: only the
-//! splash `AttackInfo` that `OnHitTarget` of `Skill_AttackWeaponRadius` (sub_1804E4AD0: the class's
-//! unnamed vtable @0x1806e8780, registered by name in sub_18000BB50; radius = the profile's
+//! splash `AttackInfo` that `Skill_AttackWeaponRadius::OnHitTarget` (the class's unnamed vtable
+//! `Skill_AttackWeaponRadius::vftable`, registered by name in
+//! `Game::RegisterSkillClasses`; radius = the profile's
 //! `skillTargetRadius`), of `Skill_WPAttack_Radius` and (crit-only) of `Skill_WPAttack_RadialCrit` builds
-//! around a first-level hit. The port's splash hits are plain [`SkillHit`](crate::casting::SkillHit)s
+//! around a first-level hit. The port's splash hits are plain [`SkillHit`](gd_game_core::casting::SkillHit)s
 //! outside the cast's target list (`casting` `fire.rs`: `Skill_AttackWeaponRadius`; a `Skill_WPAttack_Radius`
 //! hit, `Kind::TargetRadius`, is its primary hit and splash in one), and the ordinary pair is activated once per
-//! cast on that list, i.e. only for the +151 = 0 result, so a splash starts no secondaries and no second
-//! splash. PORT: the splash's target effect (played only when skill +296 is 0) is not told apart. Nothing builds
+//! cast on that list, i.e. only for the `replica` = 0 result, so a splash starts no secondaries and no second
+//! splash. PORT: the splash's target effect (played only when `Skill.suppressTargetEffect` is 0) is not told
+//! apart. Nothing builds
 //! a `replica` message: `RadialCrit` and a radius `BasicAttack` have no stock user (by design). Cadence's ordinary attacks run none
 //! (`Skill_WeaponPool_ChargedFinale::TargetResult` skips them).
 //! The on-hit / on-kill ones roll their activation chance
@@ -100,11 +102,12 @@
 //! ([`beam_targets`]); the beam shows after the delay too ([`Tether::delay`],
 //! drawn by grimdawn `beams.rs`). `PetModifier`
 //! is handled by `pets.rs`.
-use crate::casting::{Casting, Kind, ProcCast};
 use crate::combat::{HitLanded, MonsterKilled};
-use crate::data::GameData;
-use crate::weapon_pool::SkillLinks;
 use bevy::prelude::*;
+use gd_game_core::casting::{Casting, Kind, ProcCast};
+use gd_game_core::data::GameData;
+use gd_game_core::secondary::{Tether, Tethers};
+use gd_game_core::weapon_pool::SkillLinks;
 
 pub struct SecondaryPlugin;
 
@@ -114,12 +117,12 @@ impl Plugin for SecondaryPlugin {
             Update,
             // After the frame's combat / casting writers (`HitLanded`, `MonsterKilled`,
             // `Activate`): a hit's procs resolve deterministically after the hit that
-            // caused them (`SkillAutoCastController::AppraiseAndExecute` @0x180523440
+            // caused them (`SkillAutoCastController::AppraiseAndExecute`
             // fires inside `Character::AttackTarget` / `UnderAttack`).
             (activate, on_kill, on_hit_taken, tethers)
                 .chain()
                 .in_set(SecondarySet)
-                .after(crate::combat::CombatSet),
+                .after(gd_game_core::combat::CombatSet),
         );
     }
 }
@@ -158,7 +161,7 @@ pub struct Activate {
     pub mode: Mode,
     /// The parent's level index.
     pub level_index: usize,
-    /// `AttackInfo` +151 set: the attack is a forwarded replica and
+    /// `AttackInfo.replica` set: the attack is a forwarded replica and
     /// `Skill_AttackWeapon::TargetResult` does not run the ordinary
     /// secondaries again. No writer (module docs: the port's
     /// splashes are outside the activation); this is the honouring side.
@@ -166,9 +169,8 @@ pub struct Activate {
 }
 
 /// Parent classes whose `ActivateNow` calls `PrimaryActivateSecondarySkills`
-/// (`Skill_BuffSelfDuration` @0x1804eab10, `Skill_BuffRadius`
-/// @0x1804e8c1a, `Skill_AttackRadius` @0x1804c5610, `Skill_AttackWave`
-/// @0x1804e237b, `Skill_AttackLine` sub_1804b50e0). PORT: `Skill_DefensiveWall` and `Skill_Shapeshift` call it
+/// (`Skill_BuffSelfDuration`, `Skill_BuffRadius`, `Skill_AttackRadius`, `Skill_AttackWave`,
+/// `Skill_AttackLine`). PORT: `Skill_DefensiveWall` and `Skill_Shapeshift` call it
 /// too but their casts do not go through the casting flow.
 pub fn primary_activates(class: &str) -> bool {
     matches!(
@@ -272,10 +274,10 @@ impl Activate {
 /// `ForkLightning` / `ChainBonus` chain from target to target
 /// (`GetTargetsInRadius` + `PickObject`, `GrowChain`); `TargetedSpawnPet` /
 /// `PetSpawn` summon. `BuffAttackRadiusDrop` (the Fangs undead nemesis'
-/// leap rock rain; classInfo 0x180A5B550, a `BuffAttackRadiusDuration` with
-/// its own vtable 0x1807984C8) keeps the activation point with
-/// `targetingMode` `Point` (sub_1804A8A40, put on the floor) and rains like
-/// `Skill_BuffAttackRadiusDrop` around it (sub_1804A8BD0), a storm
+/// leap rock rain; classInfo `SkillSecondary_BuffAttackRadiusDrop::classInfo`, a `BuffAttackRadiusDuration` with
+/// its own vtable `SkillSecondary_BuffAttackRadiusDrop::vftable`) keeps the activation point with
+/// `targetingMode` `Point` (`SkillSecondary_BuffAttackRadiusDrop::SetTargetPoint`, put on the floor) and rains
+/// like `Skill_BuffAttackRadiusDrop` around it (`SkillSecondary_BuffAttackRadiusDrop::ActivateNow`), a storm
 /// (`casting::Storm`). PORT: the point is not pulled back into line of sight
 /// / onto the path mesh (`GetPointInLOS`, `FindStraightMovePointOnSlopes`).
 pub fn kind(class: &str) -> Option<Kind> {
@@ -301,32 +303,8 @@ fn cast_record(data: &GameData, sec: &str) -> String {
         .unwrap_or_else(|| sec.to_owned())
 }
 
-/// One tether of a caster ([`Tethers`]).
-#[derive(Clone, Debug)]
-pub struct Tether {
-    pub target: Entity,
-    pub skill: String,
-    pub level_index: usize,
-    /// Seconds left, seconds to the next hit.
-    pub left: f32,
-    pub tick: f32,
-    /// `tetherDelay` left: the beam shows and the hits start after it.
-    pub delay: f32,
-    pub max_range: f32,
-    /// Seconds between hits (`timeBetweenAttacks` / spell cast speed).
-    pub every: f32,
-    /// `tetherThickness`: how far from the beam a foe is hit.
-    pub thickness: f32,
-    /// `hurtsTarget`: the tethered target is hit too.
-    pub hurts_target: bool,
-}
-
-/// Active tethers of a caster.
-#[derive(Component, Default)]
-pub struct Tethers(pub Vec<Tether>);
-
 /// The foes a tether's beam hits on a tick (`SkillSecondary_Tether::
-/// GetTargets` @0x1804b0750: `GameEngine::GetTargetsAroundRay`
+/// GetTargets`: `GameEngine::GetTargetsAroundRay`
 /// along the beam, `tetherThickness` wide, leaving the tethered target out
 /// unless `hurtsTarget`): a foe counts when the ray from `from` to `to` enters
 /// its world box (`Combatant::body_box`) grown by the thickness
@@ -362,12 +340,12 @@ fn tethers(
         (
             Entity,
             &Transform,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
             crate::combat::VictimSide,
         ),
-        Without<crate::combat::Dead>,
+        Without<gd_game_core::combat::Dead>,
     >,
-    mut hits: MessageWriter<crate::casting::SkillHit>,
+    mut hits: MessageWriter<gd_game_core::casting::SkillHit>,
 ) {
     let dt = time.delta_secs();
     for (e, tf, mut t, sd) in &mut q {
@@ -398,7 +376,7 @@ fn tethers(
                     t.hurts_target,
                     near,
                 ) {
-                    hits.write(crate::casting::SkillHit {
+                    hits.write(gd_game_core::casting::SkillHit {
                         attacker: e,
                         target,
                         skill: t.skill.clone(),
@@ -427,7 +405,7 @@ fn activate(
     tfs: Query<&Transform>,
     mut procs: MessageWriter<ProcCast>,
     mut tethered: Query<&mut Tethers>,
-    chars: Query<&crate::character::Character>,
+    chars: Query<&gd_game_core::character::Character>,
     monsters: Query<(), With<crate::combat::MonsterAi>>,
 ) {
     for m in msgs.read() {
@@ -451,7 +429,7 @@ fn activate(
                 .cloned()
         };
         let Some(key) = key else { continue };
-        // +151: a replica attack of a `Skill_AttackWeapon` runs no ordinary
+        // `AttackInfo.replica`: a replica attack of a `Skill_AttackWeapon` runs no ordinary
         // ones (`Skill_AttackWeapon::TargetResult`).
         if m.replica
             && matches!(m.mode, Mode::Normal | Mode::All)
@@ -472,7 +450,7 @@ fn activate(
             if rec.class == "SkillSecondary_Tether" && matches!(m.mode, Mode::Normal | Mode::All) {
                 let lv = |k: &str, d: f32| {
                     rec.get(k)
-                        .map_or(d, |_| crate::casting::level_f(rec, k, *li))
+                        .map_or(d, |_| gd_game_core::casting::level_f(rec, k, *li))
                 };
                 let limit = lv("tetherLimit", 1.0).max(1.0) as usize;
                 let speed = chars.get(m.caster).map_or(1.0, |c| c.spell_speed.max(0.1));
@@ -574,9 +552,9 @@ fn activate(
 
 fn chance(rec: &gd_formats::arz::Record, li: usize) -> bool {
     let c = rec.get("onHitActivationChance").map_or(100.0, |_| {
-        crate::casting::level_f(rec, "onHitActivationChance", li)
+        gd_game_core::casting::level_f(rec, "onHitActivationChance", li)
     });
-    c >= 100.0 || crate::rng::f32() * 100.0 < c
+    c >= 100.0 || gd_game_core::rng::f32() * 100.0 < c
 }
 
 /// `SkillSecondary_OnKillAttackRadius`: a kill by the parent skill blasts
@@ -625,7 +603,7 @@ fn on_kill(
 fn on_hit_taken(
     mut landed: MessageReader<HitLanded>,
     data: Res<GameData>,
-    links: Query<(&SkillLinks, &crate::player::Loadout, &Transform)>,
+    links: Query<(&SkillLinks, &gd_game_core::player::Loadout, &Transform)>,
     tfs: Query<&Transform>,
     mut procs: MessageWriter<ProcCast>,
 ) {

@@ -3,16 +3,16 @@
 //! set item (`gd_sim::items::convert`). Grimdawn's
 //! windows pick what to do and call these. Which item a window's slot takes is [`slot_accepts`]; the
 //! dismantle prompt shows for [`dismantle_warns`].
-use crate::inventory::Inventory;
-use crate::stash::{Stash, count, take};
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::stash::{Stash, count, take};
 use gd_sim::items::crafting::Blueprint;
 
 pub const DISMANTLE: &str = "records/ui/inventor/dismantlepanel/dismantle_table.dbr";
 
 /// How many times the player could craft `bp` now
-/// (`ItemArtifactFormula::GetMaximumCraftable` @0x18032ed70): the least of
+/// (`ItemArtifactFormula::GetMaximumCraftable`): the least of
 /// held / needed over the reagents (a reagent listed twice needs both
 /// amounts) and, when it costs anything, money / cost; no reagents → 0.
 pub fn max_craftable(bp: &Blueprint, gold: u64, level: u32, inv: &Inventory, stash: &Stash) -> u32 {
@@ -61,17 +61,17 @@ pub fn can_craft(bp: &Blueprint, gold: u64, level: u32, inv: &Inventory, stash: 
 /// in the bags. `Err` says why not.
 #[allow(clippy::too_many_arguments)]
 pub fn craft(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     enhancement: Option<&str>,
     bp: &Blueprint,
     gold: &mut u64,
     params: &gd_sim::items::LootParams,
     inv: &mut Inventory,
     stash: &mut Stash,
-    req: &crate::inventory::Requirements,
+    req: &gd_game_core::inventory::Requirements,
 ) -> Result<Vec<Item>, &'static str> {
     let level = params.player_level;
-    // Exe craft button sub_14019ecf0: disabled unless the formula is valid.
+    // Exe craft button `BlacksmithWindow::UpdateCraftButton`: disabled unless the formula is valid.
     if !data
         .db
         .get(&bp.record)
@@ -87,7 +87,7 @@ pub fn craft(
         });
     }
     let idb = data.item_db();
-    let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let items = bp.craft(&idb, params, enhancement, &mut rng);
     if items.is_empty() {
         return Err("the blueprint made nothing");
@@ -122,7 +122,7 @@ pub fn craft(
 pub fn dismantle_cost(table: &gd_formats::arz::Record, item_level: u32) -> u64 {
     table
         .str("dismantleCost")
-        .and_then(|e| gd_sim::expr::Expr::parse(e).ok())
+        .and_then(|e| gd_rules::expr::Expr::parse(e).ok())
         .map_or(0.0, |e| {
             e.eval(&|n| {
                 n.eq_ignore_ascii_case("itemLevel")
@@ -132,11 +132,15 @@ pub fn dismantle_cost(table: &gd_formats::arz::Record, item_level: u32) -> u64 {
         .max(0.0) as u64
 }
 
-/// The salvage cost of an item (`sub_1401B20C0` and
-/// `EnchanterRecoveryConfigCmd::Execute` @0x1800e8830): `gameengine.dbr`
+/// The salvage cost of an item (`UISalvagePanel::Update` and
+/// `EnchanterRecoveryConfigCmd::Execute`): `gameengine.dbr`
 /// `enchanterRecoveryFactor` (0.05) x `Item::GetItemCost` (the item's price
 /// with its component and augment, see `item_cost`), truncated.
-pub fn salvage_cost(data: &crate::data::GameData, idb: &gd_sim::items::ItemDb, item: &Item) -> u64 {
+pub fn salvage_cost(
+    data: &gd_game_core::data::GameData,
+    idb: &gd_sim::items::ItemDb,
+    item: &Item,
+) -> u64 {
     let factor = data
         .db
         .get("records/game/gameengine.dbr")
@@ -145,8 +149,9 @@ pub fn salvage_cost(data: &crate::data::GameData, idb: &gd_sim::items::ItemDb, i
     (factor * gd_sim::items::resolve::item_cost(idb, item) as f32) as u64
 }
 
-/// Why the Inventor's dismantle or convert did nothing (logged only). `Grim Dawn.exe` enchanter tabs
-/// (dismantle 0x1401AA370..0x1401AB5D0, convert sub_1401A8BF0, salvage sub_1401B20C0): they send no UI
+/// Why the Inventor's dismantle or convert did nothing (logged only). `Grim Dawn.exe` enchanter tabs (dismantle
+/// `DismantleTab::OnButton` / `DismantleTab::Update` … `UIEnchanterDismantleTab::RollBonus`, convert
+/// `UIEnchanterConvertTab::Convert`, salvage `UISalvagePanel::Update`): they send no UI
 /// notification, success or not (their only messages are the confirm dialogs, `tagDismantleDestroyItemWarning`,
 /// `tagDismantleDestroyItemComponentWarning`, `tagConvertBlacklist`); a refused action's button is not enabled
 /// there, so the port's requests reaching a refusal show nothing either.
@@ -180,7 +185,7 @@ pub enum Refusal {
 // `Err` hands the item back to the caller.
 #[allow(clippy::result_large_err)]
 pub fn dismantle_item(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     item: Item,
     unlocked: bool,
     params: &gd_sim::items::LootParams,
@@ -220,7 +225,7 @@ pub fn dismantle_item(
     }
     *gold -= cost;
     take(&names, 1, inv, stash);
-    let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let mut out = Dismantled::default();
     // Scrap: the index picked by `itemWeights`.
     let weights: Vec<u32> = table
@@ -241,7 +246,7 @@ pub fn dismantle_item(
     if let Some(scrap) = table.str("itemGenerated").filter(|_| n > 0) {
         out.scrap = Some(Item {
             base_name: scrap.to_owned(),
-            seed: crate::rng::u32(1..0x7FFF_FFFF),
+            seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
             stack_count: n,
             ..Default::default()
         });
@@ -257,7 +262,7 @@ pub fn dismantle_item(
         });
     } else if let Some(r) = &resolved {
         // The rarity picks the entry; other classes get no bonus.
-        // sub_1401AB5D0: an item with an ascendant bonus first
+        // `UIEnchanterDismantleTab::RollBonus`: an item with an ascendant bonus first
         // picks `ascendantItemBonus`, but the rarity branch always
         // replaces it, so that entry is never used.
         let key = match gd_sim::items::loot::rarity(r) {
@@ -298,16 +303,16 @@ pub struct Dismantled {
 }
 
 /// A dismantle's results for the dismantle tab's take-only result boxes
-/// (`Player::GiveDismantledItemToCharacter` @0x1803d43e0 -> `ControllerPlayer::GiveDismantledItemToPlayer`
-/// @0x18015f600 -> GameUIInterface vt+184 / vt+192); the window keeps them (UI state)
+/// (`Player::GiveDismantledItemToCharacter` -> `ControllerPlayer::GiveDismantledItemToPlayer`
+/// -> `GameUIInterface::SetDismantleResult1` / `SetDismantleResult2`); the window keeps them (UI state)
 /// and, when the tab is not shown, gives them back with `InvRequest::Stow` (`GiveItemToPlayer`).
 #[derive(Message, Clone, Debug)]
 pub struct DismantleResult(pub Dismantled);
 
 /// Puts a dismantle's results into the tab's result boxes `[dismantleBox1, dismantleBox2]`; what has to go
-/// back to the player (`InvRequest::Stow`) is returned. `DismantleTab_SetResult1` (exe @0x1401abd70):
+/// back to the player (`InvRequest::Stow`) is returned. `DismantleTab_SetResult1` (exe):
 /// box 1 empty takes the scrap, else its item grows by it (`IncrementStack`, the new object removed: scrap
-/// stacks across dismantles). Box 2 (`HudUI_DismantleResult2` @0x14021b0e0) is set, no merge. PORT: box 1
+/// stacks across dismantles). Box 2 (`HudUI_DismantleResult2`) is set, no merge. PORT: box 1
 /// holding another record, or box 2 holding an item, gives the old item back (the base box's set is not
 /// traced).
 pub fn receive_dismantled(boxes: &mut [Option<Item>; 2], d: Dismantled) -> Vec<Item> {
@@ -343,12 +348,12 @@ pub enum SalvageKind {
 // `Err` hands the item back to the caller.
 #[allow(clippy::result_large_err)]
 pub fn salvage_item(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     mut item: Item,
     which: SalvageKind,
     gold: &mut u64,
     inv: &mut Inventory,
-    req: &crate::inventory::Requirements,
+    req: &gd_game_core::inventory::Requirements,
 ) -> Result<(u64, Vec<Item>), Item> {
     let idb = data.item_db();
     let cost = salvage_cost(data, &idb, &item);
@@ -402,7 +407,7 @@ pub fn salvage_item(
 }
 
 /// Whether the player has a story token (case-insensitive).
-fn has_token(rt: &crate::story::StoryRuntime, token: &str) -> bool {
+fn has_token(rt: &gd_game_core::story::StoryRuntime, token: &str) -> bool {
     rt.story
         .borrow()
         .player
@@ -414,8 +419,8 @@ fn has_token(rt: &crate::story::StoryRuntime, token: &str) -> bool {
 /// `MainPlayerCanUseDismantle`: the table's `dismantleToken` story token
 /// (unlocked without a story).
 pub fn dismantle_unlocked(
-    data: &crate::data::GameData,
-    rt: Option<&crate::story::StoryRuntime>,
+    data: &gd_game_core::data::GameData,
+    rt: Option<&gd_game_core::story::StoryRuntime>,
 ) -> bool {
     let token = data
         .db
@@ -426,11 +431,11 @@ pub fn dismantle_unlocked(
 }
 
 /// `MainPlayerCanUseConvert`: the `gameengine.dbr` `convertToken` story
-/// token (`sub_14026DAC0`: the convert tab is enabled by it, like
+/// token (`InventorWindow::SetVisible`: the convert tab is enabled by it, like
 /// dismantle / reroll by their tokens; unlocked without a story).
 pub fn convert_unlocked(
-    data: &crate::data::GameData,
-    rt: Option<&crate::story::StoryRuntime>,
+    data: &gd_game_core::data::GameData,
+    rt: Option<&gd_game_core::story::StoryRuntime>,
 ) -> bool {
     let token = data
         .db
@@ -441,7 +446,7 @@ pub fn convert_unlocked(
 }
 
 /// Whether the convert tab's slot takes the item
-/// (`sub_1401B06D0`: equipment whose record has an `itemSetName`).
+/// (`UIEnchanterConvertTab::CanAcceptItem`: equipment whose record has an `itemSetName`).
 pub fn convert_accepts(idb: &gd_sim::items::ItemDb, item: &Item) -> Result<(), String> {
     match gd_sim::items::resolve(idb, item) {
         Some(r)
@@ -467,7 +472,7 @@ pub enum SlotBox {
 }
 
 /// Whether the slot takes the item (reroll tab
-/// `sub_1401B79B0`; the dismantle slot only needs equipment, PORT: the
+/// `UIEnchanterRerollTab::AcceptsItem`; the dismantle slot only needs equipment, PORT: the
 /// game's slot hint says "greater than common quality" but its bonus
 /// table has a common row). `Err`: the refusal text.
 pub fn slot_accepts(idb: &gd_sim::items::ItemDb, slot: SlotBox, item: &Item) -> Result<(), String> {
@@ -484,7 +489,7 @@ pub fn slot_accepts(idb: &gd_sim::items::ItemDb, slot: SlotBox, item: &Item) -> 
     }
 }
 
-/// The dismantle prompt applies (`sub_1401AA790`): the item has a
+/// The dismantle prompt applies (`DismantleTab::OnButton`): the item has a
 /// component or is Epic / Legendary.
 pub fn dismantle_warns(idb: &gd_sim::items::ItemDb, item: &Item) -> bool {
     use gd_sim::items::resolve::Classification;
@@ -501,7 +506,7 @@ pub fn dismantle_warns(idb: &gd_sim::items::ItemDb, item: &Item) -> bool {
 /// Legendary item then uses the legendary formula), see
 /// `gd_sim::items::convert`.
 pub fn convert_formula(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     idb: &gd_sim::items::ItemDb,
     item: &Item,
     random: bool,
@@ -517,7 +522,7 @@ pub fn convert_formula(
 
 /// The cost and reagents of converting the item at `level`.
 pub fn convert_plan(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     idb: &gd_sim::items::ItemDb,
     item: &Item,
     random: bool,
@@ -534,8 +539,9 @@ pub fn convert_plan(
 /// docs of `gd_sim::items::convert`): `unlocked` (the story's token), not a
 /// `blacklistedSets` set, the formula's money and reagents. `Ok`: the
 /// cost and the new item, which goes into the tab's slot:
-/// `Player::GiveSetItemToCharacter` @0x1803d47a0 hands it to the HUD's vt+208 (GrimDawn.exe `sub_14021B160` ->
-/// `sub_1401A9530`: the shown convert tab returns the slot's old item to the player and holds the new one), so
+/// `Player::GiveSetItemToCharacter` hands it to the HUD's `GameUIInterface::GiveSetItem` (GrimDawn.exe
+/// `UIPlayerHud::GiveSetItem` -> `UIEnchanterConvertTab::SetResultItem`: the shown convert tab returns the slot's old
+/// item to the player and holds the new one), so
 /// full bags never matter there; only with the tab hidden would it be `GiveItemToPlayer` (equip-empty, bags,
 /// else tutorial page 33, `SendDropItemRandom` and the inventory-full sound), which the button never reaches.
 /// `Err`: why not ([`Refusal`]) and the item back.
@@ -543,7 +549,7 @@ pub fn convert_plan(
 // `Err` hands the item back to the caller.
 #[allow(clippy::result_large_err)]
 pub fn convert_item(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     item: Item,
     random: bool,
     unlocked: bool,
@@ -583,7 +589,7 @@ pub fn convert_item(
     {
         return Err((Refusal::Missing(n.clone(), q), item));
     }
-    let mut rng = gd_sim::combat::Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let Some(name) =
         gd_sim::items::convert::convert(&idb, &f, &item.base_name, &set, r.item_level, &mut rng)
     else {
@@ -596,7 +602,7 @@ pub fn convert_item(
     }
     let made = Item {
         base_name: name,
-        seed: crate::rng::u32(1..0x7FFF_FFFF),
+        seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
         stack_count: 1,
         ..Default::default()
     };
@@ -613,8 +619,8 @@ pub fn convert_item(
 /// (exact match; unlocked when the record names none, locked without a
 /// story).
 pub fn reroll_unlocked(
-    data: &crate::data::GameData,
-    rt: Option<&crate::story::StoryRuntime>,
+    data: &gd_game_core::data::GameData,
+    rt: Option<&gd_game_core::story::StoryRuntime>,
 ) -> bool {
     let token = data
         .db
@@ -644,10 +650,10 @@ impl Plugin for CraftingPlugin {
                 apply_inventor
                     .run_if(resource_exists::<Inventory>)
                     .run_if(resource_exists::<Stash>)
-                    .run_if(resource_exists::<crate::progress::PlayerProgress>)
-                    .run_if(resource_exists::<crate::data::GameData>)
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet),
+                    .run_if(resource_exists::<gd_game_core::progress::PlayerProgress>)
+                    .run_if(resource_exists::<gd_game_core::data::GameData>)
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet),
             );
     }
 }
@@ -719,13 +725,13 @@ fn apply_inventor(
         MessageWriter<DismantleResult>,
         MessageWriter<crate::play_stats::PlayStat>,
     ),
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut inv: ResMut<Inventory>,
     mut stash: ResMut<Stash>,
-    mut progress: ResMut<crate::progress::PlayerProgress>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    mut progress: ResMut<gd_game_core::progress::PlayerProgress>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     session: crate::session::Session,
-    players: Query<&crate::inventory::Requirements, With<crate::player::Player>>,
+    players: Query<&gd_game_core::inventory::Requirements, With<gd_game_core::player::Player>>,
 ) {
     let Ok(req) = players.single() else {
         return;

@@ -4,11 +4,11 @@
 //! (`First`), so every system sees it as the OS pointer: the UI windows, the world click, the hover. At most one event
 //! fires a frame, so a press, the moves and the release land in separate frames (as a real mouse's) even when
 //! frames are slow. Each event logs the player's position (`GD_MOUSE: <event> ...`), which is what a check reads.
-use crate::hooks::Hooks;
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use gd_game_core::hooks::Hooks;
 
 pub fn plugin(app: &mut App) {
     if !app.world().resource::<Hooks>().ui.mouse.is_empty() {
@@ -21,7 +21,7 @@ fn scripted_mouse(
     hooks: Res<Hooks>,
     time: Res<Time<Real>>,
     mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
-    players: Query<&Transform, With<crate::player::Player>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
     labels: Query<(&crate::loot::ItemLabel, &UiGlobalTransform, &Visibility)>,
     items: Query<(&crate::loot::GroundItem, &GlobalTransform)>,
     mut buttons: MessageWriter<MouseButtonInput>,

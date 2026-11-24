@@ -3,21 +3,23 @@
 //! redemption, play stats) are `gd_game::death`.
 //!
 //! The Game Over dialog is the dialog manager's ok box (`ui/confirm.rs`, `tagGameOver`), as the engine opens
-//! it (`ControllerPlayer::CharacterIsDying` @0x18015db20: `DialogManager::AddDialog` with the
+//! it (`ControllerPlayer::CharacterIsDying`: `DialogManager::AddDialog` with the
 //! OK-only layout and the localised, genderised `tagGameOver`; the exe draws the Ok button of
-//! `prompt_manager.dbr` for it, sub_140191260 / sub_1401916A0). Answering it — Ok, close or Esc — leaves the
-//! session ([`crate::exit::ExitToMenu`]): the engine's `DeathUpdate` hands the response to the UI interface
+//! `prompt_manager.dbr` for it, `PromptManager::LoadOkButton` / `PromptManager::DrawOkButton`). Answering it — Ok,
+//! close or Esc — leaves the
+//! session ([`gd_ui::state::exit::ExitToMenu`]): the engine's `DeathUpdate` hands the response to the UI interface
 //! and the dead hardcore character cannot continue; the character list shows it as dead (`session::is_dead`).
-use crate::inventory::UiCapture;
-use crate::player::Player;
-use crate::ui::window::{Rebuild, add_window, despawn_all};
-use crate::ui::{UiAssets, contains, cursor_px, spawn_root};
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::death::GameOverBox;
+use gd_ui::window::{Rebuild, add_window, despawn_all};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use gd_game::combat::Dead;
 pub use gd_game::death::*;
-pub use gd_game::session::is_hardcore;
+use gd_game_core::combat::Dead;
+use gd_game_core::player::Player;
+pub use gd_game_core::session::is_hardcore;
 use gd_render::character::CharAssets;
+use gd_ui_kit::{UiAssets, contains, cursor_px, spawn_root};
 
 pub struct DeathPlugin;
 
@@ -27,7 +29,7 @@ impl Plugin for DeathPlugin {
             .init_resource::<GameOverBox>()
             .add_systems(
                 Update,
-                (dress_graves, game_over.after(on_death)).after(crate::player::PlayerSet),
+                (dress_graves, game_over.after(on_death)).after(gd_game_core::player::PlayerSet),
             );
         add_window(
             app,
@@ -40,7 +42,7 @@ impl Plugin for DeathPlugin {
             Update,
             game_over_live
                 .run_if(|b: Res<GameOverBox>| b.is_open())
-                .in_set(crate::ui::UiPlaySet),
+                .in_set(gd_ui_kit::UiPlaySet),
         );
     }
 }
@@ -90,8 +92,8 @@ struct GraveDressed;
 /// A hardcore character died: open the Game Over dialog (module doc).
 fn game_over(
     died: Query<(), (With<Player>, Added<Dead>)>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    choice: Res<crate::session::Choice>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    choice: Res<gd_game_core::session::Choice>,
     mut over: ResMut<GameOverBox>,
 ) {
     if !died.is_empty() && is_hardcore(loaded.as_deref(), &choice) {
@@ -99,20 +101,7 @@ fn game_over(
     }
 }
 
-/// The Game Over dialog's state (the `ui/reclamation.rs` message-box pattern).
-#[derive(Resource, Default)]
-pub struct GameOverBox {
-    open: bool,
-    /// The Ok and close rects as drawn (physical px).
-    rects: Option<(gd_formats::ui::Rect, Option<gd_formats::ui::Rect>)>,
-}
 
-impl GameOverBox {
-    /// The box is up (open, or its rects still drawn): a modal, so Esc answers it (`ui::esc_dispatcher`).
-    pub fn is_open(&self) -> bool {
-        self.open || self.rects.is_some()
-    }
-}
 
 #[derive(Component)]
 struct GameOverRoot;
@@ -121,10 +110,10 @@ struct GameOverRoot;
 fn build_game_over(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut state: ResMut<GameOverBox>,
     roots: Query<Entity, With<GameOverRoot>>,
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut built: Local<Rebuild<(bool, UVec2)>>,
     mut assets: UiAssets,
 ) {
@@ -143,7 +132,7 @@ fn build_game_over(
         return;
     }
     let s = assets.scale(size);
-    let root = spawn_root(&mut commands, (GameOverRoot, crate::ui::hud::KeepsShown), 6);
+    let root = spawn_root(&mut commands, (GameOverRoot, gd_ui::hud::KeepsShown), 6);
     let mut ui = assets.ui(
         &mut commands,
         &data,
@@ -152,17 +141,17 @@ fn build_game_over(
         1.0 / win.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
     );
-    state.rects = crate::ui::confirm::ok_box(&mut ui, "tagGameOver", (None, false));
+    state.rects = gd_ui_kit::confirm::ok_box(&mut ui, "tagGameOver", (None, false));
 }
 
 /// The box's hover / press look in place ([`crate::ui::confirm::apply_look`]).
 fn game_over_live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     state: Res<GameOverBox>,
     mouse: Res<ButtonInput<MouseButton>>,
     roots: Query<Entity, With<GameOverRoot>>,
-    mut looks: Query<(&crate::ui::confirm::ConfirmLook, &mut ImageNode)>,
+    mut looks: Query<(&gd_ui_kit::confirm::ConfirmLook, &mut ImageNode)>,
 ) {
     let (Ok(win), Some((ok, close)), Ok(root)) = (window.single(), state.rects, roots.single())
     else {
@@ -170,15 +159,15 @@ fn game_over_live(
     };
     let hit = cursor_px(&hooks, win).and_then(|p| {
         if contains(&ok, p) {
-            Some(crate::ui::confirm::Hit::Yes)
+            Some(gd_ui_kit::confirm::Hit::Yes)
         } else if close.is_some_and(|r| contains(&r, p)) {
-            Some(crate::ui::confirm::Hit::Close)
+            Some(gd_ui_kit::confirm::Hit::Close)
         } else {
             None
         }
     });
     let look = (hit, hit.is_some() && mouse.pressed(MouseButton::Left));
-    crate::ui::confirm::apply_look(root, look, &mut looks);
+    gd_ui_kit::confirm::apply_look(root, look, &mut looks);
 }
 
 /// Ok or close answers the dialog: the session ends (module doc; Esc: `ui::esc_dispatcher`).
@@ -186,12 +175,12 @@ fn game_over_live(
 fn game_over_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut state: ResMut<GameOverBox>,
     mut capture: ResMut<UiCapture>,
-    data: Res<crate::data::GameData>,
-    mut sound: MessageWriter<gd_game::visuals::PlaySound>,
-    mut exit: MessageWriter<crate::exit::ExitToMenu>,
+    data: Res<gd_game_core::data::GameData>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
+    mut exit: MessageWriter<gd_ui::state::exit::ExitToMenu>,
 ) {
     if !state.open {
         return;
@@ -205,14 +194,14 @@ fn game_over_clicks(
         if contains(&ok, p) {
             answer = true;
         } else if close.is_some_and(|r| contains(&r, p)) {
-            if let Some(pak) = crate::ui::confirm::close_sound(&data) {
-                sound.write(gd_game::visuals::PlaySound { pak, at: None });
+            if let Some(pak) = gd_ui_kit::confirm::close_sound(&data) {
+                sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
             }
             answer = true;
         }
     }
     if answer {
         state.open = false;
-        exit.write(crate::exit::ExitToMenu);
+        exit.write(gd_ui::state::exit::ExitToMenu);
     }
 }

@@ -1,54 +1,59 @@
 //! Character light rigs (`GAME::LightRig`) and the `lightingQuality` option's character side.
 //!
 //! From Engine.dll / Game.dll:
-//! - Load (`LightRig::LightRig(string)` @0x180138c10): up to 3 lights, `radius1..3` (a light is kept when its
+//! - Load (`LightRig::LightRig(string)`): up to 3 lights, `radius1..3` (a light is kept when its
 //!   radius > 0.0001), `position1..3.x/y/z`, `color1..3.r/g/b`; `cameraRelative` (default 0), `heightRelative`
 //!   (default 1), `useSpecular` (default 0). Every character reads its record's `lightRig` (`Character::Load`,
 //!   Game.dll: none when empty) and `lqLightingHighlight`.
-//! - Use (`Character::AddToScene` @0x180072250, scenes of type 0 only; no menu-character test): with
+//! - Use (`Character::AddToScene`, scenes of type 0 only; no menu-character test): with
 //!   `Options::GetQuality(6)` (`lightingQuality`) >= 1 and a rig with lights, the rig gets a scene light group
 //!   (`AssignLightGroup`) and the character's mesh is put in it; at `GetVisibility` 3 (shown) its attached
 //!   entities' meshes too (armour, weapons, the mesh's own effects), at 1 the body only, otherwise nothing.
-//! - The lights (`LightRig::AddToScene` @0x180138f50): a point light per rig light, colour = the record colour
+//! - The lights (`LightRig::AddToScene`): a point light per rig light, colour = the record colour
 //!   (no intensity), radius = the record radius, the rig's light group, skipped when no channel > 0.03. Its
 //!   position is the character's origin plus the offset turned by the camera's axes (`cameraRelative`; the
-//!   scene camera's `LookAt` frame, sub_180273CA0: z = toward the target, x = up × z, y = z × x) or by the
+//!   scene camera's `LookAt` frame, `Math::LookAtMatrix`: z = toward the target, x = up × z, y = z × x) or by the
 //!   character's own axes; without `heightRelative` the offset's y is added untouched. Specular (the light's
-//!   +113, `pointSpecular` instead of `point`) = `useSpecular` when `lightingQuality` >= 2 and
-//!   `Engine::AllowLightrigSpec` (+3107, 1 from the Engine ctor; only a console command clears it), else off.
-//! - Drawing (`GraphicsDeferredRenderer::RenderDeferredPointLight` @0x1800aba80): a grouped light is the
+//!   `GraphicsLight.specular`, `pointSpecular` instead of `point`) = `useSpecular` when `lightingQuality` >= 2 and
+//!   `Engine::AllowLightrigSpec` (`Engine.allowLightrigSpec`, 1 from the Engine ctor; only a console command clears
+//!   it), else off.
+//! - Drawing (`GraphicsDeferredRenderer::RenderDeferredPointLight`): a grouped light is the
 //!   `pointGrouped` / `pointSpecularGrouped` technique, the same `pointPS` / `pointSpecularPS` maths as a level
 //!   light under a stencil test against the group, which only the group's meshes write: a rig lights its own
 //!   character's pixels only. Colour × the HDR factor with `hdrLighting` (`render/env.rs`).
-//! - The ambient highlight (`Character::GetAmbientHighlight` @0x180063f40, the mesh's +572 that
+//! - The ambient highlight (`Character::GetAmbientHighlight`, the mesh's `GraphicsMeshInstance.ambientHighlight` that
 //!   `GraphicsMeshInstance::SetShaderParameters` sends as `diffuseColor.w`, the ambient add): 0 for a character
 //!   with a rig at `lightingQuality` >= 1, else its `lqLightingHighlight` (0.3 on most monsters, 0.5 on the
 //!   player). Its underground clause never applies (`Region::IsUnderground` = a grid level; none in stock).
-//! - The hover highlight (`Actor::AddToScene` Engine.dll): the mesh's +572 is
-//!   `GetAmbientHighlight()` + 0.25 while the actor's highlight flag (+1140) is on. `Actor::SetHighlight`
-//!   @0x1800289c0 sets it and passes it on to the attached actors (weapons, armour); Grim Dawn.exe sets it with the
-//!   hover outline (sub_14010F2B0 → sub_14010F470, which ends in vtable +792 `SetHighlight(true)` even with
-//!   `targetOutline` off; sub_14010F350 / sub_14010F2B0 clear it). A hovered NPC that is not `IsOfInterest` skips
-//!   that call (sub_140021000): named, neither outlined nor highlighted. So on the hover target that has an outline
+//! - The hover highlight (`Actor::AddToScene` Engine.dll): the mesh's `ambientHighlight` is
+//!   `GetAmbientHighlight()` + 0.25 while the actor's highlight flag (`Actor.highlight`) is on. `Actor::SetHighlight`
+//!   sets it and passes it on to the attached actors (weapons, armour); Grim Dawn.exe sets it with the
+//!   hover outline (`InGameUI::SetHoverTarget` → `InGameUI::OutlineHoverTarget`, which ends in the virtual
+//!   `SetHighlight(true)` even with `targetOutline` off; `InGameUI::ClearHoverTarget` / `InGameUI::SetHoverTarget`
+//!   clear it). A hovered NPC that is not `IsOfInterest` skips that call (`InGameUI::HandleMouseEvent`): named,
+//!   neither outlined nor highlighted.
+//!   So on the hover target that has an outline
 //!   colour (`gd_render::hover::HoverGlow`, grimdawn `hover.rs`). Shaded as deferred.ssh `ambientPS` /
 //!   `directionalAmbientPS` do (the `deferredPS` writes `diffuseColor.w` to the material target's z): albedo ×
 //!   (hemisphere ambient + it). A non-character actor's base is 0
-//!   (`Actor::GetAmbientHighlight` @0x18002c9b0: its attach parent's, else 0). The ground label manager
-//!   (`UIWorldDescManager`) sets it too: on every item whose label it lists (sub_14028BAD0 from the frustum scan
-//!   sub_14028C670, with `EnableOutline(true)`), again on the selected label's item (update sub_14028AE50), and
-//!   clears both on the last frame's list before the next scan (sub_14028C570), so on the listed items (`gd_render::hover::LabelGlow`).
+//!   (`Actor::GetAmbientHighlight`: its attach parent's, else 0). The ground label manager
+//!   (`UIWorldDescManager`) sets it too: on every item whose label it lists (`UIWorldDescManager::ListLabel`
+//!   from the frustum scan `UIWorldDescManager::ScanFrustum`, with `EnableOutline(true)`), again on the selected
+//!   label's item (`UIWorldDescManager::Update`), and clears both on the last frame's list before the next scan
+//!   (`UIWorldDescManager::ClearHighlights`), so on the listed items (`gd_render::hover::LabelGlow`).
 //! - The rest of `lightingQuality`: 0 sets `GraphicsEngine::UseLowQualityLighting`
-//!   (+340, `UpdateFromOptions` @0x180093020), which draws level lights without specular (`Light::AddToScene`
-//!   @0x1801363a0: +113 = !low quality; `render/env.rs`); 3 gives the player light a shadow (`render/env.rs`).
+//!   (`GraphicsEngine.lowQualityLighting`, `UpdateFromOptions`), which draws level lights without specular
+//!   (`Light::AddToScene`: `GraphicsLight.specular` = !low quality; `render/env.rs`); 3 gives the player light a
+//!   shadow (`render/env.rs`).
 //!
 //! - Scene types (Engine.dll `GraphicsMTRenderer::CreateScene` callers): 0 = the world scene
 //!   (`CreateBuildSceneJob`, so the main menu's world too: the menu hero gets `playerlightrig.dbr`) and
 //!   `GetCustomScene`; 1 = shadow, 2 = reflection scenes.
 //!
 //! - The paper dolls (`DollView::Character` / `Illusionist`, own camera and layer) get no rig (Game.dll
-//!   `GAME::Paperdoll` vtable 0x1807848a8: an `Actor`, so `Actor::AddToScene` / `Actor::GetAmbientHighlight`, no
+//!   `Paperdoll` (`Paperdoll::vftable`): an `Actor`, so `Actor::AddToScene` / `Actor::GetAmbientHighlight`, no
 //!   rig and highlight 0); the window's `UISceneView` record lights them. NPCs and monsters share
-//!   `Character::AddToScene` @0x180072250 (their own `lightRig`, e.g. `npclightrig.dbr`).
+//!   `Character::AddToScene` (their own `lightRig`, e.g. `npclightrig.dbr`).
 //!
 //! PORT: the stencil group is the mesh's `MeshTag` (bits 0-15 the group, 16-31 the ambient highlight × 1000) and
 //! each rig light is a Bevy `PointLight` (never shadowed) whose `radius` carries the group (+ 0.5 when
@@ -61,7 +66,7 @@ use crate::hover::{HoverGlow, LabelGlow};
 use bevy::light::SimulationLightSystems;
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
-use gd_game::character::Character;
+use gd_game_core::character::Character;
 use std::sync::Arc;
 
 pub struct LightRigPlugin;
@@ -153,7 +158,7 @@ impl LightRig {
 }
 
 /// `lightingQuality` as `Options::GetQuality(6)` (0 low .. 3 very high).
-pub fn lighting_quality(options: &gd_game::options::GameOptions) -> u32 {
+pub fn lighting_quality(options: &gd_game_core::options::GameOptions) -> u32 {
     match options.get("lightingQuality") {
         Some(gd_formats::options::Value::Quality(q)) => super::shadow::quality_index(q),
         _ => 1,
@@ -201,7 +206,7 @@ fn in_world_scene(doll: Option<&DollBody>) -> bool {
 /// Reads each new world-scene character's `lightRig` / `lqLightingHighlight` (`Character::Load`).
 fn load_rigs(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     chars: Query<(Entity, &Character, Option<&DollBody>), Without<CharacterLighting>>,
     mut next: Local<u32>,
 ) {
@@ -234,7 +239,7 @@ fn load_rigs(
 /// Spawns, places and removes the rig lights (`Character::AddToScene` / `LightRig::AddToScene`).
 fn place_rig_lights(
     mut commands: Commands,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     cams: Query<&GlobalTransform, (With<crate::camera::GameCamera>, Without<RigLight>)>,
     mut chars: Query<
         (

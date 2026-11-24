@@ -15,20 +15,20 @@
 //!
 //! The potions window ("Cauldron", `records/ui/cauldron/potions_table.dbr`,
 //! GrimDawn.exe; the window itself is `gd_game::cauldron`):
-//! - lists ([`trees`], loader `sub_140278300`): per potion (the player's
+//! - lists ([`trees`], loader `PotionsWindow::LoadTrees`): per potion (the player's
 //!   health / energy `Skill_ChargePotion`, `customPotionTree1/2`), its
 //!   `Skill_PotionContainer`s in tree order and its modifiers: the skill's
 //!   modifiers in tree order, then its secondary skills (`SkillSecondary_*`)
 //!   in tree order;
 //! - the two modifier slots show the potion's enabled modifiers in that list
-//!   order ([`slots`], open `sub_1402769B0`), not in choice order; they are
+//!   order ([`slots`], open `PotionsWindow::Open`), not in choice order; they are
 //!   disabled while no container of the potion is chosen
-//!   ([`slots_enabled`], update `sub_140276750`);
+//!   ([`slots_enabled`], update `PotionsWindow::Update`);
 //! - a click on a container that is not enabled chooses it
-//!   ([`choose_container`], click `sub_140276E30` → `sub_140278E30`): every
+//!   ([`choose_container`], click `PotionsWindow::OnButtonPress` → `PotionsWindow::ApplyChoice`): every
 //!   other container of the potion turns off (one per potion);
-//! - a modifier picked for a slot ([`place_modifier`], `sub_1402777A0` →
-//!   `sub_140278E30`): nothing when the slot already holds it; the other slot
+//! - a modifier picked for a slot ([`place_modifier`], `PotionsWindow::PlaceModifier` →
+//!   `PotionsWindow::ApplyChoice`): nothing when the slot already holds it; the other slot
 //!   is emptied when it holds the same modifier or both are
 //!   `exclusivePotionSkill` (`SkillProfile::IsExclusivePotionSkill`), else
 //!   kept; the picked and kept modifiers turn on (level 1 when at 0), every
@@ -56,7 +56,7 @@
 //! `modifier2` (the engine's loop keeps only the last name's result). No
 //! match keeps the previous bitmap (empty at first). With no container
 //! enabled the key is the empty name (`UpdatePotionBitmap` passes an empty
-//! string, `GetPotionModifierComboBitmap` @0x1802fa9e0 looks it up like any
+//! string, `GameEngine::GetPotionModifierComboBitmap` looks it up like any
 //! other): `LoadFromDatabase` files a combo without a `container` under it,
 //! the stock `potionhealth_default.dbr` (`modifier1` the heal over time) and
 //! `potionenergy_default.dbr` (no lists): no texture (the slot keeps the
@@ -252,7 +252,7 @@ pub fn choose_container(
     Ok(())
 }
 
-/// Puts a modifier in slot `slot` (0 or 1) of its potion (`sub_1402777A0`).
+/// Puts a modifier in slot `slot` (0 or 1) of its potion (`PotionsWindow::PlaceModifier`).
 pub fn place_modifier(
     db: &Database,
     book: &mut SkillBook,
@@ -278,7 +278,7 @@ pub fn place_modifier(
     };
     let keep = cur[1 - slot]
         .filter(|o| !(o.eq_ignore_ascii_case(skill) || (exclusive(skill) && exclusive(o))));
-    // `sub_140278E30`, with this potion's and the other potion's unlocked lists.
+    // `PotionsWindow::ApplyChoice`, with this potion's and the other potion's unlocked lists.
     let mine = unlocked_modifiers(book, tree);
     let theirs = trees
         .get(1 - pi.min(1))

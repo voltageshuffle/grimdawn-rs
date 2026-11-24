@@ -5,7 +5,7 @@
 //! (`menu_scene.rs` removes it when the menu closes; `exit.rs` clears it at a session's end).
 use bevy::prelude::*;
 use gd_formats::map::MapFile;
-use gd_game::levels::Levels;
+use gd_game_core::levels::Levels;
 use std::sync::Arc;
 
 #[derive(Resource)]

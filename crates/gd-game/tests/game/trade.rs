@@ -3,12 +3,12 @@
 //! slot; restocking; faction tiers. No frames needed: one game runs every
 //! check in turn (each on its own market key).
 use bevy::prelude::*;
+use gd_formats::inventory::Sack;
 use gd_formats::save::item::Item;
-use gd_game::inventory::Inventory;
-use gd_game::progress::PlayerProgress;
 use gd_game::testing::TestGame;
 use gd_game::trade::{Markets, buy_item, sell_item};
-use gd_sim::items::inventory::Sack;
+use gd_game_core::inventory::Inventory;
+use gd_game_core::progress::PlayerProgress;
 use gd_sim::items::market::{BUYBACK_TAB, VENDOR_TABS};
 
 const MARKET: &str = "records/creatures/npcs/merchants/merchanttbl_a101.dbr";

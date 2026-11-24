@@ -5,9 +5,9 @@
 //!   story's `GiveDevotion` and restored shrines grant them, capped by
 //!   `maxDevotionPoints` (see `gd_sim::devotion`).
 //! * Shrines (`StaticShrine`): a shrine whose `<difficulty>Disabled` is set
-//!   does not exist on that difficulty (`StaticShrine::Load` @0x1805662a0
+//!   does not exist on that difficulty (`StaticShrine::Load`
 //!   skips it). Using one already restored only says so
-//!   (`RequestToUse` @0x180567f40: `Player::IsShrineUIDKnown`);
+//!   (`RequestToUse`: `Player::IsShrineUIDKnown`);
 //!   otherwise using it opens the shrine window ([`ShrineWindow`], see
 //!   "Shrine window" below). A shrine with a `<difficulty>MonsterSpawn`
 //!   proxy starts its fight when the window is accepted and is restored
@@ -40,30 +40,30 @@
 //!
 //! Shrine window (Game.dll / `Grim Dawn.exe`):
 //! * Using an unrestored shrine sends `EngageShrineRequest` (Game.dll
-//!   0x180310ea0): a locked shrine answers `tagShrineLocked`, one restored
+//!   `EngageShrineRequest::Execute`): a locked shrine answers `tagShrineLocked`, one restored
 //!   for this player `tagShrineHostActivated`, one in use by another player
-//!   `tagShrineBusy`; otherwise `EngageShrineResponse` (0x1802c47a0) posts
+//!   `tagShrineBusy`; otherwise `EngageShrineResponse` (`EngageShrineResponse::Execute`) posts
 //!   game event 60 with the shrine and `HasProxy`, and the game opens one
 //!   of two windows from `records/ui/shrine/shrine_table.dbr` (`hudShrineWindow`):
-//!   the "Ruined Shrine" offering window (loader 0x1401d2640) or, for a
+//!   the "Ruined Shrine" offering window (loader `ShrineWindow::Load`) or, for a
 //!   shrine with a proxy, the "Desecrated Shrine" window (loader
-//!   0x1401d4030: `tagShrineConfirmProxy`, button `tagShrineButton02`),
+//!   `ShrineProxyWindow::Load`: `tagShrineConfirmProxy`, button `tagShrineButton02`),
 //!   whose button sends `StartShrineProxyToServer` → `RunProxy`
-//!   (0x1401d45c0).
-//! * The offering window's update (0x1401d1da0) counts each offering with
+//!   (`ShrineProxyWindow::OnButtonPress`).
+//! * The offering window's update (`ShrineWindow::Update`) counts each offering with
 //!   `Player::GetItemCountInStashes` (bags, then the material storage,
 //!   private stash and transfer stash), less the earlier slots asking for
 //!   the same item; a slot is filled when one is left ([`offering_slots`]).
 //!   Its "Offer" button is enabled only when every slot is filled; its
-//!   press (0x1401d3900) sends `CleanseShrineConfigCmd`, whose `Execute`
+//!   press (`ShrineWindow::OnOffer`) sends `CleanseShrineConfigCmd`, whose `Execute`
 //!   takes one of each offering in the same order (`TakeOfferings`:
 //!   `TakeItemFromCharacter`, `TakeItemFromReagents`, private stash,
-//!   transfer), then `CleanseShrine` (0x1805691e0) rewards the players
+//!   transfer), then `StaticShrine::CleanseShrine` rewards the players
 //!   within `bindRadius` of it and switches it to restored.
 //! * Cancel and the close button only hide the window; it also closes
 //!   when the player is farther than the shrine's `GetUICloseDistance`
-//!   (`uiCloseDistance`, 3D, 0x1401d1da0). Nothing is taken until "Offer".
-//! * Saving (the window's show handler sub_1401d3380): showing the
+//!   (`uiCloseDistance`, 3D, `ShrineWindow::Update`). Nothing is taken until "Offer".
+//! * Saving (the window's show handler `ShrineWindow::OnShow`): showing the
 //!   offering window calls `GameEngine::SetSaveEnabled(false)`; hiding it (only
 //!   when it was shown) calls `SetSaveEnabled(true)`, `AutoSave`,
 //!   `SaveTransferStash` and `SaveReagents`. Here [`save_disabled`] holds the
@@ -75,17 +75,17 @@
 //!   The `bindRadius` check
 //!   is left out: a single player with the window open is always within
 //!   it (`uiCloseDistance` 7 m vs `bindRadius` 80 m on stock shrines).
-use crate::data::GameData;
 use crate::movement::MovePath;
 use crate::nav::Nav;
-use crate::player::{Loadout, Player, ProfileDirty};
-use crate::session::MessageDrain;
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
 use gd_formats::map::{Uid, uid_bytes, uid_words};
-use gd_sim::combat::Rng;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
+use gd_game_core::session::MessageDrain;
+use gd_rules::Rng;
 use gd_sim::devotion::Devotions;
 use gd_sim::items::ItemDb;
-use std::collections::HashMap;
 
 /// A celestial power bound to a skill.
 #[derive(Clone, Debug, PartialEq)]
@@ -96,7 +96,7 @@ pub struct Binding {
     pub controller: String,
     /// The item skill instance bound (`player::ItemSkillKey` with `skill`); none for a learned skill or the plain
     /// attack. The engine binds a `Skill` object, so two item skills of one record keep their own powers.
-    pub item: Option<crate::player::ItemSkillSource>,
+    pub item: Option<gd_game_core::player::ItemSkillSource>,
 }
 
 #[derive(Resource)]
@@ -125,7 +125,7 @@ pub struct DevotionState {
 
 impl DevotionState {
     /// Grants points (capped at the rules' `max_devotion_points`); returns how many were added.
-    pub fn grant(&mut self, n: u32, rules: &crate::rules::CombatRules) -> u32 {
+    pub fn grant(&mut self, n: u32, rules: &gd_game_core::rules::CombatRules) -> u32 {
         let max = rules.0.levels.max_devotion_points.max(0) as u32;
         let add = gd_sim::devotion::grant(self.total, max, n);
         self.points += add;
@@ -134,8 +134,8 @@ impl DevotionState {
         add
     }
 
-    /// A celestial power's devotion level (`Skill::GetDevotionLevel`, skill
-    /// +208: 0 until `SkillManager::AddExperience` raises it; 0 for any
+    /// A celestial power's devotion level (`Skill::GetDevotionLevel`,
+    /// `Skill.devotionLevel`: 0 until `SkillManager::AddExperience` raises it; 0 for any
     /// other skill), which its buffs carry (`crate::skill_buffs`).
     pub fn devotion_level(&self, skill: &str) -> u32 {
         self.powers
@@ -155,7 +155,7 @@ impl DevotionState {
         db: &gd_formats::vfs::Database,
         power: &str,
         skill: &str,
-        item: Option<crate::player::ItemSkillSource>,
+        item: Option<gd_game_core::player::ItemSkillSource>,
     ) -> bool {
         // `templateAutoCast` of the power's profile record (a wrapper's
         // `buffSkillName`: `Skill::LoadResources` reads it).
@@ -234,10 +234,10 @@ pub struct RemoveStar {
 #[derive(Message, Clone, Debug)]
 pub struct BindPower {
     pub power: String,
-    pub skill: Option<String>,
+    pub skill: Option<std::sync::Arc<str>>,
     /// The item skill instance picked (the skill-select list's row); none for a learned skill, and for a hot slot
     /// key, whose slot names a skill only: then an unlearned skill's first worn, else cached, instance.
-    pub item: Option<crate::player::ItemSkillSource>,
+    pub item: Option<gd_game_core::player::ItemSkillSource>,
 }
 
 /// Undo every star taken or refunded since the devotion window opened.
@@ -265,21 +265,21 @@ pub enum DevotionStep {
 /// Changes made in the open devotion window, in order.
 ///
 /// Devotion pane (GrimDawn.exe): the undo button is the pane's
-/// `undoButton` (click callback sub_14018BEC0, `a3 == a1 + 288`). Each star
-/// counts the clicks made in the window (star `+304`; the pane's "something
-/// to undo" flag `+9242` is set by any, sub_1401853B0, and enables the button:
-/// sub_140188870 disables it while clear); the window's total reclamation delta
-/// is `+10980`. Undo walks every star with a count: when the pane is in
-/// reclaim mode (`+9241`, set while removing stars) it levels the skill up
+/// `undoButton` (click callback `DevotionWindow::OnButtonEvent`, sender `DevotionWindow.undoButton`). Each star
+/// counts the clicks made in the window (`DevotionStar.clickCount`; the pane's "something
+/// to undo" flag `DevotionWindow.canUndo` is set by any, `DevotionWindow::HandleStarClick`, and enables the button:
+/// `DevotionWindow::Update` disables it while clear); the window's total reclamation delta
+/// is `DevotionWindow.reclaimDelta`. Undo walks every star with a count: when the pane is in
+/// reclaim mode (`DevotionWindow.reclaimMode`, set while removing stars) it levels the skill up
 /// again and spends the points (`SubtractDevotionPoint`), otherwise it takes the
-/// skill away (`vtable+80(0)`) and returns the points (`AddDevotionPoints`);
+/// skill away (`Skill::SetSkillLevel(0)`) and returns the points (`AddDevotionPoints`);
 /// it then calls `SkillManager::UseDevotionReclamationPoints(-removals)`, which
 /// lowers the refund count and gives back the gold and aether the removals cost
-/// (Game.dll 0x180534f20: negative count, cost of the tier at each lowered
-/// count), clears the counts, `+9242` and `+10980`. It is all-or-nothing.
-/// Hiding the pane (sub_14018B120 with 0: leaves reclaim mode; the tab switch
-/// asks `tagConfirmSkillChanges`, sub_14018B280, then sub_14018B5B0 resets
-/// `+9242`/`+10980`) makes the changes final.
+/// (Game.dll `SkillManager::RefundDevotionReclamation`: negative count, cost of the tier at each lowered
+/// count), clears the counts, `canUndo` and `reclaimDelta`. It is all-or-nothing.
+/// Hiding the pane (`DevotionWindow::SetVisible` with 0: leaves reclaim mode; the tab switch
+/// asks `tagConfirmSkillChanges`, `DevotionWindow::ConfirmTabSwitch`, then `DevotionWindow::ClearPendingChanges`
+/// resets `canUndo` / `reclaimDelta`) makes the changes final.
 /// PORT: the engine has one pane-wide mode and unordered counts; here every
 /// click is a step undone newest first (same result for one mode). A refunded
 /// power's experience and bindings are restored (the engine keeps them on the
@@ -321,19 +321,20 @@ pub fn reclaim_cost(db: &gd_formats::vfs::Database, reclaimed: u32) -> (u64, u32
 /// (`Player::GetCurrentAether`, what a refund takes; the crystal is `gameengine.dbr` `aetherCrystal`).
 pub fn aether_held(
     data: &GameData,
-    inv: &crate::inventory::Inventory,
-    stash: &crate::stash::Stash,
+    inv: &gd_game_core::inventory::Inventory,
+    stash: &gd_game_core::stash::Stash,
 ) -> u32 {
-    crate::stash::count(data.engine().aether_crystal.as_slice(), inv, stash)
+    gd_game_core::stash::count(data.engine().aether_crystal.as_slice(), inv, stash)
 }
 
 /// Applies the devotion window's requests: taking a star (a point, the
 /// constellation rules `Devotions::cannot_take`), refunding one (gold and
 /// aether crystals, `cannot_remove`), binding a power.
 ///
-/// The window has two modes (GrimDawn.exe star click `sub_14017EB80`, pane flag `+9241`): opened
-/// plainly, a left click takes a star and nothing refunds one (no other button reaches the stars,
-/// `sub_1401853B0`); opened by a spirit guide (`crate::reclamation`, `SkillReclamation::devotion`) a left
+/// The window has two modes (GrimDawn.exe star click `DevotionWindow::OnStarClick`, pane flag
+/// `DevotionWindow.reclaimMode`): opened plainly, a left click takes a star and nothing refunds one (no other
+/// button reaches the stars, `DevotionWindow::HandleStarClick`); opened by a spirit guide (`crate::reclamation`,
+/// `SkillReclamation::devotion`) a left
 /// click on a taken star refunds it (`SkillManager::UseDevotionReclamationPoints(1)`, then the point back,
 /// `AddDevotionPoints`, a celestial power's binding dropped) and nothing takes one. So a [`TakeStar`] is
 /// refused in the mode and a [`RemoveStar`] outside it.
@@ -347,9 +348,9 @@ pub fn devotion_requests(
     mut players: Query<(Entity, &mut Loadout), With<Player>>,
     data: Res<GameData>,
     // Option: the refund pays from whichever of these exist.
-    mut inv: Option<ResMut<crate::inventory::Inventory>>,
-    mut stash: Option<ResMut<crate::stash::Stash>>,
-    mut progress: Option<ResMut<crate::progress::PlayerProgress>>,
+    mut inv: Option<ResMut<gd_game_core::inventory::Inventory>>,
+    mut stash: Option<ResMut<gd_game_core::stash::Stash>>,
+    mut progress: Option<ResMut<gd_game_core::progress::PlayerProgress>>,
     mut undo: ResMut<DevotionUndo>,
     // Option: created with the player (`reclamation::init_reclamation`); without it nothing refunds.
     reclaim: Option<Res<crate::reclamation::SkillReclamation>>,
@@ -365,7 +366,8 @@ pub fn devotion_requests(
         match &b.skill {
             Some(skill) => {
                 let item = b.item.clone().or_else(|| {
-                    (skill != crate::casting::DEFAULT_ATTACK && loadout.skills.level(skill) == 0)
+                    (&**skill != gd_game_core::casting::DEFAULT_ATTACK
+                        && loadout.skills.level(skill) == 0)
                         .then(|| loadout.item_skill_source(skill))
                         .flatten()
                 });
@@ -440,7 +442,7 @@ pub fn devotion_requests(
         }
         progress.gold -= gold;
         if aether > 0 {
-            crate::stash::take(data.engine().aether_crystal.as_slice(), aether, inv, stash);
+            gd_game_core::stash::take(data.engine().aether_crystal.as_slice(), aether, inv, stash);
         }
         state.reclaimed += 1;
         loadout
@@ -476,16 +478,16 @@ pub fn undo_devotion(
     mut state: ResMut<DevotionState>,
     mut players: Query<(Entity, &mut Loadout), With<Player>>,
     (mut stash, mut inv): (
-        Option<ResMut<crate::stash::Stash>>,
-        Option<ResMut<crate::inventory::Inventory>>,
+        Option<ResMut<gd_game_core::stash::Stash>>,
+        Option<ResMut<gd_game_core::inventory::Inventory>>,
     ),
-    mut progress: Option<ResMut<crate::progress::PlayerProgress>>,
+    mut progress: Option<ResMut<gd_game_core::progress::PlayerProgress>>,
     data: Res<GameData>,
     (shared, choice, save_dir, mut error): (
-        Res<crate::stash::SharedFiles>,
-        Res<crate::session::Choice>,
-        Res<crate::session::SaveDir>,
-        MessageWriter<crate::stash::QuickActionError>,
+        Res<gd_game_core::stash::SharedFiles>,
+        Res<gd_game_core::session::Choice>,
+        Res<gd_game_core::session::SaveDir>,
+        MessageWriter<gd_game_core::stash::QuickActionError>,
     ),
 ) {
     let undone = undos.read().count() > 0;
@@ -513,13 +515,13 @@ pub fn undo_devotion(
             to_storage = false;
             let item = gd_formats::save::item::Item {
                 base_name: c.to_owned(),
-                seed: crate::rng::u32(1..0x7FFF_FFFF),
+                seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
                 stack_count: aether,
                 ..Default::default()
             };
             if !inv.as_deref_mut().is_some_and(|i| i.add_to_bags(item)) {
                 info!("devotion: no room in the bags for the refunded aether; undo refused");
-                error.write(crate::stash::QuickActionError { notify: false });
+                error.write(gd_game_core::stash::QuickActionError { notify: false });
                 return;
             }
         }
@@ -552,7 +554,7 @@ pub fn undo_devotion(
                         && to_storage
                         && let (Some(st), Some(c)) = (stash.as_deref_mut(), crystal)
                     {
-                        crate::stash::store_material(&mut st.materials, c, aether);
+                        gd_game_core::stash::store_material(&mut st.materials, c, aether);
                     }
                 }
             }
@@ -567,7 +569,7 @@ pub fn undo_devotion(
 /// What the shrine window's requests need: the devotion state and the bags (the offerings).
 fn shrine_window_inputs(
     state: Option<Res<DevotionState>>,
-    inv: Option<Res<crate::inventory::Inventory>>,
+    inv: Option<Res<gd_game_core::inventory::Inventory>>,
 ) -> bool {
     state.is_some() && inv.is_some()
 }
@@ -585,10 +587,10 @@ impl Plugin for DevotionPlugin {
             .add_systems(
                 Update,
                 (
-                    init_devotion.run_if(resource_exists::<crate::rules::CombatRules>),
-                    story_devotion.run_if(resource_exists::<crate::rules::CombatRules>),
+                    init_devotion.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
+                    story_devotion.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     power_experience
-                        .run_if(resource_exists::<crate::progress::PlayerProgress>)
+                        .run_if(resource_exists::<gd_game_core::progress::PlayerProgress>)
                         .run_if(resource_exists::<DevotionState>),
                     discover_shrines.run_if(resource_exists::<DevotionState>),
                     use_shrine.run_if(resource_exists::<DevotionState>),
@@ -597,7 +599,7 @@ impl Plugin for DevotionPlugin {
                     shrine_fights.run_if(resource_exists::<DevotionState>),
                 )
                     .chain()
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::player::PlayerSet),
             );
     }
 }
@@ -630,7 +632,7 @@ pub fn save_disabled(window: &ShrineWindow) -> bool {
 pub fn shrine_autosave(
     window: Res<ShrineWindow>,
     mut was_open: Local<bool>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut save: MessageWriter<crate::save::SaveRequest>,
 ) {
     // The window of a finished session is gone with it: no close to autosave.
@@ -662,17 +664,17 @@ pub struct ShrineCleansed(pub Entity);
 
 /// The window's three offering slots (`shrineBox1..3`): the offering of
 /// each (None: no offering, the slot is covered) and whether the player has
-/// it, counting each item once per slot asking for it (0x1401d1da0).
+/// it, counting each item once per slot asking for it (`ShrineWindow::Update`).
 pub fn offering_slots(
     sh: &Shrine,
-    inv: &crate::inventory::Inventory,
-    stash: Option<&crate::stash::Stash>,
+    inv: &gd_game_core::inventory::Inventory,
+    stash: Option<&gd_game_core::stash::Stash>,
 ) -> [Option<(String, bool)>; 3] {
     let count = |rec: &str| {
         let names = [rec.to_owned()];
         stash.map_or_else(
             || inv.count_by_record(rec),
-            |s| crate::stash::count(&names, inv, s),
+            |s| gd_game_core::stash::count(&names, inv, s),
         )
     };
     std::array::from_fn(|i| {
@@ -723,10 +725,10 @@ pub struct Shrine {
 }
 
 impl Shrine {
-    /// `IsOfInterest`: `StaticShrine` @0x180568870 while dormant
+    /// `IsOfInterest`: `StaticShrine` while dormant
     /// (state 1), 4, or restored (6) and not `<difficulty>Disabled` (a disabled
     /// one is not spawned here), so not during its fight (2) or the restoring
-    /// animation (5); `MonsterShrine` @0x18056a0e0 only while dormant (state 1:
+    /// animation (5); `MonsterShrine` only while dormant (state 1:
     /// not fighting, not cleared).
     pub fn is_of_interest(&self, state: Option<&DevotionState>) -> bool {
         self.fight.is_none()
@@ -742,7 +744,7 @@ pub fn spawn_shrine(
     tf: Transform,
     record: &str,
     uid: Uid,
-    mode: gd_sim::mode::Mode,
+    mode: gd_rules::mode::Mode,
 ) -> Option<Entity> {
     let rec = db.get(record)?;
     let difficulty = mode.difficulty;
@@ -758,8 +760,8 @@ pub fn spawn_shrine(
     let shrine = Shrine {
         uid,
         record: record.to_owned(),
-        radius: crate::combat::get_radius(Some(rec), crate::combat::ACTOR_RADIUS),
-        range: crate::combat::fixed_usable_range(Some(rec)),
+        radius: gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS),
+        range: gd_game_core::combat::fixed_usable_range(Some(rec)),
         points: rec.i32("devotionPoints").unwrap_or(0).max(0) as u32,
         offerings: std::array::from_fn(|i| f(&format!("Offering{}", i + 1))),
         proxy: f("MonsterSpawn"),
@@ -800,8 +802,8 @@ pub fn init_devotion(
     mut commands: Commands,
     // Option: `have` is the existence check (this system creates it); `loaded` is absent for a new character.
     have: Option<Res<DevotionState>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    data: Res<crate::data::GameData>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    data: Res<gd_game_core::data::GameData>,
     players: Query<(), With<Player>>,
 ) {
     if have.is_some() || players.is_empty() {
@@ -815,7 +817,7 @@ pub fn init_devotion(
         discovered: Vec::new(),
         totems_done: Vec::new(),
         reclaimed: 0,
-        powers: HashMap::new(),
+        powers: HashMap::default(),
         bindings: Vec::new(),
         data: Devotions::load(&data.db),
         version: 1,
@@ -850,7 +852,7 @@ pub fn init_devotion(
             if k.autocast_skill.is_empty() || k.autocast_controller.is_empty() {
                 continue;
             }
-            if let Some(item) = crate::player::item_skill_binding_restored(&data.db, g, k) {
+            if let Some(item) = gd_game_core::player::item_skill_binding_restored(&data.db, g, k) {
                 s.bindings.push(Binding {
                     skill: k.skill_name.clone(),
                     power: k.autocast_skill.clone(),
@@ -877,22 +879,22 @@ pub fn init_devotion(
 /// state is remembered for shrines streamed in later.
 #[allow(clippy::too_many_arguments)]
 pub fn story_devotion(
-    mut fresh: crate::session::NewSession,
-    mut events: MessageReader<crate::story::StoryEffect>,
+    mut fresh: gd_game_core::session::NewSession,
+    mut events: MessageReader<gd_game_core::story::StoryEffect>,
     // Option: the story effects of other kinds are handled without devotion.
     mut state: Option<ResMut<DevotionState>>,
     mut shrine_locks: MessageReader<ShrineLock>,
-    rules: Res<crate::rules::CombatRules>,
-    data: Res<crate::data::GameData>,
+    rules: Res<gd_game_core::rules::CombatRules>,
+    data: Res<gd_game_core::data::GameData>,
     mut shrines: Query<(&Transform, &mut Shrine)>,
     mut locks: Local<Vec<(String, Vec3, bool)>>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
     if fresh.begun() {
         *locks = Default::default();
     }
     for ev in events.read() {
-        if let gd_sim::story::Effect::GiveDevotion(n) = &ev.0
+        if let gd_story::story::Effect::GiveDevotion(n) = &ev.0
             && let Some(s) = state.as_mut()
         {
             let add = s.grant(*n, &rules);
@@ -900,7 +902,7 @@ pub fn story_devotion(
                 "devotion: +{add} point(s) from the story ({} unspent)",
                 s.points
             );
-            // `ScriptableAction_GiveDevotion` @0x18046acc0: the points
+            // `ScriptableAction_GiveDevotion`: the points
             // granted (clamped by the cap) as the headline, type 4; nothing when none were.
             if add > 0 {
                 let tag = if add == 1 {
@@ -913,7 +915,7 @@ pub fn story_devotion(
                     .get(tag)
                     .unwrap_or(tag)
                     .replace("{%d0}", &add.to_string());
-                cinematic.write(crate::story::CinematicText::plain(head, 4));
+                cinematic.write(gd_game_core::story::CinematicText::plain(head, 4));
             }
         }
     }
@@ -952,13 +954,13 @@ pub fn story_devotion(
 /// `experience` since the last frame (`last` starts over with each session, so loading a character with
 /// more experience than the previous one is not a gain).
 pub fn power_experience(
-    p: Res<crate::progress::PlayerProgress>,
+    p: Res<gd_game_core::progress::PlayerProgress>,
     mut s: ResMut<DevotionState>,
-    players: Query<&crate::player::Loadout, With<Player>>,
-    data: Res<crate::data::GameData>,
-    mut fresh: crate::session::NewSession,
+    players: Query<&gd_game_core::player::Loadout, With<Player>>,
+    data: Res<gd_game_core::data::GameData>,
+    mut fresh: gd_game_core::session::NewSession,
     mut last: Local<Option<u64>>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
     if fresh.begun() {
         *last = None;
@@ -975,7 +977,9 @@ pub fn power_experience(
     let bound: Vec<String> = s
         .bindings
         .iter()
-        .filter(|b| b.skill == crate::casting::DEFAULT_ATTACK || loadout.skills.level(&b.skill) > 0)
+        .filter(|b| {
+            b.skill == gd_game_core::casting::DEFAULT_ATTACK || loadout.skills.level(&b.skill) > 0
+        })
         .map(|b| b.power.to_ascii_lowercase())
         .collect();
     for power in bound {
@@ -1000,11 +1004,11 @@ pub fn power_experience(
             // over `tagDevotionSkillLevelUp(skill name, rank)`, or `tagDevotionSkillMaxLevel(name)` at the last rank.
             let name = rec.str("skillDisplayName").unwrap_or_default().to_owned();
             let max = e.0 as usize >= levels.len();
-            let mut args = vec![crate::floating::TextArg::Tag(name)];
+            let mut args = vec![gd_game_core::floating::TextArg::Tag(name)];
             if !max {
-                args.push(crate::floating::TextArg::Num(e.0 as f32));
+                args.push(gd_game_core::floating::TextArg::Num(e.0 as f32));
             }
-            cinematic.write(crate::story::CinematicText {
+            cinematic.write(gd_game_core::story::CinematicText {
                 head: "tagDevotionUpdate".into(),
                 sub: if max {
                     "tagDevotionSkillMaxLevel"
@@ -1054,18 +1058,18 @@ pub fn use_shrine(
             &Transform,
             &mut MovePath,
             &mut crate::player_orders::InteractTarget,
-            &crate::combat::Combatant,
-            &crate::character::Character,
+            &gd_game_core::combat::Combatant,
+            &gd_game_core::character::Character,
         ),
         With<Player>,
     >,
     s: Res<DevotionState>,
-    mut notify: MessageWriter<crate::story::Notify>,
+    mut notify: MessageWriter<gd_game_core::story::Notify>,
     mut fights: ShrineFights,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     nav: Res<crate::nav::Nav>,
-    data: Res<crate::data::GameData>,
-    mut sound: MessageWriter<crate::visuals::PlaySound>,
+    data: Res<gd_game_core::data::GameData>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
     mut tested: Local<bool>,
 ) {
     let Ok((ptf, mut path, mut interact, pcb, ch)) = players.single_mut() else {
@@ -1101,8 +1105,12 @@ pub fn use_shrine(
     let at = gt.translation();
     // Use range (`player_orders::usable_range`): player radius + shrine radius + `usableRange`, 3D, +1 m at the
     // walk's end.
-    let range =
-        crate::player_orders::usable_range(pcb.radius, sh.radius, sh.range, path.points.is_empty());
+    let range = gd_game_core::player_orders::usable_range(
+        pcb.radius,
+        sh.radius,
+        sh.range,
+        path.points.is_empty(),
+    );
     if ptf.translation.distance(at) > range {
         return;
     }
@@ -1110,7 +1118,7 @@ pub fn use_shrine(
     path.points.clear();
     let mut say = |t: &str| {
         info!("devotion: {t}");
-        notify.write(crate::story::Notify(t.to_owned()));
+        notify.write(gd_game_core::story::Notify(t.to_owned()));
     };
     if s.restored.contains(&sh.uid) || s.totems_done.contains(&sh.uid) {
         say("tagShrineActivated");
@@ -1126,7 +1134,7 @@ pub fn use_shrine(
         if let Some(pak) =
             crate::char_sounds::locked_vox(&data, ch, crate::char_sounds::LockedKind::Shrine)
         {
-            sound.write(crate::visuals::PlaySound {
+            sound.write(gd_game_core::visuals::PlaySound {
                 pak,
                 at: Some(ptf.translation),
             });
@@ -1155,12 +1163,12 @@ pub fn use_shrine(
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ShrineFights<'w> {
     // Option (SystemParam): the fight is optional input; `start` does nothing without rules or levels.
-    progress: Option<Res<'w, crate::progress::PlayerProgress>>,
-    rules: Option<Res<'w, crate::rules::CombatRules>>,
-    world: Option<Res<'w, crate::levels::Levels>>,
+    progress: Option<Res<'w, gd_game_core::progress::PlayerProgress>>,
+    rules: Option<Res<'w, gd_game_core::rules::CombatRules>>,
+    world: Option<Res<'w, gd_game_core::levels::Levels>>,
     nav: Res<'w, Nav>,
     data: Res<'w, GameData>,
-    bodies: ResMut<'w, crate::creature::BodyCache>,
+    bodies: ResMut<'w, gd_game_core::creature::BodyCache>,
     session: crate::session::Session<'w>,
     factions: Option<Res<'w, crate::factions::PlayerFactions>>,
 }
@@ -1211,8 +1219,8 @@ pub fn shrine_requests(
     players: Query<&Transform, With<Player>>,
     s: Res<DevotionState>,
     (mut inv, stash): (
-        ResMut<crate::inventory::Inventory>,
-        Option<ResMut<crate::stash::Stash>>,
+        ResMut<gd_game_core::inventory::Inventory>,
+        Option<ResMut<gd_game_core::stash::Stash>>,
     ),
     mut cleansed: MessageWriter<ShrineCleansed>,
     mut fights: ShrineFights,
@@ -1252,7 +1260,7 @@ pub fn shrine_requests(
                 for (rec, _) in slots.iter().flatten() {
                     let names = [rec.clone()];
                     match stash.as_deref_mut() {
-                        Some(st) => crate::stash::take(&names, 1, &mut inv, st),
+                        Some(st) => gd_game_core::stash::take(&names, 1, &mut inv, st),
                         None => {
                             inv.remove_by_record(rec, 1);
                         }
@@ -1276,8 +1284,8 @@ pub fn shrine_requests(
 fn restore(
     s: &mut DevotionState,
     sh: &Shrine,
-    rules: &crate::rules::CombatRules,
-) -> Option<crate::story::CinematicText> {
+    rules: &gd_game_core::rules::CombatRules,
+) -> Option<gd_game_core::story::CinematicText> {
     if sh.totem {
         // `GameEngine::HandleShrineReward`: a `MonsterShrine` shows nothing.
         s.totems_done.push(sh.uid);
@@ -1296,14 +1304,14 @@ fn restore(
     );
     // `GameEngine::HandleShrineReward`: type 4, `tagDevotionShrine` over
     // `tagDevotionPoint(s)Awarded` (none when no point was granted).
-    Some(crate::story::CinematicText {
+    Some(gd_game_core::story::CinematicText {
         head: "tagDevotionShrine".into(),
         sub: match add {
             0 => String::new(),
             1 => "tagDevotionPointAwarded".into(),
             _ => "tagDevotionPointsAwarded".into(),
         },
-        sub_args: vec![crate::floating::TextArg::Num(add as f32)],
+        sub_args: vec![gd_game_core::floating::TextArg::Num(add as f32)],
         kind: 4,
         front: false,
     })
@@ -1314,19 +1322,19 @@ fn give_reward(
     commands: &mut Commands,
     data: &GameData,
     nav: &Nav,
-    rewards: &mut MessageWriter<crate::story::StoryEffect>,
+    rewards: &mut MessageWriter<gd_game_core::story::StoryEffect>,
     idb: &ItemDb,
     sh: &Shrine,
     (at, rot): (Vec3, Quat),
     player_level: i32,
     difficulty: usize,
-    world: Option<&crate::levels::Levels>,
+    world: Option<&gd_game_core::levels::Levels>,
     container: &mut crate::loot::ContainerLoot,
-    bodies: &mut crate::creature::BodyCache,
+    bodies: &mut gd_game_core::creature::BodyCache,
 ) {
     if sh.xp > 0 {
-        rewards.write(crate::story::StoryEffect(
-            gd_sim::story::Effect::GiveExperience(sh.xp),
+        rewards.write(gd_game_core::story::StoryEffect(
+            gd_story::story::Effect::GiveExperience(sh.xp),
         ));
     }
     let Some(loot) = &sh.loot else { return };
@@ -1334,13 +1342,13 @@ fn give_reward(
     // PORT: the shrine's region is not carried here (engine source not traced): position lookup.
     let limits = world.and_then(|w| w.level_limits(None, at, difficulty));
     let level = gd_sim::items::loot::container_level(rec, player_level, difficulty, limits, 0);
-    let mut rng = Rng(crate::rng::u32(1..0x7FFF_FFFF));
+    let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let drops = container.drops(idb, loot, level, player_level as u32, Some(at), &mut rng);
     info!(
         "devotion: shrine loot (level {level}): {} items",
         drops.len()
     );
-    // `StaticShrine::CleanseShrine` (dropper +1848: toss, one per release) from
+    // `StaticShrine::CleanseShrine` (`StaticShrine.dropper`: toss, one per release) from
     // `StaticShrine::GetLootDropCoords` / `GetLootDropRadius` (`crate::loot` doc).
     let srec = data.db.get(&sh.record);
     let body = srec
@@ -1350,7 +1358,7 @@ fn give_reward(
     let drop = crate::loot::fixed_drop_point(nav, at, rot, body.as_deref());
     let radius = srec
         .and_then(|r| r.f32("actorRadius"))
-        .unwrap_or(crate::combat::ACTOR_RADIUS);
+        .unwrap_or(gd_game_core::combat::ACTOR_RADIUS);
     crate::loot::drop_loot_by(
         commands,
         idb,
@@ -1366,19 +1374,25 @@ fn give_reward(
 #[allow(clippy::too_many_arguments)]
 pub fn shrine_fights(
     mut commands: Commands,
-    rules: Res<crate::rules::CombatRules>,
+    rules: Res<gd_game_core::rules::CombatRules>,
     mut shrines: Query<(Entity, &GlobalTransform, &mut Shrine)>,
-    alive: Query<(), (With<crate::combat::Combatant>, Without<crate::combat::Dead>)>,
+    alive: Query<
+        (),
+        (
+            With<gd_game_core::combat::Combatant>,
+            Without<gd_game_core::combat::Dead>,
+        ),
+    >,
     mut s: ResMut<DevotionState>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
-    progress: Option<Res<crate::progress::PlayerProgress>>,
-    world: Res<crate::levels::Levels>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    world: Res<gd_game_core::levels::Levels>,
     nav: Res<Nav>,
     data: Res<GameData>,
-    mut rewards: MessageWriter<crate::story::StoryEffect>,
+    mut rewards: MessageWriter<gd_game_core::story::StoryEffect>,
     mut loot: crate::loot::ContainerLoot,
     mut cleansed: MessageReader<ShrineCleansed>,
-    mut bodies: ResMut<crate::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut stats: MessageWriter<crate::play_stats::PlayStat>,
 ) {
     let offered: Vec<Entity> = cleansed.read().map(|c| c.0).collect();

@@ -1,10 +1,11 @@
 //! Headless checks of faction reputation (save values, kills, story).
 use bevy::prelude::*;
 use gd_game::combat::MonsterKilled;
-use gd_game::factions::{PlayerFactions, index_of_name};
-use gd_game::story::StoryEffect;
+use gd_game::factions::PlayerFactions;
 use gd_game::testing::TestGame;
-use gd_sim::story::Effect;
+use gd_game_core::factions::index_of_name;
+use gd_game_core::story::StoryEffect;
+use gd_story::story::Effect;
 
 fn value(g: &TestGame, name: &str) -> f32 {
     g.app

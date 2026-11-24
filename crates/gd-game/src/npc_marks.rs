@@ -3,9 +3,9 @@
 //! (something to say, new or heard), and the service icons of merchants,
 //! blacksmiths, ... (the `punctuation` field of the NPC's record).
 //!
-//! * `Character::UpdatePunctuation` (Game.dll 0x180067b10): a
+//! * `Character::UpdatePunctuation` (Game.dll): a
 //!   character with a conversation asks `Conversation::GetPunctuation`
-//!   ([`gd_sim::story::Story::conversation_punctuation`]) at most every 500 ms
+//!   ([`gd_story::story::Story::conversation_punctuation`]) at most every 500 ms
 //!   (its own timer, `Character::UpdateSelf` adds the frame time; it resets
 //!   only when a conversation exists) and attaches the FX record
 //!   [`Punctuation::record`]: 1 `npcexclaimationpoint01`, 2
@@ -24,12 +24,12 @@
 //!   timer; story NPCs ([`StoryActor`]) and placed level NPCs ([`LevelNpc`],
 //!   no story hooks: only the `punctuation` record) are covered, not
 //!   monsters.
-use crate::character::Character;
-use crate::data::GameData;
 use crate::monsters::LevelNpc;
-use crate::story::{StoryActor, StoryRuntime};
 use bevy::prelude::*;
-use gd_sim::story::Punctuation;
+use gd_game_core::character::Character;
+use gd_game_core::data::GameData;
+use gd_game_core::story::{StoryActor, StoryRuntime};
+use gd_story::story::Punctuation;
 
 /// `Character::UpdateSelf`'s poll period for the mark.
 pub const POLL_SECS: f32 = 0.5;
@@ -40,7 +40,7 @@ impl Plugin for NpcMarksPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            update_npc_marks.after(crate::story::StoryStage::Tick),
+            update_npc_marks.after(gd_game_core::story::StoryStage::Tick),
         );
     }
 }

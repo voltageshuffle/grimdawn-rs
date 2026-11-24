@@ -3,41 +3,41 @@
 //! class. Colours / fonts come from the text class
 //! ([`super::tooltip::CLASS_KEYS`], `records/game/gameengine.dbr`).
 //!
-//! `Item::GetUIDisplayText` @0x180325cc0: name (`GetUIGameDescription`
-//! @0x180326590: class `GameEngine::GetItemTextClass(classification)`, the
+//! `Item::GetUIDisplayText`: name (`GetUIGameDescription`:
+//! class `GameEngine::GetItemTextClass(classification)`, the
 //! name or `tagItemNameAndStack`), `itemText` (class 17), `Soulbound` /
 //! `Untradeable` (class 18).
-//! `ItemEquipment::GetUIDisplayText` @0x18033dce0: base, `Illusion:`
+//! `ItemEquipment::GetUIDisplayText`: base, `Illusion:`
 //! line, attributes (`CreateUIAttributeText`: quality line, base lines, blank,
 //! the stores with the racial bonus after the conversions), ascendant block,
 //! skill bonuses (`+1 to all skills in Occultist`), skill modifier blocks,
 //! the pet bonus ([`pet_bonus_block`]), granted skills, item set block (blank first), the inserted component
-//! (`ItemRelic::GetBoundUIDisplayText` @0x180349230) and augment
-//! (`ItemEnchantment::GetBoundUIDisplayText` @0x18033a710), each after a
+//! (`ItemRelic::GetBoundUIDisplayText`) and augment
+//! (`ItemEnchantment::GetBoundUIDisplayText`), each after a
 //! blank, a blank, the requirements (`GetUIRequirementText`), a blank and
-//! `tagShowDetails` (class 35, unless the "always show details" option 68).
-//! Requirement reductions (`Item::GenerateRequirementText`
-//! @0x180327420, [`super::req_reduction`]), the DPS line while comparing
-//! (`GetUIDisplayText_DPS` @0x18033ff50, [`TipCtx::dps_delta`]) and the
+//! `tagShowDetails` (class 35, unless the "always show details" option `detailItemTooltips`).
+//! Requirement reductions (`Item::GenerateRequirementText`,
+//! [`super::req_reduction`]), the DPS line while comparing
+//! (`GetUIDisplayText_DPS`, [`TipCtx::dps_delta`]) and the
 //! granted skills' stat lines with the details flag ([`TipCtx::details`]).
 //! Not ported: the
 //! off-hand weapon's DPS line (`GetUIDisplayText_OffhandDPS`).
-//! `ItemRelic::GetUIDisplayText` @0x180348800: name, `itemText`
+//! `ItemRelic::GetUIDisplayText`: name, `itemText`
 //! (class 32), the classification line (class 31: `SimpleStringsFormat`
 //! of the classification name and `tagComponentComplete`, or
 //! `tagComponentNumber[Rare]` while partial), a blank, the bonus lines
 //! (class 33), the completion bonus, a blank, requirements and (not when
 //! directions are suppressed) a blank and `tagComponentHelp` /
 //! `tagComponentError` / `tagComponentCombine`.
-//! `ItemArtifactFormula::GetUIDisplayText` @0x18032ddd0: name,
+//! `ItemArtifactFormula::GetUIDisplayText`: name,
 //! description (class 58), blank, `tagCraftingComponentRequired` (59), the
 //! reagents `Name (count)` (60/61), blank, `tagCraftingCreate` (69), blank,
 //! the crafted item's tooltip with directions suppressed, then
 //! `tagFormulaLearn03` when already learned, else (directions not
 //! suppressed) a blank and `tagCraftingLearn`.
-//! `ItemEnchantment::GetUIDisplayText` @0x180339dd0,
-//! `ItemSet::GetUIDisplayText` @0x18034b810, `OneShot_Potion::
-//! GetUIDisplayText` @0x1803bef20, `QuestItem::GetUIDisplayText` @0x180428120
+//! `ItemEnchantment::GetUIDisplayText`,
+//! `ItemSet::GetUIDisplayText`, `OneShot_Potion::
+//! GetUIDisplayText`, `QuestItem::GetUIDisplayText`
 //! (same structure, see the functions below).
 use super::db::{Fields, ItemDb};
 use super::resolve::{
@@ -69,18 +69,18 @@ pub struct TipCtx<'a> {
     /// skill modifier blocks' numbers pass through it; `None` shows the
     /// modifier records' raw values.
     pub skills: Option<&'a crate::skill_tooltip::SkillTipCtx<'a>>,
-    /// The details flag of `GetUIDisplayText` (`sub_140225110`: Ctrl
-    /// held, the gamepad's left trigger, or the option `detailItemTooltips`,
-    /// bool 68): the granted skills' stat lines show and the hint reads
+    /// The details flag of `GetUIDisplayText` (its caller computes it, e.g. `QuestRewardItemIcon::GetRolloverText`:
+    /// Ctrl held, the gamepad's left trigger, or the option `detailItemTooltips`):
+    /// the granted skills' stat lines show and the hint reads
     /// `tagHideDetails`.
     pub details: bool,
-    /// The option `detailItemTooltips` (bool 68): hides the hint line.
+    /// The option `detailItemTooltips`: hides the hint line.
     pub details_option: bool,
     /// `GetUIDisplayText_DPS`'s value: the change of the primary skill's DPS
     /// when this weapon replaces the worn one (rounded numbers, see
     /// `gd_game::sheet_dps::compare_dps`); `None` outside a comparison.
     pub dps_delta: Option<f32>,
-    /// The off-hand DPS change (`GetUIDisplayText_OffhandDPS` @0x1803401d0: a one-hander compared with a worn off-hand
+    /// The off-hand DPS change (`GetUIDisplayText_OffhandDPS`: a one-hander compared with a worn off-hand
     /// weapon), printed right after the main DPS line.
     pub dps_offhand: Option<f32>,
     /// The player's weapon attack animation rate (frame rate / length,
@@ -173,7 +173,7 @@ pub fn name_class(c: Classification) -> u8 {
     }
 }
 
-/// `GameEngine::GetItemClassificationName` @0x1802e88e0: the prefix word of
+/// `GameEngine::GetItemClassificationName`: the prefix word of
 /// a classification (`tagMagic` ... `tagLegend`; empty for Common and the
 /// others).
 fn classification_word(ctx: &TipCtx, c: Classification) -> String {
@@ -233,8 +233,8 @@ fn name_line(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Line {
 }
 
 /// The item's symbol: the name line's bitmap at 0.8 x its size (`Item::GetUIGameDescription` puts
-/// `ItemEquipment` +2872 on the name line with scale 0.8; `ItemEquipment::GetUIDisplayText` loads it from
-/// `Item::GetSymbolBitmapName` @0x180325a10, so only equipment has one). The names are `gameiteminfo.dbr`'s
+/// `ItemEquipment.symbolBitmap` on the name line with scale 0.8; `ItemEquipment::GetUIDisplayText` loads it from
+/// `Item::GetSymbolBitmapName`, so only equipment has one). The names are `gameiteminfo.dbr`'s
 /// (`GameEngine::LoadFromDatabase`): a pre-awakened item ([`pre_awakened`]) shows `awakenedItemSymbol`; else
 /// an item with an ascendant affix (`HasAscendantBonus`) its `<class>AscendedSymbol` by its display class
 /// ([`Classification::color_index`]); else a double rare of a rare base (17) `doubleRareMonsterInfrequentSymbol`,
@@ -292,7 +292,7 @@ fn pre_awakened(db: &super::ItemDb, base: &str) -> bool {
     })
 }
 
-/// `Item::GetUIDisplayText` @0x180325cc0.
+/// `Item::GetUIDisplayText`.
 fn item_head(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     let mut out = vec![name_line(ctx, r, base)];
     push_text(
@@ -308,7 +308,7 @@ fn item_head(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     out
 }
 
-/// `GetUIDisplayText_RacialBonus` / `sub_180429CB0` @0x180429CB0: per race of
+/// `GetUIDisplayText_RacialBonus` / `RacialBonus::GetUIDisplayText`: per race of
 /// `racialBonusRace` the percent / absolute damage bonus and defence lines
 /// (tags `RacialBonus*`, the race's `tagRaceNNNP` plural).
 fn racial_lines(ctx: &TipCtx, rec: &Record, class: u8) -> Vec<Line> {
@@ -319,7 +319,7 @@ fn racial_lines(ctx: &TipCtx, rec: &Record, class: u8) -> Vec<Line> {
 }
 
 /// The lines of [`racial_lines`] at a level index (a skill's values are per
-/// level, `a1[4]` of `sub_180429CB0`).
+/// level, the level-index argument of `RacialBonus::GetUIDisplayText`).
 pub(crate) fn racial_text(tags: &TagTable, rec: &Record, li: usize) -> Vec<String> {
     let races = rec.strs("racialBonusRace");
     let mut out = Vec::new();
@@ -350,7 +350,7 @@ pub(crate) fn racial_text(tags: &TagTable, rec: &Record, li: usize) -> Vec<Strin
     out
 }
 
-/// Granted skills: `AttributePak` tail → `sub_18034E5A0` @0x18034e5a0: a
+/// Granted skills: `AttributePak` tail → `ItemSkillAugment::GetUIDisplayText_GrantedSkills`: a
 /// blank, `tagTooltipSkillsHeader`, then each skill's text
 /// (`GameEngine::GenerateUISkillText`): the name (`skillDisplayName` +
 /// `tagItemSkill`, or `tagAutoItemSkill` for an auto-controlled skill), the
@@ -396,9 +396,9 @@ fn skill_lines(ctx: &TipCtx, item: Option<&Item>, skills: &[(String, bool)]) -> 
 }
 
 /// The granted skill's stat block, only with the details flag (
-/// `sub_18034E5A0` -> `GameEngine::GenerateUISkillText` @0x1802e3be0: when
+/// `ItemSkillAugment::GetUIDisplayText_GrantedSkills` -> `GameEngine::GenerateUISkillText`: when
 /// `Skill::GetCurrentLevel` is not 0, `Skill::CreateUIParameterText`
-/// @0x180483570 prints `tagCurrentLevel` (class 48) and the skill's stat lines
+/// prints `tagCurrentLevel` (class 48) and the skill's stat lines
 /// in the item's text class (19), then a blank). PORT: the level is the item's
 /// grant level (`gd_sim::skills::granted_level` of its grants), the lines are
 /// `skill_tooltip::stat_lines` (it carries the mana-reserve line and the summon's pet block) and the pet bonus block.
@@ -447,12 +447,12 @@ fn item_skills(recs: &[&Record]) -> Vec<(String, bool)> {
 }
 
 /// A pet bonus (`petBonusName` of `rec`) at `level` printed for a caller of text class `caller`
-/// (`sub_1803C8D30` @0x1803c8d30): a blank, the title by the bonus's `petTypeNames` count and
+/// (`Skill::CreateUIPetBonusText`): a blank, the title by the bonus's `petTypeNames` count and
 /// the bonus's attribute lines ([`crate::skill_tooltip::pet_bonus_lines`]), title / lines in classes
 /// 25 / 26 for a caller's 26, 28 / 28 for 28, 24 / 42 for 19, 33 and 41, the caller's own for 81 / 82,
 /// else 70 / 71 (`PetBonusTitle` / `PetBonus`). Callers: `ItemEquipment::GetUIDisplayText_PetBonus`
-/// @0x18033fec0 (the base record's bonus at level 1, class 71; `InitializeItem` @0x18033c3a0 ->
-/// `CreateItemPetBonus` @0x18033f9a0 reads no affix's), a granted skill's `CreateUIParameterText` and
+/// (the base record's bonus at level 1, class 71; `InitializeItem` ->
+/// `CreateItemPetBonus` reads no affix's), a granted skill's `CreateUIParameterText` and
 /// `ItemArtifact::GetUIDisplayText` (class 19). PORT: needs the skill tooltip context (the numbers come
 /// from it); without it nothing shows.
 fn pet_bonus_block(ctx: &TipCtx, rec: &Record, level: u32, caller: u8) -> Vec<Line> {
@@ -483,7 +483,7 @@ fn pet_bonus_block(ctx: &TipCtx, rec: &Record, level: u32, caller: u8) -> Vec<Li
     out
 }
 
-/// `WeaponArmor_Shield::GetUIArmorSpecificText` @0x18058d0f0 (the
+/// `WeaponArmor_Shield::GetUIArmorSpecificText` (the
 /// `WeaponArmor::CreateUIAttributeText` virtual after the quality line and
 /// before the base damage list): when the shield's `defensiveBlockChance` is
 /// above 0, `tagShieldBlockInfo` (chance, `defensiveBlock`) and
@@ -512,7 +512,7 @@ fn trim(out: &mut Vec<Line>) {
     }
 }
 
-/// `tagShowDetails` (class 35) after a blank; the game option 68 hides it.
+/// `tagShowDetails` (class 35) after a blank; the game option `detailItemTooltips` hides it.
 fn details_hint(ctx: &TipCtx, out: &mut Vec<Line>) {
     if ctx.details_option {
         return;
@@ -555,8 +555,8 @@ fn resolved_tooltip(ctx: &TipCtx, item: &Item, r: &ResolvedItem) -> Vec<Line> {
     out
 }
 
-/// The lines the vendor search looks through (`Item::GenerateSearchText`
-/// @0x180329370). `ItemEquipment::GetSearchText` @0x18033e4a0:
+/// The lines the vendor search looks through (`Item::GenerateSearchText`).
+/// `ItemEquipment::GetSearchText`:
 /// equipment gets `Item::GetUIDisplayText` (name, text), the attribute text,
 /// the skill / modifier / pet blocks, the set block and the requirements, but
 /// not the `Illusion:` line, the inserted component / augment blocks or the
@@ -619,7 +619,7 @@ fn quest(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     out
 }
 
-/// `OneShot_Potion::GetUIDisplayText` @0x1803bef20: a blank, then the bonuses
+/// `OneShot_Potion::GetUIDisplayText`: a blank, then the bonuses
 /// (class 19) in the order attribute points, skill points, health, health
 /// over time, energy, experience, iron; a blank and `tagPotionDirections`;
 /// `tagCombineStacks`.
@@ -708,8 +708,8 @@ fn potion(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     out
 }
 
-/// `Armor::GetUIQualityDescription` @0x18002c1e0 / `Weapon::
-/// GetUIQualityDescription` @0x18058a1a0 (class 66, `ArtifactClass`):
+/// `Armor::GetUIQualityDescription` / `Weapon::
+/// GetUIQualityDescription` (class 66, `ArtifactClass`):
 /// `PentaStringFormat` of `tagEnchanted` (augmented), `tagStyleAscended`
 /// (ascendant affix), the classification word (`GetItemClassificationName`
 /// of the item's classification; both affixes Rare: `tagDoubleRare`), the
@@ -817,12 +817,13 @@ fn skill_display<'a>(ctx: &TipCtx<'a>, skill: &str) -> Option<&'a Record> {
 }
 
 /// Whether `skill` greys out: the skill bonus lines' and the modifier blocks' grey variant (
-/// `sub_18034DD60`, `sub_180351F90`): the main player's `SkillManager::FindSkillId` has the skill
-/// and the skill its +316 names (its mastery) has learned level (+200) 0. The rule is the
+/// `ItemSkillAugment::GetUIDisplayText`, `SkillModifierContainer::GetUIDisplayText`): the main player's
+/// `SkillManager::FindSkillId` has the skill and the skill its `Skill.masterySkill` names (its mastery) has
+/// learned level 0. The rule is the
 /// mastery's level, not the skill's own. Every class skill is in the manager (`Player::Load` loads
 /// all `skillTree1..80` through `SkillManager::LoadSkills`), so a skill of an unchosen mastery
 /// greys. `SkillManager::CreateAndLoadSkill`
-/// gives a tree's skills and modifiers the tree's mastery as +316 but leaves a mastery's own at
+/// gives a tree's skills and modifiers the tree's mastery as `Skill.masterySkill` but leaves a mastery's own at
 /// 0, so a mastery line (`augmentMasteryName`) never greys; nor do item skills (no tree).
 fn unlearned(ctx: &TipCtx, skill: &str) -> bool {
     let Some(sk) = ctx.skills else { return false };
@@ -838,7 +839,7 @@ fn unlearned(ctx: &TipCtx, skill: &str) -> bool {
 const GRAY_STATS2: u8 = 81;
 const GRAY_STATS3: u8 = 82;
 
-/// Skill bonus lines (the item pak's `+8` text, `sub_18034DD60`, class 19):
+/// Skill bonus lines (the item pak's skill augment text, `ItemSkillAugment::GetUIDisplayText`, class 19):
 /// each `augmentSkillName` as `ItemSkillIncrement` ("+3 to Fire Strike"),
 /// then each `augmentMasteryName` as `ItemMasteryIncrement` ("+1 to all skills
 /// in Occultist"), then `augmentAllLevel` as `ItemAllSkillIncrement`; a level
@@ -931,17 +932,17 @@ fn record_conversions(rec: &Record) -> Vec<super::resolve::Attr> {
     out
 }
 
-/// Skill modifier blocks (the item's modifier container `+8`, `sub_180351F90`
-/// @0x180351f90): `modifiedSkillName{n}` → `modifierSkillName{n}` of the base
+/// Skill modifier blocks (the item's modifier container, `SkillModifierContainer::GetUIDisplayText`):
+/// `modifiedSkillName{n}` → `modifierSkillName{n}` of the base
 /// and affix records, grouped by modified skill in a `std::map` (record name
 /// order: Fire Strike's `playerclass02` before `playerclass07`). Per skill: the
 /// skill's name (class 37, `ItemSkillName`, drawn after its icon, [`modifier_block_icon`]),
-/// then each modifier's attribute text at level 1 (`sub_180350410`, class 26;
+/// then each modifier's attribute text at level 1 (`SkillModifierContainer::GetModifierText`, class 26;
 /// grey 81 / 82 when the skill's mastery is unlearned, [`unlearned`]:
 /// damage through the main player's profile, `DamageAttributeStore::
 /// ProcessText`; the other stores). PORT: the lines come from
 /// `skill_tooltip::stat_lines` of the modifier record (its params and stores);
-/// the transmuter exclusions of `sub_18034FD80` are not
+/// the transmuter exclusions of `SkillModifierContainer::IsTransmuterExcluded` are not
 /// ported. The numbers are the skill tooltip's (`actor::skill_tooltip_damage`,
 /// without the player's conversions): 33 → 397 Fire in the real window.
 fn modifier_blocks(ctx: &TipCtx, recs: &[&Record]) -> Vec<Line> {
@@ -969,7 +970,7 @@ fn modifier_blocks(ctx: &TipCtx, recs: &[&Record]) -> Vec<Line> {
             continue;
         };
         let name = tag(ctx, disp.string("skillDisplayName")).to_string();
-        // Grey (`sub_180351260`): name class 81, lines 82 without colours.
+        // Grey (`SkillModifierContainer::GetGrayText`): name class 81, lines 82 without colours.
         let gray = unlearned(ctx, &target);
         let (name_class, body_class) = if gray {
             (GRAY_STATS2, GRAY_STATS3)
@@ -1008,8 +1009,8 @@ fn modifier_blocks(ctx: &TipCtx, recs: &[&Record]) -> Vec<Line> {
         if body.is_empty() {
             continue;
         }
-        // `sub_180353140` between two blocks: a " " line of class 1 (`DefaultShort`) unless the
-        // last line already is one (`sub_180351F90`).
+        // `SkillModifierContainer::AddBlockSeparator` between two blocks: a " " line of class 1 (`DefaultShort`)
+        // unless the last line already is one (`SkillModifierContainer::GetUIDisplayText`).
         if !out.is_empty() && out.last().is_some_and(|l: &Line| l.class != 1) {
             out.push(line(" ", 1));
         }
@@ -1021,8 +1022,8 @@ fn modifier_blocks(ctx: &TipCtx, recs: &[&Record]) -> Vec<Line> {
     out
 }
 
-/// Before the first skill modifier block (`sub_180351F90` @0x180351f90, with blocks to print and
-/// lines before them): a blank of class 0 (`sub_18001C090`: unless the last line already is class 0),
+/// Before the first skill modifier block (`SkillModifierContainer::GetUIDisplayText`, with blocks to print and
+/// lines before them): a blank of class 0 (`GameTextLines::AddBlankLine`: unless the last line already is class 0),
 /// unless the last line is the `tagTooltipAscensionHeader` text.
 fn blank_before_blocks(ctx: &TipCtx, out: &mut Vec<Line>) {
     let Some(last) = out.last() else { return };
@@ -1032,8 +1033,9 @@ fn blank_before_blocks(ctx: &TipCtx, out: &mut Vec<Line>) {
     out.push(blank());
 }
 
-/// The skill modifier block's icon (`sub_180351F90` / `sub_180350160`): the name line's
-/// `GameTextLine` bitmap is the modified skill's first `skillUpBitmapName` (`SkillProfile` +0x88 of
+/// The skill modifier block's icon (`SkillModifierContainer::GetUIDisplayText` /
+/// `SkillModifierContainer::GetBlockIcon`): the name line's `GameTextLine` bitmap is the modified skill's first
+/// `skillUpBitmapName` (`SkillProfile.skillUpBitmap` of
 /// `GetSkillResource` by the skill object's own record; a `Skill_Modifier`'s parent's), at scale 0.65
 /// (`0x3F266666`).
 fn modifier_block_icon(ctx: &TipCtx, target: &str) -> Option<String> {
@@ -1063,8 +1065,8 @@ fn equipment(ctx: &TipCtx, r: &ResolvedItem, base: &Record, search: bool) -> Vec
             tc::BASE_STATS,
         ));
     }
-    // `CreateUIAttributeText` (Armor @0x18002c5e0, Weapon @0x18058a540,
-    // WeaponArmor @0x18058c0a0): the quality line, the base lines
+    // `CreateUIAttributeText` (Armor, Weapon,
+    // WeaponArmor): the quality line, the base lines
     // (class 18), a blank, then the damage and conversion lists, the racial
     // bonus, the character, defense, retaliation and skill lists and the
     // requirement reductions (class 19). Shields / off-hands put the blank
@@ -1084,7 +1086,7 @@ fn equipment(ctx: &TipCtx, r: &ResolvedItem, base: &Record, search: bool) -> Vec
         |a: &super::resolve::Attr| matches!(a.store, StoreKind::Damage | StoreKind::Conversion);
     // The details flag prints each attribute's `_Min` / `_Max` range numbers
     // (`Create*RangeText`, [`super::tooltip::range_numbers`]); not in the
-    // search text (`ItemEquipment::GetSearchText` @0x18033e4a0 passes 0).
+    // search text (`ItemEquipment::GetSearchText` passes 0).
     let bounds = ctx
         .details
         .then(|| super::resolve::attr_bounds(ctx.db, item))
@@ -1137,10 +1139,10 @@ fn equipment(ctx: &TipCtx, r: &ResolvedItem, base: &Record, search: bool) -> Vec
         out.extend(base_dmg);
         out.extend(base_def);
         out.push(blank());
-        // `Weapon::CreateUIAttributeText` @0x18058a540 after that blank: the
-        // DPS line (`GetUIDisplayText_DPS` @0x18033ff50, class 18, only while
+        // `Weapon::CreateUIAttributeText` after that blank: the
+        // DPS line (`GetUIDisplayText_DPS`, class 18, only while
         // comparing: its sign colour `^g+` / `^r` / `+` then `DamagePerSecond`)
-        // and the blank `sub_18001C090` adds after a non-blank line.
+        // and the blank `GameTextLines::AddBlankLine` adds after a non-blank line.
         if let Some(d) = ctx
             .dps_delta
             .filter(|_| r.class.starts_with("Weapon") && !search)
@@ -1292,7 +1294,7 @@ fn relic_class_line(ctx: &TipCtx, rec: &Record, var1: u32, class: u8) -> Line {
     line(text, class)
 }
 
-/// `ItemRelic::GetBoundUIDisplayText` @0x180349230 (a component inside an
+/// `ItemRelic::GetBoundUIDisplayText` (a component inside an
 /// item): name (class 29), the class line (31), bonuses (33). A component has
 /// no completion bonus (neither this nor `ItemRelic::GetUIDisplayText`
 /// prints one; see [`super::components::roll_bonus`]).
@@ -1338,17 +1340,17 @@ fn relic(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     out
 }
 
-/// `ItemArtifact::GetUIDisplayText` @0x18032a570: name,
+/// `ItemArtifact::GetUIDisplayText`: name,
 /// `itemText` (32), the class line(s) (66), a blank, then the relic's own
 /// attributes (class 19), skill bonuses, skill modifier blocks, racial bonus,
 /// pet bonus and granted skills. With a completion bonus (the save's
-/// `relic_bonus`; `ItemArtifact::InitializeItem` @0x18032a0c0 picks one from
+/// `relic_bonus`; `ItemArtifact::InitializeItem` picks one from
 /// `bonusTableName` when it has none, [`super::components::roll_bonus`]; PORT:
 /// an empty one shows none): a
 /// blank, `tagDeviceBonus` (class 67) and the bonus record's own blocks the same
 /// way, its attributes rolled ([`Source::RelicBonus`], `resolve`); for a
 /// blueprint's preview (`preview`: `ItemArtifactFormula::LoadArtifact` sets the
-/// flag +2378) `tagCraftingRandom` (19) instead; a title left last is dropped.
+/// flag `ItemArtifact.isPreview`) `tagCraftingRandom` (19) instead; a title left last is dropped.
 /// Then a blank, the requirements and the details hint. PORT: the class text
 /// (`artifact classes` tags set by `ItemArtifact::Load`) is not read.
 fn artifact(ctx: &TipCtx, r: &ResolvedItem, base: &Record, preview: bool) -> Vec<Line> {
@@ -1361,7 +1363,7 @@ fn artifact(ctx: &TipCtx, r: &ResolvedItem, base: &Record, preview: bool) -> Vec
     out.push(blank());
     artifact_blocks(ctx, r, base, Source::Base, &mut out);
     let bonus = if preview {
-        let mut rng = crate::combat::Rng(r.item.seed);
+        let mut rng = gd_rules::Rng(r.item.seed);
         (!super::components::roll_bonus(ctx.db, base, &mut rng).is_empty()).then_some(None)
     } else {
         ctx.db.get(&r.item.relic_bonus).map(Some)
@@ -1408,7 +1410,7 @@ fn artifact_blocks(
     out.extend(skill_lines(ctx, None, &item_skills(&[rec])));
 }
 
-/// `ItemEnchantment::GetBoundUIDisplayText` @0x18033a710: name (class 43), the
+/// `ItemEnchantment::GetBoundUIDisplayText`: name (class 43), the
 /// classification line (31: word + `tagEnchantmentName`), bonuses (33).
 fn enchantment_bound(ctx: &TipCtx, rec: &Record, level: u32) -> Vec<Line> {
     let mut out = vec![Line {
@@ -1425,8 +1427,8 @@ fn enchantment_bound(ctx: &TipCtx, rec: &Record, level: u32) -> Vec<Line> {
 
 /// `SimpleStringsFormat(classification word, kNameTag)`, or
 /// `TripleStringFormat2(faction tag, word, kNameTag)` for a faction augment (
-/// `ItemEnchantment::GetUIDisplayText` @0x180339dd0 / `GetBoundUIDisplayText`: item+4792, which
-/// `ItemEnchantment::Load` @0x1803396c0 sets from `factionSource` through `FactionPack::
+/// `ItemEnchantment::GetUIDisplayText` / `GetBoundUIDisplayText`: `ItemEnchantment.faction`, which
+/// `ItemEnchantment::Load` sets from `factionSource` through `FactionPack::
 /// GetFactionFromString`; -1000 = none).
 fn enchant_class_text(ctx: &TipCtx, rec: &Record) -> String {
     let word = classification_word(ctx, Classification::parse(rec.string("itemClassification")));
@@ -1437,7 +1439,7 @@ fn enchant_class_text(ctx: &TipCtx, rec: &Record) -> String {
     }
 }
 
-/// `FactionPack::GetFactionTag` @0x1802a07b0 of `FactionPack::GetFactionFromString` @0x1802a16a0:
+/// `FactionPack::GetFactionTag` of `FactionPack::GetFactionFromString`:
 /// names match case-insensitively (`neutralnpc` = `User1`); the tag is `tagFaction` + the
 /// type's name (`tagFactionAlone`, `Invisible`, `GenericMonster`, `Player`, `Survivors`, `Aetherials`,
 /// `Cthonians`, `Outlaws`, `Beasts`, `User0`..`User40`); anything else is no faction (-1000).
@@ -1534,7 +1536,7 @@ fn formula(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
         }
     }
     for (name, q, _) in reagents {
-        // @0x18032ddd0: the loop pushes class 60 only.
+        // `ItemArtifactFormula::GetUIDisplayText`: the loop pushes class 60 only.
         out.push(line(
             format!("{} ({q})", gd_formats::text::strip_markup(&name)),
             tc::FORMULA_REAGENT_HAVE,
@@ -1586,7 +1588,7 @@ fn formula(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
     out
 }
 
-/// `ItemSet::GetUIDisplayText` @0x18034b810: set name (21), description (22),
+/// `ItemSet::GetUIDisplayText`: set name (21), description (22),
 /// each member (23 not equipped / 24 equipped), a blank, then per piece count
 /// `tagSetItems` with the bonuses that count adds (headers class 24 when
 /// reached, else 23; lines 26 / 28). A count whose bonuses equal the previous

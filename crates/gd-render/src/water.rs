@@ -1,23 +1,23 @@
 //! Water layers (level chunk 9) rendered with a port of `waterbasic.ssh` (lava types: `lavabasic.ssh`, below).
 //!
-//! Geometry (WaterLayer::Load @0x1801FDCE0, block VB builder @0x1801FB650):
+//! Geometry (`WaterLayer::Load`, block VB builder `WaterLayer::BuildBlockVertices`):
 //! a layer is a grid of 9-unit blocks, `(terrain width - 1 + 8) / 9` per row
 //! (Water::Initialize); each stored block is a 10×10 vertex grid at 1-unit
 //! spacing clamped to the block bounds, at the layer height.
 //! The block's 100 bytes are the per-vertex alpha. Depth opacity per vertex is
 //! `lerp(p0, p1, sat((depth − p2) / max(p3 − p2, 1)))` (VS), where depth is
-//! water height − terrain height. Parameters (WaterType::SetShaderParams
-//! @0x180209110): surfaceParams = p[5..8], waterColor = p[11..14],
+//! water height − terrain height. Parameters (`WaterType::SetShaderParams`):
+//! surfaceParams = p[5..8], waterColor = p[11..14],
 //! textureScale = 1/(p9, p10), textureDirection = angle p8°, textureScroll =
 //! p4/p9, depthParams = (p2, p3, p0, p1).
 //!
 //! Shading (`waterbasic.ssh` `basePS`, its DX11 bytecode): the bump is the water type's
 //! NoiseTexture record ([`wt_noise`]), NOT a static texture. The engine generates 256 32×32 value-noise
-//! textures (Engine.dll `sub_1800DC2D0` / `sub_1800DC9B0`: lattice 31×31, hash
+//! textures (Engine.dll `NoiseTexture::GenerateNoise` / `NoiseTexture::GenerateNoiseSlice`: lattice 31×31, hash
 //! `(n·(15731·n² + 789221) − 771171059) & 0x7FFFFFFF`, tent weights 31.75 / 15.875 / 7.9375, byte = trunc(Σ + 127)),
 //! crossfades each of 4 octaves between two of them at the record's `rates` (`NoiseTexture::UpdateLayers`),
-//! composites them at UV scales (1, 2, 4, 8) weighted by `levels` (`noisetexturegen.ssh` `compositeBaseStyle`,
-//! Engine.dll xmmword_18034C3D0) into a `size`² target, and converts the height to a normal map with the ×8 gradient
+//! composites them at UV scales (1, 2, 4, 8) weighted by `levels` (`noisetexturegen.ssh` `compositeBaseStyle`, Engine.dll
+//! `Engine::NoiseOctaveUvScales`) into a `size`² target, and converts the height to a normal map with the ×8 gradient
 //! at ±1/size (`noisetexturegen.ssh` `convertStyle`). PORT: `shaders/water.wesl` evaluates the same composite +
 //! convert per water pixel (3 heights × 8 array samples) instead of rendering the 256² target; the bank is one
 //! 256-layer 32×32 array ([`noise_bank`]), the octave state lives in [`WaterMaterials`] and steps in
@@ -47,17 +47,18 @@
 //! ((m / a)³ or 1 − k³, + 0.15 · sat(a − h) · a) on the crust; alpha = the painted vertex alpha only. No sky,
 //! reflection, specular or glow style; `waterColor` and `surfaceParams.z` unused.
 //!
-//! Points on water ([`WaterPoints`], [`water_above`]): `Water::GetWaterPointInfo` @0x1801f9db0, an upward ray
+//! Points on water ([`WaterPoints`], [`water_above`]): `Water::GetWaterPointInfo`, an upward ray
 //! against every layer, the nearest hit wins; a layer holds a point when its block exists and the block's alpha byte at
-//! the point is non-zero (`WaterLayer::IsPointInLayer` @0x1801ffb00: cell `min(int(frac(x / 9) * 10), 9)` per axis).
-//! A path (river) holds a point that lies in one of its segments (`WaterPath::RayIntersection` @0x1802013d0,
+//! the point is non-zero (`WaterLayer::IsPointInLayer`: cell `min(int(frac(x / 9) * 10), 9)` per axis).
+//! A path (river) holds a point that lies in one of its segments (`WaterPath::RayIntersection`,
 //! `gd_sim::surface::in_path_segment`), so rain and gusts ripple rivers too.
 //!
-//! Water paths (rivers; format in gd-formats `map/water.rs`), `WaterPath::Load` @0x180200b20 and the segment
-//! builder `sub_1802047A0` ([`path_segment`]): each pair of neighbouring control points is a segment whose centre is
+//! Water paths (rivers; format in gd-formats `map/water.rs`), `WaterPath::Load` and the segment builder
+//! `WaterPath::BuildSegment` ([`path_segment`]): each pair of neighbouring control points is a segment whose centre is
 //! the Bézier (p0, p0 + t0, p1 − t1, p1). Its rows: n = min(int(L₂₀ / 4), 64) (L₂₀ = the centre's polyline length over
-//! 20 steps, `sub_1801FCFD0`; n = 0: no geometry), t = r / n for r = 0..=n. The two banks are Béziers too: the ends
-//! at p ± width · side, the handles at the centre's handles ± width (lerped) · the centre's left normal over the chords
+//! 20 steps, `WaterPath::CentreLength`; n = 0: no geometry), t = r / n for r = 0..=n. The two banks are Béziers too:
+//! the ends at p ± width · side, the handles at the centre's handles ± width (lerped) · the centre's left normal over
+//! the chords
 //! t = 1/3 → 0.4333 and 2/3 → 0.7666. Each row has 10 vertices from the left bank to the right (s = k · 0.11111111),
 //! at the path's height; vertex texture u = width(t) · s / p10, v = the along distance in `p9` repeats (each row adds
 //! the mean bank step / L · max(int(L / p9), 1), L the length over n steps); the flow tangent (bump frame) is
@@ -70,19 +71,18 @@
 //! the same surface); `WaterPath::CalcSurfaceVelocity` (the flow at a point, `GetWaterPointInfo`'s velocity) has no
 //! consumer in the port.
 //!
-//! Ripples (`Water::CreateRipple` @0x1801fa070, the set's rules in `gd_sim::weather::Ripples`): the weather adds them
+//! Ripples (`Water::CreateRipple`, the set's rules in `gd_sim::weather::Ripples`): the weather adds them
 //! (rain drops at `weatherQuality` > 1, strong directional wind), and so does every
-//! `World::CreatePointDisturbance` (@0x18021fd90, [`gd_game::visuals::PointDisturbance`]: moving characters, debris,
+//! `World::CreatePointDisturbance` ([`gd_game_core::visuals::PointDisturbance`]: moving characters, debris,
 //! FX paks, floaters, waves; callers in `render/grass.rs`), which calls `CreateRipple(pos, radius, strength, splash)` on the
 //! water of each region whose box grown by the radius holds the point until one is hit. `CreateRipple`'s
 //! splash: when the point is on water, type 1 (the player walking; only when the point lies under the surface), 2
 //! (debris landing on water) or 3 starts the water type's matching splash effect ([`splash_effects`]) at the water
 //! point, whether or not a ripple was added. Their set lives in `render::weather::WeatherState` and [`update_ripples`]
 //! places, grows and draws it. Drawn only
-//! with `detailObjects` (bool 9, `Water::AddToScene` @0x1801f9490) by `WaterRipple.ssh` (`shaders/ripple.wesl`): one
+//! with `detailObjects` (`Water::AddToScene`) by `WaterRipple.ssh` (`shaders/ripple.wesl`): one
 //! quad per live ripple, texture `WaterWalkRipple_01.tex`, SrcAlpha / InvSrcAlpha, no depth write, sort 4020 (before
 //! the effect particles, after the water). PORT: the engine keeps one set per region's water; the port one for all.
-use crate::data::GameData;
 use crate::render::GdDefaults;
 use crate::textures::Textures;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
@@ -97,9 +97,10 @@ use bevy::render::render_resource::{
 };
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
+use gd_formats::collections::HashMap;
 use gd_formats::map::terrain::Terrain;
 use gd_formats::map::water::{ControlPoint, Water, WaterPath, WaterType};
-use std::collections::HashMap;
+use gd_game_core::data::GameData;
 
 pub struct WaterPlugin;
 
@@ -245,7 +246,7 @@ pub struct WaterPoints {
 /// `WaterType::kDefaultSplashEffect`: a water type file before version 3 splashes with it.
 const DEFAULT_SPLASH: &str = "records/level art/water/watersplash.dbr";
 
-/// `WaterType::Load` @0x180207030: version ≥ 3 stores the three splash effect records (+224, +256, +288),
+/// `WaterType::Load`: version ≥ 3 stores the three splash effect records (`WaterType.splashEffects`),
 /// older ones take `kDefaultSplashEffect` for all three.
 fn splash_effects(wt: &WaterType) -> [String; 3] {
     std::array::from_fn(|i| {
@@ -283,7 +284,7 @@ impl WaterPoints {
     }
 
     /// `IsPointInLayer`: inside the grid, on a stored block, on a cell of non-zero alpha; a path: in one of its
-    /// segments (`gd_sim::surface::in_path_segment`, `WaterPath::RayIntersection` @0x1802013d0).
+    /// segments (`gd_sim::surface::in_path_segment`, `WaterPath::RayIntersection`).
     pub fn holds(&self, x: f32, z: f32) -> bool {
         let (x, z) = (x - self.origin.x, z - self.origin.y);
         match &self.shape {
@@ -330,7 +331,7 @@ struct WaterMaterials {
     mats: HashMap<(String, [u32; 14], bool), Handle<WaterMaterial>>,
     /// The shared noise bank, generated on first use.
     bank: Option<Handle<Image>>,
-    /// One state per water type name (the engine: one NoiseTexture per WaterType; PORT: `gd_game::rng`
+    /// One state per water type name (the engine: one NoiseTexture per WaterType; PORT: `gd_game_core::rng`
     /// for the engine's `rand()`).
     states: HashMap<String, NoiseState>,
     /// The GPU copy of each state ([`noise_gpu`]), keyed by the same water type name.
@@ -360,7 +361,7 @@ fn advance_noise(s: &mut NoiseState, dt: f32) {
         s.phase[i] += dt * s.rates[i];
         if s.phase[i] >= 1.0 {
             s.prev[i] = s.cur[i];
-            s.cur[i] = (s.cur[i] + gd_game::rng::u32(0..256)) % 256;
+            s.cur[i] = (s.cur[i] + gd_game_core::rng::u32(0..256)) % 256;
             s.phase[i] = s.phase[i].fract();
         }
     }
@@ -371,8 +372,8 @@ fn noise_gpu(s: &NoiseState) -> [[f32; 4]; 3] {
     [s.phase, s.prev.map(|i| i as f32), s.cur.map(|i| i as f32)]
 }
 
-/// The engine's 256 noise textures as one 32×32 × 256 array (Engine.dll `sub_1800DC2D0` /
-/// `sub_1800DC9B0`): value noise on a 31×31 lattice, seed = slice index.
+/// The engine's 256 noise textures as one 32×32 × 256 array (Engine.dll `NoiseTexture::GenerateNoise` /
+/// `NoiseTexture::GenerateNoiseSlice`): value noise on a 31×31 lattice, seed = slice index.
 /// h(n) = (n·(15731·n² + 789221) − 771171059) & 0x7FFFFFFF (i32 wrapping), v = 1 − h·2⁻³⁰;
 /// tent weights centre 31.75, edges 15.875, diagonals 7.9375 (sum 127); byte = trunc(Σ + 127).
 /// Texel 31 duplicates texel 0 (the lattice wraps mod 31), as in the engine.
@@ -463,7 +464,7 @@ pub fn build(water: &Water, terrain: Option<&Terrain>, origin: Vec3) -> Vec<Wate
             .unwrap_or(ext_z as u32)
             .max(1)
             .div_ceil(9);
-        let mut grid_blocks = HashMap::new();
+        let mut grid_blocks = HashMap::default();
         let mut pos = Vec::new();
         let mut colors = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
@@ -589,7 +590,7 @@ fn centre(a: &ControlPoint, b: &ControlPoint) -> [Vec2; 4] {
     [p0, p0 + t0, p1 - t1, p1]
 }
 
-/// `sub_1801FCFD0`: the polyline length of the centre over `n` steps.
+/// `WaterPath::CentreLength`: the polyline length of the centre over `n` steps.
 fn centre_length(c: &[Vec2; 4], n: u32) -> f32 {
     let mut prev = bezier(c, 0.0);
     let mut len = 0.0;
@@ -601,7 +602,7 @@ fn centre_length(c: &[Vec2; 4], n: u32) -> f32 {
     len
 }
 
-/// One path's mesh and hit shape (module doc, `sub_1802047A0` per segment).
+/// One path's mesh and hit shape (module doc, `WaterPath::BuildSegment` per segment).
 fn build_path(
     path: &WaterPath,
     wt: &WaterType,
@@ -679,7 +680,7 @@ struct PathVertex {
     alpha: f32,
 }
 
-/// `sub_1802047A0`: one segment's grid, rows along × 10 vertices across, each passed to `vertex(x, z, v)`
+/// `WaterPath::BuildSegment`: one segment's grid, rows along × 10 vertices across, each passed to `vertex(x, z, v)`
 /// (region-local x / z); returns the number of row gaps (`None`: too short for geometry). `flags` 1 = the path's
 /// first segment, 2 = its last.
 fn path_segment(
@@ -839,7 +840,7 @@ fn load_cube(data: &GameData, path: &str) -> Option<Image> {
 
 #[allow(clippy::too_many_arguments)]
 fn finish_water(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut WaterSurface)>,
     data: Res<GameData>,
@@ -1136,9 +1137,9 @@ fn ripple_bytes() -> u64 {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_ripples(
     mut rt: ResMut<crate::render::weather::WeatherState>,
-    mut disturbances: MessageReader<gd_game::visuals::PointDisturbance>,
+    mut disturbances: MessageReader<gd_game_core::visuals::PointDisturbance>,
     layers: Query<&WaterPoints>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     time: Res<Time<Virtual>>,
     data: Res<GameData>,
     lights: Query<&GlobalTransform, With<DirectionalLight>>,
@@ -1177,7 +1178,7 @@ pub(crate) fn update_ripples(
             _ => continue,
         };
         let at = Transform::from_xyz(g.pos.x, l.height, g.pos.z);
-        gd_game::visuals::spawn_fx(&mut commands, &data, effect, at);
+        gd_game_core::visuals::spawn_fx(&mut commands, &data, effect, at);
     }
     let dt_ms = time.delta_secs() * 1000.0;
     if dt_ms > 0.0 {

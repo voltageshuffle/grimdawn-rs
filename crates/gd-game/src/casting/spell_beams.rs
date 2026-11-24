@@ -2,15 +2,15 @@
 //! caster ([`SpellBeams`]), their life (`gd_sim::beam`), fan, emit point, directions and lengths, every frame
 //! ([`spell_beams`]). grimdawn `beams.rs` draws them and their effects.
 //!
-//! Game.dll `Skill_AttackSpellBeam::ActivateNow` @0x1804d98f0 (a node per cast: `beamDelay` for the main
-//! player only; the ray count and spread with the learned modifiers', `gd_sim::beam`), `UpdateBeams` @0x1804db2a0:
+//! Game.dll `Skill_AttackSpellBeam::ActivateNow` (a node per cast: `beamDelay` for the main
+//! player only; the ray count and spread with the learned modifiers', `gd_sim::beam`), `UpdateBeams`:
 //! the emit point is the caster's `emitPointName` (default `L Hand`) attach point, re-read every frame; the heading
 //! is the caster's, its slope toward the aim point (the y of the normalised aim - emit) and ray k turned by the
-//! fan's angle k; the held cast's rays grow to `GetMaxBeamLength` @0x1804d88e0 (the ray of `maxRange` + 1 from 1 m
+//! fan's angle k; the held cast's rays grow to `GetMaxBeamLength` (the ray of `maxRange` + 1 from 1 m
 //! behind the emit point, cut by the world and solid entities, minus 1, so never past `maxRange`). Stopping (the
-//! channel ended, `StopEmitting` @0x1804dbeb0) the node keeps its last directions while it retracts.
+//! channel ended, `StopEmitting`) the node keeps its last directions while it retracts.
 //!
-//! Damage (`Update` @0x1804da5a0, `GetTargets` @0x1804dbaa0): every `timeBetweenAttacks` / cast speed ms while the
+//! Damage (`Update`, `GetTargets`): every `timeBetweenAttacks` / cast speed ms while the
 //! ribbons are in the world (`gd_sim::beam::SpellBeam::attack_due`), each ray's drawn ribbon (from its retract point,
 //! its grown length + 1.5 m) hits the foes within `beamThickness` of it, each foe once; so a growing or delayed beam
 //! does not reach past what is drawn. `ActivateNow` pays the energy once, then each strike of the held cast pays it
@@ -22,43 +22,7 @@
 use super::*;
 use gd_sim::beam::{SpellBeam, State, fan_angles};
 
-/// The beam nodes of a caster's channelled beam skill, the held cast's last (`Skill_AttackSpellBeam` +1800 list).
-#[derive(Component, Default)]
-pub struct SpellBeams(pub Vec<BeamNode>);
-
-/// One cast's rays.
-pub struct BeamNode {
-    /// Unique per caster (the drawing's key).
-    pub id: u64,
-    pub skill: String,
-    pub level_index: usize,
-    pub beam: SpellBeam,
-    /// The fan's turn of each ray (radians).
-    angles: Vec<f32>,
-    /// The heading with its slope (kept while retracting): the start effect sits at `emit + heading * retract`.
-    pub heading: Vec3,
-    /// The emit point this frame.
-    pub emit: Vec3,
-    /// Each ray's direction this frame.
-    pub dirs: Vec<Vec3>,
-    /// Each ray meets a surface at its longest (its ground effect emits).
-    pub surface: Vec<bool>,
-    /// `beamName`, `startEffect`, `endEffect` as `ActivateNow` resolved them (`crate::skill_fx::beam_effects`).
-    pub effects: [Option<String>; 3],
-}
-
-impl BeamNode {
-    /// Ray `k`'s drawn segment: from the retract point to its far end.
-    pub fn segment(&self, k: usize) -> (Vec3, Vec3) {
-        let d = self.dirs[k];
-        (
-            self.emit + d * self.beam.retract,
-            self.emit + d * self.beam.lens[k],
-        )
-    }
-}
-
-/// `GetMaxBeamLength` @0x1804d88e0 / `Skill_AttackSpellCone::GetMaxConeLength` @0x1804cc560: the ray from 1 m
+/// `GetMaxBeamLength` / `Skill_AttackSpellCone::GetMaxConeLength`: the ray from 1 m
 /// behind `emit` along `dir`, `range` + 1 long, cut at its first
 /// contact with the world (`World::GetIntersection`: terrain and level meshes) or a solid visible entity
 /// (`GetAllIntersections`), minus 1 and at least 0; and whether it was cut (a surface). Both are the physics world
@@ -77,18 +41,6 @@ pub fn max_beam_length(
     }
 }
 
-/// The skill's ray count and spread (degrees) at `li`, with the learned modifiers' (`GetSkillModifierData`).
-fn fan(data: &GameData, rec: &Record, li: usize, mods: &[(String, usize)]) -> (usize, f32) {
-    let sum = |k: &str| {
-        level_f(rec, k, li)
-            + mods
-                .iter()
-                .filter_map(|(m, ml)| data.db.get(m).map(|r| level_f(r, k, *ml)))
-                .sum::<f32>()
-    };
-    ((sum("beamNumber") as usize).max(1), sum("beamAngle"))
-}
-
 /// Starts, stops and moves every caster's beam nodes (see the module doc).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn spell_beams(
@@ -103,9 +55,9 @@ pub fn spell_beams(
         Option<&Channel>,
         Option<&mut SpellBeams>,
         Has<Player>,
-        Option<&crate::weapon_pool::SkillLinks>,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
         Option<&mut Caster>,
-        Option<&crate::player::Loadout>,
+        Option<&gd_game_core::player::Loadout>,
     )>,
     // `FilterInvalidTargets`: the caster's foes ([`crate::combat::Side::hits`]).
     foes: Query<
@@ -168,13 +120,13 @@ pub fn spell_beams(
                 level_index: ch.level_index,
                 beam: SpellBeam::new(delay, n, attack_period(rec, character)),
                 angles: fan_angles(n, spread),
-                heading: crate::character::facing_flat(tf),
+                heading: gd_game_core::character::facing_flat(tf),
                 emit: tf.translation,
-                dirs: vec![crate::character::facing_flat(tf); n],
+                dirs: vec![gd_game_core::character::facing_flat(tf); n],
                 surface: vec![false; n],
-                effects: crate::skill_fx::beam_effects(
+                effects: gd_game_core::skill_fx::beam_effects(
                     rec,
-                    &crate::skill_fx::override_mods(
+                    &gd_game_core::skill_fx::override_mods(
                         &data.db,
                         links,
                         loadout.map(|l| &l.skills),
@@ -202,7 +154,7 @@ pub fn spell_beams(
             if !node.beam.stopped()
                 && let Some(ch) = channel
             {
-                let flat = crate::character::facing_flat(tf);
+                let flat = gd_game_core::character::facing_flat(tf);
                 let aim = ch.aim.unwrap_or(node.emit + flat * range);
                 let to = aim - node.emit;
                 let slope = (to.y / to.with_y(0.0).length().max(0.5)).clamp(-1.0, 1.0);
@@ -250,7 +202,7 @@ pub fn spell_beams(
                     projectile: false,
                 });
             }
-            crate::visuals::notify(&mut commands, &node.skill);
+            gd_game_core::visuals::notify(&mut commands, &node.skill);
             // The held cast pays each strike and ends when the energy left is under the cost.
             if !node.beam.stopped()
                 && let Some(c) = caster.as_deref_mut()

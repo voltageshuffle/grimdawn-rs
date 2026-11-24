@@ -1,9 +1,11 @@
 use super::*;
+use gd_ui::state::options::{OptionsWindow, Tab};
 
 #[derive(Component)]
 pub(super) struct OptionsRoot;
 
-/// The shown rollover: its tag, root and text size (physical px).
+/// The shown rollover: its tag (a control's rollover tag, or an open dropdown row's full label), root and text size
+/// (physical px).
 #[derive(Default)]
 pub(super) struct Tip {
     tag: Option<String>,
@@ -12,16 +14,19 @@ pub(super) struct Tip {
 }
 
 /// The controls' rollovers: the menu manager's shared rollover box
-/// ([`crate::ui::rollover::menu_tip`]). Grim Dawn.exe: a hovered check box
-/// (sub_1400A01D0), slider (knob or rect, sub_1400EBA70) or dropdown (sub_1400EA880) hands its rollover tag to the
-/// menu manager (sub_1400BD910), which localises it and splits the lines at `^n` (sub_1400EF9C0, no wrapping); the
-/// box draws (sub_1400EF780) once 500 ms have passed since the first text was ever set (the timer at +72 is set
-/// once and only the constructor clears it). `first` keeps that one-shot start for the whole process (never
-/// reset): a new tag spawns a fresh root whose [`crate::ui::tip::TipDelay`] is seeded with the elapsed time, and
-/// `tip::delay_tips` drives its visibility (instant while paused). The box moves with the cursor in place (the
-/// cursor is not in its identity: no rebuild while moving).
-/// PORT: hidden while a dropdown's list is open or a binding waits for a key; in the main menu (no session,
-/// `delay_tips` is in `UiPlaySet`) the one-shot timer shows it here itself.
+/// ([`gd_ui::rollover::menu_tip`]). Grim Dawn.exe: a hovered check box
+/// (`MenuButton::HandleMouseEvent`), slider (knob or rect, `MenuSlider::HandleMouseEvent`) or dropdown
+/// (`MenuDropBox::HandleDropMouse`) hands its rollover tag to the
+/// menu manager (`MenuManager::SetRollover`), which localises it and splits the lines at `^n`
+/// (`MenuRolloverBox::SetText`,
+/// no wrapping); the box draws (`MenuRolloverBox::Draw`) once 500 ms have passed since the first text was ever set (the
+/// timer `MenuRolloverBox.firstTextTime` is set once and only the constructor clears it). `first` keeps that one-shot
+/// start for the whole process (never reset): a new tag spawns a fresh root whose [`crate::ui::tip::TipDelay`] is
+/// seeded with the elapsed time, and `tip::delay_tips` drives its visibility (instant while paused). The box moves with
+/// the cursor in place (the cursor is not in its identity: no rebuild while moving).
+/// PORT: while a dropdown's list is open only its rows show a rollover — the row's full label (the drawn text is
+/// ellipsised), drawn without localisation ([`gd_ui::rollover::menu_tip_text`]); hidden while a binding waits for
+/// a key; in the main menu (no session, `delay_tips` is in `UiPlaySet`) the one-shot timer shows it here itself.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rollover(
     mut commands: Commands,
@@ -29,19 +34,39 @@ pub(super) fn rollover(
     data: Res<GameData>,
     win: Res<OptionsWindow>,
     layout: Res<OptionsLayout>,
-    state: Res<State<crate::session::AppState>>,
-    mut roots: Query<(&mut Node, &mut Visibility), With<crate::ui::rollover::MenuTipRoot>>,
+    options: Res<GameOptions>,
+    state: Res<State<gd_ui::state::session::AppState>>,
+    mut roots: Query<(&mut Node, &mut Visibility), With<gd_ui::rollover::MenuTipRoot>>,
     mut tip: Local<Tip>,
     mut first: Local<Option<f32>>,
     time: Res<Time<Real>>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
 ) {
     let Ok(w) = window.single() else { return };
-    let p = crate::ui::cursor_px(&assets.hooks, w);
+    let p = gd_ui_kit::cursor_px(&assets.hooks, w);
     let tag = p
-        .filter(|_| win.open && win.dropdown.is_none() && win.rebind.is_none())
-        .and_then(|p| layout.tips.iter().find(|(r, _)| contains(r, p)))
-        .map(|t| t.1.clone());
+        .filter(|_| win.open && win.rebind.is_none())
+        .and_then(|p| {
+            if win.dropdown.is_some() {
+                // The open list's rows show their full label (the drawn rows are ellipsised).
+                match hit_at(
+                    &layout,
+                    win.draft.as_ref().unwrap_or(&options),
+                    win.scroll,
+                    win.drop_top,
+                    p,
+                ) {
+                    Some(Hit::DropRow(k)) => layout.drop_rows.get(k).cloned(),
+                    _ => None,
+                }
+            } else {
+                layout
+                    .tips
+                    .iter()
+                    .find(|(r, _)| contains(r, p))
+                    .map(|t| t.1.clone())
+            }
+        });
     if tag != tip.tag {
         if let Some(e) = tip.root.take() {
             commands.entity(e).try_despawn();
@@ -51,19 +76,19 @@ pub(super) fn rollover(
             let now = time.elapsed_secs();
             let first = first.get_or_insert(now);
             let screen = Vec2::new(w.physical_width() as f32, w.physical_height() as f32);
-            let root = crate::ui::spawn_root(
+            let root = gd_ui_kit::spawn_root(
                 &mut commands,
                 (
-                    crate::ui::rollover::MenuTipRoot,
-                    crate::ui::hud::KeepsShown,
+                    gd_ui::rollover::MenuTipRoot,
+                    gd_ui::hud::KeepsShown,
                     Visibility::Hidden,
-                    crate::ui::tip::TipDelay::menu(
+                    gd_ui_kit::tip::TipDelay::menu(
                         tag.clone(),
-                        crate::ui::rollover::MENU_TIP_DELAY,
+                        gd_ui::rollover::MENU_TIP_DELAY,
                     )
                     .with_ms(((now - *first) * 1000.0).max(0.0)),
                 ),
-                crate::ui::window::Z_OPTIONS + 5,
+                gd_ui::window::Z_OPTIONS + 5,
             );
             // Drawn in screen pixels: the style's font size and the paddings are not UI-scaled.
             let mut ui = assets.ui(
@@ -74,8 +99,12 @@ pub(super) fn rollover(
                 1.0 / w.scale_factor(),
                 screen,
             );
-            let size = crate::ui::rollover::menu_tip(&mut ui, &tag);
-            let o = crate::ui::rollover::menu_tip_origin(p, size, screen) / w.scale_factor();
+            let size = if win.dropdown.is_some() {
+                gd_ui::rollover::menu_tip_text(&mut ui, &tag)
+            } else {
+                gd_ui::rollover::menu_tip(&mut ui, &tag)
+            };
+            let o = gd_ui::rollover::menu_tip_origin(p, size, screen) / w.scale_factor();
             commands.entity(root).insert(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(o.x),
@@ -95,12 +124,12 @@ pub(super) fn rollover(
         return;
     };
     let screen = Vec2::new(w.physical_width() as f32, w.physical_height() as f32);
-    let o = crate::ui::rollover::menu_tip_origin(p, tip.size, screen) / w.scale_factor();
+    let o = gd_ui::rollover::menu_tip_origin(p, tip.size, screen) / w.scale_factor();
     node.left = Val::Px(o.x);
     node.top = Val::Px(o.y);
-    if *state.get() != crate::session::AppState::InGame {
+    if *state.get() != gd_ui::state::session::AppState::InGame {
         let shown = first.is_some_and(|t| {
-            time.elapsed_secs() - t >= crate::ui::rollover::MENU_TIP_DELAY / 1000.0
+            time.elapsed_secs() - t >= gd_ui::rollover::MENU_TIP_DELAY / 1000.0
         });
         vis.set_if_neq(if shown {
             Visibility::Inherited
@@ -147,10 +176,13 @@ pub(super) enum Look {
     Label(Hit),
 }
 
-/// A dropdown's value text ([`Ui::live_text`]): [`live`] sets it from the draft.
+/// A dropdown's value text ([`Ui::live_text`]): [`live`] sets it from the draft, ellipsised
+/// to `max_w` (the box's inner width, physical px) in `style`.
 #[derive(Component)]
 pub(super) struct DropText {
     pub(super) shown: Shown,
+    pub(super) style: String,
+    pub(super) max_w: f32,
 }
 
 /// A dropdown row's highlight (the select fill and its two border lines):
@@ -168,7 +200,7 @@ pub(super) struct ApplyGate;
 /// or the scroll bar's thumb), so a scroll never rebuilds the window.
 #[derive(Component)]
 pub(super) enum Scroll {
-    /// The dropdown list's pane ([`crate::ui::window::pane`]): `max` its last first row.
+    /// The dropdown list's pane ([`gd_ui::window::pane`]): `max` its last first row.
     DropPane {
         clip_y: f32,
         row_h: f32,
@@ -273,7 +305,7 @@ pub(super) fn bottom_button(
     ui.root = e;
     if let (Some(style), Some(tag)) = (rec.str("textFont"), rec.str("textTag")) {
         let t = ui.fonts.tag(tag).to_string();
-        if let Some(le) = crate::ui::trade::label(
+        if let Some(le) = gd_ui_kit::widgets::label(
             ui,
             URect::new(0.0, 0.0, r.w, r.h),
             style,
@@ -303,7 +335,14 @@ pub(super) fn build(
     bindings: Res<KeyBindings>,
     mut layout: ResMut<OptionsLayout>,
     roots: Query<Entity, With<OptionsRoot>>,
-    mut fresh: gd_game::session::NewSession,
+    devices: Res<crate::audio::devices::AudioDevices>,
+    adapters: Res<crate::render_devices::RenderAdapters>,
+    monitors: Query<(
+        Entity,
+        &bevy::window::Monitor,
+        Option<&bevy::window::PrimaryMonitor>,
+    )>,
+    mut fresh: gd_game_core::session::NewSession,
     mut built: Local<
         Rebuild<(
             UVec2,
@@ -312,25 +351,37 @@ pub(super) fn build(
             Option<usize>,
             Option<(u32, usize)>,
             i32,
+            String,
+            i32,
+            u64,
             u64,
             u32,
         )>,
     >,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
         built.reset();
     }
     let Ok(w) = window.single() else { return };
     let size = UVec2::new(w.physical_width(), w.physical_height());
-    // Only layout state: hover, drags, scrolls and the draft's values are live
-    // ([`live`]); the movement type is the one draft value that changes the
-    // layout (the key list's WASD rows). No draft / bindings clone before the
-    // early-return.
+    // Only layout state plus the tags generation: hover, drags, scrolls and the draft's values are live
+    // ([`live`]); the movement type changes the layout (the key list's WASD rows),
+    // and the draft's language / device rebuild the closed dropdown box on a pick.
+    // No draft / bindings clone before the early-return.
     let movement = win
         .draft
         .as_ref()
         .map_or(options.int("movementType"), |d| d.int("movementType"));
+    let language = win
+        .draft
+        .as_ref()
+        .map_or(language_option(&options), |d| language_option(d))
+        .to_string();
+    let device = win
+        .draft
+        .as_ref()
+        .map_or(options.int("device"), |d| d.int("device"));
     let sig = (
         size,
         win.open,
@@ -338,14 +389,19 @@ pub(super) fn build(
         win.dropdown,
         win.rebind,
         movement,
+        language,
+        device,
         win.keys_ver,
+        // A language / mod swap reloads the tags (`FontCache::generation`): rebuild the tag-resolved row
+        // labels and dropdown values, as the other UI groups' signatures do.
+        assets.fonts.generation,
         // An applied UI Scale rebuilds the open window at the new size.
         assets.scale(size).to_bits(),
     );
     if size.x == 0 || !built.changed(sig) {
         return;
     }
-    crate::ui::window::despawn_all(&mut commands, &roots);
+    gd_ui::window::despawn_all(&mut commands, &roots);
     *layout = OptionsLayout::default();
     if !win.open {
         return;
@@ -356,8 +412,11 @@ pub(super) fn build(
         return;
     };
     let s = assets.scale(size);
-    let root = crate::ui::spawn_root(&mut commands, OptionsRoot, crate::ui::window::Z_OPTIONS);
-    commands.entity(root).insert(crate::ui::hud::KeepsShown);
+    let root = gd_ui_kit::spawn_root(&mut commands, OptionsRoot, gd_ui::window::Z_OPTIONS);
+    commands.entity(root).insert(gd_ui::hud::KeepsShown);
+    // The dropdown values' tag table ([`ChoiceCtx`]): an Arc clone, so the `Ui`'s mutable borrow of the
+    // fonts cache below does not conflict with the context's borrow.
+    let tags = assets.fonts.tags.clone();
     let mut ui = assets.ui(
         &mut commands,
         &data,
@@ -365,6 +424,15 @@ pub(super) fn build(
         s,
         1.0 / w.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
+    );
+    let languages = data.available_languages();
+    let ctx = ChoiceCtx::new(
+        &devices,
+        crate::settings::primary_monitor(&monitors),
+        ui.screen,
+        &adapters,
+        &languages,
+        &tags,
     );
     // The menu layer's window: `windowDefaultX/Y` is the top-left corner's
     // offset from the aligned point (the screen centre here), not centred
@@ -396,7 +464,7 @@ pub(super) fn build(
         let text = ui.fonts.tag(tag).to_string();
         let h = ui.sc(t.f32("maxHeight").unwrap_or(30.0));
         let y = o.y + ui.sc(t.f32("bitmapPositionY").unwrap_or(0.0)) - h * 0.5;
-        crate::ui::trade::label(
+        gd_ui_kit::widgets::label(
             &mut ui,
             URect::new(o.x, y.round(), wr.w, h),
             &style,
@@ -446,7 +514,7 @@ pub(super) fn build(
         .str("optionsCheckboxBitmap")
         .unwrap_or("ui/mainmenu/buttoncheckbox*.tex")
         .to_string();
-    // The code-built check boxes' sounds (sub_1400A0F70: the constants' gem button sounds).
+    // The code-built check boxes' sounds (`MenuCheckBox::MenuCheckBox`: the constants' gem button sounds).
     let check_over = consts.str("gemButtonRolloverSound").map(str::to_owned);
     let check_down = consts.str("gemButtonClickSound").map(str::to_owned);
     let label_style = consts
@@ -485,9 +553,10 @@ pub(super) fn build(
             Ctl::Check(k, tag, x, y) => {
                 let enabled = check_enabled(k, &draft);
                 let on = enabled && draft.flag(k);
-                // `Grim Dawn.exe` sub_1400A1D70 (the check box's draw; its bitmaps are the pattern with
-                // `Up` / `Down` / `Over` / `Disabled`, sub_14009E940, and `DownOver`, sub_1400A0F70): a disabled box
-                // (+81 clear), on or off, draws the `Disabled` bitmap (else `Up` tinted 0.6 grey when that one is
+                // `Grim Dawn.exe` `MenuCheckBox::Render` (the check box's draw; its bitmaps are the pattern with
+                // `Up` / `Down` / `Over` / `Disabled`, `MenuCheckBox::LoadBitmaps`, and `DownOver`,
+                // `MenuCheckBox::MenuCheckBox`): a disabled box (`MenuCheckBox.enabled` clear), on or off, draws the
+                // `Disabled` bitmap (else `Up` tinted 0.6 grey when that one is
                 // missing). All five states are resolved once; [`live`] swaps them.
                 let p = at(&ui, x, y);
                 if let Some((up_h, up_sz)) = ui.image(&check.replace('*', "up")) {
@@ -501,7 +570,7 @@ pub(super) fn build(
                     let (img, tint) = states[check_state(on, enabled, false)].clone();
                     let e = ui.quad(img, r, None, tint);
                     ui.commands.entity(e).insert(Look::Check { k, states });
-                    // A disabled box takes no mouse, so shows no rollover either (sub_1400A01D0).
+                    // A disabled box takes no mouse, so shows no rollover either (`MenuButton::HandleMouseEvent`).
                     if enabled {
                         let r = URect::new(r.x, r.y, ui.sc(24.0), r.h);
                         layout.hits.push((r, Hit::Check(k)));
@@ -578,7 +647,11 @@ pub(super) fn build(
                 let h = ui.sc(20.0);
                 let r = URect::new(a.x, (a.y - h * 0.5).round(), b.x - a.x, h);
                 thin_box(&mut ui, &drop_border, r, drop_back);
-                let text = shown_text(shown, &draft, ui.screen);
+                let text = shown_text(shown, &draft, &ctx);
+                // PORT: the value is ellipsised to the box's inner width (`UITextBox::TruncateLine`);
+                // [`live`] re-truncates it on a pick. The full string drives the pick matching.
+                let max_w = r.w - 2.0 * ui.sc(4.0);
+                let text = ui.truncate_line(&value_style, max_w, &text);
                 let lh = ui.line_height(&value_style);
                 let e = ui.live_text(
                     TextAt::Line {
@@ -589,7 +662,11 @@ pub(super) fn build(
                     },
                     &text,
                 );
-                ui.commands.entity(e).insert(DropText { shown });
+                ui.commands.entity(e).insert(DropText {
+                    shown,
+                    style: value_style.clone(),
+                    max_w,
+                });
                 let mut hit_r = r;
                 let (mut arrow_bottom, mut arrow_w) = (r.y + r.h, 0.0);
                 if let Some((img, sz)) = ui.image(&drop_arrow) {
@@ -610,114 +687,6 @@ pub(super) fn build(
     for (tag, x, cy) in loose_labels(win.tab) {
         let p = at(&ui, *x, *cy);
         label(&mut ui, tag, p.x, p.y);
-    }
-    // The open dropdown's list (`Grim Dawn.exe`: the options window's dropdowns are made by sub_1400AA480,
-    // drawn by sub_1400ABF70 and their rows by sub_1400AC830): rows `itemHeight` 19 px tall from `borderTop` 2 px under
-    // the box, at most 16 shown; a black (0, 0, 0, 1) back under them; the `dropboxBorder` frame drawn round the box and
-    // the list together; the highlighted row (the current choice when the list opens, then the row under the cursor,
-    // vfuncs 4 / 6) inset `highlightBoxReduction` 1 px, filled `dropboxSelectColor` with a `dropboxSelectBorderColor`
-    // line along its top and bottom; the row text in `dropboxListFont`, `borderSide` 4 px in, centred in the row.
-    // Over 16 rows (sub_1400ABF70 / input sub_1400AB4B0): rows `drop_top..` shown, a wheel step scrolls a row,
-    // a press in the list's right 20 px sets the first row ([`drop_bar_row`]); the thumb (grey 0.5) is the arrow
-    // button's width less 12 px from 5 px into it, at `top + 4 + first * (height - 11) / rows`, `(height - 11) * 16 /
-    // rows` tall. PORT: the arrow button is drawn outside the box here, so the thumb takes its width at the list's
-    // right edge; all rows are drawn in a clipped pane ([`crate::ui::window::pane`]) at scroll 0 and [`live`] scrolls it.
-    if let Some((r, shown, arrow_bottom, arrow_w)) = open_list {
-        let rows = choices(shown, &draft, ui.screen);
-        let current = shown_text(shown, &draft, ui.screen);
-        let row_h = ui.sc(19.0);
-        let top = r.y + r.h + ui.sc(2.0);
-        let frame_h = ui
-            .image(&drop_border.replace('*', "lt"))
-            .map_or(0.0, |(_, s)| ui.sc(s.y as f32));
-        let max = rows.len().saturating_sub(DROP_ROWS);
-        let first = win.drop_top.min(max);
-        let shown_rows = rows.len().min(DROP_ROWS);
-        let bottom = top + row_h * shown_rows as f32 + frame_h;
-        // The back starts under the arrow button (sub_1400ABF70: its rect's bottom), over the box's lower edge.
-        ui.solid(
-            URect::new(r.x, arrow_bottom, r.w, bottom - arrow_bottom),
-            Color::srgba(0.0, 0.0, 0.0, 1.0),
-        );
-        thin_box(
-            &mut ui,
-            &drop_border,
-            URect::new(r.x, r.y, r.w, bottom - r.y),
-            Color::NONE,
-        );
-        let select = color4(consts, "dropboxSelectColor");
-        let select_border = color4(consts, "dropboxSelectBorderColor");
-        let lh = ui.line_height(&value_style);
-        let mut hits = Vec::new();
-        let (s, h, n) = (ui.s, bottom - top, rows.len() as f32);
-        let track = h - 11.0 * s;
-        if rows.len() > DROP_ROWS {
-            hits.push((
-                URect::new(r.x + r.w - 20.0 * s, top, 20.0 * s, h),
-                Hit::DropBar(top, h, rows.len()),
-            ));
-        }
-        let clip = URect::new(r.x, top, r.w, row_h * shown_rows as f32);
-        let inner = crate::ui::window::pane(&mut ui, clip, first as f32 * row_h);
-        ui.commands.entity(inner).insert(Scroll::DropPane {
-            clip_y: top,
-            row_h,
-            inv: ui.inv,
-            max,
-        });
-        let root = ui.root;
-        ui.root = inner;
-        let highlighted = rows.iter().position(|(t, _)| *t == current);
-        for (k, (text, _)) in rows.iter().enumerate() {
-            let rr = URect::new(r.x, top + row_h * k as f32, r.w, row_h);
-            let inset = ui.sc(1.0);
-            let hr = URect::new(rr.x + inset, rr.y, rr.w - 2.0 * inset, rr.h);
-            let hl = ui.solid(hr, select);
-            ui.commands.entity(hl).insert((
-                DropRowHl(k),
-                if highlighted == Some(k) {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                },
-            ));
-            let hl_root = ui.root;
-            ui.root = hl;
-            ui.solid(URect::new(0.0, 0.0, hr.w, 1.0), select_border);
-            ui.solid(URect::new(0.0, hr.h, hr.w, 1.0), select_border);
-            ui.root = hl_root;
-            ui.text_line(
-                &value_style,
-                Vec2::new(rr.x + ui.sc(4.0), (rr.y + (row_h - lh) * 0.5).round()),
-                text,
-                1.0,
-            );
-            hits.push((rr, Hit::DropRow(k)));
-        }
-        ui.root = root;
-        if rows.len() > DROP_ROWS {
-            let base_y = top + 4.0 * s;
-            let step = track / n;
-            let e = ui.solid(
-                URect::new(
-                    r.x + r.w - arrow_w + 5.0 * s,
-                    base_y + first as f32 * step,
-                    (arrow_w - 12.0 * s).max(1.0),
-                    track * DROP_ROWS as f32 / n,
-                ),
-                Color::srgba(0.5, 0.5, 0.5, 1.0),
-            );
-            ui.commands.entity(e).insert(Scroll::DropThumb {
-                base_y,
-                step,
-                inv: ui.inv,
-                max,
-            });
-        }
-        layout.drop_row_h = row_h;
-        layout.drop_clip = clip;
-        hits.append(&mut layout.hits);
-        layout.hits = hits;
     }
     if win.tab == Tab::KeyBindings {
         let (tl, br) = (at(&ui, 545.0, 362.0), at(&ui, 1372.0, 717.0));
@@ -749,7 +718,7 @@ pub(super) fn build(
         .commands
         .spawn((
             Node::default(),
-            GlobalZIndex(crate::ui::window::Z_OPTIONS),
+            GlobalZIndex(gd_ui::window::Z_OPTIONS),
             ApplyGate,
             if changed {
                 Visibility::Inherited
@@ -778,6 +747,132 @@ pub(super) fn build(
             }
             layout.hits.push((r, hit));
         }
+    }
+    // The open dropdown's list (`Grim Dawn.exe`: the options window's dropdowns are made by
+    // `MenuDropBox::MenuDropBox`,
+    // drawn by `MenuDropBox::Draw` and their rows by `MenuDropBox::DrawRow`): rows `itemHeight` 19 px tall from
+    // `borderTop` 2 px under the box, at most 16 shown; a black (0, 0, 0, 1) back under them; the `dropboxBorder` frame
+    // drawn round the box and the list together; the highlighted row (the current choice when the list opens, then the
+    // row under the cursor, `MenuDropBox::SetSelection` / `MenuDropBox::SetHighlight`) inset `highlightBoxReduction`
+    // 1 px, filled `dropboxSelectColor` with a `dropboxSelectBorderColor` line along its top and bottom; the row text
+    // in `dropboxListFont`, `borderSide` 4 px in, centred in the row. Over 16 rows (`MenuDropBox::Draw` / input
+    // `MenuDropBox::HandleMouseEvent`): rows `drop_top..` shown, a wheel step scrolls a row, a press in the list's
+    // right 20 px sets the first row ([`drop_bar_row`]); the thumb (grey 0.5) is the arrow button's width less 12 px
+    // from 5 px into it, at `top + 4 + first * (height - 11) / rows`, `(height - 11) * 16 / rows` tall. PORT: the arrow
+    // button is drawn outside the box here, so the thumb takes its width at the list's right edge; all rows are drawn
+    // in a clipped pane ([`gd_ui::window::pane`]) at scroll 0 and [`live`] scrolls it. The drawn row text is
+    // ellipsised to the inner width, less the scroll column when it shows (`UITextBox::TruncateLine`); the layout keeps
+    // the full labels (`drop_rows`) for the rows' rollovers ([`rollover`]). The open list spawns
+    // last — after the key list and the Default / Apply / Close buttons — so it draws over the window chrome
+    // (`MenuDropBox::Draw` draws the open list over the window's buttons): the window's nodes all share one Z and
+    // Bevy draws equal-Z siblings in insertion (`Children`) order, later sibling on top, so spawn order is draw
+    // order. Its row / bar hits are prepended last to match, taking the mouse before the chrome's hits.
+    if let Some((r, shown, arrow_bottom, arrow_w)) = open_list {
+        let rows = choices(shown, &draft, &ctx);
+        let current = shown_text(shown, &draft, &ctx);
+        let row_h = ui.sc(19.0);
+        let top = r.y + r.h + ui.sc(2.0);
+        let frame_h = ui
+            .image(&drop_border.replace('*', "lt"))
+            .map_or(0.0, |(_, s)| ui.sc(s.y as f32));
+        let max = rows.len().saturating_sub(DROP_ROWS);
+        let first = win.drop_top.min(max);
+        let shown_rows = rows.len().min(DROP_ROWS);
+        let bottom = top + row_h * shown_rows as f32 + frame_h;
+        // The back starts under the arrow button (`MenuDropBox::Draw`: its rect's bottom), over the box's lower
+        // edge.
+        ui.solid(
+            URect::new(r.x, arrow_bottom, r.w, bottom - arrow_bottom),
+            Color::srgba(0.0, 0.0, 0.0, 1.0),
+        );
+        thin_box(
+            &mut ui,
+            &drop_border,
+            URect::new(r.x, r.y, r.w, bottom - r.y),
+            Color::NONE,
+        );
+        let select = color4(consts, "dropboxSelectColor");
+        let select_border = color4(consts, "dropboxSelectBorderColor");
+        let lh = ui.line_height(&value_style);
+        let text_max_w = r.w
+            - 2.0 * ui.sc(4.0)
+            - if rows.len() > DROP_ROWS {
+                ui.sc(20.0)
+            } else {
+                0.0
+            };
+        let mut hits = Vec::new();
+        let (s, h, n) = (ui.s, bottom - top, rows.len() as f32);
+        let track = h - 11.0 * s;
+        if rows.len() > DROP_ROWS {
+            hits.push((
+                URect::new(r.x + r.w - 20.0 * s, top, 20.0 * s, h),
+                Hit::DropBar(top, h, rows.len()),
+            ));
+        }
+        let clip = URect::new(r.x, top, r.w, row_h * shown_rows as f32);
+        let inner = gd_ui::window::pane(&mut ui, clip, first as f32 * row_h);
+        ui.commands.entity(inner).insert(Scroll::DropPane {
+            clip_y: top,
+            row_h,
+            inv: ui.inv,
+            max,
+        });
+        let root = ui.root;
+        ui.root = inner;
+        let highlighted = rows.iter().position(|(t, _)| *t == current);
+        for (k, (text, _)) in rows.iter().enumerate() {
+            let rr = URect::new(r.x, top + row_h * k as f32, r.w, row_h);
+            let inset = ui.sc(1.0);
+            let hr = URect::new(rr.x + inset, rr.y, rr.w - 2.0 * inset, rr.h);
+            let hl = ui.solid(hr, select);
+            ui.commands.entity(hl).insert((
+                DropRowHl(k),
+                if highlighted == Some(k) {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+            ));
+            let hl_root = ui.root;
+            ui.root = hl;
+            ui.solid(URect::new(0.0, 0.0, hr.w, 1.0), select_border);
+            ui.solid(URect::new(0.0, hr.h, hr.w, 1.0), select_border);
+            ui.root = hl_root;
+            let drawn = ui.truncate_line(&value_style, text_max_w, text);
+            ui.text_line(
+                &value_style,
+                Vec2::new(rr.x + ui.sc(4.0), (rr.y + (row_h - lh) * 0.5).round()),
+                &drawn,
+                1.0,
+            );
+            hits.push((rr, Hit::DropRow(k)));
+        }
+        ui.root = root;
+        if rows.len() > DROP_ROWS {
+            let base_y = top + 4.0 * s;
+            let step = track / n;
+            let e = ui.solid(
+                URect::new(
+                    r.x + r.w - arrow_w + 5.0 * s,
+                    base_y + first as f32 * step,
+                    (arrow_w - 12.0 * s).max(1.0),
+                    track * DROP_ROWS as f32 / n,
+                ),
+                Color::srgba(0.5, 0.5, 0.5, 1.0),
+            );
+            ui.commands.entity(e).insert(Scroll::DropThumb {
+                base_y,
+                step,
+                inv: ui.inv,
+                max,
+            });
+        }
+        layout.drop_row_h = row_h;
+        layout.drop_clip = clip;
+        layout.drop_rows = rows.iter().map(|(t, _)| t.clone()).collect();
+        hits.append(&mut layout.hits);
+        layout.hits = hits;
     }
 }
 
@@ -851,7 +946,7 @@ pub(super) fn key_list(
         Some((a, _)) => rows.iter().position(|(ra, ..)| *ra == a),
         None => Some(0),
     };
-    let inner = crate::ui::window::pane(ui, layout.key_clip, scroll as f32 * row_h);
+    let inner = gd_ui::window::pane(ui, layout.key_clip, scroll as f32 * row_h);
     ui.commands.entity(inner).insert(Scroll::KeyPane {
         clip_y: top,
         row_h,

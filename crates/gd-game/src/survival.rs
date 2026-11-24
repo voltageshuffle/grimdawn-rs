@@ -1,16 +1,16 @@
-//! Crucible (survival mode) host: runs [`gd_sim::story::state::Survival`]'s timer and
+//! Crucible (survival mode) host: runs [`gd_story::story::state::Survival`]'s timer and
 //! applies the story effects of the `Game.*Survival*` bindings.
 //!
 //! `PlayStats::UpdateBonusTimer`
-//! is called every frame by `Player::UpdateSelf` ([`gd_sim::story::state::Survival::tick`]);
+//! is called every frame by `Player::UpdateSelf` ([`gd_story::story::state::Survival::tick`]);
 //! `Game.KillAllMonsters` kills every monster hostile to the main player (flag, then the
 //! combat controller's kill call; [`crate::monsters::is_foe`]).
-//! Score (`PlayStats::IncrementKills` @0x1803fdf80, `GetScore` @0x1803fe220): each kill
+//! Score (`PlayStats::IncrementKills`, `GetScore`): each kill
 //! sets the monster score from `playerscore.dbr`'s `<classification>Bonus` list (indexed by the
-//! game difficulty) and adds `survivalScoreEquation` of it ([`gd_sim::story::state::Survival::add_kill`]);
-//! `SaveSurvivalScore` locks it. `PlayStats::Load` @0x1803fd890 (the table at PlayStats+584, six entries
+//! game difficulty) and adds `survivalScoreEquation` of it ([`gd_story::story::state::Survival::add_kill`]);
+//! `SaveSurvivalScore` locks it. `PlayStats::Load` (the table `PlayStats.classificationBonus`, six entries
 //! of the game difficulty's column, 0 past a list's end) and `GameEngine::ResolveMonsterClassificationEnum`
-//! @0x1802ecfa0 (the `monsterClassification` string, exact match): Common 0 `commonBonus`, Champion 1
+//! (the `monsterClassification` string, exact match): Common 0 `commonBonus`, Champion 1
 //! `championBonus`, Hero 2 `heroBonus`, Boss 3 `bossBonus`, Quest 4 `questBonus`, SuperBoss 5 `bossBonus` again;
 //! any other text (or none) is Common.
 //! `Game.SaveSurvivalScore` writes the leaderboard ([`save_score`]); the greatest difficulty / wave /
@@ -43,13 +43,15 @@
 //! ([`gd_sim::actor::Rules::with_survival_ramp`]) and the score column (`playerscore.dbr`); the bonus timer
 //! (`SurvivalEvent_StartBonusTimer`: 75 / 75 / 80 s + 10 / 11 / 12 s per tier), the rewards and the defense prices are
 //! the scripts' and conversations'.
-//! PORT: `FullscreenGlow` is forwarded as [`crate::story::StoryEffect`] and drawn by the UI.
-use crate::combat::{Combatant, Dead, MonsterKilled};
-use crate::data::GameData;
-use crate::monsters::{Monster, ProfileCache, ProxyStates};
-use crate::story::{StoryEffect, StoryRuntime};
+//! PORT: `FullscreenGlow` is forwarded as [`gd_game_core::story::StoryEffect`] and drawn by the UI.
+use crate::combat::MonsterKilled;
+use crate::monsters::{ProfileCache, ProxyStates};
 use bevy::prelude::*;
-use gd_sim::story::Effect;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::monsters::Monster;
+use gd_game_core::story::{StoryEffect, StoryRuntime};
+use gd_story::story::Effect;
 
 /// Counts the survival bonus timer down (only in a survival session).
 pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut carry: Local<f32>) {
@@ -61,7 +63,7 @@ pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut car
         story
             .game
             .survival
-            .tick(crate::session::frame_ms(&mut carry, &time), crucible);
+            .tick(gd_game_core::session::frame_ms(&mut carry, &time), crucible);
     }
 }
 
@@ -74,18 +76,18 @@ pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut car
 pub fn apply_rules(
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<GameData>,
-    mut rules: ResMut<crate::rules::CombatRules>,
+    mut rules: ResMut<gd_game_core::rules::CombatRules>,
     mut profiles: ResMut<ProfileCache>,
     mut monsters: Query<&mut crate::monster_skills::MonsterSkills>,
-    players: Query<Entity, With<crate::player::Player>>,
+    players: Query<Entity, With<gd_game_core::player::Player>>,
     mut commands: Commands,
     mut applied: Local<(u32, Vec<String>)>,
-    mut new_session: crate::session::NewSession,
+    mut new_session: gd_game_core::session::NewSession,
     (time, mut sound, mut cooldown, mut mode): (
         Res<Time>,
-        MessageWriter<crate::visuals::PlaySound>,
+        MessageWriter<gd_game_core::visuals::PlaySound>,
         Local<(f32, f32)>,
-        ResMut<crate::session::GameMode>,
+        ResMut<gd_game_core::session::GameMode>,
     ),
 ) {
     cooldown.0 -= time.delta_secs();
@@ -108,14 +110,15 @@ pub fn apply_rules(
         }
         (ramp, mutators.to_vec())
     };
-    // `GameEngine::AddMutatorInbound` @0x1802f8d70: a mutator added plays the
+    // `GameEngine::AddMutatorInbound`: a mutator added plays the
     // `mutatorSound` pak of `survivalinfo.dbr` as a 2D sound (5 s cooldown), and, when a new mutator `affectsPlayers`,
-    // `PlayMutatorPlayerFx` @0x1802f9280 (its own 5 s cooldown): `PFxManager::OneShotParticleEffect(main player,
-    // mutatorFx, "")`, a self-deleting `EffectEntity` attached to the player (`Actor::Attach` → `Entity::Attach`
-    // @0x18007ed90, Engine.dll: identity coords, the empty attach name: the player's own coords). The
+    // `PlayMutatorPlayerFx` (its own 5 s cooldown): `PFxManager::OneShotParticleEffect(main player,
+    // mutatorFx, "")`, a self-deleting `EffectEntity` attached to the player (`Actor::Attach` → `Entity::Attach`,
+    // Engine.dll: identity coords, the empty attach name: the player's own coords). The
     // record's `boneList` (`playermutator_fx01.dbr`: the weapon bones) places nothing: `EffectEntity::Load`
-    // @0x180064000 stores it (+528, with `emitterType` Standard / BoneList / AllBones at +553 / +554), but its only
-    // reader `EffectEntity::PullParentBones` @0x180064c70 and the `Effect::SetBoneList` @0x180063230 it would feed
+    // stores it (`EffectEntity.boneList`, with `emitterType` Standard / BoneList / AllBones in
+    // `EffectEntity.emitterType`), but its only
+    // reader `EffectEntity::PullParentBones` and the `Effect::SetBoneList` it would feed
     // have no caller (Engine.dll; Game.dll imports neither), so `Effect::Update` passes the emitters no bones and the
     // effect emits at the player's origin, as here.
     let added: Vec<&String> = want.1.iter().filter(|m| !applied.1.contains(m)).collect();
@@ -125,7 +128,7 @@ pub fn apply_rules(
         && let Some(pak) = info.as_ref().and_then(|r| r.str("mutatorSound"))
     {
         cooldown.0 = 5.0;
-        sound.write(crate::visuals::PlaySound {
+        sound.write(gd_game_core::visuals::PlaySound {
             pak: pak.to_owned(),
             at: None,
         });
@@ -143,7 +146,7 @@ pub fn apply_rules(
         && let Ok(player) = players.single()
     {
         cooldown.1 = 5.0;
-        let mut spec = crate::visuals::EffectSpec::record(fx.to_owned());
+        let mut spec = gd_game_core::visuals::EffectSpec::record(fx.to_owned());
         spec.despawn_when_complete = true;
         let fx = commands.spawn((spec, Transform::IDENTITY)).id();
         commands.entity(player).add_child(fx);
@@ -172,7 +175,9 @@ pub fn apply_rules(
         ms.mark_profile_dirty();
     }
     for p in &players {
-        commands.entity(p).try_insert(crate::player::ProfileDirty);
+        commands
+            .entity(p)
+            .try_insert(gd_game_core::player::ProfileDirty);
     }
 }
 
@@ -180,21 +185,25 @@ pub fn apply_rules(
 #[derive(Component)]
 pub struct RespawnHeld;
 
-/// `Game.EnableRespawn` / `DisableRespawn` (GameEngine byte +4848,
-/// and `ControllerPlayer` byte +1328 set by Enable): while respawn is disabled a dead player stays
+/// `Game.EnableRespawn` / `DisableRespawn` (`GameEngine.respawnEnabled`,
+/// and `ControllerPlayer.autoRespawn` set by Enable): while respawn is disabled a dead player stays
 /// dead ([`RespawnHeld`], read by `combat::dead_bodies`), which is how a failed wave ends the event
 /// (`Game.PlayersDead`); `EnableRespawn` brings a dead player back at once.
-/// `ControllerPlayer::CharacterIsDying` @0x18015db20 (mode 1): respawn disabled (+4848 false) clears
-/// +1328; the "last death" texts (`tagSurvivalDeath` / `tagSurvivalLastDeath`) are for more than one player only, so
-/// a single player gets no dialog. `ControllerPlayer::DeathUpdate`: with +1328 set the dead player respawns on
-/// his own at `Player::GetClosestRespawnPoint` (`StartRespawnForLocalPlayer`); with it clear he lies there.
-/// The `KillAllMonstersOnNextRespawn` flag (+226120) is read by that respawn's activity (sub_18042B740,
-/// the vtable `StartRespawnForLocalPlayer` installs): on arrival `GameEngine::KillAllMonsters`, which clears it.
+/// `ControllerPlayer::CharacterIsDying` (mode 1): respawn disabled (`respawnEnabled` false) clears
+/// `autoRespawn`; the "last death" texts (`tagSurvivalDeath` / `tagSurvivalLastDeath`) are for more than one player
+/// only, so a single player gets no dialog. `ControllerPlayer::DeathUpdate`: with `autoRespawn` set the dead player
+/// respawns on his own at `Player::GetClosestRespawnPoint` (`StartRespawnForLocalPlayer`); with it clear he lies
+/// there. The `KillAllMonstersOnNextRespawn` flag (`GameEngine.killAllMonstersOnNextRespawn`) is read by that
+/// respawn's activity (`RespawnLocalPlayerActivity::Update`, the activity `StartRespawnForLocalPlayer` installs): on
+/// arrival `GameEngine::KillAllMonsters`, which clears it.
 /// PORT: the kill is sent when the respawn is requested (the body moves at once here, no fade).
 pub fn respawn_control(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
-    mut players: Query<(Entity, Option<&mut Dead>, Has<RespawnHeld>), With<crate::player::Player>>,
+    mut players: Query<
+        (Entity, Option<&mut Dead>, Has<RespawnHeld>),
+        With<gd_game_core::player::Player>,
+    >,
     mut out: MessageWriter<StoryEffect>,
 ) {
     let Some(rt) = rt else { return };
@@ -228,11 +237,11 @@ pub fn score_kills(
     mut killed: MessageReader<MonsterKilled>,
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<GameData>,
-    mode: Option<Res<crate::session::GameMode>>,
+    mode: Option<Res<gd_game_core::session::GameMode>>,
     credit: crate::combat::KillCredit,
     by_script: Query<(), With<ScriptKilled>>,
 ) {
-    // `Player::OnCreatureDeath` @0x1803e17a0: `IncrementKills` runs only for a
+    // `Player::OnCreatureDeath`: `IncrementKills` runs only for a
     // kill by the player or its pets, their DoTs' included ([`crate::combat::KillCredit`]), never by a leaderless
     // monster: a defense turret or guard killing a wave monster, a wave monster killing an `Allied` guard, nor for
     // a death without a killer (`Game.KillAllMonsters`: [`ScriptKilled`]; the tier's end kills the leftovers and
@@ -252,7 +261,7 @@ pub fn score_kills(
     };
     let Some(eq) = table
         .str("survivalScoreEquation")
-        .and_then(|e| gd_sim::expr::Expr::parse(e).ok())
+        .and_then(|e| gd_rules::expr::Expr::parse(e).ok())
     else {
         return;
     };
@@ -280,7 +289,7 @@ pub fn score_kills(
 /// `GD_KILL_ALL` (hooks.rs): the waves of the Crucible and the floors of the Shattered Realm complete without a
 /// bot that walks to every monster.
 pub fn test_kill_all(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     mut since: Local<f32>,
     mut out: MessageWriter<StoryEffect>,
@@ -291,7 +300,7 @@ pub fn test_kill_all(
     *since += time.delta_secs();
     if *since >= every {
         *since = 0.0;
-        out.write(StoryEffect(gd_sim::story::Effect::KillAllMonsters));
+        out.write(StoryEffect(gd_story::story::Effect::KillAllMonsters));
     }
 }
 
@@ -302,7 +311,7 @@ pub fn autosave(
 ) {
     if events
         .read()
-        .any(|e| matches!(e.0, gd_sim::story::Effect::SurvivalAutosave))
+        .any(|e| matches!(e.0, gd_story::story::Effect::SurvivalAutosave))
     {
         info!("survival: autosave");
         save.write(crate::save::SaveRequest);
@@ -320,7 +329,7 @@ pub fn kill_all_monsters(
         (
             Entity,
             &Transform,
-            &mut crate::character::Character,
+            &mut gd_game_core::character::Character,
             &mut Combatant,
             &Monster,
         ),
@@ -328,7 +337,7 @@ pub fn kill_all_monsters(
     >,
     mut states: ResMut<ProxyStates>,
     mut killed: MessageWriter<MonsterKilled>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if !events
         .read()
@@ -361,8 +370,8 @@ pub fn kill_all_monsters(
 }
 
 /// The Crucible's tokens of `difficulty` in `player.gdc` (block 10: three vectors, one per game difficulty,
-/// the character's own, shared by every arena). `Player::GetSurvivalTokens` @0x1803d5b10 (vector at
-/// `Player + 24 * (763 + difficulty)`, picked instead of `GetTokens` when `GameInfo::GetMode() == 1`;
+/// the character's own, shared by every arena). `Player::GetSurvivalTokens` (`Player.survivalTokens[difficulty]`,
+/// picked instead of `GetTokens` when `GameInfo::GetMode() == 1`;
 /// `BestowToken` / `HasToken` / `ClearTokens` likewise), `SaveNewFormatData` block 10.
 pub fn load_tokens(
     g: &gd_formats::save::gdc::Gdc,
@@ -416,10 +425,10 @@ pub fn record_score(dir: &std::path::Path, name: &str, difficulty: u32, score: u
 pub fn save_score(
     mut events: MessageReader<StoryEffect>,
     rt: Option<NonSend<StoryRuntime>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    choice: Res<crate::session::Choice>,
-    mode: Option<Res<crate::session::GameMode>>,
-    dir: Res<crate::save::SaveDir>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    choice: Res<gd_game_core::session::Choice>,
+    mode: Option<Res<gd_game_core::session::GameMode>>,
+    dir: Res<gd_game_core::session::SaveDir>,
 ) {
     if !events
         .read()
@@ -453,9 +462,9 @@ impl Plugin for SurvivalPlugin {
             (
                 tick_survival,
                 respawn_control,
-                apply_rules.run_if(resource_exists::<crate::rules::CombatRules>),
-                save_score.run_if(resource_exists::<crate::save::SaveDir>),
-                autosave.run_if(resource_exists::<crate::save::SaveDir>),
+                apply_rules.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
+                save_score.run_if(resource_exists::<gd_game_core::session::SaveDir>),
+                autosave.run_if(resource_exists::<gd_game_core::session::SaveDir>),
                 test_kill_all,
                 score_kills.run_if(resource_exists::<GameData>),
                 // Before the scoring, so its `ScriptKilled` marks are in.

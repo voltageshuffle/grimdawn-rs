@@ -6,8 +6,7 @@
 //! reads the presentation state (`render::weather::WeatherState`) the app's weather driver writes; the
 //! main menu backdrop lights itself through [`render::backdrop::MenuBackdrop`].
 //!
-//! Like grimdawn's `main.rs`, the gd-game modules the drawing reads are imported at the root so
-//! `crate::data::GameData` etc. resolve here too.
+//! The gameplay data the drawing reads lives in `gd-game-core`; the modules reference it by path.
 // Bevy system parameters (queries with filters, param tuples) are long by nature; Bevy recommends
 // allowing this lint for them (as gd-game and grimdawn do).
 #![allow(clippy::type_complexity)]
@@ -26,5 +25,3 @@ pub mod see_through;
 pub mod textures;
 pub mod trails;
 pub mod water;
-
-use gd_game::{combat, data, hooks, player, story};

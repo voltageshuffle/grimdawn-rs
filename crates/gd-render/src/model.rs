@@ -7,12 +7,12 @@
 //!
 //! Animation entity events ([`anim_entities`] for object models,
 //! [`character_anim_entities`] for characters), Engine.dll
-//! sub_180037360 (AnimChannel advance): each `CreateEntity { frame, entity,
+//! `AnimChannel::Advance`: each `CreateEntity { frame, entity,
 //! attach }` of the playing `.anm` fires as the channel's advance crosses its
 //! frame — the same interval as the callback points, one wrap rule
 //! (`gd_sim::anim::ChannelEvents::entities`; again on every pass of a looped
 //! one) — and creates `entity` at the mesh's `attach` point (`Entity::
-//! CreateAttachedEntity` @0x18007f580: `ObjectManager` create, then the
+//! CreateAttachedEntity`: `ObjectManager` create, then the
 //! actor's `Attach` by point name with the identity offset); an
 //! `EffectEntity` (or subclass) made so is a self-deleting child
 //! (`EffectEntity::MakeSelfDeletingChild`: it goes once its emitters are
@@ -25,7 +25,7 @@
 //! hands, and the personal riftgate's open animation creating its portal
 //! effect. A `RemoveEntity { frame, entity, attach }` passing removes the
 //! first entity attached to the root with that record and attach point
-//! (`Entity::RemoveAttachedEntity` @0x18007f620: `Detach` + `DestroyObjectEx`,
+//! (`Entity::RemoveAttachedEntity`: `Detach` + `DestroyObjectEx`,
 //! no fade; the beronath / giant / hellhound / yeti ground-chunk `FxMesh`es).
 //! The effect follows its attach point as posed this frame ([`AnimFx`]:
 //! `Actor::GetAttachedCoordsInRegion`, the parent bone's posed frame × the
@@ -38,21 +38,21 @@
 //! the engine's `RemoveAttachedEntity` compares the attach name with a
 //! function-static `Name` made from its first call's argument, the port
 //! compares each event's own; paper dolls fire nothing.
-//! PORT: the model cache holds its models weakly (`gd_game::weak_cache`) and each spawned part holds its model
+//! PORT: the model cache holds its models weakly (`gd_game_core::weak_cache`) and each spawned part holds its model
 //! ([`ModelRef`]), so a model and its meshes go with its last instance instead of 5 s after (the engine's
 //! `BaseResourceManager`).
-use crate::data::GameData;
 use crate::render::material::{MaterialAssets, MeshFacts, PartMaterial};
 use crate::textures::Textures;
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::DynamicSkinnedMeshBounds;
-use bevy::math::Affine3A;
+use bevy::camera::primitives::Aabb;
+use bevy::math::{Affine3A, Vec3A};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use gd_formats::anm::Animation;
 use gd_formats::msh::{AttachPoint, Coords, Mesh as Msh};
-use gd_game::character::{AnimCallback, Character, SharedAnims};
+use gd_game_core::character::{AnimCallback, Character, SharedAnims};
+use gd_game_core::data::GameData;
 use gd_sim::anim::{self, AnimChannel, AnimEntityEvent, AnimType, Pose};
 use std::sync::Arc;
 
@@ -61,7 +61,7 @@ pub struct ModelPlugin;
 impl Plugin for ModelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ModelCache>()
-            .init_resource::<gd_game::character::AnimCache>()
+            .init_resource::<gd_game_core::character::AnimCache>()
             .init_resource::<crate::render::terrain::TerrainLayers>()
             .add_message::<ModChanged>()
             .add_message::<AnimGibs>()
@@ -97,7 +97,7 @@ impl Plugin for ModelPlugin {
         // when a session's mod mount replaced the resource).
         let shared = app
             .world_mut()
-            .resource::<gd_game::character::AnimCache>()
+            .resource::<gd_game_core::character::AnimCache>()
             .shared();
         app.world_mut().resource_mut::<ModelCache>().anims = shared;
     }
@@ -113,6 +113,9 @@ pub struct ModelAsset {
     /// part; `None` when the part's material can never fade (no "…T.ssh"
     /// variant of its shader, [`transparent_variant_exists`]).
     pub part_sections: Vec<Option<u32>>,
+    /// Static culling AABB per part; skinned parts use a generous one ([`conservative_bounds`])
+    /// instead of `DynamicSkinnedMeshBounds`' per-frame recompute.
+    pub part_bounds: Vec<Aabb>,
     /// What the materials were built for ([`MaterialAssets::reshade`]).
     pub mesh: MeshFacts,
     pub inverse_bindposes: Option<Handle<SkinnedMeshInverseBindposes>>,
@@ -135,7 +138,7 @@ pub struct ModelRef(pub Arc<ModelAsset>);
 #[derive(Resource, Default)]
 pub struct ModelCache {
     /// Built models by normalized mesh path, held weakly ([`ModelRef`]).
-    models: gd_game::weak_cache::WeakCache<ModelAsset>,
+    models: gd_game_core::weak_cache::WeakCache<ModelAsset>,
     /// The shared parsed-`.anm` store ([`SharedAnims`], gd-game's `AnimCache`).
     anims: SharedAnims,
     /// The mod mounted when the caches were filled ([`drop_on_mod_change`]).
@@ -143,9 +146,9 @@ pub struct ModelCache {
     /// Models read and built in the background ([`ModelCache::model_ready`], [`collect_model_loads`]).
     loading: Vec<bevy::tasks::Task<(String, Option<ModelCpu>)>>,
     /// The paths of `loading`, so a model is read once.
-    in_flight: std::collections::HashSet<String>,
-    /// Models just built, held until their waiters take them ([`gd_game::weak_cache::Fresh`]).
-    fresh: gd_game::weak_cache::Fresh<Arc<ModelAsset>>,
+    in_flight: gd_formats::collections::HashSet<String>,
+    /// Models just built, held until their waiters take them ([`gd_game_core::weak_cache::Fresh`]).
+    fresh: gd_game_core::weak_cache::Fresh<Arc<ModelAsset>>,
 }
 
 /// The mounted mod changed and the render caches were dropped ([`drop_on_mod_change`]); the sound
@@ -161,7 +164,7 @@ pub struct ModChanged;
 pub fn drop_on_mod_change(
     data: Option<Res<GameData>>,
     mut cache: ResMut<ModelCache>,
-    anims: ResMut<gd_game::character::AnimCache>,
+    anims: ResMut<gd_game_core::character::AnimCache>,
     textures: Option<ResMut<Textures>>,
     fx: Option<ResMut<crate::fx::FxAssets>>,
     layers: Res<crate::render::terrain::TerrainLayers>,
@@ -180,7 +183,7 @@ pub fn drop_on_mod_change(
     // Re-link the shared anim store (a session's mod mount replaces the
     // `AnimCache` resource) and clear it: one cache, both crates.
     cache.anims = anims.shared();
-    cache.anims.lock().unwrap().clear();
+    cache.anims.lock().clear();
     cache.mounted = active.map(str::to_owned);
     if let Some(mut t) = textures {
         t.clear();
@@ -288,7 +291,7 @@ pub struct BoneFx {
 /// The world frame of an attachment this frame: `anchor`, the posed frame it hangs on (a joint, a character's posed
 /// attach point, a weapon root, the root itself), × `local`, its frame relative to it; a `stationary` one (an
 /// `FxMesh` with `stationaryAttachment`, the root given) keeps its place on the root but not the root's turn
-/// (Engine.dll `Entity::UpdateAttachedEntities` @0x18007e8ff / `Actor::FastUpdate`: each update its attach
+/// (Engine.dll `Entity::UpdateAttachedEntities` / `Actor::FastUpdate`: each update its attach
 /// offset becomes the parent's rotation transposed, applied after the attach frame). The one rule every follower
 /// places by: [`follow_bone_fx`], [`follow_anim_fx`], `fx::items::follow`, `fx::enchant::follow_points`.
 pub fn attach_frame(
@@ -328,7 +331,7 @@ pub(crate) fn follow_bone_fx(
 }
 
 /// On a model root: effects its animations attached stay when it goes,
-/// stop emitting and finish (`FixedItemTeleport::UpdateSelf` @0x1802b5f90:
+/// stop emitting and finish (`FixedItemTeleport::UpdateSelf`:
 /// a removed personal portal detaches its `EffectEntity` children,
 /// `StopEmitting`, and leaves them in the world).
 #[derive(Component)]
@@ -456,7 +459,7 @@ fn create_attached(
     };
     match rec.class.as_str() {
         "EffectEntity" | "GibEffectEntity" => {
-            let mut spec = gd_game::visuals::EffectSpec::record(record);
+            let mut spec = gd_game_core::visuals::EffectSpec::record(record);
             spec.despawn_when_complete = true;
             commands.spawn((
                 spec,
@@ -474,7 +477,7 @@ fn create_attached(
         }
         "FxMesh" => {
             commands.spawn((
-                gd_game::visuals::FxMeshRequest(record.to_owned()),
+                gd_game_core::visuals::FxMeshRequest(record.to_owned()),
                 tf,
                 GlobalTransform::from(tf),
                 AnimFx {
@@ -487,7 +490,7 @@ fn create_attached(
     }
 }
 
-/// `Entity::RemoveAttachedEntity` @0x18007f620: the first entity attached to
+/// `Entity::RemoveAttachedEntity`: the first entity attached to
 /// `root` with this record (and this attach point, when one is named) goes now.
 fn remove_attached(
     commands: &mut Commands,
@@ -528,7 +531,7 @@ fn follow_anim_fx(
             &mut Transform,
             Has<crate::fx::mesh::Stationary>,
         ),
-        Without<gd_game::visuals::FxMeshRequest>,
+        Without<gd_game_core::visuals::FxMeshRequest>,
     >,
     roots: Query<(Option<&Character>, Option<&Skeleton>)>,
     mut globals: Query<&mut GlobalTransform>,
@@ -613,18 +616,18 @@ impl ModelCache {
     /// ([`SharedAnims`]), so a file the characters already loaded is not
     /// parsed again.
     pub fn anim(&mut self, data: &GameData, path: &str) -> Option<Arc<Animation>> {
-        gd_game::character::shared_anim(&self.anims, data, path)
+        gd_game_core::character::shared_anim(&self.anims, data, path)
     }
 
     /// The render model of the mesh at `path`, built once while an instance holds it ([`ModelRef`]). The parsed
-    /// mesh is gd-game's (`gd_game::creature::BodyCache`, the one loader), so a character's `Character::body` and
+    /// mesh is gd-game's (`gd_game_core::creature::BodyCache`, the one loader), so a character's `Character::body` and
     /// its body part's `Skeleton::msh` are the same `Arc`. Loads on the spot: for what must exist this frame; a
     /// spawn that can wait a few frames uses [`ModelCache::model_ready`].
     #[allow(clippy::too_many_arguments)]
     pub fn model(
         &mut self,
         data: &GameData,
-        bodies: &mut gd_game::creature::BodyCache,
+        bodies: &mut gd_game_core::creature::BodyCache,
         path: &str,
         meshes: &mut Assets<Mesh>,
         mats: &mut MaterialAssets,
@@ -654,7 +657,7 @@ impl ModelCache {
     pub fn model_ready(
         &mut self,
         data: &GameData,
-        bodies: &gd_game::creature::BodyCache,
+        bodies: &gd_game_core::creature::BodyCache,
         path: &str,
     ) -> Ready<Arc<ModelAsset>> {
         let key = gd_formats::vfs::normalized(path);
@@ -712,7 +715,7 @@ pub const FINISH_BUDGET: std::time::Duration = std::time::Duration::from_millis(
 pub fn collect_model_loads(
     mut cache: ResMut<ModelCache>,
     data: Res<GameData>,
-    mut bodies: ResMut<gd_game::creature::BodyCache>,
+    mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: MaterialAssets,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
@@ -766,13 +769,13 @@ pub fn collect_model_loads(
 /// Whether a material shader has the transparent variant a faded section
 /// draws with.
 ///
-/// Engine.dll sub_1800B6D70 (the mesh material loader, from
-/// sub_1800B5340): each material loads its shader (+0) and the same name with
-/// 'T' inserted before the extension (sub_1800BDA20) as its transparent shader
-/// (+8), or the shader itself when that file does not exist.
-/// `GraphicsMeshInstance::GetShader2` @0x1800c3ed0 draws a section with
-/// opacity < 1 with +8, and `GraphicsMeshInstance::RenderPass` @0x1800c42b0
-/// always draws a material whose +0 == +8. So "standardstatic_nofade.ssh"
+/// Engine.dll `GraphicsMesh::LoadMaterials` (the mesh material loader, from
+/// `GraphicsMesh::LoadData`): each material loads its shader (`MeshMaterial.shader`) and the same name with
+/// 'T' inserted before the extension (`Engine::TransparentShaderName`) as its transparent shader
+/// (`MeshMaterial.transparentShader`), or the shader itself when that file does not exist.
+/// `GraphicsMeshInstance::GetShader2` draws a section with
+/// opacity < 1 with the transparent one, and `GraphicsMeshInstance::RenderPass`
+/// always draws a material whose two shaders are the same. So "standardstatic_nofade.ssh"
 /// (byte-identical to standardstatic.ssh, but no "…_nofadeT.ssh" exists) marks
 /// the parts of a see-through object that stay: the stump and base of the
 /// Conclave's round pillars.
@@ -829,7 +832,7 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
     let joints = skinned.then(|| msh.global_bone_indices());
     // Vertex colours drive the foliage wind (render/material.rs `Wind`) and
     // tint the vertex-colour shaders (`FLAG_VERTEX_COLOR`, `FLAG_VERTEX_ALPHA`); only those parts
-    // get them. B8G8R8A8 (Direct3D11.dll sub_180011400).
+    // get them. B8G8R8A8 (Direct3D11.dll `Direct3DVertexDeclaration::Direct3DVertexDeclaration`).
     let has_colors = v.colors.len() == n;
     let colors: Vec<[f32; 4]> = if has_colors {
         v.colors
@@ -1011,6 +1014,7 @@ fn finish_model(
     let mut parts = Vec::with_capacity(cpu_parts.len());
     let mut part_materials = Vec::with_capacity(cpu_parts.len());
     let mut part_sections = Vec::with_capacity(cpu_parts.len());
+    let mut part_bounds = Vec::with_capacity(cpu_parts.len());
     for (mut mesh, material, section) in cpu_parts {
         if color_material.get(material as usize) == Some(&true) {
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors.clone());
@@ -1019,6 +1023,7 @@ fn finish_model(
             .get(material as usize)
             .cloned()
             .unwrap_or_else(|| materials[0].clone());
+        part_bounds.push(conservative_bounds(&mesh));
         parts.push((meshes.add(mesh), mat));
         part_materials.push(material);
         part_sections.push(section);
@@ -1029,9 +1034,35 @@ fn finish_model(
         parts,
         part_materials,
         part_sections,
+        part_bounds,
         mesh: facts,
         inverse_bindposes: inverse_bindposes
             .map(|b| bindposes.add(SkinnedMeshInverseBindposes::from(b))),
+    }
+}
+
+/// A static culling AABB generous enough to enclose a skinned mesh's animation range. Skinned
+/// parts use this instead of `DynamicSkinnedMeshBounds`, whose per-frame recompute
+/// (`update_skinned_mesh_bounds`) is a measurable CPU cost in crowded scenes. A conservative
+/// static bound culls almost as well (actors are small relative to the view) and never pops a
+/// visible actor: twice the bind-pose half-extents plus half a metre covers limb/weapon motion.
+fn conservative_bounds(mesh: &Mesh) -> Aabb {
+    let (min, max) = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(VertexAttributeValues::Float32x3(p)) => {
+            let (mut mn, mut mx) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+            for &v in p {
+                let v = Vec3::from_array(v);
+                mn = mn.min(v);
+                mx = mx.max(v);
+            }
+            (mn, mx)
+        }
+        _ => (Vec3::splat(-0.5), Vec3::splat(0.5)),
+    };
+    let a = Aabb::from_min_max(min, max);
+    Aabb {
+        center: a.center,
+        half_extents: a.half_extents * 2.0 + Vec3A::splat(0.5),
     }
 }
 
@@ -1123,7 +1154,12 @@ fn spawn_parts(
             }
         });
     }
-    for ((mesh, mat), mi) in model.parts.iter().zip(&model.part_materials) {
+    for (((mesh, mat), mi), bounds) in model
+        .parts
+        .iter()
+        .zip(&model.part_materials)
+        .zip(&model.part_bounds)
+    {
         let mut e = commands.spawn((
             Mesh3d(mesh.clone()),
             Transform::IDENTITY,
@@ -1139,7 +1175,7 @@ fn spawn_parts(
                     inverse_bindposes: ibp.clone(),
                     joints: joints.clone(),
                 },
-                DynamicSkinnedMeshBounds,
+                *bounds,
             ));
         }
         let id = e.id();

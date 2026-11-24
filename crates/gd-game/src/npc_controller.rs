@@ -1,35 +1,34 @@
 //! An NPC's controller out of conversation: `GAME::ControllerNpc2`'s Idle ↔ LongIdle cycle (Game.dll).
 //! It only picks the character's [`IdleMode`]; `crate::character` plays it.
 //!
-//! - Every `Npc*`-class character gets the controller: `Npc::Load` @0x1803b9ab0 reads `controller`, default
+//! - Every `Npc*`-class character gets the controller: `Npc::Load` reads `controller`, default
 //!   [`DEFAULT_CONTROLLER`] (stock: only gdx3 `areah_blacksmithb302` names one, `ai_npc_idleloop_01`).
-//!   `ControllerNpc2::Load` @0x180153710 reads `npcIdleTimeMin` / `npcIdleTimeMax` (s, `(int)(v * 1000)` ms, default 0;
+//!   `ControllerNpc2::Load` reads `npcIdleTimeMin` / `npcIdleTimeMax` (s, `(int)(v * 1000)` ms, default 0;
 //!   default02: 5 / 10) and `npcIdleLoop` (default 0) from that record.
-//! - Idle (`ControllerNpcStateIdle::OnBegin` @0x1801597a0): a new `IdleAction` ([`IdleMode::Combat`]) and a timer of
-//!   min + rand() % (max − min + 1) ms (just min when the unsigned difference is above 0x7FFD). `OnUpdate` @0x180159830:
+//! - Idle (`ControllerNpcStateIdle::OnBegin`): a new `IdleAction` ([`IdleMode::Combat`]) and a timer of
+//!   min + rand() % (max − min + 1) ms (just min when the unsigned difference is above 0x7FFD). `OnUpdate`:
 //!   the timer counts down; at ≤ 0 an NPC whose current animation set has no `Walk` clip goes to LongIdle, one with
-//!   it to Wander, whose `OnBegin` @0x180159fc0 goes straight back to Idle when there are no wander points (a new
+//!   it to Wander, whose `OnBegin` goes straight back to Idle when there are no wander points (a new
 //!   timer; the combat idle goes on).
-//! - LongIdle (`ControllerNpcStateLongIdle::OnBegin` @0x180159c00 / `OnUpdate` @0x180159ce0): `LongIdleAction`
+//! - LongIdle (`ControllerNpcStateLongIdle::OnBegin` / `OnUpdate`): `LongIdleAction`
 //!   ([`IdleMode::Long`]: transition, loop, fidgets) and the same timer roll; at ≤ 0 back to Idle unless
 //!   `npcIdleLoop`.
 //! - Chat (both states' `OnUpdate` → "Chat" while the NPC has a partner; `crate::character::npc_chat`) suspends the
-//!   cycle; its end (`ControllerNpcStateChat::OnUpdate` @0x180159eb0) re-enters Idle with a new timer.
-//! - PORT: the timers use `crate::rng`, not the CRT `rand()` (only the draw order differs). The Walk NPC's re-entry
+//!   cycle; its end (`ControllerNpcStateChat::OnUpdate`) re-enters Idle with a new timer.
+//! - PORT: the timers use `gd_game_core::rng`, not the CRT `rand()` (only the draw order differs). The Walk NPC's re-entry
 //!   into Idle keeps the playing `AttackIdle` instead of starting a fresh `IdleAction` (the same clip either way).
 //!   Leaving the idle states any other way (a quest `ControllerState` animation) re-enters Idle when the character
 //!   idles again (the quest states' ends are not traced).
 //! - Startup ([`attach_npc_controllers`]): the Spawn animation once when the spawn animation is enabled (a script's
 //!   `Character.Create`: the Shattered Realm keeper swapped in when a run starts or ends plays its activate /
 //!   deactivate animation), else Idle at once.
-//! - PORT: not run, because stock data never reaches them: Wander and WatchAttraction (`MoveToCurrentWanderPoint`
-//!   @0x18015a680, `FindAttraction`
-//!   @0x18015aaa0: no `NpcWanderPoint` is placed in any map and no NPC is an `isNpcAttractor`), Alert
-//!   (`ControllerNpcStateAlert` exists but `ControllerNpc2::RegisterStates` @0x180153ae0 does not register it). So an
+//! - PORT: not run, because stock data never reaches them: Wander and WatchAttraction (`MoveToCurrentWanderPoint`,
+//!   `FindAttraction`: no `NpcWanderPoint` is placed in any map and no NPC is an `isNpcAttractor`), Alert
+//!   (`ControllerNpcStateAlert` exists but `ControllerNpc2::RegisterStates` does not register it). So an
 //!   NPC never walks or turns on its own.
-use crate::character::{CharState, Character, IdleMode};
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_game_core::character::{CharState, Character, IdleMode};
+use gd_game_core::data::GameData;
 use gd_sim::anim::AnimType;
 
 /// The controller record of an `Npc` without `controller` (`Npc::Load`).
@@ -79,7 +78,7 @@ impl NpcController {
         let ms = if d > 0x7FFD {
             min
         } else {
-            min + crate::rng::u32(0..=d) as i32
+            min + gd_game_core::rng::u32(0..=d) as i32
         };
         ms as f32
     }
@@ -96,15 +95,19 @@ impl NpcController {
 }
 
 /// `Npc::Load`: an `Npc*`-class character gets its controller. Its Startup state
-/// (`ControllerNpcStateStartup::OnBegin` @0x180159420): with `GetSpawnAnimationEnabled` (an NPC a script created with
-/// `Character.Create`, `gd_sim::story::state::Entities::spawn_animation`) it plays the Spawn animation (type 19) once,
+/// (`ControllerNpcStateStartup::OnBegin`): with `GetSpawnAnimationEnabled` (an NPC a script created with
+/// `Character.Create`, `gd_story::story::state::Entities::spawn_animation`) it plays the Spawn animation (type 19) once,
 /// then Idle; else Idle at once.
 pub fn attach_npc_controllers(
     mut commands: Commands,
     data: Res<GameData>,
-    rt: Option<NonSend<crate::story::StoryRuntime>>,
+    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut new: Query<
-        (Entity, &mut Character, Option<&crate::story::StoryActor>),
+        (
+            Entity,
+            &mut Character,
+            Option<&gd_game_core::story::StoryActor>,
+        ),
         (Added<Character>, Without<NpcController>),
     >,
 ) {

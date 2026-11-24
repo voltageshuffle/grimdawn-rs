@@ -2,9 +2,9 @@
 //! `FxPak` record as a skill spawns it: sound, shake, mesh and particles); `GD_FX_GRID=n` repeats each as an
 //! n×n grid (performance checks). With `GD_FPS` the effect counters are logged every second. Registered by
 //! `dev::DevPlugin` (not with `GD_NO_FX`).
-use crate::data::GameData;
-use crate::hooks::Hooks;
 use bevy::prelude::*;
+use gd_game_core::data::GameData;
+use gd_game_core::hooks::Hooks;
 use gd_render::fx::{Effect, EffectSpec, FxStats, FxView, simulated, spawn_effect_record};
 
 pub fn plugin(app: &mut App) {
@@ -33,7 +33,7 @@ fn scene(
                 );
                 let t = Transform::from_translation(base + off);
                 if data.db.get(p).is_some_and(|r| r.class == "FxPak") {
-                    gd_game::visuals::spawn_fx(&mut commands, &data, p, t);
+                    gd_game_core::visuals::spawn_fx(&mut commands, &data, p, t);
                 } else if p.ends_with(".dbr") {
                     spawn_effect_record(&mut commands, p, t);
                 } else {

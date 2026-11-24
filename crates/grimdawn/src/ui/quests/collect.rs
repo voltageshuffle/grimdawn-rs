@@ -1,65 +1,22 @@
-use super::*;
+use bevy::prelude::*;
+use gd_game_core::story::StoryRuntime;
+use gd_story::story::quest::{STATE_COMPLETE, STATE_IN_PROGRESS};
+use gd_ui::quests::{QuestEntry, QuestView, TaskView, event_text, plain};
+use std::hash::{Hash, Hasher};
+use gd_ui_kit::text::FontCache;
 
-/// A quest event's shown text (`Quest2Event::GetText` @0x180421f00, Game.dll): the authored
-/// text when the event has no action; otherwise always the first action's `Localize(text)`, which only
-/// the `Give*` amounts implement and only for the text `*` (`ScriptableAction_GiveTribute::Localize`
-/// @0x18046d220, `_GiveMoney` @0x18046c520, `_GiveExperience` @0x18046b0f0, `_GiveLevel` @0x18046c320,
-/// `_GiveSkillPoint` @0x18046cfb0, `_GiveAttribPoint` @0x18046aba0, `_GiveDevotion` @0x18046af10): their
-/// `tagActionGive*` line with the amount (Tribute: `tagActionGiveTribute` for 1, else `…Tributes`; the
-/// others one tag whatever the amount). Any other first action, or another text, gives an empty line
-/// (so an authored text next to an action, e.g. `bq_wg08`'s "Slay Reynar, the Loathed", is not shown).
-/// No stock quest authors `*` (nor gives Tribute: the stock `GiveTribute`s are conversation spends), so the
-/// Tribute line shows only for mods. Tribute has no floating text: `GiveTribute::Execute` @0x18046d160 and
-/// `Character::AddTribute` @0x180062290 send nothing but GameEvent 63 (the Crucible pane's glow and sound,
-/// `ui/survival.rs`), and the exe uses no `tagActionGive*` tag.
-pub(super) fn event_text(
-    fonts: &FontCache,
-    text: String,
-    actions: &[gd_formats::qst::Action],
-) -> String {
-    use gd_formats::qst::Action as A;
-    let Some(first) = actions.first() else {
-        return text;
-    };
-    if text != "*" {
-        return String::new();
-    }
-    let (tag, n) = match first {
-        A::GiveTribute { amount: 1 } => ("tagActionGiveTribute", 1),
-        A::GiveTribute { amount } => ("tagActionGiveTributes", *amount),
-        A::GiveMoney { amount } => ("tagActionGiveMoney", *amount),
-        A::GiveExperience { amount } => ("tagActionGiveExperience", *amount),
-        A::GiveLevel { amount } => ("tagActionGiveLevel", *amount),
-        A::GiveSkillPoint { amount } => ("tagActionGiveSkillPoint", *amount),
-        A::GiveAttribPoint { amount } => ("tagActionGiveAttributePoint", *amount),
-        A::GiveDevotion { amount } => ("tagActionGiveDevotionPoint", *amount),
-        _ => return String::new(),
-    };
-    // `%d` of the stored dword: a spend (a wrapped u32) prints negative.
-    crate::ui::floating::format_text(
-        fonts,
-        tag,
-        &[gd_game::floating::TextArg::Num(n as i32 as f32)],
-    )
-}
-
-/// Story text as shown: `{^n}` / `^n` become line breaks; the `^X` colour markup stays and is drawn by the text
-/// drawing (`gd_formats::ui::layout_text`, carried over wraps by `Ui::wrap_lines`).
-pub(super) fn plain(text: &str) -> String {
-    text.replace("{^n}", "\n").replace("^n", "\n")
-}
 
 /// Builds [`QuestView`] from the story's quest log, in the repository's
 /// order (the world map's quest list hashed as the engine does).
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<StoryRuntime>>,
     fonts: Res<FontCache>,
     world: Option<Res<crate::world::StreamedMap>>,
     (inv, stash): (
-        Option<Res<crate::inventory::Inventory>>,
-        Option<Res<gd_game::stash::Stash>>,
+        Option<Res<gd_game_core::inventory::Inventory>>,
+        Option<Res<gd_game_core::stash::Stash>>,
     ),
     mut order: Local<Vec<usize>>,
     mut seen: Local<Option<u64>>,
@@ -144,7 +101,7 @@ pub fn collect(
                     .enumerate()
                     .map(|(oi, (o, ort))| {
                         (
-                            gd_game::story::objective_text(
+                            gd_game_core::story::objective_text(
                                 Some(&*fonts.tags),
                                 &story,
                                 q.texts.get(o.text).to_owned(),

@@ -2,12 +2,13 @@
 //! engine), or charges at the Charge animation's root-motion speed toward a skill's target.
 //!
 //! A plain move request (a click or a held button on the ground, [`move_request`]) follows
-//! `ControllerPlayerState::DefaultRequestMoveAction` @0x180163490:
-//! * a point less than 1 m (0.5 m while the player is already moving, `CharacterMovementManager` +56) from the
+//! `ControllerPlayerState::DefaultRequestMoveAction`:
+//! * a point less than 1 m (0.5 m while the player is already moving, `CharacterMovementManager.moving`) from the
 //!   player, horizontally, is ignored: the current move goes on;
-//! * `Player::FindPath` (@0x1803ce890 → `CharacterMovementManager::FindPath` @0x18008e200) asks for a full path
+//! * `Player::FindPath` (→ `CharacterMovementManager::FindPath`) asks for a full path
 //!   (no partial result). It is refused (result 2) when the path is at least 15 m long and longer than
-//!   `maxMoveToRatio` (the player record, 2.5 in `malepc01.dbr` / `femalepc01.dbr`; `Player::Load` → +19440) times
+//!   `maxMoveToRatio` (the player record, 2.5 in `malepc01.dbr` / `femalepc01.dbr`; `Player::Load` →
+//!   `Player.maxMoveToRatio`) times
 //!   the straight 3D distance, and (result 3) when its first leg points away from the target by more than the
 //!   minimum dot (−1 in Classic movement: never; 0 with `movementType` above 0, `Player::FindPath`);
 //! * a refused or failed path (2 or 4) to a point above the player is retried once at the point moved back along the
@@ -16,33 +17,35 @@
 //!   target reaches, [`crate::nav::straight_move_point`]), when that is more than 2.5 cm away and pathable;
 //! * nothing at all: the request is dropped (the player keeps what it did).
 //!
-//! The held button (EXE `sub_140021000`): a press that issues an interaction request (an
-//! NPC, an item, a fixed actor: `SelectPrimaryAction` clears `ControllerPlayer::NewMouseCommand`) is the whole
+//! The held button (EXE `InGameUI::HandleMouseEvent`): a press that issues an interaction request (an
+//! NPC, an item, a fixed actor: `SelectPrimaryAction` clears `ControllerPlayer::SetNewMouseCommand`) is the whole
 //! command: `HandleActionFromMouse` issues nothing more until the button is released ([`MouseCommand`]), so the
 //! walk to the object is not replaced by moves to the ground under the cursor. A press the UI takes (a window,
-//! a HUD button) leaves no command pending (`a1+464` cleared; only a world press or the held Move key sets it), so
+//! a HUD button) leaves no command pending (`InGameUI.commandPending` cleared; only a world press or the held Move
+//! key sets it), so
 //! the button held after it, also once the cursor leaves the window or the window closed, issues nothing either.
 //!
 //! A request while the player walks a plain move ([`request_move`], `ControllerPlayerStateMoveTo`): the
-//! state keeps the horizontal direction from the player to its path's end, taken when it began (`OnBegin`
-//! @0x180166020, +32). `RequestMoveAction` @0x1801662d0: when the direction from the player to the new point has a
-//! dot above 0.9999998 with it, the point only becomes the pending destination (+48), no path is searched; else the
-//! request is a plain one. `OnUpdate` @0x1801661c0: once the player is within 2.5 m (3D) of the move's end
-//! (`CharacterMovementManager` +32, the `MoveTo` target), the pending point is taken and requested as a plain move
+//! state keeps the horizontal direction from the player to its path's end, taken when it began (`OnBegin`,
+//! `ControllerPlayerStateMoveTo.startDirection`). `RequestMoveAction`: when the direction from the player to the new
+//! point has a dot above 0.9999998 with it, the point only becomes the pending destination
+//! (`ControllerPlayerStateMoveTo.pendingDestination`), no path is searched; else the
+//! request is a plain one. `OnUpdate`: once the player is within 2.5 m (3D) of the move's end
+//! (`CharacterMovementManager.target`, the `MoveTo` target), the pending point is taken and requested as a plain move
 //! ([`pending_moves`]). So a held button over a cursor that stays ahead of a straight run searches no path until
 //! the run nears its end. `EndOfPathReached` ends the state (`Idle`): a pending point not taken by then is dropped.
 //!
-//! The crowd (Engine.dll crowd update sub_18025C440; the rules and parameters are in `gd_sim::crowd`):
+//! The crowd (Engine.dll crowd update `Crowd::Update`; the rules and parameters are in `gd_sim::crowd`):
 //! every character is a crowd agent ([`CrowdAgent`], given by [`crowd_begin`], which also marks where each one
 //! starts the frame). The agents' groups and masks decide who meets whom: the player only hostile monsters, a
 //! hostile monster everyone, pets and allied monsters only hostile monsters, NPCs hostile monsters and each other;
 //! a `forceCollision` monster (or a Boss / Quest / SuperBoss) is never pushed, a `forceNoCollision` one is met by
 //! no one, and a dashing character (the warm-ups of path charges, leaps, blinks, weapon charges and evades set
-//! Character +3528, the "no collision" flag 0x800; the player's ChargeToUseSkill) is neither pushed nor steered.
+//! `Character.crowdFlags`, the "no collision" flag 0x800; the player's ChargeToUseSkill) is neither pushed nor steered.
 //! - The player's planning ([`follow_path`], flag 4 of its agent): with an agent that moved last frame, a velocity is
 //!   sampled against the hostile monsters within max(8 r, r + the largest radius) that stand between it and its
 //!   target (`gd_sim::crowd::avoid`); the player keeps its speed (flag 0x40) and only turns. Its step then fails
-//!   the move (reason 2, `ControllerPlayerStateMoveTo::PathFailed` @0x180166480: Idle) when it touches a neighbour
+//!   the move (reason 2, `ControllerPlayerStateMoveTo::PathFailed`: Idle) when it touches a neighbour
 //!   that stands on the move's end, or touches one within its radius of the end: a run onto a monster ends at it.
 //! - A moving monster's or pet's separation ([`crowd_begin`], weight 1.1, `Monster::CrowdAgentCreated`): from where
 //!   the agents stand when the frame begins, the push away from the other monsters and pets it meets
@@ -52,7 +55,7 @@
 //!   moved them): the step is undone and the path fails (reason 2). A steered step is put back on the mesh
 //!   ([`onto_nav`]).
 //! - A knocked-down character (`crate::ragdoll::KnockedDown`) is out of the crowd while down
-//!   (`Character::ExecuteKnockdown` → `NavManager::RemoveObject`; back at `ReleaseKnockdown` @0x18005d5f0).
+//!   (`Character::ExecuteKnockdown` → `NavManager::RemoveObject`; back at `ReleaseKnockdown`).
 //! - The collision pass ([`crowd_update`], `gd_sim::crowd::depenetration`): each overlapping pair that
 //!   `CrowdAgentDepenetrate` lets push moves the agent by (r_a + r_b − d) / d × 0.35, averaged; a moving agent is
 //!   pushed by every neighbour unless that one moves too with a higher priority (the player has 2, the rest 1), a
@@ -64,7 +67,7 @@
 //!   its height when it is over the mesh); one whose record has `allowedOffNavmesh` stays where it is pushed.
 //! - The stuck check ([`crowd_update`], `gd_sim::crowd::Stuck`): an agent whose run carried it less than 1.1 m/s
 //!   for over 0.4 s (held back by others) fails its move (reason 3).
-//! - A failed path: the player's move ends (`ControllerPlayerStateMoveTo::PathFailed` @0x180166480: Idle); a
+//! - A failed path: the player's move ends (`ControllerPlayerStateMoveTo::PathFailed`: Idle); a
 //!   monster's or pet's [`CrowdAgent::take_path_failed`] runs its state's `PathFailed` at its next AI update
 //!   (`combat::monster_ai`, `pets::ai`, `melee`).
 //! - A spinning player (`Skill_AttackRadiusSpin`) has mask 8: only the group-8 monsters push it or are avoided.
@@ -73,7 +76,7 @@
 //! built per pass from that pass's positions; the candidates are filtered with the engine's tests and come by index,
 //! so the result and its order are the brute-force scan's.
 //!
-//! The radius is `Actor::GetRadius` ([`crate::combat::Combatant::radius`], `crate::combat::get_radius`).
+//! The radius is `Actor::GetRadius` ([`gd_game_core::combat::Combatant::radius`], `gd_game_core::combat::get_radius`).
 //! PORT: the crowd's corridor (Detour path corridor, `movePosition` each frame, the visibility shortcut of flag
 //! 0x400) is the port's string-pulled [`MovePath`] (taut already); the smooth steering of flag 0x200 is set for no
 //! character. A steered monster or pet arrives at a path corner once it is within one frame's step of it (then it
@@ -91,11 +94,11 @@
 //! mesh (an off-mesh point ends a leap or charge), crowd pushes are put back on the mesh ([`onto_nav`]), and
 //! projectiles test the whole segment they flew. What a long step changes is only how coarse the crowd's
 //! reactions are (≤ 0.1 s × the speed per step), which the cap bounds.
-use crate::character::{CharState, Character, MoveOrder, QueuedAction};
 use crate::nav::Nav;
-use crate::player::{Player, PlayerSet};
 use bevy::prelude::*;
 use bevy::time::Virtual;
+use gd_game_core::character::{CharState, Character, MoveOrder, QueuedAction};
+use gd_game_core::player::{Player, PlayerSet};
 use std::time::Duration;
 
 pub struct MovementPlugin;
@@ -121,9 +124,9 @@ impl Plugin for MovementPlugin {
             Update,
             (
                 crowd_begin
-                    .run_if(resource_exists::<crate::data::GameData>)
+                    .run_if(resource_exists::<gd_game_core::data::GameData>)
                     .before(PlayerSet),
-                crowd_update.after(crate::combat::CombatSet),
+                crowd_update.after(gd_game_core::combat::CombatSet),
             ),
         );
     }
@@ -151,10 +154,11 @@ pub struct MovePath {
 
 #[derive(Clone, Copy, Debug)]
 struct PlainMove {
-    /// Horizontal unit direction from the player to `dest` when the move began (+32).
+    /// Horizontal unit direction from the player to `dest` when the move began
+    /// (`ControllerPlayerStateMoveTo.startDirection`).
     dir: Vec3,
     dest: Vec3,
-    /// The pending destination (+48) and the rules it is requested with.
+    /// The pending destination (`ControllerPlayerStateMoveTo.pendingDestination`) and the rules it is requested with.
     pending: Option<(Vec3, MoveRules)>,
 }
 
@@ -176,7 +180,7 @@ impl MovePath {
     }
 }
 
-/// `ControllerPlayerStateMoveTo::RequestMoveAction` @0x1801662d0 (module docs): while a plain move runs and the
+/// `ControllerPlayerStateMoveTo::RequestMoveAction` (module docs): while a plain move runs and the
 /// direction to `to` is the one it began with, `to` becomes its pending destination; else
 /// [`default_move_request`]. True when the request was taken (the held button's 10 ms repeat).
 pub fn request_move(
@@ -237,7 +241,7 @@ pub fn apply_move_order(
     path: &mut MovePath,
     nav: &gd_sim::nav::NavWorld,
     scratch: &mut gd_sim::nav::PathScratch,
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     record: &str,
     from: Vec3,
     order: MoveOrder,
@@ -262,7 +266,7 @@ pub fn apply_move_order(
     taken
 }
 
-/// `ControllerPlayerStateMoveTo::OnUpdate` @0x1801661c0 (module docs): within 2.5 m of the move's end, its
+/// `ControllerPlayerStateMoveTo::OnUpdate` (module docs): within 2.5 m of the move's end, its
 /// pending destination is requested. PORT: its camera-ray retry uses the camera position of the held request.
 pub fn pending_moves(
     nav: Res<Nav>,
@@ -286,22 +290,22 @@ pub fn pending_moves(
 /// skill whose target is out of reach. The player walks to the target
 /// (`ControllerAI::MoveTo` with the skill) and `EndOfPathReached` /
 /// `PathFailed` start `UseSkill` with the clicked point. The state ends
-/// (`Idle`) when the target dies (`OnUpdate` @0x180167480), and a move
+/// (`Idle`) when the target dies (`OnUpdate`), and a move
 /// request, stun or a new valid skill request replaces it
 /// (`RequestMoveAction`, `BeginStun`, `RequestSkillAction`).
 /// `ControllerPlayerStateChargeToUseSkill` (same vtable: it shares
 /// `EndOfPathReached` / `PathFailed` / `CloseEnoughToUseSkill` and ends the
-/// same way in `OnUpdate` @0x180167f80) differs in `OnBegin` @0x180167ef0 only:
+/// same way in `OnUpdate`) differs in `OnBegin` only:
 /// `ControllerAI::MoveTo` with animation type 7 (Charge) and speed factor 1.0
 /// (unit speed, as `Pace::Charge`), the `charge` flag here.
 ///
 /// The move is a `MoveToAction` carrying the skill: `MoveToAction::Execute`
-/// @0x180082c00 calls the skill's `WarmUpStart` (vtable slot 214) and, when
-/// it returns true, sets the warm-up run speed flag (`Character + 9907`,
-/// `ForceSpeedUpdate`); `Finish` @0x180082ef0 calls `WarmUpEnd` with the
+/// calls the skill's `WarmUpStart` and, when
+/// it returns true, sets the warm-up run speed flag (`Character.warmUpRunSpeed`,
+/// `ForceSpeedUpdate`); `Finish` calls `WarmUpEnd` with the
 /// target and clears the flag. Only weapon skills warm up
-/// (`Skill_AttackWeapon::WarmUpStart` @0x1804e40b0, see
-/// `casting::WarmUp`); the others' slot is an empty stub.
+/// (`Skill_AttackWeapon::WarmUpStart`, see
+/// `casting::WarmUp`); the others' `WarmUpStart` is an empty stub.
 #[derive(Component)]
 pub struct MoveToUseSkill {
     /// ChargeToUseSkill rather than MoveToUseSkill.
@@ -331,12 +335,12 @@ struct Neighbour {
 }
 
 /// The player walks its [`MovePath`]. Held in place ([`Rooted`]: trapped, immobilized, every [`Stunned`]) the
-/// move is over: `ControllerPlayerState::DefaultBeginTrapAction` @0x180165350 sets the "Trapped" state
-/// (so the `MoveTo` state is left; `ControllerPlayerStateMoveToUseSkill::BeginTrap` @0x180167eb0 runs its slot
-/// 15 first, then the same), whose `OnBegin` @0x18016a450 is a `TakeTrapAction` (`Character::ExecuteTrap`
-/// @0x18005d4f0: action state 13) and whose `EndTrap` @0x18016a9f0 goes to "Idle", not back to the move. PORT:
-/// the pending skill move is dropped whole (slot 15 of its state was not decompiled); the trapped pose is Idle.
-/// A move queued while busy ([`crate::character::QueuedAction`]) runs here once the action allows it: at the
+/// move is over: `ControllerPlayerState::DefaultBeginTrapAction` sets the "Trapped" state
+/// (so the `MoveTo` state is left; `ControllerPlayerStateMoveToUseSkill::BeginTrap` runs its
+/// `ControllerPlayerState::PreTrap` first, then the same), whose `OnBegin` is a `TakeTrapAction`
+/// (`Character::ExecuteTrap`: action state 13) and whose `EndTrap` goes to "Idle", not back to the move. PORT:
+/// the pending skill move is dropped whole (its state's `PreTrap` was not decompiled); the trapped pose is Idle.
+/// A move queued while busy ([`gd_game_core::character::QueuedAction`]) runs here once the action allows it: at the
 /// clip's `AllowInterrupt` point (the recovery cancel, its remainder carried as the attack-delay) or when the
 /// action ends; an evade's recovery is cancelable once its dash (`StopJump`) is over.
 #[allow(clippy::type_complexity)]
@@ -345,7 +349,7 @@ pub fn follow_path(
     mut scratch: Local<gd_sim::nav::PathScratch>,
     time: Res<Time>,
     nav: Res<Nav>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut players: Query<
         (
             Entity,
@@ -354,7 +358,7 @@ pub fn follow_path(
             &mut Character,
             &mut crate::player_orders::InteractTarget,
             Option<&MoveToUseSkill>,
-            Option<&crate::combat::Combatant>,
+            Option<&gd_game_core::combat::Combatant>,
             Option<&mut CrowdAgent>,
             Has<Rooted>,
         ),
@@ -364,13 +368,13 @@ pub fn follow_path(
         (
             &Transform,
             &Character,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
             Option<&CrowdAgent>,
         ),
         (
-            With<crate::monsters::Monster>,
+            With<gd_game_core::monsters::Monster>,
             Without<Player>,
-            Without<crate::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
             Without<crate::combat::Allied>,
         ),
     >,
@@ -385,7 +389,7 @@ pub fn follow_path(
             if pending.is_some() {
                 commands
                     .entity(e)
-                    .try_remove::<(MoveToUseSkill, crate::casting::WarmPaid)>();
+                    .try_remove::<(MoveToUseSkill, gd_game_core::casting::WarmPaid)>();
             }
             if matches!(ch.state, CharState::Run | CharState::Charge) {
                 ch.state = CharState::Idle;
@@ -420,7 +424,7 @@ pub fn follow_path(
         );
         // A queued move runs when the action allows it: free, or the recovery
         // cancelable at the clip's `AllowInterrupt` point (an evade: its dash over) —
-        // `AttackAction::QueryActionPermission` @0x180084380 permission 4; the cancelled
+        // `AttackAction::QueryActionPermission` permission 4; the cancelled
         // remainder becomes the attack-delay so the cadence is kept.
         if busy && !ch.can_act() {
             continue;
@@ -580,7 +584,7 @@ pub fn follow_path(
         }
         // The occupied target (the integration, reason 2): a step onto a neighbour that stands at the move's end,
         // or one that touches a neighbour within the player's radius of the end, fails the path; the player does
-        // not move (`ControllerPlayerStateMoveTo::PathFailed` @0x180166480: Idle).
+        // not move (`ControllerPlayerStateMoveTo::PathFailed`: Idle).
         if moving
             && let Some(end) = end
             && gd_sim::crowd::occupied_target(
@@ -602,7 +606,7 @@ pub fn follow_path(
         }
         // The move's state. Without a move only a move state goes back to Idle: another action's state (a held
         // channel or whirlwind, a flinch, a scripted clip) is its requester's, left at its own "End" or release. A
-        // move that starts replaces it, and a channel's skill stops with it (`MoveToAction::Execute` @0x180082c00:
+        // move that starts replaces it, and a channel's skill stops with it (`MoveToAction::Execute`:
         // `SkillManager::StopCurrentSkill`).
         let moves = moving || !path.points.is_empty();
         let want = match (moves, charging) {
@@ -619,7 +623,9 @@ pub fn follow_path(
                 ch.state,
                 CharState::Channel | CharState::Channel2 | CharState::Spin
             ) {
-                commands.entity(e).try_remove::<crate::casting::Channel>();
+                commands
+                    .entity(e)
+                    .try_remove::<gd_game_core::casting::Channel>();
             }
             ch.state = want;
         }
@@ -747,7 +753,8 @@ fn xz(v: Vec3) -> gd_sim::crowd::V2 {
     [v.x, v.z]
 }
 
-/// Where the crowd puts an agent moved to `to` (sub_18025C440's end, the nav interface's vfunc +24 / +32):
+/// Where the crowd puts an agent moved to `to` (`Crowd::Update`'s end, the nav interface's
+/// `NavInterface::FindNearestPoly` / `NavInterface::FindNearestPoint`):
 /// over the mesh (`findNearestPoly` with the default extents) only its height is taken; else the nearest point on
 /// the mesh within 10 m horizontally; with neither the agent stays at `to`, off the mesh (PORT: it keeps its spot,
 /// None). An agent allowed off the mesh (flag 0x20, [`CrowdAgent::off_mesh`]) is not projected. PORT: the mesh is
@@ -794,15 +801,16 @@ fn onto_nav(nav: &gd_sim::nav::NavWorld, to: Vec3, off_mesh: bool) -> Option<Vec
 /// A character's crowd agent (module docs): the crowd's own per-agent state.
 #[derive(Component, Debug, Clone, Default)]
 pub struct CrowdAgent {
-    /// Where the agent stood when the frame began (the crowd's +196).
+    /// Where the agent stood when the frame began (`CrowdAgent.frameStart`).
     pub start: Vec3,
     /// Its velocity over the last frame (m/s).
     pub vel: Vec3,
-    /// A `forceCollision` monster (or a Boss / Quest / SuperBoss): group 8 too, never pushed (`Monster` +21332).
+    /// A `forceCollision` monster (or a Boss / Quest / SuperBoss): group 8 too, never pushed
+    /// (`Monster.forceCollision`).
     pub forced: bool,
-    /// A `forceNoCollision` monster: group 0 (`Monster` +21333).
+    /// A `forceNoCollision` monster: group 0 (`Monster.forceNoCollision`).
     pub ghost: bool,
-    /// Its top speed this frame (params +8; set by the movers: the player's path following,
+    /// Its top speed this frame (`CrowdAgentParams.maxSpeed`; set by the movers: the player's path following,
     /// `combat::advance_steered`; 0 otherwise).
     pub speed: f32,
     /// The separation velocity [`crowd_begin`] computed for this frame (zero: none), added to the desired
@@ -810,13 +818,14 @@ pub struct CrowdAgent {
     pub(crate) separation: Vec3,
     /// This frame's move was steered (not along the path exactly): the crowd puts it back on the mesh.
     pub(crate) steered: bool,
-    /// The record's `allowedOffNavmesh` (`Character::Load` → +3778, `GetAllowedOffNavmesh`): flag 0x20, the crowd
+    /// The record's `allowedOffNavmesh` (`Character::Load` → `Character.allowedOffNavmesh`, `GetAllowedOffNavmesh`):
+    /// flag 0x20, the crowd
     /// never puts it back on the mesh.
     pub off_mesh: bool,
-    /// Spinning (`Skill_AttackRadiusSpin`, a [`crate::casting::Channel`] of that class): Character +3529, mask 8
+    /// Spinning (`Skill_AttackRadiusSpin`, a [`gd_game_core::casting::Channel`] of that class): `Character.spinning`, mask 8
     /// (`gd_sim::crowd::group::SPIN_MASK`). Set every frame by [`crowd_begin`].
     pub spinning: bool,
-    /// The stuck check (+224).
+    /// The stuck check (`CrowdAgent.stuck`).
     stuck: gd_sim::crowd::Stuck,
     /// The crowd failed the agent's path (state 6, reasons 2 and 3) and its controller's `PathFailed` is due
     /// ([`CrowdAgent::take_path_failed`]).
@@ -824,8 +833,8 @@ pub struct CrowdAgent {
 }
 
 impl CrowdAgent {
-    /// `Character::CrowdAgentError` @0x1800672b0: the crowd failed the path (the agent's move stops) and
-    /// the current controller state's `PathFailed` (vtable slot 17) runs; true once per failure. The monster and pet
+    /// `Character::CrowdAgentError`: the crowd failed the path (the agent's move stops) and
+    /// the current controller state's `PathFailed` runs; true once per failure. The monster and pet
     /// AIs take it at their next update (the crowd runs after them).
     pub fn take_path_failed(&mut self) -> bool {
         std::mem::take(&mut self.failed)
@@ -833,12 +842,12 @@ impl CrowdAgent {
 }
 
 /// Gives every character its [`CrowdAgent`], marks where each one starts the frame, and computes the moving
-/// monsters' and pets' separation from those positions (module docs; sub_18025C440's planning pass: the
+/// monsters' and pets' separation from those positions (module docs; `Crowd::Update`'s planning pass: the
 /// neighbours within max(8 r, r + the largest radius) that carry a separation weight too).
 #[allow(clippy::type_complexity)]
 pub fn crowd_begin(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut agents: Query<
         (
             (
@@ -846,21 +855,21 @@ pub fn crowd_begin(
                 &Transform,
                 &Character,
                 Option<&mut CrowdAgent>,
-                Option<&crate::monsters::Monster>,
-                Option<&crate::casting::Channel>,
+                Option<&gd_game_core::monsters::Monster>,
+                Option<&gd_game_core::casting::Channel>,
             ),
             (
-                Option<&crate::combat::Combatant>,
+                Option<&gd_game_core::combat::Combatant>,
                 Has<Player>,
                 Has<crate::pets::Pet>,
                 Has<crate::combat::Allied>,
-                Has<crate::combat::Dead>,
+                Has<gd_game_core::combat::Dead>,
                 Has<crate::ragdoll::KnockedDown>,
             ),
             (
-                Has<crate::casting::PathCharge>,
-                Has<crate::casting::Leap>,
-                Has<crate::casting::Charge>,
+                Has<gd_game_core::casting::PathCharge>,
+                Has<gd_game_core::casting::Leap>,
+                Has<gd_game_core::casting::Charge>,
                 Has<crate::evade::Evading>,
                 Option<&MoveToUseSkill>,
             ),
@@ -916,7 +925,7 @@ pub fn crowd_begin(
             }
             continue;
         }
-        // `Monster::Load` @0x180373810: `forceCollision` (or classification 3..5), `forceNoCollision`.
+        // `Monster::Load`: `forceCollision` (or classification 3..5), `forceNoCollision`.
         let rec = monster.and_then(|m| data.db.get(&m.record));
         let (forced, ghost) = rec.map_or((false, false), |r| {
             let boss = matches!(
@@ -992,80 +1001,96 @@ fn crowd_group(player: bool, monster: bool, allied: bool, agent: &CrowdAgent) ->
     (g, m)
 }
 
+/// [`crowd_update`]'s per-frame scratch: the allocations are reused, the contents rebuilt every frame.
+#[derive(Default)]
+pub struct CrowdScratch {
+    infos: Vec<Info>,
+    /// The neighbour candidates of a query (`gd_sim::grid`: by index, the engine's order).
+    near: Vec<usize>,
+    blocked: Vec<usize>,
+    bodies: Vec<gd_sim::crowd::Body>,
+    grid: gd_sim::grid::Grid,
+}
+
+/// One crowd agent's snapshot for [`crowd_update`].
+struct Info {
+    e: Entity,
+    start: Vec3,
+    body: gd_sim::crowd::Body,
+    /// Its move this frame was steered (`combat::advance_steered`): put back on the mesh.
+    steered: bool,
+    off_mesh: bool,
+    /// A monster's or pet's path end while it follows one (the player's own checks are `follow_path`'s).
+    target: Option<Vec3>,
+    /// Where its AI's move put it.
+    pre: Vec3,
+    failed: bool,
+}
+
 /// The crowd update after every mover has moved (module docs): the monsters' and pets' occupied targets, the
 /// steered steps put back on the mesh, the collision pass, the stuck checks and each agent's velocity.
 #[allow(clippy::type_complexity)]
 pub fn crowd_update(
     time: Res<Time>,
     nav: Res<Nav>,
+    mut scratch: Local<CrowdScratch>,
     mut agents: Query<
         (
             (
                 Entity,
                 &mut Transform,
                 &mut Character,
-                &crate::combat::Combatant,
+                &gd_game_core::combat::Combatant,
                 &mut CrowdAgent,
             ),
             (
                 Has<Player>,
-                Has<crate::monsters::Monster>,
+                Has<gd_game_core::monsters::Monster>,
                 Has<crate::pets::Pet>,
                 Has<crate::combat::Allied>,
                 Option<&crate::combat::MonsterAi>,
                 Option<&crate::pets::Pet>,
             ),
             (
-                Has<crate::casting::PathCharge>,
-                Has<crate::casting::Leap>,
-                Has<crate::casting::Charge>,
+                Has<gd_game_core::casting::PathCharge>,
+                Has<gd_game_core::casting::Leap>,
+                Has<gd_game_core::casting::Charge>,
                 Has<crate::evade::Evading>,
                 Option<&MoveToUseSkill>,
                 Option<&mut MovePath>,
             ),
         ),
         (
-            Without<crate::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
             Without<crate::ragdoll::KnockedDown>,
         ),
     >,
 ) {
-    use gd_sim::{crowd, grid::Grid};
+    use gd_sim::crowd;
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
-    struct Info {
-        e: Entity,
-        start: Vec3,
-        body: crowd::Body,
-        /// Its move this frame was steered (`combat::advance_steered`): put back on the mesh.
-        steered: bool,
-        off_mesh: bool,
-        /// A monster's or pet's path end while it follows one (the player's own checks are `follow_path`'s).
-        target: Option<Vec3>,
-        /// Where its AI's move put it.
-        pre: Vec3,
-        failed: bool,
-    }
-    let mut infos: Vec<Info> = Vec::new();
+    let s = &mut *scratch;
+    s.infos.clear();
     for (
         (e, tf, ch, cb, agent),
         (player, monster, pet, allied, ai, pet_c),
         (pc, leap, charge, evade, mts, _),
     ) in &agents
     {
-        // "No collision" (Character +3528, flag 0x800): the dashes' warm-ups (path charge, leap, blink, weapon
+        // "No collision" (`Character.crowdFlags`, flag 0x800): the dashes' warm-ups (path charge, leap, blink, weapon
         // charge, evade) and the player's ChargeToUseSkill.
         let dash = pc || leap || charge || evade || mts.is_some_and(MoveToUseSkill::charging);
         let (group, mask) = crowd_group(player, monster || pet, allied || pet, agent);
         let moving = crowd_moving(ch);
-        // `Monster::CrowdAgentDepenetrate` @0x180376450: never a `forceCollision` monster, nor one whose Spawn
-        // animation (`EnableSpawnAnimation`, Character +9768) still plays (the current entry's type 19, the Spawn
+        // `Monster::CrowdAgentDepenetrate`: never a `forceCollision` monster, nor one whose Spawn
+        // animation (`EnableSpawnAnimation`, `Character.spawnAnimation`) still plays (the current entry's type 19,
+        // the Spawn
         // animation type; the flag clears once it is something else).
         let spawning =
             ch.state == CharState::Scripted && ch.scripted == gd_sim::anim::AnimType::Spawn;
-        infos.push(Info {
+        s.infos.push(Info {
             e,
             start: agent.start,
             body: crowd::Body {
@@ -1095,36 +1120,37 @@ pub fn crowd_update(
             failed: false,
         });
     }
-    let max_r = infos.iter().map(|i| i.body.radius).fold(0.0, f32::max);
+    let max_r = s.infos.iter().map(|i| i.body.radius).fold(0.0, f32::max);
     let cell = crowd::grid_cell(max_r);
-    // The neighbour candidates of a query (`gd_sim::grid`: by index, the engine's order).
-    let mut near: Vec<usize> = Vec::new();
     // The occupied target (the integration, reason 2): a monster's or pet's step that touches a neighbour standing on
     // its path's end, or that touches one within its radius of the end, fails the path; it does not move. Its combat
     // target counts like any neighbour: the attack points are the skill range + both radii (`GetTargetDistance`)
     // from the enemy, the same `GetRadius` as the crowd's.
-    let mut blocked: Vec<usize> = Vec::new();
-    if infos.iter().any(|a| a.target.is_some() && a.body.collides) {
-        let grid = Grid::new(cell, infos.iter().map(|i| i.body.pos));
-        for (i, a) in infos.iter().enumerate() {
+    if s.infos
+        .iter()
+        .any(|a| a.target.is_some() && a.body.collides)
+    {
+        s.grid.rebuild(cell, s.infos.iter().map(|i| i.body.pos));
+        for (i, a) in s.infos.iter().enumerate() {
             let Some(t) = a.target.filter(|_| a.body.collides) else {
                 continue;
             };
             let range = crowd::plan_range(a.body.radius, max_r);
             let me = [a.body.pos[0], a.body.y, a.body.pos[1]];
-            grid.near(a.body.pos, range, &mut near);
-            let others = near
+            s.grid.near(a.body.pos, range, &mut s.near);
+            let others = s
+                .near
                 .iter()
-                .map(|&j| (j, &infos[j]))
+                .map(|&j| (j, &s.infos[j]))
                 .filter(|&(j, b)| j != i && a.body.meets(&b.body, range))
                 .map(|(_, b)| ([b.body.pos[0], b.body.y, b.body.pos[1]], b.body.radius));
             if crowd::occupied_target(me, a.body.radius, t.to_array(), others) {
-                blocked.push(i);
+                s.blocked.push(i);
             }
         }
     }
-    for i in blocked {
-        let a = &mut infos[i];
+    for i in s.blocked.drain(..) {
+        let a = &mut s.infos[i];
         debug!("crowd: {} occupied target at {:.1?}", a.e, a.start);
         a.failed = true;
         a.target = None;
@@ -1136,7 +1162,7 @@ pub fn crowd_update(
         }
     }
     // A steered step may leave the walkable mesh: put it back (the integration's projection).
-    for a in infos.iter_mut().filter(|a| a.steered && !a.failed) {
+    for a in s.infos.iter_mut().filter(|a| a.steered && !a.failed) {
         let at = Vec3::new(a.body.pos[0], a.body.y, a.body.pos[1]);
         if let Some(to) = onto_nav(&nav.0, at, a.off_mesh)
             && to != at
@@ -1149,8 +1175,9 @@ pub fn crowd_update(
         }
     }
     // The collision pass.
-    let bodies: Vec<crowd::Body> = infos.iter().map(|i| i.body).collect();
-    for (info, push) in infos.iter().zip(crowd::depenetration(&bodies)) {
+    s.bodies.clear();
+    s.bodies.extend(s.infos.iter().map(|i| i.body));
+    for (info, push) in s.infos.iter().zip(crowd::depenetration(&s.bodies)) {
         if push == [0.0; 2] {
             continue;
         }
@@ -1165,9 +1192,9 @@ pub fn crowd_update(
             c.1.translation = to;
         }
     }
-    // The query's order is the same as in the first pass: `infos` is index-aligned.
+    // The query's order is the same as in the first pass: `s.infos` is index-aligned.
     for (((e, mut tf, ch, _, mut agent), (player, ..), (.., path)), info) in
-        agents.iter_mut().zip(&infos)
+        agents.iter_mut().zip(&s.infos)
     {
         debug_assert_eq!(e, info.e);
         if (tf.translation.x != agent.start.x || tf.translation.z != agent.start.z)
@@ -1182,7 +1209,7 @@ pub fn crowd_update(
             agent.failed = true;
             continue;
         }
-        // The stuck check (reason 3). The player's: `ControllerPlayerStateMoveTo::PathFailed` @0x180166480 → Idle.
+        // The stuck check (reason 3). The player's: `ControllerPlayerStateMoveTo::PathFailed` → Idle.
         // A monster's or pet's top speed is the one its mover gave (`combat::advance_steered`), else how far its
         // move carried it this frame.
         let (moving, top) = if player {
@@ -1212,8 +1239,9 @@ pub fn crowd_update(
     }
 }
 
-/// The world mouse command gate (module docs, `ControllerPlayer::HandleActionFromMouse` @0x18015e1f0 with
-/// `NewMouseCommand`, EXE `sub_140021000` with the pending command `a1+464`): after a press that started an
+/// The world mouse command gate (module docs, `ControllerPlayer::HandleActionFromMouse` with
+/// `NewMouseCommand`, EXE `InGameUI::HandleMouseEvent` with the pending command `InGameUI.commandPending`):
+/// after a press that started an
 /// interaction, or a press the UI took, the held buttons issue no more commands (a move, an attack, a held skill)
 /// until both are released. One for both buttons, as the engine's flags: grimdawn's `click_to_move` updates it each
 /// frame, the world-click systems after it read it.
@@ -1225,9 +1253,10 @@ pub struct MouseCommand {
 impl MouseCommand {
     /// The frame's mouse event, before anything acts on it: `held` a world button (left / right) is down,
     /// `pressed` one went down now, `ui` the UI took the press. With neither button held the gate opens; a world
-    /// press opens it; a press the UI took closes it (`sub_140021000`: the UI's handler, vfunc +56, takes
-    /// the press and `a1+464` is cleared; the held events after it, with the cursor over the world, only set
-    /// `CommandRepeated` and dispatch nothing, as `a1+464` is set again only by a world press or the held Move key).
+    /// press opens it; a press the UI took closes it (`InGameUI::HandleMouseEvent`: the UI's handler,
+    /// `UIWindow::HandleMouseEvent`, takes the press and `InGameUI.commandPending` is cleared; the held events
+    /// after it, with the cursor over the world, only set `CommandRepeated` and dispatch nothing, as
+    /// `InGameUI.commandPending` is set again only by a world press or the held Move key).
     pub fn event(&mut self, held: bool, pressed: bool, ui: bool) {
         if !held {
             self.consumed = false;

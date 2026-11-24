@@ -1,24 +1,22 @@
 //! Fear and confusion: the controller states the duration-damage manager's
 //! involuntary influences enter, below the hard crowd control
-//! (`DurationDamageManager::UpdateFxAndInfluence` @0x18027b8a0:
+//! (`DurationDamageManager::UpdateFxAndInfluence`:
 //! while none of immobilize / petrify / freeze / trap / sleep / stun /
 //! knockdown runs, confusion (53) before fear (52)).
 //!
-//! - Confusion: `Monster::CombatExertInfluenceConfusion` @0x18037b2e0 →
-//!   `ControllerMonster::Confuse` @0x180135970 → `ControllerMonsterStateConfused`
-//!   (`OnBegin` @0x180149df0, `OnUpdate` @0x180149f70, `WalkRandomly`
-//!   @0x18014a1c0, `PathFailed` = `EndOfPathReached` → `WalkRandomly`):
-//!   walks to a random point 2 r..7 m from its home (sub_18013E7A0: up to 5
+//! - Confusion: `Monster::CombatExertInfluenceConfusion` →
+//!   `ControllerMonster::Confuse` → `ControllerMonsterStateConfused`
+//!   (`OnBegin`, `OnUpdate`, `WalkRandomly`, `PathFailed` = `EndOfPathReached` → `WalkRandomly`):
+//!   walks to a random point 2 r..7 m from its home (`ControllerMonster::FindRandomPoint`: up to 5
 //!   tries, any direction, on the navmesh, more than 1 m away), and every
 //!   `rand() % 2000 + 1000` ms attacks at random (`UseSkillOnPoint` with the
 //!   best skill at a point 2 r..5 m from home — anyone in reach is hit,
 //!   friend or foe).
-//! - Fear: `Character::CombatExertInfluenceFear` @0x180068ee0 →
-//!   `ControllerMonster::ScareMe` @0x180135cb0 → `ControllerMonsterStateScared`
-//!   (`OnBegin` @0x18014ae10, `OnUpdate` @0x18014aee0, `PickRunToPoint`
-//!   @0x18014b090, `PathFailed` = `EndOfPathReached` → re-pick): runs to
+//! - Fear: `Character::CombatExertInfluenceFear` →
+//!   `ControllerMonster::ScareMe` → `ControllerMonsterStateScared`
+//!   (`OnBegin`, `OnUpdate`, `PickRunToPoint`, `PathFailed` = `EndOfPathReached` → re-pick): runs to
 //!   `max(fleeDistance, 5)` m directly away from the last attacker
-//!   (Character +1692, [`Attackers::last`]) with ±1 m of horizontal jitter,
+//!   (`Character.lastAttacker`, [`Attackers::last`]) with ±1 m of horizontal jitter,
 //!   re-picking every 1–2 s and on the path's end / failure; an invalid
 //!   enemy stops the flee. No roar, no flee count (the Flee state's
 //!   bookkeeping is its own, `crate::flee`).
@@ -41,15 +39,15 @@
 //! only. The scripted / patrolling / spirit states `monster_ai` leaves alone
 //! are left alone here too.
 
-use crate::afflictions::{AfflictionStage, Afflictions};
-use crate::character::{CharState, Character};
-use crate::combat::{
-    Attackers, CombatSet, Combatant, HiddenFromCombat, MELEE_RANGE, MonsterAi, QuestMove,
-    advance_steered, run_speed,
-};
+use crate::afflictions::Afflictions;
+use crate::combat::{HiddenFromCombat, MonsterAi, QuestMove, advance_steered, run_speed};
 use crate::movement::{CrowdAgent, Rooted, crowd_update};
 use crate::nav::Nav;
 use bevy::prelude::*;
+use gd_game_core::afflictions::AfflictionStage;
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::MELEE_RANGE;
+use gd_game_core::combat::{Attackers, CombatSet, Combatant};
 use gd_sim::attributes::CombatType as T;
 
 pub struct CcStatesPlugin;
@@ -75,7 +73,7 @@ struct CcControl {
     repick: f32,
 }
 
-/// `ControllerMonsterStateConfused::WalkRandomly`'s point (sub_18013E7A0):
+/// `ControllerMonsterStateConfused::WalkRandomly`'s point (`ControllerMonster::FindRandomPoint`):
 /// up to 5 tries at a random point 2 r..7 m from home, any direction, on the
 /// navmesh and more than 1 m from the monster; the path to it (empty: none
 /// found, the monster stands).
@@ -87,8 +85,8 @@ fn wander_path(
     radius: f32,
 ) -> Vec<Vec3> {
     for _ in 0..5 {
-        let dist = 2.0 * radius + crate::rng::f32() * (7.0 - 2.0 * radius);
-        let angle = crate::rng::f32() * std::f32::consts::TAU;
+        let dist = 2.0 * radius + gd_game_core::rng::f32() * (7.0 - 2.0 * radius);
+        let angle = gd_game_core::rng::f32() * std::f32::consts::TAU;
         let mut p = home + Vec3::new(angle.sin() * dist, 0.0, angle.cos() * dist);
         let Some(g) = nav.0.ground([p.x, home.y + 0.5, p.z]) else {
             continue;
@@ -135,7 +133,7 @@ fn cc_states(
         Query<
             (Entity, &Transform, &Combatant),
             (
-                Without<crate::combat::Dead>,
+                Without<gd_game_core::combat::Dead>,
                 Without<HiddenFromCombat>,
                 // A physics prop has a `Combatant` but is no character to attack.
                 Without<crate::physics_decoration::PhysicsDecoration>,
@@ -154,10 +152,10 @@ fn cc_states(
                 Has<Rooted>,
             ),
             (
-                Without<crate::combat::Dead>,
-                Without<crate::player::Player>,
-                Without<crate::world::Dummy>,
-                Without<crate::casting::PathCharge>,
+                Without<gd_game_core::combat::Dead>,
+                Without<gd_game_core::player::Player>,
+                Without<gd_game_core::world::Dummy>,
+                Without<gd_game_core::casting::PathCharge>,
                 Without<QuestMove>,
                 Without<crate::patrol::PatrolPoint>,
                 Without<crate::graeae::ToggleEye>,
@@ -208,7 +206,7 @@ fn cc_states(
         let can_move = ai.class.can_move() && !rooted;
         let mut attack = ctl
             .as_ref()
-            .map_or_else(|| 1.0 + crate::rng::f32() * 2.0, |c| c.attack);
+            .map_or_else(|| 1.0 + gd_game_core::rng::f32() * 2.0, |c| c.attack);
         let mut repick = ctl.as_ref().map_or(0.0, |c| c.repick);
         let mut moving = false;
         let mut swinging = false;
@@ -224,7 +222,7 @@ fn cc_states(
                 if let Some((_, ep, _)) = enemy {
                     if can_move && (repick <= 0.0 || ai.path.is_empty() || failed) {
                         ai.path = path_to(&nav, &mut scratch, me, ai.flee.scare_point(me, *ep));
-                        repick = 1.0 + crate::rng::f32();
+                        repick = 1.0 + gd_game_core::rng::f32();
                     }
                 } else {
                     ai.path.clear();
@@ -245,7 +243,7 @@ fn cc_states(
                 // side becomes the target; approach it and swing.
                 attack -= dt;
                 if attack <= 0.0 {
-                    attack = 1.0 + crate::rng::f32() * 2.0;
+                    attack = 1.0 + gd_game_core::rng::f32() * 2.0;
                     let candidates: Vec<Entity> = all
                         .iter()
                         .filter(|(oe, op, or)| {
@@ -254,7 +252,7 @@ fn cc_states(
                         .map(|(oe, ..)| *oe)
                         .collect();
                     cb.target = (!candidates.is_empty())
-                        .then(|| candidates[crate::rng::usize(..candidates.len())]);
+                        .then(|| candidates[gd_game_core::rng::usize(..candidates.len())]);
                     ai.path.clear();
                 }
                 if let Some(te) = cb.target {
@@ -265,7 +263,7 @@ fn cc_states(
                             if cb.cooldown <= 0.0 {
                                 ch.begin_swing(&tf, Some((te, *tp)), *tp);
                                 cb.cooldown = ai.swing_pause.0
-                                    + crate::rng::f32()
+                                    + gd_game_core::rng::f32()
                                         * (ai.swing_pause.1 - ai.swing_pause.0).max(0.0);
                                 ch.state = CharState::Attack;
                                 swinging = true;

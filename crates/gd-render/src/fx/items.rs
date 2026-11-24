@@ -3,7 +3,7 @@
 //! wisps), on every character that wears the item: the player, monsters /
 //! NPCs with gear, the paper dolls.
 //!
-//! Engine.dll `Actor::CreateAttachmentsFromMesh` @0x18002c4e0 (see
+//! Engine.dll `Actor::CreateAttachmentsFromMesh` (see
 //! [`super::mesh_creations`]): a weapon or armour item is an actor like any
 //! other, so its mesh creates its entities at its attach points once it has
 //! loaded; they are attached to the item (`Actor::Attach`) and follow it, and
@@ -12,8 +12,8 @@
 //! `ItemEquipment::Load`, `Weapon::Load`, `Armor::Load` read none). A
 //! character's own body mesh goes the same way ([`attach_armour`] from
 //! `character::dress`, a shapeshift form's from `wear_forms`). The
-//! "toggled weapon effects" interface option (bool 64) does not touch these:
-//! `EquipManager::UpdateWeaponFxVisibility` @0x180286c50 only sets or clears
+//! `toggledWeaponEffects` interface option does not touch these:
+//! `EquipManager::UpdateWeaponFxVisibility` only sets or clears
 //! the skill-applied weapon enchantment (`SetWeaponEnchantment`, a
 //! `WeaponEnchantmentPak` from a buff's `weaponEnchantment`: [`super::enchant`]).
 //!
@@ -23,11 +23,12 @@
 //! `character::pose_bodies` and before the effect systems. A paper doll's get
 //! its render layer ([`super::FxView`]).
 use super::{FxSystems, FxView, mesh_effect_points, spawn_effect_record};
-use crate::character::{Character, WeaponOf};
+use crate::character::WeaponOf;
 use crate::model::{ModelAsset, attach_frame, coords_to_affine};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use gd_formats::msh::Mesh as Msh;
+use gd_game_core::character::Character;
 use std::sync::Arc;
 
 pub struct ItemFxPlugin;
@@ -119,7 +120,7 @@ fn spawn(commands: &mut Commands, record: &str, fx: ItemFx, parent: Entity, mesh
     let e = if mesh {
         commands
             .spawn((
-                gd_game::visuals::FxMeshRequest(record.to_owned()),
+                gd_game_core::visuals::FxMeshRequest(record.to_owned()),
                 Transform::IDENTITY,
             ))
             .id()

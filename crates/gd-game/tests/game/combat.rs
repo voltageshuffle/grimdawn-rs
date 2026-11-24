@@ -1,10 +1,12 @@
 //! Headless fights on flat ground: a monster attacks the player, the
 //! player kills a monster, casts land.
 use bevy::prelude::*;
-use gd_game::casting::{CastRequest, Caster};
-use gd_game::combat::{Combatant, Dead, MonsterKilled};
-use gd_game::player::Loadout;
+use gd_game::combat::MonsterKilled;
 use gd_game::testing::TestGame;
+use gd_game_core::casting::CastRequest;
+use gd_game_core::casting::Caster;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::player::Loadout;
 
 use crate::common::ZOMBIE;
 

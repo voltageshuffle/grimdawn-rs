@@ -27,7 +27,11 @@ impl Plugin for AutoShotPlugin {
     fn build(&self, app: &mut App) {
         // PORT: a plugin `build` starts the watchdog thread and decides whether the systems exist;
         // `main` inserts the hooks before the plugins.
-        let hooks = app.world().resource::<crate::hooks::Hooks>().shot.clone();
+        let hooks = app
+            .world()
+            .resource::<gd_game_core::hooks::Hooks>()
+            .shot
+            .clone();
         let Some(path) = hooks.path else {
             return;
         };
@@ -67,7 +71,7 @@ fn tick(
     mut shot: ResMut<Shot>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
-    trigger: Option<Res<gd_game::visuals::ShotTrigger>>,
+    trigger: Option<Res<gd_game_core::visuals::ShotTrigger>>,
 ) {
     shot.frame += 1;
     if !shot.delays.is_empty() || !shot.taken.is_empty() {

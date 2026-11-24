@@ -1,7 +1,7 @@
 //! Level pathing (chunk 28): "PTHD" container of DetourTileCache compressed
 //! layers ("DTLR" magic, i.e. dtTileCacheLayerHeader). Parsed by
-//! sub_1801099B0 (NavManager), layers added via dtTileCache::addTile-like
-//! sub_180264200 which checks magic 'DTLR' + version 1 and keys tiles by
+//! `NavManager::LoadPathing`, layers added via dtTileCache::addTile-like
+//! `NavManager::AddTileLayer` which checks magic 'DTLR' + version 1 and keys tiles by
 //! (tx, ty, tlayer); data after the 56-byte header is the compressed payload.
 use crate::util::Reader;
 use anyhow::{Result, bail};

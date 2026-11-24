@@ -4,33 +4,33 @@
 //! decal.wesl, called from their point-light loop), and the shadow views.
 //!
 //! Engine.dll:
-//! - A light record's `shadowPriority` (`Light::Load` @0x180136150, also
-//!   `FireLight` / `DayNightLight`, +512) goes to the scene light by
-//!   `Light::AddToScene` @0x1801363a0 only when > 0; `GraphicsLight::SetShadowPriority`
-//!   @0x1800b1050 turns it into the light's shadow flag (+112) as a threshold on
+//! - A light record's `shadowPriority` (`Light::Load`, also
+//!   `FireLight` / `DayNightLight`, `Light.shadowPriority`) goes to the scene light by
+//!   `Light::AddToScene` only when > 0; `GraphicsLight::SetShadowPriority`
+//!   turns it into the light's shadow flag (`GraphicsLight.castsShadow`) as a threshold on
 //!   `shadowQuality`: priority ≤ 1 / 2 / 3 / 4 / 4 for low / medium / high /
 //!   very high / ultra ([`priority_casts`]). Stock values: 1-4 (campfires 4,
 //!   `light_firecauldron01` 1), the `_noshadow` lights 8-9999 (never). Not for
-//!   a light in simple mode (+518), and with `GraphicsEngine::UseLowQualityLighting`
-//!   (`lightingQuality` low, `render/light_rig.rs`) only for a light with +516
-//!   set (`Light::SetForceShadows` @0x18008e350, called by none of Engine.dll /
+//!   a light in simple mode (`Light.simpleMode`), and with `GraphicsEngine::UseLowQualityLighting`
+//!   (`lightingQuality` low, `render/light_rig.rs`) only for a light with `Light.forceShadows`
+//!   set (`Light::SetForceShadows`, called by none of Engine.dll /
 //!   Game.dll / Grim Dawn.exe), so then none ([`lights_cast`]). Effect lights
 //!   (`fx/mod.rs`): priority 1 with the emitter's bools[7].
-//! - Map pools (sub_180093410 → `GraphicsMTRenderer::RecreateRenderTargets` /
-//!   `CreateRenderTargets` @0x1800c7910): `full` maps of the point size
-//!   256 / 384 / 512 / 1024 / 2048 (renderer +636, +648 count 1 / 2 / 3 / 3 / 4)
-//!   and `half` maps of half that size (+644 count 3 / 4 / 6 / 8 / 12)
+//! - Map pools (`GraphicsEngine::GetShadowMapSizes` → `GraphicsMTRenderer::RecreateRenderTargets` /
+//!   `CreateRenderTargets`): `full` maps of the point size
+//!   256 / 384 / 512 / 1024 / 2048 (`GraphicsMTRenderer.pointShadowSize`, `fullShadowCount` 1 / 2 / 3 / 3 / 4)
+//!   and `half` maps of half that size (`halfShadowCount` 3 / 4 / 6 / 8 / 12)
 //!   ([`pools`]); a D16 depth target each.
-//! - Order: `SetupLights` @0x1800ceb80 sorts the frame's lights by their
-//!   scissor-rect area in pixels, largest first (sub_1800D6530, key
-//!   `(int)(w·h)`); the rect is `GetSphereScissorRect` @0x1800c8180 of the
+//! - Order: `SetupLights` sorts the frame's lights by their
+//!   scissor-rect area in pixels, largest first (`GraphicsMTRenderer::CompareLightScissorArea`, key
+//!   `(int)(w·h)`); the rect is `GetSphereScissorRect` of the
 //!   light's sphere with radius + 1 m (the whole viewport when the camera is
 //!   within radius + 2 m of it along the view axis, empty when it is behind);
 //!   a light with an empty rect is not in the frame. `BuildShadows`
-//!   @0x1800cd150 then hands the flagged lights, in that order, the full maps
+//!   then hands the flagged lights, in that order, the full maps
 //!   first, then the half ones; the rest get the renderer's 16² dummy (cleared,
-//!   lit). Nothing when `shadows` is off (renderer +478).
-//! - The map (`BuildShadowPoint` @0x1800c8f00, `pLightShadowVS` of the
+//!   lit). Nothing when `shadows` is off (`GraphicsMTRenderer.shadows`).
+//! - The map (`BuildShadowPoint`, `pLightShadowVS` of the
 //!   material shaders): ONE paraboloid of the hemisphere below the light. The
 //!   light frame has rows (−1, 0, 0), (0, 1, 0), (0, 0, −1) about the light
 //!   position; for a unit direction q in it, clip xy = (q.x, q.z) / (q.y − 1),
@@ -38,15 +38,15 @@
 //!   alpha test is `a · (0.5 − q.y) ≥ 0.5` (nothing above the light's
 //!   horizon casts). The viewport leaves a 1-texel border, cleared to 1.
 //! - Casters: `Region::GetEntitiesInSphere` (light position, radius, list 2):
-//!   Actors whose mesh `GetCastsShadows(lightGroup)` (+656 and not the
+//!   Actors whose mesh `GetCastsShadows(lightGroup)` (`GraphicsMeshInstance.castsShadows` and not the
 //!   `ignoreLightShadows` group); no visibility test.
-//! - Receiver (deferred.ssh `pointPS`, `RenderDeferredPointLight`
-//!   @0x1800aba80): the same paraboloid uv of the light→pixel direction,
+//! - Receiver (deferred.ssh `pointPS`, `RenderDeferredPointLight`):
+//!   the same paraboloid uv of the light→pixel direction,
 //!   uv = (0.5 + 0.5 s, 0.5 − 0.5 t), 4 taps at ±½·`shadowBluriness` in a plus
-//!   (bluriness = softness 1.5 (`SetShadowSoftness`, renderer +488) / the
+//!   (bluriness = softness 1.5 (`SetShadowSoftness`, `GraphicsMTRenderer.shadowSoftness`) / the
 //!   map's width, so ±0.75 texel of a full or a half map), each ¼ lit unless
 //!   the stored depth < sat((d − 0.1)·0.0334448 + `shadowBias`), bias =
-//!   `Engine::GetDeferredPointShadowBias` −0.0003 (Engine ctor @0x180072930).
+//!   `Engine::GetDeferredPointShadowBias` −0.0003 (Engine ctor).
 //!   The result scales the light's diffuse term only.
 //!
 //! The port draws each map as the engine does, one view per light: a
@@ -124,16 +124,16 @@ pub fn priority_casts(priority: i32, quality: u32) -> bool {
     priority > 0 && priority <= max
 }
 
-/// `Light::AddToScene` @0x1801363a0: does any light get a shadow priority at
+/// `Light::AddToScene`: does any light get a shadow priority at
 /// this `lightingQuality` (none when low)?
-pub fn lights_cast(options: Option<&gd_game::options::GameOptions>) -> bool {
+pub fn lights_cast(options: Option<&gd_game_core::options::GameOptions>) -> bool {
     !matches!(
         options.and_then(|o| o.get("lightingQuality")),
         Some(gd_formats::options::Value::Quality(q)) if super::shadow::quality_index(q) == 0
     )
 }
 
-/// (full map size, full count, half count) of a quality (sub_180093410).
+/// (full map size, full count, half count) of a quality (`GraphicsEngine::GetShadowMapSizes`).
 pub fn pools(quality: u32) -> (u32, usize, usize) {
     match quality {
         0 => (256, 1, 3),
@@ -218,7 +218,7 @@ struct AssignScratch {
 fn assign_point_shadows(
     mut commands: Commands,
     settings: Option<Res<super::shadow::SunShadowSettings>>,
-    options: Option<Res<gd_game::options::GameOptions>>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     layer: Res<DirectionalLightShadowMap>,
     cams: Query<
         (&GlobalTransform, &Projection, &Camera, &Frustum),

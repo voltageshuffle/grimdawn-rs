@@ -1,24 +1,24 @@
 //! The ribbons of a channelled beam skill (`Skill_AttackSpellBeam`: Aether Ray), and of reflect links and tethers: a
 //! `LineEffect2` record's entity ([`draw_links`]).
 //!
-//! Engine.dll `LineEffect2` (`Load` @0x18013b000, `Generate` @0x18013b450, `UpdateSelf` @0x18013b640,
-//! `RenderPass` @0x18013b8e0) and Game.dll `Skill_AttackSpellBeam::UpdateBeams` @0x1804db2a0:
+//! Engine.dll `LineEffect2` (`Load`, `Generate`, `UpdateSelf`, `RenderPass`) and Game.dll
+//! `Skill_AttackSpellBeam::UpdateBeams`:
 //! a camera-facing ribbon `lineWidth` wide along a 4-point polyline from the start to the end (`P1` and `P2` a tenth
 //! of the length, at most `fadeDistance`, in from the ends); texture v = the path length / `textureLength` + a
 //! scroll that moves `-textureSpeed` repeats per second; vertex alpha `endAlpha` at both ends and 1 inside; the blend
 //! is the record's shader (`trailcombine` alpha blend, else additive). The rays themselves (the node's life, the
 //! `beamNumber` / `beamAngle` fan, the emit point, each ray's direction and length) are
-//! `gd_game::casting::SpellBeams`'; each ray is its own `LineEffect2` with its own end (`endEffect`, while the ray is
+//! `gd_game_core::casting::SpellBeams`'; each ray is its own `LineEffect2` with its own end (`endEffect`, while the ray is
 //! at its end) and ground (`groundEffect`, while it meets a surface) effects at its far end, the start effect
 //! (`startEffect`, one per node) at `emit + heading * retract` until the stop; each is removed when stopped
-//! (`ActivateNow` @0x1804d98f0, `Update` @0x1804da5a0, `PlaceEffects` @0x1804daec0, `StartEndEffects` @0x1804db0a0,
-//! `DestroyBeams` @0x1804db7b0). The beam, start and end names are the node's (`BeamNode::effects`: a modifier's
-//! `fxChanges` replaces them, `gd_game::skill_fx::beam_effects`). PORT: the sounds are `gd_game::combat_sounds`'.
+//! (`ActivateNow`, `Update`, `PlaceEffects`, `StartEndEffects`,
+//! `DestroyBeams`). The beam, start and end names are the node's (`BeamNode::effects`: a modifier's
+//! `fxChanges` replaces them, `gd_game_core::skill_fx::beam_effects`). PORT: the sounds are `gd_game::combat_sounds`'.
 //! Each node's drawing and each link ribbon is an entity [`VisualOf`] its caster; the record's ribbon parameters are
 //! read once when it is made.
 use bevy::prelude::*;
-use gd_game::casting::{BeamNode, SpellBeams};
-use gd_game::visuals::EffectSpec;
+use gd_game_core::casting::{BeamNode, SpellBeams};
+use gd_game_core::visuals::EffectSpec;
 
 pub struct BeamsPlugin;
 
@@ -52,7 +52,7 @@ struct Ray {
     ground_fx: Option<Entity>,
 }
 
-/// The drawing of one beam node ([`gd_game::casting::BeamNode`]) on its own root entity: its rays (children) and
+/// The drawing of one beam node ([`gd_game_core::casting::BeamNode`]) on its own root entity: its rays (children) and
 /// start effect.
 #[derive(Component)]
 struct Drawn {
@@ -109,7 +109,7 @@ pub(crate) fn start_effect(
     at: Vec3,
 ) -> Option<Entity> {
     let r = record.filter(|r| !r.is_empty())?;
-    gd_game::visuals::notify(commands, r);
+    gd_game_core::visuals::notify(commands, r);
     let mut spec = EffectSpec::record(r);
     spec.despawn_when_complete = true;
     Some(
@@ -128,7 +128,7 @@ pub(crate) fn stop_effect(commands: &mut Commands, e: &mut Option<Entity>) {
     if let Some(e) = e.take() {
         commands
             .entity(e)
-            .try_insert(gd_game::visuals::StopEmitting);
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
 }
 
@@ -147,7 +147,7 @@ fn place(
 }
 
 type FxOnly = (
-    Without<gd_game::character::Character>,
+    Without<gd_game_core::character::Character>,
     Without<crate::camera::GameCamera>,
 );
 
@@ -231,7 +231,7 @@ fn set_ribbon(
 fn draw_beams(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     casters: Query<(Entity, &SpellBeams, Option<&Visuals>)>,
     mut fx: Query<(&mut Transform, &mut GlobalTransform), FxOnly>,
@@ -473,29 +473,32 @@ struct LinkRibbon {
     end_fx: Option<Entity>,
 }
 
-/// Reflect-link and tether ribbons (`Skill_AttackSpellReflectLink::Update` @0x1804d42a0, `SkillSecondary_Tether`
-/// @0x1804afe40): a `LineEffect2` (`linkName` / `tetherName`) from the caster's
+/// Reflect-link and tether ribbons (`Skill_AttackSpellReflectLink::Update`, `SkillSecondary_Tether::Update`):
+/// a `LineEffect2` (`linkName` / `tetherName`) from the caster's
 /// `emitPointName` (default `FXCentered`) to the same point of the linked character, re-read every frame, so the ribbon
 /// always spans the two. The start effect (`startEffect`) emits at the caster's point from the link's start; the
-/// ribbon shows after the delay (`linkDelay` for the main player, `tetherDelay`: `gd_game::reflect_link::Link::shown`,
-/// `gd_game::secondary::Tether::delay`) with the end effect (`endEffect`) at the target's point; when the link ends
+/// ribbon shows after the delay (`linkDelay` for the main player, `tetherDelay`: `gd_game_core::reflect_link::Link::shown`,
+/// `gd_game_core::secondary::Tether::delay`) with the end effect (`endEffect`) at the target's point; when the link ends
 /// both effects stop and the ribbon goes. The points are on the posed bodies.
 #[allow(clippy::too_many_arguments)]
 fn draw_links(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
     casters: Query<(
         Entity,
-        Option<&gd_game::reflect_link::ReflectLinks>,
-        Option<&gd_game::secondary::Tethers>,
+        Option<&gd_game_core::reflect_link::ReflectLinks>,
+        Option<&gd_game_core::secondary::Tethers>,
         Option<&Visuals>,
     )>,
     mut ribbons: Query<(Entity, &mut LinkRibbon, Option<&VisualOf>)>,
     // The link's end points read `GlobalTransform`, the effects at them write it: one after the other.
     mut pf: ParamSet<(
-        Query<(&GlobalTransform, Option<&gd_game::character::Character>)>,
+        Query<(
+            &GlobalTransform,
+            Option<&gd_game_core::character::Character>,
+        )>,
         Query<(&mut Transform, &mut GlobalTransform), FxOnly>,
     )>,
     mut assets: crate::character::CharAssets,
@@ -504,7 +507,10 @@ fn draw_links(
     let dt = time.delta_secs();
     // `Actor::GetAttachPointCoords`: the point on the posed body, every frame.
     fn ends(
-        points: &Query<(&GlobalTransform, Option<&gd_game::character::Character>)>,
+        points: &Query<(
+            &GlobalTransform,
+            Option<&gd_game_core::character::Character>,
+        )>,
         emit: &str,
         a: Entity,
         b: Entity,

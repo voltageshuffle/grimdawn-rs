@@ -1,8 +1,9 @@
 //! The `SkillProfile_Modifiers` lines: energy cost, cooldown, duration, radius, targets
-//! (`sub_18054B090` / `sub_18054D250`, the parent module's docs).
+//! (`SkillProfile_Modifiers::CreateUIText` / `SkillProfile_Modifiers::CreateUINextText`, the parent module's
+//! docs).
 use super::*;
 
-/// How a changed value is tested in `sub_18054D250` (the "next level" text:
+/// How a changed value is tested in `SkillProfile_Modifiers::CreateUINextText` (the "next level" text:
 /// only what differs from the current level is listed).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Cmp {
@@ -13,8 +14,8 @@ pub(super) enum Cmp {
 }
 
 /// The `SkillProfile_Modifiers` values the tooltip lists, in the order of
-/// `sub_18054D250` / `sub_18054B090` (struct offsets from
-/// `sub_18054A660` which fills them from these record fields; tags and order
+/// `SkillProfile_Modifiers::CreateUINextText` / `CreateUIText` (struct order from
+/// `SkillProfile_Modifiers::Load` which fills them from these record fields; tags and order
 /// from the two functions' string references): (field, test, tag, label tag).
 /// The energy reservation lines come after the costs ([`COSTS`]); the
 /// chance / life monitor lines before and the spark lines after them are
@@ -122,7 +123,7 @@ fn target_radius_tag(class: &str) -> &'static str {
     }
 }
 
-/// Whether `sub_18054B090` / `sub_18054D250` use the `...Mod` tags: a
+/// Whether `SkillProfile_Modifiers::CreateUIText` / `CreateUINextText` use the `...Mod` tags: a
 /// `Skill_Modifier`, or a `SkillSecondary_PetModifier` unless its pet skill is
 /// no modifier and it adds no charges (the check on the pet's skill).
 fn uses_mod_tags(rec: &Record, prof: &Record, level: u32) -> bool {
@@ -153,8 +154,8 @@ fn cost_period(ctx: &SkillTipCtx, rec: &Record, prof: &Record) -> f32 {
 }
 
 /// Energy cost, cooldown, duration, radius... lines of a skill: the current
-/// level's (`prev == None`, `sub_18054B090`: every non-zero value) or the next
-/// level's (`sub_18054D250`: what differs from `prev`). `rec` is the skill
+/// level's (`prev == None`, `SkillProfile_Modifiers::CreateUIText`: every non-zero value) or the next
+/// level's (`SkillProfile_Modifiers::CreateUINextText`: what differs from `prev`). `rec` is the skill
 /// object's own record (classes), `prof` its profile; potion lines ([`PARAMS`]'
 /// `PotionCooldownCharges`), combo lines ([`combo_lines`]) and a pet modifier's `...Mod` tags
 /// ([`uses_mod_tags`]) included.
@@ -170,8 +171,8 @@ pub(super) fn param_lines(
     reduce: bool,
 ) -> Vec<TextLine> {
     let mut out = Vec::new();
-    // `Skill::CreateUIModifierText` @0x180485a90: the profile data is
-    // the skill's plus its learned modifiers' (`sub_18054ACF0` accumulates
+    // `Skill::CreateUIModifierText`: the profile data is
+    // the skill's plus its learned modifiers' (`SkillProfile_Modifiers::Accumulate` accumulates
     // `GetSkillModifierData`); a `Skill_Modifier` itself lists its values with
     // the `...Mod` tags (`+23.4 Energy Cost`).
     let is_mod = uses_mod_tags(rec, prof, level);
@@ -202,7 +203,7 @@ pub(super) fn param_lines(
                 0.0
             }
     };
-    // `sub_18054A660`: the chance a monster / auto-cast picks it, the life
+    // `SkillProfile_Modifiers::Load`: the chance a monster / auto-cast picks it, the life
     // monitor (`lifeMonitorCooldown` in seconds, as shown: the Savior potion
     // modifiers hold 20).
     // `now`: `sum(f, level)`, which every caller already holds.
@@ -232,11 +233,11 @@ pub(super) fn param_lines(
         };
         out.push(line(class, text));
     }
-    // `Skill::CreateUIModifierText` @0x180485a90: the cooldown ×
+    // `Skill::CreateUIModifierText`: the cooldown ×
     // (1 − `GetTotalSkillAttribute(1)` %) and the energy cost × (1 −
     // `GetTotalSkillAttribute(2)` %), floored at 0, unless the skill is an
-    // item skill (+761) or a potion (+764). `Skill::GetTotalSkillAttribute`
-    // @0x180492650 is the skill's own (record + modifiers) plus its
+    // item skill (`Skill.isItemSkill`) or a potion (`Skill.isPotion`). `Skill::GetTotalSkillAttribute`
+    // is the skill's own (record + modifiers) plus its
     // `SkillManager`'s total (gear, passives: [`Profile::skill_attribute`]);
     // a skill outside the player's manager (an unlearned devotion star) gets
     // none of the manager's: the real Time Dilation tooltip reads 13 s with
@@ -289,7 +290,7 @@ pub(super) fn param_lines(
         }
         let v = value(field, level);
         let (shown, v) = match prev {
-            // `sub_18054B090`: the charges only above one (a modifier's: any).
+            // `SkillProfile_Modifiers::CreateUIText`: the charges only above one (a modifier's: any).
             None if field == "cooldownCharges" => (v > 1.0 || (is_mod && v != 0.0), v),
             None => (v != 0.0, v),
             Some(p) => {
@@ -322,7 +323,8 @@ pub(super) fn param_lines(
         } else {
             ctx.tag(label)
         };
-        // `sub_18054B090`: a `Skill_ChargePotion`'s charges read `PotionCooldownCharges[Mod]`.
+        // `SkillProfile_Modifiers::CreateUIText`: a `Skill_ChargePotion`'s charges read
+        // `PotionCooldownCharges[Mod]`.
         let tag = if field == "cooldownCharges" && prof.class == "Skill_ChargePotion" {
             mod_tag("PotionCooldownCharges", v)
         } else {
@@ -348,7 +350,8 @@ pub(super) fn param_lines(
         };
         out.push(line(class, text));
     }
-    // `sub_18054F4F0`: the fragment count (`projectileFragmentsLaunchNumberMin/Max`).
+    // `SkillProfile_Modifiers::CreateUIProjectileText`: the fragment count
+    // (`projectileFragmentsLaunchNumberMin/Max`).
     let frag = |f: &str, lv: u32| sum(f, lv).round() as i32;
     let (lo, hi) = (
         frag("projectileFragmentsLaunchNumberMin", level),
@@ -371,8 +374,8 @@ pub(super) fn param_lines(
         };
         out.push(line(class, ctx.fmt(key, &args)));
     }
-    // `sub_18054F4F0` goes on with the projectile modifiers' chance to pass
-    // through (`projectilePiercingChance`, loaded by `sub_18054F300`).
+    // `SkillProfile_Modifiers::CreateUIProjectileText` goes on with the projectile modifiers' chance to pass
+    // through (`projectilePiercingChance`, loaded by `SkillProfile_Modifiers::LoadProjectileModifiers`).
     let pierce = sum("projectilePiercingChance", level);
     if pierce > 0.0 && changed("projectilePiercingChance", pierce) {
         out.push(line(
@@ -380,7 +383,7 @@ pub(super) fn param_lines(
             ctx.fmt("ProjectilePiercingChance", &[Arg::Num(pierce)]),
         ));
     }
-    // `sub_18054B090`'s end: the sparks (`sparkMaxNumber`, `sparkChance`).
+    // `SkillProfile_Modifiers::CreateUIText`'s end: the sparks (`sparkMaxNumber`, `sparkChance`).
     let (n, chance) = (sum("sparkMaxNumber", level), sum("sparkChance", level));
     if n != 0.0 && (changed("sparkMaxNumber", n) || changed("sparkChance", chance)) {
         let single = if n <= 1.0 { "Single" } else { "" };

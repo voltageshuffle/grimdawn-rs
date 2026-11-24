@@ -1,97 +1,5 @@
 use super::*;
 
-/// Damaging auras (`Skill_BuffAttackRadiusToggled`: blade swarm, blight
-/// fumes, undeath aura …): every 1000 ms (`Update` @0x1804e6a30, interval
-/// set to 1000 by the constructor) the skill hits every foe within
-/// `skillTargetRadius` of its owner. Pets and monsters that have the skill
-/// keep it on: their AI casts it as a buffSelf skill
-/// (`ControllerMonster::ChooseBestBuffSelfSkill` @0x180137bb0, skipped once
-/// active) and a toggle never runs out; the port starts it on,
-/// without that first cast.
-pub struct DamageAura {
-    pub(super) skill: String,
-    pub(super) level_index: usize,
-    pub(super) radius: f32,
-    pub(super) hostile: bool,
-    pub(super) timer: f32,
-    /// Seconds left for a timed aura (`Skill_BuffAttackRadiusDuration`).
-    pub(super) left: Option<f32>,
-    /// Seconds between ticks (1, or `skillTargetInterval` for the lightning
-    /// storm `Skill_BuffAttackRadiusLightning`).
-    pub(super) interval: f32,
-    /// The storm hits only `skillTargetNumber` foes per tick (random ones:
-    /// the radius list is shuffled and cut,
-    /// `Skill_BuffAttackRadiusLightning::Update`), each with a
-    /// `lightningName` bolt from the owner.
-    pub(super) max_targets: Option<usize>,
-    pub(super) bolt: Option<String>,
-    /// The storm's `cameraShakeDurationSecs` / `cameraShakeAmplitude`, sent per bolt
-    /// (`SkillActivated::CameraShake`, `Skill_BuffAttackRadiusLightning::Update` @0x1804e56c0).
-    pub(super) shake: Option<(f32, f32)>,
-}
-
-impl DamageAura {
-    /// The aura's skill record (read by the HUD, `buff_bar::pet_icons`).
-    pub fn skill(&self) -> &str {
-        &self.skill
-    }
-
-    pub fn new(rec: &Record, skill: &str, level_index: usize, hostile: bool) -> Self {
-        let storm = rec.class == "Skill_BuffAttackRadiusLightning";
-        let interval = if storm {
-            level_f(rec, "skillTargetInterval", level_index)
-        } else {
-            1.0
-        };
-        Self {
-            skill: skill.to_owned(),
-            level_index,
-            radius: level_f(rec, "skillTargetRadius", level_index),
-            hostile,
-            timer: interval,
-            left: None,
-            interval,
-            max_targets: storm
-                .then(|| level_f(rec, "skillTargetNumber", level_index).max(1.0) as usize),
-            shake: storm
-                .then(|| {
-                    (
-                        level_f(rec, "cameraShakeDurationSecs", level_index),
-                        level_f(rec, "cameraShakeAmplitude", level_index),
-                    )
-                })
-                .filter(|s| s.0 > 0.0001),
-            bolt: if storm {
-                rec.str("lightningName")
-                    .filter(|l| !l.is_empty())
-                    .map(str::to_owned)
-            } else {
-                None
-            },
-        }
-    }
-}
-
-#[derive(Component)]
-pub struct DamageAuras(pub Vec<DamageAura>);
-
-impl DamageAuras {
-    /// Dispelled (`crate::skill_buffs::DispelOn`): the damage auras stop
-    /// (`Skill_BuffAttackRadiusToggled::StopSkill`, also the timed and
-    /// lightning ones' class) but those `keep` names (`notDispelable`). The
-    /// stopped ones.
-    pub fn dispel(&mut self, keep: impl Fn(&str) -> bool) -> Vec<String> {
-        let gone: Vec<String> = self
-            .0
-            .iter()
-            .filter(|a| !keep(&a.skill))
-            .map(|a| a.skill.clone())
-            .collect();
-        self.0.retain(|a| keep(&a.skill));
-        gone
-    }
-}
-
 /// The player's damage toggles (`Skill_BuffAttackRadiusToggled`, learned or
 /// a worn item's, `crate::player` docs: item toggles) as its
 /// [`DamageAuras`] while they are on (`Loadout::skill_active`); a timed aura
@@ -103,12 +11,15 @@ pub(super) fn player_damage_toggles(
         (
             Entity,
             &Loadout,
-            &crate::player::EffectiveSkills,
+            &gd_game_core::player::EffectiveSkills,
             Option<&mut DamageAuras>,
         ),
         (
             With<Player>,
-            Or<(Changed<Loadout>, Changed<crate::player::EffectiveSkills>)>,
+            Or<(
+                Changed<Loadout>,
+                Changed<gd_game_core::player::EffectiveSkills>,
+            )>,
         ),
     >,
 ) {
@@ -224,7 +135,7 @@ pub(super) fn damage_auras(
                 .map(|&i| (list[i].0, list[i].1.translation()))
                 .collect();
             if let Some(n) = a.max_targets {
-                crate::rng::shuffle(&mut targets);
+                gd_game_core::rng::shuffle(&mut targets);
                 targets.truncate(n);
             }
             for (t, at) in targets {
@@ -240,7 +151,7 @@ pub(super) fn damage_auras(
                 // `SkillActivated::CameraShake` per bolt: `Player::SendCameraShakeEvent` is the player's
                 // own shake, a monster's / pet's `Actor` event shakes only a camera that sees it.
                 if let Some((secs, amp)) = a.shake {
-                    commands.write_message(crate::visuals::CameraShake {
+                    commands.write_message(gd_game_core::visuals::CameraShake {
                         ms: (secs * 1000.0).trunc(),
                         amp,
                         at: gt.translation(),
@@ -248,7 +159,7 @@ pub(super) fn damage_auras(
                     });
                 }
                 if let Some(l) = &a.bolt {
-                    commands.spawn(crate::visuals::PendingBolt {
+                    commands.spawn(gd_game_core::visuals::PendingBolt {
                         record: l.clone(),
                         from: gt.translation() + Vec3::Y * 1.5,
                         to: at + Vec3::Y,
@@ -259,24 +170,14 @@ pub(super) fn damage_auras(
     }
 }
 
-/// Life from a bonus (`CharacterBio::TakeBonus` / `GetBonusLifeAmount`):
-/// flat × (1 + `characterHealIncreasePercent` %) plus % of max
-/// life × (1 + that + `characterPercentHealIncreaseModifier` %); energy is
-/// not scaled. The over-time % uses only the first.
-pub fn bonus_life(sheet: &gd_sim::stats::CharacterSheet, flat: f32, pct: f32) -> f32 {
-    let h = sheet.heal_increase * 0.01;
-    flat * (1.0 + h)
-        + (sheet.life * pct * 0.01 * (1.0 + h + sheet.percent_heal_increase * 0.01)).max(0.0)
-}
-
 /// The life / energy part of a skill's `GAME::Bonus`, as the skill bonuses fill it from the profile
 /// (`GetSkillModifierData`: the record at the level plus its modifiers') and give it with
-/// `Character::TakeBonus(bonus, slow = false)`: `Skill_BuffRadius::TargetResult` @0x1804e8cd0 (the
-/// activation's pass), `Skill_BuffOther::TargetResult` @0x1804e7740, `Skill_GiveBonus::TargetResult`
-/// @0x1804f8200 and `Skill_BuffSelfToggled::ReceiveActiveUpdate` @0x1804ebb50 (a self buff going on) copy
-/// `skillLifeBonus` (+140), `skillLifePercent` (+144), `skillLifePercentSlow` (+148), `skillManaBonus` (+160),
-/// `skillManaPercent` (+164), `skillManaPercentSlow` (+168) (offsets: `SkillProfile_Modifiers` loader
-/// sub_18054A660) into `Bonus` +4 … +28. A held buff's periodic one is [`Bonus::buff_duration`].
+/// `Character::TakeBonus(bonus, slow = false)`: `Skill_BuffRadius::TargetResult` (the
+/// activation's pass), `Skill_BuffOther::TargetResult`, `Skill_GiveBonus::TargetResult`
+/// and `Skill_BuffSelfToggled::ReceiveActiveUpdate` (a self buff going on) copy
+/// `skillLifeBonus`, `skillLifePercent`, `skillLifePercentSlow`, `skillManaBonus`,
+/// `skillManaPercent`, `skillManaPercentSlow` (as loaded by `SkillProfile_Modifiers::Load`)
+/// into `Bonus.life` … `Bonus.manaPercentSlow`. A held buff's periodic one is [`Bonus::buff_duration`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bonus {
     pub life: f32,
@@ -314,10 +215,10 @@ impl Bonus {
         Self::of(|k| level_f(rec, k, li) + mods.iter().map(|(r, l)| level_f(r, k, *l)).sum::<f32>())
     }
 
-    /// A held buff's bonus every 1000 ms: `SkillBuff::Update` @0x180526070 (a buff another character put
-    /// here, +382 timer, 0 at creation so the first comes at once) and `Skill_BuffSelfToggled::Update`
-    /// @0x1804eb820 (a self buff while on, +394, zeroed by `ReceiveActiveUpdate`) give the profile's
-    /// `skillLifeBonusBuffDuration` (+152) and `skillLifePercentBuffDuration` (+156) as `Bonus` +4 / +8 (flat,
+    /// A held buff's bonus every 1000 ms: `SkillBuff::Update` (a buff another character put
+    /// here, `SkillBuff.bonusTimer`, 0 at creation so the first comes at once) and `Skill_BuffSelfToggled::Update`
+    /// (a self buff while on, `Skill_BuffSelfToggled.bonusTimer`, zeroed by `ReceiveActiveUpdate`) give the profile's
+    /// `skillLifeBonusBuffDuration` and `skillLifePercentBuffDuration` as `Bonus.life` / `Bonus.lifePercent` (flat,
     /// %), when either is non-zero.
     pub fn buff_duration(f: impl Fn(&str) -> f32) -> Self {
         Self {
@@ -331,7 +232,7 @@ impl Bonus {
         *self == Self::default()
     }
 
-    /// `CharacterBio::TakeBonus` @0x18008c5d0 with `slow = false`: life + % of max life × (1 +
+    /// `CharacterBio::TakeBonus` with `slow = false`: life + % of max life × (1 +
     /// healing increase + % healing increase), energy + % of max energy, + the flat energy, life + flat × (1 +
     /// healing increase), + the slow % of max life × (1 + healing increase) and energy + the slow % of max
     /// energy (at once: only `slow = true`, the charge potions', fills the restore pools); each capped at the
@@ -386,36 +287,8 @@ impl Bonus {
     }
 }
 
-/// `Skill_BuffSelfToggled` and the classes deriving from it (RTTI: `…Colossus`, `…Duration`, `…Immobilize`,
-/// `…Invulnerable`, `…Shield`, `…Sick`, `Skill_Shapeshift`), whose `Update` gives the self buff's
-/// [`Bonus::buff_duration`] every second while it is on.
-pub fn is_self_buff_class(class: &str) -> bool {
-    matches!(
-        class,
-        "Skill_BuffSelfToggled"
-            | "Skill_BuffSelfColossus"
-            | "Skill_BuffSelfDuration"
-            | "Skill_BuffSelfImmobilize"
-            | "Skill_BuffSelfInvulnerable"
-            | "Skill_BuffSelfShield"
-            | "Skill_BuffSelfSick"
-            | "Skill_Shapeshift"
-    )
-}
-
-/// Seconds to each running self buff's next [`Bonus::buff_duration`] (`Skill_BuffSelfToggled` +394).
-#[derive(Component, Default, Debug)]
-pub struct SelfBuffHeals(Vec<(String, f32)>);
-
-/// The player's switched-on self-buff toggles from the book and worn items
-/// ([`self_buff_heals`]), cached: reading them clones the skill book and scans
-/// the items, so it runs only when the [`Loadout`] changed. The timed buffs are
-/// read fresh each frame (their remaining time ticks down).
-#[derive(Component, Default)]
-pub struct SelfBuffToggles(Vec<(String, usize)>);
-
 /// The player's switched-on toggles at their effective level ([`self_buff_heals`]; `effective` the
-/// player's [`crate::player::EffectiveSkills`]).
+/// player's [`gd_game_core::player::EffectiveSkills`]).
 fn loadout_toggles(
     db: &gd_formats::vfs::Database,
     l: &Loadout,
@@ -431,7 +304,7 @@ fn loadout_toggles(
     out
 }
 
-/// `Skill_BuffSelfToggled::Update` @0x1804eb820: while a self buff is on, every 1000 ms (the
+/// `Skill_BuffSelfToggled::Update`: while a self buff is on, every 1000 ms (the
 /// first in the update after it went on, `ReceiveActiveUpdate` zeroes the timer) its holder takes the
 /// profile's [`Bonus::buff_duration`] (the record with the caster's modifiers of it). The running self buffs:
 /// the player's timed buffs and switched-on self toggles, a monster's / pet's timed buffs and toggles.
@@ -444,8 +317,8 @@ pub(super) fn self_buff_heals(
         (
             Entity,
             Option<Ref<Loadout>>,
-            Option<Ref<crate::player::EffectiveSkills>>,
-            Option<&crate::weapon_pool::SkillLinks>,
+            Option<Ref<gd_game_core::player::EffectiveSkills>>,
+            Option<&gd_game_core::weapon_pool::SkillLinks>,
             Option<&crate::monster_skills::MonsterSkills>,
             Option<&crate::pets::Pet>,
             Option<&mut SelfBuffHeals>,
@@ -567,116 +440,6 @@ pub(super) fn self_buff_heals(
             .queue(&mut commands, e);
         }
     }
-}
-
-/// A character's damage-absorbing combat filters, in the order they were added: `CombatManager::AddCombatFilter`
-/// (@0x180121e40) appends a filter to the manager's list (+688) unless it is in it already, and
-/// `CombatManager::ApplyDamage` runs every filter of the list in turn on each damage application (each type of a
-/// hit and each DoT tick, `gd_sim::combat::Absorb`). Each skill is its own filter, so a recast keeps its place.
-/// Every [`crate::combat::Combatant`] has one (empty: no absorb).
-#[derive(Component, Default, Debug, Clone)]
-pub struct Shields(pub Vec<Shield>);
-
-/// One filter of [`Shields`]: its skill (or buff) record, absorb and seconds left.
-///
-/// - [`ShieldKind::Buff`]: a self buff's damage absorption (`damageAbsorptionPercent` %, then `damageAbsorption`
-///   flat, a pool for `Skill_BuffSelfShield` that ends the shield when spent) for the types the skill's
-///   `…DamageQualifier` flags list (none = all). `Skill_BuffSelfToggled::ModifyDamage`,
-///   `Skill_BuffSelfShield::ModifyDamage`, `SkillProfile::LoadProfile`. Ends with `skillActiveDuration` when the
-///   buff has one, or when the skill stops (`skill_buffs::stop_shields`).
-/// - [`ShieldKind::Potion`]: a charge potion's absorb (`absorbShieldPercentHealth`, see [`HEALTH_POTION`]), the
-///   potion skill's own filter, with the pool it started with. That makes the potion trackable while the pool
-///   lasts (`Skill_ChargePotion::IsTrackable` @0x1804ef5f0: absorb left (+1612) > 0; `TrackableRemainingTime` /
-///   `TrackableTotalTime` = absorb left / the amount of the last potion, +1616, both reset by each potion in
-///   `TargetResult`).
-/// - [`ShieldKind::Shrine`]: a Shattered Realm shrine buff's (`crate::endless::shrine_shield`).
-#[derive(Debug, Clone)]
-pub struct Shield {
-    pub skill: String,
-    pub absorb: gd_sim::combat::Absorb,
-    pub left: Option<f32>,
-    pub kind: ShieldKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ShieldKind {
-    Buff,
-    /// The pool the last potion started with.
-    Potion(f32),
-    Shrine,
-}
-
-impl Shields {
-    /// `AddCombatFilter`: the skill's filter takes the new values in its place, or joins at the end.
-    pub fn add(&mut self, s: Shield) {
-        match self
-            .0
-            .iter_mut()
-            .find(|x| x.kind_matches(&s) && x.skill.eq_ignore_ascii_case(&s.skill))
-        {
-            Some(x) => *x = s,
-            None => self.0.push(s),
-        }
-    }
-
-    /// The potion's filter, if one is on.
-    pub fn potion(&self) -> Option<&Shield> {
-        self.0
-            .iter()
-            .find(|s| matches!(s.kind, ShieldKind::Potion(_)))
-    }
-
-    /// Each filter in turn on one damage application (`ApplyDamage`).
-    pub fn filter(&mut self, ty: gd_sim::attributes::CombatType, v: f32) -> f32 {
-        self.0.iter_mut().fold(v, |v, s| s.absorb.filter(ty, v))
-    }
-
-    /// Drops the spent pools.
-    pub fn drop_spent(&mut self) {
-        if self.0.iter().any(|s| s.absorb.spent()) {
-            self.0.retain(|s| !s.absorb.spent());
-        }
-    }
-}
-
-impl Shield {
-    fn kind_matches(&self, o: &Shield) -> bool {
-        std::mem::discriminant(&self.kind) == std::mem::discriminant(&o.kind)
-    }
-}
-
-/// `<type>DamageQualifier` flags of a skill record → damage types
-/// (`SkillProfile::LoadProfile`: elemental = fire, cold,
-/// lightning).
-pub fn qualifying_types(rec: &Record) -> Vec<gd_sim::attributes::CombatType> {
-    use gd_sim::attributes::CombatType as T;
-    let mut v = Vec::new();
-    for (f, tys) in [
-        ("physicalDamageQualifier", &[T::Physical][..]),
-        ("pierceDamageQualifier", &[T::Pierce]),
-        ("lightningDamageQualifier", &[T::Lightning]),
-        ("fireDamageQualifier", &[T::Fire]),
-        ("coldDamageQualifier", &[T::Cold]),
-        ("poisonDamageQualifier", &[T::Acid]),
-        ("lifeDamageQualifier", &[T::Vitality]),
-        ("bleedingDamageQualifier", &[T::Bleeding]),
-        (
-            "elementalDamageQualifier",
-            &[T::Fire, T::Cold, T::Lightning],
-        ),
-        ("aetherDamageQualifier", &[T::Aether]),
-        ("chaosDamageQualifier", &[T::Chaos]),
-    ] {
-        if rec.bool(f) {
-            v.extend(
-                tys.iter()
-                    .filter(|t| !v.contains(*t))
-                    .copied()
-                    .collect::<Vec<_>>(),
-            );
-        }
-    }
-    v
 }
 
 /// Timed filters run out ([`Shield::left`]).

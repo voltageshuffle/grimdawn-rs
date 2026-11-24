@@ -37,7 +37,7 @@ struct WaterParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var<storage, read> noise_state: array<vec4<f32>>;
 
 // noisetexturegen.ssh compositePS: Σ levels[i] · mix(prev, cur, phase) sampled at
-// uv · 2^i — the octave scales (1, 2, 4, 8), Engine.dll xmmword_18034C3D0.
+// uv · 2^i — the octave scales (1, 2, 4, 8), Engine.dll `Engine::NoiseOctaveUvScales`.
 fn noise_height(uv: vec2<f32>) -> f32 {
     var h = 0.0;
     for (var i = 0; i < 4; i = i + 1) {

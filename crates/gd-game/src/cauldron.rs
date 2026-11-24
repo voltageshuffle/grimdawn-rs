@@ -15,7 +15,7 @@
 //!   [`reach_cauldron`] opens the window at the NPC use range
 //!   (`DefaultRequestNpcAction`, as `crate::trade`): within player radius +
 //!   cauldron radius + 3 m ([`crate::conversation::in_talk_range`]), else at
-//!   the walk's end (`MoveToNpc::EndOfPathReached`).
+//!   the walk's end (`ControllerPlayerStateMoveToNpc::EndOfPathReached`).
 //! * Placement: no level places a cauldron NPC. Kurn's Hold (Region0K041)
 //!   and the Ugdenbog coven (Region0H032) place the ScriptEntities
 //!   `scriptentitiesgdx3/areah_cauldron{kurnhold,ugdenbog}_transition_01`
@@ -24,18 +24,18 @@
 //!   player has `POTIONCRAFTING_UNLOCKED` / `..._COVEN` (given there from the
 //!   unlock quest's task state), else `areah_cauldron_placeholder` (a plain
 //!   Npc); the quest events' `cauldron*Transition` swap it later. The port
-//!   runs these through the story (`gd_sim::story`, story actors).
-//! * Closing: GrimDawn.exe window update `sub_140276750`: when the
+//!   runs these through the story (`gd_story::story`, story actors).
+//! * Closing: GrimDawn.exe window update `PotionsWindow::Update`: when the
 //!   3D distance from the player to the cauldron exceeds its
 //!   `GetUICloseDistance` ([`crate::conversation::close_distance`]); the
-//!   close button and Esc (`sub_140276960`: Esc first closes the modifier
+//!   close button and Esc (`PotionsWindow::OnKey`: Esc first closes the modifier
 //!   list) close it; closing makes the cauldron say goodbye.
 //! * Choices: a click on a container that is not on chooses it; a click on a
 //!   modifier slot opens the list of the potion's unlocked modifiers and the
-//!   pick goes into that slot (`sub_140276E30`, `sub_1402777A0`). Slots take
+//!   pick goes into that slot (`PotionsWindow::OnButtonPress`, `PotionsWindow::PlaceModifier`). Slots take
 //!   no choice while the potion has no container
 //!   (`gd_sim::potions::slots_enabled`).
-//! * Saving (GrimDawn.exe window show handler `sub_1402769b0`):
+//! * Saving (GrimDawn.exe window show handler `PotionsWindow::Open`):
 //!   showing the window calls `GameEngine::SetSaveEnabled(false)`; hiding it
 //!   (only when it was shown) makes the cauldron say goodbye, then
 //!   `SetSaveEnabled(true)` and `AutoSave`. Here [`save_disabled`] holds the
@@ -45,10 +45,10 @@
 //!   goodbye sounds are not played.
 //!   [`PotionRequest::Open`] with no cauldron (test hook `GD_UI_OPEN=potions`)
 //!   opens it without a distance check.
-use crate::character::Character;
-use crate::data::GameData;
-use crate::player::{Loadout, Player, ProfileDirty};
 use bevy::prelude::*;
+use gd_game_core::character::Character;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
 
 pub struct CauldronPlugin;
 
@@ -56,12 +56,15 @@ impl Plugin for CauldronPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<PotionRequest>()
             .init_resource::<PotionWindow>()
-            .add_systems(Update, reach_cauldron.before(crate::player::PlayerSet))
+            .add_systems(
+                Update,
+                reach_cauldron.before(gd_game_core::player::PlayerSet),
+            )
             .add_systems(
                 Update,
                 (run_window, cauldron_autosave)
                     .chain()
-                    .after(crate::player::PlayerSet),
+                    .after(gd_game_core::player::PlayerSet),
             );
     }
 }
@@ -106,7 +109,7 @@ pub fn save_disabled(window: &PotionWindow) -> bool {
 pub fn cauldron_autosave(
     window: Res<PotionWindow>,
     mut was_open: Local<bool>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut save: MessageWriter<crate::save::SaveRequest>,
 ) {
     // The window of a finished session is gone with it: no close to autosave.
@@ -139,7 +142,7 @@ pub fn reach_cauldron(
             &Transform,
             &mut crate::movement::MovePath,
             &mut crate::player_orders::InteractTarget,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
         ),
         With<Player>,
     >,
@@ -159,7 +162,7 @@ pub fn reach_cauldron(
         return;
     }
     let d = gt.translation().distance(ptf.translation);
-    let npc_radius = crate::combat::get_radius(rec, crate::combat::ACTOR_RADIUS);
+    let npc_radius = gd_game_core::combat::get_radius(rec, gd_game_core::combat::ACTOR_RADIUS);
     if !crate::conversation::in_talk_range(d, pcb.radius, npc_radius) && !path.points.is_empty() {
         return;
     }
@@ -177,6 +180,7 @@ pub fn run_window(
     mut window: ResMut<PotionWindow>,
     mut players: Query<(Entity, &Transform, &mut Loadout), With<Player>>,
     npcs: Query<(&GlobalTransform, &Character), Without<Player>>,
+    fx: Query<(Entity, &gd_game_core::visuals::BuffFx)>,
 ) {
     let Ok((player, ptf, mut loadout)) = players.single_mut() else {
         requests.clear();
@@ -209,7 +213,14 @@ pub fn run_window(
                             "potions window: container {}",
                             skill.rsplit('/').next().unwrap_or(skill)
                         );
-                        commands.entity(player).try_insert(ProfileDirty);
+                        wipe_switched_off(
+                            &mut commands,
+                            &data,
+                            &fx,
+                            player,
+                            ptf.translation,
+                            &mut loadout,
+                        );
                     }
                     Err(e) => info!("potions window: cannot choose {skill}: {e}"),
                 }
@@ -230,7 +241,14 @@ pub fn run_window(
                             "potions window: modifier {} in slot {slot}",
                             skill.rsplit('/').next().unwrap_or(skill)
                         );
-                        commands.entity(player).try_insert(ProfileDirty);
+                        wipe_switched_off(
+                            &mut commands,
+                            &data,
+                            &fx,
+                            player,
+                            ptf.translation,
+                            &mut loadout,
+                        );
                     }
                     Err(e) => info!("potions window: cannot choose {skill}: {e}"),
                 }
@@ -246,5 +264,30 @@ pub fn run_window(
         if far {
             close(&mut window);
         }
+    }
+}
+
+/// A potion skill switched out (its level back to 0) loses its running buff (`PotionsWindow::ApplyChoice` →
+/// `PotionsWindow::StopPotionBuff`: the player's buff under that skill's name stops).
+fn wipe_switched_off(
+    commands: &mut Commands,
+    data: &GameData,
+    fx: &Query<(Entity, &gd_game_core::visuals::BuffFx)>,
+    player: Entity,
+    at: Vec3,
+    loadout: &mut Loadout,
+) {
+    let off: Vec<String> = gd_sim::potions::trees(&data.db)
+        .iter()
+        .flat_map(|t| t.containers.iter().chain(&t.modifiers))
+        .filter(|s| loadout.skills.level(s) == 0)
+        .cloned()
+        .collect();
+    let gone = loadout
+        .buffs
+        .stop_where(|b| off.iter().any(|s| s.eq_ignore_ascii_case(b)));
+    if !gone.is_empty() {
+        crate::skill_buffs::timed_buffs_ended(commands, data, fx, player, at, &gone);
+        commands.entity(player).try_insert(ProfileDirty);
     }
 }

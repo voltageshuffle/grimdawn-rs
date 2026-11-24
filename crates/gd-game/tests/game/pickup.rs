@@ -2,10 +2,10 @@
 //! first (never a swap; weapons into the active set with the hand rules), else the main bag, the selected bag,
 //! the others; a full inventory throws it back down (soulbound: destroyed); Broken items are not picked up.
 use bevy::prelude::*;
+use gd_formats::inventory::EquipSlot;
 use gd_formats::save::item::Item;
-use gd_game::inventory::{Inventory, Requirements, slot_index};
 use gd_game::testing::TestGame;
-use gd_sim::items::inventory::EquipSlot;
+use gd_game_core::inventory::{Inventory, Requirements, slot_index};
 
 fn item(record: &str, seed: u32) -> Item {
     Item {
@@ -88,12 +88,12 @@ fn in_bags(g: &mut TestGame, record: &str) -> Vec<usize> {
 fn auto_equips_into_an_empty_slot_never_swaps() {
     let Some((mut g, _)) = game() else { return };
     let head = record(&mut g, "ArmorProtective_Head");
-    assert!(give(&mut g, item(&head, 1)).is_ok());
+    give(&mut g, item(&head, 1)).unwrap();
     assert_eq!(
         worn(&mut g, EquipSlot::Head).as_deref(),
         Some(head.as_str())
     );
-    assert!(give(&mut g, item(&head, 2)).is_ok());
+    give(&mut g, item(&head, 2)).unwrap();
     assert_eq!(
         inv(&mut g).equipped[slot_index(EquipSlot::Head)]
             .as_ref()
@@ -104,7 +104,7 @@ fn auto_equips_into_an_empty_slot_never_swaps() {
     assert_eq!(in_bags(&mut g, &head), vec![0]);
     let ring = record(&mut g, "ArmorJewelry_Ring");
     for seed in 1..=3 {
-        assert!(give(&mut g, item(&ring, seed)).is_ok());
+        give(&mut g, item(&ring, seed)).unwrap();
     }
     let seed = |g: &mut TestGame, s| inv(g).equipped[slot_index(s)].as_ref().map(|i| i.seed);
     assert_eq!(seed(&mut g, EquipSlot::Ring1), Some(1));

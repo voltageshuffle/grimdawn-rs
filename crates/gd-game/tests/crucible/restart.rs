@@ -2,14 +2,14 @@
 //! (`SurvivalEvent_Update`'s failure branch) and `survival/eventcontrol.lua` (`restartEvent`), run on arena A's
 //! script objects.
 use super::*;
-use gd_sim::story::Effect;
-use gd_sim::story::state::Survival;
+use gd_story::story::Effect;
+use gd_story::story::state::Survival;
 
 /// The story effects the host forwarded (`StoryEffect` messages), collected by the test.
 #[derive(Resource, Default)]
 struct Seen(Vec<Effect>);
 
-fn collect(mut seen: ResMut<Seen>, mut ev: MessageReader<gd_game::story::StoryEffect>) {
+fn collect(mut seen: ResMut<Seen>, mut ev: MessageReader<gd_game_core::story::StoryEffect>) {
     seen.0.extend(ev.read().map(|e| e.0.clone()));
 }
 
@@ -120,7 +120,7 @@ fn a_failed_event_restarts_at_the_checkpoint() {
     g.app
         .world_mut()
         .entity_mut(p)
-        .insert(gd_game::combat::Dead { timer: 4.0 });
+        .insert(gd_game_core::combat::Dead { timer: 4.0 });
     // Dead past the corpse time: held down (`RespawnHeld`), until the event's next update (once a second).
     for _ in 0..90 {
         g.step();
@@ -131,7 +131,7 @@ fn a_failed_event_restarts_at_the_checkpoint() {
         }
         drop(s);
         assert!(
-            g.app.world().get::<gd_game::combat::Dead>(p).is_some(),
+            g.app.world().get::<gd_game_core::combat::Dead>(p).is_some(),
             "held dead"
         );
     }
@@ -144,7 +144,7 @@ fn a_failed_event_restarts_at_the_checkpoint() {
     );
     assert_eq!(s.timer_ms, 0);
     assert!(
-        g.app.world().get::<gd_game::combat::Dead>(p).is_none(),
+        g.app.world().get::<gd_game_core::combat::Dead>(p).is_none(),
         "the player is back"
     );
     assert_eq!(

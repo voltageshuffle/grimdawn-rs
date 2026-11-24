@@ -6,7 +6,7 @@
 //! `Mesh` asset rewritten each frame is freed and re-allocated by the mesh
 //! allocator, a `ShaderBuffer` is not.
 //!
-//! Per particle (`Emitter::RenderPass`, 0x18006f3f0): centre, 4 corners uv
+//! Per particle (`Emitter::RenderPass`): centre, 4 corners uv
 //! (0,0)(1,0)(1,1)(0,1), "dir" = (up or velocity, stretch), params = (rotation
 //! rad, half-size, speed·[stretch>0.01], frame), colour; indices (2,1,0, 0,3,2).
 //! Slots past the header's count are collapsed by the shader.
@@ -44,10 +44,10 @@ pub struct ParticleMaterial {
     /// Shader sort order (`Emitter::sort_order`) and emitter index: the queue
     /// is sorted by the shader order first, then distance (`build_mesh`
     /// anchor), then the emitter's place in its effect.
-    /// `GraphicsMTRenderer::RenderScenePasses` @0x1800d04a0: the scene passes
+    /// `GraphicsMTRenderer::RenderScenePasses`: the scene passes
     /// (sort orders 0-8999, particles included) are merge-sorted (stable,
-    /// sub_1800D6180 / comparator sub_1800D9480) by sort order, then shader,
-    /// style, light and texture pointer; no distance (only the 10000-11000
+    /// `GraphicsMTRenderer::MergeSortPasses` / comparator `GraphicsMTRenderer::ComparePasses`) by sort order,
+    /// then shader, style, light and texture pointer; no distance (only the 10000-11000
     /// transparency passes are sorted far to near, `ExecutePrepareTransparency`).
     /// PORT: within one sort order the engine's draw order follows pointer
     /// values and collection order, which a port cannot reproduce; back to

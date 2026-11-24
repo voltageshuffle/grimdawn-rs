@@ -1,10 +1,11 @@
 //! `playmenu.cpn`: the main menu's "last played" settings (plain, unencrypted).
 //!
-//! `Grim Dawn.exe` writer 0x1400bc580 (on menu state changes and on menu destruction) and reader
-//! 0x1400bbca0 (called from the menu's init 0x1400bead0), both through `GameEngine::GetSharedSavePath` case 2
+//! `Grim Dawn.exe` writer `MainMenu::WritePlayMenu` (on menu state changes and on menu destruction) and reader
+//! `MainMenu::ReadPlayMenu` (called from the menu's init `MainMenu::Initialize`), both through
+//! `GameEngine::GetSharedSavePath` case 2
 //! (SaveManager::DirectWrite, optionally cloud-synced). Little endian:
 //! `u32 0xFFFFFFFF` marker (a file whose first dword is not -1 is version 0, whose strings differ: not read),
-//! `u32 version` (3), `u32 menu+576` (default 0), `u32 menu+580` (default 1), then
+//! `u32 version` (3), `u32` `PlayMenu.savedWord0` (default 0), `u32` `PlayMenu.savedWord1` (default 1), then
 //! `wstring player name`, `wstring game name`, `wstring host name` (version >= 2), `string level name`,
 //! `u32 max players` (the reader clamps to [2, global max]), `u32 level range` (>= 0), `u32 difficulty` (clamped 0..2),
 //! `u32 challenge` (> 0 is true), `u32 mode` (0 campaign, 1 Crucible, 2 Custom, clamped 0..2; 2 becomes 0 when there is
@@ -27,7 +28,7 @@ pub struct PlayMenu {
     pub marker: u32,
     /// 3 (the writer's version).
     pub version: u32,
-    /// Menu words +576 / +580 (meaning unknown).
+    /// `PlayMenu.savedWord0` / `PlayMenu.savedWord1` (meaning unknown).
     pub unk0: u32,
     pub unk1: u32,
     pub character: String,

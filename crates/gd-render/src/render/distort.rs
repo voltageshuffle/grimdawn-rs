@@ -1,13 +1,14 @@
 //! Screen distortion: the `distort*.ssh` mesh shaders and `particledistort*`
 //! emitters (fx/render.rs) refract a copy of the finished frame.
 //!
-//! When: `GraphicsDeferredRenderer::RenderFinalScene` (Engine.dll
-//! @0x1800adeb0): after every scene pass (sort orders up to 11000: opaque,
+//! When: `GraphicsDeferredRenderer::RenderFinalScene` (Engine.dll): after
+//! every scene pass (sort orders up to 11000: opaque,
 //! decals, emissive FX, particles), the fog and the scene glow,
-//! `GraphicsMTRenderer::RenderPostObjects` @0x1800d3880 collects the passes of
+//! `GraphicsMTRenderer::RenderPostObjects` collects the passes of
 //! the `postObjectRenderStyle` technique, copies the frame
-//! (`UpdateFrameBufferCopy`, the `screenTexture` parameter, renderer +696, set
-//! by `SetShaderParamsForScene` @0x1800cf6e0) and draws them; then the same for
+//! (`UpdateFrameBufferCopy`, the `screenTexture` parameter,
+//! `GraphicsMTRenderer.screenTexture`, set
+//! by `SetShaderParamsForScene`) and draws them; then the same for
 //! `postRenderStyle` (a second copy). The post effects (bloom, enhancement,
 //! depth of field) come later. `screenTextureScale` is the constant
 //! (1/512, 1/512) (`SetShaderParamsForScene`).
@@ -66,7 +67,7 @@ use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilTexture, ViewTarget};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::shader::ShaderRef;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
 
 const SHADER: &str = "embedded://gd_render/render/shaders/gd_distort.wesl";
 

@@ -4,10 +4,10 @@
 //! attack / death; `GD_CHAR_STATE` sets the initial state and `GD_CHAR_HOLD=<0..1>` freezes attacks at that
 //! fraction (for screenshots; both read by `gd_game::character`). `GD_CHAR_CAM` / `GD_CHAR_YAW`: the camera's
 //! distance and yaw.
-use crate::hooks::Hooks;
 use bevy::prelude::*;
 use gd_game::character::drive_characters;
-use gd_game::player::starting_gear;
+use gd_game_core::hooks::Hooks;
+use gd_game_core::player::starting_gear;
 use gd_render::camera::{CameraFocus, GameCamera};
 use gd_render::character::{CharAssets, CharState, Character, spawn_player};
 use gd_sim::anim::AnimType;

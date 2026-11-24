@@ -4,6 +4,17 @@
 //! Field lookup ([`Record::get`]) is case-insensitive, first match wins. A record built by
 //! [`Record::new`] (every decoded one) carries a sorted hash index of its keys, so a lookup is
 //! a binary search; a record whose `fields` were replaced or edited since scans them in order.
+//!
+//! Decoded string values and field keys are `Arc<str>` shared with the archive's string
+//! table, so caching decoded records does not duplicate the table.
+//!
+//! [`Record::derived`] memoizes a consumer's value derived from a record's fields in one of
+//! [`DERIVED_SLOTS`] fixed slots, addressed by a const-generic index (lock-free reads, a stable
+//! `&T`). Slot assignments (a consumer owns its index; a second type in the same slot reads `None`):
+//! - 0: gd-sim `actor::RecordContributions` (per-record stat contributions by level/owner).
+//! - 1: gd-sim `actor::RecordOffenseFields` (per-record offense field values by level index).
+//! - 2: gd-sim `stats::RecordExprs` (parsed field equations: bio / proxy / loot).
+//! - 3: gd-sim `[skills::SkillLevel; 64]` (parsed `skillLevelN` numbers / equations).
 use crate::util::{Reader, lz4_block};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
@@ -20,7 +31,7 @@ pub struct RecordHeader {
 }
 
 pub struct Arz {
-    pub strings: Vec<String>,
+    pub strings: Vec<Arc<str>>,
     pub records: Vec<RecordHeader>,
     data: Vec<u8>,
 }
@@ -32,7 +43,7 @@ pub struct Record {
     pub class: String,
     /// Shared: cloning a record (`Database::get_owned` clones the cached one) copies no values;
     /// `Arc::make_mut` to modify.
-    pub fields: Arc<Vec<(String, Vec<RawValue>)>>,
+    pub fields: Arc<Vec<(Arc<str>, Vec<RawValue>)>>,
     index: FieldIndex,
 }
 
@@ -44,11 +55,14 @@ pub struct Record {
 struct FieldIndex(Option<Arc<IndexOf>>);
 
 struct IndexOf {
-    of: Weak<Vec<(String, Vec<RawValue>)>>,
+    of: Weak<Vec<(Arc<str>, Vec<RawValue>)>>,
     keys: Box<[(u32, u32)]>,
-    /// [`Record::derived`]'s value.
-    derived: std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>,
+    /// [`Record::derived`]'s values, one per consumer slot.
+    derived: [std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>; DERIVED_SLOTS],
 }
+
+/// Number of [`Record::derived`] slots (see the module doc for the assignments).
+pub const DERIVED_SLOTS: usize = 4;
 
 impl std::fmt::Debug for FieldIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -71,7 +85,7 @@ fn key_hash(key: &str) -> u32 {
 pub enum RawValue {
     Int(i32),
     Float(f32),
-    Str(String),
+    Str(Arc<str>),
     Bool(bool),
 }
 
@@ -100,7 +114,7 @@ impl Arz {
         while r.pos < str_start + str_size {
             let n = r.u32()?;
             for _ in 0..n {
-                strings.push(r.string()?);
+                strings.push(r.string()?.into());
             }
         }
         let mut r = Reader::at(&data, rec_start);
@@ -142,7 +156,7 @@ impl Arz {
         &self.strings[h.name as usize]
     }
 
-    fn string(&self, i: u32) -> Result<&String> {
+    fn string(&self, i: u32) -> Result<&Arc<str>> {
         self.strings.get(i as usize).with_context(|| {
             format!(
                 "string {i} outside the string table ({})",
@@ -198,7 +212,7 @@ impl Record {
     pub fn new(
         name: impl Into<String>,
         class: impl Into<String>,
-        fields: Vec<(String, Vec<RawValue>)>,
+        fields: Vec<(Arc<str>, Vec<RawValue>)>,
     ) -> Self {
         let mut keys: Box<[(u32, u32)]> = fields
             .iter()
@@ -210,7 +224,7 @@ impl Record {
         let index = FieldIndex(Some(Arc::new(IndexOf {
             of: Arc::downgrade(&fields),
             keys,
-            derived: std::sync::OnceLock::new(),
+            derived: [const { std::sync::OnceLock::new() }; DERIVED_SLOTS],
         })));
         Self {
             name: name.into(),
@@ -221,15 +235,22 @@ impl Record {
     }
 
     /// A consumer's data derived from this record's fields, made by `make` on first use and shared by the
-    /// record's clones (the record's own cache: gd-sim's per-record stat contributions). `None` when the fields
-    /// were replaced since the record was indexed, or the slot already holds another type.
-    pub fn derived<T: std::any::Any + Send + Sync>(&self, make: impl FnOnce() -> T) -> Option<&T> {
+    /// record's clones (the record's own cache). `IDX` is the consumer's fixed slot (module doc); reads are
+    /// lock-free and return a stable `&T`. `None` when the fields were replaced since the record was indexed,
+    /// or the slot already holds another type.
+    pub fn derived<const IDX: usize, T: std::any::Any + Send + Sync>(
+        &self,
+        make: impl FnOnce() -> T,
+    ) -> Option<&T> {
+        const { assert!(IDX < DERIVED_SLOTS, "derived slot index out of range") };
         let ix = self
             .index
             .0
             .as_deref()
             .filter(|ix| std::ptr::eq(ix.of.as_ptr(), Arc::as_ptr(&self.fields)))?;
-        ix.derived.get_or_init(|| Box::new(make())).downcast_ref()
+        ix.derived[IDX]
+            .get_or_init(|| Box::new(make()))
+            .downcast_ref()
     }
 
     /// The values of field `key` (case-insensitive; the first such field).
@@ -263,7 +284,7 @@ impl Record {
     /// The non-empty string values of field `key`, borrowed: no allocation per call.
     pub fn strs_iter(&self, key: &str) -> impl Iterator<Item = &str> {
         self.get(key).unwrap_or(&[]).iter().filter_map(|v| match v {
-            RawValue::Str(s) if !s.is_empty() => Some(s.as_str()),
+            RawValue::Str(s) if !s.is_empty() => Some(s.as_ref()),
             _ => None,
         })
     }
@@ -327,7 +348,11 @@ mod index_tests {
     /// Every key of `r`, in its own, upper and lower case, plus a missing one, finds what the scan does.
     fn agrees(r: &Record) {
         for (k, _) in r.fields.iter() {
-            for q in [k.clone(), k.to_ascii_uppercase(), k.to_ascii_lowercase()] {
+            for q in [
+                k.to_string(),
+                k.to_ascii_uppercase(),
+                k.to_ascii_lowercase(),
+            ] {
                 assert_eq!(r.get(&q), linear(r, &q), "{} {q}", r.name);
             }
             let missing = format!("{k}#");

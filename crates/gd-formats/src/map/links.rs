@@ -1,7 +1,7 @@
-//! Which map regions are connected (`World::GetConnectedRegionSet` @0x1802195b0 in Engine.dll).
+//! Which map regions are connected (`World::GetConnectedRegionSet` in Engine.dll).
 //!
 //! The links are not stored in the map file. `World::Load`
-//! builds them (`BuildConnectivity` @0x180224230, per pair `Region::BuildRegionConnectivity` @0x180193da0): region
+//! builds them (`World::BuildConnectivity`, per pair `Region::BuildRegionConnectivity`): region
 //! B is a neighbour of A when on every axis (Y included)
 //! `|cA - (cB + (oB - oA))| <= hB + hA + 2.0` (c the box centre, h the half extents, o the integer world offset:
 //! boxes in world space that overlap or touch with 2 m of slack); symmetric. `GetConnectedRegionSet` adds the
@@ -13,8 +13,8 @@ use super::RegionInfo;
 /// The slack added to the box overlap test (m).
 pub const SLACK: f32 = 2.0;
 
-/// The neighbour lists of all regions (`Region+256`): O(n^2) over the regions, about 4 million box tests for the
-/// world map.
+/// The neighbour lists of all regions (`Region.neighbours`): O(n^2) over the regions, about 4 million box tests
+/// for the world map.
 pub fn neighbours(regions: &[RegionInfo]) -> Vec<Vec<usize>> {
     let world = |r: &RegionInfo| -> ([f32; 3], [f32; 3]) {
         (

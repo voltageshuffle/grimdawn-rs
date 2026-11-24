@@ -2,44 +2,44 @@
 //! phantoms, Fleshshaper's spirits): monsters that join up and let their
 //! leader release a charged super skill. Game.dll:
 //!
-//! - `Load` @0x18014fa40: `synergyRadius`, `synergyTeamSize` (6),
+//! - `Load`: `synergyRadius`, `synergyTeamSize` (6),
 //!   `synergyChargeTime` (1000 ms), `synergySearchIntervalMin` /
 //!   `…Max` (1000 / 2000 ms), `synergyChaosBeam`, `synergyNumBeams` (1).
-//! - `InitialUpdate` @0x18014fb50 keeps special slot 0 (`specialAttack`) aside
-//!   as the super skill (`GetSuperSkill` @0x1800f2350) and empties the slot.
-//! - `Update` @0x18014ec00, idle (mode +2244 = 0), its search timer (+2224)
+//! - `InitialUpdate` keeps special slot 0 (`specialAttack`) aside
+//!   as the super skill (`GetSuperSkill`) and empties the slot.
+//! - `Update`, idle (`ControllerMonsterSynergy.mode` = 0), its search timer (`searchTimer`)
 //!   out: the timer is re-armed (`IGenerate(min, max)`); the `Monster`s
 //!   within `synergyRadius` (`GetTargetsInRadius`) whose controller is an
 //!   idle synergy one are the candidates, and the target most of them are
 //!   after (their state's target) is the team's. With at least
 //!   `synergyTeamSize` candidates and such a target: the leader is the
 //!   candidate nearest the centre of their bounding box; nothing happens when
-//!   this monster's super skill is missing or not ready (+176), fails
+//!   this monster's super skill is missing or not ready (`Skill.ready`), fails
 //!   `rand() % 100 > chance` or is not close enough to the target
 //!   (`CloseEnoughToUseSkill`); from twice the team size only the team size
-//!   nearest the leader stay (sub_1801515D0). Every member gets the target
-//!   (+992); the leader takes a new team (`PickTeam`: ++`m_sTeamPool`),
-//!   mode 1 and the charge time (+2220), the others mode 2 (`SetSlave`), and
+//!   nearest the leader stay (`Game::FindClosestEntities`). Every member gets the target
+//!   (`ControllerMonster.target`); the leader takes a new team (`PickTeam`: ++`m_sTeamPool`),
+//!   mode 1 and the charge time (`chargeTimer`), the others mode 2 (`SetSlave`), and
 //!   each a `synergyChaosBeam` (`SetNumBeams`) from it to the leader that the
-//!   leader keeps with the member (`AddComrade` @0x18014ffc0).
+//!   leader keeps with the member (`AddComrade`).
 //! - The leader (mode 1): the charge is 1 - left / `synergyChargeTime`; at 1
-//!   (once, +2280) it goes "SuperAttack"
-//!   (`ControllerMonsterSynergyStateSuperAttack::OnBegin` @0x180152b80:
+//!   (once, `superAttackOrdered`) it goes "SuperAttack"
+//!   (`ControllerMonsterSynergyStateSuperAttack::OnBegin`:
 //!   `UseSkill` of the super skill on its target); before, with fewer than
 //!   `synergyTeamSize` of its members within `synergyRadius`, it `Disband`s;
 //!   the time left counts down; the beams follow the members' and its
 //!   "Target" points, filled to the charge. Members (mode 2) fight on as
 //!   usual.
-//! - The super attack's "End" (`HandleEvent` @0x180152c70): `Disband`, then
+//! - The super attack's "End" (`HandleEvent`): `Disband`, then
 //!   "RepositionForAttack" with the current state's enemy and skill (not zeroed);
-//!   `ControllerMonsterStateRepositionForAttack` (`OnBegin` @0x180143800, `OnUpdate` @0x180143980)
+//!   `ControllerMonsterStateRepositionForAttack` (`OnBegin`, `OnUpdate`)
 //!   is the fight state of `melee.rs` (`St::Reposition`: the run to `GetMoveToPoint` at both
 //!   radii, "Attack" in reach at the path's end or after 2500 ms, else "Pursue"), entered through
 //!   `MeleeAi::reposition`.
-//! - `Disband` @0x180150060: the flag cleared, the search timer re-armed; each
+//! - `Disband`: the flag cleared, the search timer re-armed; each
 //!   member (the leader one of them) idle again (mode 0), its beam detached
 //!   and freed; the member list emptied. "Dying"
-//!   (`ControllerMonsterSynergyStateDying::OnBegin` @0x180152df0) disbands
+//!   (`ControllerMonsterSynergyStateDying::OnBegin`) disbands
 //!   first.
 //!
 //! PORT: the beams are drawn by `grimdawn::chaos_beam` (not seen in a run); the super attack starts once the leader
@@ -48,13 +48,16 @@
 //! of the state data; the reach distance is flat
 //! (the bounding-box centre test adds the region height); ties for the
 //! target go to the first found; the draws use the port's RNG.
-use crate::casting::Casting;
-use crate::character::{CharState, Character};
-use crate::combat::{Combatant, ControllerClass, Dead, MonsterAi};
-use crate::data::GameData;
-use crate::monster_skills::{MonsterSkills, Special};
-use crate::monsters::Monster;
+use crate::combat::MonsterAi;
+use crate::monster_skills::MonsterSkills;
 use bevy::prelude::*;
+use gd_game_core::casting::Casting;
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::{Combatant, ControllerClass, Dead};
+use gd_game_core::data::GameData;
+use gd_game_core::monster_skills::Special;
+use gd_game_core::monsters::Monster;
+use gd_game_core::synergy::{Mode, Synergy};
 
 pub struct SynergyPlugin;
 
@@ -73,54 +76,6 @@ impl Plugin for SynergyPlugin {
 /// `ControllerMonsterSynergy::m_sTeamPool`.
 #[derive(Resource, Default)]
 pub struct TeamPool(pub u32);
-
-/// The controller's mode (+2244) and team (+2248).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Mode {
-    #[default]
-    Idle,
-    Leader(u32),
-    Slave(u32),
-}
-
-/// A synergy monster's controller state (module docs).
-#[derive(Component, Debug)]
-pub struct Synergy {
-    pub mode: Mode,
-    radius: f32,
-    team_size: usize,
-    /// `synergyChargeTime`, the charge time left (s).
-    charge_time: f32,
-    charge_left: f32,
-    /// `synergySearchInterval*` (ms) and the search timer (s).
-    interval: (i32, i32),
-    search: f32,
-    /// Slot 0, the super skill.
-    pub super_skill: Option<Special>,
-    /// The super attack was ordered (+2280) / seen running.
-    fired: bool,
-    started: bool,
-    /// The members (the leader's `AddComrade` list).
-    pub comrades: Vec<Entity>,
-}
-
-impl Synergy {
-    /// The charge, 0..1 (the leader's beams' fill).
-    pub fn charge(&self) -> f32 {
-        if self.charge_time <= 0.0 {
-            1.0
-        } else {
-            1.0 - self.charge_left / self.charge_time
-        }
-    }
-
-    fn rearm(&mut self) {
-        self.search = crate::rng::i32(
-            self.interval.0.min(self.interval.1)..=self.interval.1.max(self.interval.0),
-        ) as f32
-            / 1000.0;
-    }
-}
 
 fn init(
     mut commands: Commands,
@@ -281,7 +236,7 @@ fn update(
                 let Some(sup) = sup.filter(|_| ready) else {
                     continue;
                 };
-                if crate::rng::i32(0..100) as f32 > sup.chance {
+                if gd_game_core::rng::i32(0..100) as f32 > sup.chance {
                     continue;
                 }
                 let Ok((ttf, tcb)) = targets.get(target) else {

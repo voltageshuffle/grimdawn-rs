@@ -22,7 +22,7 @@ pub struct Rules {
     /// Game balance level (`GameEngine::SetGameBalanceLevel`): the paks'
     /// column, `difficulty * 4 + players - 1` (the server's
     /// player-manager update sends `difficulty * min(maxPlayers, 4) +
-    /// players` @0x180312ca0 and `CharAttributeVal::AddToAccumulator` reads
+    /// players` (`ServerPlayerManager::UpdateGameBalance`) and `CharAttributeVal::AddToAccumulator` reads
     /// index level - 1; the port takes maxPlayers >= 4); single player:
     /// `difficulty * 4`.
     pub balance: usize,
@@ -76,9 +76,9 @@ impl Default for SpeedCap {
 
 impl SpeedCap {
     /// The speed slowed by `slow_pct` % and then capped.
-    /// `Character::GetRunSpeed` @0x180069040 / `GetAttackSpeed` @0x1800692e0 /
-    /// `GetSpellCastSpeed` @0x1800693a0: speed × (1 − 0.01 × slow) goes into
-    /// `Cap*Speed` (vtable +0x678/+0x688/+0x680), so a slow can only push the
+    /// `Character::GetRunSpeed` / `GetAttackSpeed` /
+    /// `GetSpellCastSpeed`: speed × (1 − 0.01 × slow) goes into
+    /// `Cap*Speed` (`Character::CapRunSpeed` / `CapAttackSpeed` / `CapSpellCastSpeed`), so a slow can only push the
     /// speed down to the cap's min (`*SpeedCapMin` % of the bio base), and a
     /// speed above the max loses nothing until the slowed value drops below it.
     /// The slow % is `DurationDamageManager::GetFixedDamage` of the run /
@@ -94,14 +94,14 @@ impl SpeedCap {
 }
 
 /// Run, attack and cast speed from the accumulators (
-/// `Character::GetRunSpeed` @0x180069040 / `GetAttackSpeed` @0x1800692e0 /
+/// `Character::GetRunSpeed` / `GetAttackSpeed` /
 /// `GetSpellCastSpeed`): run = RunSpeed, attack = AttackSpeed ×
 /// (1 + BaseAttackSpeed), cast = CastSpeed, each clamped by `Cap*`:
 /// [min% × base, (max% + `character*MaxModifier`) × base] with the caps of
 /// `gameengine.dbr` (`player*`, `monster*`, `boss*SpeedCapMin/Max`, the
 /// min per difficulty). Dual-wielding melee weapons (hand state 10) scales
 /// BaseAttackSpeed (both weapons' sum) by `dwWeaponSpeedFactor` (0.5:
-/// their average; `GetAttackSpeed` @0x1800692e0). `base` is the
+/// their average; `GetAttackSpeed`). `base` is the
 /// bio base value (before gear/skills): `Player/Monster::CapAttackSpeed`
 /// read the bio's base accumulator (`CharacterBio::ReloadBaseAttrAcc`).
 /// Returned uncapped with the bounds so slows can be folded in
@@ -287,10 +287,10 @@ impl Rules {
     /// The Crucible's monster stats at a `ramp` (`Game.SetSurvivalDifficulty`): next to the
     /// stock pak, a monster with a non-zero ramp adds the survival adjustment pak
     /// (`survivalinfo.dbr` `survivalAdjustmentNormal` / `Elite` / `Ultimate` by game difficulty,
-    /// `GameEngine::GetChallengeAdjustment` @0x1802f1c20 in mode 1) at list index `ramp - 1`
-    /// (`CharAttributeVal::AddToAccumulator` @0x1800cc380: column 0 adds nothing, else
-    /// `list[min(column - 1, len - 1)]`; `Monster::ContributeGameBalanceCharAttributes`
-    /// @0x18037b710). Players and pets take no such pak. Live monsters take the new pak through
+    /// `GameEngine::GetChallengeAdjustment` in mode 1) at list index `ramp - 1`
+    /// (`CharAttributeVal::AddToAccumulator`: column 0 adds nothing, else
+    /// `list[min(column - 1, len - 1)]`; `Monster::ContributeGameBalanceCharAttributes`).
+    /// Players and pets take no such pak. Live monsters take the new pak through
     /// `gd_game::monster_skills::rebuild_profiles` (the engine's `Monster::OnDifficultyRampLevel` reload).
     pub fn with_survival_ramp(&self, db: &Database, ramp: u32) -> Self {
         let challenge = (ramp > 0)
@@ -351,9 +351,9 @@ impl Rules {
 
 impl Rules {
     /// The rules of a character standing in a challenge area (`gd_game::challenge_areas`):
-    /// `Monster::ContributeGameBalance*` @0x18037b710: a monster adds the area's `difficultyAdjustment`
-    /// `AttributePak` (`ChallengeArea` +144, loaded by `ChallengeArea::Load`) at the game-balance column, after
-    /// the challenge pak (pets and players take none, `Pet::` / `Player::ContributeGameBalance*`). `mutators`
+    /// `Monster::ContributeGameBalance*`: a monster adds the area's `difficultyAdjustment`
+    /// `AttributePak` (`ChallengeArea.difficultyPak`, loaded by `ChallengeArea::Load`) at the game-balance column,
+    /// after the challenge pak (pets and players take none, `Pet::` / `Player::ContributeGameBalance*`). `mutators`
     /// (`Some`: the area's rolled `mutatorPakList` / `playerMutatorPakList` paks) replace the mutators through
     /// [`Rules::with_mutators`]: `Monster::GetMonsterMutators` / `Player::GetPlayerMutators` filter the
     /// engine's list by the area's id (type 2), so in an area only its own count; `None` keeps them (the

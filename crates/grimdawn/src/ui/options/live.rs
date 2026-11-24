@@ -1,19 +1,27 @@
 use super::*;
+use gd_ui::state::options::OptionsWindow;
 
 /// Per frame, without a rebuild: the hover / drag / enabled looks ([`Look`]),
-/// the knob positions, the dropdown texts ([`DropText`]), the list scrolls
+/// the knob positions, the dropdown texts ([`DropText`], ellipsised to the box's inner width), the list scrolls
 /// ([`Scroll`]), the dropdown highlight and Apply's sound gate. The draft and
 /// bindings are read by reference; the dropdown texts / highlight recompute
-/// only when the draft's version, the open dropdown or the screen size changes
+/// only when the draft's version, the open dropdown, the screen size or the tags generation changes
 /// (a drag bumps the version every frame; the knob still moves every frame).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn live(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
+    devices: Res<crate::audio::devices::AudioDevices>,
+    adapters: Res<crate::render_devices::RenderAdapters>,
+    monitors: Query<(
+        Entity,
+        &bevy::window::Monitor,
+        Option<&bevy::window::PrimaryMonitor>,
+    )>,
     win: Res<OptionsWindow>,
     layout: Res<OptionsLayout>,
     (options, bindings, data): (Res<GameOptions>, Res<KeyBindings>, Res<GameData>),
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
     mut looks: Query<(&Look, &mut ImageNode, &mut Visibility, &mut Node)>,
     mut texts: Query<(Entity, &DropText, &mut LiveText)>,
     mut scrolled: Query<(&Scroll, &mut Node), Without<Look>>,
@@ -21,8 +29,8 @@ pub(super) fn live(
         (Option<&DropRowHl>, &mut Visibility),
         (Or<(With<DropRowHl>, With<ApplyGate>)>, Without<Look>),
     >,
-    mut fresh: gd_game::session::NewSession,
-    mut last: Local<Option<(u64, Option<usize>, UVec2, Option<usize>)>>,
+    mut fresh: gd_game_core::session::NewSession,
+    mut last: Local<Option<(u64, Option<usize>, UVec2, u64, Option<usize>)>>,
 ) {
     if fresh.begun() {
         *last = None;
@@ -33,8 +41,20 @@ pub(super) fn live(
     let Ok(w) = window.single() else { return };
     let size = UVec2::new(w.physical_width(), w.physical_height());
     let screen = Vec2::new(size.x as f32, size.y as f32);
+    let languages = data.available_languages();
+    // The dropdown values' tag table ([`ChoiceCtx`]): an Arc clone, so the mutable asset borrows below
+    // (`assets.ui`, `LiveText::set`) do not conflict with the context's borrow.
+    let tags = assets.fonts.tags.clone();
+    let ctx = ChoiceCtx::new(
+        &devices,
+        crate::settings::primary_monitor(&monitors),
+        screen,
+        &adapters,
+        &languages,
+        &tags,
+    );
     let draft = win.draft.as_ref().unwrap_or(&*options);
-    let hover = crate::ui::cursor_px(&assets.hooks, w)
+    let hover = gd_ui_kit::cursor_px(&assets.hooks, w)
         .and_then(|p| hit_at(&layout, draft, win.scroll, win.drop_top, p));
     let apply_enabled =
         !draft.same_values(&options) || win.keys.as_ref().is_some_and(|k| k != &*bindings);
@@ -118,31 +138,38 @@ pub(super) fn live(
             }
         }
     }
+    let generation = assets.fonts.generation;
     let current_row = match *last {
-        Some((v, d, s, row)) if (v, d, s) == (draft.version, win.dropdown, size) => row,
+        Some((v, d, s, g, row))
+            if (v, d, s, g) == (draft.version, win.dropdown, size, generation) =>
+        {
+            row
+        }
         _ => {
+            let s = assets.scale(size);
             for (e, t, mut text) in &mut texts {
-                text.set(
-                    e,
-                    &shown_text(t.shown, draft, screen),
-                    &mut commands,
-                    &data,
-                    &mut assets,
-                );
+                let full = shown_text(t.shown, draft, &ctx);
+                // Ellipsised like the built box; measurement spawns nothing, and its borrow ends before `set`.
+                let shown = {
+                    let mut ui =
+                        assets.ui(&mut commands, &data, e, s, 1.0 / w.scale_factor(), screen);
+                    ui.truncate_line(&t.style, t.max_w, &full)
+                };
+                text.set(e, &shown, &mut commands, &data, &mut assets);
             }
             let row = win
                 .dropdown
                 .and_then(|i| page(win.tab).get(i).copied())
                 .and_then(|c| match c {
                     Ctl::Drop(shown, ..) => {
-                        let current = shown_text(shown, draft, screen);
-                        choices(shown, draft, screen)
+                        let current = shown_text(shown, draft, &ctx);
+                        choices(shown, draft, &ctx)
                             .iter()
                             .position(|(t, _)| *t == current)
                     }
                     _ => None,
                 });
-            *last = Some((draft.version, win.dropdown, size, row));
+            *last = Some((draft.version, win.dropdown, size, generation, row));
             row
         }
     };

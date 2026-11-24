@@ -1,9 +1,9 @@
-//! Level water (chunk 9): `GAME::Water::Load` @0x1801F81E0, WaterType::Load
-//! @0x180207030, WaterLayer::Load @0x1801FDCE0, WaterPath::Load @0x180200B20,
-//! WaterWaveSet::Load @0x18020CBD0.
+//! Level water (chunk 9): `Water::Load`, `WaterType::Load`,
+//! `WaterLayer::Load`, `WaterPath::Load`,
+//! `WaterWaveSet::Load`.
 //!
-//! Water paths (rivers), per `WaterPath::Load` @0x180200b20: the water type's name, the path's surface height
-//! (region-local y, `WaterPath+0x6C`), then the control points, 64 bytes each of which the engine keeps the first 28
+//! Water paths (rivers), per `WaterPath::Load`: the water type's name, the path's surface height
+//! (region-local y, `WaterPath.height`), then the control points, 64 bytes each of which the engine keeps the first 28
 //! ([`ControlPoint`]); a path of n points has n - 1 segments, each the cubic Bézier between two neighbours (geometry and
 //! hits: grimdawn `water.rs`, `gd_sim::surface::in_path_segment`). A path whose water type is not loaded logs "Failed to
 //! load water type '%s' for water path." and is not used.
@@ -33,7 +33,7 @@ pub struct WaterType {
 pub struct WaterBlock {
     /// Block index in the layer grid (x = idx % grid_w, z = idx / grid_w).
     pub index: u32,
-    /// 100 bytes copied verbatim into WaterBlockBase+88 (layout unknown; stock
+    /// 100 bytes copied verbatim into `WaterBlockBase.blockData` (layout unknown; stock
     /// samples are often all-NaN floats).
     pub data: [u8; 100],
 }

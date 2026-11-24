@@ -7,35 +7,37 @@
 //! `GameMode`, the area name from the map's name sector at the player. Gameplay systems never
 //! write UI state; the windows read only this view (or the gameplay
 //! components directly), so they cannot drift from what the game uses.
-use super::status::{BuffBar, DotIcon, debuff_icon};
-use super::{HudValues, HudVitals};
+use gd_ui::status::{BuffBar, DotIcon, debuff_icon};
+use gd_ui::{HudValues, HudVitals};
 use crate::afflictions::Afflictions;
-use crate::casting::Caster;
-use crate::combat::{CombatRules, Combatant};
-use crate::data::GameData;
 use crate::loot::PlayerProgress;
-use crate::player::{EffectiveSkills, Player};
-use crate::session::LoadedCharacter;
 use crate::sheet_dps::{SheetDps, SheetDpsValues};
 use bevy::prelude::*;
+use gd_game_core::casting::Caster;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{EffectiveSkills, Player};
+use gd_game_core::session::LoadedCharacter;
+use gd_game_core::combat::Combatant;
+use gd_game_core::rules::CombatRules;
 
 type PlayerParts<'a> = (
     Entity,
     &'a Combatant,
     Option<&'a EffectiveSkills>,
     Option<&'a Caster>,
-    Option<&'a Afflictions>,
-    Option<Ref<'a, crate::player::Loadout>>,
-    Option<&'a gd_game::weapon_pool::PoolCharges>,
-    Option<&'a gd_game::skill_buffs::ReceivedBuffs>,
-    Option<&'a gd_game::casting::Shields>,
+    Option<Ref<'a, Afflictions>>,
+    Option<Ref<'a, gd_game_core::player::Loadout>>,
+    Option<&'a gd_game_core::weapon_pool::PoolCharges>,
+    Option<&'a gd_game_core::skill_buffs::ReceivedBuffs>,
+    Option<&'a gd_game_core::casting::Shields>,
     Option<&'a gd_game::combo::Combo>,
-    Option<Ref<'a, gd_game::weapon_pool::SkillLinks>>,
-    Option<&'a gd_game::casting::PotionOverTime>,
+    Option<Ref<'a, gd_game_core::weapon_pool::SkillLinks>>,
+    Option<&'a gd_game_core::casting::PotionOverTime>,
 );
 
 /// The buff bar's state kept across frames: the bar, the player's status list ([`gd_game::buff_bar::PlayerIcons`],
-/// rewritten in place), the duration-damage icons and each listed record's resolved bitmap.
+/// rewritten in place), the duration-damage icons, each listed record's resolved bitmap and the
+/// pets' portrait-icon inputs ([`PetIconInputs`]).
 #[derive(Default)]
 pub struct BarCache {
     bar: BuffBar,
@@ -43,7 +45,55 @@ pub struct BarCache {
     listed: Vec<gd_game::buff_bar::Tracked>,
     dots: Vec<DotIcon>,
     /// A record's icon bitmap (`skillUpBitmapName`, else its display record's; `None`: no icon).
-    bitmaps: std::collections::HashMap<String, Option<String>>,
+    bitmaps: gd_formats::collections::HashMap<String, Option<String>>,
+    /// Each shown pet's portrait-icon inputs, in [`HudValues::pet_buffs`] order.
+    pet_icons: Vec<(Entity, PetIconInputs)>,
+}
+
+/// One pet's portrait-icon inputs ([`gd_game::buff_bar::pet_icons`]): the icon list changes only
+/// when one of these moves. `Pet` and `DamageAuras` are marked changed every frame their timers
+/// tick (`gd_game::pets`, `gd_game::casting::auras`), so their change ticks cannot gate the
+/// recompute; the received buffs' can (an expiry only shrinks the list, hence the count).
+struct PetIconInputs {
+    toggled: Vec<String>,
+    buffs: Vec<String>,
+    auras: Vec<String>,
+    received: (Option<bevy::ecs::change_detection::Tick>, usize),
+}
+
+impl PetIconInputs {
+    fn matches(
+        &self,
+        pet: &gd_game::pets::Pet,
+        da: Option<&gd_game_core::casting::DamageAuras>,
+        received: (Option<bevy::ecs::change_detection::Tick>, usize),
+    ) -> bool {
+        self.received == received
+            && self.toggled.iter().eq(pet.toggled().iter().map(|(s, _)| s))
+            && self.buffs.iter().eq(pet.buffs().iter().map(|(s, _, _)| s))
+            && self.auras.iter().eq(da
+                .map(|d| d.0.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .map(|a| a.skill()))
+    }
+    fn of(
+        pet: &gd_game::pets::Pet,
+        da: Option<&gd_game_core::casting::DamageAuras>,
+        received: (Option<bevy::ecs::change_detection::Tick>, usize),
+    ) -> Self {
+        Self {
+            toggled: pet.toggled().iter().map(|(s, _)| s.clone()).collect(),
+            buffs: pet.buffs().iter().map(|(s, _, _)| s.clone()).collect(),
+            auras: da
+                .map(|d| d.0.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .map(|a| a.skill().to_owned())
+                .collect(),
+            received,
+        }
+    }
 }
 
 /// Assigns `new` to `dst` when it differs; true when it did.
@@ -73,34 +123,34 @@ pub fn collect(
         Res<crate::riftgates::PersonalPortal>,
         Res<crate::world::Levels>,
         Query<&Transform, With<Player>>,
-        Option<NonSend<gd_game::story::StoryRuntime>>,
-        Res<gd_game::pause::GamePause>,
-        Res<super::menufolder::MenuFolder>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        Res<gd_game_core::pause::GamePause>,
+        Res<gd_ui::menufolder::MenuFolder>,
         (
-            Res<super::gamemenu::GameMenu>,
-            Res<super::options::OptionsWindow>,
+            Res<gd_ui::gamemenu::GameMenu>,
+            Res<gd_ui::state::options::OptionsWindow>,
         ),
     ),
     dps: Res<SheetDpsValues>,
-    (row, bindings): (Res<super::hud::HotbarRow>, Res<super::keys::KeyBindings>),
+    (row, bindings): (Res<gd_ui::hud::HotbarRow>, Res<super::keys::KeyBindings>),
     // Option: both are created with the player (`gd_game::reclamation`, `gd_game::devotion`).
     // Option: `PlayerFactions` is created with the player too (`gd_game::factions::init_factions`).
     (skill_undo, reclaim, devotion_state, stash, factions): (
         Res<gd_game::points::SkillUndo>,
         Option<Res<gd_game::reclamation::SkillReclamation>>,
         Option<Res<gd_game::devotion::DevotionState>>,
-        Option<Res<gd_game::stash::Stash>>,
+        Option<Res<gd_game_core::stash::Stash>>,
         Option<Res<gd_game::factions::PlayerFactions>>,
     ),
     devotion_undo: Res<gd_game::devotion::DevotionUndo>,
     player: Query<PlayerParts, With<Player>>,
     constitution: Query<&gd_game::constitution::Constitution, With<Player>>,
     (mut hud, mut vitals): (ResMut<HudValues>, ResMut<HudVitals>),
-    choice: Res<crate::session::Choice>,
+    choice: Res<gd_game_core::session::Choice>,
     (mode, world, inv, combo_rules): (
-        Res<gd_game::session::GameMode>,
+        Res<gd_game_core::session::GameMode>,
         Option<Res<crate::world::StreamedMap>>,
-        Res<gd_game::inventory::Inventory>,
+        Res<gd_game_core::inventory::Inventory>,
         Option<Res<gd_game::combo::ComboRules>>,
     ),
     (pets, mut bar, mut fresh, mut strip_seen): (
@@ -108,13 +158,13 @@ pub fn collect(
             (
                 Entity,
                 &gd_game::pets::Pet,
-                Option<&gd_game::casting::DamageAuras>,
-                Option<&gd_game::skill_buffs::ReceivedBuffs>,
+                Option<&gd_game_core::casting::DamageAuras>,
+                Option<Ref<gd_game_core::skill_buffs::ReceivedBuffs>>,
             ),
-            Without<gd_game::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
         >,
         Local<BarCache>,
-        gd_game::session::NewSession,
+        gd_game_core::session::NewSession,
         Local<StripSeen>,
     ),
     (session, pet_cbs, mut cache, hovered, targets, hooks, challenged, areas): (
@@ -123,18 +173,18 @@ pub fn collect(
             (
                 &gd_game::pets::Pet,
                 &Combatant,
-                Option<&gd_game::skill_buffs::ReceivedBuffs>,
+                Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
             ),
-            Without<gd_game::combat::Dead>,
+            Without<gd_game_core::combat::Dead>,
         >,
         Local<SheetCache>,
-        Res<crate::hover::Hovered>,
+        Res<gd_ui::state::hover::Hovered>,
         Query<(
             Option<Ref<Afflictions>>,
-            Option<Ref<gd_game::skill_buffs::ReceivedBuffs>>,
-            Option<&gd_game::monsters::Monster>,
+            Option<Ref<gd_game_core::skill_buffs::ReceivedBuffs>>,
+            Option<&gd_game_core::monsters::Monster>,
         )>,
-        Res<crate::hooks::Hooks>,
+        Res<gd_game_core::hooks::Hooks>,
         Query<&gd_game::challenge_areas::InChallengeArea, With<Player>>,
         Res<gd_game::challenge_areas::ChallengeAreas>,
     ),
@@ -150,9 +200,9 @@ pub fn collect(
     changed |= put(&mut v.skill_undo, skill_undo.available());
     changed |= put(
         &mut v.reclaim,
-        super::reclamation::ReclaimView::of(reclaim.as_deref(), devotion_state.as_deref()),
+        gd_ui::reclamation::ReclaimView::of(reclaim.as_deref(), devotion_state.as_deref()),
     );
-    let dv = super::reclamation::DevotionReclaimView::of(reclaim.as_deref(), || {
+    let dv = gd_ui::reclamation::DevotionReclaimView::of(reclaim.as_deref(), || {
         stash
             .as_deref()
             .map_or(0, |st| gd_game::devotion::aether_held(&data, &inv, st))
@@ -204,7 +254,7 @@ pub fn collect(
         changed |= put(
             &mut v.mode_tags,
             mode.0.label_tags_in(
-                gd_game::session::is_hardcore(loaded.as_deref(), &choice),
+                gd_game_core::session::is_hardcore(loaded.as_deref(), &choice),
                 survival,
             ),
         );
@@ -213,14 +263,14 @@ pub fn collect(
     // The orb HUD's menu folder: its buttons hide under the game menu / options window (`menufolder.rs`).
     changed |= put(
         &mut v.menu_folder,
-        super::menufolder::FolderView {
+        gd_ui::menufolder::FolderView {
             open: folder.open,
             buttons: folder.open && !pause.menu,
         },
     );
     changed |= put(
         &mut v.options_button,
-        super::hud::OptionsButton {
+        gd_ui::hud::OptionsButton {
             shown: !options.open,
             down: menu.alone() || options.open,
         },
@@ -232,11 +282,11 @@ pub fn collect(
     });
     changed |= put(&mut v.endless_progress, endless);
     // The area name: the name sector under the player, read from the player's
-    // own region's level (`Player::UpdateSelf` 0x1803D24A0: sectors are
+    // own region's level (`Player::UpdateSelf`: sectors are
     // read per region; the Shattered Realm's regions overlap main-world ground,
     // so a lookup by position alone showed "Conclave of the Three" there).
-    // Engine.dll `AmbianceManager::Update` @0x1800320c0 (the area name's
-    // writer: engine +2880, read by `Engine::GetAreaNameTag`): every update it is
+    // Engine.dll `AmbianceManager::Update` (the area name's
+    // writer: `GameEngine.areaNameTag`, read by `Engine::GetAreaNameTag`): every update it is
     // the name sector's tag at the ambiance target (whatever its "show" flag),
     // empty where there is no name sector. The target: `ui/cinematic.rs` `area_names`.
     let region = story
@@ -256,17 +306,18 @@ pub fn collect(
         }
     }
     // The challenge area (`challenge.rs`).
-    changed |= super::challenge::ChallengeHud::refresh(
+    changed |= gd_ui::challenge::ChallengeHud::refresh(
         &mut v.challenge_area,
         &data,
         challenged.single().ok(),
         &areas,
     );
     if let (Some(state), Ok(tf)) = (state, at.single()) {
-        // sub_14020D550 (`v175`: the options window or the game menu is up): the active button
+        // `UIPlayerHud::Update` (the options window or the game menu is up): the active button
         // (`hudActiveTeleportButton`) hides; the plain one stays drawn, disabled for presses without the disabled
-        // bitmap (+641 set, +644 clear: `ButtonStatic` draw sub_140123C50 draws the up bitmap), so it neither
-        // vanishes nor greys out (`riftmap::teleport_button` refuses the press while the menu is up).
+        // bitmap (`ButtonStatic.disabled` set, `ButtonStatic.dimmed` clear: `ButtonStatic` draw `ButtonStatic::Render`
+        // draws the up bitmap), so it neither vanishes nor greys out (`riftmap::teleport_button` refuses the press
+        // while the menu is up).
         let unlocked = gd_game::riftgates::portal_unlocked(&data, story.as_deref());
         let teleport = gd_game::riftgates::portal_button(
             tf.translation,
@@ -296,7 +347,7 @@ pub fn collect(
         let tags = data.tags();
         changed |= put(
             &mut v.hotbar_labels,
-            super::hud::slot_labels(&bindings, &tags),
+            gd_ui::hud::slot_labels(&bindings, &tags),
         );
     }
     if let Ok((
@@ -321,7 +372,7 @@ pub fn collect(
         vitals.health = cb.life;
         vitals.health_max = cb.profile.sheet.life;
         // The health-gain bar: current life plus the potion restore pool still to drain
-        // (`Character::GetPotentialLife` @0x18006b1b0), over the limit.
+        // (`Character::GetPotentialLife`), over the limit.
         vitals.health_gain = ((cb.life + pot.map_or(0.0, |p| p.life))
             / cb.profile.sheet.life.max(1.0))
         .clamp(0.0, 1.0);
@@ -334,15 +385,26 @@ pub fn collect(
                 .filter(|p| p.0.owner == me)
                 .min_by(|a, b| a.0.spawned_at.total_cmp(&b.0.spawned_at));
             let foes = session.last_foes(loaded.as_deref().map(|c| &c.0.stats), mode.0.difficulty);
-            let red = gd_sim::sheet::resistance_reduction(
-                &afflictions
-                    .as_ref()
-                    .map(|a| a.debuffs())
-                    .unwrap_or_default(),
-            );
+            // The resistance reduction reads the debuff list: recomputed only when the
+            // afflictions moved (their change tick; a timer's countdown alone is not a change,
+            // `gd_game::afflictions::tick`), as the target strip's cache does ([`StripSeen`]).
+            let aff_tick = afflictions.as_ref().map(|a| a.last_changed());
+            let red = cache
+                .0
+                .as_ref()
+                .filter(|(_, _, _, _, (t, _))| *t == aff_tick)
+                .map(|(_, _, _, _, (_, r))| *r)
+                .unwrap_or_else(|| {
+                    gd_sim::sheet::resistance_reduction(
+                        &afflictions
+                            .as_ref()
+                            .map(|a| a.debuffs())
+                            .unwrap_or_default(),
+                    )
+                });
             // The key holds the profiles' `Arc`s, not their addresses: a freed address can be reused
             // between two collects (a level-up rebuild, a pet resummon).
-            let sheet_changed = cache.0.as_ref().is_none_or(|(p, pet_p, d, f, r)| {
+            let sheet_changed = cache.0.as_ref().is_none_or(|(p, pet_p, d, f, (_, r))| {
                 !std::sync::Arc::ptr_eq(p, &cb.profile)
                     || match (pet_p, pet) {
                         (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, &b.1.profile),
@@ -372,7 +434,7 @@ pub fn collect(
                     pet.map(|p| p.0.clone()),
                     dps.0.clone(),
                     foes,
-                    red,
+                    (aff_tick, red),
                 ));
                 v.rollovers.clone_from(&cache.2);
                 v.armor.clone_from(&cache.3);
@@ -452,7 +514,7 @@ pub fn collect(
                     .iter()
                     .map(|s| {
                         s.as_deref()
-                            .and_then(|s| super::hotbar_pick::option_icon(&data, s, &v.skills))
+                            .and_then(|s| gd_ui::hotbar_pick::option_icon(&data, s, &v.skills))
                     })
                     .collect();
                 cache.4 = c.slots.to_vec();
@@ -462,7 +524,7 @@ pub fn collect(
             vitals.energy = c.energy.min(max);
             vitals.energy_max = max;
             vitals.energy_reserved = cb.profile.sheet.energy_reserve;
-            super::cooldown::slots(c, v.hotbar_row, &v.hotbar_labels, &mut vitals.cooldowns);
+            gd_ui::cooldown::slots(c, v.hotbar_row, &v.hotbar_labels, &mut vitals.cooldowns);
             hot_slot_states(
                 &data,
                 &v.skills,
@@ -483,17 +545,36 @@ pub fn collect(
             );
         }
         if let (Some(c), Some(l)) = (caster, loadout) {
-            let summons: Vec<&str> = pets
-                .iter()
-                .filter(|p| p.1.owner == me)
-                .map(|p| p.1.summon.as_str())
-                .collect();
+            // The summon records of the player's living pets: an inline buffer keeps the usual
+            // small pet count allocation-free (a `Local` cannot hold a slice borrowed from the
+            // pet query); more pets fall back to a Vec.
+            let mut inline = [""; 16];
+            let mut count = 0;
+            for p in pets.iter().filter(|p| p.1.owner == me) {
+                if let Some(slot) = inline.get_mut(count) {
+                    *slot = p.1.summon.as_str();
+                }
+                count += 1;
+            }
+            let overflow: Vec<&str> = if count > inline.len() {
+                pets.iter()
+                    .filter(|p| p.1.owner == me)
+                    .map(|p| p.1.summon.as_str())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let summons: &[&str] = if count > inline.len() {
+                &overflow
+            } else {
+                &inline[..count]
+            };
             let st = gd_game::buff_bar::PlayerState {
                 loadout: l,
                 caster: c,
                 links,
                 pool,
-                pets: &summons,
+                pets: summons,
                 received,
                 shield,
                 combo: combo.zip(combo_rules.as_deref().map(|r| &r.0)),
@@ -503,7 +584,7 @@ pub fn collect(
                 .list(&data.db, &st, loadout_changed, &mut bar.listed);
             // The icon is the trackable icon (a `.tex`) or the record's up
             // bitmap (`SkillProfile::GetUpBitmapName`); none: no icon
-            // (sub_14024F350). PORT: else its display record's. Resolved once per record.
+            // (`PlayerStatusIcons::AddIcon`). PORT: else its display record's. Resolved once per record.
             let bitmaps = &mut bar.bitmaps;
             bar.listed.retain_mut(|t| {
                 if t.icon.ends_with(".tex") {
@@ -528,8 +609,10 @@ pub fn collect(
                     None => false,
                 }
             });
-            dot_icons(afflictions, &mut bar.dots);
-            vitals.damage_taken_debuff = afflictions.map_or(0.0, Afflictions::damage_multiplier);
+            dot_icons(afflictions.as_deref(), &mut bar.dots);
+            vitals.damage_taken_debuff = afflictions
+                .as_deref()
+                .map_or(0.0, Afflictions::damage_multiplier);
             bar.bar.update(
                 &bar.listed,
                 &bar.dots,
@@ -537,24 +620,41 @@ pub fn collect(
                 &mut vitals.status,
             );
         }
-        // The pets' portrait icons, compared before they are copied.
+        // The pets' portrait icons: recomputed only when their inputs moved ([`PetIconInputs`]),
+        // compared before they are copied.
         let mut n = 0;
         for (e, pet, da, ab) in pets.iter().filter(|p| p.1.owner == me) {
-            let icons = gd_game::buff_bar::pet_icons(&data.db, da, Some(pet), ab);
-            match v.pet_buffs.get_mut(n) {
-                Some((pe, list)) if *pe == e && list.iter().eq(icons.iter().copied()) => {}
-                Some(slot) => {
-                    *slot = (e, icons.iter().map(|s| (*s).to_owned()).collect());
-                    changed = true;
+            let received = (
+                ab.as_ref().map(|r| r.last_changed()),
+                ab.as_ref().map_or(0, |r| r.list.len()),
+            );
+            let stale = bar
+                .pet_icons
+                .get(n)
+                .is_none_or(|(pe, k)| *pe != e || !k.matches(pet, da, received));
+            if stale {
+                let icons = gd_game::buff_bar::pet_icons(&data.db, da, Some(pet), ab.as_deref());
+                let key = PetIconInputs::of(pet, da, received);
+                match bar.pet_icons.get_mut(n) {
+                    Some(slot) => *slot = (e, key),
+                    None => bar.pet_icons.push((e, key)),
                 }
-                None => {
-                    v.pet_buffs
-                        .push((e, icons.iter().map(|s| (*s).to_owned()).collect()));
-                    changed = true;
+                match v.pet_buffs.get_mut(n) {
+                    Some((pe, list)) if *pe == e && list.iter().eq(icons.iter().copied()) => {}
+                    Some(slot) => {
+                        *slot = (e, icons.iter().map(|s| (*s).to_owned()).collect());
+                        changed = true;
+                    }
+                    None => {
+                        v.pet_buffs
+                            .push((e, icons.iter().map(|s| (*s).to_owned()).collect()));
+                        changed = true;
+                    }
                 }
             }
             n += 1;
         }
+        bar.pet_icons.truncate(n);
         if v.pet_buffs.len() != n {
             v.pet_buffs.truncate(n);
             changed = true;
@@ -563,36 +663,43 @@ pub fn collect(
     // The hovered character's debuff strip (`monsterBarsDebuffs`, `hover.rs`).
     let hovered_parts = hovered
         .entity
-        .filter(|_| hovered.kind == crate::hover::Kind::Character)
+        .filter(|_| hovered.kind == gd_ui::state::hover::Kind::Character)
         .and_then(|e| targets.get(e).ok());
     let target = hovered_parts.and(hovered.entity);
     strip_seen.retarget(target);
-    let strip = match hovered_parts {
-        Some((a, r, m)) => {
-            let src = (
-                r.as_ref().map(|r| r.last_changed()),
-                r.as_ref().map_or(0, |r| r.list.len()),
-                a.as_ref().map(|a| a.last_changed()),
-            );
-            if strip_seen.src != src {
-                strip_seen.strip = target_strip(&data.db, m, r.as_deref(), a.as_deref());
-                strip_seen.src = src;
-            } else if let Some(r) = &r {
-                // The countdowns run down without a change tick: refresh their text.
-                for (k, d) in &mut strip_seen.strip {
-                    if let Some(rec) = k.strip_prefix("s:")
-                        && let Some(b) = r.list.iter().find(|b| b.buff.eq_ignore_ascii_case(rec))
-                    {
-                        d.text = countdown_text(b.left, b.total);
+    if let Some((a, r, m)) = hovered_parts {
+        let src = (
+            r.as_ref().map(|r| r.last_changed()),
+            r.as_ref().map_or(0, |r| r.list.len()),
+            a.as_ref().map(|a| a.last_changed()),
+        );
+        if strip_seen.src != src {
+            strip_seen.strip = target_strip(&data.db, m, r.as_deref(), a.as_deref());
+            strip_seen.src = src;
+        } else if let Some(r) = &r {
+            // The countdowns run down without a change tick: refresh their text only when the
+            // shown second changes (no String per debuff per frame).
+            for (k, d) in &mut strip_seen.strip {
+                if let Some(rec) = k.strip_prefix("s:")
+                    && let Some(b) = r.list.iter().find(|b| b.buff.eq_ignore_ascii_case(rec))
+                {
+                    let secs = countdown_secs(b.left, b.total);
+                    if d.text.as_deref().and_then(|t| t.parse().ok()) != secs {
+                        d.text = secs.map(|s| s.to_string());
                     }
                 }
             }
-            strip_seen.merge()
         }
-        None => Vec::new(),
-    };
-    if v.target_debuffs != strip {
-        v.target_debuffs = strip;
+        strip_seen.merge();
+    }
+    // Published in place: the strip's debuffs, compared before they are copied (no target: the
+    // retarget above cleared the strip).
+    let strip = &strip_seen.strip;
+    if v.target_debuffs.len() != strip.len()
+        || !v.target_debuffs.iter().eq(strip.iter().map(|e| &e.1))
+    {
+        v.target_debuffs.clear();
+        v.target_debuffs.extend(strip.iter().map(|e| e.1.clone()));
         changed = true;
     }
     // `GD_SUNDERED` (hooks.rs): overrides the entry's value (a shot of the overlay without an enemy that applies it).
@@ -634,8 +741,8 @@ pub struct HotCache(
     Vec<HotStatic>,
 );
 
-/// The shown hot slots' state overlays ([`super::hud::HotSlotState`],
-/// `HotSlotOptionSkill::GetStatus` @0x18031c140 / sub_1401E6C90): the active-toggle / low-energy blue
+/// The shown hot slots' state overlays ([`gd_ui::hud::HotSlotState`],
+/// `HotSlotOptionSkill::GetStatus` / `HotSlotButton::Update`): the active-toggle / low-energy blue
 /// highlight, the wrong-weapon red highlight, the unlearned dark rect, and the charged pool skills'
 /// charge count. The usability is the hot-slot tooltip's (`gd_sim::skill_tooltip::hot_state`). Per frame only
 /// the toggles, energy, cooldowns and charges are read; the rest comes from `cache` ([`HotStatic`]), rebuilt
@@ -646,17 +753,17 @@ fn hot_slot_states(
     data: &GameData,
     book: &gd_sim::skills::SkillBook,
     caster: Option<&Caster>,
-    loadout: Option<&crate::player::Loadout>,
-    links: Option<&gd_game::weapon_pool::SkillLinks>,
-    pool: Option<&gd_game::weapon_pool::PoolCharges>,
+    loadout: Option<&gd_game_core::player::Loadout>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
+    pool: Option<&gd_game_core::weapon_pool::PoolCharges>,
     rules: Option<&CombatRules>,
     cb: &Combatant,
     row: usize,
     inputs_changed: bool,
     cache: &mut HotCache,
-    out: &mut Vec<super::hud::HotSlotState>,
+    out: &mut Vec<gd_ui::hud::HotSlotState>,
 ) {
-    use super::hud::{HotSlotState, SlotLook};
+    use gd_ui::hud::{HotSlotState, SlotLook};
     use gd_sim::skill_tooltip::{HotState, hot_state};
     out.clear();
     let Some(c) = caster else {
@@ -713,14 +820,14 @@ fn hot_statics(
     data: &GameData,
     book: &gd_sim::skills::SkillBook,
     c: &Caster,
-    loadout: Option<&crate::player::Loadout>,
-    links: Option<&gd_game::weapon_pool::SkillLinks>,
+    loadout: Option<&gd_game_core::player::Loadout>,
+    links: Option<&gd_game_core::weapon_pool::SkillLinks>,
     rules: Option<&CombatRules>,
     cb: &Combatant,
     row: usize,
 ) -> Vec<HotStatic> {
-    use super::hud::HOT_SLOTS;
-    use crate::casting::{ENERGY_POTION, HEALTH_POTION, SLOT_LEFT, SLOT_RIGHT, SLOT_ROW2};
+    use gd_ui::hud::HOT_SLOTS;
+    use gd_game_core::casting::{ENERGY_POTION, HEALTH_POTION, SLOT_LEFT, SLOT_RIGHT, SLOT_ROW2};
     use gd_sim::skill_tooltip::SkillTipCtx;
     let tags = data.tags();
     let ctx = SkillTipCtx {
@@ -760,7 +867,7 @@ fn hot_statics(
                 skill,
             )
         });
-        // An unlearned slotted skill that worn gear or a form grants for a while (skill+761).
+        // An unlearned slotted skill that worn gear or a form grants for a while (`Skill.grantedByItem`).
         let granted = !is_default
             && level == 0
             && loadout.is_some_and(|l| {
@@ -802,11 +909,16 @@ fn hot_statics(
     out
 }
 
-/// A timed skill debuff's icon text (sub_14024F110 type 0): `ms / 1000 + 1` while under 3000 ms are
+/// A timed skill debuff's icon text (`PlayerStatusIcons::RefreshIcon` type 0): `ms / 1000 + 1` while under 3000 ms are
 /// left and the total is known.
 fn countdown_text(left: f32, total: f32) -> Option<String> {
+    countdown_secs(left, total).map(|s| s.to_string())
+}
+
+/// The whole seconds [`countdown_text`] shows (`None`: no text).
+fn countdown_secs(left: f32, total: f32) -> Option<i32> {
     let ms = (left * 1000.0) as i32;
-    (ms < 3000 && total > 0.0).then(|| (ms / 1000 + 1).to_string())
+    (ms < 3000 && total > 0.0).then(|| ms / 1000 + 1)
 }
 
 /// What the hovered character's strip already shows ([`StripSeen::merge`]).
@@ -818,7 +930,7 @@ pub struct StripSeen {
     /// received buffs' change tick and count (their timers tick without a
     /// change tick, `gd_game::skill_buffs::run_buffs`; an expiry only shrinks
     /// the list) and the afflictions' change tick.
-    strip: Vec<(String, super::status::TargetDebuff)>,
+    strip: Vec<(String, gd_ui::status::TargetDebuff)>,
     src: (
         Option<bevy::ecs::change_detection::Tick>,
         usize,
@@ -827,17 +939,19 @@ pub struct StripSeen {
 }
 
 impl StripSeen {
-    /// sub_14024F350 / sub_14024F890: the widget keeps its icons; each update refreshes an icon in place
-    /// (same skill / same duration-damage type), appends the new ones at the end in the update's order
-    /// ([`target_strip`]) and drops the ones gone (state 2). So an icon keeps its place for as long as it shows.
-    /// A skill icon is keyed by its buff record (the engine's by the buff's object id: a buff made anew moves to
-    /// the end there; PORT). For the target change see [`StripSeen::retarget`].
-    /// `Grim Dawn.exe` sub_140021000 / sub_14002BC00 (the hover writes the widget's target, +0x6D0 of
-    /// the monster bar = widget +48, and nothing else) and sub_14024C7D0 (an icon not refreshed by an update goes
-    /// to state 2: `SkillBuff`'s vfunc +1464 is the stock `return false`; the next update drops it): the widget
-    /// keeps its icons across a target change. The old target's skill icons are keyed by its buff objects, which
-    /// the new target never refreshes, so they go; a duration-damage icon is keyed by its type (sub_14024F890),
-    /// so one the new target also has keeps its place. PORT: the dropped icons show one update less.
+    /// `PlayerStatusIcons::AddIcon` / `PlayerStatusIcons::AddDotIcon`: the widget keeps its icons; each update
+    /// refreshes an icon in place (same skill / same duration-damage type), appends the new ones at the end in the
+    /// update's order ([`target_strip`]) and drops the ones gone (state 2). So an icon keeps its place for as long as
+    /// it shows. A skill icon is keyed by its buff record (the engine's by the buff's object id: a buff made anew moves
+    /// to the end there; PORT). For the target change see [`StripSeen::retarget`]. `Grim Dawn.exe`
+    /// `InGameUI::HandleMouseEvent` / `InGameUI::Update` (the hover writes the widget's target,
+    /// `TargetInfoWidget.target`
+    /// through the monster bar's `MonsterBar.targetInfo`, and nothing else) and `PlayerStatusIcons::TickIcons` (an icon
+    /// not refreshed by an update goes to state 2: `SkillBuff`'s virtual `SkillBuff::KeepsTrackerIcon` is the stock
+    /// `return false`; the next update drops it): the widget keeps its icons across a target change. The old target's
+    /// skill icons are keyed by its buff objects, which the new target never refreshes, so they go; a duration-damage
+    /// icon is keyed by its type (`PlayerStatusIcons::AddDotIcon`), so one the new target also has keeps its place.
+    /// PORT: the dropped icons show one update less.
     fn retarget(&mut self, target: Option<Entity>) {
         if self.target != target {
             self.target = target;
@@ -848,54 +962,52 @@ impl StripSeen {
         }
     }
 
-    fn merge(&mut self) -> Vec<super::status::TargetDebuff> {
-        let mut out: Vec<(String, super::status::TargetDebuff)> =
-            Vec::with_capacity(self.strip.len());
-        let mut fresh: Vec<Option<&(String, super::status::TargetDebuff)>> =
-            self.strip.iter().map(Some).collect();
-        for k in &self.keys {
-            if let Some(e) = fresh.iter_mut().find(|e| e.is_some_and(|e| e.0 == *k)) {
-                out.extend(e.take().cloned());
+    /// Orders [`Self::strip`] by [`Self::keys`] in place (a shown icon keeps its place; the new
+    /// ones append in the update's order) and refreshes the keys — no per-frame Vec.
+    fn merge(&mut self) {
+        let mut n = 0;
+        for i in 0..self.keys.len() {
+            if let Some(j) = self.strip[n..].iter().position(|e| e.0 == self.keys[i]) {
+                self.strip.swap(n, n + j);
+                self.keys.swap(n, i);
+                n += 1;
             }
         }
-        out.extend(fresh.into_iter().flatten().cloned());
-        self.keys = out.iter().map(|e| e.0.clone()).collect();
-        out.into_iter().map(|e| e.1).collect()
+        self.keys.truncate(n);
+        self.keys
+            .extend(self.strip[n..].iter().map(|e| e.0.clone()));
     }
 }
 
-/// The debuff strip of the target info widget in one update's order (sub_14024E790): the target's active
-/// skills (its own: no `SkillBuff_Debuf` among a monster's), then its UI temp skill list, then the item skill
-/// list, then its duration-damage types (normal DoTs
-/// in insertion order, then the fixed-damage ones, [`Afflictions::status`]; one icon per type, no text).
-/// The temp skill list holds the buffs received (`SkillManager::CreateRemoveSkillBuff` @0x18053a990:
-/// after every buff made or removed the list +320 is rebuilt from the buff map's list,
-/// [`gd_sim::hash_order::msvc_unordered_order`] of the
-/// buff records in the order they were made); the strip takes its `SkillBuff_Debuf`s without `hideFromUI`
-/// (`SkillBuff::IsTempTrackable`, `SkillBuff::LoadResources` @0x180526010). A debuff's icon is its own record's
-/// `skillUpBitmapName` (the first of a list; `Skill::GetTrackableIcon` is empty for buffs, then
-/// `SkillProfile::GetUpBitmapName(1)` of the buff's own profile): a debuff record without one shows nothing (the
-/// stock pet auras of the Arcane Seal and the Elemental Seeker, item bleed vulnerabilities). A timed one under 3 s
-/// left shows `ms / 1000 + 1` in red. Keys: `a:` + an own skill, `s:` + the buff record, `d:` + the DoT icon
-/// ([`StripSeen`]).
-/// The active list (Game.dll `SkillManager::GetActiveSkillList` @0x180531780: list +552 first) gets every
-/// own skill set to a level above 0 (`Skill::SetSkillLevel` → `AddToActiveList`; received buffs and sub-skills are
-/// flagged +760 by `CreateSkillBuff` / `AddSubSkills` and stay off it), in load order: for a monster its
+/// The debuff strip of the target info widget in one update's order (`PlayerStatusIcons::Update`): the target's active
+/// skills (its own: no `SkillBuff_Debuf` among a monster's), then its UI temp skill list, then the item skill list,
+/// then its duration-damage types (normal DoTs in insertion order, then the fixed-damage ones, [`Afflictions::status`];
+/// one icon per type, no text). The temp skill list holds the buffs received (`SkillManager::CreateRemoveSkillBuff`:
+/// after every buff made or removed the list `SkillManager.tempSkillList` is rebuilt from the buff map's list;
+/// PORT: creation order, not the engine's MSVC bucket order — display only); the strip takes its
+/// `SkillBuff_Debuf`s without `hideFromUI` (`SkillBuff::IsTempTrackable`, `SkillBuff::LoadResources`). A debuff's icon
+/// is its own record's `skillUpBitmapName` (the first of a list; `Skill::GetTrackableIcon` is empty for buffs, then
+/// `SkillProfile::GetUpBitmapName(1)` of the buff's own profile): a debuff record without one shows nothing (the stock
+/// pet auras of the Arcane Seal and the Elemental Seeker, item bleed vulnerabilities). A timed one under 3 s left shows
+/// `ms / 1000 + 1` in red. Keys: `a:` + an own skill, `s:` + the buff record, `d:` + the DoT icon ([`StripSeen`]). The
+/// active list (Game.dll `SkillManager::GetActiveSkillList`: list `SkillManager.activeSkillList` first) gets every own
+/// skill set to a level above 0 (`Skill::SetSkillLevel` → `AddToActiveList`; received buffs and sub-skills are flagged
+/// `Skill.notInActiveList` by `CreateSkillBuff` / `AddSubSkills` and stay off it), in load order: for a monster its
 /// `skillName1..` with a level ([`gd_sim::actor::monster_skill_levels`]); the strip shows those that are
-/// `SkillBuff_Debuf`s, untimed (stock: Ordarion `cult_h01`'s `ordarion_chaosdrain_buff`). A monster's temp list is
-/// its [`ReceivedBuffs`](gd_game::skill_buffs::ReceivedBuffs) like the player's. The item skill list adds nothing in
-/// stock data (no `itemSkillName` / augment skill is a `SkillBuff_Debuf`; their debuffs land on the hit target's
-/// temp list). PORT: the order the buffs were made is the received-buff list (newest first) walked backwards; buffs
-/// removed earlier do not count.
+/// `SkillBuff_Debuf`s, untimed (stock: Ordarion `cult_h01`'s `ordarion_chaosdrain_buff`). A monster's temp list is its
+/// [`ReceivedBuffs`](gd_game_core::skill_buffs::ReceivedBuffs) like the player's. The item skill list adds nothing in stock
+/// data (no `itemSkillName` / augment skill is a `SkillBuff_Debuf`; their debuffs land on the hit target's temp list).
+/// PORT: the order the buffs were made is the received-buff list (newest first) walked backwards; buffs removed earlier
+/// do not count.
 pub fn target_strip(
     db: &gd_formats::vfs::Database,
-    monster: Option<&gd_game::monsters::Monster>,
-    received: Option<&gd_game::skill_buffs::ReceivedBuffs>,
+    monster: Option<&gd_game_core::monsters::Monster>,
+    received: Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
     afflictions: Option<&Afflictions>,
-) -> Vec<(String, super::status::TargetDebuff)> {
+) -> Vec<(String, gd_ui::status::TargetDebuff)> {
     let icon_of = |path: &str| {
         db.get(path)
-            .filter(|r| gd_game::skill_buffs::is_debuff(r) && !r.bool("hideFromUI"))
+            .filter(|r| gd_game_core::skill_buffs::is_debuff(r) && !r.bool("hideFromUI"))
             .and_then(|r| {
                 r.str("skillUpBitmapName")
                     .and_then(|i| i.split(';').next())
@@ -903,7 +1015,7 @@ pub fn target_strip(
                     .map(str::to_owned)
             })
     };
-    let mut out: Vec<(String, super::status::TargetDebuff)> = monster
+    let mut out: Vec<(String, gd_ui::status::TargetDebuff)> = monster
         .and_then(|m| {
             db.get(&m.record)
                 .map(|r| gd_sim::actor::monster_skill_levels(r, m.level))
@@ -914,17 +1026,15 @@ pub fn target_strip(
             let icon = icon_of(&skill)?;
             Some((
                 format!("a:{}", skill.to_ascii_lowercase()),
-                super::status::TargetDebuff { icon, text: None },
+                gd_ui::status::TargetDebuff { icon, text: None },
             ))
         })
         .collect();
-    use super::status::TargetDebuff;
-    let made: Vec<&gd_game::skill_buffs::ReceivedBuff> = received
+    use gd_ui::status::TargetDebuff;
+    let made: Vec<&gd_game_core::skill_buffs::ReceivedBuff> = received
         .map(|r| r.list.iter().rev().collect())
         .unwrap_or_default();
-    let names: Vec<&str> = made.iter().map(|b| b.buff.as_str()).collect();
-    for i in gd_sim::hash_order::msvc_unordered_order(&names) {
-        let b = made[i];
+    for b in made {
         let Some(icon) = icon_of(&b.buff) else {
             continue;
         };
@@ -956,13 +1066,17 @@ pub fn target_strip(
 #[derive(Default)]
 pub struct SheetCache(
     /// The sheet's inputs: the player's and the pet's profile (held, compared with `Arc::ptr_eq`), the
-    /// DPS values, the last foes and the resistance reduction.
+    /// DPS values, the last foes and the resistance reduction with the afflictions' change tick it
+    /// was read at.
     Option<(
         std::sync::Arc<gd_sim::actor::Profile>,
         Option<std::sync::Arc<gd_sim::actor::Profile>>,
         SheetDps,
         gd_sim::sheet::LastFoes,
-        gd_sim::combat::ReductionInfo,
+        (
+            Option<bevy::ecs::change_detection::Tick>,
+            gd_sim::combat::ReductionInfo,
+        ),
     )>,
     std::collections::BTreeMap<String, String>,
     std::collections::BTreeMap<String, gd_sim::sheet::RollValues>,
@@ -1006,8 +1120,8 @@ fn stat_rows(
     data: &GameData,
     loaded: Option<&LoadedCharacter>,
     session: &gd_game::play_stats::PlayCounts,
-    mode: Option<&gd_game::session::GameMode>,
-    loadout: Option<&crate::player::Loadout>,
+    mode: Option<&gd_game_core::session::GameMode>,
+    loadout: Option<&gd_game_core::player::Loadout>,
 ) -> std::collections::BTreeMap<String, String> {
     let mut ps = loaded.map(|c| c.0.stats.clone());
     if let Some(ps) = &mut ps {
@@ -1044,7 +1158,7 @@ fn sheet(
     rules: &gd_sim::actor::Rules,
     dps: &SheetDps,
     data: &GameData,
-    loadout: Option<&crate::player::Loadout>,
+    loadout: Option<&gd_game_core::player::Loadout>,
     pet: Option<&(
         std::sync::Arc<gd_sim::actor::Profile>,
         Vec<(gd_formats::arz::Record, usize)>,

@@ -6,8 +6,8 @@ use bevy::prelude::*;
 use gd_game::chests::{Chest, spawn_chest};
 use gd_game::loot::GroundItem;
 use gd_game::testing::TestGame;
-use gd_game::visuals::{EffectSource, EffectSpec, PlaySound};
-use gd_game::world::{ChestKey, ChestStates};
+use gd_game_core::visuals::{EffectSource, EffectSpec, PlaySound};
+use gd_game_core::world::{ChestKey, ChestStates};
 
 const CHEST: &str = "records/items/lootchests/b01_chestmetal01.dbr";
 
@@ -19,7 +19,7 @@ fn game() -> Option<TestGame> {
     let root = g.app.world_mut().spawn_empty().id();
     g.app
         .world_mut()
-        .resource_mut::<gd_game::levels::Levels>()
+        .resource_mut::<gd_game_core::levels::Levels>()
         .add(2, root, Vec3::ZERO, None);
     g.step();
     Some(g)

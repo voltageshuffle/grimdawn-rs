@@ -3,17 +3,20 @@
 //! loaded save's equipment (or the record's starting gear for a new
 //! character); movement speed comes from the run animation's root motion, as
 //! in the engine.
-use crate::combat::{CombatRules, Combatant, Dead};
-use crate::session::{LoadedCharacter, PlayerStart};
-use crate::world::Nav;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use gd_game::nav::Nav;
 use gd_game::player_orders::PlayerOrder;
+use gd_game_core::session::{LoadedCharacter, PlayerStart};
+use gd_game_core::{
+    combat::{Combatant, Dead},
+    rules::CombatRules,
+};
 use gd_render::camera::CameraFocus;
 use gd_render::character::{self, CharAssets};
 
 pub use gd_game::movement::MovePath;
-pub use gd_game::player::{EffectiveSkills, Loadout, Player, PlayerSet};
+pub use gd_game_core::player::{Player, PlayerSet};
 
 pub struct PlayerPlugin;
 
@@ -47,7 +50,7 @@ impl Plugin for PlayerPlugin {
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "dev"), allow(unused_variables, unused_mut))]
 fn spawn_player(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut commands: Commands,
     existing: Query<(), With<Player>>,
@@ -57,8 +60,8 @@ fn spawn_player(
     rules: Option<Res<CombatRules>>,
     mut cams: Query<&mut gd_render::camera::GameCamera>,
     mut assets: CharAssets,
-    choice: Res<crate::session::Choice>,
-    save_dir: Res<gd_game::session::SaveDir>,
+    choice: Res<gd_game_core::session::Choice>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
 ) {
     if !existing.is_empty() {
         return;
@@ -93,7 +96,7 @@ fn spawn_player(
         error!("could not build the player's combat profile");
         return;
     };
-    let gd_game::player::SpawnData {
+    let gd_game_core::player::SpawnData {
         female,
         equipment,
         bundle: player,
@@ -133,14 +136,15 @@ fn spawn_player(
 /// within 60 m of it; a point within 3 m is passed. The route's last point is walked to once (e.g. teleported into
 /// the Shattered Realm's treasure room, whose reward trigger is ~25 m from the portal's exit), the ones before it
 /// every second until reached (a monster in the way stops a walk). Not while a teleport runs: the player is frozen and
-/// teleporting for the whole activity (`Character::IsTeleporting`, +9258, set from the activity's start to
+/// teleporting for the whole activity (`Character::IsTeleporting`, `Character.teleporting`, set from the activity's
+/// start to
 /// its last phase), and `gd_game::doors::run_teleport` clears the path every frame until it ends — a walk issued
 /// during the fade-in would be dropped yet count as walked, stranding the player at the entrance.
 #[cfg(feature = "dev")]
 #[allow(clippy::too_many_arguments)]
 fn walk_to_nearby(
-    hooks: Res<gd_game::hooks::Hooks>,
-    mut fresh: gd_game::session::NewSession,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    mut fresh: gd_game_core::session::NewSession,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     time: Res<Time>,
     // The route's next point, and the time of the last try (a point within 60 m can be in another, unconnected
@@ -223,23 +227,28 @@ pub fn pick_ground(ray: Ray3d, nav: &gd_sim::nav::NavWorld) -> Option<Vec3> {
 /// issues nothing more ([`gd_game::movement::MouseCommand`]); gd-game routes it by component and walks beside it.
 /// Every ground move follows [`gd_game::movement::request_move`]. What the click means is sent as
 /// [`PlayerOrder`]s, which `gd_game::player_orders` applies.
-/// The foe / breakable clicked is the hover pick ([`crate::hover::Hovered`], `combat::pick_enemy` — one pick feeds
+/// The foe / breakable clicked is the hover pick ([`gd_ui::state::hover::Hovered`], `combat::pick_enemy` — one pick feeds
 /// the hover and the attack). A press attacks it once ([`gd_game::player_orders::PrimaryUse`]); while the button is
-/// held, every repeat takes that pick again and re-issues the attack (sub_140021000: the pick runs on every
+/// held, every repeat takes that pick again and re-issues the attack (`InGameUI::HandleMouseEvent`: the pick
+/// runs on every
 /// mouse event while held; its wider held frustum is the stickiness), so the attacks chain, and a skill key pressed
 /// meanwhile goes between two of them: a different pick switches the attack, and a target's death re-acquires the
 /// cursor pick instead of falling through to a ground move.
 #[allow(clippy::too_many_arguments)]
 fn click_to_move(
     buttons: Res<ButtonInput<MouseButton>>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     // The main camera only (the glow pass has a second one).
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
     time: Res<Time>,
     nav: Res<Nav>,
     players: Query<
-        (&MovePath, &Combatant, Option<&gd_game::casting::Caster>),
+        (
+            &MovePath,
+            &Combatant,
+            Option<&gd_game_core::casting::Caster>,
+        ),
         (With<Player>, Without<Dead>),
     >,
     mut orders: MessageWriter<PlayerOrder>,
@@ -248,7 +257,7 @@ fn click_to_move(
             Entity,
             &GlobalTransform,
             &Combatant,
-            Option<&gd_game::world::Breakable>,
+            Option<&gd_game_core::world::Breakable>,
             gd_game::combat::SideData,
         ),
         (
@@ -264,23 +273,24 @@ fn click_to_move(
             Without<crate::loot::Unpickable>,
         ),
     >,
-    capture: Res<crate::inventory::UiCapture>,
-    keys: crate::casting::ClickKeys,
-    options: Res<gd_game::options::GameOptions>,
-    hovered_label: Res<crate::loot::HoveredLabel>,
+    capture: Res<gd_ui::state::inventory::UiCapture>,
+    keys: gd_ui::state::casting::ClickKeys,
+    options: Res<gd_game_core::options::GameOptions>,
+    hovered_label: Res<gd_ui::state::loot::HoveredLabel>,
     (move_held, armed): (
         Res<crate::casting::MoveKeyHeld>,
         Res<gd_game::hotbar::ArmedSlot>,
     ),
     (hovered, objects, mut gate): (
-        Res<crate::hover::Hovered>,
+        Res<gd_ui::state::hover::Hovered>,
         Query<&GlobalTransform>,
         ResMut<gd_game::movement::MouseCommand>,
     ),
 ) {
     use gd_game::hotbar::{is_move_to, move_slot_keeps};
     // The frame's mouse event opens or closes the world command gate (`gd_game::movement::MouseCommand`,
-    // sub_140021000), for this system and the world clicks after it (`casting::cast_input`): a press the UI took
+    // `InGameUI::HandleMouseEvent`), for this system and the world clicks after it (`casting::cast_input`): a
+    // press the UI took
     // (`UiCapture`) leaves the held buttons without commands until they are released, also once the cursor leaves
     // the window or the window closed.
     let pressed_now = buttons.any_just_pressed([MouseButton::Left, MouseButton::Right]);
@@ -297,7 +307,7 @@ fn click_to_move(
         return;
     }
     // Force Move held: the press skips the pick of whatever is under the cursor and walks to the ground point
-    // (`casting::ClickKeys`, sub_140021000).
+    // (`casting::ClickKeys`, `InGameUI::HandleMouseEvent`).
     let force = keys.force_move();
     let Ok((path, cb, caster)) = players.single() else {
         return;
@@ -309,14 +319,14 @@ fn click_to_move(
     // The right button walks only with the Move skill on it (else it is `casting::cast_input`'s).
     let right = !buttons.pressed(MouseButton::Left)
         && buttons.pressed(MouseButton::Right)
-        && (move_slot(gd_game::casting::SLOT_RIGHT)
+        && (move_slot(gd_game_core::casting::SLOT_RIGHT)
             || (armed_move && buttons.just_pressed(MouseButton::Right)));
     let (button, moving) = if right {
         (MouseButton::Right, true)
     } else {
         (
             MouseButton::Left,
-            move_slot(gd_game::casting::SLOT_LEFT)
+            move_slot(gd_game_core::casting::SLOT_LEFT)
                 || (armed_move && buttons.just_pressed(MouseButton::Left)),
         )
     };
@@ -338,7 +348,7 @@ fn click_to_move(
         .filter(|_| {
             matches!(
                 hovered.kind,
-                crate::hover::Kind::Npc | crate::hover::Kind::Object
+                gd_ui::state::hover::Kind::Npc | gd_ui::state::hover::Kind::Object
             )
         })
         .and_then(|e| objects.get(e).ok().map(|gt| (e, gt.translation())));
@@ -385,7 +395,7 @@ fn click_to_move(
             .filter(|_| {
                 matches!(
                     hovered.kind,
-                    crate::hover::Kind::Character | crate::hover::Kind::Breakable
+                    gd_ui::state::hover::Kind::Character | gd_ui::state::hover::Kind::Breakable
                 )
             })
             .filter(|e| {
@@ -408,7 +418,7 @@ fn click_to_move(
     if pressed {
         // Clicking an item's label walks over and picks it up (the interact order routes to `loot::pick_up`);
         // a right press with Move drops the object. The pick mode (`crate::loot::PickMode`,
-        // `sub_140020F60`, with `lockItemPickup`): `items`.
+        // `InGameUI::GetPickFilterMode`, with `lockItemPickup`): `items`.
         if !right && let Some(item) = label {
             orders.write(PlayerOrder::Interact(item));
             return;
@@ -431,7 +441,8 @@ fn click_to_move(
             return;
         }
     } else if !move_key {
-        // The held button re-picks under the cursor every repeat (sub_140021000: the pick runs on every
+        // The held button re-picks under the cursor every repeat (`InGameUI::HandleMouseEvent`: the pick
+        // runs on every
         // mouse event while held, `SetCombatEnemy` from it, the re-dispatch gated by the 10/50 ms timer — the
         // `repath` wait above). The hover pick is that one pick (its wider held frustum is the stickiness): a
         // different pick switches the attack; a dead target re-acquires the cursor pick, not a ground move.
@@ -461,12 +472,13 @@ fn click_to_move(
             .and_then(|e| monsters.get(e).ok())
             .map(|m| m.1.translation());
     }
-    // `SelectPrimaryAction` @0x180161d00: with `movementType` above 0 (Keyboard / Keyboard Only) a left click never
+    // `SelectPrimaryAction`: with `movementType` above 0 (Keyboard / Keyboard Only) a left click never
     // walks to the cursor.
     if options.int("movementType") > 0 {
         return;
     }
-    // The plain move (`gd_game::player_orders`): to the object's coordinates (sub_140021000, `a1+728`; a breakable
+    // The plain move (`gd_game::player_orders`): to the object's coordinates (`InGameUI::HandleMouseEvent`,
+    // `InGameUI.cursorObjectCoords`; a breakable
     // on its own nav obstacle gets the straight move point there), else the ground point under the cursor.
     orders.write(PlayerOrder::Move {
         to: walk_to,
@@ -475,28 +487,28 @@ fn click_to_move(
     });
 }
 
-/// Keyboard movement (`movementType` 1 Keyboard, 2 Keyboard Only; `sub_14002BC00`):
+/// Keyboard movement (`movementType` 1 Keyboard, 2 Keyboard Only; `InGameUI::Update`):
 /// the key actions 63 / 64 forward / back and 65 / 66 left / right (opposite keys cancel) give a direction relative
 /// to the camera (its horizontal forward and right), normalised; while one is held a destination 1.25 m ahead is
 /// issued every frame, so the player runs on. With a world mouse button held (and no running skill) Keyboard does
 /// nothing, and with a skill running (a cast; a running channel refuses the turn) the keys only turn the player (aiming). Every frame the
 /// direction and its length (1, or 1.414 for a diagonal; 0 and no direction with no key held) become the controller
 /// direction, and in Keyboard Only a held direction is also the aim direction
-/// ([`gd_game::player::ControllerDirection`]). Sent as [`PlayerOrder`]s (`gd_game::player_orders`).
+/// ([`gd_game_core::player::ControllerDirection`]). Sent as [`PlayerOrder`]s (`gd_game::player_orders`).
 #[allow(clippy::too_many_arguments)]
 fn wasd_move(
-    options: Res<gd_game::options::GameOptions>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
+    options: Res<gd_game_core::options::GameOptions>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    capture: Res<crate::inventory::UiCapture>,
+    capture: Res<gd_ui::state::inventory::UiCapture>,
     cams: Query<&Transform, (With<gd_render::camera::GameCamera>, Without<Player>)>,
     players: Query<
         (
             &Transform,
-            &gd_game::character::Character,
-            &gd_game::player::ControllerDirection,
-            Has<gd_game::casting::Channel>,
+            &gd_game_core::character::Character,
+            &gd_game_core::player::ControllerDirection,
+            Has<gd_game_core::casting::Channel>,
         ),
         (With<Player>, Without<Dead>),
     >,
@@ -508,8 +520,8 @@ fn wasd_move(
     let mode = options.int("movementType");
     let held = |a: u32| bindings.pressed(a, &keys);
     let fwd =
-        held(crate::ui::keys::MOVE_FORWARD) as i32 - held(crate::ui::keys::MOVE_BACKWARD) as i32;
-    let side = held(crate::ui::keys::MOVE_RIGHT) as i32 - held(crate::ui::keys::MOVE_LEFT) as i32;
+        held(gd_ui_kit::keys::MOVE_FORWARD) as i32 - held(gd_ui_kit::keys::MOVE_BACKWARD) as i32;
+    let side = held(gd_ui_kit::keys::MOVE_RIGHT) as i32 - held(gd_ui_kit::keys::MOVE_LEFT) as i32;
     let flat = |v: Vec3| Vec2::new(v.x, v.z).try_normalize().unwrap_or(Vec2::ZERO);
     let dir = cams
         .single()
@@ -531,7 +543,7 @@ fn wasd_move(
     };
     let mouse =
         !capture.0 && (buttons.pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right));
-    let running = channelling || matches!(ch.state, gd_game::character::CharState::Cast);
+    let running = channelling || matches!(ch.state, gd_game_core::character::CharState::Cast);
     // Keyboard: a held mouse button owns the player unless a skill runs (the controller direction is left as it
     // was); in both modes a held button or a running skill makes the keys only turn.
     if mode == 1 && mouse && !running {
@@ -545,7 +557,7 @@ fn wasd_move(
     });
     let rotate_only = mouse || running;
     if rotate_only {
-        // A running channel refuses the turn (`ControllerPlayerStateUseSkill::RequestRotateAction` @0x1801699d0,
+        // A running channel refuses the turn (`ControllerPlayerStateUseSkill::RequestRotateAction`,
         // a `SkillChanneled` that `IsRunning`); Keyboard Only steers it by the controller direction
         // (`gd_game::casting::channels`).
         // `RotateAction` (`RequestRotateAction`): a look-at point one step along the keys (`gd_game::turning`).

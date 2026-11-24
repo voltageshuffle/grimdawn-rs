@@ -1,11 +1,11 @@
 //! Radius buffs reaching allies (`gd_game::auras`, `gd_game::pets` module
 //! docs): the player's Elemental Infusion buffs the pet.
 use bevy::prelude::*;
-use gd_game::casting::SpawnPet;
 use gd_game::pets::Pet;
-use gd_game::player::Loadout;
-use gd_game::skill_buffs::ReceivedBuffs;
 use gd_game::testing::TestGame;
+use gd_game_core::casting::SpawnPet;
+use gd_game_core::player::Loadout;
+use gd_game_core::skill_buffs::ReceivedBuffs;
 
 use crate::common::HOUND;
 const INFUSION: &str = "records/skills/playerclass05/elementalinfusion1.dbr";

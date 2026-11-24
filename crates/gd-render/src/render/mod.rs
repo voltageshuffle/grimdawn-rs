@@ -84,12 +84,12 @@ impl Plugin for GdRenderPlugin {
             (
                 grass::grass_wind,
                 grass::character_disturbances
-                    .run_if(resource_exists::<crate::data::GameData>)
+                    .run_if(resource_exists::<gd_game_core::data::GameData>)
                     .before(grass::grass_offsets),
                 grass::line_disturbances.before(grass::grass_offsets),
                 grass::grass_offsets,
                 terrain::sync_terrain_quality
-                    .run_if(resource_exists::<gd_game::options::GameOptions>),
+                    .run_if(resource_exists::<gd_game_core::options::GameOptions>),
             ),
         );
         // The grass offset fields go to the GPU as writes into their shared buffer (grass.rs `GrassOffsets`).

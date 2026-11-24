@@ -1,42 +1,43 @@
 //! The two weapon sets (weapon set I / II) and the weapon swap.
 //!
-//! State ([`crate::inventory::Inventory`]): `equipped[12..14]` hold the active
+//! State ([`gd_game_core::inventory::Inventory`]): `equipped[12..14]` hold the active
 //! set's main / off hand, `other_weapons` the inactive set's, `alternate`
 //! which set is active, `requested_alternate` the asked-for one and
 //! `alternate_enabled` whether set II was ever chosen. Only the active set's
 //! items are worn (the loadout, the profile, item skills, the body).
 //!
 //! Game.dll / Grim Dawn.exe:
-//! - `EquipmentCtrl::SetAlternateEquipment` @0x180289c10: the equipment's
-//!   alternate flag (+25) and the two weapon-set controllers (+224 set I,
-//!   +312 set II) whose own +25 marks the inactive one; `sub_18028D690`
+//! - `EquipmentCtrl::SetAlternateEquipment`: the equipment's
+//!   alternate flag (`EquipmentCtrl.alternate`) and the two weapon-set controllers (`EquipmentCtrl.weaponSet1`
+//!   set I, `EquipmentCtrl.weaponSet2` set II) whose own `alternate` marks the inactive one; `WeaponSet__Sift`
 //!   detaches an inactive set's item (and one whose requirements fail),
 //!   attaches the active one's, then `AttributesHaveChanged` (the profile).
 //!   The save's `WeaponSet::flag` is that inactive flag, `attached` the
 //!   attach state (`gdc.rs`).
-//! - `Player::SetAlternateConfig` @0x1803e25e0 only stores the request
-//!   (`ControllerCharacter` +616); `Player::GetAlternateConfig` reads the
-//!   current set (+233). `ControllerCharacter::Update` @0x18012b402 applies a
+//! - `Player::SetAlternateConfig` only stores the request
+//!   (`ControllerCharacter.alternateConfigRequest`); `Player::GetAlternateConfig` reads the
+//!   current set (`Player.alternateConfig`). `ControllerCharacter::Update` applies a
 //!   differing request when the character's action state is neither Attack
 //!   (7) nor 20 (no name in `GetActionStateAsText`), no channel runs
 //!   (`SkillManager::IsRunningSkill`: `SkillChanneled`, beams, drains,
-//!   spins) and no active skill is in its warm-up (vtable +1376
-//!   `GetWarmUpWasActive`: weapon charges, path charges, blinks, leaps,
+//!   spins) and no active skill is in its warm-up (`Skill::GetWarmUpWasActive`:
+//!   weapon charges, path charges, blinks, leaps,
 //!   teleports, Skill_AttackRadiusSpin). Otherwise the request waits; there
 //!   is no cooldown and no swap animation. Evading, moving or being in
 //!   combat do not block it.
-//! - The HUD button (`hudButtonWeaponSwap`, handler sub_1402129E0): with a
+//! - The HUD button (`hudButtonWeaponSwap`, handler `UIPlayerHud::OnToolbarButton`): with a
 //!   living player, `SetAlternateConfig(!GetAlternateConfig())` and
-//!   `Character::ClearComboCharges`. The button is disabled (sub_14020D550:
-//!   `+5369 = !enabled`) until `Player` +19008 (`alternate_config_enabled`)
+//!   `Character::ClearComboCharges`. The button is disabled (`UIPlayerHud::Update`:
+//!   `UIPlayerHud.weaponSwapDisabled`) until `Player.alternateConfigEnabled` (`alternate_config_enabled`)
 //!   is set, and its rollover is `hudButtonWeaponSwapRolloverSpecial`
 //!   ("…you must equip a second set…") until then.
 //! - The character window's swap button (`equipSwap1LeftButton` at its
 //!   record position, the only one of the four `equipSwap*` fields the loader
-//!   sub_1402645B0 reads; rollover `equipSwapButtonRollover`): its toggle
-//!   state follows `GetAlternateConfig` (sub_140265BE0); a click
-//!   (sub_140266360) requests the toggled set, clears combo charges and, when
-//!   that is set II, sets +19008. The Illusionist's copy (sub_140280D50,
+//!   `CharacterWindow::Load` reads; rollover `equipSwapButtonRollover`): its toggle
+//!   state follows `GetAlternateConfig` (`CharacterWindow::Update`); a click
+//!   (`CharacterWindow::OnButtonEvent`) requests the toggled set, clears combo charges and, when
+//!   that is set II, sets `Player.alternateConfigEnabled`. The Illusionist's copy
+//!   (`TransmuteWindow::OnButtonEvent`,
 //!   log "EquipSwap %u") does the same.
 //! - Hotbar: the mouse buttons have a slot per set
 //!   (`PlayerHotSlotCtrl::GetPrimarySlot` / `GetSecondarySlot`: slots 10 / 12
@@ -55,13 +56,14 @@
 //! [`save_order`] puts them back in set order for the save. The swap clears
 //! the combo charges (`crate::combo`). The W key presses the
 //! HUD button (its key action 34); the button's own disabled state gates it.
-use crate::casting::{Caster, Channel, Leap, PathCharge, SLOT_LEFT, SLOT_RIGHT, SLOTS};
-use crate::character::{CharState, Character};
-use crate::combat::Dead;
-use crate::inventory::{Inventory, InventorySet, Requirements, detach_rule};
-use crate::player::Player;
-use crate::session::MessageDrain;
 use bevy::prelude::*;
+use gd_game_core::casting::{Caster, SLOT_LEFT, SLOT_RIGHT, SLOTS};
+use gd_game_core::casting::{Channel, Leap, PathCharge};
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::combat::Dead;
+use gd_game_core::inventory::{Inventory, InventorySet, Requirements, detach_rule};
+use gd_game_core::player::Player;
+use gd_game_core::session::MessageDrain;
 
 pub struct WeaponSetsPlugin;
 
@@ -72,13 +74,13 @@ impl Plugin for WeaponSetsPlugin {
             .add_systems(
                 Update,
                 (
-                    swap_requests.run_if(resource_exists::<crate::inventory::Inventory>),
-                    apply_swap.run_if(resource_exists::<crate::inventory::Inventory>),
+                    swap_requests.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
+                    apply_swap.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                 )
                     .chain()
                     .in_set(InventorySet)
-                    .after(crate::inventory::InventoryStage::Init)
-                    .before(crate::inventory::InventoryStage::Equipment),
+                    .after(gd_game_core::inventory::InventoryStage::Init)
+                    .before(gd_game_core::inventory::InventoryStage::Equipment),
             );
     }
 }
@@ -155,7 +157,7 @@ fn apply_swap(
     for k in 0..2 {
         std::mem::swap(&mut inv.equipped[12 + k], &mut inv.other_weapons[k]);
     }
-    // The swapped-in weapons attach or detach at once, by the sift's rule (`sub_18028D690`), not at the next
+    // The swapped-in weapons attach or detach at once, by the sift's rule (`WeaponSet__Sift`), not at the next
     // sift: a weapon failing its requirements is never worn in between.
     for i in 12..14 {
         let detached = inv.equipped[i]

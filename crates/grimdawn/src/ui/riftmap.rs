@@ -4,9 +4,9 @@
 //! riftgate) with [`TravelState`] / [`DevotionState`] and sends
 //! [`RiftgateRequest`]s; the travel rules are in `gd_game::riftgates`.
 //!
-//! `Grim Dawn.exe` (widget vtable 0x14031dba8: loader 0x140292940,
-//! icons 0x14028f7b0, map sections 0x140290c20, draw 0x140293a10, mouse
-//! 0x1402946a0, wheel 0x140294f70, update 0x140293930):
+//! `Grim Dawn.exe` (widget `RiftgateMap`: loader `RiftgateMap::Load`,
+//! icons `RiftgateMap::BuildDestinations`, map sections `RiftgateMap::LoadSections`, draw `RiftgateMap::Draw`, mouse
+//! `RiftgateMap::HandleMouseEvent`, wheel `RiftgateMap::HandleWheel`, update `RiftgateMap::Update`):
 //! - the window rect is the record's (1001 × 792, centred); the map view is
 //!   `mapPosition` (scaled, from the window's corner) × `mapSize`, clipped;
 //! - the map is the `mapSections` bitmaps (`texture` at `x/yPosition`, all
@@ -40,26 +40,26 @@
 //!   asks to travel; pressing elsewhere on the map (left or right button)
 //!   drags it; the wheel pans 12.5 px per step (x, and y inverted);
 //! - the player's personal portal (`GameEngine::GetTeleportInfoList`,
-//!   0x14028f150) is an icon of its region's zone, after the zone's gates
+//!   `RiftgateMap::AddPersonalPortal`) is an icon of its region's zone, after the zone's gates
 //!   (the zone counts as discovered): `personalPortal`,
 //!   `personalPortalCurrent` (the portal opened the map), `personalPortalHover`,
 //!   named "<player name> - <area name>"; it travels back to the portal;
 //! - on open the map centres on the zone of the discovered gate nearest to
-//!   the player, else the last used gate (0x1402911e0);
+//!   the player, else the last used gate (`RiftgateMap::CenterOnStart`);
 //! - the map lives in the map window ([`WINDOW`], `UIWorldMap`: loader
-//!   sub_1401F4580, draw sub_1401F48A0, open sub_1401F4C00, clicks
-//!   sub_1401F4E40), which draws over it its round `centerButton` (a click
+//!   `UIWorldMap::Load`, draw `UIWorldMap::Draw`, open `UIWorldMap::Open`, clicks
+//!   `UIWorldMap::OnButtonClick`), which draws over it its round `centerButton` (a click
 //!   centres the map as on opening) and the `switchMapButton` tab labelled
 //!   `tagWorldMapWindowName` ("World Map"; "tagMapWindowName" over the
 //!   aerial map); the switch toggles to the local map (`localmap.rs`,
-//!   sub_1401F4E40). `M` opens the same window without a gate (no travel);
+//!   `UIWorldMap::OnButtonClick`). `M` opens the same window without a gate (no travel);
 //! - the window's buttons draw `bitmapNameInFocus` while hovered (`ButtonStatic`
-//!   draw sub_140123C50), and the centre button shows its `rolloverTag`
+//!   draw `ButtonStatic::Render`), and the centre button shows its `rolloverTag`
 //!   ("Center") as the generic button tooltip (`ui::rollover::button_tip`);
 //!   the close and switch buttons have no `rolloverTag`; every button plays its
 //!   record's `soundNameDown` on press (the shared `ButtonSound`, `ui/widgets.rs`);
-//! - there is no zoom: the wheel only pans (0x140294F70). The sections are
-//!   drawn at their textures' loaded size × the UI scale (0x140290C20), so a
+//! - there is no zoom: the wheel only pans (`RiftgateMap::HandleWheel`). The sections are
+//!   drawn at their textures' loaded size × the UI scale (`RiftgateMap::LoadSections`), so a
 //!   texture still streaming at a lower mip shows the map smaller (as in the
 //!   real game).
 //!
@@ -76,10 +76,11 @@
 //! stock data) are not drawn; the map opened with `M` waits for the player before centring; label lines drop markup; the wheel step is per
 //! Bevy scroll line; Esc closes.
 use super::contains;
-use super::window::Rebuild;
-use super::{Ui, text::FontCache};
-use crate::data::GameData;
-use crate::inventory::UiCapture;
+use gd_ui::state::riftmap::{RiftMapView, RiftLayout, Icon, IconKind};
+use gd_ui::window::Rebuild;
+use super::Ui;
+use super::text::FontCache;
+use gd_ui::state::inventory::UiCapture;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -87,6 +88,7 @@ use gd_formats::map::Uid;
 use gd_formats::ui::{Rect as URect, TextAlign, TextBox, WindowDef};
 use gd_game::devotion::DevotionState;
 use gd_game::riftgates::{Rift, RiftgateMap, RiftgateRequest, TravelState, WaypointIndex};
+use gd_game_core::data::GameData;
 
 pub const RECORD: &str = "records/ui/riftgatemap/riftgate_mastertable.dbr";
 
@@ -101,15 +103,15 @@ impl Plugin for RiftMapUiPlugin {
             .init_resource::<RiftMapView>()
             .add_systems(
                 Update,
-                teleport_button.in_set(crate::ui::UiInputSet).after(clicks),
+                teleport_button.in_set(gd_ui_kit::UiInputSet).after(clicks),
             );
         // Live: the world map page is shown, or its root is still up (the closing frame despawns it).
-        super::window::add_window(
+        gd_ui::window::add_window(
             app,
             build,
             (pan_content, live, clicks).chain(),
             |map: Res<RiftgateMap>,
-             win: Res<super::localmap::MapWindow>,
+             win: Res<gd_ui::state::map::MapWindow>,
              roots: Query<(), With<RiftRoot>>| {
                 win.world_shown(&map) || !roots.is_empty()
             },
@@ -117,40 +119,8 @@ impl Plugin for RiftMapUiPlugin {
     }
 }
 
-/// What an icon is.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum IconKind {
-    Gate(Uid),
-    /// The personal portal (its object id).
-    Portal(u32),
-    Undiscovered,
-    Shrine,
-}
 
-/// One map icon: its point (record units), bitmaps (normal, current,
-/// hover) and name.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Icon {
-    pub at: Vec2,
-    pub images: [String; 3],
-    pub name: String,
-    pub kind: IconKind,
-    /// Its zone's point (where the map centres for it).
-    pub zone: Vec2,
-    /// The gate in use with the player at it (the "current" bitmap).
-    pub current: bool,
-}
 
-impl Icon {
-    /// The travel destination of a gate / portal icon.
-    pub fn rift(&self) -> Option<Rift> {
-        match self.kind {
-            IconKind::Gate(u) => Some(Rift::Gate(u)),
-            IconKind::Portal(id) => Some(Rift::Portal(id)),
-            _ => None,
-        }
-    }
-}
 
 /// The personal portal as the map shows it: its object id, zone record and name.
 pub struct PortalIcon {
@@ -159,61 +129,8 @@ pub struct PortalIcon {
     pub name: String,
 }
 
-/// The built window (physical px). Icon rects are in content px (relative to
-/// the map content's origin, see [`RiftMapView::content_origin`]).
-#[derive(Default, Clone, PartialEq)]
-pub struct RiftLayout {
-    pub window: Option<URect>,
-    pub map: URect,
-    pub close: Option<URect>,
-    /// The map window's `centerButton`.
-    pub center: Option<URect>,
-    /// The map window's `switchMapButton` (to the local map).
-    pub switch: Option<URect>,
-    /// Section bounds (scaled px): min and size.
-    pub bounds: (Vec2, Vec2),
-    pub icons: Vec<(URect, Icon)>,
-}
 
-/// Window state: pan (px), drag, pressed icon, and the built layout.
-#[derive(Resource, Default)]
-pub struct RiftMapView {
-    pub pan: Vec2,
-    pub drag: Option<Vec2>,
-    pub pressed: Option<usize>,
-    pub layout: RiftLayout,
-    /// The map was centred for this opening.
-    centred: bool,
-}
 
-impl RiftMapView {
-    /// Top-left of the map content in the map view (px): content point `q`
-    /// (= `s·p − bounds min`) is at `map.xy + origin + q`.
-    pub fn content_origin(&self) -> Vec2 {
-        let (min, size) = self.layout.bounds;
-        let centre = min + size * 0.5;
-        Vec2::new(self.layout.map.w, self.layout.map.h) * 0.5 - (centre - min) - self.pan
-    }
-
-    fn clamp(&mut self) {
-        let size = self.layout.bounds.1;
-        let half = ((size - Vec2::new(self.layout.map.w, self.layout.map.h)) * 0.5).max(Vec2::ZERO);
-        self.pan = self.pan.clamp(-half, half);
-    }
-
-    /// The icon under a screen point.
-    fn icon_at(&self, p: Vec2) -> Option<usize> {
-        let m = &self.layout.map;
-        if !contains(m, p) {
-            return None;
-        }
-        let q = p - Vec2::new(m.x, m.y) - self.content_origin();
-        self.layout
-            .icons
-            .iter()
-            .rposition(|(r, i)| i.kind != IconKind::Undiscovered && contains(r, q))
-    }
-}
 
 #[derive(Component)]
 struct RiftRoot;
@@ -414,14 +331,14 @@ fn build(
     portal: (
         Res<gd_game::riftgates::PersonalPortal>,
         Option<Res<crate::world::StreamedMap>>,
-        Res<super::HudValues>,
+        Res<gd_ui::HudValues>,
     ),
-    players: Query<&Transform, With<crate::player::Player>>,
+    players: Query<&Transform, With<gd_game_core::player::Player>>,
     roots: Query<Entity, With<RiftRoot>>,
-    mapwin: Res<super::localmap::MapWindow>,
+    mapwin: Res<gd_ui::state::map::MapWindow>,
     mut view: ResMut<RiftMapView>,
-    mut assets: crate::ui::UiAssets,
-    mut fresh: gd_game::session::NewSession,
+    mut assets: gd_ui_kit::UiAssets,
+    mut fresh: gd_game_core::session::NewSession,
     mut built: Local<
         Rebuild<(
             RiftgateMap,
@@ -463,7 +380,7 @@ fn build(
     if size.x == 0 || !built.changed(sig) {
         return;
     }
-    super::window::despawn_all(&mut commands, &roots);
+    gd_ui::window::despawn_all(&mut commands, &roots);
     view.layout = RiftLayout::default();
     // An icon index does not outlive its layout.
     view.pressed = None;
@@ -471,7 +388,7 @@ fn build(
         return;
     };
     let s = assets.scale(size);
-    let root = crate::ui::spawn_root(&mut commands, RiftRoot, super::window::Z_WINDOW);
+    let root = gd_ui_kit::spawn_root(&mut commands, RiftRoot, gd_ui::window::Z_WINDOW);
     let mut ui = assets.ui(
         &mut commands,
         &data,
@@ -514,7 +431,7 @@ fn build(
     view.layout.map = m;
     view.layout.bounds = (min, max - min);
     let portal_icon = portal.0.portal.as_ref().and_then(|p| {
-        let zone = gd_game::levels::region_zone(&portal.1.as_deref()?.map, p.pos)?;
+        let zone = gd_game_core::levels::region_zone(&portal.1.as_deref()?.map, p.pos)?;
         let area = p
             .area_tag
             .as_deref()
@@ -648,7 +565,7 @@ fn build(
             Vec2::new(wr.x, wr.y),
         )
     {
-        // `ButtonStatic` draw (sub_140123C50): `bitmapNameInFocus` while hovered.
+        // `ButtonStatic` draw (`ButtonStatic::Render`): `bitmapNameInFocus` while hovered.
         if let Some((img, _)) = b.str("bitmapNameInFocus").and_then(|p| ui.image(p)) {
             let over = ui.quad(img, r, None, Color::WHITE);
             swap(&mut ui, base, over, Hover::Button(0));
@@ -656,9 +573,9 @@ fn build(
         view.layout.close = Some(r);
         ui.record_button_sound(r, &b);
     }
-    // The map window's own buttons over the riftgate map (sub_1401F48A0):
+    // The map window's own buttons over the riftgate map (`UIWorldMap::Draw`):
     // `centerButton`, then `switchMapButton` labelled "World Map" while the
-    // riftgate map shows (sub_1401F4C00), then its close button (the same
+    // riftgate map shows (`UIWorldMap::Open`), then its close button (the same
     // record as the map's, drawn above).
     if let Some(w) = data.db.get(WINDOW) {
         let o = Vec2::new(wr.x, wr.y);
@@ -683,7 +600,7 @@ fn build(
             ui.record_button_sound(r, b);
             if label && let Some(style) = b.str("style") {
                 let text = ui.fonts.tag("tagWorldMapWindowName").to_owned();
-                super::trade::label(&mut ui, r, style, TextAlign::Center, &text);
+                super::widgets::label(&mut ui, r, style, TextAlign::Center, &text);
             } else if !label {
                 view.layout.center = Some(r);
             }
@@ -729,7 +646,7 @@ fn live(
     roots: Query<Entity, With<RiftRoot>>,
     titles: Query<Entity, With<RiftTitle>>,
     mut swaps: Query<(&Swap, &mut Visibility)>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
     mut titled: Local<Option<(Entity, usize)>>,
 ) {
     let (Ok(win), Some(wr), Ok(root)) = (window.single(), view.layout.window, roots.single())
@@ -780,15 +697,6 @@ fn live(
     }
 }
 
-impl RiftMapView {
-    /// The window button at a physical-px point: 0 close, 1 centre, 2 switch.
-    pub fn button_at(&self, p: Vec2) -> Option<usize> {
-        let over = |r: &URect| contains(r, p);
-        [self.layout.close, self.layout.center, self.layout.switch]
-            .iter()
-            .position(|r| r.as_ref().is_some_and(over))
-    }
-}
 
 /// Keeps the content node at the current pan (no rebuild while dragging).
 fn pan_content(
@@ -812,18 +720,18 @@ fn pan_content(
 /// n-th gate icon (1-based, the gate in use left out).
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<super::keys::KeyBindings>),
     mut wheel: MessageReader<MouseWheel>,
     window: Query<&Window, With<PrimaryWindow>>,
     map: Res<RiftgateMap>,
     mut view: ResMut<RiftMapView>,
-    mut mapwin: ResMut<super::localmap::MapWindow>,
+    mut mapwin: ResMut<gd_ui::state::map::MapWindow>,
     mut capture: ResMut<UiCapture>,
     mut out: MessageWriter<RiftgateRequest>,
     mut picked: Local<bool>,
-    pause: Res<gd_game::pause::GamePause>,
+    pause: Res<gd_game_core::pause::GamePause>,
 ) {
     let Some(wr) = view.layout.window.filter(|_| mapwin.world_shown(&map)) else {
         if mapwin.world_shown(&map) {
@@ -832,7 +740,7 @@ pub fn clicks(
         return;
     };
     // Closing: the riftgate's map through the rules, the `M` window here.
-    let close = |mapwin: &mut super::localmap::MapWindow,
+    let close = |mapwin: &mut gd_ui::state::map::MapWindow,
                  out: &mut MessageWriter<RiftgateRequest>| {
         mapwin.open = false;
         if map.open {
@@ -923,7 +831,7 @@ pub fn clicks(
         } else if view.layout.switch.is_some_and(|c| contains(&c, p)) {
             mapwin.switch(&map);
         } else if view.layout.center.is_some_and(|c| contains(&c, p)) {
-            // Centres as on opening (sub_1401F4E40 → 0x1402911e0).
+            // Centres as on opening (`UIWorldMap::OnButtonClick` → `RiftgateMap::CenterOnStart`).
             view.centred = false;
         } else if let Some(i) = view
             .icon_at(p)
@@ -938,14 +846,13 @@ pub fn clicks(
     }
 }
 
-/// A left click on the HUD teleport button asks for a personal portal
-/// (`gd_game::riftgates::OpenPortal`; the rules decide). PORT: on press. Nothing while the game menu / options window
-/// is up: the button stays drawn then but is disabled (`ui::view`, sub_14020D550).
-/// The Personal Riftgate key (action 33, default L) presses the button shown: `Grim Dawn.exe` HUD key
-/// action sub_140211AF0 case 33 (reached when no window takes the key): the shown one of `hudTeleportButton` /
-/// `hudActiveTeleportButton` gets a press through the HUD's button manager, nothing when neither shows.
-/// The button's rect is looked up when the HUD's layout inputs change (button shown, window size, UI scale, HUD
-/// layout), not per frame.
+/// A left click on the HUD teleport button asks for a personal portal (`gd_game::riftgates::OpenPortal`; the rules
+/// decide). PORT: on press. Nothing while the game menu / options window is up: the button stays drawn then but is
+/// disabled (`ui::view`, `UIPlayerHud::Update`). The Personal Riftgate key (action 33, default L) presses the button
+/// shown: `Grim Dawn.exe` HUD key action `UIPlayerHud::HandleKeyAction` case 33 (reached when no window takes the key):
+/// the shown one of `hudTeleportButton` / `hudActiveTeleportButton` gets a press through the HUD's button manager,
+/// nothing when neither shows. The button's rect is looked up when the HUD's layout inputs change (button shown, window
+/// size, UI scale, HUD layout), not per frame.
 #[allow(clippy::too_many_arguments)]
 fn teleport_button(
     mut commands: Commands,
@@ -958,15 +865,15 @@ fn teleport_button(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
-    values: Res<super::HudValues>,
+    values: Res<gd_ui::HudValues>,
     mut capture: ResMut<UiCapture>,
-    mut assets: crate::ui::UiAssets,
+    mut assets: gd_ui_kit::UiAssets,
     mut out: MessageWriter<gd_game::riftgates::OpenPortal>,
     mut rect: Local<(
         Rebuild<(gd_game::riftgates::PortalButton, UVec2, u32, u32, bool)>,
         Option<URect>,
     )>,
-    pause: Res<gd_game::pause::GamePause>,
+    pause: Res<gd_game_core::pause::GamePause>,
 ) {
     if pause.menu {
         return;
@@ -1004,7 +911,7 @@ fn teleport_button(
             inv,
             size.as_vec2(),
         );
-        rect.1 = super::hud::teleport_rect(&mut probe, t);
+        rect.1 = gd_ui::hud::teleport_rect(&mut probe, t);
         // Nothing found (a record or bitmap is missing): asked again the next frame.
         if rect.1.is_none() {
             rect.0.reset();

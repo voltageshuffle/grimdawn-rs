@@ -2,14 +2,18 @@
 //! (`CastRequest`, `UsePotion`, a channel's held key and aim), and
 //! projectile models and effect decals get their meshes. The casting rules
 //! are `gd_game::casting`.
-use crate::inventory::UiCapture;
-use crate::player::Player;
-use crate::world::Nav;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::casting::{ClickKeys, CastInputStage};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 pub use gd_game::casting::*;
-use gd_game::combat::{Combatant, Dead, MonsterAi};
+use gd_game::combat::MonsterAi;
 use gd_game::hotbar::{ArmedSlot, CursorOverWorld, UseArmedSlot};
+use gd_game::nav::Nav;
+pub use gd_game_core::casting::*;
+use gd_game_core::combat::{Combatant, Dead};
+use gd_game_core::player::Player;
+use gd_game_core::visuals::{PendingDecal, ProjectileMesh, ProjectileModelOf};
 use gd_render::fx::{DecalOwner, DropDecal, GroundTilt};
 
 pub struct CastingViewPlugin;
@@ -24,9 +28,15 @@ impl Plugin for CastingViewPlugin {
             .add_systems(
                 Update,
                 potion_input
-                    .after(crate::inventory::InventorySet)
+                    .after(gd_game_core::inventory::InventorySet)
                     .before(potions),
             );
+        // Bevy 0.20 releases the keyboard on focus loss but not the mouse buttons; after the input
+        // systems, which clear the previous frame's just-flags.
+        app.add_systems(
+            PreUpdate,
+            release_mouse_on_focus_loss.after(bevy::input::InputSystems),
+        );
         // The Move-key hook stands in for the OS keyboard: before the input readers.
         #[cfg(feature = "dev")]
         app.add_systems(
@@ -44,7 +54,7 @@ impl Plugin for CastingViewPlugin {
                 channel_input,
             )
                 .chain()
-                .after(crate::inventory::InventorySet)
+                .after(gd_game_core::inventory::InventorySet)
                 // The cursor record is taken before the requests that read it.
                 .after(gd_game::hotbar::HotbarCursorSet)
                 // Before the gd-game hotbar chain: its `hot_slot_keys` reads the
@@ -55,14 +65,14 @@ impl Plugin for CastingViewPlugin {
                 .before(channels),
         )
         // Before the click moves the player (and so before `cast_input`);
-        // a pending pet order takes the click first (sub_140021000).
+        // a pending pet order takes the click first (`InGameUI::HandleMouseEvent`).
         .add_systems(
             Update,
             armed_click
                 .in_set(CastInputStage::Armed)
-                .after(crate::inventory::InventorySet)
-                .after(crate::pets::PetInputSet)
-                .before(crate::player::PlayerSet),
+                .after(gd_game_core::inventory::InventorySet)
+                .after(gd_ui::state::pets::PetInputSet)
+                .before(gd_game_core::player::PlayerSet),
         )
         // The cursor record before the press that may use it (armed_click,
         // gd-game's hot slot keys and evade read it after PlayerSet).
@@ -70,7 +80,7 @@ impl Plugin for CastingViewPlugin {
             Update,
             world_cursor
                 .in_set(CastInputStage::Cursor)
-                .after(crate::inventory::InventorySet)
+                .after(gd_game_core::inventory::InventorySet)
                 .before(armed_click),
         )
         // The hotbar's cursor readers take this frame's `CursorOverWorld` /
@@ -93,65 +103,42 @@ impl Plugin for CastingViewPlugin {
     }
 }
 
-/// Potion keys (scan codes 19/18 = actions 30/29, sub_1401F68B0):
+/// Bevy 0.20 synthesizes key releases on focus loss (`bevy_input`'s keyboard system) but no mouse ones:
+/// a button held across Alt-Tab stays `pressed` until it is clicked again (phantom casting / walking).
+/// Release every mouse button when a window loses focus; the held-button consumers ([`armed_click`]'s
+/// swallow, [`cast_input`], `crate::player`'s walk) see the buttons let go as on a real release.
+fn release_mouse_on_focus_loss(
+    mut focus: MessageReader<bevy::window::WindowFocused>,
+    mut buttons: ResMut<ButtonInput<MouseButton>>,
+) {
+    if focus.read().any(|f| !f.focused) {
+        buttons.release_all();
+    }
+}
+
+/// Potion keys (scan codes 19/18 = actions 30/29, named by `KeyBindings::GetActionByName`):
 /// R health, E energy; not while the UI took the input.
 fn potion_input(
     keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
     capture: Res<UiCapture>,
     mut out: MessageWriter<UsePotion>,
 ) {
     if capture.0 {
         return;
     }
-    if bindings.just_pressed(crate::ui::keys::DRINK_HEALTH, &keys) {
+    if bindings.just_pressed(gd_ui_kit::keys::DRINK_HEALTH, &keys) {
         out.write(UsePotion::Health);
-    } else if bindings.just_pressed(crate::ui::keys::DRINK_ENERGY, &keys) {
+    } else if bindings.just_pressed(gd_ui_kit::keys::DRINK_ENERGY, &keys) {
         out.write(UsePotion::Energy);
     }
 }
 
-/// The keyboard with the held click modifiers: Stationary Attack (action 39, default Shift) and Force Move (action
-/// 50, default F). `Grim Dawn.exe` key handler sub_140026910: each sets its byte of the input controller
-/// while a bound key is down (39 → +2120, 50 → +2122; cleared on the key's release); the click handler
-/// sub_140021000 passes the stationary byte to `ControllerPlayer::HandleActionFromMouse` (the press attacks in
-/// place, also on empty ground) and, with the force-move byte, skips the pick of the object under the cursor (the
-/// press acts on the ground point). Derefs to the keyboard, so a system's `keys` can be this.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct ClickKeys<'w> {
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    bindings: Res<'w, crate::ui::keys::KeyBindings>,
-}
 
-impl ClickKeys<'_> {
-    /// Stationary Attack held.
-    pub fn stationary(&self) -> bool {
-        self.bindings
-            .pressed(crate::ui::keys::STATIONARY_ATTACK, &self.keys)
-    }
 
-    /// Force Move held.
-    pub fn force_move(&self) -> bool {
-        self.bindings
-            .pressed(crate::ui::keys::FORCE_MOVE, &self.keys)
-    }
-
-    /// A left press does not use the object under the cursor (a chest, door, NPC, …): either modifier is held.
-    pub fn skips_objects(&self) -> bool {
-        self.stationary() || self.force_move()
-    }
-}
-
-impl std::ops::Deref for ClickKeys<'_> {
-    type Target = ButtonInput<KeyCode>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.keys
-    }
-}
 
 /// What a cursor press may aim at: foes, targetable breakables and one's
-/// own pets (the engine's combat enemy / ally, sub_14002FF80; the player
+/// own pets (the engine's combat enemy / ally, `InGameUIActorCapture::CollectCandidates`; the player
 /// is never one).
 type Pickable<'w, 's> = (
     Query<
@@ -161,7 +148,7 @@ type Pickable<'w, 's> = (
             Entity,
             &'static GlobalTransform,
             &'static Combatant,
-            Option<&'static gd_game::world::Breakable>,
+            Option<&'static gd_game_core::world::Breakable>,
             gd_game::combat::SideData,
         ),
         (
@@ -185,17 +172,18 @@ type Pickable<'w, 's> = (
 );
 
 /// The character a cursor press aims at (a foe, a targetable breakable or one of `owner`'s pets) and its position.
-/// The foe is the hover pick ([`crate::hover::Hovered`], `combat::pick_enemy`: the touched enemy nearest to the
+/// The foe is the hover pick ([`gd_ui::state::hover::Hovered`], `combat::pick_enemy`: the touched enemy nearest to the
 /// player, held stickiness, target lock), the outlined one, as for the left click (`crate::player`'s
-/// `click_to_move`): one pick feeds the hover and every attack (sub_140021000). Else one's own pet: the
+/// `click_to_move`): one pick feeds the hover and every attack (`InGameUI::HandleMouseEvent`). Else one's own
+/// pet: the
 /// hovered one, or the one under the ray (the hover outlines one's pets only with the Target Pet key).
 fn under_cursor(
-    hovered: &crate::hover::Hovered,
+    hovered: &gd_ui::state::hover::Hovered,
     ray: Ray3d,
     (monsters, pets): &Pickable,
     owner: Entity,
 ) -> Option<(Entity, Vec3)> {
-    use crate::hover::Kind;
+    use gd_ui::state::hover::Kind;
     let foe = hovered
         .entity
         .filter(|_| matches!(hovered.kind, Kind::Character | Kind::Breakable))
@@ -223,7 +211,7 @@ fn under_cursor(
 /// command), and the controller's cursor record (`gd_game::hotbar::WorldCursor`): [`CursorOverWorld`] with the
 /// character under the cursor and its coordinates, else the ground point (none when the ray hits no ground: the
 /// record stays). Keyboard Only leaves the record to the controller targeting (`crate::controller_target`;
-/// sub_140021000).
+/// `InGameUI::HandleMouseEvent`).
 #[allow(clippy::too_many_arguments)]
 pub fn world_cursor(
     mut clicked: MessageReader<bevy::input::mouse::MouseButtonInput>,
@@ -231,17 +219,17 @@ pub fn world_cursor(
     window: Query<&Window, With<PrimaryWindow>>,
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
     nav: Res<Nav>,
-    (capture, over_slot): (Res<UiCapture>, Res<crate::ui::hotbar_pick::OverHotSlot>),
+    (capture, over_slot): (Res<UiCapture>, Res<gd_ui::hotbar_pick::OverHotSlot>),
     players: Query<Entity, (With<Player>, Without<Dead>)>,
     pickable: Pickable,
     (mut out, mut mouse): (
         MessageWriter<CursorOverWorld>,
         MessageWriter<gd_game::hotbar::WorldMouse>,
     ),
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     (hovered, label, controller, armed): (
-        Res<crate::hover::Hovered>,
-        Res<crate::loot::HoveredLabel>,
+        Res<gd_ui::state::hover::Hovered>,
+        Res<gd_ui::state::loot::HoveredLabel>,
         Res<crate::controller_target::ControllerPick>,
         Res<ArmedSlot>,
     ),
@@ -267,7 +255,7 @@ pub fn world_cursor(
             hovered.entity.is_some()
                 && matches!(
                     hovered.kind,
-                    crate::hover::Kind::Object | crate::hover::Kind::Npc
+                    gd_ui::state::hover::Kind::Object | gd_ui::state::hover::Kind::Npc
                 )
         };
     for b in presses {
@@ -312,12 +300,12 @@ pub fn world_cursor(
 
 /// With a hot slot armed (`gd_game::hotbar::ArmedSlot`), the next world
 /// press, left or right, uses it at the character under the cursor or the
-/// ground point ([`UseArmedSlot`], sub_140021000); the press is the armed
+/// ground point ([`UseArmedSlot`], `InGameUI::HandleMouseEvent`); the press is the armed
 /// slot's: no move, no mouse skill, until the button is let go.
-/// In sub_140021000 a press runs the armed slot (`ActivateSuperSkill` first,
+/// In `InGameUI::HandleMouseEvent` a press runs the armed slot (`ActivateSuperSkill` first,
 /// with the Move key held too: a press takes the press path), the event after it
-/// finds the slot gone (`a1+2520` set) and clears the pending command
-/// (`a1+464`), which only a press sets again; but with the Move key held
+/// finds the slot gone (`InGameUI.armedSlotUsed` set) and clears the pending command
+/// (`InGameUI.commandPending`), which only a press sets again; but with the Move key held
 /// ([`MoveKeyHeld`], Classic movement) every event that is no press sets it, so
 /// the walk goes on while the button is still held. PORT: the engine's one
 /// event without the walk is not kept.
@@ -334,10 +322,10 @@ pub fn armed_click(
     mut out: MessageWriter<UseArmedSlot>,
     mut swallow: Local<bool>,
     (options, record, move_held, hovered): (
-        Res<gd_game::options::GameOptions>,
+        Res<gd_game_core::options::GameOptions>,
         Res<gd_game::hotbar::WorldCursor>,
         Res<MoveKeyHeld>,
-        Res<crate::hover::Hovered>,
+        Res<gd_ui::state::hover::Hovered>,
     ),
 ) {
     let held = buttons.any_pressed([MouseButton::Left, MouseButton::Right]);
@@ -360,7 +348,7 @@ pub fn armed_click(
     let Ok((me, tf, caster)) = players.single() else {
         return;
     };
-    // An armed Move slot: its request fails (`gd_game::hotbar::MOVE_TO`) and `ActivateSuperSkill` @0x1801624b0
+    // An armed Move slot: its request fails (`gd_game::hotbar::MOVE_TO`) and `ActivateSuperSkill`
     // (the armed slot taken and cleared either way) does not take the press, so it goes on as a press with the Move
     // rule (`gd_game::hotbar::move_slot_keeps_target`, the walk in `crate::player`'s `click_to_move`).
     let moving = armed
@@ -414,10 +402,11 @@ fn armed_hold(held: bool, move_key: bool) -> ArmedHold {
 }
 
 /// The Move key (51, `tagMove`) or a hot slot key bound to the Move skill is held: the player walks to the cursor
-/// (`crate::player`'s `click_to_move`). `Grim Dawn.exe`: the key handler sub_140026910 sets `a1+2123` on
-/// the key's press (a hot slot key: when its slot in the shown row holds `GetDefaultSkillId(3)`, the row kept in
-/// `a1+2132`) and clears it on the release; with it set, every mouse event that is no press (the per-frame move event
-/// too) is a held Move command (sub_140021000: `SetCommandRepeated`, command pending) and, in Classic movement only,
+/// (`crate::player`'s `click_to_move`). `Grim Dawn.exe`: the key handler `InGameUI::HandleKeyEvent` sets
+/// `InGameUI.moveKeyHeld` on the key's press (a hot slot key: when its slot in the shown row holds
+/// `GetDefaultSkillId(3)`, the row kept in `InGameUI.shownHotbarRow`) and clears it on the release; with it
+/// set, every mouse event that is no press (the per-frame move event too) is a held Move command
+/// (`InGameUI::HandleMouseEvent`: `SetCommandRepeated`, command pending) and, in Classic movement only,
 /// `HandleActionFromMouse` gets `a2 = 1`, so `SelectPrimaryAction` skips every object and requests a plain move to
 /// the cursor point (the object's coordinates when one is under the cursor). The hot slot key's own request fails
 /// (`gd_game::hotbar::MOVE_TO`). PORT: the held state is recomputed every frame (not while the UI takes the keys).
@@ -428,7 +417,7 @@ pub struct MoveKeyHeld(pub bool);
 /// held-key walk (`crate::player::click_to_move`) runs without a keyboard; `GD_HOVER=x,y` aims it.
 #[cfg(feature = "dev")]
 fn move_key_hook(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     players: Query<(), With<Player>>,
     mut move_held: ResMut<MoveKeyHeld>,
@@ -451,21 +440,21 @@ fn move_key_hook(
 #[allow(clippy::too_many_arguments)]
 fn hot_slot_keys(
     keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
     capture: Res<UiCapture>,
     rift_map: Res<gd_game::riftgates::RiftgateMap>,
-    altar: Res<crate::ascendant::AltarMenu>,
+    altar: Res<gd_ui::state::ascendant::AltarMenu>,
     dialog: Res<gd_game::conversation::Conversation>,
     mut pressed: Local<[Option<usize>; 10]>,
     mut out: MessageWriter<gd_game::hotbar::HotSlotKey>,
     (mut move_held, casters, row): (
         ResMut<MoveKeyHeld>,
         Query<&Caster, With<Player>>,
-        Res<crate::ui::hud::HotbarRow>,
+        Res<gd_ui::hud::HotbarRow>,
     ),
 ) {
     for i in 0..10 {
-        if bindings.just_released(crate::ui::keys::HOT_SLOT_FIRST + i as u32, &keys)
+        if bindings.just_released(gd_ui_kit::keys::HOT_SLOT_FIRST + i as u32, &keys)
             && let Some(slot) = pressed[i].take()
         {
             out.write(gd_game::hotbar::HotSlotKey { slot, down: false });
@@ -474,7 +463,7 @@ fn hot_slot_keys(
     let blocked = capture.0 || rift_map.open || dialog.view.is_some() || altar.open;
     // The Move key, or a held hot slot key whose slot holds the Move skill (`MoveKeyHeld`).
     let held = !blocked
-        && (bindings.pressed(crate::ui::keys::MOVE, &keys)
+        && (bindings.pressed(gd_ui_kit::keys::MOVE, &keys)
             || casters.single().is_ok_and(|c| {
                 pressed.iter().flatten().any(|&s| {
                     c.slots[s]
@@ -490,7 +479,7 @@ fn hot_slot_keys(
     }
     let row2 = row.0 == 1;
     for i in 0..10 {
-        if bindings.just_pressed(crate::ui::keys::HOT_SLOT_FIRST + i as u32, &keys) {
+        if bindings.just_pressed(gd_ui_kit::keys::HOT_SLOT_FIRST + i as u32, &keys) {
             let slot = if row2 { SLOT_ROW2 + i } else { i };
             if let Some(old) = pressed[i].replace(slot) {
                 out.write(gd_game::hotbar::HotSlotKey {
@@ -504,12 +493,12 @@ fn hot_slot_keys(
 }
 
 /// The mouse buttons become [`CastRequest`]s at the character under the
-/// cursor (a foe or one's own pet: `gd_game::casting::CastRequest` aims by
+/// cursor (a foe or one's own pet: `gd_game_core::casting::CastRequest` aims by
 /// the skill), else the ground point. While a slot is armed the mouse
 /// buttons are its ([`armed_click`]).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn cast_input(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     keys: ClickKeys,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -526,17 +515,17 @@ pub fn cast_input(
     >,
     pickable: Pickable,
     rift_map: Res<gd_game::riftgates::RiftgateMap>,
-    altar: Res<crate::ascendant::AltarMenu>,
+    altar: Res<gd_ui::state::ascendant::AltarMenu>,
     dialog: Res<gd_game::conversation::Conversation>,
     armed: Res<ArmedSlot>,
     mut out: MessageWriter<CastRequest>,
     mut script: Local<Option<(std::time::Instant, Vec<(f32, usize)>)>>,
     (options, record, move_held, gate, hovered): (
-        Res<gd_game::options::GameOptions>,
+        Res<gd_game_core::options::GameOptions>,
         Res<gd_game::hotbar::WorldCursor>,
         Res<MoveKeyHeld>,
         Res<gd_game::movement::MouseCommand>,
-        Res<crate::hover::Hovered>,
+        Res<gd_ui::state::hover::Hovered>,
     ),
 ) {
     // The riftgate map and conversations take the keys while open.
@@ -552,7 +541,8 @@ pub fn cast_input(
     }
     let mut slot = None;
     // The mouse buttons cast only while the world command gate is open (`gd_game::movement::MouseCommand`, set by
-    // `crate::player`'s `click_to_move` earlier this frame; sub_140021000): not after a press the UI took
+    // `crate::player`'s `click_to_move` earlier this frame; `InGameUI::HandleMouseEvent`): not after a press
+    // the UI took
     // (a right press on a window held while the cursor leaves it), nor after an interaction press.
     let mouse = armed.0.is_none() && gate.open();
     if mouse && buttons.pressed(MouseButton::Right) {
@@ -560,7 +550,7 @@ pub fn cast_input(
     }
     // Stationary Attack ([`ClickKeys`]) + left button: the left skill at the cursor without moving.
     // In the keyboard movement modes (`movementType` above 0) a left click always uses the primary skill at the cursor,
-    // also on empty ground (`SelectPrimaryAction` @0x180161d00).
+    // also on empty ground (`SelectPrimaryAction`).
     let force = mouse
         && (keys.stationary() || options.int("movementType") > 0)
         && buttons.pressed(MouseButton::Left);
@@ -576,8 +566,9 @@ pub fn cast_input(
     let Some(slot) = slot.or_else(|| test_cast(&mut script, &hooks)) else {
         return;
     };
-    // The Move skill on the right button only walks (`crate::player`'s `click_to_move`; sub_140021000 turns the press
-    // into the primary action, `gd_game::hotbar::move_slot_keeps_target`).
+    // The Move skill on the right button only walks (`crate::player`'s `click_to_move`;
+    // `InGameUI::HandleMouseEvent` turns the press into the primary action,
+    // `gd_game::hotbar::move_slot_keeps_target`).
     if caster.slots[slot]
         .as_deref()
         .is_none_or(|s| slot == SLOT_RIGHT && gd_game::hotbar::is_move_to(s))
@@ -594,7 +585,7 @@ pub fn cast_input(
     let Ok(ray) = cam.viewport_to_world(cam_gt, cursor) else {
         return;
     };
-    // Breakables only when targetable (`gd_game::world::Breakable`).
+    // Breakables only when targetable (`gd_game_core::world::Breakable`).
     // Force Move ([`ClickKeys`]): the press skips the pick, so it aims at the ground point.
     let mut hit = under_cursor(&hovered, ray, &pickable, me).filter(|_| !keys.force_move());
     // The test hook aims at the nearest monster within 20 m.
@@ -615,11 +606,12 @@ pub fn cast_input(
     let mut point = match hit {
         Some((_, at)) => at,
         None => crate::player::pick_ground(ray, &nav.0)
-            .unwrap_or(tf.translation + gd_game::character::facing(tf) * 5.0),
+            .unwrap_or(tf.translation + gd_game_core::character::facing(tf) * 5.0),
     };
     // The Move skill on the left button (Shift / the keyboard modes): only a breakable stays the target, with
     // `breakingMoveTo` (`gd_game::hotbar::move_slot_keeps_target`); gd-game attacks with the default weapon attack.
-    // In Keyboard Only the record below replaces the target anyway (sub_140021000 reads it back after the reset).
+    // In Keyboard Only the record below replaces the target anyway (`InGameUI::HandleMouseEvent` reads it
+    // back after the reset).
     if !tested
         && slot == SLOT_LEFT
         && caster.slots[slot]
@@ -634,7 +626,8 @@ pub fn cast_input(
         target = None;
     }
     // Keyboard Only (`movementType` 2): the cursor does not aim; the press uses the controller's cursor record (the
-    // controller targeting's pick, `crate::controller_target`; sub_140021000 reads `GetMouseRepeatData` back),
+    // controller targeting's pick, `crate::controller_target`; `InGameUI::HandleMouseEvent` reads
+    // `GetMouseRepeatData` back),
     // and gd-game's `keyboard_aim` turns a request without a target into one along the facing / movement direction.
     if !tested && options.int("movementType") == 2 {
         target = record.target;
@@ -664,7 +657,7 @@ pub fn cast_input(
 /// cursor's ground point (the keyboard modes' aim: `gd_game::casting::channels`).
 fn channel_input(
     keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<crate::ui::keys::KeyBindings>,
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
@@ -682,7 +675,7 @@ fn channel_input(
         SLOT_RIGHT => buttons.pressed(MouseButton::Right),
         s => {
             let i = if s >= SLOT_ROW2 { s - SLOT_ROW2 } else { s };
-            i < 10 && bindings.pressed(crate::ui::keys::HOT_SLOT_FIRST + i as u32, &keys)
+            i < 10 && bindings.pressed(gd_ui_kit::keys::HOT_SLOT_FIRST + i as u32, &keys)
         }
     };
     let (Ok(win), Ok((cam, cgt))) = (window.single(), cams.single()) else {
@@ -762,7 +755,7 @@ fn projectile_meshes(
 /// dynamic geometry, the level decals' material; fading in
 /// `decal::fade_decals`). The surface: the terrain under the effect and,
 /// unless `terrainOnly`, the static meshes in its box (`DecalReceivers`).
-/// `Decal::Load` @0x180058a30 / `UpdateSelf` @0x180059030: `life`
+/// `Decal::Load` / `UpdateSelf`: `life`
 /// (s, a missing field reads 0) ≤ 0 never removes the decal. An owned decal
 /// follows that (then goes with its effect); PORT: a one-shot effect's decal
 /// without a `life` gets 3 s (the engine keeps it and its effect forever). PORT: a decal whose textures are not
@@ -778,9 +771,10 @@ fn fx_decals(
     mut assets: gd_render::character::CharAssets,
     mut decal_mats: ResMut<Assets<gd_render::decal::DecalMaterial>>,
     mut loads: ResMut<DecalTextureLoads>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
 ) {
-    use bevy::tasks::{block_on, futures_lite::future};
+    use bevy::tasks::block_on;
+    use bevy::tasks::futures_lite::future;
     let a = &mut assets;
     loads
         .0
@@ -810,7 +804,7 @@ fn fx_decals(
     }
     for (e, d, tf, owner) in &new {
         commands.entity(e).try_despawn();
-        // `detailObjects` (bool 9) gates every decal.
+        // `detailObjects` gates every decal.
         if !options.flag("detailObjects") {
             continue;
         }
@@ -825,11 +819,11 @@ fn fx_decals(
         } else {
             let chance = fx.i32("decalChance").filter(|&c| c != 0).unwrap_or(100);
             let list = fx.strs("decal");
-            if list.is_empty() || gd_game::rng::i32(0..=100) > chance {
+            if list.is_empty() || gd_game_core::rng::i32(0..=100) > chance {
                 continue;
             }
             (
-                list[gd_game::rng::usize(..list.len())].to_owned(),
+                list[gd_game_core::rng::usize(..list.len())].to_owned(),
                 fx.i32("decalRotate").unwrap_or(0) != 0,
             )
         };
@@ -839,7 +833,7 @@ fn fx_decals(
         let Some(mut dec) = gd_render::decal::DecalRecord::from_record(rec) else {
             continue;
         };
-        // Engine.dll `Lightning2::Generate` @0x180137850: the strike decal's +524 (`Decal::Load`'s
+        // Engine.dll `Lightning2::Generate`: the strike decal's `Decal.minNormalAngle` (`Decal::Load`'s
         // π/2 − `maxAngle`, whose sine `CreateGeometry` takes as the faces' least normal y) is set to −π/2, so
         // it keeps every mesh face.
         if fx.class == "Decal" {
@@ -850,7 +844,7 @@ fn fx_decals(
         }
         // The frame: the effect's coords, yawed at random with `decalRotate`.
         let rot = if decal_rotate {
-            Quat::from_rotation_y(gd_game::rng::f32() * std::f32::consts::TAU)
+            Quat::from_rotation_y(gd_game_core::rng::f32() * std::f32::consts::TAU)
         } else {
             tf.rotation
         };
@@ -895,7 +889,9 @@ struct ColdDecal {
 /// Effect decal textures decoding in the background (`gd_render::textures::decode`), by normalized path; filed into
 /// `Textures` as they land ([`fx_decals`]).
 #[derive(Resource, Default)]
-struct DecalTextureLoads(std::collections::HashMap<String, bevy::tasks::Task<Option<Image>>>);
+struct DecalTextureLoads(
+    gd_formats::collections::HashMap<String, bevy::tasks::Task<Option<Image>>>,
+);
 
 /// Whether the textures `decal::spawn` takes for `dec` (texture, bump, glow; UNORM) are loaded (or failed); the
 /// ones that are not start decoding in the background.
@@ -965,7 +961,7 @@ fn place_fx_decal(
 
 /// The decal mesh of `dec` centred at `c` with local Z `rot * Z`: the terrain
 /// under it and (unless `terrainOnly`) the static meshes in its box
-/// (`decal.rs`; `dynamic`: the 0.7 box of a `Decal+499` decal).
+/// (`decal.rs`; `dynamic`: the 0.7 box of a `Decal.dynamic` decal).
 fn ground_patch(
     coll: &crate::collision::WorldCollision,
     recv: &gd_render::decal::DecalReceivers,
@@ -1003,11 +999,11 @@ fn ground_patch(
 pub(crate) struct DropDecals(
     std::collections::VecDeque<Vec<Entity>>,
     bool,
-    std::collections::HashMap<(u32, u32), Handle<Mesh>>,
+    gd_formats::collections::HashMap<(u32, u32), Handle<Mesh>>,
 );
 
-/// `World::PlaceDecalOnGround` @0x1802206f0 → `PutOnFloor` →
-/// `World::PlaceDecal` @0x180220540 (only while the bool option 9 is on,
+/// `World::PlaceDecalOnGround` → `PutOnFloor` →
+/// `World::PlaceDecal` (only while the option is on,
 /// `detailObjects` in `GameOptions`) → `DecalSet::AddDecal`: the region's
 /// set keeps 256 decals in a ring (the next one replaces the oldest), no
 /// life. The decal is a flat quad in the particle's coords at the floor
@@ -1024,7 +1020,7 @@ pub(crate) struct DropDecals(
 /// patchy decals, engine behavior.
 #[allow(clippy::too_many_arguments)]
 fn drop_decals(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     nav: Res<gd_game::nav::Nav>,
     coll: Res<crate::collision::WorldCollision>,
@@ -1035,15 +1031,17 @@ fn drop_decals(
         Option<&gd_render::decal::GrowIn>,
         Has<GroundTilt>,
     )>,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     mut placed: ResMut<DropDecals>,
     mut assets: gd_render::character::CharAssets,
     mut decal_mats: ResMut<Assets<gd_render::decal::DecalMaterial>>,
-    mut records: Local<std::collections::HashMap<String, Option<gd_render::decal::DecalRecord>>>,
+    mut records: Local<
+        gd_formats::collections::HashMap<String, Option<gd_render::decal::DecalRecord>>,
+    >,
     mut mod_changed: MessageReader<gd_render::model::ModChanged>,
     (levels, layout, live): (
-        Res<gd_game::levels::Levels>,
-        Option<Res<gd_game::save::MapLayout>>,
+        Res<gd_game_core::levels::Levels>,
+        Option<Res<gd_game_core::save::MapLayout>>,
         Query<()>,
     ),
 ) {
@@ -1061,15 +1059,15 @@ fn drop_decals(
         if !options.flag("detailObjects") || hooks.render.no_decals {
             continue;
         }
-        if !records.contains_key(&d.0) {
+        if !records.contains_key(&*d.0) {
             let rec = assets
                 .data
                 .db
                 .get(&d.0)
                 .and_then(gd_render::decal::DecalRecord::from_record);
-            records.insert(d.0.clone(), rec);
+            records.insert(d.0.to_string(), rec);
         }
-        let Some(dec) = &records[&d.0] else {
+        let Some(dec) = &records[&*d.0] else {
             continue;
         };
         // `PutOnFloor`: the ground under the particle.
@@ -1177,10 +1175,3 @@ fn ring_alpha(
     }
 }
 
-/// The world-click input of casting, in order: `Cursor` records the world point, `Armed` handles an armed slot's click, `Cast` the key / button casts. The UI systems that must see the mouse first order before these.
-#[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CastInputStage {
-    Cursor,
-    Armed,
-    Cast,
-}

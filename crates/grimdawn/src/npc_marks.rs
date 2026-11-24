@@ -2,15 +2,15 @@
 //! holds the rules): the mark's FX record is a `Punctuation` object, a plain
 //! mesh (`fx/meshfx/ui_*.msh`, its `baseTexture` override) spawned like any
 //! record model ([`gd_render::character::CharAssets::spawn_record_model`]).
-//! * `Entity::AttachPunctuation` (Engine.dll 0x18007fd60): the object
+//! * `Entity::AttachPunctuation` (Engine.dll): the object
 //!   is created from the record and attached to the NPC's `Head` attach point;
 //!   `DetachPunctuation` destroys it. A new mark replaces the old one. A mesh
 //!   without a `Head` point (the bounty tables, `*_tablebounty*.msh`: only
 //!   candle / light points) attaches at the actor's origin:
-//!   `GraphicsMesh::GetAttachedCoords` @0x1800b8460 returns the identity for an
+//!   `GraphicsMesh::GetAttachedCoords` returns the identity for an
 //!   unknown name, and `Actor::GetAttachedCoordsInRegion` scales that frame by
 //!   the actor's scale before placing it at the actor's coords.
-//! * `Npc::BillboardPunctuation` (Game.dll 0x1803ba860): every frame
+//! * `Npc::BillboardPunctuation` (Game.dll): every frame
 //!   the attach offset is set to a rotation about the vertical axis derived
 //!   from the camera's direction and a translation of (0, 3, 0) in the head
 //!   point's frame. PORT: the offset is 3 m straight up from the head point
@@ -23,8 +23,8 @@
 //!   gem is an opaque grey square-topped pyramid in any light (lit, its top went
 //!   white in the sun over a dark, see-through-looking point).
 use bevy::prelude::*;
-use gd_game::character::Character;
 use gd_game::npc_marks::NpcMark;
+use gd_game_core::character::Character;
 use gd_render::camera::GameCamera;
 use gd_render::character::CharAssets;
 
@@ -106,7 +106,7 @@ fn place_marks(
         let Ok((ngt, ch)) = npcs.get(m.0) else {
             continue;
         };
-        let head = gd_game::casting::attach_point_bind(&ch.body, "Head")
+        let head = gd_game_core::casting::attach_point_bind(&ch.body, "Head")
             .map_or(ngt.translation(), |l| ngt.transform_point(l));
         let scale = ngt.scale().y;
         let at = head + Vec3::Y * 3.0 * scale;

@@ -1,9 +1,10 @@
 //! World map tools: validate `.map` files, dump levels, render top-down PNGs.
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use gd_formats::collections::HashMap;
 use gd_formats::map::{Level, MapFile};
 use gd_formats::vfs::Database;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -222,7 +223,7 @@ fn check(path: &Path, db: Option<&Database>) -> Result<()> {
     let mut n_ent = 0usize;
     let mut n_uid = 0usize;
     let mut n_extra = 0usize;
-    let mut records: HashMap<String, usize> = HashMap::new();
+    let mut records: HashMap<String, usize> = HashMap::default();
     let mut terrain_sizes: BTreeMap<(u32, u32), usize> = BTreeMap::new();
     let mut layer_counts: BTreeMap<usize, usize> = BTreeMap::new();
     let mut unknown: BTreeMap<u32, usize> = BTreeMap::new();
@@ -320,7 +321,7 @@ fn check(path: &Path, db: Option<&Database>) -> Result<()> {
         println!("    {n:7} {r}");
     }
     if let Some(db) = db {
-        let mut classes: HashMap<String, usize> = HashMap::new();
+        let mut classes: HashMap<String, usize> = HashMap::default();
         for (r, n) in &records {
             let c = db
                 .get(r)

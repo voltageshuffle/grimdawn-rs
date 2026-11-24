@@ -32,16 +32,23 @@ pub(super) fn spawn_pets(
     mut events: MessageReader<SpawnPet>,
     rules: Res<CombatRules>,
     // Option: optional input (the pet level falls back without progress).
-    progress: Option<Res<crate::progress::PlayerProgress>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     owners: Query<(
         &Transform,
         &Loadout,
         Option<&PetStances>,
-        Option<&crate::weapon_pool::SkillLinks>,
-        Option<&crate::skill_buffs::ReceivedBuffs>,
+        Option<&gd_game_core::weapon_pool::SkillLinks>,
+        Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
     )>,
     mut pets: Query<(Entity, &Pet, &mut Combatant, &mut Character), Without<Dead>>,
-    targets: Query<(&Transform, Option<&crate::monsters::Monster>, Option<&Pet>), Without<Dead>>,
+    targets: Query<
+        (
+            &Transform,
+            Option<&gd_game_core::monsters::Monster>,
+            Option<&Pet>,
+        ),
+        Without<Dead>,
+    >,
     nav: Res<Nav>,
     time: Res<Time>,
     mut assets: crate::creature::Spawner,
@@ -65,18 +72,18 @@ pub(super) fn spawn_pets(
         else {
             continue;
         };
-        // `KillExtraPets` @0x180509890: after the new pet joined
+        // `KillExtraPets`: after the new pet joined
         // the pen, `GetPetLimit` 0 = unlimited, else the oldest live pets of
         // this skill beyond the limit die through `KillMe(overkillOnDismiss)`
         // (dying skill runs). The new pet is not spawned yet, so the count
         // here is one short: kill while `old + 1 > limit`.
-        // `Skill_SpawnQuestPet::SpawnPet` @0x18050a480: before the
-        // base spawn, with the profile's vector at +1472 empty (PORT: the
+        // `Skill_SpawnQuestPet::SpawnPet`: before the
+        // base spawn, with `SkillProfile.questPetVector` empty (PORT: the
         // default; no stock skill sets it, only the base template exists),
         // every unreleased pet of the owner's quest pen, of any skill, is
         // released alive (`UnJoinLeader(false)`): a new quest pet replaces the old.
         let quest = rec.class == "Skill_SpawnQuestPet";
-        // `Skill::GetPetLimit` @0x180493880: the modifier-summed
+        // `Skill::GetPetLimit`: the modifier-summed
         // `petLimit` / `petBurstSpawn` (the tooltip sums them too).
         let summon_mods: Vec<(gd_formats::arz::Record, usize)> = links
             .map(|l| {
@@ -107,7 +114,7 @@ pub(super) fn spawn_pets(
                     .map(|m| m.record.as_str())
                     .or(p.map(|p| p.record.as_str()))
                     .and_then(|r| assets.data.db.get(r));
-                (t.translation, super::placement::extents(r))
+                (t.translation, gd_game_core::pets::placement::extents(r))
             });
         let base = assets.data.db.get(&base_rec);
         let spots: Vec<Vec3> = if rec.class == "Skill_TargetedSpawnPet" {
@@ -126,7 +133,7 @@ pub(super) fn spawn_pets(
         } else if super::placement::spawns_on_hit(&rec.class) {
             super::placement::hit_spots(&assets.data.db, &nav, rec, burst, base, ev.point, target)
         } else {
-            let count = super::placement::spawn_pet_count(
+            let count = gd_game_core::pets::placement::spawn_pet_count(
                 &rec.class,
                 limit as u32,
                 mine.len() as u32,
@@ -164,7 +171,7 @@ pub(super) fn spawn_pets(
         // The skill's learned and gear secondaries (`petChanges`,
         // [`gd_sim::skills::spawn_object`]).
         let key = ev.skill.to_ascii_lowercase();
-        let names = |m: Option<&std::collections::HashMap<String, Vec<(String, usize)>>>| {
+        let names = |m: Option<&gd_formats::collections::HashMap<String, Vec<(String, usize)>>>| {
             m.and_then(|m| m.get(&key))
                 .map(|v| v.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
                 .unwrap_or_default()
@@ -179,7 +186,7 @@ pub(super) fn spawn_pets(
                 ev.level_index,
                 &learned,
                 &gear,
-                |n| crate::rng::u32(0..n),
+                |n| gd_game_core::rng::u32(0..n),
             )
             .unwrap_or_else(|| base_rec.clone());
             let mut gone = Vec::new();
@@ -270,7 +277,7 @@ pub(super) fn spawn_pets(
                 &mut assets,
                 tf,
                 &pet_rec,
-                crate::rng::u32(..),
+                gd_game_core::rng::u32(..),
             ) else {
                 continue;
             };
@@ -292,7 +299,7 @@ pub(super) fn spawn_pets(
                     continue;
                 };
                 if l > 0 && r.class == "Skill_BuffAttackRadiusToggled" {
-                    auras.push(crate::casting::DamageAura::new(
+                    auras.push(gd_game_core::casting::DamageAura::new(
                         r,
                         name,
                         (l - 1) as usize,
@@ -324,7 +331,7 @@ pub(super) fn spawn_pets(
             if !auras.is_empty() {
                 commands
                     .entity(e)
-                    .insert(crate::casting::DamageAuras(auras));
+                    .insert(gd_game_core::casting::DamageAuras(auras));
             }
             // Its skills' autocast children (`crate::autocast`, skill-level autocasts: the Wendigo Totem's heal).
             if let Some(a) = crate::autocast::SkillAutocasts::of(&assets.data.db, &levels) {
@@ -389,7 +396,7 @@ pub(super) fn spawn_pets(
                     .map(str::to_owned)
                     .unwrap_or_else(|| name.to_owned());
                 let secs = assets.data.db.get(&inner).map_or(0.0, |b| {
-                    crate::casting::level_f(b, "skillActiveDuration", li)
+                    gd_game_core::casting::level_f(b, "skillActiveDuration", li)
                 });
                 (secs > 0.0).then(|| (name.to_owned(), li, inner, secs))
             });
@@ -473,7 +480,7 @@ pub(super) fn spawn_pets(
                     .collect::<Vec<_>>()
             );
             let dirty = !toggled.is_empty();
-            let radius = crate::combat::get_radius(Some(prec), 0.5);
+            let radius = gd_game_core::combat::get_radius(Some(prec), 0.5);
             // The summon skill's stored stance (`Player::PostPetSpawn`).
             let stored = stances.map_or(Stance::Normal, |s| s.get(&ev.skill));
             let (ctl, stance) = match PetController::of_stance(&assets.data, prec, stored) {
@@ -503,7 +510,7 @@ pub(super) fn spawn_pets(
                     player_scaling: prec.class == "PetPlayerScaling",
                     buff_self,
                     toggled,
-                    buffs: crate::skill_buffs::TimedBuffs::default(),
+                    buffs: gd_game_core::skill_buffs::TimedBuffs::default(),
                     buff_other,
                     ally_due: false,
                     cooldowns: Vec::new(),
@@ -570,7 +577,7 @@ pub(super) fn refresh_profiles(
         (
             Entity,
             Ref<Loadout>,
-            Option<&crate::skill_buffs::ReceivedBuffs>,
+            Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
         ),
         Without<Pet>,
     >,
@@ -579,7 +586,7 @@ pub(super) fn refresh_profiles(
         (
             &mut Pet,
             &mut Combatant,
-            Option<&mut crate::skill_buffs::ReceivedBuffs>,
+            Option<&mut gd_game_core::skill_buffs::ReceivedBuffs>,
             Option<&crate::challenge_areas::AreaRules>,
         ),
         Without<Dead>,

@@ -13,13 +13,13 @@ pub fn hit_box_obstacles(msh: &Msh, tf: &Transform) -> Vec<Obstacle> {
 /// bone frames, `gd_formats::anm::pose_mesh`'s first result).
 ///
 /// Engine.dll `GraphicsMesh::GetHitBox(index, SkeletalPose)`
-/// (0x1800b7b30) and `Actor::GetHitBox` (0x180026690): a hit box with a bone
+/// and `Actor::GetHitBox`: a hit box with a bone
 /// index is `GetAbsCoords(pose, bone)` × the box frame; one with bone −1 takes
 /// the bone named like the hit box, and then that bone's posed frame alone
 /// (the box frame unused); with no such bone, the box frame in mesh space.
 /// The axes are normalised and the half sizes scaled by their lengths, then
 /// placed by the entity's coords and scale. `GetAbsCoords(pose, bone)`
-/// (0x1800b8320) chains `local × key` up to the root (a bone without a key
+/// chains `local × key` up to the root (a bone without a key
 /// uses identity), as `pose_mesh` does; no root-motion pin.
 pub fn posed_hit_box_obstacles(msh: &Msh, tf: &Transform, abs: &[Coords]) -> Vec<Obstacle> {
     placed_hit_boxes(msh, &tf.to_matrix(), abs, |_| true)

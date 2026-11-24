@@ -1,40 +1,43 @@
 //! The tutorial quick tip (`tutorialTips` option): a small box at the top left that names a tutorial page's hint when
 //! the page unlocks for the first time ([`gd_game::tutorials::TutorialTip`], the engine's event 54).
 //!
-//! Grim Dawn.exe: `sub_1401C4690` reads the page's `quickTag` (nothing when empty) and
-//! `quickTagKey` (a key action name, [`super::quests::key_operation`]: the key bound to it is the tag's `%s`), and with
-//! the option on hands the text to the tip manager `sub_140108C80` at (20, 100); `sub_140109220`: 250 ms fade in, 10 s
-//! opaque, 500 ms fade out; `sub_140109A60`: a click on the box opens the Tutorial (Help) window on the page and fades
+//! Grim Dawn.exe: `HelpPage::ShowQuickTip` reads the page's `quickTag` (nothing when empty) and `quickTagKey` (a key
+//! action name, [`gd_ui::quests::key_operation`]: the key bound to it is the tag's `%s`), and with the option on hands
+//! the text to the tip manager `TipManager::AddTip` at (20, 100); `TipManager::Update`: 250 ms fade in, 10 s opaque,
+//! 500 ms fade out; `TipManager::OnTipClick`: a click on the box opens the Tutorial (Help) window on the page and fades
 //! the tip out (500 ms). A tip created while another shows is queued behind it (FIFO). The option off: no tip is made
 //! (the page still unlocks). The page number is the index into the Help window's `tutorialPages` list.
 //!
-//! HUD widget tips: every widget loaded from a record with `tutorialTag` (loader sub_140262010: `tutorialTrigger`,
-//! `tutorialTag`, `tutorialKey`, `tutorialOffsetY`) listens to event 54 (sub_140261EC0); when the unlocked page is its
-//! `tutorialTrigger` and the tag is not empty, sub_140262120 hands the tag (with the `tutorialKey` action's
-//! key name as its `%s`, else without parameters) to the tip manager as a pointer tip (`sub_140108C80` mode 1, kind 1)
-//! at the widget rect's centre, `tutorialOffsetY` lower, when the option is on. A pointer tip starts at once (it is
-//! never queued and does not hold back the page tips: sub_140109220 waits only for kind-0 tips); its box
-//! (sub_1401081E0) is 340 + 2 × padding wide and its text's height + 2 × padding high, centred on the point with its
-//! bottom on it, then raised 50 px (top at least 20), with `ui/tutorialwindow/tutorialtipbottom.tex` centred under
-//! it; same fades, and a click opens the trigger's Help page (sub_140109A60). The HUD widgets with one
-//! ([`POINTER_FIELDS`]): the health and constitution bars, the teleport button, the character button and the classic
-//! HUD's level-up indicator (`playerPortraitLevelUpIndicatorButton`, page 14). By design not the group button's
-//! (page 26: no multiplayer).
+//! HUD widget tips: every widget loaded from a record with `tutorialTag` (loader `UIWidget::LoadTutorialTip`:
+//! `tutorialTrigger`, `tutorialTag`, `tutorialKey`, `tutorialOffsetY`) listens to event 54
+//! (`UIWidget::RegisterTutorialListener`); when the unlocked page is its `tutorialTrigger` and the tag is not empty,
+//! `UIWidget::ShowTutorialTip` hands the tag (with the `tutorialKey` action's key name as its `%s`, else without
+//! parameters) to the tip manager as a pointer tip (`TipManager::AddTip` mode 1, kind 1) at the widget rect's centre,
+//! `tutorialOffsetY` lower, when the option is on. A pointer tip starts at once (it is never queued and does not hold
+//! back the page tips: `TipManager::Update` waits only for kind-0 tips); its box (`TipBox::Layout`) is 340 + 2 ×
+//! padding wide and its text's height + 2 × padding high, centred on the point with its bottom on it, then raised 50 px
+//! (top at least 20), with `ui/tutorialwindow/tutorialtipbottom.tex` centred under it; same fades, and a click opens
+//! the trigger's Help page (`TipManager::OnTipClick`). The HUD widgets with one ([`POINTER_FIELDS`]): the health and
+//! constitution bars, the teleport button, the character button and the classic HUD's level-up indicator
+//! (`playerPortraitLevelUpIndicatorButton`, page 14). By design not the group button's (page 26: no multiplayer).
 //!
 //! PORT: the box is the black rect + `genericrolloverbox` border of the button rollover (the tip manager's own frame
-//! is `genericbox_*.tex`, same pieces), [`TIP_TEXT`] wide like the pointer tips' (sub_1401081E0). The text
+//! is `genericbox_*.tex`, same pieces), [`TIP_TEXT`] wide like the pointer tips' (`TipBox::Layout`). The text
 //! ([`layout`]): the title (the tag up to its first `{^-}`, `Title{^-}{^n}{^n}Body` in every `tagQuickTip*`) in
 //! `style_rollover_title`, the body in `style_rollover_description` (its `{^h}` highlights), every line centred, a
 //! blank line a short gap ([`PARAGRAPH_GAP`]): read off the real game's main-menu tip, not decompiled. The page tips'
 //! point (20, 100) / (20, 150) is the box's left edge and vertical centre (the real main-menu box is centred on
 //! y = 150). `GD_TUTORIAL_TIP` (hooks.rs) unlocks that page at that time.
-//! PORT (a performance choice): the tips are built once per (window size, HUD table, set of tips), each in a
-//! [`FadeGroup`]; the fades change the nodes' alpha in place ([`Fader`]).
+//! PORT (a performance choice): the tips are built once per (window size, HUD table, set of tips, tags
+//! generation), each in a [`FadeGroup`]; the fades change the nodes' alpha in place ([`Fader`]). The tags
+//! generation (`FontCache::generation`) bumps on a mod or language swap: a rebuild re-resolves each tip's text
+//! from its stored tag, so the tips follow the new language (the engine localises live, `MainMenu::SetState`).
 use super::UiAssets;
-use crate::data::GameData;
 use bevy::prelude::*;
+use gd_ui::fade::{Fader, fade_group, seal_fade_group};
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::Rect as URect;
+use gd_game_core::data::GameData;
 use std::collections::VecDeque;
 
 const TITLE: &str = "records/ui/styles/text/style_rollover_title.dbr";
@@ -54,7 +57,7 @@ const PARAGRAPH_GAP: f32 = 0.4;
 pub struct QuickTip {
     shown: Option<Shown>,
     queue: VecDeque<u32>,
-    /// The main menu's tip was made (once per process, `menu+2568`; not reset with a session).
+    /// The main menu's tip was made (once per process, `MainMenu.quickTipShown`; not reset with a session).
     menu_tip_done: bool,
     /// The HUD widgets' pointer tips on screen (module doc).
     pointers: Vec<Pointer>,
@@ -69,10 +72,13 @@ impl QuickTip {
     }
 }
 
-/// A pointer tip: the HUD master field of its widget, the page that triggered it, its text and timing.
+/// A pointer tip: the HUD master field of its widget, the page that triggered it, its tag (with the optional
+/// key action), the resolved text (draw cache) and timing.
 struct Pointer {
     field: &'static str,
     page: u32,
+    tag: String,
+    key: Option<u32>,
     text: String,
     age: f32,
     out_at: Option<f32>,
@@ -92,123 +98,17 @@ const POINTER_FIELDS: [&str; 5] = [
 const POINTER_RAISE: f32 = 50.0;
 const POINTER_ARROW: &str = "ui/tutorialwindow/tutorialtipbottom.tex";
 
-/// A full-screen container node whose children (image, solid and text nodes) fade together: the alpha applied to
-/// them, on top of the alpha each was built with ([`BaseAlpha`]). Built with [`fade_group`], then
-/// [`seal_fade_group`]; changed with [`Fader::set`]. Used by the quick tips and the conversation window.
-#[derive(Component)]
-pub struct FadeGroup(f32);
 
-/// The alpha a [`FadeGroup`] child was built with.
-#[derive(Component)]
-struct BaseAlpha(f32);
 
-/// A full-screen container under `parent`; `ui` builds into it from here on.
-pub fn container(ui: &mut super::Ui, parent: Entity, marker: impl Bundle) -> Entity {
-    let e = ui
-        .commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
-            marker,
-        ))
-        .id();
-    ui.commands.entity(parent).add_child(e);
-    ui.root = e;
-    e
-}
 
-/// A [`FadeGroup`] at `alpha` under `parent`; `ui` builds into it from here on (build the children with their
-/// own alpha, as if the group's were 1), then call [`seal_fade_group`].
-pub fn fade_group(ui: &mut super::Ui, parent: Entity, alpha: f32) -> Entity {
-    container(ui, parent, FadeGroup(alpha))
-}
 
-/// After a [`fade_group`]'s children are spawned: remembers each child's own alpha and applies the group's, in
-/// the same command flush as the spawns (the first frame already shows the faded colours).
-pub fn seal_fade_group(commands: &mut Commands, group: Entity) {
-    commands.queue(move |world: &mut World| {
-        let (Some(alpha), Some(children)) = (
-            world.get::<FadeGroup>(group).map(|g| g.0),
-            world.get::<Children>(group).map(|c| c.to_vec()),
-        ) else {
-            return;
-        };
-        for c in children {
-            let Ok(mut e) = world.get_entity_mut(c) else {
-                continue;
-            };
-            // One colour per node, the same order as `Fader::set`: every `Node` carries a (default transparent)
-            // `BackgroundColor`, so an image or text node's own colour comes first and its background is never faded in.
-            let base = if let Some(mut n) = e.get_mut::<ImageNode>() {
-                let base = n.color.alpha();
-                n.color.set_alpha(base * alpha);
-                base
-            } else if let Some(mut n) = e.get_mut::<TextColor>() {
-                let base = n.0.alpha();
-                n.0.set_alpha(base * alpha);
-                base
-            } else if let Some(mut n) = e.get_mut::<BackgroundColor>() {
-                let base = n.0.alpha();
-                n.0.set_alpha(base * alpha);
-                base
-            } else {
-                continue;
-            };
-            e.insert(BaseAlpha(base));
-        }
-    });
-}
 
-/// Changes a [`FadeGroup`]'s alpha in place.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct Fader<'w, 's> {
-    groups: Query<'w, 's, (&'static mut FadeGroup, &'static Children)>,
-    #[allow(clippy::type_complexity)]
-    colors: Query<
-        'w,
-        's,
-        (
-            &'static BaseAlpha,
-            Option<&'static mut ImageNode>,
-            Option<&'static mut BackgroundColor>,
-            Option<&'static mut TextColor>,
-        ),
-    >,
-}
 
-impl Fader<'_, '_> {
-    /// Nothing is written while `alpha` is the group's.
-    pub fn set(&mut self, group: Entity, alpha: f32) {
-        let Ok((mut g, children)) = self.groups.get_mut(group) else {
-            return;
-        };
-        if g.0 == alpha {
-            return;
-        }
-        g.0 = alpha;
-        for c in children.iter() {
-            let Ok((base, image, solid, text)) = self.colors.get_mut(c) else {
-                continue;
-            };
-            let a = base.0 * alpha;
-            // The colour `seal_fade_group` based the alpha on, only (see there).
-            if let Some(mut n) = image {
-                n.color.set_alpha(a);
-            } else if let Some(mut n) = text {
-                n.0.set_alpha(a);
-            } else if let Some(mut n) = solid {
-                n.0.set_alpha(a);
-            }
-        }
-    }
-}
 
 struct Shown {
     record: String,
+    tag: String,
+    key: Option<u32>,
     text: String,
     age: f32,
     /// Age at which the fade out started (a click, or `FADE_IN + HOLD`).
@@ -224,12 +124,13 @@ struct Shown {
 #[derive(Component)]
 struct TipRoot;
 
-/// What is on screen: the window size and HUD table it was built for and the tips' fade groups (the page tip's,
-/// the pointer tips' in `QuickTip::pointers` order).
+/// What is on screen: the window size, HUD table and tags generation it was built for and the tips' fade
+/// groups (the page tip's, the pointer tips' in `QuickTip::pointers` order).
 #[derive(Default)]
 struct Built {
     size: UVec2,
     classic: bool,
+    generation: u64,
     page: Option<Entity>,
     pointers: Vec<Entity>,
 }
@@ -245,11 +146,11 @@ impl Plugin for QuickTipPlugin {
             // resolves its tag on the first menu frame.
             .add_systems(
                 Update,
-                tip.after(super::load_tags)
-                    .run_if(not(in_state(crate::session::AppState::Loading))),
+                tip.after(gd_ui::load_tags)
+                    .run_if(not(in_state(gd_ui::state::session::AppState::Loading))),
             )
             // Every tip on screen goes when the loading screen comes up (the menu's tip as in the real game).
-            .add_systems(OnEnter(crate::session::AppState::Loading), drop_tips);
+            .add_systems(OnEnter(gd_ui::state::session::AppState::Loading), drop_tips);
     }
 }
 
@@ -262,7 +163,7 @@ fn drop_tips(
 ) {
     state.shown = None;
     state.pointers.clear();
-    super::window::despawn_all(&mut commands, &roots);
+    gd_ui::window::despawn_all(&mut commands, &roots);
 }
 
 /// The tip click half ([`super::UiInputSet`], before the player's world click): a click inside a
@@ -272,9 +173,9 @@ fn clicks(
     mut state: ResMut<QuickTip>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<crate::hooks::Hooks>,
-    mut capture: ResMut<crate::inventory::UiCapture>,
-    mut journal: ResMut<super::quests::QuestJournal>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    mut capture: ResMut<gd_ui::state::inventory::UiCapture>,
+    mut journal: ResMut<gd_ui::quests::QuestJournal>,
     data: Res<GameData>,
 ) {
     let Ok(win) = window.single() else { return };
@@ -289,13 +190,13 @@ fn clicks(
 }
 
 /// A click inside the page tip's box opens its page and dismisses it; a click on a pointer tip opens
-/// its trigger's page (sub_140109A60). Both take the cursor.
+/// its trigger's page (`TipManager::OnTipClick`). Both take the cursor.
 fn click_tips(
     state: &mut QuickTip,
     cursor: Option<Vec2>,
     buttons: &ButtonInput<MouseButton>,
-    capture: &mut crate::inventory::UiCapture,
-    journal: &mut super::quests::QuestJournal,
+    capture: &mut gd_ui::state::inventory::UiCapture,
+    journal: &mut gd_ui::quests::QuestJournal,
     data: &GameData,
 ) {
     if let Some(s) = &mut state.shown
@@ -377,10 +278,12 @@ fn pointer_tips(
                 return None;
             }
             let tag = r.str("tutorialTag").filter(|t| !t.is_empty())?;
-            let key = r.str("tutorialKey").and_then(super::quests::key_operation);
+            let key = r.str("tutorialKey").and_then(gd_ui::quests::key_operation);
             Some(Pointer {
                 field,
                 page,
+                tag: tag.to_owned(),
+                key,
                 text: with_key(fonts, bindings, tag, key),
                 age: 0.0,
                 out_at: None,
@@ -394,10 +297,10 @@ fn pointer_tips(
 /// The point a pointer tip shows at: the widget rect's centre, `tutorialOffsetY` lower (screen px).
 fn pointer_anchor(ui: &mut super::Ui, field: &str) -> Option<Vec2> {
     let r = match field {
-        "hudHealthBar" | "hudConstitutionBar" => super::hud::bar_rect(ui, field)?,
+        "hudHealthBar" | "hudConstitutionBar" => gd_ui::hud::bar_rect(ui, field)?,
         // A hidden button over the portrait (no bitmap: its record size).
         "playerPortraitLevelUpIndicatorButton" => {
-            let po = super::hud::portrait_origin(ui)?;
+            let po = gd_ui::hud::portrait_origin(ui)?;
             let rec = ui.record(ui.hud_master())?.str(field)?.to_string();
             let b = ui.record(&rec)?;
             let f = |k: &str| b.f32(k).unwrap_or(0.0);
@@ -408,7 +311,7 @@ fn pointer_anchor(ui: &mut super::Ui, field: &str) -> Option<Vec2> {
                 ui.sc(f("buttonYSize")),
             )
         }
-        _ => super::rollover::button_rect(ui, field)?,
+        _ => gd_ui::rollover::button_rect(ui, field)?,
     };
     let rec = ui.record(ui.hud_master())?.str(field)?.to_string();
     let dy = ui
@@ -418,34 +321,29 @@ fn pointer_anchor(ui: &mut super::Ui, field: &str) -> Option<Vec2> {
     Some(Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5 + dy))
 }
 
-/// The page's record and tip text (`None`: no `quickTag`).
-fn page_text(
-    data: &GameData,
-    fonts: &super::text::FontCache,
-    bindings: &super::keys::KeyBindings,
-    page: u32,
-) -> Option<(String, String)> {
+/// The page's record and tip tag with its optional key action (`None`: no `quickTag`).
+fn page_text(data: &GameData, page: u32) -> Option<(String, String, Option<u32>)> {
     let rec = page_record(data, page)?;
     let r = data.db.get(&rec)?;
     let tag = r.str("quickTag").filter(|t| !t.is_empty())?;
-    let key = r.str("quickTagKey").and_then(super::quests::key_operation);
-    Some((rec, with_key(fonts, bindings, tag, key)))
+    let key = r.str("quickTagKey").and_then(gd_ui::quests::key_operation);
+    Some((rec, tag.to_owned(), key))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn tip(
-    mut fresh: gd_game::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
     mut state: ResMut<QuickTip>,
     mut events: MessageReader<gd_game::tutorials::TutorialTip>,
     mut unlock: MessageWriter<gd_game::tutorials::UnlockTutorial>,
-    options: Res<gd_game::options::GameOptions>,
-    (hooks, mut fired): (Res<gd_game::hooks::Hooks>, Local<bool>),
+    options: Res<gd_game_core::options::GameOptions>,
+    (hooks, mut fired): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
     clock: Res<Time<Real>>,
     buttons: Res<ButtonInput<MouseButton>>,
     (mut journal, mut capture): (
-        ResMut<super::quests::QuestJournal>,
-        ResMut<crate::inventory::UiCapture>,
+        ResMut<gd_ui::quests::QuestJournal>,
+        ResMut<gd_ui::state::inventory::UiCapture>,
     ),
     window: Query<&Window, With<PrimaryWindow>>,
     (data, bindings): (Res<GameData>, Res<super::keys::KeyBindings>),
@@ -458,7 +356,7 @@ fn tip(
         *fired = false;
         *built = Built::default();
     }
-    // The main menu's tip (`sub_1400BE320` case 3): `tagQuickTipMainMenu` at
+    // The main menu's tip (`MainMenu::SetState` case 3): `tagQuickTipMainMenu` at
     // (20, 150), once per process the first time the menu shows (the flag is set even with the option off).
     if menu.is_some() && !state.menu_tip_done {
         state.menu_tip_done = true;
@@ -466,6 +364,8 @@ fn tip(
             let text = assets.fonts.tag("tagQuickTipMainMenu").trim().to_owned();
             state.shown = Some(Shown {
                 record: String::new(),
+                tag: "tagQuickTipMainMenu".to_owned(),
+                key: None,
                 text,
                 age: 0.0,
                 out_at: None,
@@ -482,7 +382,7 @@ fn tip(
         *fired = true;
         unlock.write(gd_game::tutorials::UnlockTutorial(page));
     }
-    let master = super::hud::master(super::hud::classic(Some(&options)));
+    let master = gd_ui_kit::master(gd_ui_kit::classic(Some(&options)));
     for e in events.read() {
         if options.flag("tutorialTips") {
             state.queue.push_back(e.0);
@@ -509,14 +409,17 @@ fn tip(
     state
         .pointers
         .retain(|t| t.out_at.is_none_or(|o| t.age < o + FADE_OUT));
-    // The next queued tip starts once no page tip shows (sub_140108C80: queued while a tip is active).
+    // The next queued tip starts once no page tip shows (`TipManager::AddTip`: queued while a tip is active).
     while state.shown.is_none() {
         let Some(page) = state.queue.pop_front() else {
             break;
         };
-        if let Some((record, text)) = page_text(&data, &assets.fonts, &bindings, page) {
+        if let Some((record, tag, key)) = page_text(&data, page) {
+            let text = with_key(&assets.fonts, &bindings, &tag, key);
             state.shown = Some(Shown {
                 record,
+                tag,
+                key,
                 text,
                 age: 0.0,
                 out_at: None,
@@ -540,10 +443,11 @@ fn tip(
         );
     }
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let classic = super::hud::classic(Some(&options));
+    let classic = gd_ui_kit::classic(Some(&options));
     let wanted = state.shown.is_some() || !state.pointers.is_empty();
     let stale = built.size != size
         || built.classic != classic
+        || built.generation != assets.fonts.generation
         || built.page.is_some() != state.shown.is_some()
         || built.pointers.len() != state.pointers.len()
         || state.shown.as_ref().is_some_and(|s| !s.built)
@@ -559,16 +463,25 @@ fn tip(
         }
         return;
     }
-    super::window::despawn_all(&mut commands, &roots);
+    gd_ui::window::despawn_all(&mut commands, &roots);
     *built = Built {
         size,
         classic,
+        generation: assets.fonts.generation,
         ..default()
     };
     if !wanted {
         return;
     }
-    let root = crate::ui::spawn_root(&mut commands, TipRoot, 205);
+    // A rebuild re-resolves each tip's text from its tag: a language swap bumps the tags generation.
+    for t in &mut state.pointers {
+        t.text = with_key(&assets.fonts, &bindings, &t.tag, t.key);
+    }
+    if let Some(s) = &mut state.shown {
+        s.text = with_key(&assets.fonts, &bindings, &s.tag, s.key);
+    }
+
+    let root = gd_ui_kit::spawn_root(&mut commands, TipRoot, 205);
     let mut ui = assets.ui(
         &mut commands,
         &data,

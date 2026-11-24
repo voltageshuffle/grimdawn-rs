@@ -1,6 +1,6 @@
 //! Proxy spawning against the installed game database ([`gd_sim::testdata`]).
-use gd_sim::combat::Rng;
-use gd_sim::mode::Mode;
+use gd_rules::Rng;
+use gd_rules::mode::Mode;
 use gd_sim::proxy::{run_pool, run_proxy};
 
 #[test]
@@ -210,7 +210,7 @@ fn market_stock_and_prices() {
             &gd_sim::items::LootParams::at_level(3),
             &mut rng,
         );
-        let names: std::collections::HashSet<_> = roll
+        let names: gd_formats::collections::HashSet<_> = roll
             .iter()
             .map(|r| (&r.base, &r.prefix, &r.suffix))
             .collect();

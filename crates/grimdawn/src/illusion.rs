@@ -1,8 +1,8 @@
 //! The Illusionist's window, input side (drawn by `ui/trade.rs`
 //! `illusionist_window`; rules in `gd_game::illusion`).
 //!
-//! GrimDawn.exe transmuter window (`sub_14027E4D0` loader,
-//! `sub_1402817E0` page builder, `sub_140282880` apply): clicking one of the
+//! GrimDawn.exe transmuter window (`TransmuteWindow::Load` loader,
+//! `TransmuteWindow::BuildPage` page builder, `TransmuteWindow::Apply` apply): clicking one of the
 //! nine equipment boxes (`equipHead` … `equipHandLeft`) selects that worn
 //! item and lists the unlocked looks for it, 18 to a page
 //! (`displayBoxCount`), opening on the page of its current look; clicking a
@@ -13,7 +13,8 @@
 //! selected on opening (the first worn item that takes an illusion, head
 //! first).
 //!
-//! Weapon swap (sub_140280D50 / sub_14027FEB0 / sub_140281270): the
+//! Weapon swap (`TransmuteWindow::OnButtonEvent` / `UIIllusionist::UpdatePreview` /
+//! `TransmuteWindow::SwapWeapons`): the
 //! window's `equipSwap1LeftButton` is down while set II is worn (set on
 //! opening and whenever `Player::GetAlternateConfig` changes); a click swaps
 //! the player's weapon sets like the character window's button
@@ -25,77 +26,33 @@
 //! drops both hand slots' picks.
 //! The character view is the paper doll (`crate::doll`), wearing the pending
 //! picks (`Paperdoll::SetItemAppearance`), turned by the rotate buttons.
-use crate::inventory::{Inventory, UiCapture};
-use crate::trade::{Button, Trade, TradeLayout, TradeOpen, contains};
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::illusion::{EQUIP_BOXES, PAGE};
+use gd_ui::state::trade::{Button, Trade, TradeLayout};
+use crate::trade::TradeOpen;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::save::item::Item;
-pub use gd_game::illusion::WINDOW;
 use gd_game::illusion::{ApplyIllusions, Illusions, choices};
+use gd_game_core::inventory::Inventory;
+use gd_ui_kit::contains;
 
-/// The window's equipment boxes: record field and worn slot index
-/// (`gd_game::inventory::SLOTS`).
-pub const EQUIP_BOXES: [(&str, usize); 9] = [
-    ("equipHead", 0),
-    ("equipChest", 2),
-    ("equipLegs", 3),
-    ("equipFeet", 4),
-    ("equipHands", 5),
-    ("equipShoulders", 9),
-    ("equipMedal", 10),
-    ("equipHandRight", 12),
-    ("equipHandLeft", 13),
-];
 
-/// Looks per page (`displayBoxCount`).
-pub const PAGE: usize = 18;
 
-/// The open window's state.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct IllusionView {
-    /// The selected worn slot.
-    pub slot: Option<usize>,
-    /// The looks offered for it (`gd_game::illusion::choices`), rebuilt when
-    /// the slot, the item or the unlocked list changes.
-    pub list: Vec<String>,
-    /// What `list` was built for (slot item, unlocked count).
-    pub built: Option<(Item, usize)>,
-    pub page: usize,
-    /// Pending picks: (worn slot, look record).
-    pub picks: Vec<(usize, String)>,
-    /// The close button was pressed.
-    pub close: bool,
-}
 
-impl IllusionView {
-    /// The pick for the selected slot, else the item's current look.
-    pub fn shown_look(&self, inv: &Inventory) -> Option<String> {
-        let s = self.slot?;
-        if let Some((_, l)) = self.picks.iter().find(|(p, _)| *p == s) {
-            return Some(l.clone());
-        }
-        inv.equipped[s]
-            .as_ref()
-            .map(|i| gd_sim::items::illusion::look_record(i).to_owned())
-    }
-
-    pub fn pages(&self) -> usize {
-        self.list.len().div_ceil(PAGE).max(1)
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn illusion_clicks(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<TradeLayout>,
     mut trade: ResMut<Trade>,
     inv: Option<Res<Inventory>>,
     illusions: Option<Res<Illusions>>,
-    choice: Res<gd_game::session::Choice>,
-    data: Res<crate::data::GameData>,
-    fonts: Res<crate::ui::text::FontCache>,
+    choice: Res<gd_game_core::session::Choice>,
+    data: Res<gd_game_core::data::GameData>,
+    fonts: Res<gd_ui_kit::text::FontCache>,
     mut capture: ResMut<UiCapture>,
     mut apply: MessageWriter<ApplyIllusions>,
     mut swap: MessageWriter<gd_game::weapon_sets::SwapWeapons>,
@@ -191,7 +148,7 @@ pub fn illusion_clicks(
         trade.version += 1;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = crate::ui::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
         return;
     };
     trade.hover = None;

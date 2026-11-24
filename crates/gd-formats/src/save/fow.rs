@@ -1,5 +1,5 @@
 //! `map.fow` — fog of war. Engine.dll `FOWManager::Write`
-//! (0x18008ce10) / `FOWManager::Read` (0x18008cba0).
+//! / `FOWManager::Read`.
 //!
 //! File: `u32 uncompressed_size` + LZ4 block (`LZ4_compress_fast`, accel 1) of:
 //! `u32 'FOWX'`, `u32 version (1)`, `u32 count`, then per region
@@ -126,21 +126,20 @@ pub const CELL: f32 = 8.0;
 /// Vision radius in meters (`FogOfWar::kVisibleRange`, 30.0).
 pub const VISIBLE_RANGE: f32 = 30.0;
 /// Inside this distance a cell is fully revealed (`225 = 15^2`, the constant in
-/// the reveal loop of `World::AddFOWVisibility` -> sub_18008B5F0).
+/// the reveal loop of `World::AddFOWVisibility` -> `FogOfWar::Reveal`).
 pub const CLEAR_RANGE: f32 = 15.0;
 /// `FogOfWar::IsInFog` treats cells with a value above this as fogged.
 pub const FOG_THRESHOLD: u8 = 0x96;
 
-/// One region's fog grid. `FogOfWar::Write` / `Read` (0x18008c220 /
-/// 0x18008c730): region data = `u32 width, u32 height, u32 byte count (= w*h),
+/// One region's fog grid. `FogOfWar::Write` / `Read`: region data = `u32 width, u32 height, u32 byte count (= w*h),
 /// u32 format` then the cells. `Write`: format 0 = raw cells, 1 = every cell 255 and
 /// 2 = every cell 0 (both without cells); `Read` decodes 2 as all 0 and any
 /// other non-0 format as all 255. Cell 255 =
-/// fogged, 0 = fully revealed. `FogOfWar::Initialize` (0x18008bb80): width =
+/// fogged, 0 = fully revealed. `FogOfWar::Initialize`: width =
 /// `2 + floor(region_width_m / 8)` (height likewise from the depth), all 255.
 /// Row 0 of the data is the region's far (high z) edge: the cell for local
 /// `(x, z)` is `col = trunc(x/8 + 1)`, `row = h - trunc(z/8 + 1) - 1`
-/// (`IsInFog` 0x18008bc70).
+/// (`FogOfWar::IsInFog`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FogGrid {
     pub w: u32,
@@ -238,8 +237,8 @@ impl FogGrid {
             .is_some_and(|i| self.cells[i] > FOG_THRESHOLD)
     }
 
-    /// Reveals around the region-local `(x, z)`. Per sub_18008B5F0 (called
-    /// by `World::AddFOWVisibility` 0x180219f50 with the position moved by
+    /// Reveals around the region-local `(x, z)`. Per `FogOfWar::Reveal` (called
+    /// by `World::AddFOWVisibility` with the position moved by
     /// +8 m on both axes so that a cell's sample point is its low corner): every
     /// cell whose sample point is within 30 m gets
     /// `min(cell, d2 < 225 ? 0 : (d2 - 225) / 675 * 255)`. Returns whether any

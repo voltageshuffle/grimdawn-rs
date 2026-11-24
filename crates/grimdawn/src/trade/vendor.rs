@@ -1,10 +1,12 @@
 //! The vendor and caravan windows' input and the trade answers.
 use super::*;
+use gd_ui::state::trade::{Button, DismissPrompt, Prompt, Trade, TradeLayout};
+use gd_ui_kit::contains;
 
 /// The vendor / caravan window's clicks: the dialog box ([`Prompt`]), buying, selling, the stash pages.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn trade_clicks(
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -14,26 +16,26 @@ pub(super) fn trade_clicks(
     stash: Option<Res<Stash>>,
     inv: Option<Res<Inventory>>,
     progress: Option<Res<PlayerProgress>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     mut capture: ResMut<UiCapture>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     (mut tested, mut script, time, mut sound, mut dismiss, mut close): (
         Local<bool>,
-        Local<Option<Vec<gd_game::hooks::Click>>>,
+        Local<Option<Vec<gd_game_core::hooks::Click>>>,
         Res<Time>,
-        MessageWriter<gd_game::visuals::PlaySound>,
+        MessageWriter<gd_game_core::visuals::PlaySound>,
         MessageReader<DismissPrompt>,
         MessageWriter<ServiceRequest>,
     ),
     (mut buy_req, mut sell_req, mut stash_req, mut apply, mut sell_held, mut stack): (
         MessageWriter<gd_game::trade::BuyRequest>,
         MessageWriter<gd_game::trade::SellRequest>,
-        MessageWriter<gd_game::stash::StashRequest>,
-        MessageWriter<gd_game::inventory::ApplyRequest>,
+        MessageWriter<gd_game_core::stash::StashRequest>,
+        MessageWriter<gd_game_core::inventory::ApplyRequest>,
         MessageWriter<gd_game::trade::SellHeld>,
-        ResMut<crate::ui::stack::StackWindow>,
+        ResMut<gd_ui::stack::StackWindow>,
     ),
-    confirm: Res<crate::ui::apply::InvConfirm>,
+    confirm: Res<gd_ui::apply::InvConfirm>,
 ) {
     if dismiss.read().count() > 0 && (trade.prompt.is_some() || trade.confirm) {
         trade.prompt = None;
@@ -60,20 +62,20 @@ pub(super) fn trade_clicks(
         if inv
             .applying
             .as_ref()
-            .is_some_and(|a| matches!(a.src, gd_game::inventory::ItemLoc::Stash { .. }))
+            .is_some_and(|a| matches!(a.src, gd_game_core::inventory::ItemLoc::Stash { .. }))
         {
-            apply.write(gd_game::inventory::ApplyRequest::Cancel);
+            apply.write(gd_game_core::inventory::ApplyRequest::Cancel);
         }
         return;
     };
     // The dialog box ([`Prompt`]) takes every click while up: Yes on the buy question sends the purchase, Ok /
     // No / the close button only close it.
     if let Some(prompt) = trade.prompt {
-        use crate::ui::confirm::Hit;
+        use gd_ui_kit::confirm::Hit;
         capture.0 = true;
         trade.hover = None;
         let Ok(win) = window.single() else { return };
-        let p = crate::ui::cursor_px(&hooks, win);
+        let p = gd_ui_kit::cursor_px(&hooks, win);
         let hit = match (prompt, layout.confirm, layout.ok) {
             (Prompt::BuyPage { .. }, Some(r), _) => p.and_then(|p| r.hit(p)),
             (Prompt::Message(_), _, Some((ok, close))) => p.and_then(|p| {
@@ -96,13 +98,13 @@ pub(super) fn trade_clicks(
             && let Some(hit) = hit
         {
             if hit == Hit::Close
-                && let Some(pak) = crate::ui::confirm::close_sound(&data)
+                && let Some(pak) = gd_ui_kit::confirm::close_sound(&data)
             {
-                sound.write(gd_game::visuals::PlaySound { pak, at: None });
+                sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
             }
             if let (Hit::Yes, Prompt::BuyPage { transfer, cost }) = (hit, prompt) {
                 info!("stash: buying a page for {cost}");
-                stash_req.write(gd_game::stash::StashRequest::BuyPage { transfer });
+                stash_req.write(gd_game_core::stash::StashRequest::BuyPage { transfer });
             }
             trade.prompt = None;
             trade.confirm_look = Default::default();
@@ -121,7 +123,7 @@ pub(super) fn trade_clicks(
         // `GD_REAGENTS`: show the Materials / Components tab.
         trade.reagents = hooks.items.reagents;
 
-        stash_req.write(gd_game::stash::StashRequest::TestTransfer);
+        stash_req.write(gd_game_core::stash::StashRequest::TestTransfer);
         trade.version += 1;
         return;
     }
@@ -156,13 +158,13 @@ pub(super) fn trade_clicks(
     // `GD_INV_CLICKS` (hooks.rs): a scripted click inside this window clicks it (the stash's apply mode in a run).
     let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
     let scripted = matches!(open, TradeOpen::Stash { .. })
-        .then(|| gd_game::hooks::take_due(script, time.elapsed_secs()))
+        .then(|| gd_game_core::hooks::take_due(script, time.elapsed_secs()))
         .flatten()
         .filter(|c| layout.window.is_some_and(|r| contains(&r, c.at)));
     let Ok(win) = window.single() else { return };
     let Some(p) = scripted
         .map(|c| c.at)
-        .or_else(|| crate::ui::cursor_px(&hooks, win))
+        .or_else(|| gd_ui_kit::cursor_px(&hooks, win))
     else {
         return;
     };
@@ -175,7 +177,7 @@ pub(super) fn trade_clicks(
             .iter()
             .any(|(b, r)| *b == Button::Close && contains(r, p))
         && !stack.covers(p)
-        && !crate::inventory::question_up(&inv, &trade, &confirm)
+        && !gd_ui::apply::question_up(&inv, &trade, &confirm)
     {
         capture.0 = true;
         close.write(ServiceRequest::Close);
@@ -198,7 +200,7 @@ pub(super) fn trade_clicks(
     }
     // A modal question (destroy, tonic/writ use, apply / reagent confirmations: `inventory::question_up`)
     // takes every click: none reaches the window under it.
-    if crate::inventory::question_up(&inv, &trade, &confirm) {
+    if gd_ui::apply::question_up(&inv, &trade, &confirm) {
         return;
     }
     let (left, right) = match scripted {
@@ -275,7 +277,7 @@ pub(super) fn trade_clicks(
         }
         // Store a held stack of the material or take from the store
         // (`StashRequest::Material`; Shift takes a stack into the bags).
-        stash_req.write(gd_game::stash::StashRequest::Material {
+        stash_req.write(gd_game_core::stash::StashRequest::Material {
             record: record.clone(),
             shift: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
         });
@@ -287,20 +289,20 @@ pub(super) fn trade_clicks(
         && contains(&r, p)
         && stash.is_some()
     {
-        stash_req.write(gd_game::stash::StashRequest::Sort {
+        stash_req.write(gd_game_core::stash::StashRequest::Sort {
             transfer: trade.transfer,
             page: trade.tab,
         });
         return;
     }
-    // The buy tab asks first ([`Prompt`], `sub_140136F30`): short of gold, the Ok box
+    // The buy tab asks first ([`Prompt`], `CaravanWindow::PromptBuy`): short of gold, the Ok box
     // `tagTransferError01`; else the Yes / No question.
     if left
         && let Some(r) = layout.buy
         && contains(&r, p)
         && let Some(cost) = stash
             .as_deref()
-            .and_then(|s| gd_game::stash::next_page_cost(&data.db, s, trade.transfer))
+            .and_then(|s| gd_game_core::stash::next_page_cost(&data.db, s, trade.transfer))
     {
         trade.prompt = Some(if progress.gold < cost {
             Prompt::Message(gd_game::trade::TradeRefused {
@@ -406,7 +408,7 @@ pub(super) fn trade_clicks(
             // handlers' `SecondaryStashActivate` / `SecondaryTransferActivate`
             // are the primary ones).
             let transfer = trade.transfer;
-            let loc = move |x, y| gd_game::inventory::ItemLoc::Stash {
+            let loc = move |x, y| gd_game_core::inventory::ItemLoc::Stash {
                 transfer,
                 page: tab,
                 x,
@@ -414,7 +416,9 @@ pub(super) fn trade_clicks(
             };
             if (left || right) && inv.held.is_none() && inv.applying.is_some() {
                 if inv.applying.as_ref().is_some_and(|a| a.confirm.is_none()) {
-                    apply.write(gd_game::inventory::ApplyRequest::Click(Some(loc(cx, cy))));
+                    apply.write(gd_game_core::inventory::ApplyRequest::Click(Some(loc(
+                        cx, cy,
+                    ))));
                 }
                 return;
             }
@@ -426,7 +430,7 @@ pub(super) fn trade_clicks(
                 && inv.held.is_none()
                 && let Some(q) = under
             {
-                apply.write(gd_game::inventory::ApplyRequest::Start(loc(q.x, q.y)));
+                apply.write(gd_game_core::inventory::ApplyRequest::Start(loc(q.x, q.y)));
             }
             if let Some(placed) = under {
                 trade.hover = Some((placed.item.clone(), None));
@@ -435,14 +439,14 @@ pub(super) fn trade_clicks(
                 return;
             }
             // Ctrl + left click (Shift not held) on a stack of more than one opens the stack window
-            // (sub_14012EE50, `ui/stack.rs`; hidden above by every click).
+            // (`UIPlayerHud::OpenStackWindow`, `ui/stack.rs`; hidden above by every click).
             let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
             if inv.held.is_none()
                 && !shift
                 && keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
             {
                 if let Some(q) = under
-                    && gd_game::stack::count(&q.item) > 1
+                    && gd_game_core::stack::count(&q.item) > 1
                 {
                     stack.open(
                         loc(q.x, q.y),
@@ -450,14 +454,14 @@ pub(super) fn trade_clicks(
                             gr.x + (q.x + q.size.w) as f32 * cell,
                             gr.y + q.y as f32 * cell,
                         ),
-                        gd_game::stack::count(&q.item),
+                        gd_game_core::stack::count(&q.item),
                         &data,
                     );
                 }
                 return;
             }
             // Pick up / place / swap with the held item (`StashRequest::Click`).
-            stash_req.write(gd_game::stash::StashRequest::Click {
+            stash_req.write(gd_game_core::stash::StashRequest::Click {
                 transfer: trade.transfer,
                 page: tab,
                 cell: (cx, cy),

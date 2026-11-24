@@ -3,9 +3,10 @@
 //! stays dormant; the installed formulas reach the monster rules.
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
-use gd_game::ascendant::{AltarState, activate_altar};
-use gd_game::inventory::Inventory;
+use gd_game::ascendant::activate_altar;
 use gd_game::testing::TestGame;
+use gd_game_core::ascendant::AltarState;
+use gd_game_core::inventory::Inventory;
 
 #[test]
 fn altar_takes_reagents_and_installs() {
@@ -26,7 +27,11 @@ fn altar_takes_reagents_and_installs() {
     let f = db.get(&formula).unwrap();
     let reagent = f.str("reagentBaseBaseName").unwrap().to_owned();
     let q = f.i32("reagentBaseQuantity").unwrap_or(1).max(1) as u32;
-    let mode = g.app.world().resource::<gd_game::session::GameMode>().0;
+    let mode = g
+        .app
+        .world()
+        .resource::<gd_game_core::session::GameMode>()
+        .0;
     let w = g.app.world_mut();
     w.resource_scope(|w, mut inv: Mut<Inventory>| {
         let mut state = w.resource_mut::<AltarState>();
@@ -80,7 +85,7 @@ fn altar_takes_reagents_and_installs() {
     assert_eq!(
         g.app
             .world()
-            .resource::<gd_game::combat::CombatRules>()
+            .resource::<gd_game_core::rules::CombatRules>()
             .0
             .ascendant_paks,
         paks,

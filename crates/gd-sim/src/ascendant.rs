@@ -7,7 +7,7 @@
 //!   `altarExclusiveRecipes`) and five boxes (`altarInclusiveRecipes`); a
 //!   formula is found by its reagent item (`reagentBaseBaseName`,
 //!   `GameEngine::FindAltarRecipe`) and its level is the number of boxes
-//!   holding it (exe `sub_14011A4C0`). Using the altar needs the
+//!   holding it (exe `AscendantAltarWindow::CountFormulaBoxes`). Using the altar needs the
 //!   `gameengine.dbr` `ascendantToken` (`MainPlayerCanUseAscendantAltar`).
 //! - `AscendantAltarFormula::Install(level)` adds the per-level values (%,
 //!   index level − 1, clamped) of `goldModifier`, `reputationModifier`,
@@ -39,7 +39,7 @@
 //! - Gold / XP (`PlayerManagerServer::HandleBonus`): the amount plus
 //!   `round(amount × mod)` (half up), not applied inside Shattered Realm or
 //!   its treasure rooms. The `AttributePak` column is 1-based (level 1 on
-//!   Normal = index 0; `CharAttributeMod::AddToAccumulator` reads level − 1,
+//!   Normal = index 0; `CharAttributeVal::AddToAccumulator` reads level − 1,
 //!   clamped, nothing at 0). Trove / totem chances are integer rolls
 //!   `IGenerate(0, 100) <= chance` (`Proxy::RunProxy`, `SetPiece::Generate`),
 //!   soul chances a float roll `FGenerate(0, 100) <= chance`
@@ -47,7 +47,7 @@
 //!
 //! The reputation modifier: `GameEngine::OnCreatureDeath` puts it
 //! in the kill adjustment handed to `HandleFaction` → `FactionPack::Adjust`
-//! → `FactionPack::AdjustValue` @0x1802a32e0, which scales every change
+//! → `FactionPack::AdjustValue`, which scales every change
 //! (gain or loss, after the faction's own gain/loss multiplier) by
 //! `1 + mod` when the mod is positive. `doubleRareWeightModifier` scales the dyn-table rare/rare weight
 //! (`items::loot`). The engine's affix swap and loot-table override lists
@@ -55,11 +55,11 @@
 //! never filled in the shipped Game.dll (no callers), so they
 //! are left out. `luaToken` (Voidmarked / roguelike chests) is kept for
 //! Lua.
-use crate::combat::Rng;
-use crate::expr::Expr;
-use crate::mode::Mode;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
+use gd_rules::Rng;
+use gd_rules::expr::Expr;
+use gd_rules::mode::Mode;
 
 pub const GAME_ASCENDANT: &str = "records/game/gameascendant.dbr";
 
@@ -361,7 +361,7 @@ pub fn monster_paks(
 }
 
 /// The column of a Shattered Realm ruleset's `difficultyAdjustment*` pak for `dungeons_generated` (the tier).
-/// `CharAttributeVal::AddToAccumulator` @0x1800cc380: the
+/// `CharAttributeVal::AddToAccumulator`: the
 /// engine's index `i` is 1-based, `A[min(i - 1, len - 1)]` (a lookup past the table's end takes its last row, no
 /// wrap), and `i == 0` contributes nothing (`None`). The caller's column clamp is `stats::level_value`'s.
 pub fn adjustment_column(dungeons_generated: u32) -> Option<usize> {
@@ -385,7 +385,7 @@ pub fn apply_bonus(amount: u64, modifier: f32) -> u64 {
     (amount as i64).saturating_add(extra).max(0) as u64
 }
 
-/// Ascended drops (`GameEngine::GetAscendedItemName` @0x1802eb3c0, called for
+/// Ascended drops (`GameEngine::GetAscendedItemName`, called for
 /// monster drops): an equipment drop of item classification
 /// `classification` becomes ascended at the UV base chance
 /// (`ultimateChallengeItemAscension<X>Chance`) or, with an item-ascension
@@ -443,7 +443,7 @@ pub fn ascend_drop(
     )
 }
 
-/// The Inventor's ascended-affix reroll (exe `sub_1401B7CD0` mode 4):
+/// The Inventor's ascended-affix reroll (exe `UIEnchanterRerollTab::Reroll` mode 4):
 /// the reroll panel's `ascended<X>Recipe` for the item's rarity,
 /// the same table pick, the table rolled at the character level, up to 100
 /// tries for an affix different from `current`.
@@ -522,7 +522,7 @@ fn reroll_table_field(item_class: &str) -> Option<&'static str> {
 }
 
 /// A new prefix (or suffix) for an item at the Inventor (
-/// GrimDawn.exe `sub_1401B7CD0` modes 2 / 3): the item type's table loaded
+/// GrimDawn.exe `UIEnchanterRerollTab::Reroll` modes 2 / 3): the item type's table loaded
 /// at `targetLevelEquation` (stock: `itemLevel`, at least 1); each of up to
 /// 100 tries draws from the rare tables when a 0..100 roll is ≤ `rareChance`
 /// or the current affix is rare (`itemClassification` Rare), else from the
@@ -538,7 +538,7 @@ pub fn reroll_affix(
     use crate::items::db::Fields;
     let panel = db.get(REROLL_PANEL)?;
     let table = panel.string(reroll_table_field(item_class)?).to_owned();
-    // exe `sub_1401B7900` / resolver `sub_1401B86B0`: `itemLevel` is
+    // exe `InventorWindow::RollAffix` / resolver `InventorWindow::ResolveLevelEquation`: `itemLevel` is
     // the item's level (the stock equation is just that); the game also
     // offers parentLevel = character level, averagePlayerLevel,
     // gameDifficulty and min/maxPlayerLevel = numberOfPlayers = 1, not
@@ -567,7 +567,7 @@ pub fn reroll_affix(
 
 /// The item ascension window's recipe for an item (`itemascension_table.dbr`
 /// `<rarity>Recipe`; Rare / Epic / Legendary, anything else common,
-/// GrimDawn.exe `sub_140112610`).
+/// GrimDawn.exe `UIItemAscensionWindow::Update`).
 pub fn ascension_recipe(db: &crate::items::ItemDb, classification: &str) -> Option<String> {
     use crate::items::db::Fields;
     let key = match classification {
@@ -587,7 +587,7 @@ pub fn ascension_recipe(db: &crate::items::ItemDb, classification: &str) -> Opti
 pub const ASCENSION_WINDOW: &str = "records/ui/itemascension/itemascension_table.dbr";
 
 /// An ascendant affix from the item ascension window (
-/// GrimDawn.exe `sub_140114680`: `GetAscendedName` with the character's
+/// GrimDawn.exe `UIItemAscensionWindow::AscendItem`: `GetAscendedName` with the character's
 /// masteries, its table rolled at the character level).
 pub fn ascend_item(
     db: &crate::items::ItemDb,

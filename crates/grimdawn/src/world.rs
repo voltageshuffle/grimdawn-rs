@@ -4,37 +4,39 @@
 //! ([`spawn_levels`]), so crossing into a new area does not freeze the frame. A
 //! level counts as loaded only once fully spawned, so [`StreamedMap::area_ready`] (the
 //! initial load and teleports alike) waits for it. Far levels are despawned (at
-//! the end of the frame: `gd_game::levels::Unload`).
+//! the end of the frame: `gd_game_core::levels::Unload`).
 //!
 //! PORT: a level's object meshes all start loading in the background when its build lands
 //! (`ModelCache::model_ready`); [`spawn_levels`] spawns its objects in order as their models are built, then clips
 //! its decals in order, within [`SPAWN_BUDGET`] (~3 ms) a frame, at least one object or decal and at most one new
 //! level root a frame. While it spawns, the level holds every model already built ([`SpawnJob`]`::held`): the model
-//! cache only keeps its last `gd_game::weak_cache::RECENT` models warm, so a big level's early arrivals would go
+//! cache only keeps its last `gd_game_core::weak_cache::RECENT` models warm, so a big level's early arrivals would go
 //! (and load again) before the cursor reaches them. A retextured / reshaded object and a decal wait for their
 //! textures and override shader in the background (`MaterialAssets::variant_ready`, `decal::textures_ready`)
 //! instead of decoding them on the spot.
 //!
 //! An unloaded level's models and terrain layers linger ([`Lingering`]): held for [`LINGER`] after it goes, at most
 //! [`LINGER_LEVELS`] levels, so walking back over the unload radius finds them loaded. The engine releases a resource
-//! 5 s after its last user (`gd_game::weak_cache` module doc); PORT: longer here, since a whole level goes at once.
+//! 5 s after its last user (`gd_game_core::weak_cache` module doc); PORT: longer here, since a whole level goes at once.
 //! Cleared at session end (`exit`) and when the mounted mod changes.
 //!
 //! Coordinates: Y-up, ~1 unit = 1 m, world = region origin +
 //! level-local position; entity rotation rows are the object's local axes.
-use crate::data::GameData;
 use bevy::math::Affine3A;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
+use bevy::tasks::futures_lite::future;
+use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::map::{Level, MapFile};
-use gd_game::levels::{LOAD_RADIUS, UNLOAD_RADIUS, region_origin};
+use gd_game_core::data::GameData;
+use gd_game_core::levels::{LOAD_RADIUS, UNLOAD_RADIUS, region_origin};
 use gd_render::model::{self, ModelCache};
 use gd_render::render::lights::{
     LightCpu, LightRand, light_from_record, spawn_light, update_fire_lights,
 };
 use gd_render::textures::Textures;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -52,7 +54,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<TravelPreload>()
             .init_resource::<Lingering>()
             .add_systems(Startup, open_world)
-            // Before the unloaded roots despawn (`gd_game::levels::Unload`).
+            // Before the unloaded roots despawn (`gd_game_core::levels::Unload`).
             .add_systems(
                 Last,
                 linger_unloaded.before(gd_game::levels::despawn_unloaded),
@@ -64,7 +66,7 @@ impl Plugin for WorldPlugin {
                 (
                     (
                         stream_levels.run_if(
-                            resource_exists::<crate::session::SessionReady>.and_then(
+                            resource_exists::<gd_game_core::session::SessionReady>.and_then(
                                 resource_changed::<StreamFocus>
                                     .or_eager(resource_changed::<TravelPreload>)
                                     .or_eager(resource_changed::<Levels>),
@@ -90,8 +92,8 @@ pub struct StreamedMap {
     spawning: HashMap<usize, SpawnJob>,
 }
 
-pub use gd_game::levels::{Levels, StreamFocus};
 pub use gd_game::nav::Nav;
+pub use gd_game_core::levels::{Levels, StreamFocus};
 
 /// A teleport's destination, loaded while the player is still at the start (the teleport activity's
 /// `RegionLoader`, `gd_game::teleport::TeleportActivity`): levels stream around it as around [`StreamFocus`] and none
@@ -187,7 +189,7 @@ impl StreamedMap {
         self.map.regions.iter().enumerate().all(|(i, r)| {
             r.level_size == 0
                 || self.failed.contains(&i)
-                || gd_game::levels::region_distance(r, p) >= LOAD_RADIUS
+                || gd_game_core::levels::region_distance(r, p) >= LOAD_RADIUS
                 || (levels.is_loaded(i) && !self.pending.contains_key(&i))
         })
     }
@@ -208,11 +210,11 @@ impl StreamedMap {
 /// `GD_MAP` selects another map resource (e.g. `levels/mainmenu/mainmenu_gdx3.map`).
 fn open_world_map(
     data: &GameData,
-    hooks: &gd_game::hooks::Hooks,
-    choice: &gd_game::session::Choice,
+    hooks: &gd_game_core::hooks::Hooks,
+    choice: &gd_game_core::session::Choice,
 ) -> anyhow::Result<MapFile> {
     // A Crucible arena or a custom game's map (`Choice::map_path`, read through the mounted mod,
-    // `World::Load` @0x18021a4f0 opens it through the `FileSystem`), else `GD_MAP`, else the campaign's world.
+    // `World::Load` opens it through the `FileSystem`), else `GD_MAP`, else the campaign's world.
     let res = (choice.game_mode() != 0)
         .then(|| choice.map_path())
         .or(hooks.session.map.as_deref())
@@ -225,8 +227,8 @@ fn open_world_map(
 pub(crate) fn open_world(
     commands: Commands,
     data: Res<GameData>,
-    hooks: Res<crate::hooks::Hooks>,
-    choice: Res<gd_game::session::Choice>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    choice: Res<gd_game_core::session::Choice>,
 ) {
     let map = open_world_map(&data, &hooks, &choice).expect("open world map");
     install_world(In(map), commands);
@@ -253,15 +255,15 @@ fn install_world(In(map): In<MapFile>, mut commands: Commands) {
         later.challenge.len()
     );
     let map = Arc::new(map);
-    // The save's `map.dat` needs the region ids (`gd_game::save::MapLayout`).
-    commands.insert_resource(gd_game::save::MapLayout(map.clone()));
+    // The save's `map.dat` needs the region ids (`gd_game_core::save::MapLayout`).
+    commands.insert_resource(gd_game_core::save::MapLayout(map.clone()));
     // The unique-entity rules read the map's own group list (`gd_game::unique`).
     commands.insert_resource(gd_game::unique::InstanceGroups(map.instance_groups.clone()));
     let world = StreamedMap {
         map,
-        pending: HashMap::new(),
-        failed: HashSet::new(),
-        spawning: HashMap::new(),
+        pending: HashMap::default(),
+        failed: HashSet::default(),
+        spawning: HashMap::default(),
     };
     let focus = world.spawn_point().unwrap_or(Vec3::ZERO);
     commands.insert_resource(StreamFocus(focus));
@@ -289,7 +291,7 @@ fn stream_levels(
     mut nav: ResMut<Nav>,
     mut coll: ResMut<crate::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut lingering: ResMut<Lingering>,
 ) {
     // The test arena replaces the levels.
@@ -305,10 +307,10 @@ fn stream_levels(
     } = &mut *world;
     let dist = |i: usize| {
         let r = &map.regions[i];
-        gd_game::levels::region_distance(r, p).min(
+        gd_game_core::levels::region_distance(r, p).min(
             preload
                 .0
-                .map_or(f32::MAX, |t| gd_game::levels::region_distance(r, t)),
+                .map_or(f32::MAX, |t| gd_game_core::levels::region_distance(r, t)),
         )
     };
     // Loads: only the regions in the radius look at the bookkeeping (the map has thousands, a handful are near).
@@ -343,7 +345,9 @@ fn stream_levels(
     for i in cancel {
         if let Some(job) = spawning.remove(&i) {
             if let Some(root) = job.root {
-                commands.entity(root).try_insert(gd_game::levels::Unload);
+                commands
+                    .entity(root)
+                    .try_insert(gd_game_core::levels::Unload);
             }
             // What it spawned and the models it held linger ([`Lingering`]).
             lingering.unloaded.push((job.root, job.held));
@@ -363,8 +367,8 @@ fn stream_levels(
     far.sort_unstable();
     for i in far {
         if let Some(e) = levels.remove(i) {
-            // Despawned in `Last` (`gd_game::levels::Unload`), its assets lingering ([`Lingering`]).
-            commands.entity(e).try_insert(gd_game::levels::Unload);
+            // Despawned in `Last` (`gd_game_core::levels::Unload`), its assets lingering ([`Lingering`]).
+            commands.entity(e).try_insert(gd_game_core::levels::Unload);
             lingering.unloaded.push((Some(e), Vec::new()));
             nav.0.remove(i as u64);
             coll.remove_level(i);
@@ -516,8 +520,8 @@ struct ObjectCpu {
     /// `maxTransparency` of an `allowTransparency` record (`see_through`).
     see_through: Option<f32>,
     /// The record's `castsShadows` (default 1). Engine.dll
-    /// `Actor::Load` stores it at `Actor+584` (and the mesh instance's
-    /// +0x290); `GraphicsMTRenderer::BuildShadowDirectional` @0x1800c93a0
+    /// `Actor::Load` stores it at `Actor.castsShadows` (and the mesh instance's
+    /// `GraphicsMeshInstance.castsShadows`); `GraphicsMTRenderer::BuildShadowDirectional`
     /// adds only actors with it set to the sun's shadow scene. In Devil's
     /// Crossing: floors, weeds, bedrolls, camp clutter, candles, torches.
     casts_shadows: bool,
@@ -527,8 +531,8 @@ struct ObjectCpu {
     anims: Option<crate::decoration_anim::DecorationAnims>,
     /// A `Floater`'s bob (`decoration_anim`).
     floater: Option<crate::decoration_anim::Floater>,
-    /// A `Decoration` the hover names (`gd_game::world::Described`).
-    described: Option<gd_game::world::Described>,
+    /// A `Decoration` the hover names (`gd_game_core::world::Described`).
+    described: Option<gd_game_core::world::Described>,
     /// A `TerrainDecoration`'s painted terrain: (paint, `maxPaintableAngle`, rounded region-local x / z), drawn
     /// over its upward faces (`render/terrain.rs`).
     patch: Option<(gd_formats::map::level::TerrainPatch, f32, Vec2)>,
@@ -548,7 +552,7 @@ impl ObjectCpu {
 ///
 /// Left out on purpose (every stock map the game loads): `PlayerSpawnPoint` (one per
 /// map, at the map header's spawn point, which is what the port starts at; Game.dll
-/// `PlayerSpawnPoint::InitialUpdate` @0x180319fb0 hides it outside the editor); `GridEntrance` /
+/// `PlayerSpawnPoint::InitialUpdate` hides it outside the editor); `GridEntrance` /
 /// `GridEntranceDynamic` / `GridSystem`, `NpcWanderPoint`, `LightOfRaMarker` / `CerberusGeyserMarker`
 /// (placed in no stock map; no script or record names them, the markers' skills exist only as base
 /// templates).
@@ -653,7 +657,7 @@ struct SceneryRecord {
     periodic: Option<crate::audio::PeriodicSound>,
     anims: Option<crate::decoration_anim::DecorationAnims>,
     floater: Option<crate::decoration_anim::Floater>,
-    described: Option<gd_game::world::Described>,
+    described: Option<gd_game_core::world::Described>,
     /// A `TerrainDecoration`'s `maxPaintableAngle`.
     paintable: Option<f32>,
 }
@@ -663,7 +667,7 @@ impl SceneryRecord {
         if !is_scenery_class(&rec.class) {
             return None;
         }
-        // Engine.dll `Actor::InitialUpdate` @0x180029ee0 → `Entity::SetPhysicsSimulation(1)` only when
+        // Engine.dll `Actor::InitialUpdate` → `Entity::SetPhysicsSimulation(1)` only when
         // `IsStatic()` and `GetIsPartOfLevel()`: Game.dll `Decoration::IsStatic` is `!allowPathing`,
         // `Decoration::GetIsPartOfLevel` is "no `description`". The other scenery classes keep the always-false
         // `Entity` defaults (`Destructible` overrides IsStatic to false), so only a `Decoration` gets a body.
@@ -681,7 +685,7 @@ impl SceneryRecord {
             periodic: crate::audio::PeriodicSound::from_record(rec),
             anims: crate::decoration_anim::DecorationAnims::from_record(rec),
             floater: crate::decoration_anim::Floater::from_record(rec),
-            described: gd_game::world::Described::from_record(rec),
+            described: gd_game_core::world::Described::from_record(rec),
             paintable: (rec.class == "TerrainDecoration").then(|| {
                 rec.f32("maxPaintableAngle")
                     .unwrap_or(gd_render::render::terrain::MAX_PAINTABLE_ANGLE)
@@ -806,7 +810,7 @@ pub(crate) fn build_level(
     let mut objects = Vec::new();
     let mut lights = Vec::new();
     let mut decals = Vec::new();
-    let mut placements: HashMap<u32, Placement> = HashMap::new();
+    let mut placements: HashMap<u32, Placement> = HashMap::default();
     let mut proxies = Vec::new();
     let mut npcs = Vec::new();
     let mut chests = Vec::new();
@@ -932,7 +936,7 @@ pub(crate) fn build_level(
                     continue;
                 }
                 let Some(s) = scenery else { continue };
-                // Engine.dll `TerrainPatch::CreateGeometry` @0x1801d2ef0: the paint's texel grid is
+                // Engine.dll `TerrainPatch::CreateGeometry`: the paint's texel grid is
                 // centred on floor(position + ½) in x / z.
                 let patch = s.paintable.and_then(|angle| {
                     let p = e.terrain_patch()?;
@@ -1029,7 +1033,7 @@ fn finish_levels(
     mut nav: ResMut<Nav>,
     data: Res<GameData>,
     mut cache: ResMut<ModelCache>,
-    bodies: Res<gd_game::creature::BodyCache>,
+    bodies: Res<gd_game_core::creature::BodyCache>,
 ) {
     let done: Vec<(usize, anyhow::Result<LevelCpu>)> = world
         .pending
@@ -1043,7 +1047,7 @@ fn finish_levels(
                 nav.0.add(i as u64, std::mem::take(&mut cpu.nav));
                 // Every mesh starts loading; the ones already built are held from now on ([`SpawnJob`]`::held`).
                 let (mut held, mut loading) = (Vec::new(), Vec::new());
-                let mut requested = HashSet::new();
+                let mut requested = HashSet::default();
                 for o in cpu
                     .objects
                     .iter()
@@ -1097,11 +1101,11 @@ pub(crate) fn spawn_level(
     mats: &mut gd_render::render::material::MaterialAssets,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
     cache: &mut ModelCache,
-    bodies: &mut gd_game::creature::BodyCache,
+    bodies: &mut gd_game_core::creature::BodyCache,
     textures: &mut Textures,
     coll: &mut crate::collision::WorldCollision,
     receivers: &mut gd_render::decal::DecalReceivers,
-    hooks: &gd_game::hooks::RenderHooks,
+    hooks: &gd_game_core::hooks::RenderHooks,
 ) -> Entity {
     let root = spawn_level_root(
         &mut cpu,
@@ -1248,7 +1252,7 @@ fn spawn_level_root(
     terrain_mats: &mut Assets<TerrainMaterial>,
     mats: &mut gd_render::render::material::MaterialAssets,
     textures: &mut Textures,
-    hooks: &gd_game::hooks::RenderHooks,
+    hooks: &gd_game_core::hooks::RenderHooks,
 ) -> Entity {
     let root = commands
         .spawn((
@@ -1334,7 +1338,7 @@ fn spawn_level_objects(
     images: &mut Assets<Image>,
     mats: &mut gd_render::render::material::MaterialAssets,
     cache: &mut ModelCache,
-    bodies: &gd_game::creature::BodyCache,
+    bodies: &gd_game_core::creature::BodyCache,
     textures: &mut Textures,
     held: &mut Vec<Handle<Image>>,
     acc: &mut SpawnAcc,
@@ -1669,11 +1673,11 @@ fn spawn_levels(
     mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
     mut decal_mats: ResMut<Assets<DecalMaterial>>,
     mut mats: gd_render::render::material::MaterialAssets,
-    (mut cache, bodies): (ResMut<ModelCache>, Res<gd_game::creature::BodyCache>),
+    (mut cache, bodies): (ResMut<ModelCache>, Res<gd_game_core::creature::BodyCache>),
     mut textures: ResMut<Textures>,
     mut coll: ResMut<crate::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if world.spawning.is_empty() {
         return;
@@ -1841,7 +1845,7 @@ fn build_patrol_groups(
 }
 
 /// Opens a Crucible or custom game's map from the menu, before its session begins: the session's mod is
-/// mounted (`Engine::InitializeMod`; sub_140015530: the save's `modName` mounted before
+/// mounted (`Engine::InitializeMod`; `Game::LoadModMap`: the save's `modName` mounted before
 /// `World::Load(mapPath)`), the map is opened, then the levels streamed behind the
 /// menu are dropped with their skeleton joints and the opened map installed (`install_world`). A mod that does
 /// not mount or a map it does not serve or that does not parse is an error that leaves the menu's world and
@@ -1850,7 +1854,7 @@ fn build_patrol_groups(
 /// first.
 pub fn open_session_map(
     world: &mut World,
-    choice: &gd_game::session::Choice,
+    choice: &gd_game_core::session::Choice,
 ) -> anyhow::Result<()> {
     gd_game::session::set_mod_data(world, Some(choice.mod_name()))?;
     if !world.resource::<GameData>().vfs.exists(choice.map_path()) {
@@ -1863,7 +1867,7 @@ pub fn open_session_map(
     }
     let map = open_world_map(
         world.resource::<GameData>(),
-        world.resource::<crate::hooks::Hooks>(),
+        world.resource::<gd_game_core::hooks::Hooks>(),
         choice,
     );
     let map = match map {
@@ -1875,7 +1879,7 @@ pub fn open_session_map(
     };
     world.insert_resource(choice.clone());
     drop_streamed_levels(world);
-    let _ = world.run_system_cached_with(install_world, map);
+    world.run_system_cached_with(install_world, map)?;
     Ok(())
 }
 
@@ -1883,7 +1887,7 @@ pub fn open_session_map(
 /// them (`model::Joints`).
 fn drop_streamed_levels(world: &mut World) {
     let roots: Vec<Entity> = world
-        .resource::<gd_game::levels::Levels>()
+        .resource::<gd_game_core::levels::Levels>()
         .loaded
         .values()
         .copied()

@@ -5,19 +5,20 @@
 //! # Provenance (Game.dll)
 //!
 //! One [`FieldDef`] per class, read from the class's own code:
-//! - `ty`: the type id the constructor stores at `this+8` (e.g.
-//!   `CharAttributeVal_Strength` @0x1800cd9b0: 1, `DefenseAttributeAbs_Fire`
-//!   @0x180200950: 6, `SkillAttributeVal_CooldownReduction` @0x18051ee70: 1)
+//! - `ty`: the type id the constructor stores at `Attribute.type` (e.g.
+//!   `CharAttributeVal_Strength`: 1, `DefenseAttributeAbs_Fire`: 6,
+//!   `SkillAttributeVal_CooldownReduction`: 1)
 //!   or, for the damage / retaliation classes, their `GetType` virtual.
 //! - field names: the strings the constructor stores
-//!   (`CharAttribute*`: `this+64`; `DefenseAttribute*`: value `this+80`,
-//!   chance `this+16`; `SkillAttribute*`: value `this+96`, chance `this+88`)
+//!   (`CharAttribute*`: `CharAttribute.valueTag`; `DefenseAttribute*`: value `DefenseAttribute.valueTag`,
+//!   chance `DefenseAttribute.chanceTag`; `SkillAttribute*`: value `SkillAttribute.valueTag`, chance
+//!   `SkillAttribute.chanceTag`)
 //!   or that the `GetLoad*Tag` virtuals return (damage / retaliation classes:
 //!   `GetLoadValueMinTag`, `GetLoadValueMaxTag`, `GetLoadChanceTag`, ... e.g.
-//!   `DamageAttributeAbs_Fire` @0x18019a2e0..0x18019a330).
+//!   `DamageAttributeAbs_Fire`'s).
 //!
 //! The table was extracted once with an IDA script that is not kept; to
-//! extend or re-check it, walk the `GAME::*Attribute*` constructors and tag
+//! extend or re-check it, walk the `*Attribute*` constructors and tag
 //! virtuals the same way (`docs/reverse-engineering.md`).
 //!
 //! # `ty`: three id spaces
@@ -40,13 +41,13 @@
 //! and `DefenseAttributeMisc_BlockModifier`).
 //!
 //! `DefenseAttribute_BaseProtectionAbsorption` is the one class with two
-//! entries: its `LoadFromTable` @0x180204420 reads both `defensiveProtection`
+//! entries: its `LoadFromTable` reads both `defensiveProtection`
 //! and `defensiveBonusProtection`, and `FieldDef` has one value slot. The
 //! `defensiveBonusProtection` entry comes first, so a class lookup
 //! ([`class_def`](crate::attributes::class_def)) returns it; code that needs
 //! both fields handles the class by name. Its `ty` is 0 (the
-//! constructor @0x1802042a0 leaves `this+8` at 0; `AddToAccumulator`
-//! @0x180204bf0 emits a `CombatAttributeDefense_AbsorptionProtection`,
+//! constructor leaves `Attribute.type` at 0; `AddToAccumulator`
+//! emits a `CombatAttributeDefense_AbsorptionProtection`,
 //! type 38), so `combat_type()` is `None` for armor.
 //!
 //! # Order and lookup

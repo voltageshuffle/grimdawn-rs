@@ -10,15 +10,15 @@ pub(super) type MonsterQuery<'w, 's> = Query<
         &'static mut MonsterAi,
         &'static mut Combatant,
         &'static mut Character,
-        Option<&'static crate::casting::RangedWeapon>,
+        Option<&'static gd_game_core::casting::RangedWeapon>,
     ),
     // (A monster dashing on a leap / path charge is moved by `casting`.)
     (
         Without<Dead>,
         Without<Player>,
         Without<crate::movement::Stunned>,
-        Without<crate::world::Dummy>,
-        Without<crate::casting::PathCharge>,
+        Without<gd_game_core::world::Dummy>,
+        Without<gd_game_core::casting::PathCharge>,
         Without<QuestMove>,
         Without<crate::patrol::PatrolPoint>,
         Without<crate::graeae::ToggleEye>,
@@ -44,6 +44,8 @@ pub(super) fn monster_ai(
     mut set: ParamSet<(
         Query<(Entity, &Transform, &MonsterAi, &Combatant), Without<Dead>>,
         MonsterQuery,
+        // Every monster (dead and AI-excluded ones too): the hit-anger / distress timer decay.
+        Query<&mut MonsterAi>,
     )>,
     allied: Query<(), With<Allied>>,
     // A player's pet a monster's convert joined: a rival of its pack's foes, not a foe of hostile monsters.
@@ -54,14 +56,14 @@ pub(super) fn monster_ai(
     rooted: Query<(), With<crate::movement::Rooted>>,
     patrol_points: crate::patrol::Points,
     corpses: Query<(Entity, &Transform, &Combatant), With<Dead>>,
-    data: Res<crate::data::GameData>,
-    mut sound: MessageWriter<crate::visuals::PlaySound>,
+    data: Res<gd_game_core::data::GameData>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
     mut slot_q: crate::melee::SlotQuery,
     skills: Query<&crate::monster_skills::MonsterSkills>,
-    starts: Query<&crate::casting::ChargeStarts>,
+    starts: Query<&gd_game_core::casting::ChargeStarts>,
     (mut commands, mode, lead_targets, mut anim_cache, mut crowd, sleepers, charging): (
         Commands,
-        Res<crate::session::GameMode>,
+        Res<gd_game_core::session::GameMode>,
         Query<
             (
                 &Character,
@@ -70,21 +72,33 @@ pub(super) fn monster_ai(
             ),
             Without<MonsterAi>,
         >,
-        ResMut<crate::character::AnimCache>,
+        ResMut<gd_game_core::character::AnimCache>,
         Query<&mut crate::movement::CrowdAgent>,
         super::ai::Sleepers,
         Query<(
-            Has<crate::casting::Charge>,
+            Has<gd_game_core::casting::Charge>,
             Option<&crate::casting::ChargePursuit>,
         )>,
     ),
 ) {
     let dt = time.delta_secs();
+    // The hit-anger and distress timers decay once per frame (`ControllerMonster::Update`), over every
+    // monster — dead, stunned or dormant ones included. Folded into this system, before `anger_from_hits`'
+    // hit-anger additions (a timer armed this frame keeps its full interval; nothing between the two
+    // systems reads the timers), so that system can early-out on a hitless frame.
+    for mut ai in set.p2().iter_mut() {
+        if ai.anger_timer > 0.0 {
+            ai.anger_timer -= dt;
+        }
+        if ai.distress.timer > 0.0 {
+            ai.distress.timer -= dt;
+        }
+    }
     let slots = crate::melee::Slots::new(&mut slot_q, &scratch);
     // Every living `targetable` monster is a possible enemy of the monsters of a foe faction (stunned, charging or
     // walking ones too: they are not in `monsters`). Only the distinct packs are cloned (`FactionPack::shared`
     // hands out one `Arc` per record, so `same` is a pointer compare); a rival names its pack by index.
-    let mut packs: Vec<Option<std::sync::Arc<crate::monsters::FactionPack>>> = Vec::new();
+    let mut packs: Vec<Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>> = Vec::new();
     let mut rivals: Vec<_> = set
         .p0()
         .iter()
@@ -144,7 +158,7 @@ pub(super) fn monster_ai(
         Entity,
         Vec3,
         f32,
-        Option<std::sync::Arc<crate::monsters::FactionPack>>,
+        Option<std::sync::Arc<gd_game_core::monsters::FactionPack>>,
     )> = if fleeing {
         monsters
             .iter()
@@ -161,15 +175,15 @@ pub(super) fn monster_ai(
     let pets: Vec<Entity> = players.iter().filter(|p| p.3).map(|p| p.0).collect();
     // The foes of each side (`FoeLists`: the player for hostile monsters, the monsters of foe factions for all).
     let mut lists = FoeLists::new(&foes, packs, rivals);
-    // `ControllerMonster::FindEnemyUpdate` @0x18013c0f0: every
-    // 200 ms `FindEnemy` @0x18013b7b0 asks `AngerManager::GetNewTarget`
-    // @0x18001e1c0 for a target: the living, attackable foes on the anger
+    // `ControllerMonster::FindEnemyUpdate`: every
+    // 200 ms `FindEnemy` asks `AngerManager::GetNewTarget`
+    // for a target: the living, attackable foes on the anger
     // list whose anger (× 1.3 for the current target) reaches
     // `AngerTolerance`, the angriest first (the default comparator; the
     // pet-only `petTargetLeastAttacked` / `petTargetGreatestHealth` keys
     // and `petTargetLevelRange` are unset for monsters). No such foe: no
     // enemy. The attack / pursue states drop an enemy that fails
-    // `IsEnemyValid` @0x18013b270 (alive, foe, `InPursuitRange`) and return.
+    // `IsEnemyValid` (alive, foe, `InPursuitRange`) and return.
     for (e, tf, mut ai, _, _, _) in &mut monsters {
         let side = lists.side(&ai.faction, allied.contains(e));
         let foes = lists.get(side);
@@ -198,8 +212,7 @@ pub(super) fn monster_ai(
         cb.cooldown -= dt;
         // The crowd failed the move (`Character::CrowdAgentError`, movement.rs): the move stops and the state's
         // `PathFailed` runs. The idle-time states' (patrol.rs: Patrol, Return, Roam, Wander, FollowLeader) and
-        // DodgeAttack's do what the path's end does (@0x180147410, @0x1801464b0, @0x180145300,
-        // @0x1801459d0, @0x180148720, @0x1801495c0); the fight states' are melee.rs'; Flee's @0x180145040 is
+        // DodgeAttack's do what the path's end does (their `PathFailed`); the fight states' are melee.rs'; Flee's is
         // "Return".
         let mut agent = crowd.get_mut(e).ok();
         let path_failed = agent.as_mut().is_some_and(|a| a.take_path_failed());
@@ -226,13 +239,13 @@ pub(super) fn monster_ai(
         if pursuit.is_some() && (busy || !charge || ai.melee.st != crate::melee::St::Pursue) {
             commands
                 .entity(e)
-                .try_remove::<(crate::casting::Charge, crate::casting::ChargePursuit)>();
+                .try_remove::<(gd_game_core::casting::Charge, crate::casting::ChargePursuit)>();
             pursuit = None;
         }
         ai.melee.note_swing(busy);
         if busy {
             // Flee and DodgeAttack switch the state at once (`SetState`, `ControllerMonsterStateFlee`,
-            // `DefaultProjectileNotificationResponse` @0x18014e080, which the Attack state answers too): the
+            // `DefaultProjectileNotificationResponse`, which the Attack state answers too): the
             // swing / cast is cut short, its hit and its cast never land.
             if ai.flee.request.is_none() && ai.dodge.start.is_none() {
                 continue;
@@ -241,7 +254,7 @@ pub(super) fn monster_ai(
             ch.state = CharState::Idle;
             ch.cast_anim = None;
             commands.entity(e).try_remove::<(
-                crate::casting::Casting,
+                gd_game_core::casting::Casting,
                 crate::casting::AimPoint,
                 crate::monster_skills::AllyCast,
             )>();
@@ -385,7 +398,7 @@ pub(super) fn monster_ai(
                 .flee
                 .enter(enemy, ch.anims.has(gd_sim::anim::AnimType::Flee))
             {
-                sound.write(crate::visuals::PlaySound {
+                sound.write(gd_game_core::visuals::PlaySound {
                     pak: ai.flee.sound.clone().unwrap_or_default(),
                     at: Some(tf.translation),
                 });
@@ -561,9 +574,9 @@ pub(super) fn monster_ai(
                 // through the enemy's attack slots. Ranged weapons shoot from
                 // their reach. No line-of-sight test
                 // (`ControllerAIStateT<ControllerMonster>::UseSkill`
-                // @0x18010c6d0 asks the skill's LOS virtuals,
-                // `Skill::IsTargetInLOS`, only when its vtable slot 152 says
-                // so; that slot returns false for every weapon attack class
+                // asks the skill's LOS virtuals,
+                // `Skill::IsTargetInLOS`, only when its virtual `Skill::GetRequiresLOS` says
+                // so; that virtual returns false for every weapon attack class
                 // (`Skill`, `SkillActivatedWeapon`, `Skill_AttackWeapon`,
                 // `Skill_WPAttack*`) and true only for the chain skills
                 // (`Skill_AttackChain`, `Skill_AttackProjectileChain`,
@@ -611,7 +624,7 @@ pub(super) fn monster_ai(
                     let can_play = ch.anims.has(gd_sim::anim::AnimType::Alert);
                     let (alerted, pak) = ai.alert.enemy_found(pe, can_play, far, diff);
                     if let Some(pak) = pak {
-                        sound.write(crate::visuals::PlaySound {
+                        sound.write(gd_game_core::visuals::PlaySound {
                             pak,
                             at: Some(tf.translation),
                         });
@@ -629,7 +642,7 @@ pub(super) fn monster_ai(
                     if pursuit.take().is_some() {
                         commands
                             .entity(e)
-                            .try_remove::<(crate::casting::Charge, crate::casting::ChargePursuit)>(
+                            .try_remove::<(gd_game_core::casting::Charge, crate::casting::ChargePursuit)>(
                             );
                     }
                     if pursue {
@@ -668,16 +681,16 @@ pub(super) fn monster_ai(
                         crate::melee::Act::Swing => {
                             // The swing timer re-arms as the attack starts
                             // (`ControllerMonsterStateAttack::OnUpdate`
-                            // @0x1801413d0: timer ≤ 0 → `ResetSwingTimer`
-                            // @0x18013d030 (`min/maxSwingPause`) then
+                            //: timer ≤ 0 → `ResetSwingTimer`
+                            // (`min/maxSwingPause`) then
                             // `AttackEnemyOrReturn`; `ControllerMonster::Update`
-                            // @0x180134ec0 counts it down every update, the
+                            // counts it down every update, the
                             // attack included).
                             ai.path.clear();
                             // `AttackEnemyOrReturn`: the swing's attack action turns to the enemy.
                             ch.begin_swing(&tf, Some((pe, pp)), pp);
                             cb.cooldown = ai.swing_pause.0
-                                + crate::rng::f32()
+                                + gd_game_core::rng::f32()
                                     * (ai.swing_pause.1 - ai.swing_pause.0).max(0.0);
                             // `LeadTarget` for a ranged weapon's plain shot
                             // (lead.rs): the shot flies at the led point.
@@ -814,7 +827,7 @@ pub(super) fn monster_ai(
 /// defense turret or a friendly guard, is none), attacked as with the button held (every frame re-arms the
 /// [`crate::player_orders::PrimaryUse`]).
 pub(super) fn auto_fight(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut players: Query<
         (
             &Transform,
@@ -853,13 +866,13 @@ pub(super) fn auto_fight(
 /// The player's attack order on its target (set by clicking a monster): one use of the primary attack
 /// ([`crate::player_orders::PrimaryUse`]): walk into reach, swing once; the held button's repeat arms the next. Once
 /// spent, the target stays while the swing runs (its hit lands on it) and is dropped after. A skill waiting in the
-/// pending-action slot goes first ([`crate::character::QueuedAction`]). A target no path leads any closer to is
+/// pending-action slot goes first ([`gd_game_core::character::QueuedAction`]). A target no path leads any closer to is
 /// dropped (a request whose `Player::FindPath` finds nothing is dropped with no state change,
-/// `ControllerPlayerStateMoveTo`'s `PathFailed` @0x180166480 goes to Idle), so the failed search is not
+/// `ControllerPlayerStateMoveTo`'s `PathFailed` goes to Idle), so the failed search is not
 /// repeated every frame. A "Kick" breakable is kicked instead of swung at
-/// (`crate::hotbar::kicks_breakable`, `SelectPrimaryAction` @0x180161d00).
+/// (`crate::hotbar::kicks_breakable`, `SelectPrimaryAction`).
 /// The range re-check carries the UseSkill state's tolerance (1.0, 2.0 for a moving current target,
-/// `GetSkillUseTolerance` @0x180169ca0), so a kiting target does not stutter the swing chain into re-paths.
+/// `GetSkillUseTolerance`), so a kiting target does not stutter the swing chain into re-paths.
 /// An evade's recovery is cancelable here (only its dash refuses); a held swing that ends chains into the next
 /// in the same frame (`finish_actions` runs before this, `drive_characters` after).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -873,17 +886,20 @@ pub(super) fn player_attack(
             &mut MovePath,
             &mut Combatant,
             &mut Character,
-            &mut crate::casting::Caster,
-            (&crate::player::Loadout, &crate::player::EffectiveSkills),
-            Option<&crate::casting::RangedWeapon>,
-            Option<&crate::weapon_pool::SkillLinks>,
+            &mut gd_game_core::casting::Caster,
+            (
+                &gd_game_core::player::Loadout,
+                &gd_game_core::player::EffectiveSkills,
+            ),
+            Option<&gd_game_core::casting::RangedWeapon>,
+            Option<&gd_game_core::weapon_pool::SkillLinks>,
             Has<crate::movement::Rooted>,
             &mut crate::player_orders::PrimaryUse,
         ),
         (
             With<Player>,
             Without<Dead>,
-            Without<crate::casting::SpellAttacker>,
+            Without<gd_game_core::casting::SpellAttacker>,
             Without<crate::movement::Stunned>,
         ),
     >,
@@ -900,8 +916,8 @@ pub(super) fn player_attack(
     >,
     coll: Res<crate::collision::WorldCollision>,
     data: Res<GameData>,
-    breakables: Query<&crate::world::Breakable>,
-    options: Option<Res<crate::options::GameOptions>>,
+    breakables: Query<&gd_game_core::world::Breakable>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     nav: Res<Nav>,
     time: Res<Time>,
     mut pool_rng: ResMut<crate::weapon_pool::PoolRng>,
@@ -946,10 +962,10 @@ pub(super) fn player_attack(
         return;
     }
     // The Move slot's reset rule (`crate::hotbar::move_slot_keeps_target`,
-    // `Grim Dawn.exe` sub_140021000 @0x1400224e9): Move keeps a breakable as its target
+    // `Grim Dawn.exe` `InGameUI::HandleMouseEvent`): Move keeps a breakable as its target
     // only with `breakingMoveTo`, never a character; a target it may not keep is
     // dropped (the press walks to it), not attacked.
-    if caster.slots[crate::casting::SLOT_LEFT]
+    if caster.slots[gd_game_core::casting::SLOT_LEFT]
         .as_deref()
         .is_some_and(crate::hotbar::is_move_to)
         && !crate::hotbar::move_slot_keeps(
@@ -962,8 +978,8 @@ pub(super) fn player_attack(
         return;
     }
     let to = ttf.translation - tf.translation;
-    // The kick is melee whatever the weapon (`Skill_Kick::GetValidTarget` @0x1804f9020
-    // → `Skill::GetValidMeleeTarget` @0x180497460).
+    // The kick is melee whatever the weapon (`Skill_Kick::GetValidTarget`
+    // → `Skill::GetValidMeleeTarget`).
     let kick = breakables.get(t).is_ok_and(|b| {
         data.db
             .get(&b.record)
@@ -975,14 +991,14 @@ pub(super) fn player_attack(
         ranged.map_or(cb.reach(tcb), |r| r.reach.max(cb.reach(tcb)))
     };
     // A ranged shot at a character needs line of sight
-    // (`ControllerAIStateT<ControllerPlayer, Player>::UseSkill` @0x1801606f0's
+    // (`ControllerAIStateT<ControllerPlayer, Player>::UseSkill`'s
     // `IsTargetInLOS` gate; PORT: the plain ranged swing repositions too — playtest:
     // a shot blocked by an obstacle moves to a clear spot instead of firing into it).
     let blocked = !kick && ranged.is_some() && is_monster && {
         let (head, aim) = crate::monster_skills::sight_ray(&data, &ch, &tf, ttf, tch);
         !crate::monster_skills::target_in_los(&coll, head, ttf.translation, aim)
     };
-    // `ControllerPlayerStateUseSkill::GetSkillUseTolerance` @0x180169ca0:
+    // `ControllerPlayerStateUseSkill::GetSkillUseTolerance`:
     // 2.0 when the target is the current target and moving, else 1.0 — the ongoing
     // attack keeps its swing chain against a kiting target instead of re-pathing the
     // moment it steps past reach.
@@ -999,16 +1015,16 @@ pub(super) fn player_attack(
     if !blocked && Vec2::new(to.x, to.z).length() <= reach + tolerance {
         path.points.clear();
         // The evade refuses only its dash (warm-up); its recovery is cancelable
-        // (`JumpToUseSkill::RequestSkillAction` @0x180168550, `evade.rs`).
+        // (`ControllerPlayerStateJumpToUseSkill::RequestSkillAction`, `evade.rs`).
         if !matches!(ch.state, CharState::Attack | CharState::Cast)
             && !(ch.state == CharState::Evade && ch.evade_warmup)
             // A queued skill goes first (`cast_requests` runs it next frame).
-            && !matches!(ch.queued, Some(crate::character::QueuedAction::Cast(_)))
+            && !matches!(ch.queued, Some(gd_game_core::character::QueuedAction::Cast(_)))
         {
             if ch.state == CharState::Evade {
                 commands
                     .entity(e)
-                    .try_remove::<(crate::evade::Evading, crate::casting::Leap)>();
+                    .try_remove::<(crate::evade::Evading, gd_game_core::casting::Leap)>();
             }
             if kick {
                 primary.0 = !crate::casting::try_cast(
@@ -1027,8 +1043,8 @@ pub(super) fn player_attack(
                     ttf.translation,
                     Some(t),
                     cb.radius + tcb.radius,
-                    crate::casting::Use::Request,
-                    crate::casting::Walk::new(false, 0, true),
+                    gd_game_core::casting::Use::Request,
+                    gd_game_core::casting::Walk::new(false, 0, true),
                 );
             } else {
                 ch.state = CharState::Attack;
@@ -1047,7 +1063,7 @@ pub(super) fn player_attack(
         if ch.state == CharState::Evade {
             commands
                 .entity(e)
-                .try_remove::<(crate::evade::Evading, crate::casting::Leap)>();
+                .try_remove::<(crate::evade::Evading, gd_game_core::casting::Leap)>();
             ch.state = CharState::Run;
         }
         // Blocked: a spot that sees the target (within reach), else straight at it.

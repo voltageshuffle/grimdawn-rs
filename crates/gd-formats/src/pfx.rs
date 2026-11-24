@@ -5,8 +5,8 @@
 //! u32 bodyBytes, u32 n × str (texture, shader, drop decal), u32 n × u32 bools,
 //! u32 n × i32 ints, u32 n × f32 floats, u32 n × curve}` where curve =
 //! `{f32 domain, f32 range, u32 n × (f32 x, f32 y)}`
-//! (`EffectData::BufferLoad` 0x1800623f0, `EmitterData::InternalBinaryRead`
-//! 0x1800682c0, `CurveData::BinaryRead` 0x180184df0).
+//! (`EffectData::BufferLoad`, `EmitterData::InternalBinaryRead`,
+//! `CurveData::BinaryRead`).
 use crate::util::Reader;
 use anyhow::{Result, bail, ensure};
 
@@ -24,7 +24,7 @@ pub struct Curve {
 }
 
 impl Curve {
-    /// `CurveData::GetYFast` (0x180184a30), which is also what every inlined
+    /// `CurveData::GetYFast`, which is also what every inlined
     /// lookup in the emitter code does: the first segment whose end `x` is
     /// ≥ t is evaluated (so t below the first point extrapolates); past the
     /// last point, or with fewer than two points, the result is 0.
@@ -56,7 +56,7 @@ impl Curve {
     }
 }
 
-/// Spawn volume (`ints[0]`, `Emitter::EmitParticle` 0x180069a00).
+/// Spawn volume (`ints[0]`, `Emitter::EmitParticle`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
     /// 0: uniform in a ball of the emission radius.
@@ -86,7 +86,7 @@ impl Shape {
     }
 }
 
-/// Blend mode implied by the shader (`EmitterData::UpdateShader` 0x1800685f0 and
+/// Blend mode implied by the shader (`EmitterData::UpdateShader` and
 /// the shaders' src/dst blend states).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Blend {
@@ -195,8 +195,8 @@ impl Emitter {
     pub fn light(&self) -> bool {
         self.bools[6]
     }
-    /// bools[7]: light casts shadows (`Emitter::UpdateLight` @0x18006b670: the light's
-    /// shadow priority is 1 when set, else 0; the bools sit at EmitterData +104).
+    /// bools[7]: light casts shadows (`Emitter::UpdateLight`: the light's
+    /// shadow priority is 1 when set, else 0; the bools sit in `EmitterData.bools`).
     pub fn light_shadows(&self) -> bool {
         self.bools[7]
     }
@@ -204,8 +204,8 @@ impl Emitter {
     pub fn light_night_only(&self) -> bool {
         self.bools[8]
     }
-    /// bools[11]: the light is in simple mode (`Emitter::UpdateLight` @0x18006b670 copies it to the
-    /// light's +518): `Light::AddToScene` gives it neither specular nor a shadow.
+    /// bools[11]: the light is in simple mode (`Emitter::UpdateLight` copies it to the
+    /// light's `Light.simpleMode`): `Light::AddToScene` gives it neither specular nor a shadow.
     pub fn light_simple(&self) -> bool {
         self.bools[11]
     }

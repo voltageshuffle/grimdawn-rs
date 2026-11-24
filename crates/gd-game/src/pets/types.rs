@@ -5,7 +5,7 @@ pub const PET_ATTACK_CLASS: &str = "Skill_PetAttack";
 
 /// An order to the owner's pets (module docs): `pet: None` is the Pet
 /// Attack skill (every pet; a `target` is attacked, else they move to
-/// `point`), `Some` one selected pet (sub_1402056D0 / `HandlePetAction`: a foe
+/// `point`), `Some` one selected pet (`InGameUI::OrderSelectedPets` / `HandlePetAction`: a foe
 /// `target` is attacked, else it moves to `point`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct PetCommand {
@@ -34,7 +34,7 @@ impl Stance {
         }
     }
 
-    /// The portrait buttons' cycle (GrimDawn.exe sub_140254B40).
+    /// The portrait's forward stance key (action 15, GrimDawn.exe `PlayerPortrait::HandleKeyEvent`).
     pub fn next(self) -> Self {
         match self {
             Stance::Normal => Stance::Aggressive,
@@ -52,8 +52,8 @@ pub struct SetPetStance {
     pub stance: Stance,
 }
 
-/// `Skill::StopSkill` of a summon skill (`Skill_SpawnPet::StopSkill`
-/// @0x180509a00, module docs): all the owner's live pets of `skill` die.
+/// `Skill::StopSkill` of a summon skill (`Skill_SpawnPet::StopSkill`,
+/// module docs): all the owner's live pets of `skill` die.
 #[derive(Message, Clone, Debug)]
 pub struct StopSummonSkill {
     pub owner: Entity,
@@ -83,7 +83,7 @@ pub struct ReleasePet {
     pub suppress_dying_skill: bool,
 }
 
-/// `Character::SuppressDyingSkill` (+0x2834): the pet's dying skill is not
+/// `Character::SuppressDyingSkill` (`Character.dyingSkillSuppressed`): the pet's dying skill is not
 /// cast.
 #[derive(Component)]
 pub struct SuppressDyingSkill;
@@ -115,7 +115,7 @@ impl PetStances {
             .map_or(Stance::Normal, |(_, st)| *st)
     }
 
-    /// The stance a new portrait shows (GrimDawn.exe sub_140255BE0:
+    /// The stance a new portrait shows (GrimDawn.exe `PlayerPortrait::Setup`:
     /// `Player::GetPetControllerType`, which answers Aggressive for a skill
     /// with no stored type although the pet runs on Normal; module docs).
     pub fn portrait(stances: Option<&Self>, summon: &str) -> Stance {
@@ -163,16 +163,16 @@ pub struct PetAttack {
 pub struct Pet {
     pub owner: Entity,
     pub summon: String,
-    /// Summoned by a `Skill_SpawnMiniPet` (`PetPen` entry +36): counts
+    /// Summoned by a `Skill_SpawnMiniPet` (`PetPenEntry.mini`): counts
     /// towards `miniPetLimit` (module docs).
     pub mini: bool,
     /// Summoned by a `Skill_SpawnQuestPet`: it is in the owner's quest pen
-    /// (`Character` +8296, apart from the normal pen), so the pet limits of
+    /// (`Character.questPetPen`, apart from the normal pen), so the pet limits of
     /// other summons do not count it and its stop releases it alive
     /// ([`release_quest_pet`](super::commands::release_quest_pet)).
     pub quest: bool,
     pub spawned_at: f32,
-    /// Seconds it has left to live (`ControllerMonster` +0x624 set by
+    /// Seconds it has left to live (`ControllerMonster.lifetime` set by
     /// `Monster::SetLifetime`; module docs, [`spawn_time_to_live`]); None
     /// lives until killed, replaced or disbanded. The one source of a pet's
     /// remaining time.
@@ -185,12 +185,12 @@ pub struct Pet {
     /// The record's `angerMultiplier` (`Character::Load`, default 1): scales
     /// the anger monsters gain towards it (`AngerManager::AddAnger`).
     pub anger_multiplier: f32,
-    /// The record's `causesAnger` (`Character::Load` +8376, default 1; `Character::CausesAnger`, the
+    /// The record's `causesAnger` (`Character::Load`, default 1; `Character::CausesAnger`, the
     /// same function for a `Pet` as for a `Monster`): a converted pet near the player holds the controller's combat
     /// flag (grimdawn `controller_target.rs`).
     pub causes_anger: bool,
-    /// The record's `targetable` (`Character::Load` +8026, default 1; a `Pet`'s `IsTargetable` is
-    /// `Monster::IsTargetable` @0x18037ec40): whether the controller targeting takes a converted pet.
+    /// The record's `targetable` (`Character::Load`, default 1; a `Pet`'s `IsTargetable` is
+    /// `Monster::IsTargetable`): whether the controller targeting takes a converted pet.
     pub targetable: bool,
     /// The record's `showStatusWidgetWhenPet`: it gets a HUD portrait
     /// ([`portrait_pets`]).
@@ -203,11 +203,11 @@ pub struct Pet {
     pub(super) buff_self: Vec<(String, usize, bool)>,
     /// Toggled skills its AI switched on (skill, level index).
     pub(super) toggled: Vec<(String, usize)>,
-    /// The timed self buffs (the shared [`crate::skill_buffs::TimedBuffs`]
+    /// The timed self buffs (the shared [`gd_game_core::skill_buffs::TimedBuffs`]
     /// store, ticked by `casting::expire_buffs`): its own (a self buff, a
     /// `Skill_BuffRadius`, under the skill's name) and others'
     /// `Skill_BuffOther` (under the buff record's).
-    pub(super) buffs: crate::skill_buffs::TimedBuffs,
+    pub(super) buffs: gd_game_core::skill_buffs::TimedBuffs,
     /// `buffOtherSkillName`: (skill, level index, buff record, seconds), as
     /// `MonsterSkills::buff_other`.
     pub(super) buff_other: Option<(String, usize, String, f32)>,
@@ -230,7 +230,7 @@ pub struct Pet {
     /// The controller's "Startup" state (module docs): it ignores a player's
     /// orders until its Spawn animation (type 19) ends, at once when there is none.
     pub startup: bool,
-    /// The Spawn animation was tried (once, `OnBegin`'s state flag +32).
+    /// The Spawn animation was tried (once, `ControllerMonsterStateStartup.spawnTried`, set by `OnBegin`).
     pub startup_played: bool,
     /// The special `ChooseBestSkill` chose that is still out of reach: the
     /// pet pursues for it (index into [`Pet::specials`]).
@@ -266,7 +266,7 @@ pub struct Pet {
     pub(super) most_hated: Option<Entity>,
     /// The "Move" state's destination (a move command).
     pub(super) moving: Option<Vec3>,
-    /// The dodge timer (s, `ControllerMonster` +0x644) and the DodgeAttack
+    /// The dodge timer (s, `ControllerMonster.dodgeTimer`) and the DodgeAttack
     /// state (`dodge.rs`): it runs along [`Pet::path`].
     pub dodge_timer: f32,
     pub dodging: bool,
@@ -295,7 +295,7 @@ pub struct Pet {
 pub(super) struct PetController {
     /// The record's `Class` (`combat::ControllerClass`): the stationary
     /// classes never move.
-    pub(super) class: crate::combat::ControllerClass,
+    pub(super) class: gd_game_core::combat::ControllerClass,
     pub(super) view: f32,
     pub(super) view_y: f32,
     pub(super) pursuit: f32,
@@ -310,7 +310,7 @@ pub(super) struct PetController {
     /// `RepositionChance` (`ProjectileCollided`).
     pub(super) reposition_chance: i32,
     /// `minSwingPause` / `maxSwingPause` (s): the swing timer re-arms from
-    /// them as an attack starts (`ResetSwingTimer` @0x18013d030,
+    /// them as an attack starts (`ResetSwingTimer`,
     /// `combat::monster_ai`; 47 of the 48 pet controllers carry the field).
     pub(super) swing_pause: (f32, f32),
     /// `BuffSelfBehavior` (0 NeverUseSkill … 3 WheneverPossible, default
@@ -392,7 +392,7 @@ impl Pet {
                 CharState::Attack | CharState::Cast | CharState::Death
             );
         if responds
-            && crate::rng::i32(0..100) < chance
+            && gd_game_core::rng::i32(0..100) < chance
             && me.distance(at) >= radius + min
             && let Some(path) = crate::patrol::pick_spot(
                 me,
@@ -448,7 +448,7 @@ impl PetController {
     pub(super) fn from_controller(ctl: Option<&gd_formats::arz::Record>) -> Self {
         let f = |k: &str, d: f32| ctl.and_then(|c| c.f32(k)).unwrap_or(d);
         Self {
-            class: crate::combat::ControllerClass::of(ctl.and_then(|c| c.str("Class"))),
+            class: gd_game_core::combat::ControllerClass::of(ctl.and_then(|c| c.str("Class"))),
             view: f("ViewDistance", 15.0),
             view_y: f("MaxYViewDistance", 0.0),
             pursuit: f("MaxPursuitDistance", 0.0),

@@ -6,13 +6,13 @@
 //! same-named records differ, and `game/questevents.lua` / `main.lua` exist in both) or a user mod
 //! of a custom game (`mods/<name>/`). [`Vfs::initialize_mod`] / [`Database::initialize_mod`] mount
 //! one, [`Vfs::remove_mod`] / [`Database::remove_mod`] go back to the install
-//! (`Engine::RemoveModDirectory` @0x18007a2b0), so the shared `GameData` needs no swap.
+//! (`Engine::RemoveModDirectory`), so the shared `GameData` needs no swap.
 //! PORT: the engine drops the mod's sources when it is removed; here a mod's index is built on its
 //! first mount and kept (inactive) for the process, so a later session of the same mod mounts it at
 //! once and a record borrowed from it stays valid.
 //!
-//! Mount order (exe sub_14000dc10, Engine.dll `Engine::InitializeMod` @0x180079d20 and
-//! `LoadMainDatabase` @0x180073a60, `FileSystem::AddSource` @0x180086490 / `AddSourceArchive` /
+//! Mount order (exe `Game::Initialize`, Engine.dll `Engine::InitializeMod` and
+//! `LoadMainDatabase`, `FileSystem::AddSource` / `AddSourceArchive` /
 //! `OpenFile`): `FileSystem` holds three partitions of sources; `OpenFile` tries partition 0, 1, 2
 //! in turn and, within one, the sources in the order they were added (push_back): the first that
 //! has the file wins. The install's resources are partition 2, added `gdx3`, `gdx2`, `gdx1`,
@@ -22,7 +22,8 @@
 //! it (`FindFirstFile "<dir>/*.arc"` → `AddSourceArchive`): no loose files, no subfolders.
 //! `InitializeMod(name)` adds `mods/<name>/resources`, and for the mod `survivalmode` before it
 //! `survivalmode3/resources`, `survivalmode2/resources`, `survivalmode1/resources` (each only with
-//! expansion 3 / 2 / 1 enabled, Engine bytes +3111 / +3110 / +3109, and `HasSurvivalDLC`): the
+//! expansion 3 / 2 / 1 enabled, `Engine.expansion3Enabled` / `expansion2Enabled` / `expansion1Enabled`, and
+//! `HasSurvivalDLC`): the
 //! highest pack wins a same-named file. The databases load in order: `database.arz`, `gdx1..3.arz`
 //! (`LoadMainDatabase`), then the mod's `mods/<name>/database/<name>.arz` (`LoadDatabase`), then
 //! for `survivalmode` `LoadSurvival1/2/3Database` (`survivalmodeN/database/survivalmodeN.arz`, same
@@ -36,12 +37,13 @@
 //! separators, e.g. `creatures/pc/hero_00.msh` → `Creatures.arc : pc/hero_00.msh`.
 use crate::arc::Arc;
 use crate::arz::{Arz, Record};
+use crate::collections::HashMap;
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 pub const LAYERS: [&str; 4] = ["", "gdx1", "gdx2", "gdx3"];
 
@@ -147,10 +149,7 @@ impl<T> Mods<T> {
     /// Makes `name` the active mod, indexing it with `load` on its first mount. The previous mod is
     /// removed first, so a failed load leaves the install alone.
     fn initialize(&self, name: &str, load: impl FnOnce() -> Result<T>) -> Result<()> {
-        let _lock = self
-            .mounting
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = self.mounting.lock();
         self.remove();
         let i = match self.iter().position(|m| m.name == name) {
             Some(i) => i,
@@ -163,7 +162,7 @@ impl<T> Mods<T> {
                 let n = self.iter().count();
                 let tail = self.iter().last().map_or(&self.head, |m| &m.next);
                 // Appends hold `mounting`, so the tail's link is empty.
-                let _ = tail.set(node);
+                let _set = tail.set(node);
                 n
             }
         };

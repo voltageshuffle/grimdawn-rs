@@ -17,7 +17,7 @@
 // Re-checked 2026-10-30 (directionalPS / directionalAmbientPS / pointPS): plain
 // sat(N·L), no wrap or half-Lambert, no shadow intensity; the sun shadow is a
 // 4-tap binary compare of bilinear depth at ±½·shadowBluriness (= softness 1.5, World ctor,
-// never set, / shadow map size: 1536 at shadowQuality medium, sub_180093410),
+// never set, / shadow map size: 1536 at shadowQuality medium, `GraphicsEngine::GetShadowMapSizes`),
 // i.e. ±0.75 texel, on the engine's LiSPSM map (render/shadow.rs, sun_shadow).
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::VertexOutput;
@@ -177,7 +177,7 @@ fn is_doll_view() -> bool {
     return view.color_grading.exposure > 0.5;
 }
 
-/// The doll view's lighting (Grim Dawn.exe sub_140239A40): sky / ground
+/// The doll view's lighting (Grim Dawn.exe `UISceneView::Render`): sky / ground
 /// ambient and one directional light from the record (gain = light colour,
 /// lift = sky, gamma = ground, contrast = direction to the light in view
 /// space: it turns with the camera); no shadows, no point lights.
@@ -710,7 +710,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     // The glow view renders only the glow buffer for the blur (post.rs).
     if is_glow_view() {
-        // The engine's glow target is the G-buffer's UNORM format 2 (CreateRenderTargets @0x1800ad850): at most 1.
+        // The engine's glow target is the G-buffer's UNORM format 2 (CreateRenderTargets): at most 1.
         out.color = vec4<f32>(clamp(glow, vec3<f32>(0.0), vec3<f32>(1.0)), glow_view_alpha(fade));
     } else {
         out.color = vec4<f32>(min(c + glow, vec3<f32>(env[4].x)), alpha);

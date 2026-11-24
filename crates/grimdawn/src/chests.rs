@@ -7,8 +7,8 @@
 //!
 //! The chest opens when the player's centre is within player
 //! radius + chest radius + `usableRange` (0 when absent) + 1 m of the
-//! chest's (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`
-//! @0x180167000, straight-line distance); a chest whose record has `locked`
+//! chest's (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`,
+//! straight-line distance); a chest whose record has `locked`
 //! only plays its locked sound until unlocked (`FixedItem::RequestToUse`,
 //! `FixedItem::Load` reads `locked` for every fixed item; `SetLock`). Loot
 //! is thrown from the chest's drop point (`gd_game::chests`, `gd_game::loot` doc).
@@ -20,7 +20,7 @@
 //! joints within 1.5 m). The hover pick (`hover.rs`, a sphere of `actorRadius` + 0.5 m around the pivot + 0.5 m
 //! up) chooses the chest the interact order targets; the use itself is `gd_game::chests::open_chests`.
 //!
-//! A container's effects (`FixedItemContainer::UpdateSelf` @0x1802acab0, [`chest_effects`]): the
+//! A container's effects (`FixedItemContainer::UpdateSelf`, [`chest_effects`]): the
 //! record's `IdleEffect` (the loot chests' glow and twinkle) is created and attached at the container's origin
 //! while it is not open; its `LockedEffect` is attached while it is locked and stops emitting where it is when
 //! the lock goes (the radius lock, gd-game `chests`). An open container (state 3) counts 1000 ms down (the
@@ -57,7 +57,7 @@ fn dress_chests(
     new: Query<(Entity, &Chest), Without<gd_render::character::RecordDressed>>,
     opened: Query<(Entity, &Chest, Option<&ShrineIdleFx>), (Changed<Chest>, Without<ShownOpen>)>,
     mut a: CharAssets,
-    mut anims: ResMut<gd_game::character::AnimCache>,
+    mut anims: ResMut<gd_game_core::character::AnimCache>,
 ) {
     for (e, chest) in &new {
         let db = a.data.db.clone();
@@ -121,10 +121,12 @@ fn dress_chests(
             && let Some(record) = rec.str("IdleLoopingEffect")
         {
             let fx = gd_render::fx::spawn_effect_record(&mut commands, record, Transform::IDENTITY);
-            commands.entity(fx).insert(gd_game::visuals::EffectSpec {
-                despawn_when_complete: true,
-                ..gd_game::visuals::EffectSpec::record(record)
-            });
+            commands
+                .entity(fx)
+                .insert(gd_game_core::visuals::EffectSpec {
+                    despawn_when_complete: true,
+                    ..gd_game_core::visuals::EffectSpec::record(record)
+                });
             gd_render::model::try_add_child(&mut commands, e, fx);
             commands.entity(e).try_insert(ShrineIdleFx(fx));
         }
@@ -137,7 +139,7 @@ fn dress_chests(
         if let Some(idle) = idle {
             commands
                 .entity(idle.0)
-                .try_insert(gd_game::visuals::StopEmitting);
+                .try_insert(gd_game_core::visuals::StopEmitting);
         }
         let Some(rec) = a.data.db.get(&chest.record) else {
             continue;
@@ -173,10 +175,12 @@ struct ChestFx {
 /// An `EffectEntity` of `record` attached at `chest`'s origin; it goes once stopped and finished.
 fn attach_effect(commands: &mut Commands, chest: Entity, record: &str) -> Entity {
     let fx = gd_render::fx::spawn_effect_record(commands, record, Transform::IDENTITY);
-    commands.entity(fx).insert(gd_game::visuals::EffectSpec {
-        despawn_when_complete: true,
-        ..gd_game::visuals::EffectSpec::record(record)
-    });
+    commands
+        .entity(fx)
+        .insert(gd_game_core::visuals::EffectSpec {
+            despawn_when_complete: true,
+            ..gd_game_core::visuals::EffectSpec::record(record)
+        });
     gd_render::model::try_add_child(commands, chest, fx);
     fx
 }
@@ -185,9 +189,9 @@ fn attach_effect(commands: &mut Commands, chest: Entity, record: &str) -> Entity
 fn chest_effects(
     time: Res<Time>,
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut chests: Query<(Entity, Ref<Chest>, &mut ChestFx, Option<&Children>)>,
-    effects: Query<(), With<gd_game::visuals::EffectSpec>>,
+    effects: Query<(), With<gd_game_core::visuals::EffectSpec>>,
 ) {
     for (e, chest, mut fx, children) in &mut chests {
         if chest.is_changed() || fx.is_added() {
@@ -202,7 +206,7 @@ fn chest_effects(
                 (false, Some(l)) => {
                     commands
                         .entity(l)
-                        .try_insert(gd_game::visuals::StopEmitting);
+                        .try_insert(gd_game_core::visuals::StopEmitting);
                     fx.locked = None;
                 }
                 _ => {}
@@ -222,7 +226,7 @@ fn chest_effects(
             if effects.contains(*c) {
                 commands
                     .entity(*c)
-                    .try_insert(gd_game::visuals::StopEmitting);
+                    .try_insert(gd_game_core::visuals::StopEmitting);
             }
         }
     }

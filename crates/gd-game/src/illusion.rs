@@ -14,46 +14,46 @@
 //!   is rebuilt from `look_record`).
 //! - [`use_sets`]: a used transmute set (`ItemTransmuterSet`, the DLC illusion packs and the Coven's Black Knight set;
 //!   right click, `consumables::use_items` sends [`UseTransmuteSet`]). `ItemTransmuterSet::Use`
-//!   @0x1803548e0 (main player only): each record of `transmuteDbrs` goes through `AddItemToTransmutes` (the
+//!   (main player only): each record of `transmuteDbrs` goes through `AddItemToTransmutes` (the
 //!   [`Illusions::unlock`] dedupe); when any was new, `SaveTransmutes` writes `transmutes.gst` at once (the account's
 //!   shared save folder, `GetSharedSavePath`; here the port's save folder root, where `save.rs` writes it too). Then
 //!   the `useSound` plays and, when `transmuteTag` is set, the cinematic text type 8, colour (0.9, 0.9, 1): headline
 //!   `tagTransmuteNew` ("You have gained a new Illusion: {%s0}") with the localised set name, subline empty, on every
-//!   use (also when nothing was new). `AllowUse` @0x1803285c0 always allows it and removes the item when its stack is
+//!   use (also when nothing was new). `AllowUse` always allows it and removes the item when its stack is
 //!   1; a larger stack loses one (`DecrementStack`), the generic rule of `consumables::consumed`.
-//! - [`transmute_check`]: a single-piece transmuter (`ItemTransmuter`: the DLC illusion pieces and the removal
+//! - [`gd_game_core::illusion::transmute_check`]: a single-piece transmuter (`ItemTransmuter`: the DLC illusion pieces and the removal
 //!   flask, given by the bonus-items NPC's conversations `npc_bonusitems_0{1,2}.cnv`). A right click on one in the
-//!   bags or stash enters its cursor mode (`ItemTransmuter::CreateSecondaryCursorHandler` @0x180353e30 makes a
+//!   bags or stash enters its cursor mode (`ItemTransmuter::CreateSecondaryCursorHandler` makes a
 //!   `CursorHandlerTransmute`, no requirement test), which is the component / augment apply mode of
 //!   `crate::inventory` (`Inventory::start_apply`; the handler shares `Update` / `Escape` / `CleanupDialog` with
 //!   `CursorHandlerRelicCombine`, folded, and its `Cancel` callers): a click on a bag, equipped or stash item it
-//!   `CanBeUsedOn` asks the confirmation, Yes applies it (`ControllerPlayer` vt+552 `UseItemOnConfigCmd` →
-//!   `Character::UseItemOn` → `ItemTransmuter::UseOn` @0x180353640). `ItemTransmuter::Load` @0x180353b00 reads
+//!   `CanBeUsedOn` asks the confirmation, Yes applies it (`ControllerPlayer::UseItemOnConfigCmd` →
+//!   `Character::UseItemOn` → `ItemTransmuter::UseOn`). `ItemTransmuter::Load` reads
 //!   `transmuteDbr`, `transmuteTag`,
 //!   `removeTransmute`; `InitializeItem` loads the look when `transmuteDbr` is set and it is no remover.
-//!   `CanBeUsedOn` @0x180353880 (always "ask first"): a look piece takes an `ItemEquipment` of the look's item type
+//!   `CanBeUsedOn` (always "ask first"): a look piece takes an `ItemEquipment` of the look's item type
 //!   whose current mesh is not the look's, both weapons by the weapon groups of the Illusionist window
 //!   (`gd_sim::items::illusion::fits`); the remover any equipment with an illusion. The text
-//!   (`CursorHandlerTransmute::Primary{Inventory,Equip,Stash,Transfer}Activate` @0x1801893f0 / @0x1801897c0 /
-//!   @0x180189a80 / @0x180189d60): `tagTransmuteConfirmation`, `…SoulboundConfirmation` when the piece is
+//!   (`CursorHandlerTransmute::Primary{Inventory,Equip,Stash,Transfer}Activate`):
+//!   `tagTransmuteConfirmation`, `…SoulboundConfirmation` when the piece is
 //!   soulbound and the item not; onto an item with an illusion `tagTransmuteOverwrite` / `…SoulboundOverwrite`;
 //!   the remover `tagTransmuteRemove`. A transfer-stash item is never a target unless the piece
-//!   `CanBePlacedInTransferStash` (vt+1032: not soulbound, no material), which no stock piece is. `UseOn`: a
-//!   look piece becomes the item's illusion (`ItemEquipment::AddTransmute(Item)` @0x180342010), one of a stack or
-//!   the last one; the remover clears it (`RemoveTransmute` @0x180342120) and is used up the same way. No sound.
+//!   `CanBePlacedInTransferStash` (not soulbound, no material), which no stock piece is. `UseOn`: a
+//!   look piece becomes the item's illusion (`ItemEquipment::AddTransmute(Item)`), one of a stack or
+//!   the last one; the remover clears it (`RemoveTransmute`) and is used up the same way. No sound.
 //!   PORT: the engine's illusion is the piece itself (the gdc's transmute name is the piece's record, its look
 //!   `GetTransmute`, and `AddTransmute` marks the item untradeable, soulbound when the piece is); the port stores
 //!   the look record, as the Illusionist window does (`AddTransmute(string)`), and an item's soulbound state stays
 //!   its base record's or augment's (`Inventory::apply_check`). The "capture" kind (no `transmuteDbr`, no
 //!   `removeTransmute`: `tagTransmuteDestroy`, infuses an item's look) exists only as a sandbox record
 //!   (`records/sandbox/jakub/transmute_capture_test.dbr`): not ported.
-use crate::inventory::{Inventory, SLOTS};
-use crate::session::MessageDrain;
 use bevy::prelude::*;
 use gd_formats::save::Shared;
 use gd_formats::save::gst::{TransmuteEntry, Transmutes};
 use gd_formats::save::item::Item;
 use gd_formats::vfs::Database;
+use gd_game_core::inventory::{Inventory, SLOTS};
+use gd_game_core::session::MessageDrain;
 use gd_sim::items::illusion::{fits, item_type, same_look, sort_key, takes_illusion};
 
 /// The window record (`transmuterwindow.tpl`).
@@ -70,11 +70,11 @@ pub struct Illusions {
 impl Illusions {
     pub fn new_file() -> Transmutes {
         Transmutes {
-            seed: crate::rng::u32(..),
+            seed: gd_game_core::rng::u32(..),
             file_version: 1,
             version: 2,
             mod_name: String::new(),
-            expansion_status: crate::stash::LOADED_EXPANSIONS,
+            expansion_status: gd_game_core::stash::LOADED_EXPANSIONS,
             count: 0,
             entries: Vec::new(),
         }
@@ -147,24 +147,27 @@ impl Illusions {
 
 /// Loads [`Illusions`] once the session has a character (the shared
 /// `transmutes.gst`; an empty list when there is none, and an unreadable one is never overwritten:
-/// `crate::stash::read_shared`).
+/// `gd_game_core::stash::read_shared`).
 pub fn init_illusions(
     mut commands: Commands,
     // Option: the existence check (this system creates it).
     have: Option<Res<Illusions>>,
-    choice: Res<crate::session::Choice>,
-    save_dir: Res<crate::session::SaveDir>,
-    mut shared: ResMut<crate::stash::SharedFiles>,
+    choice: Res<gd_game_core::session::Choice>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
+    mut shared: ResMut<gd_game_core::stash::SharedFiles>,
 ) {
     if have.is_some() {
         return;
     }
-    let path = crate::stash::shared_path(&choice, &save_dir, Shared::Transmutes);
-    let file =
-        crate::stash::read_shared(&mut shared, &choice, &save_dir, Shared::Transmutes, |b| {
-            Transmutes::parse(b)
-        })
-        .unwrap_or_else(Illusions::new_file);
+    let path = gd_game_core::stash::shared_path(&choice, &save_dir, Shared::Transmutes);
+    let file = gd_game_core::stash::read_shared(
+        &mut shared,
+        &choice,
+        &save_dir,
+        Shared::Transmutes,
+        Transmutes::parse,
+    )
+    .unwrap_or_else(Illusions::new_file);
     info!(
         "illusions: {} unlocked ({})",
         file.entries.iter().map(|e| e.records.len()).sum::<usize>(),
@@ -181,9 +184,9 @@ pub fn init_illusions(
 pub fn unlock_items(
     inv: Res<Inventory>,
     mut ill: ResMut<Illusions>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut seen: Local<Option<u64>>,
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
     if fresh.begun() {
         *seen = None;
@@ -210,7 +213,7 @@ pub fn unlock_items(
 /// (`name`: a record's display name, the last sort key). Empty when the
 /// item takes no illusion. A male player (`female` false) is not offered the
 /// records flagged `preventMaleTransmute` (page builder
-/// `sub_1402817E0`: `Item::IsMaleCompatible`, true unless the record's
+/// `TransmuteWindow::BuildPage`: `Item::IsMaleCompatible`, true unless the record's
 /// `preventMaleTransmute` is set and the item's gender, the main player's at
 /// `AddItemToTransmutes`, is male).
 pub fn choices(
@@ -320,8 +323,8 @@ pub struct ApplyIllusions {
 pub fn apply_requests(
     mut requests: MessageReader<ApplyIllusions>,
     mut inv: ResMut<Inventory>,
-    mut progress: ResMut<crate::progress::PlayerProgress>,
-    data: Res<crate::data::GameData>,
+    mut progress: ResMut<gd_game_core::progress::PlayerProgress>,
+    data: Res<gd_game_core::data::GameData>,
 ) {
     let level = progress.progress.level.max(1) as u32;
     for r in requests.read() {
@@ -346,18 +349,18 @@ pub fn use_sets(
     mut used: MessageReader<UseTransmuteSet>,
     mut ill: ResMut<Illusions>,
     mut inv: ResMut<Inventory>,
-    data: Res<crate::data::GameData>,
-    save_dir: Res<crate::session::SaveDir>,
-    choice: Res<crate::session::Choice>,
-    shared: Res<crate::stash::SharedFiles>,
-    mut cinematic: MessageWriter<crate::story::CinematicText>,
+    data: Res<gd_game_core::data::GameData>,
+    save_dir: Res<gd_game_core::session::SaveDir>,
+    choice: Res<gd_game_core::session::Choice>,
+    shared: Res<gd_game_core::stash::SharedFiles>,
+    mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
     for UseTransmuteSet(record) in used.read() {
         let Some(rec) = data.db.get(record) else {
             continue;
         };
         // Test hook `GD_SHOT_ON=<set record text>`: shots of the cinematic text.
-        crate::visuals::notify(&mut commands, record);
+        gd_game_core::visuals::notify(&mut commands, record);
         let mut new = false;
         for r in rec.strs("transmuteDbrs") {
             let r = r.trim();
@@ -389,66 +392,17 @@ pub fn use_sets(
             &[gd_sim::items::tooltip::Arg::Str(name.trim())],
         );
         info!("illusions: {head} ({record}, new: {new})");
-        cinematic.write(crate::story::CinematicText::plain(
+        cinematic.write(gd_game_core::story::CinematicText::plain(
             head.trim().to_owned(),
             8,
         ));
     }
 }
 
-/// What the transmuter `tr` (an `ItemTransmuter` record) does to `target` (module doc: `CanBeUsedOn` and the
-/// confirmation text): None when it cannot be used on it, else the question's text tag. `bound`: the target is
-/// soulbound (the caller's read of `Item` +3072).
-pub fn transmute_check(
-    db: &gd_sim::items::ItemDb,
-    tr: &gd_formats::arz::Record,
-    target: &Item,
-    bound: bool,
-) -> Option<&'static str> {
-    if tr.bool("removeTransmute") {
-        return (!target.transmute_name.is_empty()).then_some("tagTransmuteRemove");
-    }
-    let look = db.get(tr.str("transmuteDbr")?)?;
-    let base = db.get(&target.base_name)?;
-    if !fits(&base.class, &look.class) {
-        return None;
-    }
-    // The item's current mesh (its illusion's when it has one) against the look's.
-    let mesh = |r: &gd_formats::arz::Record| {
-        r.str("mesh")
-            .or(r.str("armorMaleMesh"))
-            .unwrap_or("")
-            .to_ascii_lowercase()
-    };
-    let now = db
-        .get(gd_sim::items::illusion::look_record(target))
-        .unwrap_or(base);
-    if mesh(now) == mesh(look) {
-        return None;
-    }
-    let binds = tr.bool("soulbound") && !bound;
-    Some(match (target.transmute_name.is_empty(), binds) {
-        (true, false) => "tagTransmuteConfirmation",
-        (true, true) => "tagTransmuteSoulboundConfirmation",
-        (false, false) => "tagTransmuteOverwrite",
-        (false, true) => "tagTransmuteSoulboundOverwrite",
-    })
-}
-
-/// The illusion `tr` (an `ItemTransmuter` record) leaves on the item it is used on (module doc: `UseOn`): its look
-/// record, or none for the remover.
-pub fn transmute_result(tr: &gd_formats::arz::Record) -> String {
-    if tr.bool("removeTransmute") {
-        String::new()
-    } else {
-        tr.str("transmuteDbr").unwrap_or("").to_owned()
-    }
-}
-
 /// What [`apply_requests`] needs: the bags and the gold.
 fn has_apply_inputs(
     inv: Option<Res<Inventory>>,
-    progress: Option<Res<crate::progress::PlayerProgress>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
 ) -> bool {
     inv.is_some() && progress.is_some()
 }
@@ -476,8 +430,8 @@ impl Plugin for IllusionPlugin {
                     apply_requests.run_if(has_apply_inputs),
                 )
                     .chain()
-                    .after(crate::inventory::InventorySet)
-                    .before(crate::player::PlayerSet),
+                    .after(gd_game_core::inventory::InventorySet)
+                    .before(gd_game_core::player::PlayerSet),
             )
             .add_systems(
                 Update,

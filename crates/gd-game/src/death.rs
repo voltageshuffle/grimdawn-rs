@@ -1,10 +1,10 @@
 //! The death penalty: dying costs experience (`experienceformulas.dbr`
 //! `deathPenaltyEquation` with `playerLevel` = `currentPlayerLevel` = the
-//! player's level, `GameEngine::ResolveEquationVariable` @0x1802e8170; clamped
+//! player's level, `GameEngine::ResolveEquationVariable`; clamped
 //! to `deathPenaltyMin/Max`), registered for redemption
-//! (`GameEngine::RegisterExperienceLoss` @0x1802efcb0). A gravestone
+//! (`GameEngine::RegisterExperienceLoss`). A gravestone
 //! (`records/ui/inworld/gravemarker.dbr`) marks the spot; using it gives back
-//! loss × `RedemptionMultiplier` (`PlayerExperienceRedemption` @0x1802ed650)
+//! loss × `RedemptionMultiplier` (`PlayerExperienceRedemption`)
 //! and removes it; levels gained go through the same `progress::level_up` as kills / quests
 //! (ProfileDirty, life / energy refill, LeveledUp). Dying again replaces the stone and the registered loss.
 //!
@@ -17,7 +17,7 @@
 //! does not persist the stone either: it lasts the session.
 //!
 //! Softcore characters come back at the current respawn point of the
-//! difficulty (`Player::GetClosestRespawnPoint` @0x1803d34f0, called by
+//! difficulty (`Player::GetClosestRespawnPoint`, called by
 //! `ControllerPlayer::DeathUpdate` and `ControllerPlayerStateRespawning::OnBegin`:
 //! the position of the entity of `Player::AddRespawnUID`'s current UID);
 //! `PlayerStart` holds that point (`riftgates` binds it, grimdawn's `session.rs` loads
@@ -26,19 +26,20 @@
 //!
 //! Play stats: deaths (`PlayStats::IncrementDeaths`) count into the save's block 16
 //! ([`crate::play_stats::PlayCounts`], with the session's other counts).
-//! Hardcore (`ControllerPlayer::CharacterIsDying` @0x18015db20):
+//! Hardcore (`ControllerPlayer::CharacterIsDying`):
 //! the penalty and the stone happen as usual (`Player::CharacterIsDying`
 //! does not look at the flag), the death count goes up, the game saves at
 //! once and shows the Game Over dialog (`tagGameOver`); there is no respawn.
 //! There is no "dead" save flag: the character list shows a hardcore
-//! character with a non-zero death count as dead (exe 0x1400892e0, via
+//! character with a non-zero death count as dead (exe `CharacterList::Draw`, via
 //! `Player::IsHardcore` and `PlayStats::GetNumberOfDeaths`).
-use crate::combat::{CombatRules, Dead};
-use crate::data::GameData;
-use crate::player::Player;
-use crate::progress::PlayerProgress;
-use crate::session::{LoadedCharacter, is_hardcore};
 use bevy::prelude::*;
+use gd_game_core::combat::Dead;
+use gd_game_core::data::GameData;
+use gd_game_core::player::Player;
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::rules::CombatRules;
+use gd_game_core::session::{LoadedCharacter, is_hardcore};
 
 pub struct DeathPlugin;
 
@@ -60,7 +61,7 @@ impl Plugin for DeathPlugin {
                     .before(crate::player::rebuild_profile),
             )
                 .chain()
-                .after(crate::player::PlayerSet),
+                .after(gd_game_core::player::PlayerSet),
         );
     }
 }
@@ -80,7 +81,7 @@ pub fn death_penalty(db: &gd_formats::vfs::Database, level: i32) -> u64 {
     let l = level as f32;
     let v = r
         .str("deathPenaltyEquation")
-        .and_then(|e| gd_sim::expr::Expr::parse(e).ok())
+        .and_then(|e| gd_rules::expr::Expr::parse(e).ok())
         .map(|e| {
             e.eval(&|n| {
                 (n.eq_ignore_ascii_case("playerLevel")
@@ -109,7 +110,7 @@ pub fn on_death(
     mut stats: ResMut<crate::play_stats::PlayCounts>,
     // Option: a new character has no `LoadedCharacter`.
     loaded: Option<Res<LoadedCharacter>>,
-    choice: Res<crate::session::Choice>,
+    choice: Res<gd_game_core::session::Choice>,
 ) {
     let Ok(tf) = died.single() else {
         return;
@@ -136,7 +137,7 @@ pub fn on_death(
     for g in &graves {
         commands.entity(g).try_despawn();
     }
-    // `ControllerPlayer::CharacterIsDying` @0x18015db20: no gravestone in the Crucible
+    // `ControllerPlayer::CharacterIsDying`: no gravestone in the Crucible
     // (`CreateGravestone` only when `GameInfo::GetMode() != 1`); the penalty above still applies.
     if redeem == 0 || choice.survival.is_some() {
         return;
@@ -184,8 +185,11 @@ pub fn use_grave(
     };
     // Use range (`combat::fixed_use_range`): the player's radius + the gravemarker's (`actorRadius` 0) + its
     // `usableRange` (2 m), 3D, +1 m at the walk's end.
-    let range =
-        crate::combat::fixed_use_range(data.db.get(GRAVE), player_radius, path.points.is_empty());
+    let range = gd_game_core::combat::fixed_use_range(
+        data.db.get(GRAVE),
+        player_radius,
+        path.points.is_empty(),
+    );
     if ptf.translation.distance(gt.translation()) > range {
         return;
     }
@@ -216,7 +220,7 @@ pub fn use_grave(
         .get(GRAVE)
         .and_then(|r| r.str("GraveEffect").map(str::to_owned))
     {
-        crate::visuals::spawn_fx(
+        gd_game_core::visuals::spawn_fx(
             &mut commands,
             &data,
             &fx,
@@ -228,8 +232,8 @@ pub fn use_grave(
 
 /// `GD_DIE` / `GD_GOD` (hooks.rs).
 pub fn test_god(
-    hooks: Res<crate::hooks::Hooks>,
-    mut players: Query<&mut crate::combat::Combatant, (With<Player>, Without<Dead>)>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    mut players: Query<&mut gd_game_core::combat::Combatant, (With<Player>, Without<Dead>)>,
 ) {
     // `GD_LIFE_PCT`: held at that percent (after the god mode's refill, which it overrides).
     if let Some(pct) = hooks.gameplay.life_pct {
@@ -252,10 +256,10 @@ pub fn test_god(
 /// `GD_DIE=<secs>` (hooks.rs): the player dies once per session, that long into play, through the one death path
 /// (`combat::kill_me`).
 pub fn test_die(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
-    (mut t, mut fresh): (Local<Option<f32>>, crate::session::NewSession),
+    (mut t, mut fresh): (Local<Option<f32>>, gd_game_core::session::NewSession),
     players: Query<Entity, (With<Player>, Without<Dead>)>,
 ) {
     if fresh.begun() {

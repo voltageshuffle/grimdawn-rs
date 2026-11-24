@@ -1,0 +1,34 @@
+lints.workspace = true
+
+[package]
+name = "gd-game-core"
+version = "0.1.0"
+edition = "2024"
+description = "Grim Dawn's gameplay data leaf: components, resources, messages, pure resolvers and system sets shared by gd-game and gd-render"
+license = "MIT"
+
+[features]
+# Set by gd-game's `dev`: `Hooks::from_env` (the only environment read of the hooks). Tests need no feature: they
+# build hooks with `Hooks::from_vars`.
+dev = []
+
+[dependencies]
+anyhow = "1.0.104"
+bevy = {
+  version = "0.20",
+  default-features = false,
+  features = [
+    "async_executor",
+    "bevy_log",
+    "multi_threaded",
+    "std",
+  ]
+}
+fastrand = "2.5.0"
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-rules = { path = "../gd-rules", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }
+gd-story = { path = "../gd-story", version = "0.1.0" }
+log = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
+parking_lot = "0.12"
+tracing = { version = "*", features = ["max_level_debug", "release_max_level_off"] }

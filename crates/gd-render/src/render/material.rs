@@ -18,7 +18,6 @@
 use super::GdDefaults;
 use super::distort::{DistortMaterial, DistortParams};
 use super::envmap::EnvmapMaterial;
-use crate::data::GameData;
 use crate::textures::Textures;
 use bevy::asset::UntypedAssetId;
 use bevy::ecs::system::SystemParam;
@@ -31,9 +30,10 @@ use bevy::render::render_resource::{
 };
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::{ShaderDefVal, ShaderRef};
+use gd_formats::collections::HashMap;
 use gd_formats::msh::{Material as MshMaterial, ParamValue};
 use gd_formats::ssh::{Profile, Ssh, Value};
-use std::collections::HashMap;
+use gd_game_core::data::GameData;
 
 const SHADER: &str = "embedded://gd_render/render/shaders/gd_standard.wesl";
 const PREPASS_SHADER: &str = "embedded://gd_render/render/shaders/gd_prepass.wesl";
@@ -80,8 +80,8 @@ pub const FLAG_ICEY: u32 = 512;
 /// - `bonefadeskinned.ssh` ([`FLAG_BONE_FADE`]): its `deferredVS` writes rgb 1 and
 ///   alpha `boneFadeFactor[first bone]`, `deferredPS` drops alpha < 0.01 and blends `base.a · a`
 ///   (SrcAlpha / OneMinusSrcAlpha). The factor is `GraphicsMeshInstance::SetBoneTransparancies`
-///   (Engine.dll, bound in `SetShaderParameters` @0x1800c2590), which only `Destructible` sets
-///   (Game.dll `UpdateSelf` @0x180260a80: after `rubbleLife`, every piece bone the same
+///   (Engine.dll, bound in `SetShaderParameters`), which only `Destructible` sets
+///   (Game.dll `Destructible::UpdateSelf`: after `rubbleLife`, every piece bone the same
 ///   `remaining / rubbleFade`; the bone bitset it also writes has no writer in the binaries).
 ///   Without it the factor is 1. Stock: the harpy gibs and the breakables' `*_break` meshes;
 ///   the other gibs are `standardblendedstatic` and fade through `blendedGlobalFadeFactor`
@@ -507,7 +507,8 @@ pub struct ShaderInfo {
 /// Per the DirectX11 vertex programs of every `.ssh` with a `foliageSpeed`,
 /// every pass: the position p moves by `d · c.rgb · c.a · 0.1 · foliageAmplitude
 /// · rippleAmplitude` with c the vertex colour (B8G8R8A8, Direct3D11.dll
-/// sub_180011400), `a_i = (p_i + o_i)·rippleScale_i + time·foliageSpeed`, `s = sin a`,
+/// `Direct3DVertexDeclaration::Direct3DVertexDeclaration`),
+/// `a_i = (p_i + o_i)·rippleScale_i + time·foliageSpeed`, `s = sin a`,
 /// `d = (s_y·s_z, s_z·s_x, s_x·s_y)`; additivescrollwiggly{static,skinned} take
 /// `d = (s_y·k_z, s_z·k_x, s_x·k_y)`, `k = sin(a + 1.57)`. The shaders without
 /// `*RippleAmplitude` (additive / multiply / distort families) have none (1).
@@ -597,7 +598,7 @@ pub enum Special {
         post_object: bool,
     },
     /// Never drawn: no technique the deferred renderer collects
-    /// (`GraphicsDeferredRenderer::ExecutePrepareScene` @0x1800adbc0:
+    /// (`GraphicsDeferredRenderer::ExecutePrepareScene`:
     /// `deferredTerrain`, `deferred`, `emissiveStyle`, `deferredLit`,
     /// `deferredStencilStyle`; then `RenderPostObjects`' two post styles and
     /// `deferredOutlineStyle`): `distortstandard*`.
@@ -999,8 +1000,8 @@ pub struct MeshFacts {
 }
 
 /// An entity record's shader and glow overrides, as `Actor::Load` applies
-/// them (Engine.dll `Actor::Load` @0x180028c50): `shader` →
-/// `GraphicsMeshInstance::SetDbrShader` @0x1800c0d80, the shader of every
+/// them (Engine.dll `Actor::Load`): `shader` →
+/// `GraphicsMeshInstance::SetDbrShader`, the shader of every
 /// face set (`GetShader2` returns it for every material unless an item's
 /// transmute turned it off, `DisableDbrShader`), drawn with the msh material's
 /// own parameters; `glowTexture` → `SetGlowTexture` (every material),

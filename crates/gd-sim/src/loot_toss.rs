@@ -2,7 +2,7 @@
 //! velocity, ballistic flight and the drop timing (the presentation and the
 //! ECS side: `gd_game::loot`).
 //!
-//! Game.dll loot dropper (`sub_180358B20`, shared by monsters,
+//! Game.dll loot dropper (`ItemDropper::Update`, shared by monsters,
 //! destructibles, chests and shrines):
 //! - Timing: after the loot job, wait [`FIRST_DELAY_MS`], then release a
 //!   batch per [`BATCH_INTERVAL_MS`]` / players`. Monsters and destructibles
@@ -25,7 +25,7 @@
 //!   are modelled lying). The body spins at 20 × its Z axis and rests in the
 //!   pose it first touched the world in.
 
-/// Toss speed (m/s), `sub_180358B20`.
+/// Toss speed (m/s), `ItemDropper::Update`.
 pub const TOSS_SPEED: f32 = 3.0;
 /// Wait after the loot job before the first batch (ms).
 pub const FIRST_DELAY_MS: f32 = 250.0;

@@ -13,29 +13,32 @@
 //! * Stock data: the spirit guides are `records/creatures/npcs/merchants/*reallocator*.dbr` (class
 //!   `NpcSkillReallocator`; placed in Region0H032, Region0J001 and Region0K043 of `world001.map`; Devil's
 //!   Crossing's comes from its quest script entity). The player record (`malepc01.dbr`) holds the price table.
-//! * Opening: Game.dll `NpcSkillReallocator::OnPlayerInteract` @0x1803bde30 (the main player's
-//!   interaction asks the UI, `gGameEngine+822` vtable +96, then the NPC says hello) and GrimDawn.exe
-//!   `sub_14021A880` (that UI call): with no mastery and no devotion point spent it shows `tagReclaimNoPoints`
-//!   (`DialogManager::AddDialog` type 13) and opens nothing; otherwise it closes the open windows
-//!   (`sub_1402198E0`); with a mastery the skills window opens in reclamation mode for that NPC (both mastery
-//!   panes' `+7756` set through vtable +168, the NPC id kept at window `+9780`, tutorial page 35 unlocked on
-//!   show, `sub_14027A210`), else the devotion window opens in its reclaim mode ([`ReclaimAnswer`]): the devotion
-//!   pane's `+9241` set (entering it recomputes the star locks, `sub_140184F20`) and the NPC id kept at pane `+9280`.
-//! * Switching: the skills window's Devotion tab in the mode (`sub_14027C890`, tab 2) calls the UI's
-//!   devotion opener `sub_14021ABA0` with the NPC: no devotion point spent → `tagReclaimNoPoints` and nothing
-//!   changes; else the open windows close (the skills window's hide leaves its mode, says goodbye and autosaves) and
-//!   the devotion window opens in its reclaim mode for the NPC. The devotion window's skills tabs in its mode
-//!   (`sub_14018C4D0`) call `DisplaySkillReallocationWindow(npc)`, i.e. `sub_14021A880` again. Here
+//! * Opening: Game.dll `NpcSkillReallocator::OnPlayerInteract` (the main player's
+//!   interaction asks the UI, `GameEngine.ui`'s `DisplaySkillReallocationWindow`, then the NPC says hello) and
+//!   GrimDawn.exe `GameUI::DisplaySkillReallocationWindow` (that UI call): with no mastery and no devotion point
+//!   spent it shows `tagReclaimNoPoints` (`DialogManager::AddDialog` type 13) and opens nothing; otherwise it closes
+//!   the open windows (`UIPlayerHud::CloseWindows`); with a mastery the skills window opens in reclamation mode for
+//!   that NPC (both mastery panes' `UISkillPane.reclamationMode` set through `UISkillPane::SetReclamationMode`, the
+//!   NPC id kept at `SkillsWindow.reclaimNpc`, tutorial page 35 unlocked on show, `SkillsWindow::SetVisible`), else
+//!   the devotion window opens in its reclaim mode ([`ReclaimAnswer`]): the devotion pane's
+//!   `DevotionPane.reclaimMode` set (entering it recomputes the star locks, `DevotionWindow::UpdateLocks`) and the
+//!   NPC id kept at `DevotionPane.reclaimNpc`.
+//! * Switching: the skills window's Devotion tab in the mode (`SkillsWindow::OnTabSelected`, tab 2) calls the UI's
+//!   devotion opener `GameUI::DisplayDevotionReallocationWindow` with the NPC: no devotion point spent →
+//!   `tagReclaimNoPoints` and nothing changes; else the open windows close (the skills window's hide leaves its
+//!   mode, says goodbye and autosaves) and the devotion window opens in its reclaim mode for the NPC. The devotion
+//!   window's skills tabs in its mode (`DevotionWindow::OnSkillsTab`) call `DisplaySkillReallocationWindow(npc)`,
+//!   i.e. `GameUI::DisplaySkillReallocationWindow` again. Here
 //!   [`ReclaimRequest::Switch`]; the mode is one state whose [`SkillReclamation::devotion`] says which window has it.
 //! * The devotion window in its mode (`crate::devotion::devotion_requests`): a left click on a taken star refunds it
 //!   for gold and aether (`gd_sim::devotion` rules for what may go), nothing takes a star; outside the mode nothing
-//!   refunds. Its update closes it by the same distance rule, its hide (`sub_14018B120`) leaves the mode, says
-//!   goodbye and autosaves.
-//! * Closing: `sub_140279F70` (window update): when the 3D distance from the player to the NPC exceeds
+//!   refunds. Its update closes it by the same distance rule, its hide (`DevotionWindow::SetVisible`) leaves the mode,
+//!   says goodbye and autosaves.
+//! * Closing: `SkillsWindow::Update` (window update): when the 3D distance from the player to the NPC exceeds
 //!   its `GetUICloseDistance` (`crate::conversation::close_distance`) the window hides; hiding
-//!   (`sub_14027A210` with 0) leaves the mode, tells the NPC goodbye (vtable +2400) and autosaves
+//!   (`SkillsWindow::SetVisible` with 0) leaves the mode, tells the NPC goodbye (`SayGoodbye`) and autosaves
 //!   ([`crate::save::SaveRequest`]). The pane's `OnHide` makes the refunds final (`crate::points::SkillUndo`).
-//! * Refund: click callback `sub_140248510` in the mode: not a mastery at level 1, the level goes down
+//! * Refund: click callback `UISkillPane::OnButtonClick` in the mode: not a mastery at level 1, the level goes down
 //!   (`DecrementSkillLevel`), `UseReclamationPoints(1)` charges the price (short of money: the level goes back up),
 //!   one skill point comes back and the window's change record takes it (`SkillUndo`, undo pays the price back).
 //!   A disabled button (`gd_sim::reclamation::Flags::disabled`) takes no click; the request is refused the same way.
@@ -44,13 +47,13 @@
 //! Hello / goodbye: the interaction's `SayHello` and each hide's `SayGoodbye` send `crate::trade::NpcSay` (the
 //! NPC's `dialogPak`, `crate::trade` module doc). With no points the answer is the `tagReclaimNoPoints`
 //! message box (grimdawn `ui/reclamation.rs`, `NoPointsBox`).
-use crate::character::Character;
-use crate::data::GameData;
-use crate::player::{Loadout, Player, ProfileDirty};
 use crate::points::{PlayerRequests, SkillUndo};
-use crate::progress::PlayerProgress;
-use crate::session::{LoadedCharacter, MessageDrain};
 use bevy::prelude::*;
+use gd_game_core::character::Character;
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player, ProfileDirty};
+use gd_game_core::progress::PlayerProgress;
+use gd_game_core::session::{LoadedCharacter, MessageDrain};
 
 pub struct ReclamationPlugin;
 
@@ -86,7 +89,7 @@ fn reach_spirit_guide(
             &Transform,
             &mut crate::movement::MovePath,
             &mut crate::player_orders::InteractTarget,
-            &crate::combat::Combatant,
+            &gd_game_core::combat::Combatant,
         ),
         With<Player>,
     >,
@@ -102,7 +105,7 @@ fn reach_spirit_guide(
         return;
     }
     let d = gt.translation().distance(ptf.translation);
-    let npc_radius = crate::combat::get_radius(rec, crate::combat::ACTOR_RADIUS);
+    let npc_radius = gd_game_core::combat::get_radius(rec, gd_game_core::combat::ACTOR_RADIUS);
     if !crate::conversation::in_talk_range(d, pcb.radius, npc_radius) && !path.points.is_empty() {
         return;
     }
@@ -114,11 +117,11 @@ fn reach_spirit_guide(
 /// The session's reclamation state.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct SkillReclamation {
-    /// Skill points refunded so far (`SkillManager` +184; prices the next refund).
+    /// Skill points refunded so far (`SkillManager.reclamationPointsUsed`; prices the next refund).
     pub used: u32,
     /// The spirit guide of the open reclamation-mode window (`None`: not in the mode).
     pub npc: Option<Entity>,
-    /// The mode is the devotion window's (pane `+9241`), not the skills window's (module doc).
+    /// The mode is the devotion window's (`DevotionPane.reclaimMode`), not the skills window's (module doc).
     pub devotion: bool,
 }
 
@@ -193,7 +196,7 @@ pub fn init_reclamation(
 /// The reclaim flags of `skill` (`gd_sim::reclamation::flags`) for the player.
 #[allow(clippy::too_many_arguments)]
 pub fn flags_for(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     loadout: &Loadout,
     tree: &str,
     skill: &str,
@@ -227,7 +230,7 @@ pub fn flags_for(
 
 /// The player's chosen masteries and spent devotion points (what [`open`] decides on).
 fn spent(
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     loadout: &Loadout,
     devotion: Option<&crate::devotion::DevotionState>,
 ) -> (usize, u32) {
@@ -254,8 +257,9 @@ fn close(
     }
 }
 
-/// `sub_14021A880` (`devotion` false: a spirit guide's interaction, the devotion window's skills tab) or
-/// `sub_14021ABA0` (`devotion`: the skills window's Devotion tab) for `npc`: which window takes the mode.
+/// `GameUI::DisplaySkillReallocationWindow` (`devotion` false: a spirit guide's interaction, the devotion window's
+/// skills tab) or `GameUI::DisplayDevotionReallocationWindow` (`devotion`: the skills window's Devotion tab) for
+/// `npc`: which window takes the mode.
 fn open(
     state: &mut SkillReclamation,
     npc: Entity,

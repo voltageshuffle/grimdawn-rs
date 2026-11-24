@@ -1,5 +1,5 @@
-//! Level terrain (chunk 6, kind 2 = TerrainRT, loader vtable slot 17
-//! @0x1801DE090) and ImpassableData (chunk 3, @ImpassableData::Load).
+//! Level terrain (chunk 6, kind 2 = TerrainRT, loader virtual
+//! `TerrainRT::Load`) and ImpassableData (chunk 3, `ImpassableData::Load`).
 use crate::util::Reader;
 use anyhow::{Context, Result, bail};
 
@@ -25,7 +25,7 @@ pub struct Terrain {
     pub heights: Vec<f32>,
     /// width*height*bytes_per_vertex per-vertex bitmask bytes
     /// (bytes_per_vertex = layers/8 + 1). Bit 0: the cell is visible; bit
-    /// i + 1: layer i is used here (`sub_1801DEB80`, layers of a block).
+    /// i + 1: layer i is used here (`TerrainRT::GetBlockLayers`, layers of a block).
     pub layer_mask: Vec<u8>,
     pub layers: Vec<TerrainLayer>,
     /// Trailing u32 skipped by the loader.

@@ -1,31 +1,31 @@
 //! Combo charges (Savagery / "Onslaught" and the items granting
 //! `skillComboChargeLevel`): one counter per character that skill hits raise
 //! and the next cooldown skill spends for a damage bonus. Game.dll
-//! (`SkillManager` +1064 count, +1068 ms left, +1072 ms lockout):
+//! (`SkillManager.comboChargeCount`, `.comboChargeTimeLeft` ms, `.comboChargeLockout` ms):
 //! - Decay (`SkillManager::Update`): the time left counts down; at 0 with
 //!   charges the count drops to 0. The lockout counts down while positive.
-//! - Gain (`SkillManager::IncrementComboCharge` @0x180540030; a
+//! - Gain (`SkillManager::IncrementComboCharge`; a
 //!   `Skill_WPAttack_BasicAttack` forwards to its pool parent): with a target
 //!   and the lockout over, the skill's modifier-summed `skillComboChargeLevel`
 //!   (0: nothing) and `skillComboChargeDuration` (ms) apply. Lockout =
 //!   `skillComboChargeTime` (melee) or `skillComboChargeTimeRanged` ms / attack
 //!   speed; count = `min(count + 1, max(count, level))`; the time left restarts.
-//! - Use (`Skill::CollectComboMultiplier` @0x180499ca0): only a skill with a
+//! - Use (`Skill::CollectComboMultiplier`): only a skill with a
 //!   cooldown, not display parameters, item / granted auto-casts or the
 //!   channelled classes (`SkillChanneled`, `Skill_AttackRadiusGrow`,
 //!   `…RadiusSpin`, `Skill_AttackSpellDrain`, `…SpellCone`, `…SpellBeam`).
 //!   Damage is scaled by (100 + `skillComboChargeMultipliers[min(count, len) −
 //!   1]`) % after the % modifiers, once per use.
-//! - Spend (`Character::SpendComboCharges` @0x1800603f0; pets with player
+//! - Spend (`Character::SpendComboCharges`; pets with player
 //!   scaling spend their master's): a roll × 100 above 100 −
 //!   `SkillComboChargeSpendReduction` keeps the charges, else they drop to 0.
 //! - Clear (`Character::ClearComboCharges`, players only): a weapon attach,
 //!   the weapon swap, a teleport of the player.
 //! - Look: one aura `skillComboChargeAura[count − 1]` (none at 0); reaching
 //!   the gaining skill's level plays its `skillComboChargeSound`.
-use crate::combat::Rng;
 use crate::items::db::Fields;
 use gd_formats::arz::Record;
+use gd_rules::Rng;
 
 /// `gameengine.dbr`'s combo charge fields (`GameEngine::LoadFromDatabase`).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -86,8 +86,8 @@ pub fn skill_combo(records: &[(&Record, usize)]) -> (u32, f32) {
     (level.max(0) as u32, duration)
 }
 
-/// Whether a skill class can take the multiplier (not channelled: `Skill`
-/// vtable +1440).
+/// Whether a skill class can take the multiplier (not channelled:
+/// `Skill::IsChanneled`).
 pub fn class_takes_multiplier(class: &str) -> bool {
     !matches!(
         class,
@@ -100,7 +100,7 @@ pub fn class_takes_multiplier(class: &str) -> bool {
     )
 }
 
-/// The character's combo charges (`SkillManager` +1064..+1072).
+/// The character's combo charges (`SkillManager.comboChargeCount` .. `SkillManager.comboChargeLockout`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ComboCharges {
     pub count: u32,
@@ -129,7 +129,7 @@ impl ComboCharges {
 
     /// `SkillManager::IncrementComboCharge` for a skill result with targets:
     /// the gaining skill's `level` / `duration_ms` ([`skill_combo`]); `melee`:
-    /// the attack's `AttackInfo` +148 flag. True when the count was set.
+    /// the attack's `AttackInfo.isMelee` flag. True when the count was set.
     pub fn increment(
         &mut self,
         table: &ComboTable,

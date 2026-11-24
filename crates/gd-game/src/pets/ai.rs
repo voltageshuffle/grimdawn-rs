@@ -47,12 +47,12 @@ pub(super) fn start_pet_cast(
 /// The charge lookups a pet reads: one parameter, so `pet_ai` stays within Bevy's system-parameter limit.
 #[derive(SystemParam)]
 pub(super) struct PetCharges<'w, 's> {
-    starts: Query<'w, 's, &'static crate::casting::ChargeStarts>,
+    starts: Query<'w, 's, &'static gd_game_core::casting::ChargeStarts>,
     charging: Query<
         'w,
         's,
         (
-            Has<crate::casting::Charge>,
+            Has<gd_game_core::casting::Charge>,
             Option<&'static crate::casting::ChargePursuit>,
         ),
     >,
@@ -109,17 +109,17 @@ pub(super) fn pet_ai(
             &Transform,
             &Combatant,
             crate::combat::SideData,
-            Option<&crate::player::Loadout>,
-            Option<&crate::skill_buffs::ReceivedBuffs>,
+            Option<&gd_game_core::player::Loadout>,
+            Option<&gd_game_core::skill_buffs::ReceivedBuffs>,
             Option<&crate::monster_skills::MonsterSkills>,
         ),
         (
             Without<Dead>,
             Without<Pet>,
-            Without<crate::world::Breakable>,
+            Without<gd_game_core::world::Breakable>,
         ),
     >,
-    pet_auras: Query<&crate::skill_buffs::ReceivedBuffs, With<Pet>>,
+    pet_auras: Query<&gd_game_core::skill_buffs::ReceivedBuffs, With<Pet>>,
     mut crowd: Query<&mut crate::movement::CrowdAgent>,
 ) {
     if pets.is_empty() {
@@ -210,7 +210,7 @@ pub(super) fn pet_ai(
         let otf = owners.get(leader).unwrap_or(otf);
         let side = side_of(joined);
         // `JoinMe` / `UnJoinLeader` clear the anger list, the most hated enemy and the target
-        // (`Monster::JoinMe` @0x180375e40: controller +976 / +992 / +1000) and leave the state alone: a pet on a
+        // (`Monster::JoinMe`) and leave the state alone: a pet on a
         // move order runs on to its point, the rest picks its walk afresh. Its owner's orders reach it no more
         // meanwhile (`commands::pet_commands`).
         if joined.is_some() != pet.joined {
@@ -223,19 +223,19 @@ pub(super) fn pet_ai(
             cb.target = None;
         }
         // The crowd failed the move (`Character::CrowdAgentError`, movement.rs): it stops and the state's
-        // `PathFailed` runs: the fight states' are melee.rs'; FollowLeader's @0x180148720 is "DefendLeader" (it
-        // stands and asks for its slot again in 300..699 ms); Move's @0x1801491c0 is "Idle", as the path's end.
+        // `PathFailed` runs: the fight states' are melee.rs'; FollowLeader's is "DefendLeader" (it
+        // stands and asks for its slot again in 300..699 ms); Move's is "Idle", as the path's end.
         let mut agent = crowd.get_mut(e).ok();
         if agent.as_mut().is_some_and(|a| a.take_path_failed()) {
             debug!("pet {e}: path failed");
             pet.path.clear();
             pet.melee.note_path_failed();
             if std::mem::take(&mut pet.following) {
-                pet.follow_check = 0.3 + crate::rng::f32() * 0.4;
+                pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.4;
             }
         }
         // The Startup state (`ControllerMonsterStateStartup::OnBegin`
-        // @0x18013ead0 / `HandleEvent` @0x18013edc0): every spawned
+        // / `HandleEvent`): every spawned
         // pet has `EnableSpawnAnimation` set; it plays animation type 19
         // (Spawn) once and stays until its "End", or goes Idle at once when
         // the set has none. The pet does nothing else meanwhile; the initial
@@ -294,7 +294,7 @@ pub(super) fn pet_ai(
             }
         };
         let (inner, rate, inner_rate) = ctl.sight;
-        // The sight sphere (`GetCharactersInSphere` @0x18013afe0, as the monsters' `combat::sight`) skips a
+        // The sight sphere (`GetCharactersInSphere`, as the monsters' `combat::sight`) skips a
         // character that causes no anger (`CausesAnger`: a training dummy, a turret); an attack order or a hit
         // still makes it a target.
         let seen = chars
@@ -326,7 +326,7 @@ pub(super) fn pet_ai(
             continue;
         }
         // A weapon charge's warm-up (`casting::charges`, as `combat::monster_ai`: `ControllerPet` registers the
-        // monster states, `ControllerPet::RegisterStates` @0x1801265e0): a dash after the cast is the
+        // monster states, `ControllerPet::RegisterStates`): a dash after the cast is the
         // casting's move; the Pursue's warm-up ends as the attack begins, the Pursue ends or a stun / death took
         // the charge.
         let (charge, marked) = charges.charging.get(e).unwrap_or((false, None));
@@ -339,7 +339,7 @@ pub(super) fn pet_ai(
         if pursuit.is_some() && (busy || !charge || pet.melee.st != crate::melee::St::Pursue) {
             commands
                 .entity(e)
-                .try_remove::<(crate::casting::Charge, crate::casting::ChargePursuit)>();
+                .try_remove::<(gd_game_core::casting::Charge, crate::casting::ChargePursuit)>();
             pursuit = None;
         }
         pet.melee.note_swing(busy);
@@ -365,7 +365,7 @@ pub(super) fn pet_ai(
         }
         // Initial skills that are not toggles: the startup state's
         // `UseSkillOnAlly` on itself (`ControllerMonsterStateStartup::
-        // UseInitialSkillIfSet` @0x18013eed0: `initialSkillName`,
+        // UseInitialSkillIfSet`: `initialSkillName`,
         // then `initial2SkillName`, each pushed as a temporary state with
         // the pet as its target), e.g. the Concussive Rune's opening nova.
         if !pet.initial_casts.is_empty() {
@@ -447,7 +447,7 @@ pub(super) fn pet_ai(
                 continue;
             }
         }
-        // `ChooseBestAllyToBuff` (`monster_skills` module docs, @0x180137a60) among the candidates above
+        // `ChooseBestAllyToBuff` (`monster_skills` module docs) among the candidates above
         // that lack the buff, by `BuffAllyTargeting`; the cast lands as the monsters' does
         // (`monster_skills::ally_casts_land`). A converted pet's friends are its joined pack's: it buffs the
         // leaderless monsters there (the one that converted it, when that follows nobody), never the player.
@@ -516,7 +516,7 @@ pub(super) fn pet_ai(
                 pet.most_hated = None;
             }
             // A totem's comparator is the distance: the nearest first.
-            let totem = ctl.class == crate::combat::ControllerClass::Totem;
+            let totem = ctl.class == gd_game_core::combat::ControllerClass::Totem;
             hated.or_else(|| {
                 let valid = pet.anger.iter().filter_map(|(m, v)| {
                     foe_at(*m)
@@ -566,7 +566,7 @@ pub(super) fn pet_ai(
             // Specials first, then the primary attack.
             // `ChooseBestSkill`: delay and timeout both out.
             let gap = (d - cb.radius - mcb).max(0.5);
-            // `ChooseBestSkill` @0x180137550: the first slot whose delay and
+            // `ChooseBestSkill`: the first slot whose delay and
             // timeout are out and that passes `rand() % 100 < chance` (rolled on every
             // call) and whose band holds the target; `SkillUsed` re-arms the delay.
             // The choice is not tested for reach: one out of reach is held and
@@ -588,7 +588,7 @@ pub(super) fn pet_ai(
                 pet.held = pet.specials.iter().position(|s| {
                     s.timer <= 0.0
                         && s.timeout <= 0.0
-                        && (crate::rng::u32(..100) as f32) < s.chance
+                        && (gd_game_core::rng::u32(..100) as f32) < s.chance
                         && s.band.is_none_or(|(lo, hi)| gap > lo && gap < hi)
                 });
             }
@@ -647,8 +647,11 @@ pub(super) fn pet_ai(
                 }
                 None => crate::melee::Approach {
                     key: String::new(),
-                    reach: cb.radius + mcb + crate::combat::MELEE_RANGE + SKILL_USE_TOLERANCE,
-                    range: crate::combat::MELEE_RANGE,
+                    reach: cb.radius
+                        + mcb
+                        + gd_game_core::combat::MELEE_RANGE
+                        + SKILL_USE_TOLERANCE,
+                    range: gd_game_core::combat::MELEE_RANGE,
                     melee: true,
                     plain: true,
                     mv: Default::default(),
@@ -689,7 +692,7 @@ pub(super) fn pet_ai(
                 if pursuit.take().is_some() {
                     commands
                         .entity(e)
-                        .try_remove::<(crate::casting::Charge, crate::casting::ChargePursuit)>();
+                        .try_remove::<(gd_game_core::casting::Charge, crate::casting::ChargePursuit)>();
                 }
                 if pursue {
                     let li = pet
@@ -711,11 +714,11 @@ pub(super) fn pet_ai(
                     pet.path.clear();
                     ch.begin_swing(&tf, Some((t, mt)), mt);
                     want = CharState::Attack;
-                    // `ResetSwingTimer` @0x18013d030
+                    // `ResetSwingTimer`
                     // (`combat::monster_ai`): the controller's swing pause,
                     // a uniform draw in [min, max].
                     cb.cooldown = pet.ctl.swing_pause.0
-                        + crate::rng::f32()
+                        + gd_game_core::rng::f32()
                             * (pet.ctl.swing_pause.1 - pet.ctl.swing_pause.0).max(0.0);
                 }
                 crate::melee::Act::Stand => {
@@ -729,7 +732,7 @@ pub(super) fn pet_ai(
                             pet.path.clear();
                             start_pet_cast(&mut commands, e, &data, &mut tf, &mut ch, &a, t, mt);
                             cb.cooldown = pet.ctl.swing_pause.0
-                                + crate::rng::f32()
+                                + gd_game_core::rng::f32()
                                     * (pet.ctl.swing_pause.1 - pet.ctl.swing_pause.0).max(0.0);
                             continue;
                         }
@@ -780,11 +783,11 @@ pub(super) fn pet_ai(
                 pet.following = false;
                 pet.path.clear();
             } else if slots.take_lost(e) && pet.following {
-                // `FollowLeader::LostSlot`: its `OnUpdate` makes it
+                // `ControllerMonsterStateFollowLeader::LostSlot`: its `OnUpdate` makes it
                 // "DefendLeader" (stands, checks again in 300..400 ms).
                 pet.following = false;
                 pet.path.clear();
-                pet.follow_check = 0.3 + crate::rng::f32() * 0.1;
+                pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.1;
             } else if ctl.teleport > 0.0 && far > ctl.teleport {
                 if let Some(at) = slots.defense(leader, e, &nav) {
                     tf.translation = at;
@@ -794,7 +797,7 @@ pub(super) fn pet_ai(
             } else {
                 pet.follow_check -= dt;
                 if pet.follow_check <= 0.0 {
-                    pet.follow_check = 0.3 + crate::rng::f32() * 0.4;
+                    pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.4;
                     // `GetMoveToPoint` → `RequestDefenseSlot`; run there when
                     // the slot is more than the pet's radius away.
                     pet.slot = slots.defense(leader, e, &nav);

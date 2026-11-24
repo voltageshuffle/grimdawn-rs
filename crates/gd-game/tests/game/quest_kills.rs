@@ -1,10 +1,10 @@
-//! Headless check of a gdx3 bounty's kill condition (`gd_sim::story::Kill`, `gd_game::story::count_story_kills`):
+//! Headless check of a gdx3 bounty's kill condition (`gd_story::story::Kill`, `gd_game::story::count_story_kills`):
 //! `bq_av07` counts the player's Aetherial / Aetherial Vanguard kills (type 29), and that counter is in the save.
 use bevy::prelude::*;
 use gd_game::combat::MonsterKilled;
-use gd_game::story::StoryRuntime;
 use gd_game::testing::TestGame;
-use gd_sim::story::Kill;
+use gd_game_core::story::StoryRuntime;
+use gd_story::story::Kill;
 
 /// The (quest, task, objective, condition) indices of the quest's first condition of `kind`.
 fn kill_condition(g: &TestGame, quest: &str, kind: u32) -> (usize, usize, usize, usize) {

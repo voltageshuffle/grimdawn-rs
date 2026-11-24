@@ -3,11 +3,11 @@
 //! order.
 use gd_formats::save::gdc::{Gdc, HotSlot};
 use gd_formats::save::item::Item;
-use gd_game::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT};
-use gd_game::inventory::Inventory;
 use gd_game::save::SaveRequest;
 use gd_game::testing::{TempDir, TestGame};
 use gd_game::weapon_sets::SwapWeapons;
+use gd_game_core::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT};
+use gd_game_core::inventory::Inventory;
 
 // Level 1: a new character can wear it, so the active set II attaches it.
 const SWORD: &str = "records/items/gearweapons/swords1h/a00_sword001.dbr";

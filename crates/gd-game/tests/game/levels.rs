@@ -1,10 +1,12 @@
 //! Headless checks of level population: a loaded level's proxies roll and
 //! spawn their monsters once per session.
 use bevy::prelude::*;
-use gd_game::combat::{Combatant, MonsterAi};
-use gd_game::levels::Levels;
-use gd_game::monsters::{LevelPopulated, LevelProxies, Monster, ProxyCpu, ProxyStates};
+use gd_game::combat::MonsterAi;
+use gd_game::monsters::{LevelPopulated, LevelProxies, ProxyCpu, ProxyStates};
 use gd_game::testing::TestGame;
+use gd_game_core::combat::Combatant;
+use gd_game_core::levels::Levels;
+use gd_game_core::monsters::Monster;
 
 const PROXY: &str = "records/proxies/area001/beastsburrwitchoutskirts_n.dbr";
 

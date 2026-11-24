@@ -4,24 +4,25 @@
 //! (`shaders/decal.wesl`: `decal_standard` / `decal_glow` / `decal_bump` /
 //! `decal_selfillum`, UNORM textures) and opacity.
 //!
-//! Geometry (`Decal::CreateGeometry` @0x1800593d0): the triangles of
+//! Geometry (`Decal::CreateGeometry`): the triangles of
 //! `World::GeometryBusStop` in the box centred on the decal with half-extent
-//! max(width, height) × 0.5, × 0.7 for a *dynamic* decal (`Decal+499`, set
+//! max(width, height) × 0.5, × 0.7 for a *dynamic* decal (`Decal.dynamic`, set
 //! by `EffectEntity::Load` on its decal; level decals are static). Terrain
-//! (`Terrain::GeometryBusStop` @0x1801c6040): every heightfield triangle whose
+//! (`Terrain::GeometryBusStop`): every heightfield triangle whose
 //! AABB overlaps the box, vertices at height + 0.01 with the terrain normal,
 //! whatever the slope.
 //!
-//! Meshes (`World::GeometryBusStop` @0x1802192f0, skipped with
+//! Meshes (`World::GeometryBusStop`, skipped with
 //! `terrainOnly`): every entity of `GetEntitiesInBox` that is an `Actor`
-//! (`Actor::GeometryBusStop` @0x18002ce50) with `IsStatic()` (vt +352; among
-//! the level classes only Game.dll `Decoration::IsStatic` @0x1801fb610 =
+//! (`Actor::GeometryBusStop`) with `IsStatic()` (among
+//! the level classes only Game.dll `Decoration::IsStatic` =
 //! `!allowPathing` is ever true, `Destructible` / `FixedItem` return false)
-//! and `OccludesPathing()` (vt +224, true for an `Actor`) gives its mesh to
-//! `GraphicsMesh::GeometryBusStop` @0x1800ba220. That walks the mesh's system
-//! copy (+584: 56-byte position / uv / normal records, +592: the u16 faces of
+//! and `OccludesPathing()` (true for an `Actor`) gives its mesh to
+//! `GraphicsMesh::GeometryBusStop`. That walks the mesh's system
+//! copy (`GraphicsMesh.decalVertices`: 56-byte position / uv / normal records,
+//! `GraphicsMesh.decalFaces`: the u16 faces of
 //! chunk 5, every face set and material; `Initialize` keeps it when the bone
-//! count +144 is still 0 as chunks 4 / 5 are read, and chunk 6 follows them
+//! count (`GraphicsMesh.boneCount`) is still 0 as chunks 4 / 5 are read, and chunk 6 follows them
 //! in every stock file, so every mesh has one). A vertex goes to the world as
 //! coords × (scale ⊙ p) + 0.001 × its rotated normal; a face is kept when its
 //! world AABB overlaps the box and the y of its normal ‖(v2 − v0) × (v1 − v0)‖
@@ -30,7 +31,7 @@
 //! below is dropped, and `maxAngle` only culls mesh faces. No clipping: whole
 //! faces go in, the shader discards outside the UV square. The port keeps
 //! those meshes per level in [`DecalReceivers`]. When: a placed
-//! decal builds its geometry in `Decal::InitialUpdate` @0x180059230, so with
+//! decal builds its geometry in `Decal::InitialUpdate`, so with
 //! what is loaded then; again only on `OnMoveInLevel`, the exported (and
 //! uncalled) `RebuildMesh`, and after a device reset (`PostDeviceReset` sets
 //! the flag `RenderPass` rebuilds on). A level loading later does not
@@ -46,18 +47,18 @@
 //! The base layer is blended before SSAO, as into the engine's G-buffer
 //! (render/gbuffer_blend.rs); the additive glow layer later, unoccluded.
 //!
-//! Opacity (`Decal::GetOpacity` @0x180058ee0, times in integer ms,
-//! the age advanced by `UpdateSelf` @0x180059030): see [`DecalTiming::opacity`];
+//! Opacity (`Decal::GetOpacity`, times in integer ms,
+//! the age advanced by `UpdateSelf`): see [`DecalTiming::opacity`];
 //! the shader's `opacity` scales the texel alpha (the glow layer's colour).
 //! A decal with `life` > 0 is removed when its age reaches it, level (static)
-//! decals too. `UpdateSelf`: while updating (+497, set by `Load`),
+//! decals too. `UpdateSelf`: while updating (`Decal.updating`, set by `Load`),
 //! at age ≥ life the decal stops updating and, in the world, is removed and
-//! destroyed unless `Engine::IsEditorMode` (`gEngine` +658) holds and it is
-//! not dynamic (+499, `SetDynamic`; `EffectEntity::Load` sets it): only the
+//! destroyed unless `Engine::IsEditorMode` (`Engine.editorMode`) holds and it is
+//! not dynamic (`Decal.dynamic`, `SetDynamic`; `EffectEntity::Load` sets it): only the
 //! editor loops a static decal's age back to 0.
 //!
-//! Effect decals (`EffectEntity::Load` @0x180064000 /
-//! `InitialUpdate` @0x180065460): with chance `decalChance` % (0 = 100,
+//! Effect decals (`EffectEntity::Load` /
+//! `InitialUpdate`): with chance `decalChance` % (0 = 100,
 //! `rand() % 101 ≤ chance`) one of the `decal` list at random, attached at the
 //! identity offset, so its frame is the effect's coords, yawed at random
 //! (`rand() × 2π / 32767` about the up axis) when `decalRotate`. The Decal
@@ -69,7 +70,7 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
-use std::collections::HashMap;
+use gd_formats::collections::HashMap;
 use std::sync::Arc;
 
 pub type DecalMaterial = ExtendedMaterial<StandardMaterial, DecalExt>;
@@ -137,13 +138,13 @@ impl Plugin for DecalPlugin {
 #[derive(Component)]
 pub struct LevelDecal;
 
-/// `detailObjects` (bool 9) gates `DecalSet::AddToScene` (Engine.dll
-/// @0x18005C0D0): with it off no decal is drawn.
+/// `detailObjects` gates `DecalSet::AddToScene` (Engine.dll):
+/// with it off no decal is drawn.
 /// PORT: the decals stay spawned and are hidden, so the option applies live
 /// like the engine's per-frame `UpdateFromOptions`. All decals are walked when
 /// the option flips (`last`: the value applied), else only new ones.
 fn gate_level_decals(
-    options: Option<Res<gd_game::options::GameOptions>>,
+    options: Option<Res<gd_game_core::options::GameOptions>>,
     mut last: Local<Option<bool>>,
     mut q: ParamSet<(
         Query<&mut Visibility, With<LevelDecal>>,
@@ -181,7 +182,7 @@ pub struct DecalTiming {
 }
 
 impl DecalTiming {
-    /// `Decal::GetOpacity` @0x180058ee0. With a `period`: a
+    /// `Decal::GetOpacity`. With a `period`: a
     /// triangle wave min → max → min over the period (× (1 − age / life) with
     /// a life). Else max × age / fadeIn while fading in, max until
     /// `fadeAfter`, then max × (1 − (age − fadeAfter) / (life − fadeAfter))
@@ -223,7 +224,7 @@ impl DecalTiming {
     }
 }
 
-/// A `Decal` record (`Decal::Load` @0x180058a30).
+/// A `Decal` record (`Decal::Load`).
 #[derive(Clone, Debug)]
 pub struct DecalRecord {
     pub texture: String,
@@ -292,7 +293,7 @@ impl DecalRecord {
 }
 
 /// (U, V) of `Decal::CreateGeometry` for the decal's local Z axis `f`
-/// (matrix row 2, `WorldCoords` +48) and the summed vertex normal `n_sum`:
+/// (matrix row 2 of its `WorldCoords`) and the summed vertex normal `n_sum`:
 /// A = ‖Y × F‖, B = A × Y (F flattened); N = ‖n_sum‖ (Y if < 0.1),
 /// C = ‖N × X‖, D = ‖N × C‖; U = C.x·A + C.y·Y + C.z·B,
 /// V = D.x·A + D.y·Y + D.z·B and u = ½ − (p−c)·U / width,
@@ -324,7 +325,7 @@ pub enum Surface<'a> {
     },
 }
 
-/// A mesh's decal faces (`GraphicsMesh` +584 / +592), object space.
+/// A mesh's decal faces (`GraphicsMesh.decalVertices` / `decalFaces`), object space.
 pub struct ReceiverMesh {
     pos: Vec<Vec3>,
     normals: Vec<Vec3>,
@@ -356,7 +357,9 @@ impl ReceiverMesh {
     }
 }
 
-/// A placed receiver: its mesh, placement and world AABB.
+/// A placed receiver: its mesh, placement, world AABB and each face's
+/// world AABB (padded for the 0.001 normal push + a rounding margin), built
+/// once at registration: the coarse per-face reject of [`Receiver::gather`].
 struct Receiver {
     mesh: Arc<ReceiverMesh>,
     /// Coords × scale (positions).
@@ -365,6 +368,7 @@ struct Receiver {
     rot: Quat,
     min: Vec3,
     max: Vec3,
+    tri_bounds: Vec<(Vec3, Vec3)>,
 }
 
 /// The meshes decals project onto, per level: the static `Decoration`s
@@ -405,6 +409,11 @@ impl DecalReceivers {
 
     pub fn remove_level(&mut self, index: usize) {
         self.levels.remove(&index);
+        // The path cache holds its meshes strongly: one no receiver holds
+        // anymore goes with its level (the asset-lifetime rule). A failed
+        // mesh (`None`) is re-derived on a reload.
+        self.meshes
+            .retain(|_, m| m.as_ref().is_some_and(|a| Arc::strong_count(a) > 1));
     }
 
     /// Adds the faces of every receiver in the box (centre `c`,
@@ -420,7 +429,7 @@ impl DecalReceivers {
         let (lo, hi) = (c - Vec3::splat(e), c + Vec3::splat(e));
         for r in self.levels.values().flatten() {
             if (r.min - hi).max_element() <= 0.0 && (lo - r.max).max_element() <= 0.0 {
-                patch.gather_mesh(&r.mesh, r.tf, r.rot, c, e, dec.min_normal_y, dynamic);
+                r.gather(patch, c, e, dec.min_normal_y, dynamic);
             }
         }
     }
@@ -428,13 +437,26 @@ impl DecalReceivers {
 
 impl Receiver {
     fn new(mesh: Arc<ReceiverMesh>, tf: Affine3A) -> Self {
-        let (min, max) = mesh.pos.iter().fold(
+        let world: Vec<Vec3> = mesh.pos.iter().map(|p| tf.transform_point3(*p)).collect();
+        let (min, max) = world.iter().fold(
             (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
-            |(a, b), p| {
-                let w = tf.transform_point3(*p);
-                (a.min(w), b.max(w))
-            },
+            |(a, b), w| (a.min(*w), b.max(*w)),
         );
+        let tri_bounds = mesh
+            .tris
+            .iter()
+            .map(|t| {
+                let v = t.map(|i| world[i as usize]);
+                // The push is ≤ 0.001 per axis; 4 eps × the coordinates covers
+                // its addition's and this subtraction's rounding (far origins).
+                let pad = Vec3::splat(0.001)
+                    + v[0].abs().max(v[1].abs()).max(v[2].abs()) * (4.0 * f32::EPSILON);
+                (
+                    v[0].min(v[1]).min(v[2]) - pad,
+                    v[0].max(v[1]).max(v[2]) + pad,
+                )
+            })
+            .collect();
         let rot = tf.to_scale_rotation_translation().1;
         Self {
             mesh,
@@ -442,6 +464,49 @@ impl Receiver {
             rot,
             min,
             max,
+            tri_bounds,
+        }
+    }
+
+    /// `GraphicsMesh::GeometryBusStop`: the faces of the mesh placed at `tf`
+    /// (normals rotated by `rot`) whose world AABB overlaps the box (centre
+    /// `c`, half-extent `e`) and whose front normal has y ≥ `min_normal_y`;
+    /// vertices pushed out 0.001 along their normal. A dynamic decal leaves
+    /// them out of N. The padded `tri_bounds` reject most faces without
+    /// transforming anything; only candidate faces' vertices are transformed
+    /// and the exact tests decide, so the output is the full scan's.
+    fn gather(&self, patch: &mut DecalPatch, c: Vec3, e: f32, min_normal_y: f32, dynamic: bool) {
+        let (lo, hi) = (c - Vec3::splat(e), c + Vec3::splat(e));
+        let mut map: HashMap<u16, u32> = HashMap::default();
+        for (t, &(tlo, thi)) in self.mesh.tris.iter().zip(&self.tri_bounds) {
+            if (tlo - hi).max_element() > 0.0 || (lo - thi).max_element() > 0.0 {
+                continue;
+            }
+            let world = t.map(|i| {
+                let n = self.rot * self.mesh.normals[i as usize];
+                (
+                    self.tf.transform_point3(self.mesh.pos[i as usize]) + n * 0.001,
+                    n,
+                )
+            });
+            let v = world.map(|(p, _)| p);
+            let (flo, fhi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
+            if !box_overlaps(flo, fhi, c, e) {
+                continue;
+            }
+            if face_normal(v).y < min_normal_y {
+                continue;
+            }
+            for (k, &i) in t.iter().enumerate() {
+                let idx = *map.entry(i).or_insert_with(|| {
+                    let (p, n) = world[k];
+                    patch.pos.push(p);
+                    patch.normals.push(n);
+                    patch.in_sum.push(!dynamic);
+                    (patch.pos.len() - 1) as u32
+                });
+                patch.idx.push(idx);
+            }
         }
     }
 }
@@ -470,7 +535,7 @@ impl DecalPatch {
             let h = |dx: i32, dz: i32| height(x + dx, z + dz).unwrap_or(y);
             Vec3::new(h(-1, 0) - h(1, 0), 2.0, h(0, -1) - h(0, 1)).normalize()
         };
-        let mut map: HashMap<(i32, i32), u32> = HashMap::new();
+        let mut map: HashMap<(i32, i32), u32> = HashMap::default();
         for z in z0..z1 {
             for x in x0..x1 {
                 for tri in [
@@ -498,53 +563,6 @@ impl DecalPatch {
                         self.idx.push(i);
                     }
                 }
-            }
-        }
-    }
-
-    /// `GraphicsMesh::GeometryBusStop`: the faces of `mesh` placed
-    /// at `tf` (normals rotated by `rot`) whose world AABB overlaps the box
-    /// and whose front normal has y ≥ `min_normal_y`; vertices pushed out
-    /// 0.001 along their normal. A dynamic decal leaves them out of N.
-    #[allow(clippy::too_many_arguments)]
-    pub fn gather_mesh(
-        &mut self,
-        mesh: &ReceiverMesh,
-        tf: Affine3A,
-        rot: Quat,
-        c: Vec3,
-        e: f32,
-        min_normal_y: f32,
-        dynamic: bool,
-    ) {
-        let world: Vec<(Vec3, Vec3)> = mesh
-            .pos
-            .iter()
-            .zip(&mesh.normals)
-            .map(|(p, n)| {
-                let n = rot * *n;
-                (tf.transform_point3(*p) + n * 0.001, n)
-            })
-            .collect();
-        let mut map: HashMap<u16, u32> = HashMap::new();
-        for t in &mesh.tris {
-            let v = t.map(|i| world[i as usize].0);
-            let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
-            if !box_overlaps(lo, hi, c, e) {
-                continue;
-            }
-            if face_normal(v).y < min_normal_y {
-                continue;
-            }
-            for &i in t {
-                let k = *map.entry(i).or_insert_with(|| {
-                    let (p, n) = world[i as usize];
-                    self.pos.push(p);
-                    self.normals.push(n);
-                    self.in_sum.push(!dynamic);
-                    (self.pos.len() - 1) as u32
-                });
-                self.idx.push(k);
             }
         }
     }
@@ -605,12 +623,12 @@ pub fn face_normal(v: [Vec3; 3]) -> Vec3 {
     (v[2] - v[0]).cross(v[1] - v[0]).normalize_or_zero()
 }
 
-/// A particle decal's quad (`DecalSet::RenderPass` @0x18005c200;
-/// `DecalSet::AddDecal` @0x18005bd20 stores the coords as given): no
+/// A particle decal's quad (`DecalSet::RenderPass`;
+/// `DecalSet::AddDecal` stores the coords as given): no
 /// projection, four vertices at origin ± X·w/2 ± Z·h/2 of the placement
 /// (× its grow scale, 1 here) with the coords' Y as the normal, u along X
 /// (0 → 1), v along Z (0 → 1). `lift` raises it along Y (`World::PlaceDecal`
-/// @0x180220540 moves the origin 0.01 along the coords' Y).
+/// moves the origin 0.01 along the coords' Y).
 pub fn quad(c: Vec3, rot: Quat, w: f32, h: f32, lift: f32) -> Mesh {
     let (x, y, z) = (
         rot * Vec3::X * w * 0.5,
@@ -635,7 +653,7 @@ pub fn quad(c: Vec3, rot: Quat, w: f32, h: f32, lift: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]))
 }
 
-/// The vertex-colour alpha `DecalSet::Update` @0x18005bfe0 gives the decal
+/// The vertex-colour alpha `DecalSet::Update` gives the decal
 /// `k` (0 = oldest) of a ring holding `n` (≤ 256): its rank from the ring head,
 /// 256 − n + k, capped at 255, so the newest is opaque and each later decal
 /// fades every older one by 1/255. The decal shaders' deferredPS multiply the
@@ -722,7 +740,7 @@ fn fade_tag(o: f32) -> MeshTag {
 /// ones go into `held`, so a caller waiting on the rest keeps them.
 pub fn textures_ready(
     dec: &DecalRecord,
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     textures: &mut crate::textures::Textures,
     images: &mut Assets<Image>,
     held: &mut Vec<Handle<Image>>,
@@ -747,7 +765,7 @@ pub fn spawn(
     dec: &DecalRecord,
     mesh: Handle<Mesh>,
     defaults: &crate::render::GdDefaults,
-    data: &crate::data::GameData,
+    data: &gd_game_core::data::GameData,
     textures: &mut crate::textures::Textures,
     images: &mut Assets<Image>,
     mats: &mut Assets<DecalMaterial>,

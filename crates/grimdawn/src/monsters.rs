@@ -4,12 +4,12 @@
 //! streamed in. What it produced is kept per proxy, so re-streaming a level
 //! brings back the same monsters, minus the dead ones.
 use bevy::prelude::*;
-pub use gd_game::monsters::Monster;
+use gd_formats::collections::HashMap;
 pub use gd_game::monsters::{LevelProp, LevelProxies, ProxyCpu, SetPieceStates};
+use gd_game_core::monsters::Monster;
 use gd_render::character::CharAssets;
 use gd_render::model::Ready;
 use gd_render::render::material::GdMaterial;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct MonstersPlugin;
@@ -21,8 +21,8 @@ impl Plugin for MonstersPlugin {
             .add_systems(
                 Update,
                 (death_effects, gib_deaths)
-                    .after(gd_game::combat::CombatSet)
-                    .after(gd_game::afflictions::AfflictionStage::Tick),
+                    .after(gd_game_core::combat::CombatSet)
+                    .after(gd_game_core::afflictions::AfflictionStage::Tick),
             )
             .add_systems(
                 Update,
@@ -34,7 +34,7 @@ impl Plugin for MonstersPlugin {
             )
             .add_systems(
                 Update,
-                (draw_ambush_dissolve, draw_corpses).after(gd_game::combat::CombatSet),
+                (draw_ambush_dissolve, draw_corpses).after(gd_game_core::combat::CombatSet),
             );
     }
 }
@@ -47,13 +47,13 @@ impl Plugin for MonstersPlugin {
 fn spawn_test_monsters(
     mut commands: Commands,
     mut pending: Local<Option<Vec<(String, f32, f32)>>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    nav: Res<crate::world::Nav>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    nav: Res<gd_game::nav::Nav>,
     mut assets: CharAssets,
-    rules: Option<Res<crate::combat::CombatRules>>,
+    rules: Option<Res<gd_game_core::rules::CombatRules>>,
     mut profiles: ResMut<gd_game::monsters::ProfileCache>,
     factions: Option<Res<gd_game::factions::PlayerFactions>>,
-    hooks: Res<gd_game::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let (Some(rules), Some(loaded)) = (rules, loaded) else {
         return;
@@ -94,7 +94,7 @@ fn spawn_test_monsters(
 /// their mesh `CreateEntity` effects) and sound emitters. The props' models load in the background
 /// (`CharAssets::model_ready`): a level's props spawn together once none is still loading. While it waits the level
 /// holds the models already built (`waiting`, as `gd_render::character`'s `dress_bodies` does): the model cache only
-/// keeps its last `gd_game::weak_cache::RECENT` models warm, so a crowd or level streaming beside it would otherwise
+/// keeps its last `gd_game_core::weak_cache::RECENT` models warm, so a crowd or level streaming beside it would otherwise
 /// evict its early props before its last one arrives, over and over.
 fn spawn_level_props(
     mut commands: Commands,
@@ -187,8 +187,8 @@ fn death_record<'a>(
         .or(pet.map(|p| p.record.as_str()))
 }
 
-/// An overkilled monster or pet with a `gibEffect` bursts when `gore` is on (`DefaultDeathHandler::Execute`
-/// @0x1801f5fa0): the effect's particles and its gib meshes from the character's `Target` point
+/// An overkilled monster or pet with a `gibEffect` bursts when `gore` is on (`DefaultDeathHandler::Execute`):
+/// the effect's particles and its gib meshes from the character's `Target` point
 /// ([`crate::gibs`]), `gibSound` at the point, and the body is hidden (no corpse; the `Dead` timer still removes
 /// the entity). `deathEffect` plays as usual ([`death_effects`]). A dismissed pet whose record sets
 /// `overkillOnDismiss` / whose `gibThreshold` its life reaches dies this way (`gd_game::pets` docs, Release).
@@ -196,14 +196,14 @@ fn death_record<'a>(
 fn gib_deaths(
     mut commands: Commands,
     mut assets: gd_render::character::CharAssets,
-    options: Res<gd_game::options::GameOptions>,
+    options: Res<gd_game_core::options::GameOptions>,
     q: Query<
         (
             Entity,
             &GlobalTransform,
             Option<&Monster>,
             Option<&gd_game::pets::Pet>,
-            Option<&gd_game::character::Character>,
+            Option<&gd_game_core::character::Character>,
         ),
         (
             Added<gd_game::combat::Overkill>,
@@ -226,21 +226,21 @@ fn gib_deaths(
         else {
             continue;
         };
-        let target = ch.and_then(|c| gd_game::casting::attach_point_bind(&c.body, "Target"));
+        let target = ch.and_then(|c| gd_game_core::casting::attach_point_bind(&c.body, "Target"));
         let at = target.map_or(gt.translation() + Vec3::Y, |l| gt.transform_point(l));
         if let Some(pfx) = gib.str("effectFile").filter(|f| !f.is_empty()) {
-            let mut spec = gd_game::visuals::EffectSpec::pfx(pfx);
+            let mut spec = gd_game_core::visuals::EffectSpec::pfx(pfx);
             spec.despawn_when_complete = true;
             spec.no_loop = true;
             commands.spawn((spec, Transform::from_translation(at), Visibility::default()));
         }
         if let Some(pak) = rec.str("gibSound").filter(|s| !s.is_empty()) {
-            commands.write_message(gd_game::visuals::PlaySound {
+            commands.write_message(gd_game_core::visuals::PlaySound {
                 pak: pak.to_owned(),
                 at: Some(at),
             });
         }
-        commands.entity(e).try_insert(gd_game::visuals::Hidden);
+        commands.entity(e).try_insert(gd_game_core::visuals::Hidden);
         crate::gibs::launch(&mut commands, &mut assets, gib, at);
     }
 }
@@ -255,17 +255,17 @@ fn gib_deaths(
 /// monsters and pets, not the player; the `gibEffect` branch is [`gib_deaths`].
 fn death_effects(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     q: Query<
         (
             Entity,
             &GlobalTransform,
             Option<&Monster>,
             Option<&gd_game::pets::Pet>,
-            Option<&gd_game::character::Character>,
+            Option<&gd_game_core::character::Character>,
         ),
         (
-            Added<gd_game::combat::Dead>,
+            Added<gd_game_core::combat::Dead>,
             Or<(With<Monster>, With<gd_game::pets::Pet>)>,
         ),
     >,
@@ -281,8 +281,8 @@ fn death_effects(
         else {
             continue;
         };
-        let target = ch.and_then(|c| gd_game::casting::attach_point_bind(&c.body, "Target"));
-        let mut spec = gd_game::visuals::EffectSpec::record(fx);
+        let target = ch.and_then(|c| gd_game_core::casting::attach_point_bind(&c.body, "Target"));
+        let mut spec = gd_game_core::visuals::EffectSpec::record(fx);
         spec.despawn_when_complete = true;
         spec.no_loop = true;
         if rec.bool("attachDeathEffect") {
@@ -317,12 +317,12 @@ struct DissolveParts(Vec<(Entity, Handle<GdMaterial>, Handle<GdMaterial>)>);
 /// each attached actor) swaps to a copy of its material drawn as the `standarddissolve*` override shader
 /// (no glow or detail map, [`FLAG_DISSOLVE`]: `fade.z` = the value, the monster record's
 /// `ambushDissolveTexture` in the detail slot, default `System/Textures/Cloud.tex`,
-/// `Monster::Load` @0x180373810); the originals come back when the component goes (the override shader
-/// is unloaded, `GraphicsMeshInstance::Update` @0x1800bffd0).
+/// `Monster::Load`); the originals come back when the component goes (the override shader
+/// is unloaded, `GraphicsMeshInstance::Update`).
 #[allow(clippy::too_many_arguments)]
 fn draw_ambush_dissolve(
     mut commands: Commands,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut textures: ResMut<gd_render::textures::Textures>,
     mut images: ResMut<Assets<Image>>,
     dissolving: Query<
@@ -408,37 +408,37 @@ struct CorpseLook {
 /// A corpse's dissolve or fade, from its death-handler data ([`gd_game::combat::Corpse`]) over the last
 /// `dissolveTime` s of its `Dead` countdown (`gd_game::combat::corpse_time`: the dissolve starts after the
 /// `corpsePersistence` wait or at the death clip's `dissolve` callback, the fade at the death):
-/// - `Dissolve` / `DissolveOnCallback`: `DissolveActorDeathHandler::StartDissolve` @0x1801f6e60 →
+/// - `Dissolve` / `DissolveOnCallback`: `DissolveActorDeathHandler::StartDissolve` →
 ///   `GraphicsMeshInstance::BeginDissolve`: the dissolve value 0 → 1 over the time, drawn by the
 ///   `standarddissolve*` override shader with the record's `dissolveTexture` and `dissolveColorR/G/B` / 255
 ///   ([`FLAG_DISSOLVE`](gd_render::render::material::FLAG_DISSOLVE) and its `emissiveStyle` edge);
-///   `Character::DissolveAttachments` @0x18005bec0 dissolves the worn items (armour, weapons) in 0.9 of the
+///   `Character::DissolveAttachments` dissolves the worn items (armour, weapons) in 0.9 of the
 ///   time. It attaches the record's `dissolveEffect` to the body and its `dissolveLight` at the `Target` point,
-///   red, radius 10 shrinking 5 m/s (`DissolveActorDeathHandler::Update` @0x1801f6b20; no stock record sets a
+///   red, radius 10 shrinking 5 m/s (`DissolveActorDeathHandler::Update`; no stock record sets a
 ///   light). Without a `dissolveTexture` the engine binds none and the cut takes the whole mesh at once: the body
 ///   is hidden then.
-/// - `Fade`: `FadeActorDeathHandler::Update` @0x1801f72e0: with k = 1 − elapsed / time the tint goes to
+/// - `Fade`: `FadeActorDeathHandler::Update`: with k = 1 − elapsed / time the tint goes to
 ///   black (the diffuse colour × k) and the instance's blend alpha multiplier to 0 (`fade.x` = k, read by the
 ///   `standardblended*` / vertex-alpha materials), on the body and its attached meshes.
 ///
 /// The copies stay until the body goes (`dead_bodies` removes it as the countdown ends). A hidden body
-/// (`gd_game::visuals::Hidden`: died out of view, or a dissolve without a texture) draws nothing, so its copies
+/// (`gd_game_core::visuals::Hidden`: died out of view, or a dissolve without a texture) draws nothing, so its copies
 /// are not rewritten each frame (each write re-prepares the material); they catch up the frame it shows.
 #[allow(clippy::too_many_arguments)]
 fn draw_corpses(
     mut commands: Commands,
     time: Res<Time>,
-    data: Res<crate::data::GameData>,
+    data: Res<gd_game_core::data::GameData>,
     mut textures: ResMut<gd_render::textures::Textures>,
     mut images: ResMut<Assets<Image>>,
     mut corpses: Query<(
         Entity,
-        &gd_game::combat::Dead,
+        &gd_game_core::combat::Dead,
         &gd_game::combat::Corpse,
-        &gd_game::character::Character,
+        &gd_game_core::character::Character,
         Option<&gd_render::character::Body>,
         Option<&mut CorpseLook>,
-        Has<gd_game::visuals::Hidden>,
+        Has<gd_game_core::visuals::Hidden>,
     )>,
     children: Query<&Children>,
     mut parts: Query<&mut MeshMaterial3d<GdMaterial>>,
@@ -468,7 +468,7 @@ fn draw_corpses(
                     .as_deref()
                     .and_then(|t| textures.get(&data, t, false, &mut images));
                 if t.is_none() {
-                    commands.entity(e).try_insert(gd_game::visuals::Hidden);
+                    commands.entity(e).try_insert(gd_game_core::visuals::Hidden);
                 }
                 t
             } else {
@@ -518,7 +518,7 @@ fn draw_corpses(
                 if let Some(fx) = &corpse.dissolve_effect {
                     let child = commands
                         .spawn((
-                            gd_game::visuals::EffectSpec::record(fx.clone()),
+                            gd_game_core::visuals::EffectSpec::record(fx.clone()),
                             Transform::IDENTITY,
                             Visibility::default(),
                         ))

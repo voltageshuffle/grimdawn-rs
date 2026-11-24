@@ -1,28 +1,29 @@
 //! `Skill_AttackLine` ("^Line Attack"; only the two `base_template skills/skill_attackline.dbr` records): a point
 //! that travels from the caster toward the target, hitting what is around it every `hitPeriod`.
 //!
-//! Game.dll, unexported: vtable 0x180798f48, a `SkillActivatedSpell`:
-//! - ctor sub_1804b4410: primary and secondary hot slot skill (`Skill` +172 / +173), activation mode 0; speed 1,
+//! Game.dll, unexported, a `SkillActivatedSpell`:
+//! - ctor `Skill_AttackLine::Skill_AttackLine`: primary and secondary hot slot skill (`Skill.primaryHotSlot` /
+//!   `Skill.secondaryHotSlot`), activation mode 0; speed 1,
 //!   radius 0, period 100 ms until loaded. `GetValidTarget` is the folded always-valid one (not
 //!   `SkillActivatedSpell`'s): the cast goes as aimed (`gd_sim::skills::request_aim`).
-//! - `Load` sub_1804b47c0 (class-level): speed = `distance` / `time`, life `time` × 1000 (int ms),
+//! - `Load` (class-level): speed = `distance` / `time`, life `time` × 1000 (int ms),
 //!   `attackRadius`, `hitPeriod` × 1000 (int ms), `loopSound`, `trailEffect` (a `TrailEffect`), `effectEntity` (an
 //!   `EffectEntity`), `startSound`.
-//! - `ActivateNow` sub_1804b50e0: the line's coordinates are the caster's, looking from them at the target point
+//! - `ActivateNow`: the line's coordinates are the caster's, looking from them at the target point
 //!   (3D; a zero direction keeps the caster's facing), up +Y; it sends an attack with no targets there and runs
 //!   `PrimaryActivateSecondarySkills` at the caster (`secondary::primary_activates`).
-//! - `TargetResult` sub_1804b5310 with no targets (that attack) pays the mana, starts the cooldown and adds a
+//! - `TargetResult` with no targets (that attack) pays the mana, starts the cooldown and adds a
 //!   line: the trail (low-efficiency, started) and the effect (emitting) at its coordinates, the loop sound there,
 //!   tracking the effect; `startSound` plays at the coordinates. With targets (the line's own attacks): per target
 //!   `CollectCombatParameters`, the rag doll, `CreateTargetFx` and `PlayHitSound`, the attack; then the
 //!   secondaries on that list at the line's coordinates.
-//! - `Update` sub_1804b4c50, per line each frame: it moves speed × dt along its heading, its effect and trail with
+//! - `Update`, per line each frame: it moves speed × dt along its heading, its effect and trail with
 //!   it. Its hit timer counts down; at 0 it restarts from `hitPeriod`, every target in `attackRadius` of the line
 //!   (`GameEngine::GetTargetsInRadius`, the caster's foes) is attacked at the line's coordinates (each again every
 //!   period while it stays in reach), and `World::CreatePointDisturbance(coords, attackRadius, 5, falloff, splash
-//!   1)` pushes the grass and water there ([`crate::visuals::PointDisturbance`]). Its life counts down; at its end
+//!   1)` pushes the grass and water there ([`gd_game_core::visuals::PointDisturbance`]). Its life counts down; at its end
 //!   the loop sound fades (250 ms), the effect stops emitting and removes itself, the trail is let go.
-//!   `StopSkill` sub_1804b5740 ends every line the same way.
+//!   `StopSkill` ends every line the same way.
 //!
 //! PORT: the hit timer starts at 0 (the first attack on the first frame; the engine's list node copies that field
 //! from uninitialised stack in `TargetResult`); a caster that is gone is `StopSkill`. "In radius":
@@ -65,7 +66,7 @@ pub(super) fn start_attack_line(
     let at = tf.translation;
     let d = cast.point - at;
     let dir = if d.length_squared() < 1e-4 {
-        crate::character::facing(tf)
+        gd_game_core::character::facing(tf)
     } else {
         d.normalize()
     };
@@ -85,7 +86,7 @@ pub(super) fn start_attack_line(
     let line = commands.spawn_empty().id();
     let trail = exists("trailEffect").map(|t| {
         commands
-            .spawn(crate::visuals::TrailRequest {
+            .spawn(gd_game_core::visuals::TrailRequest {
                 owner: line,
                 record: t,
                 width: 0.0,
@@ -107,7 +108,7 @@ pub(super) fn start_attack_line(
             names
                 .into_iter()
                 .map(|n| {
-                    let mut spec = crate::visuals::EffectSpec::record(n);
+                    let mut spec = gd_game_core::visuals::EffectSpec::record(n);
                     spec.despawn_when_complete = true;
                     commands.spawn((spec, frame)).id()
                 })
@@ -116,7 +117,7 @@ pub(super) fn start_attack_line(
         .unwrap_or_default();
     let loop_sound = rec.str("loopSound").filter(|s| !s.is_empty()).map(|pak| {
         commands
-            .spawn(crate::visuals::SoundLoop {
+            .spawn(gd_game_core::visuals::SoundLoop {
                 pak: pak.to_owned(),
                 on: Some(line),
                 at,
@@ -125,7 +126,7 @@ pub(super) fn start_attack_line(
             .id()
     });
     if let Some(pak) = rec.str("startSound").filter(|s| !s.is_empty()) {
-        commands.write_message(crate::visuals::PlaySound {
+        commands.write_message(gd_game_core::visuals::PlaySound {
             pak: pak.to_owned(),
             at: Some(at),
         });
@@ -163,7 +164,7 @@ pub(super) fn attack_lines(
     sides: Query<crate::combat::SideData>,
     mut hits: MessageWriter<SkillHit>,
     mut activations: MessageWriter<crate::secondary::Activate>,
-    mut disturbances: MessageWriter<crate::visuals::PointDisturbance>,
+    mut disturbances: MessageWriter<gd_game_core::visuals::PointDisturbance>,
 ) {
     let dt = time.delta_secs();
     for (e, mut line, mut tf) in &mut lines {
@@ -212,7 +213,7 @@ pub(super) fn attack_lines(
                 targets,
                 at,
             ));
-            disturbances.write(crate::visuals::PointDisturbance {
+            disturbances.write(gd_game_core::visuals::PointDisturbance {
                 pos: at,
                 radius: line.radius,
                 strength: 5.0,
@@ -235,10 +236,12 @@ fn end(commands: &mut Commands, e: Entity, line: &AttackLine) {
     for fx in &line.effects {
         commands
             .entity(*fx)
-            .try_insert(crate::visuals::StopEmitting);
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
     if let Some(t) = line.trail {
-        commands.entity(t).try_insert(crate::visuals::StopEmitting);
+        commands
+            .entity(t)
+            .try_insert(gd_game_core::visuals::StopEmitting);
     }
     commands.entity(e).try_despawn();
 }

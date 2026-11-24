@@ -16,7 +16,11 @@ fn challenger_and_gladiator() {
         g.flat_ground(Vec3::ZERO, 30.0);
         let p = g.spawn_player();
         g.steps(2);
-        let m = g.app.world().resource::<gd_game::session::GameMode>().0;
+        let m = g
+            .app
+            .world()
+            .resource::<gd_game_core::session::GameMode>()
+            .0;
         assert_eq!((m.difficulty, m.challenge), (d, 0));
         let objs = super::arenas::arena_objects(&g, ARENA);
         let lua_d = {
@@ -64,7 +68,7 @@ fn challenger_and_gladiator() {
         let rules = g
             .app
             .world()
-            .resource::<gd_game::rules::CombatRules>()
+            .resource::<gd_game_core::rules::CombatRules>()
             .0
             .clone();
         let pak = rules

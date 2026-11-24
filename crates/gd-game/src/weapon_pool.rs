@@ -7,10 +7,10 @@
 //! Each weapon-pool attack — a plain swing or shot (the default attack) or a
 //! `Skill_WeaponPool_*` cast (Fire Strike, Cadence, Righteous Fervor) — rolls
 //! [`gd_sim::weapon_pool::select`]; a picked pool skill is fired instead as
-//! a [`crate::casting::ProcCast`] with the pool attack as its parent.
+//! a [`gd_game_core::casting::ProcCast`] with the pool attack as its parent.
 //! The roll happens as the action starts (`SkillActivatedWeaponPool::
-//! StartAction` @0x18051bb90: it asks the skill services for a pool skill
-//! (`SkillManager::SelectWeaponPoolSkill` @0x180536b60), keeps its id and
+//! StartAction`: it asks the skill services for a pool skill
+//! (`SkillManager::SelectWeaponPoolSkill`), keeps its id and
 //! starts that skill's own `StartAction`): [`start_swing`] for a plain
 //! swing (`combat::player_attack`, `casting`'s Shift attack) and
 //! [`pool_cast_starts`] for a pool-skill cast store the outcome in
@@ -20,7 +20,7 @@
 //! is that clip's `RightHandHit`.
 //! Shapes per class: [`pool_kind`].
 //!
-//! Monsters run the same code: `SelectWeaponPoolSkill` @0x180536b60 walks
+//! Monsters run the same code: `SelectWeaponPoolSkill` walks
 //! whatever skills the manager holds, so a monster's
 //! `Skill_WPAttack*` skills form its pool and its `Skill_WeaponPool_Charged*`
 //! attack (the giants' Cleaving Strikes, a Righteous-Fervor-like scaling
@@ -35,12 +35,12 @@
 //!   `skillChargeTime` (`…Ranged` with a ranged weapon) / attack speed, the
 //!   charges expire after `skillChargeDuration`. With full charges (and the
 //!   lockout over) the next attack is the finale, decided as it starts
-//!   (`Skill_WeaponPool_ChargedFinale::StartAction` @0x18050dd50:
+//!   (`Skill_WeaponPool_ChargedFinale::StartAction`:
 //!   else the plain pool `StartAction` and its roll): the skill's own hit
 //!   (no pool roll); a landed
 //!   finale (or any with `spendChargesOnMiss`) clears the charges. Other
 //!   attacks are plain pool attacks without the skill's damage (its
-//!   constructor clears the parent flag `Skill` +263, which the
+//!   constructor clears the parent flag `Skill.isDamageParent`, which the
 //!   `Skill_WPAttack::CollectLocal*` collectors require of a parent).
 //! - `Skill_WeaponPool_ChargedScaling` (Righteous Fervor): an attack with
 //!   targets gains a charge (up to `skillChargeLevel`) before it hits; each
@@ -51,15 +51,16 @@
 //!   `skillChargeTime`, never the ranged one, divided by the attack speed;
 //!   `WPPreAttackCallback` gains a charge only with targets and the lockout
 //!   over).
-use crate::casting::{Casting, Kind};
-use crate::character::{CharState, Character};
-use crate::data::GameData;
-use crate::player::{Loadout, Player};
 use bevy::prelude::*;
 use gd_formats::arz::Record;
-use gd_sim::combat::Rng;
+use gd_formats::collections::HashMap;
+use gd_game_core::casting::{Casting, Kind};
+use gd_game_core::character::{CharState, Character};
+use gd_game_core::data::GameData;
+use gd_game_core::player::{Loadout, Player};
+use gd_game_core::weapon_pool::{Charge, PoolCharges, SkillLinks, is_pool_parent, lv};
+use gd_rules::Rng;
 use gd_sim::equip::WeaponType;
-use std::collections::HashMap;
 
 pub struct WeaponPoolPlugin;
 
@@ -68,14 +69,14 @@ impl Plugin for WeaponPoolPlugin {
         app.init_resource::<PoolRng>().add_systems(
             Update,
             (
-                rebuild_links.run_if(resource_exists::<crate::inventory::Inventory>),
+                rebuild_links.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                 toggles_need_weapons.after(rebuild_links),
                 tick_charges,
                 charged_profiles.after(tick_charges),
                 pool_cast_starts.before(crate::casting::CastingSet),
                 // The swing's clip is picked before the drive plays it.
                 pool_swing_specials
-                    .in_set(crate::character::CharacterStage::Drive)
+                    .in_set(gd_game_core::character::CharacterStage::Drive)
                     .before(crate::character::drive_characters),
             ),
         );
@@ -116,7 +117,9 @@ fn toggles_need_weapons(
             );
             loadout.skills.inactive.insert(s);
         }
-        commands.entity(e).try_insert(crate::player::ProfileDirty);
+        commands
+            .entity(e)
+            .try_insert(gd_game_core::player::ProfileDirty);
     }
 }
 
@@ -125,137 +128,7 @@ pub struct PoolRng(pub Rng);
 
 impl Default for PoolRng {
     fn default() -> Self {
-        Self(Rng(crate::rng::u32(1..0x7FFF_FFFF)))
-    }
-}
-
-/// Learned modifiers and usable pool skills of a character.
-#[derive(Component, Default, Debug, Clone)]
-pub struct SkillLinks {
-    /// Lower-case skill → its learned modifiers (record, level index): the
-    /// `Skill_Modifier` family (transmuters, projectile modifiers…), whose
-    /// fields add to the skill (`Skill` +320 list, class check).
-    pub mods: HashMap<String, Vec<(String, usize)>>,
-    /// Lower-case skill → its learned `SkillSecondary_*` skills (`Skill`
-    /// +368 list, `Skill::GetSecondarySkills`): separate effects, not damage
-    /// (`secondary.rs`); the sheet's skill rollovers add their damage.
-    pub secondaries: HashMap<String, Vec<(String, usize)>>,
-    /// Lower-case skill → the gear-granted secondaries (`Skill` +392,
-    /// `AddToItemSecondarySkills`): they act like the learned ones
-    /// (`ActivateSecondarySkills` runs both lists) but the
-    /// rollovers leave them out (`gd_sim::skills` docs).
-    pub item_secondaries: HashMap<String, Vec<(String, usize)>>,
-    /// Lower-case skill → its gear modifiers that are off (`Skill_Modifier::IsSkillEnabled`:
-    /// exclusive to a learned transmuter, [`build_links`]): not in [`Self::mods`], so they add
-    /// nothing and have no target effect; only the warm-up starts their paks (`casting::warmup`).
-    pub off_mods: HashMap<String, Vec<(String, usize)>>,
-    /// Usable pool skills: (record, level index, chance weight).
-    pub pool: Vec<(String, usize, u32)>,
-    /// The worn weapons' types (right, left hand).
-    pub hands: (Option<WeaponType>, Option<WeaponType>),
-    /// Lower-case skill → the modifier replacing its weapon requirements
-    /// (`gd_sim::weapon_pool::weapon_list_override`).
-    pub weapon_override: HashMap<String, String>,
-}
-
-impl SkillLinks {
-    /// A monster's (or any record skill list's) links, as
-    /// `SkillManager::LoadSkills` @0x18052ef00 builds them by calling
-    /// `CreateAndLoadSkill` @0x18052f300 for each `skillNameN` in order:
-    /// a `SkillSecondary_*` joins the last ordinary skill's +368
-    /// list ([`Self::secondaries`]); a `Skill_Modifier` (and subclasses)
-    /// joins the +320 list ([`Self::mods`]) of its `subSkillName`
-    /// (`Skill_Modifier::Load` @0x1804faaf0, +1952) when that names a skill
-    /// already created (`FindSkillId`: an earlier entry), else of the last
-    /// ordinary skill (`gd_sim::skills::tree_bases`); a `Skill_Mastery`
-    /// clears the last skill. Each is keyed by that skill and its
-    /// `buffSkillName` (wrappers cast as it). Stock data: the giants' Cleaving
-    /// Strikes modifier (`giant_cleavingstrikesmod`, a 45 deg / 5 target cone).
-    pub fn of_list(db: &gd_formats::vfs::Database, skills: &[(String, u32)]) -> Self {
-        let names: Vec<String> = skills.iter().map(|s| s.0.clone()).collect();
-        let mut links = Self::default();
-        for (i, ((sk, level), base)) in skills
-            .iter()
-            .zip(gd_sim::skills::tree_bases(db, &names))
-            .enumerate()
-        {
-            let (Some(base), Some(r)) = (base, db.get(sk)) else {
-                continue;
-            };
-            // `FindSkillId` only finds skills created before this one.
-            if !names[..i].iter().any(|n| n.eq_ignore_ascii_case(&base)) {
-                continue;
-            }
-            let secondary = gd_sim::skills::is_secondary_class(&r.class);
-            let mut keys = vec![base.to_ascii_lowercase()];
-            if let Some(b) = db
-                .get(&base)
-                .and_then(|br| gd_sim::skills::profile_name(br).map(str::to_ascii_lowercase))
-            {
-                keys.push(b);
-            }
-            let map = if secondary {
-                &mut links.secondaries
-            } else {
-                &mut links.mods
-            };
-            for k in keys {
-                map.entry(k)
-                    .or_default()
-                    .push((sk.clone(), (*level).max(1) as usize - 1));
-            }
-        }
-        links
-    }
-
-    /// Whether the worn weapons allow `skill` (`Skill::SetAvailability`:
-    /// `QualifyingWeapon` and `QualifyingHandState`).
-    pub fn weapons_allow(&self, db: &gd_formats::vfs::Database, rec: &Record, skill: &str) -> bool {
-        let over = self
-            .weapon_override
-            .get(&skill.to_ascii_lowercase())
-            .and_then(|m| db.get(m));
-        gd_sim::weapon_pool::qualifies(rec, over, self.hands.0, self.hands.1)
-    }
-
-    pub fn mods_of(&self, skill: &str) -> &[(String, usize)] {
-        self.mods
-            .get(&skill.to_ascii_lowercase())
-            .map_or(&[], |v| v.as_slice())
-    }
-
-    /// [`Self::off_mods`] of `skill`.
-    pub fn off_mods_of(&self, skill: &str) -> &[(String, usize)] {
-        self.off_mods
-            .get(&skill.to_ascii_lowercase())
-            .map_or(&[], |v| v.as_slice())
-    }
-
-    /// Every secondary of `skill` (lower-case key): the learned ones, then
-    /// the gear's (`Skill::ActivateSecondarySkills` order).
-    pub fn all_secondaries_of(&self, skill: &str) -> impl Iterator<Item = &(String, usize)> {
-        self.secondaries
-            .get(skill)
-            .into_iter()
-            .flatten()
-            .chain(self.item_secondaries.get(skill).into_iter().flatten())
-    }
-
-    /// The skills (lower-case keys) with any secondary.
-    pub fn secondary_parents(&self) -> impl Iterator<Item = &String> {
-        self.secondaries.keys().chain(
-            self.item_secondaries
-                .keys()
-                .filter(|k| !self.secondaries.contains_key(*k)),
-        )
-    }
-
-    /// Rolls the pool for one weapon-pool attack: the pool skill to fire
-    /// instead, if any.
-    pub fn roll(&self, rng: &mut Rng) -> Option<(String, usize)> {
-        let weights: Vec<u32> = self.pool.iter().map(|p| p.2).collect();
-        let i = gd_sim::weapon_pool::select(&weights, rng)?;
-        Some((self.pool[i].0.clone(), self.pool[i].1))
+        Self(Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF)))
     }
 }
 
@@ -289,13 +162,13 @@ pub fn pick_cast(
 }
 
 /// A weapon-pool action's outcome, decided as it starts
-/// (`SkillActivatedWeaponPool::StartAction` @0x18051bb90 rolls
+/// (`SkillActivatedWeaponPool::StartAction` rolls
 /// `SkillManager::SelectWeaponPoolSkill`; `Skill_WeaponPool_ChargedFinale::
-/// StartAction` @0x18050dd50 picks the finale instead when charged) and
+/// StartAction` picks the finale instead when charged) and
 /// used by the action's hits.
 #[derive(Component, Clone, Debug, Default)]
 pub struct PoolPick {
-    /// The action's skill: [`crate::casting::DEFAULT_ATTACK`] for a plain
+    /// The action's skill: [`gd_game_core::casting::DEFAULT_ATTACK`] for a plain
     /// swing, else the pool skill cast.
     pub skill: String,
     /// The pool skill picked to fire instead (record, level index).
@@ -319,14 +192,14 @@ pub fn start_swing(
 ) {
     let pick = links.and_then(|l| l.roll(rng));
     commands.entity(entity).try_insert(PoolPick {
-        skill: crate::casting::DEFAULT_ATTACK.into(),
+        skill: gd_game_core::casting::DEFAULT_ATTACK.into(),
         pick,
         finale: false,
     });
 }
 
 /// A weapon-pool proc's swing plays the picked skill's special animation
-/// (`SkillActivatedWeaponPool::StartAction` @0x18051bb90: it starts
+/// (`SkillActivatedWeaponPool::StartAction`: it starts
 /// the picked skill's own `StartAction`, which plays its
 /// `skillSpecialAnimationName`): [`Character::swing_special`] names the
 /// reference, `character::drive_characters` plays the `Special` slot at the
@@ -416,118 +289,12 @@ pub fn pool_kind(rec: &Record) -> Kind {
     }
 }
 
-/// Is this a weapon-pool skill whose attacks roll the pool?
-pub fn is_pool_parent(rec: &Record) -> bool {
-    rec.class.starts_with("Skill_WeaponPool")
-}
-
-/// Charge state of the charged pool skills (lower-case skill → charge).
-#[derive(Component, Default, Debug)]
-pub struct PoolCharges(pub HashMap<String, Charge>);
-
-#[derive(Default, Debug, Clone, Copy)]
-pub struct Charge {
-    pub count: u32,
-    /// Seconds before another charge can be gained.
-    pub lockout: f32,
-    /// Seconds before the charges expire (Cadence) / one is lost (Fervor).
-    pub decay: f32,
-}
-
-/// What a weapon-pool skill's attack does ([`PoolCharges::step`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PoolStep {
-    /// Cadence's finale: the skill's own hit, no pool roll.
-    Finale,
-    /// A pool attack; `parent_damage`: the skill's damage applies.
-    Attack { parent_damage: bool },
-}
-
-fn lv(rec: &Record, k: &str, i: usize) -> f32 {
-    gd_sim::stats::level_value(rec, k, i).unwrap_or(0.0)
-}
-
-impl PoolCharges {
-    /// Whether Cadence's next attack is the finale: full charges and the
-    /// lockout over (`Skill_WeaponPool_ChargedFinale::StartAction`).
-    pub fn finale_ready(&self, rec: &Record, skill: &str, li: usize) -> bool {
-        let level = lv(rec, "skillChargeLevel", li).max(1.0) as u32;
-        rec.class == "Skill_WeaponPool_ChargedFinale"
-            && self
-                .0
-                .get(&skill.to_ascii_lowercase())
-                .is_some_and(|c| c.count >= level && c.lockout <= 0.0)
-    }
-
-    /// The hit of one attack of the pool skill `rec` (`has_target`:
-    /// something to hit; `finale`: the attack started as Cadence's finale,
-    /// [`Self::finale_ready`] at its start).
-    #[allow(clippy::too_many_arguments)]
-    pub fn step(
-        &mut self,
-        rec: &Record,
-        skill: &str,
-        li: usize,
-        attack_speed: f32,
-        has_target: bool,
-        ranged: bool,
-        finale_start: bool,
-    ) -> PoolStep {
-        let finale = rec.class == "Skill_WeaponPool_ChargedFinale";
-        if !finale && rec.class != "Skill_WeaponPool_ChargedScaling" {
-            return PoolStep::Attack {
-                parent_damage: true,
-            };
-        }
-        let level = lv(rec, "skillChargeLevel", li).max(1.0) as u32;
-        let c = self.0.entry(skill.to_ascii_lowercase()).or_default();
-        if finale && finale_start {
-            if rec.bool("spendChargesOnMiss") {
-                *c = Charge::default();
-            }
-            return PoolStep::Finale;
-        }
-        if has_target && c.lockout <= 0.0 && (c.count < level || !finale) {
-            c.count = (c.count + 1).min(level);
-            let t = if finale && ranged {
-                lv(rec, "skillChargeTimeRanged", li)
-            } else {
-                lv(rec, "skillChargeTime", li)
-            };
-            c.lockout = t / attack_speed.max(0.1);
-            c.decay = lv(rec, "skillChargeDuration", c.count as usize - 1);
-        }
-        PoolStep::Attack {
-            parent_damage: !finale,
-        }
-    }
-
-    /// Fervor's damage scale for `skill` (1 for other skills).
-    pub fn scale(&self, rec: &Record, skill: &str) -> f32 {
-        if rec.class != "Skill_WeaponPool_ChargedScaling" {
-            return 1.0;
-        }
-        let n = self
-            .0
-            .get(&skill.to_ascii_lowercase())
-            .map_or(0, |c| c.count);
-        if n == 0 {
-            return 0.0;
-        }
-        rec.f32s_iter("skillChargeMultipliers")
-            .nth(n as usize - 1)
-            .or_else(|| rec.f32s_iter("skillChargeMultipliers").last())
-            .map(|m| m * 0.01)
-            .unwrap_or(1.0)
-    }
-}
-
 /// A charged `Skill_WeaponPool_ChargedScaling` adds its passive part to the player
 /// (`gd_sim::skills::charged_scaling_passive`): the profile is rebuilt when the set of charged ones changes.
 fn charged_profiles(
     mut commands: Commands,
     data: Res<GameData>,
-    q: Query<(Entity, &PoolCharges, &crate::combat::Combatant), With<Player>>,
+    q: Query<(Entity, &PoolCharges, &gd_game_core::combat::Combatant), With<Player>>,
 ) {
     for (e, charges, cb) in &q {
         let mut now: Vec<&str> = charges
@@ -551,7 +318,9 @@ fn charged_profiles(
             .collect();
         built.sort_unstable();
         if now != built {
-            commands.entity(e).try_insert(crate::player::ProfileDirty);
+            commands
+                .entity(e)
+                .try_insert(gd_game_core::player::ProfileDirty);
         }
     }
 }
@@ -620,7 +389,7 @@ pub fn build_links(
     let mut pool_candidates: Vec<(String, usize, Vec<(String, usize)>)> = Vec::new();
     links.hands = (right, left);
     // Lower-case skill → its learned modifiers (to tell them from gear ones).
-    let mut learned_of: HashMap<String, Vec<String>> = HashMap::new();
+    let mut learned_of: HashMap<String, Vec<String>> = HashMap::default();
     for (s, l) in &book.skills {
         if *l == 0
             || gd_sim::skills::is_modifier_class(
@@ -667,11 +436,11 @@ pub fn build_links(
     // which sets each modifier skill to level 1). The item (its ascendant affix with it), its
     // component (relic and completion bonus) and its augment are three such calls.
     // `AddItemSkillModifiers` / `Skill_Modifier::SetExclusiveItemSkillModifier`
-    // / `IsSkillEnabled` @0x1804faec0: a modifier of skill S whose call also
+    // / `IsSkillEnabled`: a modifier of skill S whose call also
     // modifies a `Skill_Transmuter` of S that S's learned modifiers hold is made
     // exclusive to it, and is off while that transmuter is enabled (learned: the
     // links are rebuilt as skills change). An off modifier adds nothing
-    // (`Skill_Modifier::GetSkillModifierData` @0x1804fba40 skips it for its
+    // (`Skill_Modifier::GetSkillModifierData` skips it for its
     // parent) and has no target effect (`Skill::GetTargetFX`), so it is kept
     // apart ([`SkillLinks::off_mods`]): only `Skill::CreateWarmUpFx` runs it
     // (no enabled check there, `casting::warmup`).
@@ -784,10 +553,10 @@ pub fn build_links(
 }
 
 fn rebuild_links(
-    mut fresh: crate::session::NewSession,
+    mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
     data: Res<GameData>,
-    inv: Res<crate::inventory::Inventory>,
+    inv: Res<gd_game_core::inventory::Inventory>,
     players: Query<(Entity, Ref<Loadout>), With<Player>>,
     mut sig: Local<u64>,
 ) {

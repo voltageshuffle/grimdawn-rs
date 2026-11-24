@@ -1,42 +1,16 @@
 //! Hit resolution: to-hit, critical tiers, per-damage-type attacker
 //! processing, resistances, armor, shield block, DoTs and leech, following
-//! `CombatManager::TakeAttack` @0x18011d950 and the `CombatAttribute*`
+//! `CombatManager::TakeAttack` and the `CombatAttribute*`
 //! classes (Game.dll).
 //!
 //! All arithmetic is f32 in the engine's operation order; `PCT` is the f32
 //! `0.0099999998` the engine uses for "/100".
 use crate::attributes::CombatType;
 use crate::stats::{CombatFormulas, CombatVars, PCT, Region};
+use gd_rules::Rng;
+use std::cell::RefCell;
 
-/// `GAME::RandomUniform`: Park–Miller minimal standard generator
-/// (a = 16807, m = 2^31 - 1, Schrage with q = 127773, r = 2836), used in
-/// every roll site of `CombatManager`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rng(pub u32);
-
-impl Rng {
-    // The engine's name for the step; `Rng` is no iterator.
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> u32 {
-        let s = self.0;
-        let t = 16807u32
-            .wrapping_mul(s % 127_773)
-            .wrapping_sub(2836u32.wrapping_mul(s / 127_773)) as i32;
-        let t = if t < 0 {
-            t.wrapping_add(0x7FFF_FFFF)
-        } else {
-            t
-        };
-        self.0 = t as u32;
-        self.0
-    }
-    /// `(float)(int)next * 4.6566129e-10` — [0, 1).
-    pub fn unit(&mut self) -> f32 {
-        (self.next() as i32) as f32 * 4.656_613e-10
-    }
-}
-
-/// Probability to hit (`DesignerCalculateProbabilityToHit` @0x180121790):
+/// Probability to hit (`DesignerCalculateProbabilityToHit`):
 /// the `probabilityToHitEquation`, raised to `pthMinimum`.
 pub fn probability_to_hit(f: &CombatFormulas, oa: f32, da: f32) -> f32 {
     let v = CombatVars {
@@ -63,7 +37,7 @@ pub struct HitRoll {
     pub tier: u32,
 }
 
-/// `CombatManager::CalculateDamageModifier(pth, rand)` @0x180120b10:
+/// `CombatManager::CalculateDamageModifier(pth, rand)`:
 /// `roll = max(100, pth) * rand`; a miss when `pth < 100 && roll > pth`.
 /// Above `pthThreshold1` the roll picks the highest tier whose threshold it
 /// exceeds (thresholds 2..6); otherwise the hit is scaled by
@@ -102,13 +76,13 @@ pub fn damage_modifier(f: &CombatFormulas, pth: f32, rand: f32) -> HitRoll {
     }
 }
 
-/// Critical chance shown in the UI (`DesignerCalculateCriticalChance`
-/// @0x180120ae0): `max((pth - pthThreshold2) / max(100, pth), 0)`.
+/// Critical chance shown in the UI (`DesignerCalculateCriticalChance`):
+/// `max((pth - pthThreshold2) / max(100, pth), 0)`.
 pub fn critical_chance(f: &CombatFormulas, pth: f32) -> f32 {
     ((pth - f.pth_tiers[1].0) / 100f32.max(pth)).max(0.0)
 }
 
-/// `CombatManager::PickRegion` @0x180120d90: `next % total + 1` against
+/// `CombatManager::PickRegion`: `next % total + 1` against
 /// the cumulative region chances in load order (bad data: negative chances
 /// count as 0 and the sum is u64, so it cannot wrap).
 pub fn pick_region(f: &CombatFormulas, rng: &mut Rng) -> Region {
@@ -154,7 +128,7 @@ pub struct AttackerScaling<'a> {
 impl AttackerScaling<'_> {
     fn eval(
         &self,
-        eq: &Option<crate::expr::Expr>,
+        eq: &Option<gd_rules::expr::Expr>,
         set: impl Fn(&mut CombatVars, f32),
         x: f32,
     ) -> f32 {
@@ -215,12 +189,12 @@ pub struct HitDamage {
     pub max: f32,
     /// Summed `offensiveXModifier` (%), applied at processing then cleared.
     pub modifier: f32,
-    /// `this+16`: apply the Cunning/Spirit damage equations.
+    /// `CombatAttribute.scaleByAttributes`: apply the Cunning/Spirit damage equations.
     pub scale_by_attributes: bool,
 }
 
 impl HitDamage {
-    /// Engine roll (`DamageAttributeAbs::AddDamageToAccumulator` @0x18018da60):
+    /// Engine roll (`DamageAttributeAbs::AddDamageToAccumulator`):
     /// `chanceMult * (((max - min) * (float)r) * 4.6566129e-10 + min) * (a7 + a8)`.
     pub fn roll(ty: CombatType, min: f32, max: f32, scale: f32, rng: &mut Rng) -> Self {
         let r = rng.next() as i32 as f32;
@@ -236,8 +210,8 @@ impl HitDamage {
     }
 
     /// `offensiveElementalMin/Max`: one roll split 1/3 each into Cold, Fire,
-    /// Lightning (`DamageAttributeAbs_ElementalDamage::AddDamageToAccumulator`
-    /// @0x18019aaa0; note its different f32 order).
+    /// Lightning (`DamageAttributeAbs_ElementalDamage::AddDamageToAccumulator`;
+    /// note its different f32 order).
     pub fn roll_elemental(min: f32, max: f32, scale: f32, rng: &mut Rng) -> [Self; 3] {
         let r = rng.next() as i32 as f32;
         let v = (((r * 4.656_613e-10) * (max - min)) + min) * scale * 0.333_333_34;
@@ -253,7 +227,7 @@ impl HitDamage {
     }
 
     /// Attacker-side processing: `CombatAttributeAbsDamage::Process`
-    /// @0x180113690 / `CombatAttributeAbsDamageElemental::Process` @0x180113d50.
+    /// / `CombatAttributeAbsDamageElemental::Process`.
     /// The % modifier is taken from the *unscaled* value, so
     /// attribute bonuses and +% damage add.
     pub fn process(&mut self, atk: &AttackerScaling, red: &ReductionInfo, scale: DamageScale) {
@@ -316,19 +290,19 @@ pub struct WeaponDamage {
     pub physical_modifier: f32,
     /// `offensivePierceModifier` (%).
     pub pierce_modifier: f32,
-    /// `this+84`: skill weapon-damage multiplier (1.0 = 100%).
+    /// `CombatAttributeDamage_BasePhysical.weaponMultiplier`: skill weapon-damage multiplier (1.0 = 100%).
     pub weapon_multiplier: f32,
     pub scale_by_attributes: bool,
     /// Armor gathered by `ExecuteDefense`: sum of absorption% * 0.01 * protection.
     pub protection_absorption: f32,
     /// Sum of protection of matching armor pieces.
     pub protection: f32,
-    /// `this+68` armor bonus (0 in every path traced).
+    /// `CombatAttributeDamage_BasePhysical.protectionBonus` armor bonus (0 in every path traced).
     pub protection_bonus: f32,
 }
 
 impl WeaponDamage {
-    /// `DamageAttribute_BasePhysical::AddDamageToAccumulator` @0x1801a0370.
+    /// `DamageAttribute_BasePhysical::AddDamageToAccumulator`.
     pub fn roll(min: f32, max: f32, pierce_ratio: f32, scale: f32, rng: &mut Rng) -> Self {
         let range = (max - min).max(0.0);
         let hi = min + range;
@@ -349,7 +323,7 @@ impl WeaponDamage {
         }
     }
 
-    /// `CombatAttributeDamage_BasePhysical::Process` @0x180116c30.
+    /// `CombatAttributeDamage_BasePhysical::Process`.
     // `max().min()`, not `clamp`: a NaN ratio becomes 0.
     #[allow(clippy::manual_clamp)]
     pub fn process(
@@ -427,10 +401,10 @@ pub struct DotDamage {
     pub dps: [f32; 3],
     /// Seconds.
     pub duration: f32,
-    /// The duration as loaded, before its modifier (the attribute's +40,
-    /// which `Process` leaves alone: `CombatAttributeDurDamage::
-    /// GetMinMaxDamage` @0x1801144f0 matches the sheet's row duration
-    /// against it).
+    /// The duration as loaded, before its modifier (the attribute's
+    /// `CombatAttributeDurDamage.baseDuration`, which `Process` leaves alone:
+    /// `CombatAttributeDurDamage::GetMinMaxDamage` matches the sheet's row
+    /// duration against it).
     pub base_duration: f32,
     /// `offensiveSlowXModifier` (%).
     pub modifier: f32,
@@ -441,8 +415,8 @@ pub struct DotDamage {
     pub hit_multiplier: f32,
     /// The owning source's stable key (`actor::dot_source_key`: the item
     /// instance / skill record / passive that owns the attribute, hashed with
-    /// the attribute's field). `DamageAttributeDur::
-    /// AddDamageToAccumulator` @0x180190560: the slot key is
+    /// the attribute's field). `DamageAttributeDur::AddDamageToAccumulator`:
+    /// the slot key is
     /// `(GetObjectId(owner), attribute_index)` — the owner object, not the
     /// attacker; distinct owners' same-type DoTs stack, only the same owner's
     /// re-application keeps max. 0: unkeyed (display-only values).
@@ -450,8 +424,8 @@ pub struct DotDamage {
 }
 
 impl DotDamage {
-    /// `CombatAttributeDurDamage::Process` @0x180114170 and
-    /// `CombatAttributeDurDamageElemental::Process` @0x1801148e0 (
+    /// `CombatAttributeDurDamage::Process` and
+    /// `CombatAttributeDurDamageElemental::Process` (
     /// equation slot = `magicalDurationDamageEquation`; its reduction:
     /// total %, or the larger elemental % for cold / fire / lightning, then
     /// the flat total).
@@ -504,7 +478,7 @@ pub enum Damage {
     Dot(DotDamage),
     /// `offensiveLifeLeechMin/Max`: % of the life the hit removes, returned
     /// to the attacker (`CombatAttributeAbsDamage_LifeLeech::Execute`
-    /// @0x180118900 accumulates the percent; `TakeAttack`'s tail heals the
+    /// accumulates the percent; `TakeAttack`'s tail heals the
     /// attacker by it × the life actually lost). `value` is the rolled
     /// percent, `min`/`max` its bounds (the sheet's Damage to Health row).
     LifeLeech {
@@ -513,7 +487,7 @@ pub enum Damage {
         max: f32,
     },
     /// `offensivePercentCurrentLifeMin/Max`: % of the defender's current life
-    /// (`CombatAttributeAbsDamage_PercentLife::Execute` @0x180118510).
+    /// (`CombatAttributeAbsDamage_PercentLife::Execute`).
     PercentCurrentLife {
         value: f32,
         min: f32,
@@ -581,12 +555,12 @@ impl Damage {
                 .iter_mut()
                 .chain(w.pierce.iter_mut())
                 .for_each(|x| *x *= k),
-            // `CombatManager::TakeAttack` @0x18011d950: it calls `ScaleDamage` @0x18011af00 with
+            // `CombatManager::TakeAttack`: it calls `CombatAttributeAccumulator::ScaleDamage` with
             // `includeType61 = false`, which skips type-61 attributes, so a 30 % sunder stays 30 %, not 45 %,
             // on an already sundered target.
             Damage::Dot(d) if d.ty == CombatType::DamageMultiplier => {}
             Damage::Dot(d) => d.dps.iter_mut().for_each(|x| *x *= k),
-            // base `ScaleDamage` @0x180113b70: leech and % current
+            // base `ScaleDamage` (`CombatAttributeDamage_BonusPhysical::ScaleDamage`): leech and % current
             // life scale like any value (damage-taken multiplier, reflect %).
             Damage::LifeLeech { value, min, max }
             | Damage::PercentCurrentLife { value, min, max } => {
@@ -599,7 +573,7 @@ impl Damage {
     }
 
     /// `ReduceDamage(type, pct)`: `x = max((1 - pct * 0.01) * x, 0)` when the
-    /// type matches (@0x180113af0 / BasePhysical @0x1801175f0).
+    /// type matches (`CombatAttributeDurDamage::ReduceDamage` / `CombatAttributeDamage_BasePhysical::ReduceDamage`).
     pub fn reduce_damage(&mut self, ty: CombatType, pct: f32) {
         let k = |x: f32| ((1.0 - pct * PCT) * x).max(0.0);
         match self {
@@ -625,7 +599,7 @@ impl Damage {
                     *x = k(*x);
                 }
             }
-            // `..._PercentLife::ReduceDamage` @0x180118620: vitality
+            // `..._PercentLife::ReduceDamage`: vitality
             // resistance resists it too.
             Damage::PercentCurrentLife { value, min, max }
                 if ty == CombatType::PercentCurrentLife || ty == CombatType::Vitality =>
@@ -639,7 +613,7 @@ impl Damage {
         }
     }
 
-    /// `ReduceDurationDamage(type, pct)` @0x180114560.
+    /// `ReduceDurationDamage(type, pct)`.
     pub fn reduce_duration(&mut self, ty: CombatType, pct: f32) {
         if let Damage::Dot(d) = self {
             if pct > 0.0 && d.ty == ty {
@@ -660,7 +634,7 @@ impl Damage {
                 w.physical[0] = r(w.physical[0]);
                 w.pierce[0] = r(w.pierce[0]);
             }
-            // base `DamageReductionByShield` @0x180113b40: a block
+            // base `DamageReductionByShield`: a block
             // reduces leech, % current life and crowd control values too.
             Damage::LifeLeech { value, min, max }
             | Damage::PercentCurrentLife { value, min, max } => {
@@ -673,8 +647,8 @@ impl Damage {
     }
 }
 
-/// `DesignerCalculatePhysicalDamageDefense(dmg, protection, protAbs, bonus)`
-/// @0x180121430: absorption = protAbs / protection; both scaled
+/// `DesignerCalculatePhysicalDamageDefense(dmg, protection, protAbs, bonus)`:
+/// absorption = protAbs / protection; both scaled
 /// by `(bonus + 1)`; `DLEP` when protection >= damage else `DGP`.
 pub fn physical_damage_defense(
     f: &CombatFormulas,
@@ -705,8 +679,8 @@ pub fn physical_damage_defense(
     r.max(0.0)
 }
 
-/// `DesignerCalculateShieldBlockDamageReduction(dmg, block, absorption)`
-/// @0x180121cc0: `DLEB` when dmg <= block, else `DGB`.
+/// `DesignerCalculateShieldBlockDamageReduction(dmg, block, absorption)`:
+/// `DLEB` when dmg <= block, else `DGB`.
 pub fn shield_block_reduction(f: &CombatFormulas, dmg: f32, block: f32, absorption: f32) -> f32 {
     let v = CombatVars {
         damage_dv: dmg,
@@ -727,7 +701,7 @@ pub fn shield_block_reduction(f: &CombatFormulas, dmg: f32, block: f32, absorpti
 
 /// Restricted resistances (`DefenseAttributeAbsRestricted`: crowd control,
 /// influence, leech, mana burn, disruption and % current life): their
-/// `Process` @0x180115290 runs with a zeroed `ReductionInfo`, so resistance
+/// `Process` runs with a zeroed `ReductionInfo`, so resistance
 /// reduction debuffs do not lower them.
 pub fn restricted_resistance(ty: CombatType) -> bool {
     use CombatType as T;
@@ -801,9 +775,9 @@ pub enum Defense {
 }
 
 impl Defense {
-    /// `Process` (`CombatAttributeAbsDefense::Process` @0x180115370,
-    /// `CombatAttributeDurDefense::Process`, `..._AbsorptionProtection::Process`
-    /// @0x180118370). `cap` is `GetDefenseAttributeCap()` (80 for players,
+    /// `Process` (`CombatAttributeAbsDefense::Process`,
+    /// `CombatAttributeDurDefense::Process`, `..._AbsorptionProtection::Process`).
+    /// `cap` is `GetDefenseAttributeCap()` (80 for players,
     /// 100 for monsters, per difficulty).
     pub fn process(
         &mut self,
@@ -910,7 +884,7 @@ impl Defense {
     }
 }
 
-/// `TakeAttack` combat styles (`ParametersCombat+16`).
+/// `TakeAttack` combat styles (`ParametersCombat.combatStyle`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AttackKind {
     /// 1: fumble, dodge, to-hit.
@@ -932,17 +906,17 @@ pub enum AttackKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attack {
     pub kind: AttackKind,
-    /// `+20`: attacker OA.
+    /// `ParametersCombat.offensiveAbility`: attacker OA.
     pub offensive_ability: f32,
-    /// `+148`: fumble chance % (melee).
+    /// `ParametersCombat.fumbleChance`: fumble chance % (melee).
     pub fumble_chance: f32,
-    /// `+180`: projectile fumbled.
+    /// `ParametersCombat.projectileFumbled`: projectile fumbled.
     pub projectile_fumbled: bool,
-    /// `+176 > 0`: cannot be deflected/blocked (projectile).
+    /// `ParametersCombat.unblockable` > 0: cannot be deflected/blocked (projectile).
     pub unblockable: bool,
-    /// `+160`: crit damage bonus added to the tier multiplier when > 1.
+    /// `ParametersCombat.critDamageBonus`: crit damage bonus added to the tier multiplier when > 1.
     pub crit_damage_bonus: f32,
-    /// `+152`: skill energy cost (for energy absorption).
+    /// `ParametersCombat.energyCost`: skill energy cost (for energy absorption).
     pub energy_cost: f32,
     /// Mana burn: % of the burned energy dealt as damage
     /// (`offensiveManaBurnDamageRatio` + `…RatioAdder`).
@@ -1022,7 +996,7 @@ pub struct Defender<'a> {
     /// `damageAbsorptionPercent` of the defender's reflect links (0: none),
     /// see [`HitResult::link_copy`].
     pub link_absorb: f32,
-    /// `+720`: ms until the shield can block again.
+    /// `Character.shieldBlockCooldown`: ms until the shield can block again.
     pub block_cooldown_ms: i32,
     /// Character attr 25 (%).
     pub block_recovery_reduction: f32,
@@ -1030,7 +1004,7 @@ pub struct Defender<'a> {
     pub block_modifier: f32,
     /// `defensiveBlockAmountModifier` total (%).
     pub block_amount_modifier: f32,
-    /// Racial bonus % damage reduction (`+712`).
+    /// Racial bonus % damage reduction (`Character.racialDamageReduction`).
     pub racial_reduction: f32,
     /// Character attr 26 (%).
     pub energy_absorption: f32,
@@ -1040,7 +1014,7 @@ pub struct Defender<'a> {
     pub life: f32,
 }
 
-/// Equipped shield (`WeaponArmor_Shield` +5936..+5948).
+/// Equipped shield (`WeaponArmor_Shield`'s block fields).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shield {
     /// `defensiveBlockChance` (%).
@@ -1054,7 +1028,7 @@ pub struct Shield {
 }
 
 impl Shield {
-    /// A shield record's fields (`WeaponArmor_Shield::Load` @0x18058cd70,
+    /// A shield record's fields (`WeaponArmor_Shield::Load`,
     /// The record's own values, `GetShieldBlockChance` /
     /// `GetShieldDefense` / `GetShieldAbsorption` read them back,
     /// `GetShieldRecoveryTime` = `(int)(blockRecoveryTime × 1000)` ms).
@@ -1080,17 +1054,17 @@ pub enum MissReason {
 /// What an attack's influence and disruption attributes do to the defender, beside damage. They travel as
 /// [`Damage::Reflex`] (no blunt, crit or damage-taken scaling, reduced by the defender's restricted resistance of
 /// the type and by a block, never reflected nor linked) and are executed here, not as crowd control:
-/// - taunt (50): `CombatAttributeInfluenceDamage_Taunt::Execute` @0x180118c30: a value above 0 goes to
-///   `Character::CombatExertInfluenceTaunt` @0x180068f70 (the value passed on in xmm1) → the defender's controller
-///   `ControllerMonster::TauntMe` @0x180139730: within `InPursuitRange`, `AngerManager::AddAnger(last attacker,
+/// - taunt (50): `CombatAttributeInfluenceDamage_Taunt::Execute`: a value above 0 goes to
+///   `Character::CombatExertInfluenceTaunt` (the value passed on in xmm1) → the defender's controller
+///   `ControllerMonster::TauntMe`: within `InPursuitRange`, `AngerManager::AddAnger(last attacker,
 ///   value)`. One call per instance, so the instances add up.
-/// - convert (51): `CombatAttributeInfluenceDamage_Convert::Execute` @0x180118d00: a value of at least 1
+/// - convert (51): `CombatAttributeInfluenceDamage_Convert::Execute`: a value of at least 1
 ///   calls `Monster::JoinMe(attacker, value × 1000 ms)` when the attacker's level + 5 reaches the defender's (the
 ///   caller's check: it needs both characters). A second instance meets a monster that already joined
 ///   (`JoinMe`'s refusal), so the first one counts.
-/// - disruption (13): `CombatAttributeAbsDamage_Disruption::Execute` @0x180118770: a value above 0 calls
-///   `Character::CombatAddCooldownDamage` @0x180069000 with `(int)(value × 1000)` ms → `SkillManager::
-///   ApplyCooldownDamage` @0x18053d380, which puts each of the defender's skills on that cooldown unless it already
+/// - disruption (13): `CombatAttributeAbsDamage_Disruption::Execute`: a value above 0 calls
+///   `Character::CombatAddCooldownDamage` with `(int)(value × 1000)` ms → `SkillManager::ApplyCooldownDamage`,
+///   which puts each of the defender's skills on that cooldown unless it already
 ///   runs longer (`Skill::ReplaceCooldownTime`), so the longest instance counts.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Influence {
@@ -1142,7 +1116,7 @@ pub struct HitResult {
     pub link_copy: Vec<Damage>,
 }
 
-/// `CombatManager::TakeAttack` @0x18011d950, single-player path, in
+/// `CombatManager::TakeAttack`, single-player path, in
 /// order. The engine draws from two generators (the
 /// accumulator's for region, the attack seed for rolls); here one stream
 /// is used in the same per-roll order.
@@ -1225,7 +1199,7 @@ pub fn take_attack(
             .iter_mut()
             .for_each(|d| d.scale(def.damage_taken_pct));
     }
-    // Reflection (`TakeAttack` @0x18011d950): not for retaliation
+    // Reflection (`TakeAttack`): not for retaliation
     // or reflected attacks. The copy is the incoming damage as it arrives,
     // scaled by the damage-taken multiplier like the real one but without
     // the hit roll / crit multiplier; `FilterReflectDamage` drops the
@@ -1309,7 +1283,7 @@ pub fn take_attack(
             dfn.execute(d, region);
         }
     }
-    // Reflect links (`TakeAttack` @0x18011d950): after
+    // Reflect links (`TakeAttack`): after
     // `ExecuteDefense` the attack is copied and, with
     // `GetReflectLinkDamageReduction` > 0, every attribute of the copy is
     // scaled by it; for attacks other than retaliation (style 3) and
@@ -1329,12 +1303,18 @@ pub fn take_attack(
             })
             .collect();
     }
+    // PERF-36: size the per-hit result lists once (they escape to the caller as
+    // owned `Vec`s, so cannot be scratch-reused); the bounds only avoid growth
+    // reallocations and never change a value or the draw order.
+    res.applied.reserve(atk.damage.len() + 1);
+    res.dots.reserve(atk.damage.len());
+    res.reflex.reserve(atk.damage.len());
     // ExecuteDamage.
     let life0 = def.life.max(0.0);
     let mut leech = 0.0f32;
     for d in &atk.damage {
         match d {
-            // `CombatAttributeAbsDamage_ManaBurn::Execute` @0x1801189c0:
+            // `CombatAttributeAbsDamage_ManaBurn::Execute`:
             // burns value % of max energy (at most what is
             // left) and deals ratio % of the burned energy.
             Damage::Hit(h) if h.ty == CombatType::ManaBurn => {
@@ -1378,9 +1358,9 @@ pub fn take_attack(
                     res.influence.disruption = res.influence.disruption.max(secs);
                 }
                 CombatType::Taunt | CombatType::Convert => {}
-                // `..._Fear::Execute` @0x180118e40 (fear and
+                // `..._Fear::Execute` (fear and
                 // confusion): at least a full second; other crowd control
-                // (`CombatAttributeReflexDamage::Execute` @0x180114ee0) any
+                // (`CombatAttributeReflexDamage::Execute`) any
                 // positive duration.
                 _ => {
                     let ok = *secs > 0.0
@@ -1501,13 +1481,13 @@ pub struct DotTick {
     pub per_type: Vec<(CombatType, f32)>,
     pub from_source: f32,
     pub multiplier: f32,
-    /// `DurationDamageManager::ExecuteDamage` @0x1802796b0: before each entry's `ApplyDamage` the
-    /// defender's `CombatManager` attacker (+364, the killer `Character::CharacterIsDying` sends) is set to the
+    /// `DurationDamageManager::ExecuteDamage`: before each entry's `ApplyDamage` the
+    /// defender's `CombatManager.lastAttacker` (the killer `Character::CharacterIsDying` sends) is set to the
     /// entry's attacker, so after an update it is the last entry that dealt damage. PORT: the engine's entries
     /// are one per (type, attack) in insertion order; here it is the last entry of the last timeline (types in
     /// first-application order) that ticked.
     pub last_source: Option<u64>,
-    /// The skill of that entry (`ApplyDamage` @0x18011d340: the killing entry's skills run the
+    /// The skill of that entry (`CombatManager::ApplyDamage`: the killing entry's skills run the
     /// attacker's `OnEnemyDeath`).
     pub last_skill: Option<std::sync::Arc<str>>,
     /// The damage per attacker this update (before the defender's filters; each entry's `ApplyDamage`
@@ -1521,12 +1501,12 @@ pub struct DotTick {
 /// the source is the owning object + attribute, [`DotDamage::source`], not
 /// the attacker; `Update(ms)` consumes whole 100 ms ticks, carrying the
 /// remainder).
-/// `DurationDamageManager::ExecuteDamage` @0x1802796b0 also returns the
+/// `DurationDamageManager::ExecuteDamage` also returns the
 /// damage of the entries whose attacker is the main player and the largest
-/// multiplier of every ticked slot entry (`sub_1802800A0`): the
+/// multiplier of every ticked slot entry (`DurationDamageManager::GetLargestMultiplier`): the
 /// DoT combat numbers ([`DotTick`]). A slot's entries, sorted, are scaled by
 /// gameengine.dbr `damageMagnitude` % by rank (the last value for the rest;
-/// `sub_18027FC30`); stock it is just 100, so stacking is full.
+/// `DurationDamageManager::ApplyDamageMagnitude`); stock it is just 100, so stacking is full.
 ///
 /// PORT: the manager stores one entry per application ([`DotApp`]) instead
 /// of writing it into every slot, and derives a slot's entries when it ticks
@@ -1665,8 +1645,8 @@ impl DotManager {
 
     /// The types with damage queued, in the order their timelines were
     /// created (PORT: the engine's normal duration-damage list keeps one entry
-    /// per (type, attack) in insertion order, `DurationDamageManager::AddDamage`
-    /// @0x180279e70; the port merges attacks of one type into one timeline,
+    /// per (type, attack) in insertion order, `DurationDamageManager::AddDamage`;
+    /// the port merges attacks of one type into one timeline,
     /// kept at the first one's place).
     pub fn types(&self) -> impl Iterator<Item = CombatType> + '_ {
         self.timelines.iter().map(|t| t.ty)
@@ -1704,8 +1684,8 @@ impl DotManager {
 /// One conversion: (in type, out type, %).
 pub type Conversion = (CombatType, CombatType, f32);
 
-/// Damage conversion (`ConversionAttributeAccumulator::Weigh` @0x18017d520 +
-/// `CombatAttributeAccumulator::ConvertDamage` @0x180119ed0): each
+/// Damage conversion (`ConversionAttributeAccumulator::Weigh` +
+/// `CombatAttributeAccumulator::ConvertDamage`): each
 /// stage's conversions are grouped by input type; a group over 100 % is
 /// scaled down to 100 %. The groups run one after the other: every
 /// not-yet-converted damage of the input type (Physical also takes the
@@ -1716,7 +1696,7 @@ pub type Conversion = (CombatType, CombatType, f32);
 /// Aether. An Elemental output splits in thirds (cold, fire, lightning, each
 /// at % / 3); a converted DoT keeps its duration (the new attribute copies
 /// the source); hit damage stays hit damage and DoTs stay DoTs
-/// (`ConvertCombatAttributes` @0x1801199f0).
+/// (`ConvertCombatAttributes`).
 ///
 /// The % modifier a damage already holds goes along: the piece copies it
 /// and both piece and original scale damage and modifier by their share
@@ -1729,35 +1709,87 @@ pub type Conversion = (CombatType, CombatType, f32);
 /// `stages` run in order (the skill's conversions, then the character's);
 /// what one stage converted stays out of the next.
 pub fn convert_damage(damage: &mut Vec<Damage>, stages: &[&[Conversion]]) {
-    let mut converted = Vec::new();
+    let mut s = CONVERT_SCRATCH.with(|c| c.replace(ConvertScratch::default()));
+    convert_damage_with(damage, stages, &mut s);
+    CONVERT_SCRATCH.with(|c| {
+        c.replace(s);
+    });
+}
+
+/// Reusable conversion buffers (PERF-36): [`convert_damage`]'s `converted` list
+/// and [`weigh_with`]'s per-input groups are collected here instead of fresh
+/// heap allocations per attack. One per thread, taken empty and returned
+/// cleared (the `gd_game_core::rng` pattern), so a nested or parallel
+/// conversion never shares buffers; only capacity is reused, no value survives
+/// a call. PORT: the engine allocates these per `ConvertDamage`.
+#[derive(Default)]
+pub(crate) struct ConvertScratch {
+    pub(crate) converted: Vec<Damage>,
+    weigh: Vec<(CombatType, Vec<(CombatType, f32)>)>,
+    weigh_pool: Vec<Vec<(CombatType, f32)>>,
+}
+
+thread_local! {
+    static CONVERT_SCRATCH: RefCell<ConvertScratch> = RefCell::new(ConvertScratch::default());
+}
+
+/// [`convert_damage`] over caller-held buffers (the attack path's scratch).
+pub(crate) fn convert_damage_with(
+    damage: &mut Vec<Damage>,
+    stages: &[&[Conversion]],
+    s: &mut ConvertScratch,
+) {
+    let ConvertScratch {
+        converted,
+        weigh,
+        weigh_pool,
+    } = s;
+    converted.clear();
     for convs in stages {
-        for (in_t, outs) in weigh(convs) {
-            convert_group(damage, in_t, &outs, &mut converted);
+        weigh_with(convs, weigh, weigh_pool);
+        for (in_t, outs) in weigh.iter() {
+            convert_group(damage, *in_t, outs, converted);
         }
     }
-    damage.extend(converted);
+    damage.append(converted);
+    for (_, inner) in weigh.drain(..) {
+        let mut inner = inner;
+        inner.clear();
+        weigh_pool.push(inner);
+    }
 }
 
 /// `ConversionAttributeAccumulator::Weigh`: conversions summed per input and
 /// output type, each input's group scaled down to 100 % (fractions of 1).
-fn weigh(convs: &[Conversion]) -> Vec<(CombatType, Vec<(CombatType, f32)>)> {
-    let mut groups: Vec<(CombatType, Vec<(CombatType, f32)>)> = Vec::new();
+fn weigh_with(
+    convs: &[Conversion],
+    groups: &mut Vec<(CombatType, Vec<(CombatType, f32)>)>,
+    pool: &mut Vec<Vec<(CombatType, f32)>>,
+) {
+    for (_, inner) in groups.drain(..) {
+        let mut inner = inner;
+        inner.clear();
+        pool.push(inner);
+    }
     for &(i, o, pct) in convs {
         match groups.iter_mut().find(|g| g.0 == i) {
             Some(g) => match g.1.iter_mut().find(|x| x.0 == o) {
                 Some(x) => x.1 += pct * PCT,
                 None => g.1.push((o, pct * PCT)),
             },
-            None => groups.push((i, vec![(o, pct * PCT)])),
+            None => {
+                let mut inner = pool.pop().unwrap_or_default();
+                inner.push((o, pct * PCT));
+                groups.push((i, inner));
+            }
         }
     }
-    for g in &mut groups {
+    for g in groups.iter_mut() {
         let total: f32 = g.1.iter().map(|x| x.1).sum();
         if total > 1.0 {
             g.1.iter_mut().for_each(|x| x.1 *= 1.0 / total);
         }
     }
-    groups
 }
 
 /// One input type's `ConvertDamage` over the not-yet-converted `damage`.

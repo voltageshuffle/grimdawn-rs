@@ -5,15 +5,15 @@
 //! walking order; a proxy is a member of a "ProxyPatrollers" group whose
 //! child groups are "Patrol Points" groups. A proxy's monsters take the points
 //! of those child groups when they are attached to their controller
-//! (`ControllerMonster::PostParentAttached` @0x1801391f0);
-//! `Proxy:LinkPatrolPointGroup` (exe sub_14006ad90) edits the groups
+//! (`ControllerMonster::PostParentAttached`);
+//! `Proxy:LinkPatrolPointGroup` (exe `LuaProxy::LinkPatrolPointGroup`) edits the groups
 //! at run time.
 
 use gd_formats::map::Uid;
 
 pub const PATROL_POINTS: &str = "Patrol Points";
 pub const PROXY_PATROLLERS: &str = "ProxyPatrollers";
-/// Proxies of one such group share their pool choice (`GameEngine::GetEntityUnificationIndex` @0x1802e78e0).
+/// Proxies of one such group share their pool choice (`GameEngine::GetEntityUnificationIndex`).
 pub const UNIFIED_ENTITIES: &str = "Unified Entities";
 
 #[derive(Clone, Debug)]
@@ -31,7 +31,7 @@ pub struct Group {
 #[derive(Clone, Debug, Default)]
 pub struct PatrolGroups {
     pub groups: Vec<Group>,
-    /// The `LinkedProxyPatrolGroup %d` counter (`dword_1403D03D0`).
+    /// The `LinkedProxyPatrolGroup %d` counter (`Proxy::linkedPatrolGroupCount`).
     linked: u32,
 }
 

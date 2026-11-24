@@ -1,5 +1,5 @@
 //! The weapon loadout's hand state: `GAME::Weapon_Type` from the item class and
-//! `EquipManager_HandState` (`EquipManager::GetHandState` 0x180285e50), which picks the
+//! `EquipManager_HandState` (`EquipManager::GetHandState`), which picks the
 //! animation set's record-key prefix ([`crate::anim::AnimSet::load`]) and qualifies weapon
 //! skills ([`crate::weapon_pool`]).
 
@@ -54,7 +54,7 @@ impl WeaponType {
     }
 }
 
-/// `GAME::EquipManager_HandState` (`EquipManager::GetHandState` 0x180285e50).
+/// `EquipManager_HandState` (`EquipManager::GetHandState`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HandState {
     Unarmed = 0,
@@ -123,7 +123,7 @@ impl HandState {
     }
 
     /// Record-key prefix of the animation set the engine uses for this hand
-    /// state (`Character::GetHandStateAnimation` 0x1800713a0 → set loaders).
+    /// state (`Character::GetHandStateAnimation` → set loaders).
     pub fn prefix(self) -> &'static str {
         match self {
             Self::Unarmed => "unarmed",

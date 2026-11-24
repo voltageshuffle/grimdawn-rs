@@ -23,27 +23,36 @@ pub struct Grid {
 impl Grid {
     /// A grid of `cell`-wide squares (`cell` > 0) over `points`, indexed in iteration order.
     pub fn new(cell: f32, points: impl IntoIterator<Item = V2>) -> Self {
-        debug_assert!(cell > 0.0, "grid cell {cell}");
         let mut g = Grid {
             cell,
             cells: Vec::new(),
         };
-        g.cells = points
-            .into_iter()
-            .enumerate()
-            .map(|(i, p)| (g.key(p), i))
-            .collect();
-        g.cells.sort_unstable();
+        g.rebuild(cell, points);
         g
     }
 
-    fn col(&self, x: f32) -> i32 {
-        // (`as` saturates, and NaN goes to 0.)
-        (x / self.cell).floor() as i32
+    /// Replaces the points ([`Self::new`]'s build for the same input), reusing the cell list's allocation:
+    /// a per-frame reader keeps its grid and rebuilds it in place.
+    pub fn rebuild(&mut self, cell: f32, points: impl IntoIterator<Item = V2>) {
+        debug_assert!(cell > 0.0, "grid cell {cell}");
+        self.cell = cell;
+        self.cells.clear();
+        self.cells.extend(
+            points
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| (Self::key(cell, p), i)),
+        );
+        self.cells.sort_unstable();
     }
 
-    fn key(&self, p: V2) -> (i32, i32) {
-        (self.col(p[0]), self.col(p[1]))
+    fn col(cell: f32, x: f32) -> i32 {
+        // (`as` saturates, and NaN goes to 0.)
+        (x / cell).floor() as i32
+    }
+
+    fn key(cell: f32, p: V2) -> (i32, i32) {
+        (Self::col(cell, p[0]), Self::col(cell, p[1]))
     }
 
     /// Fills `out` with the candidate neighbours of `pos` within `range` (module docs), by ascending index.
@@ -54,9 +63,12 @@ impl Grid {
         };
         let range = range.abs();
         // Only the columns that hold points: a huge range does not walk empty ones.
-        let x0 = self.col(pos[0] - range).max(first.0.0);
-        let x1 = self.col(pos[0] + range).min(last.0.0);
-        let (z0, z1) = (self.col(pos[1] - range), self.col(pos[1] + range));
+        let x0 = Self::col(self.cell, pos[0] - range).max(first.0.0);
+        let x1 = Self::col(self.cell, pos[0] + range).min(last.0.0);
+        let (z0, z1) = (
+            Self::col(self.cell, pos[1] - range),
+            Self::col(self.cell, pos[1] + range),
+        );
         for x in x0..=x1 {
             let from = self.cells.partition_point(|c| c.0 < (x, z0));
             out.extend(

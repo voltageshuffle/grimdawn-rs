@@ -12,11 +12,11 @@ use super::Sounds;
 use super::listener::{BaseVolume, SoundClass, sound};
 use super::mixer::{EarGains, Fade, OnEnd, Voice3d, attach_voice};
 use super::pak::{ENGINE_HZ, Positioned, numbered, start_voice};
-use crate::data::GameData;
 use crate::world::StreamedMap;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::map::sector::SectorEntry;
+use gd_game_core::data::GameData;
 use gd_render::camera::CameraFocus;
 use gd_sim::jukebox::Channel;
 
@@ -64,7 +64,7 @@ pub(crate) struct Ambience {
     pending_boss: Option<Entity>,
 }
 
-/// A boss music session (`BossMusicSession`, `sub_18003F540`): intro, loop, then the
+/// A boss music session (`BossMusicSession`, `BossMusicSession::Update`): intro, loop, then the
 /// boss death or player death stinger; each state's sound is one entity. The record's (file, volume) pairs are read
 /// when the session starts.
 struct Boss {
@@ -95,7 +95,7 @@ pub(super) struct MonsterMusic {
 pub(super) fn cache_monster_music(
     mut commands: Commands,
     data: Res<GameData>,
-    new: Query<(Entity, &gd_game::monsters::Monster), Added<gd_game::monsters::Monster>>,
+    new: Query<(Entity, &gd_game_core::monsters::Monster), Added<gd_game_core::monsters::Monster>>,
 ) {
     for (e, m) in &new {
         let Some(rec) = data.db.get(&m.record) else {
@@ -188,7 +188,7 @@ impl ShotClass {
     }
 
     /// The wait in ms after a sound (`1000 * (min + rand() % (max - min))`, integer seconds;
-    /// `sub_1800363A0`).
+    /// `AmbientSession::UpdateOneShots`).
     fn delay(&self) -> f32 {
         let span = (self.max - self.min).max(1) as u32;
         1000.0 * (self.min as f32 + (fastrand::u32(..) % span) as f32)
@@ -206,7 +206,7 @@ pub(super) fn track_area(
     ambiance: Option<Res<gd_render::render::env::Ambiance>>,
     menu: Option<Res<crate::menu_scene::MenuScene>>,
     backdrop: Option<Res<gd_render::render::backdrop::MenuBackdrop>>,
-    story: Option<NonSend<crate::story::StoryRuntime>>,
+    story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut amb: ResMut<Ambience>,
 ) {
     use gd_sim::jukebox::{AMBIENT_SWITCH_MS, DAY_NIGHT_WAIT_MS, MUSIC_SWITCH_MS};
@@ -217,7 +217,7 @@ pub(super) fn track_area(
     // sectors are read from the player's own region's level (`Player::UpdateSelf`; the Shattered Realm's
     // regions overlap main-world ground). PORT: the engine's ambience / music sector source is not traced, the
     // player's region stands in for it.
-    let region = gd_game::riftgates::player_region(story.as_deref());
+    let region = gd_game_core::riftgates::player_region(story.as_deref());
     let at = match (&menu, focus.single()) {
         (Some(m), _) => m.view.player.translation,
         (None, Ok(f)) => f.translation(),
@@ -317,7 +317,7 @@ fn play_once(
 ///   event music fades out over 3 s, the area music is cut, the intro plays, then the loop; when every tracked boss is
 ///   gone the boss death stinger plays, when the player is dead the player death one (the playing sound fades over
 ///   `EndXFadeMS`); after the stinger the area music loads again. The ambient sounds go on throughout.
-/// - when the boss session ends (`StopBossMusic` @0x18012a540) an event session it interrupted (still alive: the 3 s
+/// - when the boss session ends (`StopBossMusic`) an event session it interrupted (still alive: the 3 s
 ///   fade does not stop it) plays again from the start at its volume, else the area music reloads.
 ///
 /// PORT: `LeaveFadeMS` (no reader found) is not modelled.
@@ -328,8 +328,11 @@ pub(super) fn boss_and_event_music(
     mut sounds: ResMut<Sounds>,
     mut amb: ResMut<Ambience>,
     alive_sounds: Query<(), With<SoundClass>>,
-    monsters: Query<(Entity, &GlobalTransform, &MonsterMusic), Without<gd_game::combat::Dead>>,
-    player: Query<(&GlobalTransform, Has<gd_game::combat::Dead>), With<crate::player::Player>>,
+    monsters: Query<(Entity, &GlobalTransform, &MonsterMusic), Without<gd_game_core::combat::Dead>>,
+    player: Query<
+        (&GlobalTransform, Has<gd_game_core::combat::Dead>),
+        With<gd_game_core::player::Player>,
+    >,
     volumes: Query<&BaseVolume>,
 ) {
     use gd_sim::jukebox::MUSIC_SWITCH_MS;
@@ -534,8 +537,9 @@ pub(super) fn drive_sessions(
     amb.ambient.update(dt);
     // Music: the track chain of each audible session.
     for slot in amb.music.audible() {
-        // `MusicSession::Load` (Engine.dll sub_18014F790): every track's SoundDescriptor is built with volume
-        // 0.8 (the ctor default), and the tick (sub_18014F9F0) plays it unchanged; the session fade is `slot.volume`.
+        // `MusicSession::Load` (Engine.dll): every track's SoundDescriptor is built with volume
+        // 0.8 (the ctor default), and the tick (`MusicSession::Update`) plays it unchanged; the session fade is
+        // `slot.volume`.
         let nominal = 0.8 * slot.volume;
         if let Some((.., mut v)) = players.iter_mut().find(|(_, s, _)| s.0 && s.1 == slot.id) {
             v.set_if_neq(BaseVolume(nominal));
@@ -654,11 +658,13 @@ pub(super) fn drive_sessions(
     }
 }
 
-/// A `SoundDescriptor`'s own `fallOff`: constructor @0x1801b29f0 (+68 = 5.5), which the ambient sessions'
+/// A `SoundDescriptor`'s own `fallOff`: constructor `SoundDescriptor::SoundDescriptor` (5.5), which the ambient
+/// sessions'
 /// one-shots keep.
 const DEFAULT_FALLOFF: f32 = 5.5;
 
-/// Where an ambient session's one-shot plays: `sub_180036260`, 1 m from the ears at `rand() % 360` degrees,
+/// Where an ambient session's one-shot plays: `AmbientSession::PlaceOneShot`, 1 m from the ears at `rand() % 360`
+/// degrees,
 /// level with them (`force2d<Class>N` plays it 2D). It stays there as the player walks on.
 pub fn ambient_spot(ears: Vec3, roll: u32) -> Vec3 {
     let a = (roll % 360) as f32 * 0.017444445;
@@ -666,11 +672,12 @@ pub fn ambient_spot(ears: Vec3, roll: u32) -> Vec3 {
 }
 
 /// Frequencies of an ambient session's one-shots (frequent / moderate / unique): the `AmbientSession` updates
-/// (Engine.dll sub_180036440, sub_180036690, sub_1800368E0): `rand() % 4` picks 2 and 1 semitones down, 44100 Hz or 1
+/// (Engine.dll `AmbientSession::UpdateFrequent`, `AmbientSession::UpdateModerate`, `AmbientSession::UpdateUnique`):
+/// `rand() % 4` picks 2 and 1 semitones down, 44100 Hz or 1
 /// semitone up.
 pub const AMBIENT_ONESHOT_HZ: [f32; 4] = [39293.098, 41630.4, 44100.0, 46701.902];
 
-/// The ambient session's one-shots (`sub_1800363A0`): per class, while its sound
+/// The ambient session's one-shots (`AmbientSession::UpdateOneShots`): per class, while its sound
 /// plays the wait is armed once; when nothing plays the wait counts down, and at 0 the next sound starts (so the first
 /// plays at once). The class volume is not scaled by the session fade. A class without sounds never plays; a file that
 /// cannot be read waits as if it had played instead of retrying every frame.

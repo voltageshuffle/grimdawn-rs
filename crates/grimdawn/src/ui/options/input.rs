@@ -1,6 +1,21 @@
 use super::*;
+use gd_ui::state::options::{OptionsWindow, Tab};
 
-/// Clicks, drags, the bindings' wheel; opening the window starts a draft of the session's options.
+/// The read-only resources the input system consults, bundled as one parameter (Bevy systems take at most
+/// 16): the cursor hooks, the UI scale, the window layout, the app state, the mounted data and the font
+/// cache (its tags localize the dropdown rows, [`ChoiceCtx`]).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct InputReads<'w> {
+    hooks: Res<'w, gd_game_core::hooks::Hooks>,
+    scale: Res<'w, gd_ui_kit::state::settings::UiScaleOption>,
+    layout: Res<'w, OptionsLayout>,
+    state: Res<'w, State<gd_ui::state::session::AppState>>,
+    data: Res<'w, GameData>,
+    fonts: Res<'w, FontCache>,
+}
+
+/// Clicks, drags, the bindings' wheel; a rebind wait takes keys, mouse buttons (not Left / Right) and the
+/// wheel; opening the window starts a draft of the session's options.
 /// Esc: in game the shared dispatcher's (`ui::esc_dispatcher`), in the menu state the window's own.
 #[allow(clippy::too_many_arguments)]
 pub fn input(
@@ -9,17 +24,29 @@ pub fn input(
     mut wheel: MessageReader<MouseWheel>,
     mut clicks: MessageReader<bevy::input::mouse::MouseButtonInput>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<crate::hooks::Hooks>,
-    scale: Res<crate::settings::UiScaleOption>,
-    layout: Res<OptionsLayout>,
+    reads: InputReads,
     mut win: ResMut<OptionsWindow>,
     mut options: ResMut<GameOptions>,
     mut bindings: ResMut<KeyBindings>,
-    state: Res<State<crate::session::AppState>>,
+    mut devices: ResMut<crate::audio::devices::AudioDevices>,
+    mut adapters: ResMut<crate::render_devices::RenderAdapters>,
+    monitors: Query<(
+        Entity,
+        &bevy::window::Monitor,
+        Option<&bevy::window::PrimaryMonitor>,
+    )>,
 ) {
+    let InputReads {
+        hooks,
+        scale,
+        layout,
+        state,
+        data,
+        fonts,
+    } = reads;
     // The release comes from the raw messages: the window resets the `ButtonInput` below, so a held button is never
     // `pressed` on the next frame.
-    let released = crate::ui::left_released(&mut clicks);
+    let released = gd_ui_kit::left_released(&mut clicks);
     if !win.open {
         win.draft = None;
         win.drag = None;
@@ -31,6 +58,10 @@ pub fn input(
         return;
     }
     if win.draft.is_none() {
+        // The window just opened: re-enumerate the audio devices and render adapters
+        // (`OptionsWindow::Load`).
+        devices.refresh();
+        adapters.refresh();
         win.draft = Some(options.clone());
     }
     if win.keys.is_none() {
@@ -39,17 +70,42 @@ pub fn input(
     }
     // In game Esc is the shared dispatcher's (`ui::esc_dispatcher`, Update): it cancels the rebind
     // wait, closes an open list, then the window. The menu state has no dispatcher: Esc acts here.
-    let in_game = *state.get() == crate::session::AppState::InGame;
+    let in_game = *state.get() == gd_ui::state::session::AppState::InGame;
     let esc = !in_game && keys.just_pressed(KeyCode::Escape);
-    // A cell waiting for a key takes the next key press (Esc cancels).
+    // A cell waiting for a key takes the next key press (Esc cancels). The engine binds mouse codes too
+    // (`keys.rs`, 145 to 152): a mouse button binds — except Left / Right, which cancel the wait (a click
+    // on another cell or away) — and a wheel notch binds Wheel Up / Down.
     if let Some((action, slot)) = win.rebind {
+        // The wheel's notches this frame, as `keys::mouse_codes` reads them.
+        let (mut up, mut down) = (false, false);
+        for w in wheel.read() {
+            up |= w.y > 0.0;
+            down |= w.y < 0.0;
+        }
+        // The buttons' codes 147 to 152: `keys.rs`'s `MOUSE_BUTTONS` order after the wheel's 145 / 146.
+        let button = mouse.get_just_pressed().find_map(|b| match *b {
+            MouseButton::Middle => Some(147),
+            MouseButton::Back => Some(148),
+            MouseButton::Forward => Some(149),
+            MouseButton::Other(6) => Some(150),
+            MouseButton::Other(7) => Some(151),
+            MouseButton::Other(8) => Some(152),
+            _ => None,
+        });
+        let wheel_code = if up {
+            Some(145)
+        } else if down {
+            Some(146)
+        } else {
+            None
+        };
         if let Some(k) = keys.get_just_pressed().next().copied() {
             if k == KeyCode::Escape && in_game {
                 // Leave the press for the dispatcher, which cancels the wait.
             } else {
                 win.rebind = None;
                 if k != KeyCode::Escape
-                    && let Some(code) = crate::ui::keys::code_of(k)
+                    && let Some(code) = gd_ui_kit::keys::code_of(k)
                 {
                     if let Some(b) = win.keys.as_mut() {
                         b.bind(action, slot, code);
@@ -57,17 +113,23 @@ pub fn input(
                     win.keys_ver += 1;
                 }
             }
+        } else if let Some(code) = button.or(wheel_code) {
+            win.rebind = None;
+            if let Some(b) = win.keys.as_mut() {
+                b.bind(action, slot, code);
+            }
+            win.keys_ver += 1;
         } else if mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right) {
             win.rebind = None;
         }
-        crate::ui::keys::reset_but_escape(&mut keys);
+        gd_ui_kit::keys::reset_but_escape(&mut keys);
         mouse.reset_all();
         return;
     }
     let cursor = window
         .single()
         .ok()
-        .and_then(|w| crate::ui::cursor_px(&hooks, w));
+        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
     // (Esc: see above.)
     let lines: f32 = wheel
         .read()
@@ -89,13 +151,20 @@ pub fn input(
     let screen = window.single().map_or(Vec2::ZERO, |w| {
         Vec2::new(w.physical_width() as f32, w.physical_height() as f32)
     });
-    // An open list scrolls a row per wheel step, up to its last page (sub_1400AB4B0 events 17 / 18).
+    let languages = data.available_languages();
+    let ctx = ChoiceCtx::new(
+        &devices,
+        crate::settings::primary_monitor(&monitors),
+        screen,
+        &adapters,
+        &languages,
+        &fonts.tags,
+    );
+    // An open list scrolls a row per wheel step, up to its last page (`MenuDropBox::HandleMouseEvent` events 17 / 18).
     if lines != 0.0
         && let Some(Ctl::Drop(shown, ..)) = w.dropdown.and_then(|i| page(w.tab).get(i).copied())
     {
-        let max = choices(shown, draft, screen)
-            .len()
-            .saturating_sub(DROP_ROWS);
+        let max = choices(shown, draft, &ctx).len().saturating_sub(DROP_ROWS);
         w.drop_top = scrolled(w.drop_top, lines, max);
     } else if lines != 0.0
         && w.tab == Tab::KeyBindings
@@ -118,20 +187,20 @@ pub fn input(
                 w.dropdown = Some(i);
             } else if let (Some(Hit::DropRow(row)), Some(Ctl::Drop(shown, ..))) =
                 (h, page(w.tab).get(i).copied())
-                && let Some((_, sets)) = choices(shown, draft, screen).into_iter().nth(row)
+                && let Some((_, sets)) = choices(shown, draft, &ctx).into_iter().nth(row)
             {
                 for (k, v) in sets {
                     draft.set(k, v);
                 }
             }
-            crate::ui::keys::reset_but_escape(&mut keys);
+            gd_ui_kit::keys::reset_but_escape(&mut keys);
             mouse.reset_all();
             return;
         }
         match h {
             Some(Hit::Drop(i)) => {
                 if let Some(Ctl::Drop(shown, ..)) = page(w.tab).get(i).copied() {
-                    w.drop_top = drop_first_row(shown, draft, screen);
+                    w.drop_top = drop_first_row(shown, draft, &ctx);
                 }
                 w.dropdown = Some(i);
             }
@@ -146,10 +215,11 @@ pub fn input(
                 let v = !draft.flag(k);
                 draft.set(k, Value::Bool(v));
             }
-            // The slider's mouse handler sub_1400EBA70: a press on the knob grabs it; a press elsewhere on
-            // the slider does nothing.
+            // The slider's mouse handler `MenuSlider::HandleMouseEvent`: a press on the knob grabs it; a press
+            // elsewhere on the slider does nothing.
             Some(Hit::Knob(k, _)) => w.drag = Some(k),
-            // The list scroll bar's input sub_1400DB910: a press on the thumb grabs it (offset from its top).
+            // The list scroll bar's input `MenuScrollBar::HandleMouseEvent`: a press on the thumb grabs it (offset from
+            // its top).
             Some(Hit::KeyThumb) => w.key_grab = Some(p.y - key_thumb_top(&layout, w.scroll)),
             Some(Hit::Default) => {
                 if w.tab == Tab::KeyBindings {
@@ -162,7 +232,7 @@ pub fn input(
                     // A dropdown resets every option its rows set ([`choices`]).
                     let keys: Vec<&'static str> = match c {
                         Ctl::Check(k, ..) | Ctl::Slider(k, ..) => vec![k],
-                        Ctl::Drop(shown, ..) => choices(shown, draft, screen)
+                        Ctl::Drop(shown, ..) => choices(shown, draft, &ctx)
                             .into_iter()
                             .flat_map(|(_, sets)| sets.into_iter().map(|(k, _)| k))
                             .collect(),
@@ -173,6 +243,18 @@ pub fn input(
                         }
                     }
                 }
+                // `Options::SetToDefaults` copies the defaults vector per group, which differs from the
+                // constructor for two options: Gameplay (group 0) corpsePersistence 0.0, Audio (group 5)
+                // musicVolume 0.6.
+                match w.tab {
+                    Tab::Gameplay => {
+                        draft.set("corpsePersistence", Value::Float(0.0));
+                    }
+                    Tab::Audio => {
+                        draft.set("musicVolume", Value::Float(0.6));
+                    }
+                    _ => {}
+                }
             }
             Some(Hit::Apply)
                 if !draft.same_values(&options) || w.keys.as_ref() != Some(&*bindings) =>
@@ -181,19 +263,19 @@ pub fn input(
                     let mut next = draft.clone();
                     next.version = options.version + 1;
                     *options = next;
-                    crate::settings::store(&options);
+                    gd_ui_kit::state::settings::store(&options);
                 }
                 if let Some(b) = w.keys.as_ref().filter(|b| *b != &*bindings) {
                     *bindings = b.clone();
-                    crate::ui::keys::store(&bindings);
+                    gd_ui_kit::keys::store(&bindings);
                 }
             }
             Some(Hit::Close) => w.open = false,
             _ => {}
         }
     }
-    // While grabbed, the knob follows the cursor (sub_1400EBA70 on a mouse move: the value from the cursor x over the
-    // knob centre's travel, clamped) until the button is released.
+    // While grabbed, the knob follows the cursor (`MenuSlider::HandleMouseEvent` on a mouse move: the value from the
+    // cursor x over the knob centre's travel, clamped) until the button is released.
     if let Some(k) = w.drag {
         if released {
             w.drag = None;
@@ -211,14 +293,21 @@ pub fn input(
         ) {
             let v = ((p.x - x0) / (x1 - x0).max(1.0)).clamp(0.0, 1.0);
             let v = (v * 1000.0).round() / 1000.0;
+            // `MenuSlider::HandleMouseEvent` snaps to a 0.5 notch within 0.05 (autoLootRadius, uiScale, gamma).
+            let v =
+                if matches!(k, "autoLootRadius" | "uiScale" | "gamma") && (v - 0.5).abs() <= 0.05 {
+                    0.5
+                } else {
+                    v
+                };
             if !matches!(draft.get(k), Some(Value::Float(f)) if (*f - v).abs() < 1e-4) {
                 draft.set(k, Value::Float(v));
             }
         }
     }
-    // A grabbed key-list thumb follows the cursor until the release (sub_1400DB910: a move places the thumb at the
-    // cursor less the grab offset, within the track; event 9 lets go). PORT: the list scrolls by whole rows, so it
-    // shows the row nearest the thumb's place.
+    // A grabbed key-list thumb follows the cursor until the release (`MenuScrollBar::HandleMouseEvent`: a move places
+    // the thumb at the cursor less the grab offset, within the track; event 9 lets go). PORT: the list scrolls by whole
+    // rows, so it shows the row nearest the thumb's place.
     if let Some(grab) = w.key_grab {
         if released {
             w.key_grab = None;
@@ -238,7 +327,7 @@ pub fn input(
         }
     }
     // The window takes the keyboard and mouse (Escape stays for the dispatcher in game).
-    crate::ui::keys::reset_but_escape(&mut keys);
+    gd_ui_kit::keys::reset_but_escape(&mut keys);
     mouse.reset_all();
 }
 
@@ -257,7 +346,7 @@ fn sync_keys_mode(keys: Option<&mut KeyBindings>, draft: &GameOptions, ver: &mut
 /// (nothing is stored). The value is read as the option's own kind.
 #[cfg(feature = "dev")]
 pub(super) fn option_hook(
-    hooks: Res<crate::hooks::Hooks>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     mut options: ResMut<GameOptions>,
     mut fired: Local<usize>,

@@ -1,7 +1,7 @@
 //! The lore codex: the lore notes (`ItemNote` records) the character has
 //! collected, shown on the Codex window's lore page (`grimdawn` `ui/quests.rs`).
 //!
-//! `Grim Dawn.exe` codex log rebuild sub_14016A180:
+//! `Grim Dawn.exe` codex log rebuild `LoreJournal::RebuildTree`:
 //! - the list is `Player::GetLoreCodex`, the note records' object ids in
 //!   collection order, saved as `player.gdc` block 12 (v1, a string list of the
 //!   record paths, `gd_formats::save::gdc::Notes`); nothing else about a note
@@ -12,37 +12,37 @@
 //! Collecting a note, Game.dll:
 //! - a note is an ordinary item: picked up into the bags (it is no
 //!   `OneShot_*`, so `PlayerInventoryCtrl::AddItem` does not use it) and read
-//!   by using it (right click: `PlayerInventoryCtrl::UseItem` @0x1803f42c0 →
+//!   by using it (right click: `PlayerInventoryCtrl::UseItem` →
 //!   `Character::UseInventoryItem` → `ItemNote::Use`);
 //! - `UseItem`: a note already in the codex (`Player::GetItemInLoreCodex` by
 //!   record) stays in the bags and only shows its codex page (event 61 with
-//!   flag 0, then the journal opens); else `ItemNote::AllowUse` @0x180346d00
+//!   flag 0, then the journal opens); else `ItemNote::AllowUse`
 //!   (allowed when not in the codex; takes the item when the stack is 1) and
-//!   `ItemNote::Use` @0x180346a70: `PlayStats::CollectedLoreNote` (+1,
+//!   `ItemNote::Use`: `PlayStats::CollectedLoreNote` (+1,
 //!   inlined), `Player::AddItemToLoreCodex` (appended), event 61 with flag 1,
 //!   then when its experience bonus is not 0 `Character::ReceiveExperience`
 //!   (with the character's experience bonus %) and `ShowCinematicText`
 //!   (`tagLoreBonus` over `ExperienceFormat` with the amount, 5 s), then the
 //!   journal opens;
-//! - the bonus (`ItemNote::Load` @0x1803462d0): `experienceBonus` indexed by
+//! - the bonus (`ItemNote::Load`): `experienceBonus` indexed by
 //!   the difficulty (the last value past the end), 0 unless positive;
-//! - event 61 (GrimDawn.exe sub_14022FB30): flag 1 plays the quest window's
-//!   `loreCollectedSound`; then the note's page is shown (sub_140168860) and
+//! - event 61 (GrimDawn.exe `QuestWindow::OnLoreNoteEvent`): flag 1 plays the quest window's
+//!   `loreCollectedSound`; then the note's page is shown (`LoreJournal::ShowPage`) and
 //!   the tree rebuilt: [`LoreNoteRead`], handled by the game (`ui/quests.rs`);
 //! - monsters' `perPartyMemberDropItemName` (`Monster::Load`, chances
 //!   `perPartyMemberDropChance`, a missing one 100, clamped 0..=100) drop at
-//!   death each with `rand() % 101 <= chance` (`ControllerMonster::DropLoot`
-//!   @0x18013a3d0): [`monster_note_drops`].
+//!   death each with `rand() % 101 <= chance` (`ControllerMonster::DropLoot`):
+//!   [`monster_note_drops`].
 //!
-//! A chest's `perPartyMemberDropItemName` (`FixedItem::Load` into +3336, kept
-//! as the `ItemReplicaInfo` at +3328):
-//! `FixedItemController::LoadDropLoot` @0x1802adb90: after the chest's loot
+//! A chest's `perPartyMemberDropItemName` (`FixedItem::Load` into `FixedItem.noteDropName`, kept
+//! as the `ItemReplicaInfo` `FixedItem.noteDropReplica`):
+//! `FixedItemController::LoadDropLoot`: after the chest's loot
 //! table is generated, when `GameEngine::IsServerOrSingle` one copy of that
 //! note (fresh seed) is appended to the loot per player of the party (the
 //! single player: one note, after the table's items, no chance roll); the
 //! port drops it with the loot when the chest opens (`chests.rs`).
 //!
-//! Level-placed notes: `ItemNote::InitialUpdate` @0x1803464c0: when the
+//! Level-placed notes: `ItemNote::InitialUpdate`: when the
 //! note entity appears, `Actor::SetVisibility(!Player::GetItemInLoreCodex)`
 //! for the main player. The engine saves no per-level item state (the save's
 //! `map.dat` holds only the map path and spawn coordinates), so the only
@@ -54,8 +54,8 @@
 //! it; stack counts of notes are 1 in the stock data, so a used note is always
 //! taken.
 
-use crate::session::MessageDrain;
 use bevy::prelude::*;
+use gd_game_core::session::MessageDrain;
 
 /// The collected lore notes (record paths, collection order).
 #[derive(Resource, Default, Debug, Clone, PartialEq)]
@@ -81,9 +81,9 @@ pub fn init_lore(
     mut commands: Commands,
     // Option: `codex` is the existence check (this system creates it); `loaded` is absent for a new character.
     codex: Option<Res<LoreCodex>>,
-    loaded: Option<Res<crate::session::LoadedCharacter>>,
-    data: Res<crate::data::GameData>,
-    players: Query<(), With<crate::player::Player>>,
+    loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
+    data: Res<gd_game_core::data::GameData>,
+    players: Query<(), With<gd_game_core::player::Player>>,
 ) {
     if codex.is_some() || players.is_empty() {
         return;
@@ -118,7 +118,7 @@ pub struct UseNote(pub String);
 /// A note placed in a level (lying as a ground item); taken ones are
 /// remembered in `ChestStates::opened` under its key.
 #[derive(Component, Clone, Copy, Debug)]
-pub struct PlacedNote(pub crate::world::ChestKey);
+pub struct PlacedNote(pub gd_game_core::world::ChestKey);
 
 /// The note's experience bonus at `difficulty` (module doc).
 pub fn experience_bonus(rec: &gd_formats::arz::Record, difficulty: usize) -> u32 {
@@ -150,11 +150,11 @@ pub fn monster_note_drops(
 pub fn read_notes(
     mut used: MessageReader<UseNote>,
     mut codex: ResMut<LoreCodex>,
-    mut inv: ResMut<crate::inventory::Inventory>,
-    data: Res<crate::data::GameData>,
-    mode: Res<crate::session::GameMode>,
+    mut inv: ResMut<gd_game_core::inventory::Inventory>,
+    data: Res<gd_game_core::data::GameData>,
+    mode: Res<gd_game_core::session::GameMode>,
     mut stats: ResMut<crate::play_stats::PlayCounts>,
-    mut rewards: MessageWriter<crate::story::StoryEffect>,
+    mut rewards: MessageWriter<gd_game_core::story::StoryEffect>,
     mut out: MessageWriter<LoreNoteRead>,
 ) {
     for UseNote(record) in used.read() {
@@ -175,8 +175,8 @@ pub fn read_notes(
         let difficulty = mode.0.difficulty;
         let xp = experience_bonus(rec, difficulty);
         if xp > 0 {
-            rewards.write(crate::story::StoryEffect(
-                gd_sim::story::Effect::GiveExperience(xp),
+            rewards.write(gd_game_core::story::StoryEffect(
+                gd_story::story::Effect::GiveExperience(xp),
             ));
         }
         info!(
@@ -196,7 +196,7 @@ pub fn spawn_placed_note(
     commands: &mut Commands,
     record: &str,
     at: Vec3,
-    key: crate::world::ChestKey,
+    key: gd_game_core::world::ChestKey,
     taken: bool,
 ) -> Option<Entity> {
     if taken {
@@ -206,7 +206,7 @@ pub fn spawn_placed_note(
     let item = gd_formats::save::item::Item {
         base_name: record.to_owned(),
         stack_count: 1,
-        seed: crate::rng::u32(1..0x7FFF_FFFF),
+        seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
         ..Default::default()
     };
     Some(
@@ -229,7 +229,7 @@ pub fn spawn_placed_note(
 /// The codex and the bags exist: a used note can be read.
 fn has_lore_inputs(
     codex: Option<Res<LoreCodex>>,
-    inv: Option<Res<crate::inventory::Inventory>>,
+    inv: Option<Res<gd_game_core::inventory::Inventory>>,
 ) -> bool {
     codex.is_some() && inv.is_some()
 }
@@ -245,7 +245,7 @@ impl Plugin for LorePlugin {
                 Update,
                 (
                     init_lore
-                        .after(crate::player::PlayerSet)
+                        .after(gd_game_core::player::PlayerSet)
                         .run_if(not(resource_exists::<LoreCodex>)),
                     read_notes
                         .after(crate::consumables::ConsumableStage::Use)
