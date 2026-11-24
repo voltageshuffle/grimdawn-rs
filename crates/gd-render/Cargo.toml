@@ -41,6 +41,7 @@ bevy = {
     "png",
     "std",
     "wayland",
+    "x11",
   ]
 }
 gd-formats = { path = "../gd-formats", version = "0.1.0" }

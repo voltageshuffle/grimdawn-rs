@@ -1,5 +1,5 @@
 //! Saving: `F5` writes the current character to the port's own save folder,
-//! never the game's (`GD_SAVE_DIR`, default `~/.local/share/grimdawn-rs/save`,
+//! never the game's (`GD_SAVE_DIR`, default `save` in `gd_game_core::session::data_dir`,
 //! laid out like the game's: `main/_<name>/player.gdc` (`user/_<name>/` for a character created in a custom
 //! game: `Choice::player_folder`) and
 //! `<map folder>/<Difficulty>/{quests,conversations}.gdd`, `map.fow` and `map.dat` (map path, mod, spawn:

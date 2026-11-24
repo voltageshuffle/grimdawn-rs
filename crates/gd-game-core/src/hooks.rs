@@ -57,7 +57,7 @@ pub struct SessionHooks {
     pub veteran: Option<bool>,
     /// `GD_START=x,z` / `x,y,z`: the player's start position.
     pub start: Option<Vec<f32>>,
-    /// `GD_SAVE_DIR`: where the port saves (default `$XDG_DATA_HOME/grimdawn-rs/save`).
+    /// `GD_SAVE_DIR`: where the port saves (default `save` in `session::data_dir`).
     pub save_dir: Option<String>,
     /// `GD_AUTOSAVE_SECS`: autosave after that many seconds.
     pub autosave_secs: Option<f32>,

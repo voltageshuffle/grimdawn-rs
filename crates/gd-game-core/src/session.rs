@@ -282,11 +282,24 @@ pub fn write_user_file(what: &str, file: &std::path::Path, contents: impl AsRef<
     }
 }
 
+/// The port's own data folder (saves, settings, key bindings): `%APPDATA%\grimdawn-rs` on Windows,
+/// else `$XDG_DATA_HOME/grimdawn-rs`, else `~/.local/share/grimdawn-rs`.
+pub fn data_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default());
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
+        });
+    base.join("grimdawn-rs")
+}
+
 /// The port's save folder (`main/_<name>/player.gdc`, `transfer.gst`, ...):
 /// a resource, so every save system reads the same value and a test gives
 /// each game its own folder. The default (`GD_SAVE_DIR`, else
-/// `$XDG_DATA_HOME/grimdawn-rs/save`, else `~/.local/share/grimdawn-rs/save`)
-/// is the only place the environment is read.
+/// `<`[`data_dir`]`>/save`) is the only place the environment is read.
 #[derive(Resource, Clone, Debug)]
 pub struct SaveDir(pub PathBuf);
 
@@ -299,13 +312,7 @@ impl FromWorld for SaveDir {
         {
             return SaveDir(PathBuf::from(d));
         }
-
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-            });
-        SaveDir(base.join("grimdawn-rs/save"))
+        SaveDir(data_dir().join("save"))
     }
 }
 

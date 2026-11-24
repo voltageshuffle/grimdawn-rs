@@ -128,6 +128,8 @@ struct Linger {
 
 impl Lingering {
     /// Lingering levels let go so far: their assets were freed if nothing else holds them.
+    // Read only by `heap.rs`'s trim, which exists on glibc only.
+    #[cfg_attr(not(all(target_os = "linux", target_env = "gnu")), expect(dead_code))]
     pub fn released(&self) -> u64 {
         self.released
     }
@@ -201,6 +203,7 @@ impl StreamedMap {
     }
 
     /// Levels are still building or spawning (`heap.rs` holds its trim until streaming settles).
+    #[cfg_attr(not(all(target_os = "linux", target_env = "gnu")), expect(dead_code))]
     pub fn busy(&self) -> bool {
         !self.pending.is_empty() || !self.spawning.is_empty()
     }

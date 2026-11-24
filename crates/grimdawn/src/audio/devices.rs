@@ -87,11 +87,13 @@ fn enumerate(input: bool) -> Vec<AudioDeviceEntry> {
 /// duplicates alongside the physical endpoints, so filter on the stable id's PCM name: keep front:/hdmi: only.
 /// Other hosts already list one entry per endpoint and pass through unchanged.
 fn is_listed_endpoint(id: &cpal::DeviceId) -> bool {
+    // cpal's ALSA host exists only on these targets.
+    #[cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd"))]
     if id.0 == cpal::platform::HostId::Alsa {
-        id.1.starts_with("front:") || id.1.starts_with("hdmi:")
-    } else {
-        true
+        return id.1.starts_with("front:") || id.1.starts_with("hdmi:");
     }
+    let _ = id;
+    true
 }
 
 /// Enumeration errors are logged once: a headless machine fails every refresh.

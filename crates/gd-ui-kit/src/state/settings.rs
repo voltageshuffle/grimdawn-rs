@@ -8,12 +8,7 @@ use std::path::PathBuf;
 
 /// The port's settings file.
 pub fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-        });
-    base.join("grimdawn-rs/Settings/options.txt")
+    gd_game_core::session::data_dir().join("Settings/options.txt")
 }
 
 /// Writes the options to the port's file (never into the game's folders).

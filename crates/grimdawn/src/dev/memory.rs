@@ -9,6 +9,9 @@
 //! - `GD_MEM_TOUR=<n>@<secs>` travels to `n` riftgates spread over the map's index, `secs` after each arrival.
 //! - `GD_MEM_EXIT=<secs>`: the first session exits to the main menu `secs` after it began (after the tour), and the
 //!   same character starts again from the menu 5 s later.
+//!
+//! The resident set reads `/proc`, the heap figures and the trim are glibc's and the profile dump needs `dlsym`:
+//! elsewhere (Windows) they log 0 / are skipped.
 use bevy::prelude::*;
 use gd_game_core::hooks::Hooks;
 use gd_ui::state::session::AppState;
@@ -32,6 +35,7 @@ fn rss_mb() -> f64 {
 }
 
 /// jemalloc's `mallctl` when it is the process' allocator (preloaded).
+#[cfg(unix)]
 fn jemalloc_dump() -> bool {
     type Mallctl = unsafe extern "C" fn(
         *const libc::c_char,
@@ -60,6 +64,37 @@ fn jemalloc_dump() -> bool {
             0,
         ) == 0
     }
+}
+
+#[cfg(not(unix))]
+fn jemalloc_dump() -> bool {
+    false
+}
+
+/// glibc's heap: bytes in use, free bytes the allocator keeps, mmapped blocks.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn heap_bytes() -> (usize, usize, usize) {
+    // SAFETY: plain libc allocator-statistics call with no memory-safety invariants.
+    let heap = unsafe { libc::mallinfo2() };
+    (heap.uordblks, heap.fordblks, heap.hblkhd)
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn heap_bytes() -> (usize, usize, usize) {
+    (0, 0, 0)
+}
+
+/// Returns glibc's free heap pages to the system (`malloc_trim`); false where there is no such call.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim() -> bool {
+    // SAFETY: plain libc call with no memory-safety invariants (releases free heap pages).
+    unsafe { libc::malloc_trim(0) };
+    true
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim() -> bool {
+    false
 }
 
 /// An image's GPU bytes: every mip of every layer at its format's block size.
@@ -109,16 +144,15 @@ fn log(
     *last = now;
     if hooks.audit.mem_trim {
         let (before, t) = (rss_mb(), std::time::Instant::now());
-        // SAFETY: plain libc call with no memory-safety invariants (releases free heap pages).
-        unsafe { libc::malloc_trim(0) };
-        info!(
-            "mem: malloc_trim {:.1} ms, rss {before:.0} -> {:.0} MB",
-            t.elapsed().as_secs_f64() * 1e3,
-            rss_mb()
-        );
+        if trim() {
+            info!(
+                "mem: malloc_trim {:.1} ms, rss {before:.0} -> {:.0} MB",
+                t.elapsed().as_secs_f64() * 1e3,
+                rss_mb()
+            );
+        }
     }
-    // SAFETY: plain libc allocator-statistics call with no memory-safety invariants.
-    let heap = unsafe { libc::mallinfo2() };
+    let (heap_used, heap_free, heap_mmap) = heap_bytes();
     let mb = |b: usize| b as f64 / 1.0e6;
     let (meshes, images, std_mats, terrain_mats) = assets;
     let (img_cpu, img_gpu) = images.iter().fold((0usize, 0u64), |(c, g), (_, i)| {
@@ -134,9 +168,9 @@ fn log(
          models {}, bodies {}, anims {}, sounds {} ({:.0} MB), pfx {}, fx textures {}, terrain layers {}",
         state.get(),
         rss_mb(),
-        mb(heap.uordblks),
-        mb(heap.fordblks),
-        mb(heap.hblkhd),
+        mb(heap_used),
+        mb(heap_free),
+        mb(heap_mmap),
         if dumped { ", profile dumped" } else { "" },
         entities.iter().len(),
         levels.loaded.len(),

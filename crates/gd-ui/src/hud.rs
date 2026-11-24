@@ -1016,13 +1016,19 @@ fn mode_label(ui: &mut Ui, rec: &str, tags: &[&str]) {
 /// locale: "h:mm:ss AM".
 fn local_time() -> Option<String> {
     // SAFETY: `libc::tm` is a plain C struct of integers; all-zero bytes are a valid value, and
-    // `localtime_r` below overwrites every field before any is read.
+    // `localtime_r` / `localtime_s` below overwrite every field before any is read.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: `time` accepts a null pointer, in which case it only returns the calendar time
     // without storing through it.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     // SAFETY: `localtime_r` fills `tm` from `now`; both are valid locals.
+    #[cfg(unix)]
     if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+        return None;
+    }
+    // SAFETY: `localtime_s` (the CRT's form, arguments swapped) fills `tm` from `now`; both are valid locals.
+    #[cfg(windows)]
+    if unsafe { libc::localtime_s(&mut tm, &now) } != 0 {
         return None;
     }
     let h = tm.tm_hour % 12;

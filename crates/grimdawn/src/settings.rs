@@ -1,5 +1,5 @@
-//! The port's own settings file: `$XDG_DATA_HOME/grimdawn-rs/Settings/options.txt`
-//! (default `~/.local/share/grimdawn-rs/Settings/options.txt`), in the game's
+//! The port's own settings file: `Settings/options.txt` in the port's data folder
+//! (`gd_game_core::session::data_dir`), in the game's
 //! `options.txt` format (`gd_game_core::options`). Read before start-up into
 //! [`GameOptions`]; written by the options window's Apply.
 //!

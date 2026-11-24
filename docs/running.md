@@ -11,9 +11,10 @@ holding `database/database.arz`). Then either `source local.env`, or prefix comm
   are built at opt-level 3.
 - Frame times: `cargo run -p grimdawn --profile profiling --features profile` (release code with line tables,
   Chrome trace) plus `GD_FPS=1`.
-- Shipped build: `cargo build -p grimdawn --release` (thin LTO, panic = abort, stripped).
-- Saves go to `GD_SAVE_DIR` (default `$XDG_DATA_HOME/grimdawn-rs/save`). Maps are read straight from the
-  install's archives; nothing is cached on disk.
+- Shipped build: `cargo build -p grimdawn --release` (thin LTO, panic = abort, stripped). Linux (Wayland and
+  X11) and Windows x86-64; `.github/workflows/release.yml` builds both on a `v*` tag or by hand.
+- Saves go to `GD_SAVE_DIR` (default `$XDG_DATA_HOME/grimdawn-rs/save`, `%APPDATA%\grimdawn-rs\save` on
+  Windows). Maps are read straight from the install's archives; nothing is cached on disk.
 
 ## Running mods
 A mod lives in `<install>/mods/<name>/`: `resources/*.arc` (maps, quests, scripts, assets) plus
