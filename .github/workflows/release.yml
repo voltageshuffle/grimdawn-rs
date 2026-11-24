@@ -1,6 +1,6 @@
 # Release builds of the game binary for x86-64 Linux (Wayland + X11) and Windows.
 # Runs by hand (Actions → Release → Run workflow) or on a `v*` tag; a tag also publishes a GitHub release
-# with both archives. The toolchain comes from rust-toolchain.toml.
+# with both archives. Builds with the latest stable Rust.
 name: Release
 
 on:
@@ -39,8 +39,8 @@ jobs:
 
       - name: Toolchain
         run: |
-          rustup show active-toolchain || rustup toolchain install nightly
-          rustup target add ${{ matrix.target }}
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
 
       - uses: Swatinem/rust-cache@v2
         with:

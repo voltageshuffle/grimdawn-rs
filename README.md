@@ -87,8 +87,7 @@ and key bindings in `Settings/`. The save files use the game's formats, so a cha
 between the port and the real game.
 
 ### Building it yourself
-1. Install Rust with [rustup](https://rustup.rs). The repo pins its nightly toolchain; rustup fetches it on
-   the first build.
+1. Install Rust with [rustup](https://rustup.rs) (stable, 1.97.1 or newer: `rustup update stable`).
    - Windows: rustup asks for the Visual Studio C++ Build Tools; install them when it does.
    - Linux: install the build libraries, e.g. on Debian / Ubuntu
      `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`,
