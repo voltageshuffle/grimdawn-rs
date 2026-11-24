@@ -322,7 +322,7 @@ pub(super) fn layout(tab: Tab, env: &mut Env) -> Vec<Ctl> {
 /// size, the resolution fallback when there is no monitor. Built once per calling system; the monitor's modes
 /// are session-stable.
 pub(super) struct ChoiceCtx<'a> {
-    devices: &'a crate::audio::devices::AudioDevices,
+    devices: &'a gd_audio::devices::AudioDevices,
     pub adapters: &'a crate::render_devices::RenderAdapters,
     pub languages: &'a [&'static gd_formats::text::Language],
     pub tags: &'a gd_formats::text::TagTable,
@@ -332,7 +332,7 @@ pub(super) struct ChoiceCtx<'a> {
 
 impl<'a> ChoiceCtx<'a> {
     pub(super) fn new(
-        devices: &'a crate::audio::devices::AudioDevices,
+        devices: &'a gd_audio::devices::AudioDevices,
         monitor: Option<&'a bevy::window::Monitor>,
         screen: Vec2,
         adapters: &'a crate::render_devices::RenderAdapters,
@@ -354,7 +354,7 @@ impl<'a> ChoiceCtx<'a> {
 /// "Default" sets index 0 (the system default, not a listed entry), row k + 1 sets the list's entry k.
 fn device_rows(
     k: &'static str,
-    entries: &[crate::audio::devices::AudioDeviceEntry],
+    entries: &[gd_audio::devices::AudioDeviceEntry],
 ) -> Vec<(String, Vec<(&'static str, Value)>)> {
     std::iter::once(("Default".to_string(), vec![(k, Value::Int(0))]))
         .chain(
@@ -367,7 +367,7 @@ fn device_rows(
 }
 
 /// The device a stored index shows: 0 / out of range → "Default", else the entry's name.
-fn device_shown(index: i32, entries: &[crate::audio::devices::AudioDeviceEntry]) -> String {
+fn device_shown(index: i32, entries: &[gd_audio::devices::AudioDeviceEntry]) -> String {
     index
         .checked_sub(1)
         .and_then(|i| entries.get(i as usize))

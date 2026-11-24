@@ -78,7 +78,7 @@ pub fn begin(
     let mode = gd_rules::mode::Mode::new(difficulty, veteran);
     let (veteran, ultimate_veteran) = (mode.veteran(), mode.ultimate_veteran());
     // The session's mod is mounted before anything of the session reads it (a Crucible or custom game
-    // started from the menu mounted it already, `grimdawn::world::open_session_map`). A mod that does
+    // started from the menu mounted it already, `gd_world::open_session_map`). A mod that does
     // not mount aborts the start: the menu stays as it was; a headless start (`skip_menu`) ends the
     // process instead of running a mod-labelled session on install data.
     let mod_name = (!choice.mod_name().is_empty()).then(|| choice.mod_name().to_owned());

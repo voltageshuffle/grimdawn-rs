@@ -5,7 +5,7 @@
 //! brings back the same monsters, minus the dead ones.
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
-pub use gd_game::monsters::{LevelProp, LevelProxies, ProxyCpu, SetPieceStates};
+pub use gd_game::monsters::{LevelProp, LevelProxies, SetPieceStates};
 use gd_game_core::monsters::Monster;
 use gd_render::character::CharAssets;
 use gd_render::model::Ready;
@@ -171,7 +171,7 @@ fn spawn_level_props(
             }
         }
         for (rec, pos) in &lp.sounds {
-            if let Some(e) = crate::audio::spawn_emitter(&mut commands, &assets.data, rec, *pos) {
+            if let Some(e) = gd_audio::spawn_emitter(&mut commands, &assets.data, rec, *pos) {
                 commands.entity(e).insert(LevelProp(lp.level));
             }
         }

@@ -111,9 +111,9 @@ Tests: `scripts/with-env cargo test --workspace` (`GD_SKIP_DATA_TESTS=1` skips t
 install). Hooks, recipes and headless runs: [`docs/running.md`](docs/running.md).
 
 ## Layout
-Eleven crates, layered `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core →
-{gd-game ∥ gd-render ∥ gd-ui-kit} → gd-ui → grimdawn`, plus `gd-tools`. What each holds and how the systems
-are structured: [`docs/architecture.md`](docs/architecture.md).
+Thirteen crates, layered `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core →
+{gd-game ∥ gd-render ∥ gd-ui-kit} → {gd-ui ∥ gd-world ∥ gd-audio} → grimdawn`, plus `gd-tools`. What each
+holds and how the systems are structured: [`docs/architecture.md`](docs/architecture.md).
 
 ## Docs
 - [`docs/architecture.md`](docs/architecture.md): crates, state flow, gating, session lifecycle, UI conventions

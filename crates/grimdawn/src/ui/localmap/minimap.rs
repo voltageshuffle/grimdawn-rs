@@ -164,7 +164,7 @@ pub(super) fn minimap(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
-    world: Option<Res<crate::world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     fog: Option<Res<gd_game::fog::FogOfWar>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     (cams, player, mut src): Scene,

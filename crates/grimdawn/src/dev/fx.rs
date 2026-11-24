@@ -15,7 +15,7 @@ pub fn plugin(app: &mut App) {
 fn scene(
     hooks: Res<Hooks>,
     mut commands: Commands,
-    world: Option<Res<crate::world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     data: Res<GameData>,
 ) {
     let Some(list) = &hooks.render.fx else {

@@ -74,7 +74,7 @@ pub(super) fn local_map(
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
     time: Res<Time<Real>>,
-    world: Option<Res<crate::world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     fog: Option<Res<gd_game::fog::FogOfWar>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     (rift, options, pause): (

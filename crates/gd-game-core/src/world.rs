@@ -10,7 +10,7 @@
 //! (`Actor::GetGameDescription`: `SimpleStringFormat` = `{%s0}` of the
 //! localized tag: the tag's text). The bare posts carry no description and stay
 //! scenery. Such a decoration is not part of the level either
-//! (`Decoration::GetIsPartOfLevel`): no physics body (`grimdawn::world`).
+//! (`Decoration::GetIsPartOfLevel`): no physics body (`gd_world`).
 //! PORT: `Decoration`'s subclasses take the flag too; no stock record of one
 //! has a description.
 use bevy::prelude::*;
@@ -87,4 +87,64 @@ pub struct DoorMarker;
 pub struct ChestStates {
     pub opened: HashSet<ChestKey>,
     pub accessories: HashMap<(usize, u32), Vec<(String, Vec3, f32)>>,
+}
+
+/// A level's `AreaOfInterest` (spawned with the level, `gd_world`): an icon of the local map (grimdawn
+/// `ui::localmap`).
+#[derive(Component)]
+pub struct MapPoint {
+    pub record: String,
+}
+
+/// `SoundPeriodic` (Game.dll `SoundPeriodic::Load` / `Update`), the periodic sound of a
+/// `Decoration` (`periodicSound`, `soundPeriod`, `randomPeriod`,
+/// `randomPeriodMin` / `Max` in seconds): the timer starts at one period (or a random draw, both ends inclusive) and
+/// counts down; at 0 the pak plays at the object and the timer is armed again, counted from the start of the sound.
+/// The play is skipped (the timer re-armed all the same) while the previous one still sounds (`!pak.IsPlaying()`;
+/// PORT: the pak's last voice entity being alive stands for it). Placed by `gd_world`, played by
+/// `gd_audio::pak::periodic_sounds`.
+#[derive(Component, Clone, Debug)]
+pub struct PeriodicSound {
+    pub pak: String,
+    period: f32,
+    random: Option<(f32, f32)>,
+    /// Seconds until the next play.
+    pub left: f32,
+    /// The last play's voice.
+    pub last: Option<Entity>,
+}
+
+impl PeriodicSound {
+    pub fn from_record(rec: &gd_formats::arz::Record) -> Option<Self> {
+        let pak = rec
+            .str("periodicSound")
+            .filter(|p| !p.is_empty())?
+            .to_owned();
+        let secs = |k: &str| (rec.f32(k).unwrap_or(0.0) * 1000.0) as i32 as f32 / 1000.0;
+        let random = rec
+            .bool("randomPeriod")
+            .then(|| (secs("randomPeriodMin"), secs("randomPeriodMax")));
+        let mut s = Self {
+            pak,
+            period: secs("soundPeriod"),
+            random,
+            left: 0.0,
+            last: None,
+        };
+        s.arm();
+        Some(s)
+    }
+
+    /// Sets the timer to the next period.
+    pub fn arm(&mut self) {
+        self.left = match self.random {
+            Some((lo, hi)) => {
+                let (lo, hi) = (lo.min(hi), lo.max(hi));
+                // `IGenerate(lo, hi)`: whole milliseconds, both ends inclusive.
+                let (a, b) = ((lo * 1000.0) as u32, (hi * 1000.0) as u32);
+                (a + fastrand::u32(..=(b - a))) as f32 / 1000.0
+            }
+            None => self.period,
+        };
+    }
 }

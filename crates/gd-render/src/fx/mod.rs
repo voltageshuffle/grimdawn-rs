@@ -986,7 +986,7 @@ fn update_effects(
             {
                 pl.color = Color::linear_rgb(ls.color.x, ls.color.y, ls.color.z);
                 pl.range = ls.radius.max(0.1);
-                // Same scale as the level FireLights (world.rs); the deferred
+                // Same scale as the level FireLights (gd_world); the deferred
                 // light buffer reads intensity / (40 000 × range) as brightness.
                 pl.intensity = 40_000.0 * ls.radius * ls.intensity;
                 // `GD_NO_FX_LIGHTS=1` (debug): effect lights off.

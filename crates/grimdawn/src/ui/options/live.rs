@@ -11,7 +11,7 @@ use gd_ui::state::options::OptionsWindow;
 pub(super) fn live(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
-    devices: Res<crate::audio::devices::AudioDevices>,
+    devices: Res<gd_audio::devices::AudioDevices>,
     adapters: Res<crate::render_devices::RenderAdapters>,
     monitors: Query<(
         Entity,

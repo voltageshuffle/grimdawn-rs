@@ -1,6 +1,6 @@
 //! The C runtime's `rand()` (MSVC: `x = x * 214013 + 2531011`, returns `(x >> 16) & 0x7fff`; `srand` default 1).
 //! The engine calls it, not its own generators, for the water ripple set (`weather::Ripples`), the fire lights'
-//! flicker and pulse (grimdawn `world::Flicker` / `Pulse`) and the SSAO rotation texture
+//! flicker and pulse (`gd_render::render::lights::Flicker` / `Pulse`) and the SSAO rotation texture
 //! (`GraphicsCanvas::CreateSsaoRotationTexture`, grimdawn `render/post.rs`).
 
 /// One `rand()` stream.

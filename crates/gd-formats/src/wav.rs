@@ -23,7 +23,7 @@ pub fn wav_rate(bytes: &[u8]) -> Option<u32> {
 
 /// The channel count of a RIFF WAVE (`fmt ` chunk `nChannels`); `None` for
 /// anything else. A multi-channel file cannot be a 3D buffer
-/// (`grimdawn::audio::cache::Loaded::mono`). Stock pak entries: 5 054 mono, 901 stereo.
+/// (`gd_audio::cache::Loaded::mono`). Stock pak entries: 5 054 mono, 901 stereo.
 pub fn wav_channels(bytes: &[u8]) -> Option<u16> {
     fmt_chunk(bytes)?
         .get(2..4)

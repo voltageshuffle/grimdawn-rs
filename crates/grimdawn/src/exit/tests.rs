@@ -24,7 +24,7 @@ const HANDLERS: &[(&str, &str)] = &[
     // `OnExit(AppState::InGame)`.
     ("gd_ui::loading", "fn teardown_hud("),
     // Run by `end_session` (through `open_world`): the map's resources.
-    ("grimdawn::world", "fn install_world("),
+    ("gd_world", "fn install_world("),
 ];
 
 /// One source file: its module path (`grimdawn::ui::loading`) and its text.
@@ -178,6 +178,8 @@ const CRATES: &[&str] = &[
     "gd_ui",
     "gd_ui_kit",
     "gd_render",
+    "gd_world",
+    "gd_audio",
     "grimdawn",
     "bevy",
     "std",
@@ -426,6 +428,8 @@ fn every_registered_resource_is_reset_or_kept() {
         ("gd_ui", "gd-ui"),
         ("grimdawn", "grimdawn"),
         ("gd_render", "gd-render"),
+        ("gd_world", "gd-world"),
+        ("gd_audio", "gd-audio"),
     ] {
         let src = root.join(dir).join("src");
         sources(krate, &src, &src, &mut files);

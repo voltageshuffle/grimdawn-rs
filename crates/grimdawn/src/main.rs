@@ -14,7 +14,6 @@ mod dev;
 mod exit;
 mod hooks;
 use gd_game_core::hooks::Hooks;
-mod audio;
 mod breakables;
 mod camera_input;
 mod casting;
@@ -22,7 +21,6 @@ mod chests;
 mod controller_target;
 mod crafting;
 mod death;
-mod decoration_anim;
 mod devotion;
 mod doll;
 mod doors;
@@ -55,7 +53,6 @@ mod story;
 mod trade;
 mod ui;
 mod weather;
-mod world;
 
 use bevy::prelude::*;
 
@@ -158,9 +155,9 @@ fn main() {
         .add_plugins(heap::HeapPlugin)
         .add_plugins((
             exit::ExitPlugin,
-            world::WorldPlugin,
+            gd_world::WorldPlugin,
             player::PlayerPlugin,
-            audio::GameAudioPlugin,
+            gd_audio::GameAudioPlugin,
             session::SessionPlugin,
             gd_render::water::WaterPlugin,
             weather::WeatherPlugin,
@@ -191,7 +188,7 @@ fn main() {
         .add_plugins((
             endless_shrine::EndlessShrineViewPlugin,
             gd_render::see_through::SeeThroughPlugin,
-            decoration_anim::DecorationAnimPlugin,
+            gd_world::decoration_anim::DecorationAnimPlugin,
             hover::HoverPlugin,
             gd_render::icy::IcyPlugin,
             controller_target::ControllerTargetPlugin,
@@ -286,7 +283,7 @@ fn setup_lighting(mut commands: Commands) {
 
 /// Start the camera at the player spawn point (world mode).
 fn place_camera(
-    world: Option<Res<world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     #[cfg(feature = "dev")] scene: Option<Res<dev::SceneCamera>>,
     mut cams: Query<&mut gd_render::camera::GameCamera>,
 ) {
@@ -304,9 +301,9 @@ fn place_camera(
 
 fn follow_focus(
     cams: Query<&gd_render::camera::GameCamera>,
-    focus: Option<ResMut<world::StreamFocus>>,
+    focus: Option<ResMut<gd_game_core::levels::StreamFocus>>,
 ) {
     if let (Ok(c), Some(mut f)) = (cams.single(), focus) {
-        f.set_if_neq(world::StreamFocus(c.target));
+        f.set_if_neq(gd_game_core::levels::StreamFocus(c.target));
     }
 }

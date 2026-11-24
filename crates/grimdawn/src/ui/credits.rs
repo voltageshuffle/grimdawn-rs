@@ -126,8 +126,8 @@ fn roll(
     mut typed: MessageReader<KeyboardInput>,
     mut clicks: MessageReader<bevy::input::mouse::MouseButtonInput>,
     scene: Option<Res<crate::menu_scene::MenuScene>>,
-    mut volumes: Query<&mut crate::audio::BaseVolume>,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut volumes: Query<&mut gd_audio::BaseVolume>,
+    mut sounds: ResMut<gd_audio::Sounds>,
     roots: Query<Entity, With<CreditsRoot>>,
     mut assets: UiAssets,
     (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
@@ -184,10 +184,10 @@ fn roll(
             credits.menu_gain = 1.0;
         }
         if let Some(f) = sounds.file(&data, MUSIC) {
-            let speed = f.speed(crate::audio::ENGINE_HZ);
-            credits.music = Some(crate::audio::spawn_2d(
+            let speed = f.speed(gd_audio::ENGINE_HZ);
+            credits.music = Some(gd_audio::spawn_2d(
                 &mut commands,
-                crate::audio::SoundClass::Music,
+                gd_audio::SoundClass::Music,
                 0.6,
                 speed,
                 f,

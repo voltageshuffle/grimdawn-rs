@@ -158,7 +158,7 @@ pub struct ModelCache {
 }
 
 /// The mounted mod changed and the render caches were dropped ([`drop_on_mod_change`]); the sound
-/// cache (`audio::Sounds`) clears on it.
+/// cache (`gd_audio::Sounds`) clears on it.
 #[derive(Message)]
 pub struct ModChanged;
 

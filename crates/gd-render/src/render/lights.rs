@@ -1,6 +1,6 @@
 //! The level lights: a placed point light (`LightCpu`) and its record loaders, the `FireLight` flicker
 //! and `PulseLight` pulse, and the lights' shared CRT `rand()` stream. `render::env` gathers these into
-//! the lighting buffer; `world.rs` places them while streaming a level and `fx` attaches them to meshes.
+//! the lighting buffer; `gd_world` places them while streaming a level and `fx` attaches them to meshes.
 use bevy::prelude::*;
 use gd_sim::crt::CrtRand;
 

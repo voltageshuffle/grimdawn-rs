@@ -1,5 +1,5 @@
 //! Ground decals (`GAME::Decal`, Engine.dll): level-placed `Decal` entities
-//! (`world.rs`) and effect decals (an `EffectEntity`'s `decal`, `casting.rs`
+//! (`gd_world`) and effect decals (an `EffectEntity`'s `decal`, `casting.rs`
 //! `fx_decals`) share this record parsing, geometry, material
 //! (`shaders/decal.wesl`: `decal_standard` / `decal_glow` / `decal_bump` /
 //! `decal_selfillum`, UNORM textures) and opacity.
@@ -134,7 +134,7 @@ impl Plugin for DecalPlugin {
     }
 }
 
-/// A decal placed by the level (`Decal` entity, `world.rs`), as opposed to an effect's.
+/// A decal placed by the level (`Decal` entity, `gd_world`), as opposed to an effect's.
 #[derive(Component)]
 pub struct LevelDecal;
 

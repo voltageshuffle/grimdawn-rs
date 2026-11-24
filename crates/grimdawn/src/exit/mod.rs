@@ -7,7 +7,7 @@
 //! - entities: everything not alive when `Loading` began is despawned (`Baseline`);
 //! - resources the session created: removed (the `init_*` systems create them again);
 //! - resources that exist from startup but hold session state: reset to `Default`
-//!   (`Levels`, `StreamedMap` and `StreamFocus` are rebuilt by `world::open_world` → `world::install_world`).
+//!   (`Levels`, `StreamedMap` and `StreamFocus` are rebuilt by `gd_world::open_world` → `install_world`).
 //!
 //! Caches (models, textures, fonts, animations, sounds) stay; what the ended session alone used leaves them
 //! with its last holder (`gd_game_core::weak_cache`), and the freed memory goes back to the system (`heap.rs`). System
@@ -111,8 +111,8 @@ fn end_session(world: &mut World) {
     reset::<gd_ui::state::ascendant::AltarMenu>(world);
     reset::<crate::doors::PendingTravel>(world);
     reset::<gd_game::teleport::TeleportActivity>(world);
-    reset::<crate::world::TravelPreload>(world);
-    reset::<crate::world::Lingering>(world);
+    reset::<gd_world::TravelPreload>(world);
+    reset::<gd_world::Lingering>(world);
     reset::<gd_render::render::env::TimeOfDay>(world);
     reset::<gd_render::camera::ShakeState>(world);
     reset::<gd_game::story::ScreenShake>(world);
@@ -125,7 +125,7 @@ fn end_session(world: &mut World) {
     reset::<gd_ui::state::loot::ItemsHidden>(world);
     reset::<crate::loot::LabelMode>(world);
     reset::<crate::loot::PickMode>(world);
-    reset::<crate::audio::Ambience>(world);
+    reset::<gd_audio::Ambience>(world);
     reset::<crate::weather::WeatherRuntime>(world);
     reset::<gd_render::render::weather::WeatherState>(world);
     remove::<gd_render::render::backdrop::MenuBackdrop>(world);
@@ -134,9 +134,9 @@ fn end_session(world: &mut World) {
     // The weapon pool's roll stream: a new session starts a newly seeded one.
     reset::<gd_game::weapon_pool::PoolRng>(world);
     // The sound cache stays; the listener's voice count and ears describe despawned entities.
-    world.resource_mut::<crate::audio::Sounds>().listener = Default::default();
+    world.resource_mut::<gd_audio::Sounds>().listener = Default::default();
     crate::ui::reset_session(world);
-    let _opened = world.run_system_cached(crate::world::open_world);
+    let _opened = world.run_system_cached(gd_world::open_world);
     world
         .resource_mut::<gd_game_core::session::SessionEpoch>()
         .0 += 1;
@@ -198,7 +198,7 @@ const KEEP: &[&str] = &[
     // The achievement manager is the game engine's: kill counts persist across sessions of the process
     // (`AchievementKill::OnCreatureKilled`, gd-game achievements.rs).
     "gd_game::achievements::KillCounts",
-    // The CRT `rand()` stream of the FireLights (world.rs): the process's, never reseeded.
+    // The CRT `rand()` stream of the FireLights (gd_world): the process's, never reseeded.
     "gd_render::render::lights::LightRand",
     // The menu's own: removed when a session starts, made again by `menu::setup` above.
     "grimdawn::menu::MainMenu",
@@ -233,9 +233,9 @@ const KEEP: &[&str] = &[
     "grimdawn::dev::autoshot::Shot",
     "gd_game_core::visuals::ShotTrigger",
     // The sound cache; `end_session` resets its listener by hand.
-    "grimdawn::audio::Sounds",
-    // The OS device list (audio/devices.rs): the host's, not session state; the options window refreshes it.
-    "grimdawn::audio::devices::AudioDevices",
+    "gd_audio::Sounds",
+    // The OS device list (gd-audio devices.rs): the host's, not session state; the options window refreshes it.
+    "gd_audio::devices::AudioDevices",
     // The GPU adapter list (render_devices.rs): the host's, not session state; the options window refreshes it.
     "grimdawn::render_devices::RenderAdapters",
     // `GD_CHARS`: the character test scene (dev/chars.rs).

@@ -89,7 +89,7 @@
 //!     at most every 250 ms, radius 1, strength √(|v|² + |ω|²), splash 2 on water
 //!     (surface 7), else 0 (`breakables.rs`);
 //!   - `Floater::UpdateSelf`: each bob turn, radius |the region box's
-//!     half extents|, strength 1, splash 0 (`decoration_anim.rs`);
+//!     half extents|, strength 1, splash 0 (`gd_world::decoration_anim`);
 //!   - `World::CreateLineDisturbance` (a wave's front each frame,
 //!     strength 2, splash 0: `gd_game::waves`): radius-1 point disturbances 1 m
 //!     apart along the line ([`line_disturbances`]);

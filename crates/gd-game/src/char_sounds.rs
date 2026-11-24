@@ -2,7 +2,7 @@
 //! character's animation callbacks and swipes pick, with a shapeshift
 //! form's overrides (the one source of the form is the [`Character`]'s form
 //! slot, `Character::form_records`). The renderer plays them
-//! (`grimdawn::audio::character_callbacks`).
+//! (`gd_audio::pak::character_callbacks`).
 //!
 //! Game.dll: a `Character` keeps two `CharacterSounds` tables, its
 //! own (loaded from its record by `Character::Load`) and an override one

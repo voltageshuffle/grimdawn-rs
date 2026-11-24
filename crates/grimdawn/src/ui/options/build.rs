@@ -346,7 +346,7 @@ pub(super) fn build(
     bindings: Res<KeyBindings>,
     mut layout: ResMut<OptionsLayout>,
     roots: Query<Entity, With<OptionsRoot>>,
-    devices: Res<crate::audio::devices::AudioDevices>,
+    devices: Res<gd_audio::devices::AudioDevices>,
     adapters: Res<crate::render_devices::RenderAdapters>,
     monitors: Query<(
         Entity,

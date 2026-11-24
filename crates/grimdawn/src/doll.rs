@@ -326,7 +326,7 @@ fn sync_dolls(
         &mut RenderTarget,
     )>,
     menu: Option<Res<crate::menu::MainMenu>>,
-    scene: Option<Res<crate::menu_scene::MenuScene>>,
+    scene: Option<Res<gd_render::render::backdrop::MenuBackdrop>>,
     mut menu_body: Query<&mut Transform, (With<DollBody>, Without<Camera>)>,
     mut a: CharAssets,
 ) {

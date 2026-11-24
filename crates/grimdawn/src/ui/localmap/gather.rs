@@ -37,12 +37,6 @@ impl MapIcon {
     }
 }
 
-/// A level's `AreaOfInterest` (spawned with the level, `world.rs`).
-#[derive(Component)]
-pub struct MapPoint {
-    pub record: String,
-}
-
 /// `Actor::Load`'s `mapNuggetType` (Engine.dll; `None` / unknown: no icon).
 pub(super) fn nugget_type(name: &str) -> Option<u8> {
     Some(match name {
@@ -271,7 +265,14 @@ pub struct MapSources<'w, 's> {
         Query<'w, 's, &'static GlobalTransform, With<gd_game::endless::EndlessGate>>,
     pub(super) items: Query<'w, 's, (&'static GlobalTransform, &'static gd_game::loot::GroundItem)>,
     pub(super) graves: Query<'w, 's, &'static GlobalTransform, With<gd_game::death::Gravestone>>,
-    pub(super) points: Query<'w, 's, (&'static GlobalTransform, &'static MapPoint)>,
+    pub(super) points: Query<
+        'w,
+        's,
+        (
+            &'static GlobalTransform,
+            &'static gd_game_core::world::MapPoint,
+        ),
+    >,
     pub(super) devotion: Option<Res<'w, gd_game::devotion::DevotionState>>,
     pub(super) inv: Option<Res<'w, gd_game_core::inventory::Inventory>>,
     pub(super) filter: Option<Res<'w, gd_game::loot_filter::LootFilter>>,

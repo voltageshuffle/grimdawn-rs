@@ -185,12 +185,12 @@ const MASTER: &str = gd_ui_kit::MASTER;
 /// The timer warning sound (the Crucible `UISurvivalHud` update `UISurvivalHud::Update`: while 0 < bonus < 10 s, `if
 /// (pak && !SoundPak::IsPlaying(pak)) Play2D` — re-triggered whenever the clip ends; leaving the window stops it, as
 /// the Shattered Realm's event-65 handler does with `SoundPak::Stop`, `UIEndlessHud::OnBonusTimerChanged`). PORT: the
-/// pak's last voice entity being alive stands for `IsPlaying` (`audio::PeriodicSound`); the stop is the voice's despawn
-/// (the engine's Crucible pane fades 500 ms instead).
+/// pak's last voice entity being alive stands for `IsPlaying` (`gd_game_core::world::PeriodicSound`); the stop is the
+/// voice's despawn (the engine's Crucible pane fades 500 ms instead).
 fn timer_warning(
     commands: &mut Commands,
     data: &GameData,
-    audio: &mut crate::audio::Sounds,
+    audio: &mut gd_audio::Sounds,
     alive: &Query<()>,
     voice: &mut Option<Entity>,
     warning: bool,
@@ -199,7 +199,7 @@ fn timer_warning(
     let playing = voice.is_some_and(|e| alive.contains(e));
     if warning {
         if !playing && let Some(pak) = pak() {
-            *voice = crate::audio::play_pak(commands, data, audio, &pak, None);
+            *voice = gd_audio::play_pak(commands, data, audio, &pak, None);
         }
     } else if let Some(e) = voice.take()
         && playing
@@ -218,7 +218,7 @@ fn detect_events(
     mut sounds: MessageWriter<gd_game_core::visuals::PlaySound>,
     mut fresh: gd_game_core::session::NewSession,
     mut commands: Commands,
-    mut audio: ResMut<crate::audio::Sounds>,
+    mut audio: ResMut<gd_audio::Sounds>,
     alive: Query<()>,
 ) {
     if fresh.begun() {
@@ -656,7 +656,7 @@ fn detect_endless_events(
     mut last: Local<Option<(u32, bool)>>,
     mut low: Local<bool>,
     mut commands: Commands,
-    mut audio: ResMut<crate::audio::Sounds>,
+    mut audio: ResMut<gd_audio::Sounds>,
     alive: Query<()>,
 ) {
     let counters = [view.timer_adds, view.timer_failures, view.timer_cuts];

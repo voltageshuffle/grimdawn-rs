@@ -13,7 +13,7 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
    performance for parity. If our version looks better, that's fine.
 
 ## Rules
-- **Layering:** `gd-formats` → `gd-rules` → {`gd-sim` ∥ `gd-story`} → `gd-game-core` → {`gd-game` ∥ `gd-render` ∥ `gd-ui-kit`} → `gd-ui` → `grimdawn`. A lower crate never uses a higher one. Gameplay goes in gd-game, pure maths and rules in gd-sim / gd-rules.
+- **Layering:** `gd-formats` → `gd-rules` → {`gd-sim` ∥ `gd-story`} → `gd-game-core` → {`gd-game` ∥ `gd-render` ∥ `gd-ui-kit`} → {`gd-ui` ∥ `gd-world` ∥ `gd-audio`} → `grimdawn`. A lower crate never uses a higher one. Gameplay goes in gd-game, pure maths and rules in gd-sim / gd-rules.
 - **One source per value.** Raw state lives once. Each derived value comes from one function or system.
   Never cache a copy.
 - **The UI only reads.** `ui::view::collect` → `HudValues` and the gameplay components. UI and input send
@@ -44,7 +44,9 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
 | `gd-render` | The look over gd-game-core: deferred render chain, models, characters, FX, decals, water, camera |
 | `gd-ui-kit` | Shared UI kit over gd-game-core + gd-render: the record-driven widget builder, fonts, chrome, confirm boxes, key bindings, additive / masked UI materials |
 | `gd-ui` | The in-game UI windows and HUD over gd-ui-kit + gd-game + gd-render: the movable window clusters, the rebuild hub, the Esc dispatcher, the paper-doll builders, and the presentation state (`state`) the binary's input systems share |
-| `grimdawn` | The binary: world streaming, input, audio, the audio / world / menu-scene-coupled windows (options, localmap, survival, credits, mainmenu, ...), dressing gameplay entities with models / effects |
+| `gd-world` | World streaming over gd-game + gd-render: levels parsed in the background and spawned a slice per frame, lingering unloaded levels, decoration animation |
+| `gd-audio` | Sound over gd-game + gd-render: area music / ambience, sound paks, emitters, voices, the port's own mixer and output devices |
+| `grimdawn` | The binary: input, the menu scene, the audio / world / menu-scene-coupled windows (options, localmap, survival, credits, mainmenu, ...), dressing gameplay entities with models / effects |
 | `gd-tools` | CLIs: `gd-tools` (arc / arz), `gd-map`, `gd-mesh`, `gd-nav`, `gd-pfx`, `gd-rec` (merged records), `gd-save`, `gd-story`, `gd-tex` |
 
 Module doc comments are the reference for formats and rules: read them before re-deriving anything.

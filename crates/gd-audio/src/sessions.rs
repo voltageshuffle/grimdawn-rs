@@ -12,18 +12,18 @@ use super::Sounds;
 use super::listener::{BaseVolume, SoundClass, sound};
 use super::mixer::{EarGains, Fade, OnEnd, Voice3d, attach_voice};
 use super::pak::{ENGINE_HZ, Positioned, numbered, start_voice};
-use crate::world::StreamedMap;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::map::sector::SectorEntry;
 use gd_game_core::data::GameData;
+use gd_game_core::save::MapLayout;
 use gd_render::camera::CameraFocus;
 use gd_sim::jukebox::Channel;
 
 /// The area's music and ambient sessions (the jukebox, `gd_sim::jukebox`): each channel crossfades its sessions; a
 /// session's player entities ([`SessionSound`]) are keyed by slot.
 #[derive(Resource, Default)]
-pub(crate) struct Ambience {
+pub struct Ambience {
     music_record: Option<String>,
     ambient_record: Option<String>,
     music: Channel,
@@ -199,13 +199,12 @@ impl ShotClass {
 /// loads changed sessions. The probe reruns only when the focus, the region or the loaded levels changed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn track_area(
-    world: Option<Res<StreamedMap>>,
-    levels: Res<crate::world::Levels>,
+    world: Option<Res<MapLayout>>,
+    levels: Res<gd_game_core::levels::Levels>,
     focus: Query<&GlobalTransform, With<CameraFocus>>,
     tod: Res<gd_render::render::env::TimeOfDay>,
     ambiance: Option<Res<gd_render::render::env::Ambiance>>,
-    menu: Option<Res<crate::menu_scene::MenuScene>>,
-    backdrop: Option<Res<gd_render::render::backdrop::MenuBackdrop>>,
+    menu: Option<Res<gd_render::render::backdrop::MenuBackdrop>>,
     story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut amb: ResMut<Ambience>,
 ) {
@@ -226,16 +225,15 @@ pub(super) fn track_area(
     let key = (at, region, menu.is_some());
     let stale = amb.probed != Some(key)
         || levels.is_changed()
-        || menu.as_ref().is_some_and(|m| m.is_changed())
-        || backdrop.as_ref().is_some_and(|b| b.is_changed());
+        || menu.as_ref().is_some_and(|m| m.is_changed());
     let amb = &mut *amb;
     if stale {
         amb.probed = Some(key);
-        let entry = |layer: usize| match (&menu, &backdrop, &world, focus.single()) {
-            (Some(m), Some(b), ..) => b.sector_entry(m.view.player.translation, layer),
-            (None, _, Some(w), Ok(f)) => match region {
-                Some(r) => levels.sector_entry_in(&w.map, r, f.translation(), layer),
-                None => levels.sector_entry(&w.map, f.translation(), layer),
+        let entry = |layer: usize| match (&menu, &world, focus.single()) {
+            (Some(m), ..) => m.sector_entry(m.view.player.translation, layer),
+            (None, Some(w), Ok(f)) => match region {
+                Some(r) => levels.sector_entry_in(&w.0, r, f.translation(), layer),
+                None => levels.sector_entry(&w.0, f.translation(), layer),
             },
             _ => None,
         };

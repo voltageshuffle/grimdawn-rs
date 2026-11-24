@@ -132,7 +132,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
 use gather::*;
-pub use gather::{MapIcon, MapPoint, MapSources};
+pub use gather::{MapIcon, MapSources};
 use gd_formats::map::minimap::MinimapImage;
 use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
 use gd_game::riftgates::{RiftgateMap, RiftgateRequest, WaypointKind};

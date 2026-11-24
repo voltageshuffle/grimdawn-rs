@@ -28,7 +28,7 @@ pub fn input(
     mut win: ResMut<OptionsWindow>,
     mut options: ResMut<GameOptions>,
     mut bindings: ResMut<KeyBindings>,
-    mut devices: ResMut<crate::audio::devices::AudioDevices>,
+    mut devices: ResMut<gd_audio::devices::AudioDevices>,
     mut adapters: ResMut<crate::render_devices::RenderAdapters>,
     monitors: Query<(
         Entity,

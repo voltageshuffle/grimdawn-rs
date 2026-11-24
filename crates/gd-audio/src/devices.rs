@@ -88,7 +88,12 @@ fn enumerate(input: bool) -> Vec<AudioDeviceEntry> {
 /// Other hosts already list one entry per endpoint and pass through unchanged.
 fn is_listed_endpoint(id: &cpal::DeviceId) -> bool {
     // cpal's ALSA host exists only on these targets.
-    #[cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    ))]
     if id.0 == cpal::platform::HostId::Alsa {
         return id.1.starts_with("front:") || id.1.starts_with("hdmi:");
     }

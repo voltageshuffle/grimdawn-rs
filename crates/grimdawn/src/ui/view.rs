@@ -121,7 +121,7 @@ pub fn collect(
     travel: (
         Option<Res<crate::riftgates::TravelState>>,
         Res<crate::riftgates::PersonalPortal>,
-        Res<crate::world::Levels>,
+        Res<gd_game_core::levels::Levels>,
         Query<&Transform, With<Player>>,
         Option<NonSend<gd_game_core::story::StoryRuntime>>,
         Res<gd_game_core::pause::GamePause>,
@@ -149,7 +149,7 @@ pub fn collect(
     choice: Res<gd_game_core::session::Choice>,
     (mode, world, inv, combo_rules): (
         Res<gd_game_core::session::GameMode>,
-        Option<Res<crate::world::StreamedMap>>,
+        Option<Res<gd_world::StreamedMap>>,
         Res<gd_game_core::inventory::Inventory>,
         Option<Res<gd_game::combo::ComboRules>>,
     ),

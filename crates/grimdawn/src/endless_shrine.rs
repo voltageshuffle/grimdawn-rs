@@ -77,7 +77,7 @@ fn looks(
         Option<&gd_render::model::Skeleton>,
     )>,
     mut assets: CharAssets,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut sounds: ResMut<gd_audio::Sounds>,
 ) {
     for (e, sh, gt, mut look, skel) in &mut shrines {
         if look.shown == Some(sh.used) {
@@ -138,7 +138,7 @@ fn looks(
             && !first
             && let Some(snd) = rec.str("dormantToRestoredSound").filter(|s| !s.is_empty())
         {
-            crate::audio::play_pak(
+            gd_audio::play_pak(
                 &mut commands,
                 &assets.data,
                 &mut sounds,
@@ -154,7 +154,7 @@ fn proxy_sound(
     mut commands: Commands,
     mut ran: MessageReader<ShrineProxyRan>,
     data: Res<gd_game_core::data::GameData>,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut sounds: ResMut<gd_audio::Sounds>,
 ) {
     for r in ran.read() {
         if let Some(snd) = data
@@ -163,7 +163,7 @@ fn proxy_sound(
             .and_then(|rec| rec.str("proxyActivateSound").map(str::to_owned))
             .filter(|s| !s.is_empty())
         {
-            crate::audio::play_pak(&mut commands, &data, &mut sounds, &snd, Some(r.at));
+            gd_audio::play_pak(&mut commands, &data, &mut sounds, &snd, Some(r.at));
         }
     }
 }

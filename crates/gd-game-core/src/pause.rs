@@ -18,7 +18,7 @@
 //!   menu window is shown;
 //! - losing the window focus with `inactiveUpdateRate` <= 0 (`Game::OnDeactivate`)
 //!   pauses game time and every sound; regaining it (`Game::OnActivate`)
-//!   unpauses unless another pause holds (`grimdawn/src/audio/mixer.rs`
+//!   unpauses unless another pause holds (`gd-audio/src/mixer.rs`
 //!   `unfocused_mute`).
 //!
 //! Here the pause is the [`GamePause`] resource; `gd_game::pause::apply_pause` (in `Last`)

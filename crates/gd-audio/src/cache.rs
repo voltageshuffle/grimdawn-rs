@@ -175,7 +175,7 @@ impl Sounds {
     }
 
     /// The sound file at `path`, read on first use (a WAV not preloaded streams).
-    pub(crate) fn file(&mut self, data: &GameData, path: &str) -> Option<Loaded> {
+    pub fn file(&mut self, data: &GameData, path: &str) -> Option<Loaded> {
         let key = normalized(path);
         let loaded = match self.cached(&key) {
             Some(hit) => hit,
@@ -205,7 +205,7 @@ impl Sounds {
     /// The sound file at `path` when it is loaded. Otherwise its read starts in the background ([`collect_preload`]
     /// caches it) and this returns `Err(true)` while it is on its way, `Err(false)` for a file that failed to load:
     /// a one-shot never reads the archive on the game thread (a cold read stalled a fight's frame by up to 100 ms).
-    pub(crate) fn file_or_fetch(&mut self, data: &GameData, path: &str) -> Result<Loaded, bool> {
+    pub fn file_or_fetch(&mut self, data: &GameData, path: &str) -> Result<Loaded, bool> {
         let key = normalized(path);
         match self.cached(&key) {
             Some(Some(l)) => {

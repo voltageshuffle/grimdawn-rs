@@ -388,7 +388,7 @@ fn player_foe(sd: &gd_game::combat::SideDataItem) -> bool {
 }
 
 /// A described decoration's parts as one world sphere: the ray is tested against its parts only when it passes
-/// within it. PORT (a performance choice): the parts are spawned with the decoration (`world.rs`), so the sphere is
+/// within it. PORT (a performance choice): the parts are spawned with the decoration (`gd_world`), so the sphere is
 /// taken once they have their boxes; 1 m of margin covers a floating part's bob.
 #[derive(Component)]
 struct DecoSphere {

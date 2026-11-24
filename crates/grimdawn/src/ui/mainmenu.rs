@@ -522,7 +522,7 @@ fn build(
         Res<super::credits::Credits>,
     ),
     save_dir: Res<gd_game_core::session::SaveDir>,
-    scene: Option<Res<crate::menu_scene::MenuScene>>,
+    backdrop: Option<Res<gd_render::render::backdrop::MenuBackdrop>>,
     mut fresh: gd_game_core::session::NewSession,
     mut built: Local<Option<(UVec2, u32, MenuWindow, bool, bool, Option<usize>, u64)>>,
     mut lists: Local<Option<GameTypeLists>>,
@@ -537,7 +537,7 @@ fn build(
     if size.x == 0 {
         return;
     }
-    let view = scene.as_ref().map(|s| &s.view);
+    let view = backdrop.as_ref().map(|b| &b.view);
     let sig = (
         size,
         menu.revision,
@@ -818,7 +818,7 @@ fn version_line(ui: &mut Ui) {
 }
 
 /// The scene record's vignette and logo over the scene (module docs).
-fn background(ui: &mut Ui, view: &crate::menu_scene::MenuView) {
+fn background(ui: &mut Ui, view: &gd_render::render::backdrop::MenuView) {
     let (w, h) = (ui.screen.x, ui.screen.y);
     // The frame is black with its shade in alpha.
     if let Some((v, _)) = view.vignette.as_deref().and_then(|v| ui.image(v)) {

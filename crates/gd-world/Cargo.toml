@@ -1,0 +1,18 @@
+lints.workspace = true
+
+[package]
+name = "gd-world"
+version = "0.1.0"
+edition = "2024"
+description = "Grim Dawn world streaming on Bevy: levels parsed in the background and spawned a slice per frame, decoration animation"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+bevy = { version = "0.20", default-features = false }
+fastrand = "2.5.0"
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-game = { path = "../gd-game", version = "0.1.0" }
+gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
+gd-render = { path = "../gd-render", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }

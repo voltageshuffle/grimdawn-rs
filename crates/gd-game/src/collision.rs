@@ -19,7 +19,7 @@
 //! `!allowPathing` and `Decoration::GetIsPartOfLevel` is "empty `description`".
 //! Props, destructibles, fixed items (doors, shrines, chests), NPCs and
 //! monsters keep the `false` defaults, so only such `Decoration` records are
-//! solid (`world.rs` picks them). `Actor::PhysicsSetup` mode 1
+//! solid (`gd_world` picks them). `Actor::PhysicsSetup` mode 1
 //! builds the body from the mesh's physics mesh (`GraphicsMesh::
 //! GetPhysicsMesh`, chunk 2) when it has one, otherwise from every hit box
 //! whose name is not `Visibility` / `Transparency` (so `BlockLOS` boxes are

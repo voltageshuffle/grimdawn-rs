@@ -324,7 +324,7 @@ fn build(
     index: Option<Res<WaypointIndex>>,
     portal: (
         Res<gd_game::riftgates::PersonalPortal>,
-        Option<Res<crate::world::StreamedMap>>,
+        Option<Res<gd_world::StreamedMap>>,
         Res<gd_ui::HudValues>,
     ),
     players: Query<&Transform, With<gd_game_core::player::Player>>,

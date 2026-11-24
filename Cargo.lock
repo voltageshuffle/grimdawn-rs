@@ -2564,6 +2564,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gd-audio"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "cpal",
+ "fastrand",
+ "gd-formats",
+ "gd-game",
+ "gd-game-core",
+ "gd-render",
+ "gd-sim",
+ "gd-story",
+ "parking_lot",
+ "rodio",
+]
+
+[[package]]
 name = "gd-formats"
 version = "0.1.0"
 dependencies = [
@@ -2693,6 +2710,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gd-world"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "fastrand",
+ "gd-formats",
+ "gd-game",
+ "gd-game-core",
+ "gd-render",
+ "gd-sim",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2755,8 +2786,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
- "cpal",
- "fastrand",
+ "gd-audio",
  "gd-formats",
  "gd-game",
  "gd-game-core",
@@ -2766,9 +2796,8 @@ dependencies = [
  "gd-story",
  "gd-ui",
  "gd-ui-kit",
+ "gd-world",
  "libc",
- "parking_lot",
- "rodio",
  "wgpu",
 ]
 

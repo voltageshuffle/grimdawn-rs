@@ -5,7 +5,7 @@
 //! is skipped and the cadence re-phases from now, so no catch-up burst follows.
 //!
 //! Unfocused behaviour is untouched: `inactiveUpdateRate` pauses virtual time and sound
-//! (`gd_game_core::pause`, `audio::mixer`), not frame delivery — the cap applies focused or not.
+//! (`gd_game_core::pause`, `gd_audio::mixer`), not frame delivery — the cap applies focused or not.
 //! The pacing phase is a `Local`, not session state: it self-corrects against `Instant::now()` every
 //! frame, so a session change needs no reset.
 use bevy::prelude::*;

@@ -1,5 +1,5 @@
 //! What a 3D sound does at the listener's two ears: distance gain and stereo
-//! panning (`grimdawn::audio` applies them to every voice, every frame).
+//! panning (`gd_audio` applies them to every voice, every frame).
 //!
 //! The engine only hands positions to the sound system; DirectSound does the
 //! mixing:
@@ -7,7 +7,7 @@
 //! - `WorldCamera::SetListenerPosition` (Engine.dll):
 //!   the listener's front is the camera's z axis (`Math::LookAtMatrix`: target -
 //!   eye) flattened and normalised, its top (0, 1, 0). The ears' position:
-//!   `grimdawn::audio::ears`. The camera's x axis (up x z) is the image's
+//!   `gd_audio::listener::ears`. The camera's x axis (up x z) is the image's
 //!   left (`Camera::GetImagePoint`), so screen right = front x up
 //!   in the game's right-handed coordinates.
 //! - DS8Sound.dll negates z in every buffer position (`DS8SoundBuffer::SetPosition`),

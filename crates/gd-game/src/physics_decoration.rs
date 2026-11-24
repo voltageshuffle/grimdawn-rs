@@ -18,7 +18,7 @@
 //! `SetCastsShadows(false)` (the record's `castsShadows` is overridden).
 //!
 //! The props come with their level ([`LevelPhysicsProps`], bucketed by
-//! grimdawn `world.rs`) and go with it (`gd_game_core::levels::LevelMember`; no saved state; the engine recreates
+//! `gd_world`) and go with it (`gd_game_core::levels::LevelMember`; no saved state; the engine recreates
 //! them when the level reloads).
 //!
 //! PORT: the prop is a life-1 [`Combatant`] — the first hit "kills" it, which

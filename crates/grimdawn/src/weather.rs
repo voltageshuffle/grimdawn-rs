@@ -44,7 +44,6 @@
 //! (`WeatherSystem::Update`) and `windSound` start with `SoundPak::Play2D` and nothing in the weather code
 //! places them; a
 //! destroyed system's sound fades out over 3 s.
-use crate::audio::{BaseVolume, ENGINE_HZ, Fade, SoundClass, spawn_2d};
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -66,6 +65,7 @@ use bevy::render::storage::ShaderBuffer;
 use bevy::render::texture::GpuImage;
 use bevy::render::view::ViewDepthStencilTexture;
 use bevy::shader::ShaderRef;
+use gd_audio::{BaseVolume, ENGINE_HZ, Fade, SoundClass, spawn_2d};
 use gd_game_core::options::GameOptions;
 use gd_render::camera::GameCamera;
 use gd_render::fx::{FxAssets, render};
@@ -411,8 +411,8 @@ fn buffer_bytes(cap: usize) -> u64 {
 #[allow(clippy::too_many_arguments)]
 fn simulate_weather(
     (mut rt, mut state): (ResMut<WeatherRuntime>, ResMut<WeatherState>),
-    world: Option<Res<crate::world::StreamedMap>>,
-    levels: Res<crate::world::Levels>,
+    world: Option<Res<gd_world::StreamedMap>>,
+    levels: Res<gd_game_core::levels::Levels>,
     data: Res<gd_game_core::data::GameData>,
     options: Res<GameOptions>,
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -525,9 +525,9 @@ fn simulate_weather(
             (&*forced, set)
         }
         None => {
-            let focus = menu
+            let focus = backdrop
                 .as_ref()
-                .map_or(cam.target, |m| m.view.player.translation);
+                .map_or(cam.target, |b| b.view.player.translation);
             // In the game the sector of the player's own region (`Player::UpdateSelf`; the Shattered Realm's
             // regions overlap main-world ground). PORT: the engine's climate sector source is not traced; the
             // menu scene has one map, so the position alone.
@@ -557,8 +557,9 @@ fn simulate_weather(
         _ => None,
     };
     weather.update(
-        menu.as_ref()
-            .map_or(cam.target, |m| m.view.player.translation)
+        backdrop
+            .as_ref()
+            .map_or(cam.target, |b| b.view.player.translation)
             .to_array(),
         dt_ms,
         day,
@@ -801,7 +802,7 @@ fn wanted(weather: &Weather, wind: Option<f32>, pak: &str) -> Option<f32> {
 fn weather_sounds(
     state: Res<WeatherState>,
     data: Res<gd_game_core::data::GameData>,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut sounds: ResMut<gd_audio::Sounds>,
     mut loops: Query<(Entity, &WeatherLoop, &mut BaseVolume), Without<Fade>>,
     mut commands: Commands,
 ) {

@@ -210,7 +210,7 @@ pub const SHORT_LOOP_FADE: f32 = 0.25;
 pub struct CombatSoundsPlugin;
 
 /// The combat sound writers that run after the frame's combat and casting:
-/// `grimdawn::audio::play_requests` orders itself after this set (and
+/// `gd_audio::pak::play_requests` orders itself after this set (and
 /// `CastingSet`) so it hears their `PlaySound`s the same frame. `swipe_sounds`
 /// stays out of it — it reads the swipe callbacks before `CastingSet` advances
 /// them, so it is already before `play_requests` through `CastingSet`.

@@ -959,7 +959,7 @@ fn update_env(
         cache.current = Some((amb.daynight_name.clone(), key));
     }
     let cam_distance = match &menu {
-        Some(b) => b.cam_distance,
+        Some(b) => b.cam_distance(),
         None => cam.map_or(0.0, |c| c.distance),
     };
     if !post.is_empty() {

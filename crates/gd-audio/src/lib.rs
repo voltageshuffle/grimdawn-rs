@@ -23,6 +23,7 @@
 //! default, i >= 1 = entry i - 1). bevy_audio 0.20 opens only the default sink (`AudioOutput` is pub(crate), no
 //! device hook), so the bus plays through a port-owned rodio sink on the selected `soundDevice`
 //! (`mixer::start_bus`); Apply reopens it without dropping the voice queue (`mixer::switch_device`).
+#![allow(clippy::type_complexity)]
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 use parking_lot::Mutex;
@@ -37,11 +38,11 @@ mod mixer;
 mod pak;
 mod sessions;
 
-pub(crate) use emitters::{spawn_emitter, spawn_loop};
-pub(crate) use listener::{BaseVolume, SoundClass};
-pub(crate) use mixer::{Fade, spawn_2d};
-pub(crate) use pak::{ENGINE_HZ, PeriodicSound, play_pak};
-pub(crate) use sessions::Ambience;
+pub use emitters::{spawn_emitter, spawn_loop};
+pub use listener::{BaseVolume, SoundClass};
+pub use mixer::{Fade, spawn_2d};
+pub use pak::{ENGINE_HZ, play_pak};
+pub use sessions::Ambience;
 
 pub struct GameAudioPlugin;
 

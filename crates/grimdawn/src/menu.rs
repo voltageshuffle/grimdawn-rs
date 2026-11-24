@@ -50,7 +50,7 @@
 //! The Crucible (`GameModeWindow::HandleEvent`, `GameModeWindow::Accept`): the window sets the
 //! mode and the arena (Random or one offered by the installed packs), the difficulty window then lists
 //! Aspirant / Challenger / Gladiator and Start mounts the Crucible data and opens the arena
-//! (`world::open_session_map`).
+//! (`gd_world::open_session_map`).
 //! Custom (mode 2, `GameModeWindow::Load` / toggles `GameModeWindow::HandleToggle` / view
 //! `GameModeWindow::ShowCustomView` / Accept `GameModeWindow::AcceptCustom`): the toggle is always offered; it
 //! shows the map list of
@@ -58,7 +58,7 @@
 //! with an empty list falls back to the Main Campaign, else the mode is 2 with the selected mod and map
 //! (`GameInfo::SetModName` / `SetLevelName`). The stock install has no user mod, so there Custom always ends
 //! as the campaign. Start in mode 2 mounts the user mod over the base game (`Engine::InitializeMod`:
-//! `gd_formats::vfs`), opens its map (`world::open_session_map`) and begins the session; a character created
+//! `gd_formats::vfs`), opens its map (`gd_world::open_session_map`) and begins the session; a character created
 //! there is not in the main quest and is saved under `save/user/` (`Choice::player_folder`), its shared files
 //! under `save/<mod>/` (`Choice::shared_save_dir`). A mod that does not mount, or a listed map its archives do
 //! not hold (a loose `.map`: `InitializeMod` mounts only `resources/*.arc`), refuses Start and the menu stays.
@@ -883,7 +883,7 @@ fn run_menu(
 }
 
 /// Leaves the menu into a session. A Crucible or custom game opens its mod's map first
-/// (`world::open_session_map`); if that fails the menu stays open.
+/// (`gd_world::open_session_map`); if that fails the menu stays open.
 ///
 /// An existing save's `map.dat` names the mod it was written in (`Choice::read_map_dat`): a pick
 /// whose mod differs is refused before anything is mounted or written, since the per-map folder
@@ -916,7 +916,7 @@ pub(crate) fn start(
         return;
     }
     commands.queue(move |world: &mut World| {
-        if let Err(e) = crate::world::open_session_map(world, &choice) {
+        if let Err(e) = gd_world::open_session_map(world, &choice) {
             let msg = format!("{e:#}");
             error!("menu: {} does not start: {msg}", choice.map_path());
             let mut m = world.resource_mut::<MainMenu>();

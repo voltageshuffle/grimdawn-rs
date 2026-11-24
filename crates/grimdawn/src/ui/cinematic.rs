@@ -122,8 +122,8 @@ impl Plugin for CinematicPlugin {
 #[allow(clippy::too_many_arguments)]
 fn area_names(
     mut fresh: gd_game_core::session::NewSession,
-    world: Option<Res<crate::world::StreamedMap>>,
-    levels: Res<crate::world::Levels>,
+    world: Option<Res<gd_world::StreamedMap>>,
+    levels: Res<gd_game_core::levels::Levels>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     player: Query<&Transform, With<gd_game_core::player::Player>>,
     mut seen: Local<(String, Vec<String>)>,

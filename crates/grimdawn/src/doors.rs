@@ -62,7 +62,7 @@ fn locked_feedback(
     mut commands: Commands,
     mut events: MessageReader<LockedUse>,
     data: Res<gd_game_core::data::GameData>,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut sounds: ResMut<gd_audio::Sounds>,
     mut notify: MessageWriter<gd_game_core::story::Notify>,
 ) {
     for ev in events.read() {
@@ -71,7 +71,7 @@ fn locked_feedback(
         };
         info!("locked: {}", ev.record.rsplit('/').next().unwrap_or(""));
         if let Some(snd) = rec.str("lockedSound").filter(|s| !s.is_empty()) {
-            crate::audio::play_pak(&mut commands, &data, &mut sounds, snd, Some(ev.at));
+            gd_audio::play_pak(&mut commands, &data, &mut sounds, snd, Some(ev.at));
         }
         if let Some(tag) = rec
             .str("lockedTag")
@@ -88,12 +88,12 @@ fn locked_feedback(
 struct TravelCover;
 
 /// Tells the teleport activity that the pending travel's destination has streamed in
-/// ([`gd_game::doors::DestinationReady`]: every level around it is in, [`crate::world::StreamedMap::area_ready`]; always
+/// ([`gd_game::doors::DestinationReady`]: every level around it is in, [`gd_world::StreamedMap::area_ready`]; always
 /// in the test arena, which has no streaming).
 fn report_destination(
     pending: Res<PendingTravel>,
-    world: Option<Res<crate::world::StreamedMap>>,
-    levels: Option<Res<crate::world::Levels>>,
+    world: Option<Res<gd_world::StreamedMap>>,
+    levels: Option<Res<gd_game_core::levels::Levels>>,
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut ready: MessageWriter<gd_game::doors::DestinationReady>,
 ) {
@@ -110,13 +110,13 @@ fn report_destination(
 
 /// What the teleport activity ([`gd_game::teleport::TeleportActivity`]) shows and streams: the loading screen while it
 /// runs, at the activity's opacity, and the destination's levels from the end of the fade-out to the end
-/// ([`crate::world::TravelPreload`]). The cover is the loading screen (`ui::loading`: background, tip; its pieces
+/// ([`gd_world::TravelPreload`]). The cover is the loading screen (`ui::loading`: background, tip; its pieces
 /// follow the cover's alpha).
 fn travel_screen(
     mut commands: Commands,
     pending: Res<PendingTravel>,
     activity: Res<gd_game::teleport::TeleportActivity>,
-    mut preload: ResMut<crate::world::TravelPreload>,
+    mut preload: ResMut<gd_world::TravelPreload>,
     mut covers: Query<(Entity, &mut BackgroundColor, Option<&Children>), With<TravelCover>>,
     mut texts: Query<&mut TextColor>,
 ) {

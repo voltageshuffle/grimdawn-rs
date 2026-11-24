@@ -1,8 +1,8 @@
 # Architecture
 
 Layering: `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core → {gd-game ∥ gd-render ∥ gd-ui-kit}
-→ gd-ui → grimdawn`. A lower crate never uses a higher one. Module doc comments are the reference for
-formats and rules; this file holds only the cross-cutting conventions.
+→ {gd-ui ∥ gd-world ∥ gd-audio} → grimdawn`. A lower crate never uses a higher one. Module doc comments are the
+reference for formats and rules; this file holds only the cross-cutting conventions.
 
 ## Crates
 - **gd-formats**: file formats (`map/*`, `save/*`, ...) and the VFS: `vfs::Database` the merged ARZ
@@ -18,8 +18,13 @@ formats and rules; this file holds only the cross-cutting conventions.
   builder, fonts, chrome, key bindings, adaptive layout helpers, settings/UI scale.
 - **gd-ui**: the in-game windows and HUD over gd-ui-kit + gd-game + gd-render; the rebuild hub, Esc
   dispatcher, window manager and the presentation state the binary's input systems share.
-- **grimdawn**: the binary: world streaming, input, audio, menu scene, the world/menu-coupled windows, and
-  the `dress_*` systems that give gameplay entities models and effects.
+- **gd-world**: world streaming over gd-game + gd-render (`StreamedMap`, `build_level` / `spawn_level`, shared
+  with the menu scene) and decoration animation.
+- **gd-audio**: sound over gd-game + gd-render (`GameAudioPlugin`, `Sounds`, `play_pak`, the mixer). Reads the
+  map through `gd_game_core::save::MapLayout` and the menu through `gd_render::render::backdrop::MenuBackdrop`,
+  so it never waits on gd-world.
+- **grimdawn**: the binary: input, menu scene, the world/menu-coupled windows, and the `dress_*` systems
+  that give gameplay entities models and effects.
 - **gd-tools**: CLIs for inspecting game data (archives, records, maps, meshes, saves, story, mods).
 
 ## State and data flow

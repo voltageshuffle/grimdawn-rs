@@ -1,0 +1,30 @@
+lints.workspace = true
+
+[package]
+name = "gd-audio"
+version = "0.1.0"
+edition = "2024"
+description = "Grim Dawn's sound on Bevy: area music and ambience, sound paks, emitters, voices and the port's own mixer"
+license = "MIT"
+
+[features]
+# Dev builds: the memory audit's sound footprint (`Sounds::footprint`). grimdawn's `dev` forwards here.
+dev = []
+
+[dependencies]
+# The render feature set is gd-render's; this adds audio (the game's sounds are WAV and Ogg Vorbis).
+bevy = { version = "0.20", default-features = false, features = ["bevy_audio", "vorbis", "wav"] }
+# The audio devices (`devices`) and the mixer's rate; the cpal rodio plays through.
+cpal = "0.17"
+fastrand = "2.5.0"
+gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-game = { path = "../gd-game", version = "0.1.0" }
+gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
+gd-render = { path = "../gd-render", version = "0.1.0" }
+gd-sim = { path = "../gd-sim", version = "0.1.0" }
+gd-story = { path = "../gd-story", version = "0.1.0" }
+# No-poison locks for the mixer's shared bus state (already in the tree via Bevy).
+parking_lot = "0.12"
+# The port-owned output sink for the sound mixer (`mixer`): bevy_audio opens only the default device.
+# Same rodio bevy_audio locks (0.22.2); its `playback` + `tracing` features unify, no extra decoders.
+rodio = { version = "0.22", default-features = false, features = ["playback"] }

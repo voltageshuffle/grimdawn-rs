@@ -22,6 +22,10 @@
 //!
 //! Coordinates: Y-up, ~1 unit = 1 m, world = region origin +
 //! level-local position; entity rotation rows are the object's local axes.
+#![allow(clippy::type_complexity)]
+
+pub mod decoration_anim;
+
 use bevy::math::Affine3A;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -227,7 +231,7 @@ fn open_world_map(
     MapFile::open_resource(&data.vfs, &res)
 }
 
-pub(crate) fn open_world(
+pub fn open_world(
     commands: Commands,
     data: Res<GameData>,
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -292,7 +296,7 @@ fn stream_levels(
     grass: Res<gd_render::render::grass::GrassQuality>,
     mut commands: Commands,
     mut nav: ResMut<Nav>,
-    mut coll: ResMut<crate::collision::WorldCollision>,
+    mut coll: ResMut<gd_game::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut lingering: ResMut<Lingering>,
@@ -381,7 +385,7 @@ fn stream_levels(
 }
 
 /// CPU-side result of loading one level.
-pub(crate) struct LevelCpu {
+pub struct LevelCpu {
     index: usize,
     origin: Vec3,
     terrain: Option<gd_render::render::terrain::TerrainCpu>,
@@ -394,7 +398,7 @@ pub(crate) struct LevelCpu {
     decals: Vec<DecalCpu>,
     water: Vec<gd_render::water::WaterSurface>,
     effects: Vec<gd_render::fx::PlacedEffect>,
-    proxies: Vec<crate::monsters::ProxyCpu>,
+    proxies: Vec<gd_game::monsters::ProxyCpu>,
     npcs: Vec<(u32, String, Transform)>,
     chests: Vec<(u32, String, Transform)>,
     set_pieces: Vec<(u32, String, Vec3, f32, Option<[u32; 4]>)>,
@@ -419,11 +423,11 @@ pub(crate) struct LevelCpu {
 }
 
 impl LevelCpu {
-    pub(crate) fn origin(&self) -> Vec3 {
+    pub fn origin(&self) -> Vec3 {
         self.origin
     }
 
-    pub(crate) fn take_sectors(&mut self) -> Option<(Vec3, gd_formats::map::sector::SectorLayers)> {
+    pub fn take_sectors(&mut self) -> Option<(Vec3, gd_formats::map::sector::SectorLayers)> {
         self.sectors.take()
     }
 }
@@ -529,7 +533,7 @@ struct ObjectCpu {
     /// Crossing: floors, weeds, bedrolls, camp clutter, candles, torches.
     casts_shadows: bool,
     /// `SoundPeriodic` (`periodicSound` of a `Decoration`).
-    periodic: Option<crate::audio::PeriodicSound>,
+    periodic: Option<gd_game_core::world::PeriodicSound>,
     /// The record's animations (`decoration_anim`).
     anims: Option<crate::decoration_anim::DecorationAnims>,
     /// A `Floater`'s bob (`decoration_anim`).
@@ -657,7 +661,7 @@ struct SceneryRecord {
     decals: bool,
     see_through: Option<f32>,
     casts_shadows: bool,
-    periodic: Option<crate::audio::PeriodicSound>,
+    periodic: Option<gd_game_core::world::PeriodicSound>,
     anims: Option<crate::decoration_anim::DecorationAnims>,
     floater: Option<crate::decoration_anim::Floater>,
     described: Option<gd_game_core::world::Described>,
@@ -685,7 +689,7 @@ impl SceneryRecord {
             decals: gd_render::decal::receives_decals(&rec.class, rec.bool("allowPathing")),
             see_through: gd_render::see_through::max_transparency(rec),
             casts_shadows: rec.i32("castsShadows") != Some(0),
-            periodic: crate::audio::PeriodicSound::from_record(rec),
+            periodic: gd_game_core::world::PeriodicSound::from_record(rec),
             anims: crate::decoration_anim::DecorationAnims::from_record(rec),
             floater: crate::decoration_anim::Floater::from_record(rec),
             described: gd_game_core::world::Described::from_record(rec),
@@ -701,7 +705,7 @@ impl SceneryRecord {
 fn classify(data: &GameData, rec_name: &str) -> Placement {
     let lower = rec_name.to_ascii_lowercase();
     let rec = data.db.get(rec_name);
-    let story = |r: &gd_formats::arz::Record| crate::story::is_story_record(r);
+    let story = |r: &gd_formats::arz::Record| gd_game::story_world::is_story_record(r);
     // NPCs without story hooks (the story layer shows the others), and every other creature placed as a
     // `Monster` (town guards, faction champions, the Dranghoul tribe, training dummies, floor-spike traps, the
     // Loghorrean / Dermapteran queen / Master of Flesh bosses: placed only, no proxy or script spawns them):
@@ -746,7 +750,7 @@ fn classify(data: &GameData, rec_name: &str) -> Placement {
         "Destructible" if !story(r) => Placement::Breakable(r.f32("scale").unwrap_or(1.0)),
         "PhysicsDecoration" if !story(r) => Placement::PhysicsProp(r.f32("scale").unwrap_or(1.0)),
         "NavBlocker" if !story(r) => Placement::Blocker,
-        _ if crate::riftgates::waypoint_kind(class).is_some() || class == "DynamicTeleporter" => {
+        _ if gd_game::riftgates::waypoint_kind(class).is_some() || class == "DynamicTeleporter" => {
             Placement::Waypoint
         }
         "StaticShrine" | "MonsterShrine" => Placement::Shrine,
@@ -796,7 +800,7 @@ fn placed_scale(e: &gd_formats::map::level::Entity, record: f32) -> Vec3 {
     }
 }
 
-pub(crate) fn build_level(
+pub fn build_level(
     map: &MapFile,
     data: &GameData,
     layers: &gd_render::render::terrain::TerrainLayers,
@@ -850,7 +854,7 @@ pub(crate) fn build_level(
                         .with_scale(Vec3::splat(e.scale()[1])),
                 ));
             }
-            Placement::Proxy => proxies.push(crate::monsters::ProxyCpu {
+            Placement::Proxy => proxies.push(gd_game::monsters::ProxyCpu {
                 entity: ei as u32,
                 record: rec_name.to_owned(),
                 position: at,
@@ -1092,7 +1096,7 @@ fn finish_levels(
 /// points to the local map); without it only what is drawn (the main menu's
 /// scene, `render::menu`).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_level(
+pub fn spawn_level(
     mut cpu: LevelCpu,
     gameplay: bool,
     commands: &mut Commands,
@@ -1106,7 +1110,7 @@ pub(crate) fn spawn_level(
     cache: &mut ModelCache,
     bodies: &mut gd_game_core::creature::BodyCache,
     textures: &mut Textures,
-    coll: &mut crate::collision::WorldCollision,
+    coll: &mut gd_game::collision::WorldCollision,
     receivers: &mut gd_render::decal::DecalReceivers,
     hooks: &gd_game_core::hooks::RenderHooks,
 ) -> Entity {
@@ -1218,21 +1222,23 @@ pub(crate) struct SpawnJob {
 /// systems unload whatever belongs to a level that is not loaded, so content handed over while the level is still
 /// streaming in slices was despawned as it appeared, and the root never repopulated.
 fn attach_gameplay(commands: &mut Commands, root: Entity, cpu: &mut LevelCpu) {
-    commands.entity(root).insert(crate::monsters::LevelProxies {
-        level: cpu.index,
-        proxies: std::mem::take(&mut cpu.proxies),
-        npcs: std::mem::take(&mut cpu.npcs),
-        chests: std::mem::take(&mut cpu.chests),
-        set_pieces: std::mem::take(&mut cpu.set_pieces),
-        doors: std::mem::take(&mut cpu.doors),
-        breakables: std::mem::take(&mut cpu.breakables),
-        blockers: std::mem::take(&mut cpu.blockers),
-        waypoints: std::mem::take(&mut cpu.waypoints),
-        shrines: std::mem::take(&mut cpu.shrines),
-        sounds: std::mem::take(&mut cpu.sounds),
-        patrol_points: std::mem::take(&mut cpu.patrol_points),
-        placed: std::mem::take(&mut cpu.placed),
-    });
+    commands
+        .entity(root)
+        .insert(gd_game::monsters::LevelProxies {
+            level: cpu.index,
+            proxies: std::mem::take(&mut cpu.proxies),
+            npcs: std::mem::take(&mut cpu.npcs),
+            chests: std::mem::take(&mut cpu.chests),
+            set_pieces: std::mem::take(&mut cpu.set_pieces),
+            doors: std::mem::take(&mut cpu.doors),
+            breakables: std::mem::take(&mut cpu.breakables),
+            blockers: std::mem::take(&mut cpu.blockers),
+            waypoints: std::mem::take(&mut cpu.waypoints),
+            shrines: std::mem::take(&mut cpu.shrines),
+            sounds: std::mem::take(&mut cpu.sounds),
+            patrol_points: std::mem::take(&mut cpu.patrol_points),
+            placed: std::mem::take(&mut cpu.placed),
+        });
     commands
         .entity(root)
         .insert(gd_game::physics_decoration::LevelPhysicsProps {
@@ -1269,7 +1275,7 @@ fn spawn_level_root(
         .filter(|_| gameplay)
     {
         let e = commands
-            .spawn((crate::ui::localmap::MapPoint { record }, at))
+            .spawn((gd_game_core::world::MapPoint { record }, at))
             .id();
         commands.entity(root).add_child(e);
     }
@@ -1638,7 +1644,7 @@ fn spawn_level_decals(
 fn spawn_level_collision(
     index: usize,
     origin: Vec3,
-    coll: &mut crate::collision::WorldCollision,
+    coll: &mut gd_game::collision::WorldCollision,
     heights: Option<(u32, u32, Vec<f32>)>,
     ground: gd_sim::surface::Ground,
     acc: SpawnAcc,
@@ -1678,7 +1684,7 @@ fn spawn_levels(
     mut mats: gd_render::render::material::MaterialAssets,
     (mut cache, bodies): (ResMut<ModelCache>, Res<gd_game_core::creature::BodyCache>),
     mut textures: ResMut<Textures>,
-    mut coll: ResMut<crate::collision::WorldCollision>,
+    mut coll: ResMut<gd_game::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
     hooks: Res<gd_game_core::hooks::Hooks>,
 ) {

@@ -34,13 +34,13 @@ pub fn playback_speed(freq: f32, rate: Option<u32>) -> f32 {
 
 /// A `SoundPak` record as `SoundPak::Load` reads it, kept in [`Sounds`] by name until the mod changes, so
 /// a play does no record lookups.
-pub(crate) struct PakInfo {
+pub struct PakInfo {
     /// `volumeSet` ([`volume_set`]).
     pub(super) class: SoundClass,
     /// `soundName1..N` (normalized file keys) and their `weightN` (default 25).
-    pub(crate) names: Vec<String>,
+    pub names: Vec<String>,
     weights: Vec<u32>,
-    pub(crate) volume: f32,
+    pub volume: f32,
     /// `fallOff` as written (a one-shot defaults to 0, a loop to 10).
     pub(super) falloff: Option<f32>,
     force2d: bool,
@@ -86,7 +86,7 @@ impl PakInfo {
 
 impl Sounds {
     /// The `SoundPak` record `name`, read on first use.
-    pub(crate) fn pak(&mut self, data: &GameData, name: &str) -> Option<Arc<PakInfo>> {
+    pub fn pak(&mut self, data: &GameData, name: &str) -> Option<Arc<PakInfo>> {
         if let Some(p) = self.paks.get(name) {
             return p.clone();
         }
@@ -445,61 +445,12 @@ pub(super) fn story_sounds(
     }
 }
 
-/// `SoundPeriodic` (Game.dll `SoundPeriodic::Load` / `Update`), the periodic sound of a
-/// `Decoration` (`periodicSound`, `soundPeriod`, `randomPeriod`,
-/// `randomPeriodMin` / `Max` in seconds): the timer starts at one period (or a random draw, both ends inclusive) and
-/// counts down; at 0 the pak plays at the object and the timer is armed again, counted from the start of the sound.
-/// The play is skipped (the timer re-armed all the same) while the previous one still sounds (`!pak.IsPlaying()`;
-/// PORT: the pak's last voice entity being alive stands for it).
-#[derive(Component, Clone, Debug)]
-pub struct PeriodicSound {
-    pak: String,
-    period: f32,
-    random: Option<(f32, f32)>,
-    left: f32,
-    last: Option<Entity>,
-}
-
-impl PeriodicSound {
-    pub fn from_record(rec: &Record) -> Option<Self> {
-        let pak = rec
-            .str("periodicSound")
-            .filter(|p| !p.is_empty())?
-            .to_owned();
-        let secs = |k: &str| (rec.f32(k).unwrap_or(0.0) * 1000.0) as i32 as f32 / 1000.0;
-        let random = rec
-            .bool("randomPeriod")
-            .then(|| (secs("randomPeriodMin"), secs("randomPeriodMax")));
-        let mut s = Self {
-            pak,
-            period: secs("soundPeriod"),
-            random,
-            left: 0.0,
-            last: None,
-        };
-        s.arm();
-        Some(s)
-    }
-
-    fn arm(&mut self) {
-        self.left = match self.random {
-            Some((lo, hi)) => {
-                let (lo, hi) = (lo.min(hi), lo.max(hi));
-                // `IGenerate(lo, hi)`: whole milliseconds, both ends inclusive.
-                let (a, b) = ((lo * 1000.0) as u32, (hi * 1000.0) as u32);
-                (a + fastrand::u32(..=(b - a))) as f32 / 1000.0
-            }
-            None => self.period,
-        };
-    }
-}
-
 pub(super) fn periodic_sounds(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,
-    mut q: Query<(&GlobalTransform, &mut PeriodicSound)>,
+    mut q: Query<(&GlobalTransform, &mut gd_game_core::world::PeriodicSound)>,
     alive: Query<()>,
 ) {
     for (gt, mut p) in &mut q {
@@ -538,10 +489,10 @@ pub(super) fn character_callbacks(
     mut callbacks: MessageReader<gd_game_core::character::AnimCallback>,
     chars: Query<
         (&gd_game_core::character::Character, &GlobalTransform),
-        Without<crate::doll::DollBody>,
+        Without<gd_render::character::DollBody>,
     >,
     players: Query<&GlobalTransform, With<gd_game_core::player::Player>>,
-    coll: Res<crate::collision::WorldCollision>,
+    coll: Res<gd_game::collision::WorldCollision>,
     mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut out: MessageWriter<gd_game_core::visuals::PlaySound>,
     mut tracked: MessageWriter<gd_game_core::visuals::PlaySoundOn>,

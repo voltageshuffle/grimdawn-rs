@@ -37,7 +37,6 @@ impl Plugin for StoryPlugin {
     }
 }
 
-pub use gd_game::story_world::is_story_record;
 pub use gd_game_core::story::{StoryActor, StoryRuntime};
 use gd_game_core::visuals::DecorationRequest;
 
@@ -73,7 +72,7 @@ fn dress_story_objects(
             .data
             .db
             .get(&req.record)
-            .and_then(crate::decoration_anim::DecorationAnims::from_record)
+            .and_then(gd_world::decoration_anim::DecorationAnims::from_record)
         {
             commands.entity(e).insert(a);
         }

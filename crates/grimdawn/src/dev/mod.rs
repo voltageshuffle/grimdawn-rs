@@ -123,7 +123,7 @@ fn fps_log(
     mut acc: Local<(f32, f32, u32)>,
     all: Query<Entity>,
     chars: Query<(), With<gd_game_core::character::Character>>,
-    levels: Res<crate::world::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
     player: Query<&Transform, With<gd_game_core::player::Player>>,
 ) {
     let dt = time.delta_secs();

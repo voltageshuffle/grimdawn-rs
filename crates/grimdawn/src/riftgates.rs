@@ -34,7 +34,7 @@
 //! else `activeSound` once discovered, else `dormatSound`, spelled so in the
 //! loader: stock gate records name it `dormantSound`, so gates are silent while
 //! dormant) at the gate, looping like a placed `SoundObject`
-//! (`audio::spawn_loop`: distance gain, silent beyond 8 × `fallOff`).
+//! (`gd_audio::spawn_loop`: distance gain, silent beyond 8 × `fallOff`).
 //!
 //! The arrival: the engine's teleport activity (`InstallTeleportActivity`)
 //! puts the player on the floor at the destination (`gd_game::doors::run_teleport`,
@@ -95,7 +95,7 @@ struct GateFx(Option<Entity>, Option<Entity>, &'static str);
 fn build_index(
     mut commands: Commands,
     ready: Option<Res<gd_game_core::session::SessionReady>>,
-    world: Option<Res<crate::world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     data: Res<gd_game_core::data::GameData>,
     index: Option<Res<WaypointIndex>>,
 ) {
@@ -197,7 +197,7 @@ fn gate_effects(
         let snd = rec
             .as_ref()
             .and_then(|r| r.str(sound).filter(|s| !s.is_empty()).map(str::to_owned))
-            .and_then(|pak| crate::audio::spawn_loop(&mut commands, &data, &pak, Vec3::ZERO));
+            .and_then(|pak| gd_audio::spawn_loop(&mut commands, &data, &pak, Vec3::ZERO));
         if let Some(snd) = snd {
             commands.entity(e).add_child(snd);
         }
@@ -219,8 +219,8 @@ fn travel(
 /// (`Engine::GetAreaNameTag`: the name sector there).
 fn name_portal(
     mut portal: ResMut<PersonalPortal>,
-    world: Option<Res<crate::world::StreamedMap>>,
-    levels: Res<crate::world::Levels>,
+    world: Option<Res<gd_world::StreamedMap>>,
+    levels: Res<gd_game_core::levels::Levels>,
 ) {
     let Some(world) = world else { return };
     let Some(p) = portal.portal.as_ref().filter(|p| p.area_tag.is_none()) else {
@@ -320,7 +320,7 @@ fn dress_exit_gates(
         if let Some(snd) = rec
             .str("openSound")
             .filter(|s| !s.is_empty())
-            .and_then(|pak| crate::audio::spawn_loop(&mut commands, &a.data, pak, Vec3::ZERO))
+            .and_then(|pak| gd_audio::spawn_loop(&mut commands, &a.data, pak, Vec3::ZERO))
         {
             commands.entity(e).add_child(snd);
         }
@@ -479,7 +479,7 @@ fn rift_effects(
         }
         if let Some(snd) = rec
             .str(sound)
-            .and_then(|pak| crate::audio::spawn_loop(&mut commands, &data, pak, Vec3::ZERO))
+            .and_then(|pak| gd_audio::spawn_loop(&mut commands, &data, pak, Vec3::ZERO))
         {
             commands.entity(e).add_child(snd);
         }

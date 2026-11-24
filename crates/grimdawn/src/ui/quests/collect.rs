@@ -12,7 +12,7 @@ pub fn collect(
     mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<StoryRuntime>>,
     fonts: Res<FontCache>,
-    world: Option<Res<crate::world::StreamedMap>>,
+    world: Option<Res<gd_world::StreamedMap>>,
     (inv, stash): (
         Option<Res<gd_game_core::inventory::Inventory>>,
         Option<Res<gd_game_core::stash::Stash>>,

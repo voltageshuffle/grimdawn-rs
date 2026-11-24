@@ -123,18 +123,18 @@ fn log(
         Res<Assets<Mesh>>,
         Res<Assets<Image>>,
         Res<Assets<StandardMaterial>>,
-        Res<Assets<crate::world::TerrainMaterial>>,
+        Res<Assets<gd_world::TerrainMaterial>>,
     ),
     caches: (
         Res<gd_render::textures::Textures>,
         Res<gd_render::model::ModelCache>,
         Res<gd_game_core::creature::BodyCache>,
         Res<gd_game_core::character::AnimCache>,
-        Res<crate::audio::Sounds>,
+        Res<gd_audio::Sounds>,
         Option<Res<gd_render::fx::FxAssets>>,
         Res<gd_render::render::terrain::TerrainLayers>,
     ),
-    levels: Res<crate::world::Levels>,
+    levels: Res<gd_game_core::levels::Levels>,
 ) {
     let every = hooks.audit.mem_log.unwrap_or(5.0);
     let now = time.elapsed_secs();

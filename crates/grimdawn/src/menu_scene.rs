@@ -39,7 +39,7 @@
 //!   [`ambient_shadow`]).
 //!
 //! The scene is the map's levels built by the world streamer's own code
-//! (`world::build_level` on a background task, `world::spawn_level` without
+//! (`gd_world::build_level` on a background task, `gd_world::spawn_level` without
 //! gameplay content: no proxies, chests, breakables, nav or collision); it is
 //! despawned when the menu closes, before the session's world streams
 //! (`SessionReady`). The environment (`env.rs`) reads the menu map's sector
@@ -58,16 +58,17 @@
 //! the doll's looped long idle; the menu ambience (`StartAmbient`) and the
 //! scene's two breakable containers are not shown; the music plays at the
 //! area music's volume (0.6).
-use crate::world::{LevelCpu, Levels};
 use bevy::prelude::*;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use gd_formats::map::MapFile;
 use gd_formats::options::Value;
 use gd_game_core::data::GameData;
+use gd_game_core::levels::Levels;
 use gd_game_core::options::GameOptions;
 use gd_render::camera::GameCamera;
-use gd_render::render::backdrop::MenuBackdrop;
+use gd_render::render::backdrop::{MenuBackdrop, MenuView};
+use gd_world::LevelCpu;
 use std::sync::Arc;
 
 pub struct MenuPlugin;
@@ -96,29 +97,9 @@ impl Plugin for MenuPlugin {
             menu_camera
                 .after(gd_render::camera::CameraSet)
                 .before(TransformSystems::Propagate)
-                .run_if(resource_exists::<MenuScene>),
+                .run_if(resource_exists::<MenuBackdrop>),
         );
     }
-}
-
-/// A `gamemenu.tpl` record (module doc).
-#[derive(Clone, Debug)]
-pub struct MenuView {
-    /// The record's place in the menu's record list (module doc).
-    pub index: usize,
-    pub map: String,
-    pub eye: Vec3,
-    pub target: Vec3,
-    /// Vertical, radians.
-    pub fov: f32,
-    pub near: f32,
-    pub far: f32,
-    /// The character's place: `mmPlayerPosition`, rotation, `mmPlayerScale`.
-    pub player: Transform,
-    pub music: Option<String>,
-    /// `mmVignetteBitmap` and `mmLogo` (drawn by `ui/mainmenu.rs`).
-    pub vignette: Option<String>,
-    pub logo: Option<String>,
 }
 
 /// The menu record `option` (the `mainMenu` option) picks (module doc).
@@ -173,10 +154,9 @@ pub fn menu_view(
 
 type Built = anyhow::Result<(Arc<MapFile>, Vec<(usize, LevelCpu)>)>;
 
-/// The menu scene while the main menu is open.
+/// The menu scene while the main menu is open; its record's view is the [`MenuBackdrop`]'s.
 #[derive(Resource)]
 pub struct MenuScene {
-    pub view: MenuView,
     task: Option<Task<Built>>,
     music: Option<Entity>,
 }
@@ -197,12 +177,12 @@ impl MenuScene {
 fn open_scene(
     mut commands: Commands,
     data: Res<GameData>,
-    mut sounds: ResMut<crate::audio::Sounds>,
+    mut sounds: ResMut<gd_audio::Sounds>,
     layers: Res<gd_render::render::terrain::TerrainLayers>,
     grass: Res<gd_render::render::grass::GrassQuality>,
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut options: Option<ResMut<GameOptions>>,
-    scene: Option<Res<MenuScene>>,
+    (scene, backdrop): (Option<Res<MenuScene>>, Option<Res<MenuBackdrop>>),
     owned: Query<Entity, With<MenuSceneEntity>>,
 ) {
     // No options file: the engine's defaults, whose first run picks the third expansion's.
@@ -221,8 +201,8 @@ fn open_scene(
         warn!("main menu: no menu record");
         return;
     };
-    if let Some(old) = &scene {
-        if old.view.index == view.index {
+    if scene.is_some() {
+        if backdrop.is_some_and(|b| b.view.index == view.index) {
             return;
         }
         for e in &owned {
@@ -243,7 +223,7 @@ fn open_scene(
         let mut levels = Vec::new();
         for (i, r) in map.regions.iter().enumerate() {
             if r.level_size > 0 {
-                levels.push((i, crate::world::build_level(&map, &d, &layers, high, i)?));
+                levels.push((i, gd_world::build_level(&map, &d, &layers, high, i)?));
             }
         }
         Ok((map, levels))
@@ -253,25 +233,23 @@ fn open_scene(
         .as_deref()
         .and_then(|m| sounds.file(&data, m))
         .map(|f| {
-            use crate::audio::{ENGINE_HZ, SoundClass};
+            use gd_audio::{ENGINE_HZ, SoundClass};
             let speed = f.speed(ENGINE_HZ);
-            let e = crate::audio::spawn_2d(&mut commands, SoundClass::Music, 0.6, speed, f, true);
+            let e = gd_audio::spawn_2d(&mut commands, SoundClass::Music, 0.6, speed, f, true);
             commands
                 .entity(e)
                 .insert((Name::new("menu music"), MenuSceneEntity));
             e
         });
-    let cam_distance = view.eye.distance(view.player.translation);
     commands.insert_resource(MenuScene {
-        view,
         task: Some(task),
         music,
     });
     commands.insert_resource(MenuBackdrop {
+        view,
         map: None,
         levels: Levels::new(Vec::new()),
         time,
-        cam_distance,
     });
 }
 
@@ -282,8 +260,8 @@ fn finish_scene(
     data: Res<GameData>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut terrain_mats: ResMut<Assets<crate::world::TerrainMaterial>>,
-    mut decal_mats: ResMut<Assets<crate::world::DecalMaterial>>,
+    mut terrain_mats: ResMut<Assets<gd_world::TerrainMaterial>>,
+    mut decal_mats: ResMut<Assets<gd_world::DecalMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut mats: gd_render::render::material::MaterialAssets,
@@ -312,7 +290,7 @@ fn finish_scene(
     let mut receivers = gd_render::decal::DecalReceivers::default();
     for (i, mut cpu) in levels {
         let (origin, sectors) = (cpu.origin(), cpu.take_sectors());
-        let root = crate::world::spawn_level(
+        let root = gd_world::spawn_level(
             cpu,
             false,
             &mut commands,
@@ -338,7 +316,7 @@ fn finish_scene(
     if let Some(e) = ambient_shadow(
         &mut commands,
         &data,
-        &scene.view,
+        &backdrop.view,
         &mut meshes,
         &mut materials,
         &mut images,
@@ -404,10 +382,10 @@ fn close_scene(
 
 /// The record's fixed camera over the world camera's orbit.
 fn menu_camera(
-    scene: Res<MenuScene>,
+    backdrop: Res<MenuBackdrop>,
     mut cams: Query<(&mut GameCamera, &mut Transform, &mut Projection)>,
 ) {
-    let v = &scene.view;
+    let v = &backdrop.view;
     for (mut c, mut t, mut p) in &mut cams {
         // The environment picks its lights and sun around the target.
         c.target = v.target;

@@ -1,11 +1,11 @@
 //! The play session's start point: `map.dat`'s spawn, else (a save without one) the loaded character's
 //! respawn point, a uid resolved through the map's instance groups as the engine does. The session
 //! state itself (character choice, [`LoadedCharacter`]) is `gd_game::session`.
-use crate::world::StreamedMap;
 use bevy::prelude::*;
 pub use gd_game::session::*; // incl. `in_game`, which `AppState` mirrors
 pub use gd_game_core::session::*;
 use gd_ui::state::session::AppState;
+use gd_world::StreamedMap;
 
 /// `AppState` follows the session resources (PreUpdate, so the transition applies the same frame).
 // The area-ready gate reads StreamedMap/Levels/PlayerStart alongside the state mirrors.
@@ -16,7 +16,7 @@ fn sync_state(
     state: Res<State<AppState>>,
     mut next: ResMut<NextState<AppState>>,
     world: Option<Res<StreamedMap>>,
-    levels: Option<Res<crate::world::Levels>>,
+    levels: Option<Res<gd_game_core::levels::Levels>>,
     start: Option<Res<PlayerStart>>,
     hooks: Res<gd_game_core::hooks::Hooks>,
 ) {

@@ -16,7 +16,7 @@
 //! design not ported (Bevy / rodio mix to stereo; the window does not show it). Not ported on purpose: `toggledAurasOther`,
 //! `critFeedback`, `extraRollovers` and `reportStats` are no-ops in the engine, and the one-hit low-health flash is
 //! a stock quirk that never fires in normal play. `inactiveUpdateRate` <= 0 (the default) pauses game time and every
-//! sound while the window is unfocused (`grimdawn/src/audio/mixer.rs` `unfocused_mute`, `GamePause::unfocused`).
+//! sound while the window is unfocused (`gd-audio/src/mixer.rs` `unfocused_mute`, `GamePause::unfocused`).
 use bevy::prelude::*;
 use gd_formats::options::{Options, Value};
 
