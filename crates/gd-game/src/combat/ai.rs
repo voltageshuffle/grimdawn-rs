@@ -656,16 +656,22 @@ impl Alert {
 /// and goes idle. `quest_walk` runs it for every story character (friendly
 /// ones have no `MonsterAi`); the monster AI and skill choice skip it.
 ///
-/// `interruptible` is `MoveAction`'s bool, the controller's
-/// `AllowQuestInterruptions` (`ControllerAI::QuestCommandMove` stores it at
+/// `interruptible` is the quest command's last bool, the controller's
+/// `AllowQuestInterruptions` (every `ControllerAI::QuestCommand*` stores it at
 /// `ControllerAI.allowQuestInterruptions`): the state looks for enemies (`ShouldFindEnemy`) and
 /// answers `EnemyFound` / `Attacked` / `LowHealth` / ... with the default
 /// responses (the monster leaves the move to fight) only when it is set; else
 /// it ignores them all. [`quest_interrupt`] is that.
+///
+/// `anim`: the "QuestPlayAnimation" state instead (`Character.PlayAnimation`,
+/// `ControllerMonsterState::DefaultQuestCommandPlayAnimationResponse`), a QuestMove subclass sharing
+/// those event handlers: no path; it lasts while the character plays the scripted slot
+/// (`ControllerMonsterStateQuestPlayAnimation::HandleEvent`: the clip's "End" goes Idle unless held).
 #[derive(Component)]
 pub struct QuestMove {
     pub path: Vec<Vec3>,
     pub interruptible: bool,
+    pub anim: bool,
 }
 
 /// The enemy part of `ControllerMonster::FindEnemyUpdate` for a monster.
@@ -889,6 +895,12 @@ pub fn quest_walk(
 ) {
     let dt = time.delta_secs();
     for (e, mut tf, mut mv, mut ch, ai, mut agent) in &mut q {
+        if mv.anim {
+            if !matches!(ch.state, CharState::Scripted | CharState::ScriptedHold) {
+                commands.entity(e).remove::<QuestMove>();
+            }
+            continue;
+        }
         // A swing or cast in progress finishes first, and a knockdown's get-up.
         if matches!(
             ch.state,

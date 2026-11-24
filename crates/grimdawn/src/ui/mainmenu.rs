@@ -1300,7 +1300,11 @@ fn gametype_window(
         ("customButton", Hit::ModeCustom, g.custom),
         ("survivalButton", Hit::ModeCrucible, g.crucible),
     ] {
-        let Some(b) = child(ui, &rec, k) else {
+        // `GameModeWindow::Load` creates `survivalButton` only with the Crucible owned (port: installed,
+        // `available_arenas` non-empty).
+        let Some(b) =
+            child(ui, &rec, k).filter(|_| hit != Hit::ModeCrucible || !lists.arenas.is_empty())
+        else {
             continue;
         };
         if let Some(r) = check(ui, &b, c, down, hit) {

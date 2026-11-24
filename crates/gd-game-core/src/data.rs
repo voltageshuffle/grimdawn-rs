@@ -86,7 +86,8 @@ impl GameData {
     /// Mounts the mod `name` over the install for the whole process (`Engine::InitializeMod`: its
     /// records, scripts and maps win), or with `None` goes back to the install
     /// (`Engine::RemoveModDirectory`). A session sets it before anything reads the data. A mod
-    /// that fails to mount leaves the install.
+    /// that fails to mount leaves the install. A `.arz` in the mod's database folder other than
+    /// `<name>.arz` is not loaded (as in the engine) and is warned about.
     pub fn set_mod(&self, name: Option<&str>) -> anyhow::Result<()> {
         let mounted = match name {
             None => {
@@ -98,6 +99,14 @@ impl GameData {
                 .vfs
                 .initialize_mod(name)
                 .and_then(|()| self.db.initialize_mod(&self.vfs.root, name))
+                .map(|skipped| {
+                    for p in skipped {
+                        bevy::log::warn!(
+                            "mod {name}: {} is not loaded (only {name}.arz is)",
+                            p.display()
+                        );
+                    }
+                })
                 .inspect_err(|_| {
                     self.vfs.remove_mod();
                     self.db.remove_mod();

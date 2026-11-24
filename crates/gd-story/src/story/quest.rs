@@ -1186,7 +1186,7 @@ impl Story {
                 id: entity,
                 anim: *value,
                 hold: false,
-                flag: false,
+                quest: None,
             }),
             Action::CinematicText { tag } => self.effects.push(Effect::CinematicText(tag.clone())),
             Action::ScriptEvent { name } => self.effects.push(Effect::ScriptEvent(name.clone())),

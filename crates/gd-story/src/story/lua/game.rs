@@ -193,17 +193,14 @@ impl ScriptHost {
         }
         g.set("UI", ui)?;
 
-        // Not bound by the game (no `Debug` table in the exe or Engine.dll,
-        // and no stock script uses it); a mod script that calls it gets a
-        // loud error, as every unsupported binding does.
+        // Debug.AddStatisticText(text) (the exe binds a `Debug` table with it; the glue reaches
+        // `Engine::AddStatisticText`, which formats the text into the engine's statistics display and does
+        // nothing without one). PORT: the port has no statistics display, so it is a no-op (no stock script
+        // calls it).
         let debug = lua.create_table()?;
         debug.set(
             "AddStatisticText",
-            lua.create_function(|_, _: MultiValue| -> mlua::Result<()> {
-                Err(mlua::Error::runtime(
-                    "Debug.AddStatisticText is not supported by the port's Lua host",
-                ))
-            })?,
+            lua.create_function(|_, _: MultiValue| Ok(()))?,
         )?;
         g.set("Debug", debug)?;
 

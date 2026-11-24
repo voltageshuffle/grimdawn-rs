@@ -160,13 +160,19 @@ pub const ARENAS: [(&str, &str); 10] = [
     ("tagSurvivalArena_10", "i"),
 ];
 
-/// The arenas the install offers, as indices into [`ARENAS`].
+/// The arenas the install offers, as indices into [`ARENAS`]: none without the Crucible
+/// ([`gd_formats::vfs::survival_files_exist`], the port's `Engine::HasSurvivalDLC`); with it the base
+/// arenas, and those of each expansion pack present. Empty means no Crucible: the game-mode window has no
+/// Crucible toggle (`GameModeWindow::Load` creates `survivalButton` only when the DLC is owned).
 pub fn available_arenas(root: &std::path::Path) -> Vec<usize> {
+    if !gd_formats::vfs::survival_files_exist(root) {
+        return Vec::new();
+    }
     (0..ARENAS.len())
         .filter(|i| match ARENAS[*i].1 {
             "g" | "j" => root.join("survivalmode1").is_dir(),
             "h" | "i" => root.join("survivalmode2").is_dir(),
-            _ => root.join("mods/survivalmode").is_dir(),
+            _ => true,
         })
         .collect()
 }

@@ -1,6 +1,7 @@
 //! `.arc` resource archives (version 3). Files are split into LZ4-block parts
-//! of up to 256 KiB; a part whose compressed size equals its decompressed size
-//! is stored raw.
+//! of up to 256 KiB ([`MAX_PART`]); a part whose compressed size equals its decompressed size
+//! is stored raw. A part that claims more than [`MAX_PART`] is refused (every stock part fits;
+//! the 255× LZ4 bound alone would let a hostile mod's 1 MiB part allocate 255 MiB).
 //!
 //! [`Arc::read`] decodes a whole entry; [`Arc::open_entry`] gives a seekable reader ([`EntryReader`]) that
 //! decodes only the parts a read touches, as the engine's `FileSystem` serves a map to `World::Load`
@@ -31,6 +32,9 @@ pub struct Entry {
     pub num_parts: u32,
     pub first_part: u32,
 }
+
+/// The most decoded bytes of one part (the format's chunk size; the largest stock part).
+pub const MAX_PART: u32 = 256 << 10;
 
 pub struct Arc {
     pub path: PathBuf,
@@ -156,6 +160,7 @@ impl Arc {
         let mut total = 0u64;
         for p in parts {
             if past_end(p.offset, p.compressed)
+                || p.size > MAX_PART
                 || p.size as usize > lz4_max_size(p.compressed as usize)
             {
                 bail!("{}: corrupt part at {:#x}", e.name, p.offset);

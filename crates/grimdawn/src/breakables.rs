@@ -15,14 +15,14 @@
 //! mass) and a torque impulse (`applyTorqueImpulse`: angular velocity = the
 //! world inverse inertia × torque), all in world space, by `breakMode`
 //! (`BreakModeFromString`): Explode along (r, 1, r') normalised (r in -1..1),
-//! torque 0.05 × the impulse; React along the attack direction; Fall along that
-//! direction turned by the object's rotation (`WorldCoords::TransformVector`)
+//! torque 0.05 × the impulse; React along `BreakApart`'s direction, both rolls × its force;
+//! Fall along that direction turned by the object's rotation (`WorldCoords::TransformVector`)
 //! and tilted by up to ±0.3 on two perpendicular axes; React and Fall torque
 //! 0.025 × a second roll on a random -1..1 axis; any other mode no push. The
-//! attack direction is attacker → object, straight up without an attacker
-//! (`TakeAttack` → `BreakApart(dir, 1, …)`, which stores it over the
-//! `fallDirectionX/Y/Z` the record loaded, so an attack's Fall never reads
-//! them). The world's gravity is 14 m/s² and its restitution 0: the pieces do
+//! direction and force are [`Broke`]'s (`TakeAttack` → `BreakApart(dir, 1, …)`, a script's
+//! `Destructible:Destroy(dir, force, …)`), which `BreakApart` stores over the
+//! `fallDirectionX/Y/Z` the record loaded, so Fall never reads
+//! them. The world's gravity is 14 m/s² and its restitution 0: the pieces do
 //! not bounce; they tumble, slide to a stop on the terrain and the static
 //! scenery, and sleep once below 1.6 m/s and 2.5 rad/s for 2 s (Bullet's
 //! deactivation).
@@ -102,7 +102,7 @@ fn debris(mut commands: Commands, mut broke: MessageReader<Broke>, mut a: CharAs
     for b in broke.read() {
         let db = a.data.db.clone();
         if let Some(rec) = db.get(&b.record) {
-            spawn_debris(&mut commands, &mut a, rec, b.transform, b.attacker);
+            spawn_debris(&mut commands, &mut a, rec, b.transform, (b.dir, b.force));
         }
     }
 }
@@ -397,24 +397,24 @@ fn fly_debris(
     }
 }
 
-/// The broken pieces and break effects of a destructible record at `tf`;
-/// `attacker` is where the breaking hit came from (React and Fall modes). The break sound and effects play now;
+/// The broken pieces and break effects of a destructible record at `tf`; `push` is `BreakApart`'s direction
+/// and force ([`Broke`], React and Fall modes). The break sound and effects play now;
 /// the broken mesh follows once its model is built ([`PendingDebris`]).
 fn spawn_debris(
     commands: &mut Commands,
     assets: &mut CharAssets,
     rec: &gd_formats::arz::Record,
     tf: Transform,
-    attacker: Option<Vec3>,
+    push: (Vec3, f32),
 ) {
     if let Some(mesh) = rec.str("brokenMesh") {
         match assets.model_ready(mesh) {
-            Ready::Done(model) => spawn_broken(commands, rec, &model, tf, attacker),
+            Ready::Done(model) => spawn_broken(commands, rec, &model, tf, push),
             Ready::Loading => {
                 commands.spawn(PendingDebris {
                     record: rec.name.clone(),
                     tf,
-                    attacker,
+                    push,
                 });
             }
             Ready::Failed => {}
@@ -443,7 +443,7 @@ fn spawn_debris(
 struct PendingDebris {
     record: String,
     tf: Transform,
-    attacker: Option<Vec3>,
+    push: (Vec3, f32),
 }
 
 /// Spawns the waiting broken meshes whose model is built ([`PendingDebris`]); one that cannot load is dropped.
@@ -459,7 +459,7 @@ fn pending_debris(
         {
             match a.model_ready(mesh) {
                 Ready::Loading => continue,
-                Ready::Done(model) => spawn_broken(&mut commands, rec, &model, p.tf, p.attacker),
+                Ready::Done(model) => spawn_broken(&mut commands, rec, &model, p.tf, p.push),
                 Ready::Failed => {}
             }
         }
@@ -473,25 +473,24 @@ fn spawn_broken(
     rec: &gd_formats::arz::Record,
     model: &Arc<gd_render::model::ModelAsset>,
     tf: Transform,
-    attacker: Option<Vec3>,
+    (dir, push): (Vec3, f32),
 ) {
-    let force = (
-        rec.f32("breakForceMin").unwrap_or(0.0) * FORCE_SCALE,
-        rec.f32("breakForceMax").unwrap_or(0.0) * FORCE_SCALE,
-    );
     let mode = match rec.str("breakMode").unwrap_or("") {
         "React" => 0,
         "Explode" => 2,
         "Fall" => 3,
         _ => 1,
     };
-    let attack = attacker
-        .and_then(|a| (tf.translation + Vec3::Y * 0.5 - a).try_normalize())
-        .unwrap_or(Vec3::Y);
+    // React scales both rolls by `BreakApart`'s force (module doc).
+    let scale = if mode == 0 { push } else { 1.0 };
+    let force = (
+        rec.f32("breakForceMin").unwrap_or(0.0) * FORCE_SCALE * scale,
+        rec.f32("breakForceMax").unwrap_or(0.0) * FORCE_SCALE * scale,
+    );
     let dir = match mode {
-        0 => attack,
-        // `WorldCoords::TransformVector` of the stored attack direction (module doc).
-        3 => (tf.rotation * attack).normalize_or(Vec3::Y),
+        0 => dir,
+        // `WorldCoords::TransformVector` of the stored direction (module doc).
+        3 => (tf.rotation * dir).normalize_or(Vec3::Y),
         _ => Vec3::Y,
     };
     // `PickStatics` (module doc).
@@ -585,7 +584,8 @@ fn test_debris(
             &mut assets,
             r,
             Transform::from_translation(p.translation + Vec3::new(2.0, 0.0, 0.0)),
-            Some(p.translation),
+            // `TakeAttack`'s push: from the player to the object, force 1 (module doc).
+            (Vec3::X, 1.0),
         );
     }
 }

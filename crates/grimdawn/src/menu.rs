@@ -447,7 +447,9 @@ impl MainMenu {
         maps: &[CustomMap],
         rows: usize,
     ) {
-        self.crucible = pm.mode == 1;
+        // No Crucible installed (`offered` empty): a mode 1 file opens as the campaign (the engine's
+        // game-mode window has no Crucible toggle then).
+        self.crucible = pm.mode == 1 && !offered.is_empty();
         // PORT: a mode 2 file whose map is no longer listed opens as the campaign (the engine keeps mode 2
         // with no map set when the list is not empty).
         self.custom = (pm.mode == 2)

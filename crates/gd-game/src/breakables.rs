@@ -53,14 +53,17 @@ impl Plugin for BreakablesPlugin {
 }
 
 /// A breakable broke (the game throws its broken pieces and plays its
-/// break effects): its record and transform, where the killing blow's
-/// attacker was (any caster breaks them; the player when it is gone), and the
-/// story object it is (`crate::story_world`: its `onBroken` hook).
+/// break effects): its record and transform, `Destructible::BreakApart`'s direction and force, and the
+/// story object it is (`crate::story_world`: its `onBroken` hook). A killing blow's break
+/// (`Destructible::TakeAttack`) passes the direction from its attacker (any caster; the player when it is
+/// gone) to the object, 0.5 m up its centre, straight up without one, and force 1; a script's
+/// `Destructible:Destroy(dir, force, bool)` passes its own.
 #[derive(Message, Clone, Debug)]
 pub struct Broke {
     pub record: String,
     pub transform: Transform,
-    pub attacker: Option<Vec3>,
+    pub dir: Vec3,
+    pub force: f32,
     pub story: Option<u32>,
 }
 
@@ -191,10 +194,12 @@ pub fn break_objects(
     for (e, tf, b, by, story) in &q {
         // The killing blow's attacker (any caster: `combat::Side::hits`),
         // else the player.
-        let attacker = by
+        let dir = by
             .and_then(|k| places.get(k.0).ok())
             .map(|t| t.translation)
-            .or(player);
+            .or(player)
+            .and_then(|a| (tf.translation + Vec3::Y * 0.5 - a).try_normalize())
+            .unwrap_or(Vec3::Y);
         broken.0.insert(b.key);
         let Some(rec) = data.db.get(&b.record) else {
             continue;
@@ -205,7 +210,8 @@ pub fn break_objects(
         broke.write(Broke {
             record: b.record.clone(),
             transform: *tf,
-            attacker,
+            dir,
+            force: 1.0,
             story: story.map(|a| a.0),
         });
         let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));

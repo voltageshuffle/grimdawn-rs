@@ -108,6 +108,25 @@ fn files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
     paths
 }
 
+/// `dir/<name>.arz`, the name matched ignoring case (Windows file names).
+fn named_arz(dir: &Path, name: &str) -> Option<PathBuf> {
+    files_with_ext(dir, "arz").into_iter().find(|p| {
+        p.file_stem()
+            .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(name))
+    })
+}
+
+/// `Engine::SurvivalFilesExist`: the Crucible's first pack (`mods/survivalmode/database/survivalmode.arz`,
+/// any case) is installed. The engine's `HasSurvivalDLC` is this and the Steam DLC being owned; the port
+/// has no Steam, so this alone stands for it.
+pub fn survival_files_exist(root: &Path) -> bool {
+    named_arz(
+        &root.join(SURVIVAL_LAYERS[0]).join("database"),
+        SURVIVAL_MOD,
+    )
+    .is_some()
+}
+
 /// The mods mounted so far, each indexed once and kept, and which one is active (partition 1).
 /// Append-only (a list of `OnceLock` links), so a borrow of a mod's data lives as long as `self`.
 struct Mods<T> {
@@ -367,12 +386,18 @@ pub struct Database {
 }
 
 impl Database {
-    /// Every `database/*.arz` of each layer present under `root`.
+    /// The install's records in `Engine::LoadMainDatabase` order: `database/database.arz`, then
+    /// `gdx1/database/gdx1.arz` .. `gdx3` (names matched ignoring case: the install ships
+    /// `GDX1.arz`), a layer without its file adding nothing. Any other `.arz` in those folders is
+    /// not loaded, as in the engine.
+    /// PORT: the engine's `/basemods` command-line switch (mounts `mods/` resources over the
+    /// install and loads `mods/database.arz` last) is not ported.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref();
         let mut base = Records::default();
         for layer in LAYERS {
-            for p in files_with_ext(&root.join(layer).join("database"), "arz") {
+            let name = if layer.is_empty() { "database" } else { layer };
+            if let Some(p) = named_arz(&root.join(layer).join("database"), name) {
                 base.push(Arz::open(&p)?);
             }
         }
@@ -383,41 +408,35 @@ impl Database {
     }
 
     /// `Engine::InitializeMod(name)`'s records: `<layer>/database/<layer name>.arz` of each of
-    /// [`mod_layers`] (under the game `root`; a layer without one adds nothing) replace the
-    /// install's until [`Database::remove_mod`] or the next mod. A missing mod folder is an
-    /// error, and so is a database folder whose `.arz` files all miss the mod's name (the
-    /// records would silently not load).
-    /// PORT: the engine's `LoadDatabase` may enumerate the folder's `.arz` files; the port
-    /// loads only `<name>.arz` and refuses a folder where nothing matches.
-    pub fn initialize_mod(&self, root: &Path, name: &str) -> Result<()> {
+    /// [`mod_layers`] (under the game `root`) replace the install's until
+    /// [`Database::remove_mod`] or the next mod. `LoadDatabase` opens that one file: a layer
+    /// without it adds nothing (the engine logs "Unable to open database archive" and mounts the
+    /// mod all the same), and no other `.arz` of the folder is read. A missing mod folder is an
+    /// error. Returns the `.arz` files of the mod's database folders that were not loaded (a
+    /// misnamed mod database), for the caller to warn about; only on the mod's first mount.
+    pub fn initialize_mod(&self, root: &Path, name: &str) -> Result<Vec<PathBuf>> {
         let layers = mod_layers(name);
         let dir = root.join(&layers[0]);
         anyhow::ensure!(dir.is_dir(), "mod folder not found: {}", dir.display());
+        let mut skipped = Vec::new();
         self.mods.initialize(name, || {
             let mut records = Records::default();
-            for (i, layer) in layers.iter().enumerate() {
-                let file = format!("{}.arz", layer.rsplit('/').next().unwrap_or(layer));
+            for layer in &layers {
+                let file = layer.rsplit('/').next().unwrap_or(layer);
                 let dir = root.join(layer).join("database");
-                let arzs = files_with_ext(&dir, "arz");
-                let found = arzs.iter().find(|p| {
-                    p.file_name()
-                        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&file))
-                });
-                match found {
-                    Some(p) => records.push(Arz::open(p)?),
-                    None if i == 0 && !arzs.is_empty() => anyhow::bail!(
-                        "mod database: no {file} in {} (found: {})",
-                        dir.display(),
-                        arzs.iter()
-                            .map(|p| p.file_name().unwrap().to_string_lossy())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                    None => {}
+                let found = named_arz(&dir, file);
+                if let Some(p) = &found {
+                    records.push(Arz::open(p)?);
                 }
+                skipped.extend(
+                    files_with_ext(&dir, "arz")
+                        .into_iter()
+                        .filter(|p| Some(p) != found.as_ref()),
+                );
             }
             Ok(records)
-        })
+        })?;
+        Ok(skipped)
     }
 
     /// `Engine::RemoveModDirectory` + `ReloadDatabase`: back to the install's records.

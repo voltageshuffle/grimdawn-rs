@@ -64,34 +64,26 @@ impl UserData for Obj {
         };
         m.add_method("GetCoords", get_coords_fn);
         // Actor.GetAttachedCoords(name) (`LuaActor::GetAttachedCoords` →
-        // `Actor::GetAttachedCoords`, Game.dll `0x1800274d0`): the coords of a
-        // mesh attach point (its transform applied to the entity's). PORT: no
-        // meshes here — the host publishes attach offsets
-        // (`Entities::attach_offsets`) added to the entity coords (translation
-        // only, no attach rotation); without a published offset this falls
-        // back to the entity coords (its one stock use spawns an effect at a
-        // boss).
+        // `Actor::GetAttachedCoords`): the world coords of a mesh attach point (the entity coords ×
+        // the actor-scaled posed point, `Actor::GetAttachPointCoords`). PORT: no meshes here — the host
+        // publishes each story character's points in the world every frame (`Entities::attach_coords`,
+        // name matched ignoring case); without them this falls back to the entity coords.
         m.add_method("GetAttachedCoords", |lua: &Lua, o: &Obj, name: String| {
             let c = {
                 let s = o.ctx.story.borrow();
-                let base = if o.id == s.player.id {
-                    s.player.position
-                } else {
-                    s.entities.get(o.id).map_or([0.0; 3], |e| e.coords.origin)
-                };
-                let off = s
+                let point = s
                     .entities
-                    .attach_offsets
-                    .get(&(o.id, name.clone()))
-                    .or_else(|| {
-                        s.entities
-                            .attach_offsets
-                            .get(&(o.id, name.to_ascii_lowercase()))
-                    });
-                match off {
-                    Some(d) => Coords::at([base[0] + d[0], base[1] + d[1], base[2] + d[2]]),
-                    None => Coords::at(base),
-                }
+                    .attach_coords
+                    .get(&o.id)
+                    .and_then(|ps| ps.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)))
+                    .map(|(_, c)| *c);
+                point.unwrap_or_else(|| {
+                    Coords::at(if o.id == s.player.id {
+                        s.player.position
+                    } else {
+                        s.entities.get(o.id).map_or([0.0; 3], |e| e.coords.origin)
+                    })
+                })
             };
             coords_value(lua, &c)
         });
@@ -800,25 +792,24 @@ impl UserData for Obj {
             });
             Ok(())
         });
-        // Character.PlayAnimation(uint anim, bool hold, bool)
+        // Character.PlayAnimation(uint anim, bool hold, bool allow)
         // (`LuaCharacter::PlayAnimation` → `GameEngine::QuestCommandPlayAnimation`
         // → `Character::QuestCommandPlayAnimation` → the controller's
-        // "QuestPlayAnimation" state, exe `sub_14005C980`): the
-        // `AnimationSet_Type` slot plays once at speed 1; the first bool holds
-        // the pose past the clip's "End" (no return to Idle), the second is
-        // stored on the controller (its reader not traced — carried for
-        // parity). A non-character does nothing.
+        // "QuestPlayAnimation" state): the `AnimationSet_Type` slot plays once at speed 1; `hold`
+        // keeps the pose past the clip's "End" (no return to Idle), `allow` is
+        // `ControllerAI.allowQuestInterruptions` (`ControllerAI::QuestCommandPlayAnimation`; the state's
+        // enemy / attack handlers answer only when set). A non-character does nothing.
         m.add_method("PlayAnimation", |_, o, args: MultiValue| {
             let anim = arg_num(&args, 0) as u32;
             let hold = matches!(args.get(1), Some(Value::Boolean(true)));
-            let flag = matches!(args.get(2), Some(Value::Boolean(true)));
+            let allow = matches!(args.get(2), Some(Value::Boolean(true)));
             let mut s = o.ctx.story.borrow_mut();
             if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
                 s.effects.push(Effect::PlayAnimation {
                     id: Some(o.id),
                     anim,
                     hold,
-                    flag,
+                    quest: Some(allow),
                 });
             }
             Ok(())
@@ -904,21 +895,15 @@ impl UserData for Obj {
             });
             Ok(())
         });
-        // Item.HasAffix(record) (`LuaItem::HasAffix` → `Item::HasAffix`,
-        // Game.dll `0x180323ea0`): streq (case-sensitive memcmp,
-        // `sub_180019E40`) of the name against the item's stored prefix and
-        // suffix. The host publishes the live affixes of items the story
-        // knows (`Entities::item_affixes`); an object with none published has
-        // no affix.
+        // Item.HasAffix(name) (`LuaItem::HasAffix` → `Item::HasAffix`): false unless the object is an
+        // Item; then streq (case-sensitive) of the name against the item's own prefix and suffix. Every
+        // item object a script can name was made from its record alone (`Item.Create` →
+        // `ObjectManager::CreateObjectFromFile`, or placed by a level), so both are empty and only ""
+        // matches; picking it up keeps the same object. (`Player.GiveAffixItem` returns no object.)
         m.add_method("HasAffix", |_, o, args: MultiValue| {
             let name = arg_str(&args, 0);
-            Ok(o.ctx
-                .story
-                .borrow()
-                .entities
-                .item_affixes
-                .get(&o.id)
-                .is_some_and(|(p, s)| p == &*name || s == &*name))
+            let s = o.ctx.story.borrow();
+            Ok(name.is_empty() && super::has_class(&s, "Item", o.id))
         });
     }
 }

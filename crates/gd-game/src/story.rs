@@ -46,8 +46,7 @@ impl Plugin for StoryPlugin {
                             .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                         mirror_story_monsters.in_set(StoryStage::Sync),
                         count_story_kills.in_set(StoryStage::Sync),
-                        publish_item_affixes.in_set(StoryStage::Sync),
-                        publish_attach_offsets.in_set(StoryStage::Sync),
+                        publish_attach_coords.in_set(StoryStage::Sync),
                         tick_story.in_set(StoryStage::Tick),
                         pick_up_story_essences,
                         quest_updates,
@@ -778,18 +777,21 @@ pub fn tick_story(
     }
 }
 
-/// Quest `ControllerState` actions: the conversation's NPC plays the
-/// `AnimationSet_Type` slot ([`gd_game_core::character::Character::play_scripted`]).
+/// Quest `ControllerState` actions and `Character.PlayAnimation`: the character plays the
+/// `AnimationSet_Type` slot ([`gd_game_core::character::Character::play_scripted_with`]); the latter also puts
+/// it in the "QuestPlayAnimation" state ([`crate::combat::QuestMove`] with `anim`), which keeps the
+/// monster AI off it unless the call allows quest interruptions.
 pub fn play_story_animations(
+    mut commands: Commands,
     mut events: MessageReader<StoryEffect>,
-    mut actors: Query<(&StoryActor, &mut gd_game_core::character::Character)>,
+    mut actors: Query<(Entity, &StoryActor, &mut gd_game_core::character::Character)>,
 ) {
     for ev in events.read() {
         let Effect::PlayAnimation {
             id: Some(id),
             anim,
             hold,
-            flag,
+            quest,
         } = &ev.0
         else {
             continue;
@@ -797,9 +799,16 @@ pub fn play_story_animations(
         let Some(ty) = gd_sim::anim::AnimType::from_index(*anim as usize) else {
             continue;
         };
-        for (a, mut c) in &mut actors {
-            if a.0 == *id {
-                c.play_scripted_with(ty, *hold, *flag);
+        for (e, a, mut c) in &mut actors {
+            if a.0 == *id
+                && c.play_scripted_with(ty, *hold)
+                && let Some(allow) = quest
+            {
+                commands.entity(e).insert(crate::combat::QuestMove {
+                    path: Vec::new(),
+                    interruptible: *allow,
+                    anim: true,
+                });
             }
         }
     }
@@ -1167,78 +1176,43 @@ pub fn screen_shake(mut events: MessageReader<StoryEffect>, mut shake: ResMut<Sc
     }
 }
 
-/// `Item:HasAffix`'s host bridge (LUA-13): the live affixes of the inventory items the story knows.
-/// PORT: the port's items carry no object ids (the engine's `Item` objects do), so a story item object
-/// is bridged to the first inventory instance of its record (bags, worn gear, the stash sacks); an
-/// object with no instance publishes nothing (`HasAffix` false).
-pub fn publish_item_affixes(
+/// `Entity:GetAttachedCoords(name)`'s host facts (LUA-18): every frame, the world coords of each story
+/// character's mesh attach points (`Actor::GetAttachedCoords`: the entity coords × the point in its posed
+/// parent bone's frame, `Character::posed`, scaled by the actor scale). Names as the mesh spells them.
+/// The names are rebuilt only when the body mesh changes (a form); the coords are refreshed in place. A
+/// character no longer in the world publishes nothing (the binding falls back to the entity coords).
+pub fn publish_attach_coords(
     rt: Option<NonSend<StoryRuntime>>,
-    inv: Option<Res<gd_game_core::inventory::Inventory>>,
-    stash: Option<Res<gd_game_core::stash::Stash>>,
-) {
-    let (Some(rt), Some(inv)) = (rt, inv) else {
-        return;
-    };
-    let mut s = rt.story.borrow_mut();
-    let items: Vec<(u32, String)> = s
-        .entities
-        .objects
-        .values()
-        .filter(|o| o.class == gd_story::story::state::ObjClass::Item)
-        .map(|o| (o.id, o.record.clone()))
-        .collect();
-    for (id, record) in items {
-        let bags = inv
-            .bags
-            .iter()
-            .flat_map(|b| b.items.iter().map(|p| &p.item));
-        let worn = inv.equipped.iter().flatten();
-        let stored = stash
-            .iter()
-            .flat_map(|st| st.pages.iter().chain(&st.transfer))
-            .flat_map(|b| b.items.iter().map(|p| &p.item));
-        let affixes = bags
-            .chain(worn)
-            .chain(stored)
-            .find(|it| it.base_name.eq_ignore_ascii_case(&record))
-            .map(|it| (it.prefix_name.clone(), it.suffix_name.clone()));
-        match affixes {
-            Some(a) => {
-                s.entities.item_affixes.insert(id, a);
-            }
-            None => {
-                s.entities.item_affixes.remove(&id);
-            }
-        }
-    }
-}
-
-/// `Entity:GetAttachedCoords(name)`'s host facts (LUA-18): the mesh attach points of the story
-/// characters (`gd_formats::msh::Mesh::attach_points`), published as local offsets the binding adds to
-/// the entity coords. PORT: translation only — the engine applies the attach point's full transform
-/// (its parent bone's animated frame × the point); the port publishes the point's mesh-space origin
-/// (no bone animation, no attach rotation), keyed lowercase (the engine's name lookup is
-/// case-insensitive). Republished when the body mesh changes (a form); objects without a mesh keep
-/// the binding's entity-coords fallback.
-pub fn publish_attach_offsets(
-    rt: Option<NonSend<StoryRuntime>>,
-    chars: Query<(&StoryActor, &gd_game_core::character::Character)>,
-    mut seen: Local<HashMap<u32, usize>>,
+    chars: Query<(&StoryActor, &gd_game_core::character::Character, &Transform)>,
+    mut seen: Local<HashMap<u32, (usize, bool)>>,
 ) {
     let Some(rt) = rt else { return };
     let mut s = rt.story.borrow_mut();
-    for (&StoryActor(id), c) in &chars {
+    seen.values_mut().for_each(|(_, live)| *live = false);
+    for (&StoryActor(id), c, tf) in &chars {
+        let points = c.body.attach_points();
+        let list = s.entities.attach_coords.entry(id).or_default();
         let ptr = Arc::as_ptr(&c.body) as usize;
-        if seen.get(&id) == Some(&ptr) {
-            continue;
+        if seen.insert(id, (ptr, true)).map(|(p, _)| p) != Some(ptr) {
+            list.clear();
+            list.extend(
+                points
+                    .iter()
+                    .map(|a| (a.name.clone(), gd_story::story::state::Coords::at([0.0; 3]))),
+            );
         }
-        seen.insert(id, ptr);
-        s.entities.attach_offsets.retain(|(oid, _), _| *oid != id);
-        for a in c.body.attach_points() {
-            s.entities
-                .attach_offsets
-                .insert((id, a.name.to_ascii_lowercase()), a.coords.origin);
+        for (a, (_, out)) in points.iter().zip(list.iter_mut()) {
+            let p = a.coords_in(c.posed());
+            let axis = |v: [f32; 3]| (tf.rotation * (Vec3::from(v) * tf.scale)).to_array();
+            *out = gd_story::story::state::Coords {
+                origin: tf.transform_point(Vec3::from(p.origin)).to_array(),
+                axes: [axis(p.x), axis(p.y), axis(p.z)],
+            };
         }
     }
-    seen.retain(|id, _| s.entities.get(*id).is_some());
+    seen.retain(|_, (_, live)| *live);
+    let seen = &*seen;
+    s.entities
+        .attach_coords
+        .retain(|id, _| seen.contains_key(id));
 }

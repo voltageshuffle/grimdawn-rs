@@ -1165,6 +1165,7 @@ pub fn world_effects(
                         commands.entity(e).insert(crate::combat::QuestMove {
                             path: p.into_iter().skip(1).map(Vec3::from).collect(),
                             interruptible: *interruptible,
+                            anim: false,
                         });
                     }
                 }
@@ -1227,6 +1228,7 @@ pub fn world_effects(
                         commands.entity(e).insert(crate::combat::QuestMove {
                             path: p.into_iter().skip(1).map(Vec3::from).collect(),
                             interruptible: false,
+                            anim: false,
                         });
                     }
                 }
@@ -1292,14 +1294,18 @@ pub fn world_effects(
                     }
                 }
             }
-            // `Destructible:Destroy(dir, force, bool)` (engine `BreakApart`, Game.dll `0x18025e650`):
+            // `Destructible:Destroy(dir, force, bool)` (engine `Destructible::BreakApart`):
             // the object breaks but stays valid and queryable (the binding set `broken` / `alive`);
-            // the host shows the broken pieces ([`crate::breakables::Broke`], no `onBroken`: the engine
+            // the host shows the broken pieces ([`crate::breakables::Broke`] with the call's dir and force,
+            // which `BreakApart` stores for the pieces' launch; no `onBroken`: the engine
             // fires that only from `TakeAttack`), remembers the break for the session and takes the
-            // intact entity away. The bool arms a ~1000 ms despawn ([`despawn_broken`]). PORT: dir /
-            // force are the engine's debris launch; the port's pieces launch from the attacker's
-            // direction (none here: the record's own scatter).
-            Effect::BreakDestructible { id, timed, .. } => {
+            // intact entity away. The bool arms a ~1000 ms despawn ([`despawn_broken`]).
+            Effect::BreakDestructible {
+                id,
+                dir,
+                force,
+                timed,
+            } => {
                 for (e, a, b, tf) in &breakables {
                     if a.0 != *id {
                         continue;
@@ -1308,7 +1314,8 @@ pub fn world_effects(
                     broke.write(crate::breakables::Broke {
                         record: b.record.clone(),
                         transform: *tf,
-                        attacker: None,
+                        dir: Vec3::from(dir.origin),
+                        force: *force,
                         story: None,
                     });
                     commands.entity(e).try_despawn();

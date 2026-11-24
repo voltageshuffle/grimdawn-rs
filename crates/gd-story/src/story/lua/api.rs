@@ -23,7 +23,7 @@ pub const API: &[(&str, &[(&str, bool)])] = &[
     ("Shared", &[("Localize", true)]),
     ("Time", &[("Now", true)]),
     ("UI", &[("Notify", true)]),
-    ("Debug", &[("AddStatisticText", false)]),
+    ("Debug", &[("AddStatisticText", true)]),
     (
         "Game",
         &[

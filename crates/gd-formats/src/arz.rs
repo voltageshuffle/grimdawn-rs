@@ -15,10 +15,17 @@
 //! - 1: gd-sim `actor::RecordOffenseFields` (per-record offense field values by level index).
 //! - 2: gd-sim `stats::RecordExprs` (parsed field equations: bio / proxy / loot).
 //! - 3: gd-sim `[skills::SkillLevel; 64]` (parsed `skillLevelN` numbers / equations).
+//!
+//! A record that claims more than [`MAX_RECORD`] decoded bytes is refused (the largest stock or
+//! shipped-mod record is about 43 KB), so a hostile mod cannot have one record allocate 255× its
+//! compressed size.
 use crate::util::{Reader, lz4_block};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::sync::{Arc, Weak};
+
+/// The most decoded bytes of one record (a hundredfold the largest known one).
+pub const MAX_RECORD: u32 = 4 << 20;
 
 #[derive(Debug, Clone)]
 pub struct RecordHeader {
@@ -176,6 +183,9 @@ impl Arz {
                     h.compressed
                 )
             })?;
+        if h.size > MAX_RECORD {
+            bail!("record of {} bytes exceeds {MAX_RECORD}", h.size);
+        }
         let buf = lz4_block(src, h.size as usize)?;
         let mut r = Reader::new(&buf);
         let mut fields = Vec::with_capacity(r.capacity(r.remaining() / 8, 8));

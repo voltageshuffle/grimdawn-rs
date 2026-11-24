@@ -626,12 +626,9 @@ pub struct Entities {
     pub proxy_limits: BTreeMap<u32, [f32; 3]>,
     /// `Proxy.Create(record, vec, true)`: `CreateAtIgnoreBoss` (byte +1612).
     pub proxy_ignore_boss: HashSet<u32>,
-    /// Host-published live affixes of inventory items the story knows (object id → prefix/suffix
-    /// record names), for `Item:HasAffix` (engine `Item::HasAffix` streq's the replica's affixes).
-    pub item_affixes: HashMap<u32, (String, String)>,
-    /// Host-published mesh attach-point offsets (object id, attach name → local offset), for
-    /// `Entity:GetAttachedCoords(name)`; absent = fall back to the entity coords (documented).
-    pub attach_offsets: HashMap<(u32, String), [f32; 3]>,
+    /// Host-published world coords of the story characters' mesh attach points (object id → (attach name,
+    /// coords)), for `Entity:GetAttachedCoords(name)`; an object without them falls back to its entity coords.
+    pub attach_coords: HashMap<u32, Vec<(String, Coords)>>,
     /// Characters a script created with `Character.Create` / `CreateNearPlayer`: Grim Dawn.exe
     /// `LuaCharacter::Create` / `LuaCharacter::CreateAtLevel` / `LuaCharacter::CreateNearPlayer` call the new
     /// object's `Character::EnableSpawnAnimation`, so it starts with its Spawn animation (the host's startup);
@@ -684,8 +681,7 @@ impl Entities {
         self.origins.remove(&id);
         self.proxy_limits.remove(&id);
         self.proxy_ignore_boss.remove(&id);
-        self.item_affixes.remove(&id);
-        self.attach_offsets.retain(|(oid, _), _| *oid != id);
+        self.attach_coords.remove(&id);
         self.spawn_animation.remove(&id);
         self.objects.remove(&id)
     }
@@ -793,8 +789,10 @@ pub enum Effect {
         anim: u32,
         /// Third arg: hold the pose past the clip's end instead of reverting.
         hold: bool,
-        /// Fourth arg: stored by the engine (`sub_14005C980`); reader untraced, kept for parity.
-        flag: bool,
+        /// `Some(allow)`: the controller's "QuestPlayAnimation" state (`Character.PlayAnimation`), `allow` its
+        /// fourth arg, `ControllerAI.allowQuestInterruptions` (the monster fights an enemy only when set);
+        /// `None`: a bare animation play with no controller state (quest action 14).
+        quest: Option<bool>,
     },
     /// Quest action 22 (`ScriptableAction_CastSkill`): `caster` (the action's owner, a conversation's NPC) casts
     /// `skill` on the main player; None (a quest's action, no owner) does nothing (`gd_game::story::cast_story_skills`).
