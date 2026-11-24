@@ -47,7 +47,62 @@ Highlights; the module doc comments are the reference:
 - `gd-tools`: mod-aware record/story inspection (`--mod`, `--diff`) and `<arc>:<entry>` map reading,
   without extracting archives.
 
-## Quick start
+## Playing
+You need Grim Dawn **1.3.1.2** installed (Steam or GOG, with whichever expansions you own) and a GPU with
+Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the game's folder.
+
+### From a GitHub release
+1. Download `grimdawn-rs-windows-x86_64.zip` or `grimdawn-rs-linux-x86_64.tar.gz` from the
+   [Releases](../../releases) page and unpack it.
+2. Either copy `grimdawn.exe` (Windows) / `grimdawn` (Linux) **into your Grim Dawn folder**, the one that holds
+   `database/database.arz`, and start it from there; or keep it anywhere and tell it where the game is:
+   ```sh
+   grimdawn --game-dir "C:\Program Files (x86)\Steam\steamapps\common\Grim Dawn"   # Windows
+   ./grimdawn --game-dir "$HOME/.local/share/Steam/steamapps/common/Grim Dawn"      # Linux
+   ```
+   Without `--game-dir` the port looks in the folder of the executable, then in the folder you start it from.
+   If neither holds the game it exits with "no Grim Dawn install found", naming the folders it tried.
+
+Windows: the build is unsigned, so SmartScreen may warn ("More info" → "Run anyway"). Linux: the build needs
+glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, any current Arch) and runs on Wayland or X11; if the file lost its
+execute bit, `chmod +x grimdawn`.
+
+### Where the game usually is
+|Store / launcher|Typical folder|
+|---|---|
+|Steam, Windows|`C:\Program Files (x86)\Steam\steamapps\common\Grim Dawn`|
+|Steam, Windows, other library|`D:\SteamLibrary\steamapps\common\Grim Dawn`|
+|GOG Galaxy, Windows|`C:\Program Files (x86)\GOG Galaxy\Games\Grim Dawn`|
+|GOG offline installer, Windows|`C:\GOG Games\Grim Dawn`|
+|Steam, Linux (Proton)|`~/.local/share/Steam/steamapps/common/Grim Dawn`|
+|Steam, Linux, Flatpak|`~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Grim Dawn`|
+|Heroic (GOG), Linux|`~/Games/Heroic/Grim Dawn`|
+
+On Steam you can also right-click Grim Dawn → Manage → Browse local files to open the folder.
+
+### Saves and settings
+The port keeps its own folder, separate from the real game's: `%APPDATA%\grimdawn-rs` on Windows,
+`~/.local/share/grimdawn-rs` on Linux (`$XDG_DATA_HOME/grimdawn-rs` if set). Characters are in `save/`, options
+and key bindings in `Settings/`. The save files use the game's formats, so a character folder can be copied
+between the port and the real game.
+
+### Building it yourself
+1. Install Rust with [rustup](https://rustup.rs). The repo pins its nightly toolchain; rustup fetches it on
+   the first build.
+   - Windows: rustup asks for the Visual Studio C++ Build Tools; install them when it does.
+   - Linux: install the build libraries, e.g. on Debian / Ubuntu
+     `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`,
+     on Arch `sudo pacman -S base-devel alsa-lib systemd-libs wayland libxkbcommon`.
+2. Build and run:
+   ```sh
+   git clone https://github.com/voltageshuffle/grimdawn-rs
+   cd grimdawn-rs
+   cargo run -p grimdawn --release -- --game-dir "/path/to/Grim Dawn"
+   ```
+   The finished program is `target/release/grimdawn` (`grimdawn.exe` on Windows); copy it like a release
+   download above.
+
+## Development
 ```sh
 cp local.env.example local.env   # set GD_ROOT to your Grim Dawn install
 scripts/with-env cargo dev       # debug build with dev hooks
