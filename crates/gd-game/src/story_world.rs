@@ -94,6 +94,7 @@ impl Plugin for StoryWorldPlugin {
                     )
                         .chain()
                         .after(StoryStage::Tick),
+                    despawn_broken,
                 ),
             );
     }
@@ -119,6 +120,10 @@ pub struct StoryWorld {
     focus: Option<Vec3>,
     /// Object ids of [`HookedChild`]ren removed since [`hooked_characters`] last ran.
     gone_children: Vec<u32>,
+    /// Script-broken destructibles' timed despawns (`Destructible:Destroy`'s bool, `BreakApart`'s
+    /// 1000 ms): object id and seconds left; [`despawn_broken`] takes the object out of the world
+    /// (it stays queryable, broken).
+    broken_despawn: Vec<(u32, f32)>,
 }
 
 /// The story object of a spawned character [`hooked_characters`] bound hooks to. Its removal (the character
@@ -421,7 +426,7 @@ fn placed(c: &Coords) -> Transform {
 pub fn sync_actors(
     mut commands: Commands,
     (rt, sw): (Option<NonSendMut<StoryRuntime>>, NonSend<StoryWorld>),
-    mut spawned_actors: ResMut<SpawnedActors>,
+    (mut spawned_actors, mut bosses): (ResMut<SpawnedActors>, ResMut<crate::monsters::HeroBosses>),
     actors: Query<(Entity, &StoryActor, Option<&gd_game_core::world::Breakable>)>,
     died: Query<
         &StoryActor,
@@ -606,6 +611,15 @@ pub fn sync_actors(
                 &patrol_groups
                     .groups
                     .for_proxy(gd_sim::patrol::story_proxy_uid(id)),
+                {
+                    let st = rt.story.borrow();
+                    st.entities.proxy_limits.get(&id).map(|v| Vec3::from(*v))
+                },
+                {
+                    let st = rt.story.borrow();
+                    st.entities.proxy_ignore_boss.contains(&id)
+                },
+                &mut bosses,
             );
             for &e in &es {
                 commands.entity(e).insert(StoryProxyChild(id));
@@ -1046,6 +1060,24 @@ pub fn world_effects(
     mut states: ResMut<crate::monsters::ProxyStates>,
     mut killed: MessageWriter<crate::combat::MonsterKilled>,
     chars: Query<(), With<gd_game_core::character::Character>>,
+    (data, factions): (Res<GameData>, Option<Res<crate::factions::PlayerFactions>>),
+    (mut broken, mut broke, mut spawned_actors): (
+        ResMut<gd_game_core::world::Broken>,
+        MessageWriter<crate::breakables::Broke>,
+        ResMut<SpawnedActors>,
+    ),
+    (mut sw, breakables): (
+        NonSendMut<StoryWorld>,
+        Query<
+            (
+                Entity,
+                &StoryActor,
+                &gd_game_core::world::Breakable,
+                &Transform,
+            ),
+            Without<gd_game_core::combat::Dead>,
+        >,
+    ),
 ) {
     // A command's target object: the player or a story object (entity, position).
     let target_of = |id: u32, player: &PlayerMove| -> Option<(Entity, Vec3)> {
@@ -1173,7 +1205,145 @@ pub fn world_effects(
                     }
                 }
             }
+            // `Character:Move(vec)` (engine `RequestMove`, Game.dll `0x18006dc50`): a plain walk to the
+            // coords, not interruptible (`QuestMove` as `MoveAction` with the bool false).
+            Effect::Move { id, coords } => {
+                let dest = Vec3::from(coords.origin);
+                for (e, a, tf, _, _, _) in &actors {
+                    if a.0 != *id {
+                        continue;
+                    }
+                    if let Some(p) = nav.0.find_path(
+                        &mut scratch,
+                        tf.translation.to_array(),
+                        dest.to_array(),
+                        crate::nav::PATH_BUDGET,
+                    ) {
+                        if let Ok(mut ai) = ais.get_mut(e) {
+                            ai.clear_path();
+                            ai.aggro = false;
+                            ai.patrol.interrupt();
+                        }
+                        commands.entity(e).insert(crate::combat::QuestMove {
+                            path: p.into_iter().skip(1).map(Vec3::from).collect(),
+                            interruptible: false,
+                        });
+                    }
+                }
+            }
+            // `Character:Attack(target)` (engine `RequestAttack`, Game.dll `0x18006dbb0`): engage the
+            // target when the factions are hostile (`IsEnemyValid`); the existing pursuit / swing takes
+            // the enemy up (`MonsterAi.enemy` / `aggro` / anger).
+            Effect::Attack { id, target } => {
+                let Some((te, _)) = target_of(*target, &player) else {
+                    continue;
+                };
+                let player_e = player.single().ok().map(|(e, _, _)| e);
+                let target_pack = if Some(te) == player_e {
+                    Some(std::sync::Arc::new(crate::monsters::player_pack(
+                        &data.db,
+                        factions.as_deref(),
+                    )))
+                } else {
+                    ais.get(te).ok().and_then(|t| t.faction.clone())
+                };
+                for (e, a, _, _, _, _) in &actors {
+                    if a.0 != *id {
+                        continue;
+                    }
+                    let Ok(mut ai) = ais.get_mut(e) else { continue };
+                    if !gd_game_core::monsters::FactionPack::foes(&ai.faction, &target_pack) {
+                        debug!("story: attack {id} -> {target} refused (not hostile)");
+                        continue;
+                    }
+                    ai.enemy = Some(te);
+                    ai.aggro = true;
+                    if !ai.anger.iter().any(|(t, _)| *t == te) {
+                        ai.anger.push((te, 100.0));
+                    }
+                }
+            }
+            // `Character:ToggleInvincible(bool)` → `combat::Invincible` (the consumers already skip
+            // damage / debuffs / targeting for it).
+            Effect::SetInvincible { id, on } => {
+                for (e, a, _, _, _, _) in &actors {
+                    if a.0 == *id {
+                        if *on {
+                            commands.entity(e).insert(crate::combat::Invincible);
+                        } else {
+                            commands.entity(e).remove::<crate::combat::Invincible>();
+                        }
+                    }
+                }
+            }
+            // `Character:ToggleSkills(bool)` → the skill chooser's gate ([`crate::monster_skills::SkillsDisabled`]).
+            Effect::SetSkillsEnabled { id, on } => {
+                for (e, a, _, _, _, _) in &actors {
+                    if a.0 == *id {
+                        if *on {
+                            commands
+                                .entity(e)
+                                .remove::<crate::monster_skills::SkillsDisabled>();
+                        } else {
+                            commands
+                                .entity(e)
+                                .insert(crate::monster_skills::SkillsDisabled);
+                        }
+                    }
+                }
+            }
+            // `Destructible:Destroy(dir, force, bool)` (engine `BreakApart`, Game.dll `0x18025e650`):
+            // the object breaks but stays valid and queryable (the binding set `broken` / `alive`);
+            // the host shows the broken pieces ([`crate::breakables::Broke`], no `onBroken`: the engine
+            // fires that only from `TakeAttack`), remembers the break for the session and takes the
+            // intact entity away. The bool arms a ~1000 ms despawn ([`despawn_broken`]). PORT: dir /
+            // force are the engine's debris launch; the port's pieces launch from the attacker's
+            // direction (none here: the record's own scatter).
+            Effect::BreakDestructible { id, timed, .. } => {
+                for (e, a, b, tf) in &breakables {
+                    if a.0 != *id {
+                        continue;
+                    }
+                    broken.0.insert(b.key);
+                    broke.write(crate::breakables::Broke {
+                        record: b.record.clone(),
+                        transform: *tf,
+                        attacker: None,
+                        story: None,
+                    });
+                    commands.entity(e).try_despawn();
+                    spawned_actors.0.remove(id);
+                    if *timed {
+                        sw.broken_despawn.push((*id, 1.0));
+                    }
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// `Destructible:Destroy`'s timed despawn (`BreakApart`'s bool: byte +2129, 1000 ms at +2124): the
+/// broken object leaves the world after the delay; it stays in the story (queryable, broken).
+pub fn despawn_broken(
+    time: Res<Time>,
+    rt: Option<NonSend<StoryRuntime>>,
+    mut sw: NonSendMut<StoryWorld>,
+) {
+    if sw.broken_despawn.is_empty() {
+        return;
+    }
+    let Some(rt) = rt else { return };
+    let dt = time.delta_secs();
+    let mut story = rt.story.borrow_mut();
+    sw.broken_despawn.retain_mut(|(id, left)| {
+        *left -= dt;
+        if *left > 0.0 {
+            return true;
+        }
+        if let Some(o) = story.entities.get_mut(*id) {
+            o.in_world = false;
+        }
+        false
+    });
 }

@@ -12,6 +12,11 @@
 //! scroll in place ([`scroll_sheet`]) with the shared scroll bar (`ui/window.rs`, the journal's widget);
 //! their hit rects ([`SheetList`]) stay at scroll 0 and shift when read.
 //!
+//! PORT: the stats list's label / value columns are measured from the text (the label column is the widest
+//! label that still leaves the widest value its room), labels and values truncate to their column and the row
+//! pitch follows the font line height, so long localised labels and swapped fonts flow instead of colliding
+//! (UX over parity; stock shares one fixed box).
+//!
 //! Sounds: the close, weapon-swap, bag-tab, page-tab, auto-sort and attribute buttons register their `soundNameDown`
 //! (`ui/widgets.rs`; the move-reagents button plays its own in `inventory.rs`).
 use super::{HudValues, Ui};
@@ -367,7 +372,8 @@ pub fn build(
     }
     if let Some(Widget::Text(tb)) = ui.widget(&field("characterGoldNumber")) {
         let text = money_text(values.gold);
-        if let Some(e) = ui.text(&tb, o, &text) {
+        let shown = fit_sheet(ui, &tb, &text);
+        if let Some(e) = ui.text(&tb, o, &shown) {
             ui.commands.entity(e).insert(SheetVital {
                 source: VitalSource::Gold,
                 tb,
@@ -822,7 +828,7 @@ fn stat_list(
     ) else {
         return;
     };
-    let line = lb.f32("LineHeight").unwrap_or(19.0);
+    let record_line = lb.f32("LineHeight").unwrap_or(19.0);
     let view_h = sw.f32("height").unwrap_or(371.0);
     let label_style = lb
         .str("FontStyle")
@@ -830,6 +836,13 @@ fn stat_list(
         .to_string();
     let head_style = t.str(&field("HeaderFontStyle")).unwrap_or("").to_string();
     let num_style = t.str(&field("NumberFontStyle")).unwrap_or("").to_string();
+    // Row pitch: the record's line height, raised to the taller of the label / number font lines so a
+    // swapped font never overlaps the next row (PORT: stock fixes the pitch to its texture).
+    let line = (ui
+        .sc(record_line)
+        .max(ui.line_height(&label_style))
+        .max(ui.line_height(&num_style)))
+        / ui.s;
     let divider = t
         .str(&field("HeaderDivider"))
         .unwrap_or("ui/generic/listboxdivider.tex")
@@ -951,7 +964,46 @@ fn stat_list(
                 .map(|tag| ui.fonts.tag(tag).to_string())
         })
         .collect();
+    // Measure the label / value columns (PORT: stock shares one fixed 205px box, so a long localised
+    // label runs into its number). The label column is the widest label that still leaves the widest
+    // value its room; labels and values truncate to their own column, values stay right-aligned.
+    let left = ui.sc(17.0);
+    let right = ui.sc(222.0).min(view.w);
+    let gap = ui.sc(8.0);
+    let mut row_texts: Vec<Option<(String, Option<String>)>> = Vec::with_capacity(placed.len());
+    let (mut max_label, mut max_value) = (0.0f32, 0.0f32);
     for p in &placed {
+        if let Placed::Row(n, _) = p {
+            let label = t
+                .str(&field(n))
+                .map(|tag| ui.fonts.tag(tag).to_string())
+                .unwrap_or_default();
+            let value = if *n != "AvgDmgText" && *n != "GreatestMonsterKilledText" {
+                let key = n.trim_end_matches("Text");
+                Some(tag_value(
+                    &*ui.fonts,
+                    values
+                        .stats
+                        .get(&format!("list.{key}"))
+                        .cloned()
+                        .unwrap_or_else(|| zero_text(n).to_string()),
+                ))
+            } else {
+                None
+            };
+            max_label = max_label.max(ui.text_width(&label_style, &label));
+            if let Some(v) = &value {
+                max_value = max_value.max(ui.text_width(&num_style, v));
+            }
+            row_texts.push(Some((label, value)));
+        } else {
+            row_texts.push(None);
+        }
+    }
+    let label_col = max_label.min((right - left - gap - max_value).max(0.0));
+    let value_x = left + label_col + gap;
+    let value_w = (right - value_x).max(0.0);
+    for (pi, p) in placed.iter().enumerate() {
         match p {
             Placed::Head(n, y, coll) => {
                 let ty = ui.sc(*y);
@@ -984,8 +1036,10 @@ fn stat_list(
                     .str(&field(n))
                     .map(|tag| ui.fonts.tag(tag).to_string())
                     .unwrap_or_default();
+                let head_w = (ui.sc(230.0).min(view.w) - ui.sc(30.0)).max(0.0);
+                let text = ui.truncate_line(&head_style, head_w, &text);
                 let e = ui.text_with_style(
-                    &tbox(30.0, *y, 200.0, 24.0, A::Start),
+                    &tbox(30.0, *y, head_w / ui.s, 24.0, A::Start),
                     &head_style,
                     Vec2::ZERO,
                     &text,
@@ -1011,40 +1065,30 @@ fn stat_list(
                         format!("list.{}", n.trim_end_matches("Text")),
                     ));
                 }
-                let label = t
-                    .str(&field(n))
-                    .map(|tag| ui.fonts.tag(tag).to_string())
-                    .unwrap_or_default();
-                let key = n.trim_end_matches("Text");
-                let value = tag_value(
-                    &*ui.fonts,
-                    values
-                        .stats
-                        .get(&format!("list.{key}"))
-                        .cloned()
-                        .unwrap_or_else(|| zero_text(n).to_string()),
-                );
+                let (label, value) = row_texts[pi].as_ref().unwrap();
+                let label = ui.truncate_line(&label_style, label_col, label);
                 let e = ui.text_with_style(
-                    &tbox(17.0, *y, 205.0, line, A::Start),
+                    &tbox(17.0, *y, label_col / ui.s, line, A::Start),
                     &label_style,
                     Vec2::ZERO,
                     &label,
                 );
                 put(ui, e);
                 // Label-only rows: the weapon damage heading, the greatest monster (its name is the line under it).
-                if *n != "AvgDmgText" && *n != "GreatestMonsterKilledText" {
-                    let mut tb = tbox(17.0, *y, 205.0, line, A::End);
+                if let Some(value) = value {
+                    let mut tb = tbox(value_x / ui.s, *y, value_w / ui.s, line, A::End);
                     tb.style = Some(num_style.clone());
-                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, &value);
+                    let shown = fit_sheet(ui, &tb, value);
+                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, &shown);
                     if let Some(e) = e {
                         ui.commands.entity(e).insert(SheetVital {
                             source: VitalSource::TagStats(
-                                format!("list.{key}"),
+                                format!("list.{}", n.trim_end_matches("Text")),
                                 zero_text(n).to_string(),
                             ),
                             tb,
                             po: Vec2::ZERO,
-                            shown: value,
+                            shown: value.clone(),
                             s: ui.s,
                             inv: ui.inv,
                         });
@@ -1069,9 +1113,10 @@ fn stat_list(
                     .and_then(|e| e.str("questMonsterColor").map(str::to_owned))
                     .unwrap_or_default();
                 let name = format!("{code}{}", ui.fonts.tag(&tag));
-                let mut tb = tbox(17.0, *y, 205.0, line, A::Start);
+                let mut tb = tbox(17.0, *y, (right - left) / ui.s, line, A::Start);
                 tb.style = Some(label_style.clone());
-                let e = ui.text_with_style(&tb, &label_style, Vec2::ZERO, &name);
+                let shown = fit_sheet(ui, &tb, &name);
+                let e = ui.text_with_style(&tb, &label_style, Vec2::ZERO, &shown);
                 if let Some(e) = e {
                     ui.commands.entity(e).insert(SheetVital {
                         source: VitalSource::Monster,
@@ -1105,11 +1150,12 @@ fn stat_list(
                     && i % 2 == 0
                     && let Some(name) = skills.get(i / 2)
                 {
+                    let shown = ui.truncate_line(&label_style, right - left, name);
                     let e = ui.text_with_style(
-                        &tbox(17.0, *y, 205.0, line, A::Start),
+                        &tbox(17.0, *y, (right - left) / ui.s, line, A::Start),
                         &label_style,
                         Vec2::ZERO,
-                        name,
+                        &shown,
                     );
                     put(ui, e);
                 } else if *i < 4
@@ -1117,9 +1163,10 @@ fn stat_list(
                     && skills.get(i / 2).is_some()
                     && let Some(v) = values.stats.get(&format!("list.SkillDmg{}", i / 2))
                 {
-                    let mut tb = tbox(17.0, *y, 205.0, line, A::Start);
+                    let mut tb = tbox(17.0, *y, (right - left) / ui.s, line, A::Start);
                     tb.style = Some(num_style.clone());
-                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, v);
+                    let shown = fit_sheet(ui, &tb, v);
+                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, &shown);
                     if let Some(e) = e {
                         ui.commands.entity(e).insert(SheetVital {
                             source: VitalSource::Stats(
@@ -1136,9 +1183,10 @@ fn stat_list(
                     put(ui, e);
                 } else if *i == 4 {
                     let v = values.stats.get("list.AvgDmg").cloned().unwrap_or_default();
-                    let mut tb = tbox(17.0, *y, 205.0, line, A::Start);
+                    let mut tb = tbox(17.0, *y, (right - left) / ui.s, line, A::Start);
                     tb.style = Some(num_style.clone());
-                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, &v);
+                    let shown = fit_sheet(ui, &tb, &v);
+                    let e = ui.text_with_style(&tb, &num_style, Vec2::ZERO, &shown);
                     if let Some(e) = e {
                         ui.commands.entity(e).insert(SheetVital {
                             source: VitalSource::Stats("list.AvgDmg".into(), String::new()),
@@ -1407,7 +1455,8 @@ fn stats_pane(
                     h: ui.sc(tb.rect.h),
                 };
                 sheet_rollover(t, &k, bx, layout);
-                let e = ui.text(&tb, po, &text);
+                let shown = fit_sheet(ui, &tb, &text);
+                let e = ui.text(&tb, po, &shown);
                 // The life / mana numbers, the money and the stats rows change without a layout change
                 // (a kill, a pickup, a drain): they are redrawn in place (`sheet_vitals`), not by a rebuild.
                 let stat_key = k
@@ -1439,6 +1488,15 @@ fn stats_pane(
             }
             _ => {}
         }
+    }
+}
+
+/// One line of a sheet number cut to its text box width (the box's own style), so a long localised
+/// label or a grown value never runs past its column. A no-op when the text already fits.
+fn fit_sheet(ui: &mut Ui, tb: &gd_formats::ui::TextBox, text: &str) -> String {
+    match tb.style.as_deref() {
+        Some(style) => ui.truncate_line(style, ui.sc(tb.rect.w), text),
+        None => text.to_owned(),
     }
 }
 
@@ -1540,7 +1598,8 @@ pub fn sheet_vitals(
             Vec2::new(size.x as f32, size.y as f32),
         );
         // An empty text draws nothing: keep an empty node so the number tracks its key again.
-        let n = ui.text(&v.tb, v.po, &text).unwrap_or_else(|| {
+        let shown_text = fit_sheet(&mut ui, &v.tb, &text);
+        let n = ui.text(&v.tb, v.po, &shown_text).unwrap_or_else(|| {
             let n = ui.commands.spawn(Node::default()).id();
             ui.commands.entity(parent.parent()).add_child(n);
             n

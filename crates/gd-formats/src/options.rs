@@ -16,6 +16,8 @@
 //! `blood` is int 4, left at the fill's 1). So map zoom, brightness, contrast,
 //! gamma and UI scale are 0.5, resolution (0, 0), and all seven qualities
 //! Medium, straight from the fills.
+//! PORT: `showFPS` (default off) and `maxFPS` (default 0, uncapped) are the port's own options — the FPS
+//! overlay and the frame limiter; the engine's table has neither.
 //! PORT: `mapZoom` is stored as the engine's 0.5; the local map reads it in
 //! its own 40..135 zoom units (`ui::localmap` clamps on read). The Default
 //! button's per-group overrides (`Options::SetToDefaults`: corpse persistence
@@ -164,7 +166,11 @@ fn build_table() -> Vec<(&'static str, Value)> {
         ("screenMode", I(0)),              // int 5
         ("device", I(0)), // int 7; the wgpu adapter index (grimdawn `render_devices`), applied at next launch
         ("syncToRefresh", B(true)), // bool 6
-        ("detailObjects", B(true)), // bool 9
+        // PORT: FPS display and frame limiter (the engine has neither); read live each frame
+        // (`gd_ui::hud::fps_overlay`, `grimdawn::fps_limit`). `maxFPS` 0 = uncapped.
+        ("showFPS", B(false)),
+        ("maxFPS", I(0)),
+        ("detailObjects", B(true)),   // bool 9
         ("advancedEffects", B(true)), // bool 10
         ("fxQuality", q("medium")),
         ("lightingQuality", q("medium")),

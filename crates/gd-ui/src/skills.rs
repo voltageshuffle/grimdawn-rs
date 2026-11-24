@@ -29,6 +29,10 @@
 //! and draw above it, so [`clicks`] and [`tooltip`] ignore a cursor inside either ([`Above`]).
 //!
 //! Sounds: the close, tab, devotion, undo, mastery and skill buttons register their `soundNameDown` (`ui/widgets.rs`).
+//!
+//! PORT: the tab segments size to their (localised) titles (`gd_ui_kit::layout::tab_strip`,
+//! contiguous, centred on the stock strip's centre) and the undo button auto-sizes to its
+//! label (kit `static_button`); stock fixes both to their textures (UX over parity).
 use super::contains;
 use super::{HudValues, Ui};
 use crate::state::inventory::UiCapture;
@@ -97,64 +101,76 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
     let can_select = masteries.len() < 2;
     let ntabs = masteries.len() + can_select as usize;
     let tab = (tab.max(1) as usize).min(ntabs.max(1));
+    // Tabs sized to their titles, contiguous in the records' x order (mastery 1, the devotion
+    // graphic, mastery 2 / select) and centred on the stock strip's centre.
+    let tab_style = "records/ui/styles/text/style_special_classtabs.dbr";
+    let mut segs = Vec::new();
     for i in 1..=ntabs {
-        let Some(Widget::Button { up, down, x, y, .. }) =
-            ui.widget(&field(&format!("skillsTab{i}Button")))
-        else {
+        let key = format!("skillsTab{i}Button");
+        let Some(Widget::Button { up, down, x, y, .. }) = ui.widget(&field(&key)) else {
             continue;
         };
-        let bmp = if i == tab { down.or(up) } else { up };
-        if let Some(b) = bmp
-            && let Some((_, r)) = ui.bitmap(&b, x, y, o)
-        {
-            button_sound(ui, r, &field(&format!("skillsTab{i}Button")));
-            layout.hits.push((SkillHit::Tab(i as u8), r));
-            let title = match masteries.get(i - 1) {
-                Some((n, _)) => ui
-                    .record(&field(&format!("skillCtrlPane{n}")))
-                    .and_then(|t| t.str("skillTabTitle").map(str::to_string))
-                    .map(|t| ui.fonts.tag(&t).to_string())
-                    .unwrap_or_default(),
-                None => ui.fonts.tag("tagSkillClassSelect").to_string(),
-            };
-            let tb = TextBox {
-                style: None,
-                rect: URect::new(x, y, r.w / ui.s, r.h / ui.s),
-                align_x: gd_formats::ui::TextAlign::Center,
-                align_y: gd_formats::ui::TextAlign::Center,
-                tag: None,
-                glow: None,
-            };
-            ui.text_with_style(
-                &tb,
-                "records/ui/styles/text/style_special_classtabs.dbr",
-                o,
-                &title,
-            );
-        }
+        let Some(b) = (if i == tab { down.or(up) } else { up }) else {
+            continue;
+        };
+        let title = match masteries.get(i - 1) {
+            Some((n, _)) => ui
+                .record(&field(&format!("skillCtrlPane{n}")))
+                .and_then(|t| t.str("skillTabTitle").map(str::to_string))
+                .map(|t| ui.fonts.tag(&t).to_string())
+                .unwrap_or_default(),
+            None => ui.fonts.tag("tagSkillClassSelect").to_string(),
+        };
+        segs.push((key, SkillHit::Tab(i as u8), b, title, x, y));
     }
     // Middle tab (`skillsTab3Button`, the devotion graphic): opens the devotion window.
     if let Some(Widget::Button { up, down, x, y, .. }) = ui.widget(&field("skillsTab3Button"))
         && let Some(b) = up.or(down)
-        && let Some((_, r)) = ui.bitmap(&b, x, y, o)
     {
-        button_sound(ui, r, &field("skillsTab3Button"));
-        layout.hits.push((SkillHit::Devotion, r));
-        let tb = TextBox {
-            style: None,
-            rect: URect::new(x, y, r.w / ui.s, r.h / ui.s),
-            align_x: gd_formats::ui::TextAlign::Center,
-            align_y: gd_formats::ui::TextAlign::Center,
-            tag: None,
-            glow: None,
-        };
         let title = ui.fonts.tag("tagSkillDevotion").to_string();
-        ui.text_with_style(
-            &tb,
-            "records/ui/styles/text/style_special_classtabs.dbr",
-            o,
-            &title,
-        );
+        segs.push((
+            "skillsTab3Button".to_string(),
+            SkillHit::Devotion,
+            b,
+            title,
+            x,
+            y,
+        ));
+    }
+    segs.sort_by(|a, b| a.4.total_cmp(&b.4));
+    let mut placed = Vec::new();
+    let (mut total, mut lo, mut hi) = (0.0, f32::MAX, f32::MIN);
+    for (key, hit, b, title, x, y) in segs {
+        let Some((img, sz)) = ui.image(&b) else {
+            continue;
+        };
+        let (tw, th) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+        let r = gd_ui_kit::layout::tab_strip(
+            ui,
+            tab_style,
+            &[&title],
+            Vec2::new(total, 0.0),
+            th,
+            ui.sc(10.0),
+            tw,
+        )[0];
+        total += r.w;
+        lo = lo.min(ui.sc(x));
+        hi = hi.max(ui.sc(x) + tw);
+        placed.push((key, hit, img, r, tw, y, title));
+    }
+    let ox = o.x + (lo + hi) * 0.5 - total * 0.5;
+    for (key, hit, img, mut r, tw, y, title) in placed {
+        r.x += ox;
+        r.y = o.y + ui.sc(y);
+        if r.w > tw {
+            ui.quad_stretch(img, r, Color::WHITE);
+        } else {
+            ui.quad(img, r, None, Color::WHITE);
+        }
+        button_sound(ui, r, &field(&key));
+        layout.hits.push((hit, r));
+        super::widgets::label(ui, r, tab_style, gd_formats::ui::TextAlign::Center, &title);
     }
     let base = ui.record(BASE_PANE);
     let pane_o = o + Vec2::new(
@@ -193,39 +209,26 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
     // GrimDawn.exe `UISkillPane::Update`). Mastery-pane only: the selection
     // table has no undo/points fields, so neither is drawn on a free slot.
     if in_mastery {
-        if let Some(ur) = base
+        let undo = base
             .as_ref()
             .and_then(|b| b.str("undoButton").map(str::to_string))
             .and_then(|p| ui.record(&p))
-            && let Some(Widget::Button {
-                up, disabled, x, y, ..
-            }) = Some(Widget::from_record(&ur))
-            && let Some(b) = if values.skill_undo {
-                up.or(disabled)
-            } else {
-                disabled.or(up)
-            }
-            && let Some((_, r)) = ui.bitmap(&b, x, y, pane_o)
+            .and_then(|ur| {
+                let r = super::widgets::static_button(
+                    ui,
+                    &ur,
+                    pane_o,
+                    values.skill_undo,
+                    false,
+                    super::widgets::Label::Record,
+                )?;
+                Some((ur, r))
+            });
+        if let Some((ur, r)) = undo
+            && values.skill_undo
         {
-            if values.skill_undo {
-                ui.record_button_sound(r, &ur);
-                layout.hits.push((SkillHit::Undo, r));
-            }
-            let tb = TextBox {
-                style: None,
-                rect: URect::new(x, y, r.w / ui.s, r.h / ui.s),
-                align_x: gd_formats::ui::TextAlign::Center,
-                align_y: gd_formats::ui::TextAlign::Center,
-                tag: None,
-                glow: None,
-            };
-            let title = ur
-                .str("textTag")
-                .map(|t| ui.fonts.tag(t).to_string())
-                .unwrap_or_default();
-            if let Some(st) = ur.str("style").map(str::to_string) {
-                ui.text_with_style(&tb, &st, pane_o, &title);
-            }
+            ui.record_button_sound(r, &ur);
+            layout.hits.push((SkillHit::Undo, r));
         }
         if let Some(r) = base
             .as_ref()

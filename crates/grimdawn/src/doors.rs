@@ -138,9 +138,10 @@ fn travel_screen(
     let a = activity.cover_alpha();
     if covers.is_empty() {
         let e = gd_ui::loading::spawn_cover(&mut commands);
-        commands
-            .entity(e)
-            .insert((TravelCover, DespawnOnExit(gd_ui::state::session::AppState::InGame)));
+        commands.entity(e).insert((
+            TravelCover,
+            DespawnOnExit(gd_ui::state::session::AppState::InGame),
+        ));
         return;
     }
     for (_, mut bg, children) in &mut covers {

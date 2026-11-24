@@ -50,6 +50,7 @@ fn setup() -> Option<(TestGame, Entity, Entity)> {
                 alive: true,
                 locked: false,
                 open: false,
+                broken: false,
                 conversation: Some(conversation),
                 available_for_conversation: true,
                 scripted: false,

@@ -106,6 +106,7 @@ fn story() -> Story {
         alive: true,
         locked: false,
         open: false,
+        broken: false,
         conversation: Some("conversations/test.cnv".into()),
         available_for_conversation: true,
         scripted: false,

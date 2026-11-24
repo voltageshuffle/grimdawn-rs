@@ -3,10 +3,10 @@
 //! resources created, resources that existed before and were mutated, and the entity kinds spawned
 //! (archetype census). It is the checklist for an in-process session teardown. Component and resource
 //! names need Bevy's `debug` feature: `cargo dev-build --features audit`.
-use gd_ui::state::session::AppState;
 use bevy::ecs::component::ComponentId;
 use bevy::prelude::*;
 use gd_formats::collections::HashSet;
+use gd_ui::state::session::AppState;
 use std::collections::BTreeMap;
 
 pub struct AuditPlugin;
@@ -120,6 +120,6 @@ fn report(world: &mut World) {
         out += &format!("{n}\t{k}\n");
     }
     if let Some(path) = &audit.census {
-        let _ = std::fs::write(path, out);
+        drop(std::fs::write(path, out));
     }
 }

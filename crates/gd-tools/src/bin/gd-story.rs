@@ -1,7 +1,8 @@
 //! Quests / conversations / scripts inspection.
 //!
-//! gd-story check [--game DIR]          parse every .qst/.cnv of base+gdx1-3, print counts + type stats
-//!                                      (`--game` defaults to `GD_ROOT`; one of them is required)
+//! gd-story check [--game DIR] [--mod NAME]
+//!                                      parse every .qst/.cnv of base+gdx1-3 (or the mod's layers),
+//!                                      print counts + type stats (`--game` defaults to `GD_ROOT`)
 //! gd-story quest <name-substring>      dump matching quests (tasks, objectives, conditions, texts)
 //! gd-story conv <name-substring>       dump matching conversations as an indented tree
 //! gd-story conv-file <file.cnv>...     dump conversation files (e.g. the Crucible's, extracted)
@@ -10,7 +11,7 @@ use clap::{Parser, Subcommand};
 use gd_formats::arc::Arc;
 use gd_formats::cnv::{Conversation, Step};
 use gd_formats::qst::{Action, Conditions, Quest};
-use gd_formats::vfs::{LAYERS, SURVIVAL_LAYERS};
+use gd_formats::vfs::{LAYERS, SURVIVAL_LAYERS, mod_layers};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -19,6 +20,10 @@ struct Args {
     /// The Grim Dawn install.
     #[arg(long, env = "GD_ROOT")]
     game: PathBuf,
+    /// Mount a mod's story layers (`mods/<name>`, the Crucible packs for `survivalmode`)
+    /// instead of the default Crucible layers.
+    #[arg(long = "mod", value_name = "NAME")]
+    mod_name: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -41,10 +46,24 @@ enum Cmd {
     },
 }
 
-/// (layer, entry name, bytes) of every entry with `ext` in `<layer>/resources/<arc>`.
-fn entries(game: &std::path::Path, arc: &str, ext: &str) -> Result<Vec<(String, String, Vec<u8>)>> {
+/// (layer, entry name, bytes) of every entry with `ext` in `<layer>/resources/<arc>`:
+/// the install's layers, then the mod's ([`mod_layers`]) or the Crucible's by default.
+fn entries(
+    game: &std::path::Path,
+    arc: &str,
+    ext: &str,
+    mod_name: Option<&str>,
+) -> Result<Vec<(String, String, Vec<u8>)>> {
+    let extra: Vec<String> = match mod_name {
+        Some(m) => mod_layers(m),
+        None => SURVIVAL_LAYERS.iter().map(|l| (*l).to_owned()).collect(),
+    };
     let mut out = Vec::new();
-    for layer in LAYERS.iter().chain(&SURVIVAL_LAYERS) {
+    for layer in LAYERS
+        .iter()
+        .copied()
+        .chain(extra.iter().map(String::as_str))
+    {
         let p = game.join(layer).join("resources").join(arc);
         // survivalmode2 names its archives in lower case.
         let p = if p.exists() {
@@ -151,12 +170,20 @@ fn print_step(c: &Conversation, s: &Step, depth: usize) {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(m) = &args.mod_name {
+        anyhow::ensure!(
+            mod_layers(m).iter().any(|l| args.game.join(l).is_dir()),
+            "mod {m}: no layer folder under {}",
+            args.game.display()
+        );
+    }
     match args.cmd {
         Cmd::Check => {
             let mut stats = Stats::default();
             for (arc, ext) in [("Quests.arc", ".qst"), ("Conversations.arc", ".cnv")] {
                 let mut per: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-                for (layer, name, data) in entries(&args.game, arc, ext)? {
+                for (layer, name, data) in entries(&args.game, arc, ext, args.mod_name.as_deref())?
+                {
                     let e = per.entry(layer.clone()).or_default();
                     let res = if ext == ".qst" {
                         Quest::parse(&data).map(|q| {
@@ -202,7 +229,9 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Quest { name } => {
-            for (layer, n, data) in entries(&args.game, "Quests.arc", ".qst")? {
+            for (layer, n, data) in
+                entries(&args.game, "Quests.arc", ".qst", args.mod_name.as_deref())?
+            {
                 if !n.to_ascii_lowercase().contains(&name.to_ascii_lowercase()) {
                     continue;
                 }
@@ -244,7 +273,8 @@ fn main() -> Result<()> {
         Cmd::Save { path } => {
             let save = gd_formats::save::gdd::Quests::parse(&std::fs::read(&path)?)?;
             let mut defs = gd_formats::collections::HashMap::default();
-            for (_, n, data) in entries(&args.game, "Quests.arc", ".qst")? {
+            for (_, n, data) in entries(&args.game, "Quests.arc", ".qst", args.mod_name.as_deref())?
+            {
                 let q = Quest::parse(&data)?;
                 defs.insert(q.id, (n, q));
             }
@@ -300,7 +330,12 @@ fn main() -> Result<()> {
             );
         }
         Cmd::Conv { name } => {
-            for (layer, n, data) in entries(&args.game, "Conversations.arc", ".cnv")? {
+            for (layer, n, data) in entries(
+                &args.game,
+                "Conversations.arc",
+                ".cnv",
+                args.mod_name.as_deref(),
+            )? {
                 if !n.to_ascii_lowercase().contains(&name.to_ascii_lowercase()) {
                     continue;
                 }

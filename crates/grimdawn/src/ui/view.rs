@@ -7,18 +7,18 @@
 //! `GameMode`, the area name from the map's name sector at the player. Gameplay systems never
 //! write UI state; the windows read only this view (or the gameplay
 //! components directly), so they cannot drift from what the game uses.
-use gd_ui::status::{BuffBar, DotIcon, debuff_icon};
-use gd_ui::{HudValues, HudVitals};
 use crate::afflictions::Afflictions;
 use crate::loot::PlayerProgress;
 use crate::sheet_dps::{SheetDps, SheetDpsValues};
 use bevy::prelude::*;
 use gd_game_core::casting::Caster;
+use gd_game_core::combat::Combatant;
 use gd_game_core::data::GameData;
 use gd_game_core::player::{EffectiveSkills, Player};
-use gd_game_core::session::LoadedCharacter;
-use gd_game_core::combat::Combatant;
 use gd_game_core::rules::CombatRules;
+use gd_game_core::session::LoadedCharacter;
+use gd_ui::status::{BuffBar, DotIcon, debuff_icon};
+use gd_ui::{HudValues, HudVitals};
 
 type PlayerParts<'a> = (
     Entity,
@@ -763,8 +763,8 @@ fn hot_slot_states(
     cache: &mut HotCache,
     out: &mut Vec<gd_ui::hud::HotSlotState>,
 ) {
-    use gd_ui::hud::{HotSlotState, SlotLook};
     use gd_sim::skill_tooltip::{HotState, hot_state};
+    use gd_ui::hud::{HotSlotState, SlotLook};
     out.clear();
     let Some(c) = caster else {
         return;
@@ -826,9 +826,9 @@ fn hot_statics(
     cb: &Combatant,
     row: usize,
 ) -> Vec<HotStatic> {
-    use gd_ui::hud::HOT_SLOTS;
     use gd_game_core::casting::{ENERGY_POTION, HEALTH_POTION, SLOT_LEFT, SLOT_RIGHT, SLOT_ROW2};
     use gd_sim::skill_tooltip::SkillTipCtx;
+    use gd_ui::hud::HOT_SLOTS;
     let tags = data.tags();
     let ctx = SkillTipCtx {
         db: &data.db,

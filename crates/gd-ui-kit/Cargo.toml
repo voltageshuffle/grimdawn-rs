@@ -37,3 +37,6 @@ gd-formats = { path = "../gd-formats", version = "0.1.0" }
 gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
 gd-render = { path = "../gd-render", version = "0.1.0" }
 gd-sim = { path = "../gd-sim", version = "0.1.0" }
+# TrueType metrics for the FNTD (ja/ko/zh/vi) fonts so layout measures what Bevy renders
+# (already in the tree via Bevy text; no extra compile cost).
+owned_ttf_parser = "0.25"

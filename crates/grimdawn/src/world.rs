@@ -25,8 +25,8 @@
 use bevy::math::Affine3A;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use bevy::tasks::futures_lite::future;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::map::{Level, MapFile};
 use gd_game_core::data::GameData;

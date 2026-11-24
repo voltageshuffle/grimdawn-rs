@@ -21,11 +21,12 @@ use gd_formats::fnt::{BitmapFont, Font as GdFont};
 use gd_formats::text::TagTable;
 use gd_formats::ui::{FontStyle, TextLayout, layout_text};
 use gd_game_core::data::GameData;
+use owned_ttf_parser::AsFaceRef;
 use std::sync::Arc;
 
 pub enum LoadedFont {
     Bitmap { font: BitmapFont, atlas: Vec<u8> },
-    Dynamic(Handle<Font>),
+    Dynamic(Handle<Font>, Option<Arc<owned_ttf_parser::OwnedFace>>),
 }
 
 /// A rasterised text block cached as an uploaded GPU image ([`FontCache::rasterize_cached`]):
@@ -201,6 +202,10 @@ impl FontCache {
                 )
                 .width as f32
             }
+            Some(LoadedFont::Dynamic(_, face)) => face
+                .as_ref()
+                .map(|f| dynamic_width(f, size as f32, text))
+                .unwrap_or_else(|| text.chars().count() as f32 * size as f32 * 0.5),
             _ => text.chars().count() as f32 * size as f32 * 0.5,
         }
     }
@@ -233,9 +238,13 @@ impl FontCache {
                 let atlas = font.atlas_rgba8()?;
                 Ok(LoadedFont::Bitmap { font, atlas })
             }
-            GdFont::Dynamic(d) => Ok(LoadedFont::Dynamic(
-                fonts.add(Font::from_bytes(d.font_file)),
-            )),
+            GdFont::Dynamic(d) => {
+                let handle = fonts.add(Font::from_bytes(d.font_file.clone()));
+                let face = owned_ttf_parser::OwnedFace::from_vec(d.font_file, 0)
+                    .ok()
+                    .map(Arc::new);
+                Ok(LoadedFont::Dynamic(handle, face))
+            }
         });
         let v = match loaded {
             Ok(f) => Some(Arc::new(f)),
@@ -247,6 +256,37 @@ impl FontCache {
         self.fonts.insert(key, v.clone());
         v
     }
+}
+
+/// Width (px) of one line of `text` in a TrueType face at pixel size `size`: the sum of the
+/// glyphs' horizontal advances scaled by `size / units_per_em`, markup stripped. CJK ideographs
+/// are full-width in the font's own metrics, so this measures what Bevy shapes (the old
+/// `chars * size * 0.5` estimate halved them and made CJK labels overlap their controls).
+pub(crate) fn dynamic_width(face: &owned_ttf_parser::OwnedFace, size: f32, text: &str) -> f32 {
+    let face = face.as_face_ref();
+    let upm = face.units_per_em() as f32;
+    if upm <= 0.0 {
+        return 0.0;
+    }
+    let mut units: u32 = 0;
+    for c in gd_formats::text::strip_markup(text).chars() {
+        let adv = face
+            .glyph_index(c)
+            .and_then(|g| face.glyph_hor_advance(g))
+            .unwrap_or(face.units_per_em() / 2);
+        units += adv as u32;
+    }
+    units as f32 * size / upm
+}
+
+/// Line height (px) of a TrueType face at pixel size `size` (ascent + descent scaled to the em).
+pub(crate) fn dynamic_line_height(face: &owned_ttf_parser::OwnedFace, size: f32) -> f32 {
+    let face = face.as_face_ref();
+    let upm = face.units_per_em() as f32;
+    if upm <= 0.0 {
+        return (size * 1.2).round();
+    }
+    ((face.ascender() - face.descender()) as f32 * size / upm).round()
 }
 
 /// A rasterised text block: `image` covers `[offset, offset + size)` relative

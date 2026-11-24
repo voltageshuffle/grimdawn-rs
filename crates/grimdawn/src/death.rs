@@ -9,9 +9,6 @@
 //! close or Esc — leaves the
 //! session ([`gd_ui::state::exit::ExitToMenu`]): the engine's `DeathUpdate` hands the response to the UI interface
 //! and the dead hardcore character cannot continue; the character list shows it as dead (`session::is_dead`).
-use gd_ui::state::inventory::UiCapture;
-use gd_ui::state::death::GameOverBox;
-use gd_ui::window::{Rebuild, add_window, despawn_all};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 pub use gd_game::death::*;
@@ -19,6 +16,9 @@ use gd_game_core::combat::Dead;
 use gd_game_core::player::Player;
 pub use gd_game_core::session::is_hardcore;
 use gd_render::character::CharAssets;
+use gd_ui::state::death::GameOverBox;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::window::{Rebuild, add_window, despawn_all};
 use gd_ui_kit::{UiAssets, contains, cursor_px, spawn_root};
 
 pub struct DeathPlugin;
@@ -100,8 +100,6 @@ fn game_over(
         over.open = true;
     }
 }
-
-
 
 #[derive(Component)]
 struct GameOverRoot;

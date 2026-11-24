@@ -15,11 +15,23 @@ holding `database/database.arz`). Then either `source local.env`, or prefix comm
 - Saves go to `GD_SAVE_DIR` (default `$XDG_DATA_HOME/grimdawn-rs/save`). Maps are read straight from the
   install's archives; nothing is cached on disk.
 
+## Running mods
+A mod lives in `<install>/mods/<name>/`: `resources/*.arc` (maps, quests, scripts, assets) plus
+`database/<name>.arz` (records). Start one from the main menu's custom-game picker, or script a session
+with the `GD_MOD` / `GD_MOD_MAP` hooks (syntax: the hooks field docs). Limits (deliberate PORT differences): only
+`resources/*.arc` are mounted — loose files are refused; one mod at a time; mod Lua runs under sandbox
+budgets; each mod's indexes are kept for the process lifetime. Tools read mods without extraction:
+`gd-rec --mod <name> --diff` (mod-vs-install record deltas), `gd-story --mod <name>`,
+`gd-map <archive.arc>:<entry>`.
+Mod Lua binds the engine's full `LuaGlue` surface. The only binding with no engine counterpart is
+`Debug.AddStatisticText`, which raises a Lua error naming the API; deliberate approximations (attach-coord
+rotation, the `PlayAnimation` flag, `HasAffix`'s record→instance bridge) are listed in the lua host module doc.
+
 ## Hooks
 `GD_*` environment variables script a `dev` run: pick a character (`GD_SAVE`, `GD_NAME`), place the player
 (`GD_START=x,z`), fight (`GD_AUTO_FIGHT`, `GD_KILL_ALL=<secs>`, `GD_GOD`), talk (`GD_STORY_TALK`,
 `GD_DIALOG_CLICK`), open windows (`GD_UI_OPEN`), take a screenshot and exit (`GD_SHOT=<png>`), and more. The
-list, with syntax, is the field docs of `crates/gd-game/src/hooks.rs`.
+list, with syntax, is the field docs of `crates/gd-game-core/src/hooks.rs`.
 
 Recipes:
 - Crucible from the menu: `GD_MENU=1 GD_MENU_CRUCIBLE=1 GD_MENU_PICK=0`. Direct: `GD_SURVIVAL=a` (arena a..j).

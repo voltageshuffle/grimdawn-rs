@@ -93,13 +93,15 @@ pub fn apply_look(root: Entity, look: Look, looks: &mut Query<(&ConfirmLook, &mu
     }
 }
 
-/// A box button (`ButtonStaticText`): its bitmap by the look (as `widgets::static_button`, always
-/// enabled), the label centred, its record sound — and [`ConfirmLook`] on the quad for [`apply_look`].
-/// (The box needs the quad entity to swap its bitmap in place; `static_button` returns only the rect.)
+/// A box button (`ButtonStaticText`) with its top-left at `pos`: its bitmap by the look (as
+/// `widgets::static_button`, always enabled), the width auto-grown to fit the label
+/// ([`widgets::button_width`]), the label centred, its record sound — and [`ConfirmLook`] on the quad
+/// for [`apply_look`]. (The box needs the quad entity to swap its bitmap in place; `static_button`
+/// returns only the rect.)
 fn box_button(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
-    o: Vec2,
+    pos: Vec2,
     hit: Hit,
     look: Look,
 ) -> Option<URect> {
@@ -109,13 +111,15 @@ fn box_button(
         _ => "bitmapNameUp",
     };
     let (img, size) = rec.str(key).map(str::to_owned).and_then(|p| ui.image(&p))?;
-    let r = URect::new(
-        o.x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0)),
-        o.y + ui.sc(rec.f32("bitmapPositionY").unwrap_or(0.0)),
-        ui.sc(size.x as f32),
-        ui.sc(size.y as f32),
-    );
-    let e = ui.quad(img.clone(), r, None, Color::WHITE);
+    let text = rec.str("textTag").map(|t| ui.fonts.tag(t).to_string());
+    let tex_w = ui.sc(size.x as f32);
+    let w = super::widgets::button_width(ui, rec, tex_w, text.as_deref());
+    let r = URect::new(pos.x, pos.y, w, ui.sc(size.y as f32));
+    let e = if w > tex_w {
+        ui.quad_stretch(img.clone(), r, Color::WHITE)
+    } else {
+        ui.quad(img.clone(), r, None, Color::WHITE)
+    };
     let load = |ui: &mut Ui, k: &str| {
         rec.str(k)
             .map(str::to_owned)
@@ -131,8 +135,7 @@ fn box_button(
         over,
         down,
     });
-    if let (Some(style), Some(tag)) = (rec.str("style"), rec.str("textTag")) {
-        let t = ui.fonts.tag(tag).to_string();
+    if let (Some(style), Some(t)) = (rec.str("style"), text) {
         super::widgets::label(ui, r, style, TextAlign::Center, &t);
     }
     // Yes / No sound on the press; the close button's sound is its handler's ([`close_sound`]).
@@ -147,52 +150,118 @@ pub fn close_sound(data: &GameData) -> Option<String> {
     data.db.get(CLOSE)?.str("soundNameDown").map(str::to_owned)
 }
 
-/// The window close button in the box's top-right slot, its bitmap by the [`Look`] (up / `bitmapNameInFocus` / `bitmapNameDown`).
-fn close_slot(ui: &mut Ui, o: Vec2, look: Look) -> Option<URect> {
-    let b = ui.record(CLOSE)?;
-    box_button(ui, &b, o, Hit::Close, look)
-}
-
-/// The box's frame, `text` and close slot: its record, its origin and the close rect.
+/// The box's frame, question, close slot and buttons, sized to their content: the height grows so the
+/// wrapped question never runs into the buttons (which keep their stock bottom margin), and the width
+/// grows so a long localised button label fits (the row stays centred). `buttons` are the record field
+/// names and their [`Hit`]s, left to right. Returns the button rects (in order) and the close rect.
+/// PORT: the stock box is fixed at its background texture's size; here it follows the content (UX over
+/// parity). The button row is centred (the stock Ok sits 2 px left of centre).
 fn frame(
     ui: &mut Ui,
     text: &str,
     look: Look,
-) -> Option<(gd_formats::arz::Record, Vec2, Option<URect>)> {
+    buttons: &[(&str, Hit)],
+) -> Option<(Vec<URect>, Option<URect>)> {
     let rec = ui.record(PROMPT)?;
     let (bg, sz) = rec
         .str("Background")
         .map(str::to_owned)
         .and_then(|p| ui.image(&p))?;
-    let (w, h) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+    let (w0, h0) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+    // Load and measure the buttons: auto width, texture height, record y (for the bottom margin).
+    struct Btn {
+        rec: gd_formats::arz::Record,
+        hit: Hit,
+        w: f32,
+        h: f32,
+        y: f32,
+    }
+    let mut btns = Vec::new();
+    for (field, hit) in buttons {
+        let b = rec
+            .str(field)
+            .map(str::to_owned)
+            .and_then(|p| ui.record(&p))?;
+        let (_, bsz) = b
+            .str("bitmapNameUp")
+            .map(str::to_owned)
+            .and_then(|p| ui.image(&p))?;
+        let label = b.str("textTag").map(|t| ui.fonts.tag(t).to_string());
+        let w = super::widgets::button_width(ui, &b, ui.sc(bsz.x as f32), label.as_deref());
+        let y = ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0));
+        btns.push(Btn {
+            rec: b,
+            hit: *hit,
+            w,
+            h: ui.sc(bsz.y as f32),
+            y,
+        });
+    }
+    // The wrapped question's height; grow the box when it overflows the record text box.
+    let tb = ui.record(PROMPT_TEXT).map(|t| TextBox::from_record(&t));
+    let mut grow = 0.0;
+    if let Some(tb) = &tb
+        && let Some(style) = tb.style.as_deref()
+    {
+        let bw = ui.sc(tb.rect.w);
+        let text_h = ui.wrap_lines(style, bw, text).len() as f32 * ui.line_height(style);
+        grow = (text_h - ui.sc(tb.rect.h)).max(0.0);
+    }
+    // Centre the button row; grow the box width when the row exceeds the texture (stock side margin).
+    let gap = ui.sc(4.0);
+    let row_w: f32 =
+        btns.iter().map(|b| b.w).sum::<f32>() + gap * btns.len().saturating_sub(1) as f32;
+    let margin = ui.sc(21.0);
+    let w = w0.max(row_w + 2.0 * margin);
+    let h = h0 + grow;
     let o = Vec2::new(
         ((ui.screen.x - w) * 0.5).round(),
         ((ui.screen.y - h) * 0.5).round(),
     );
-    ui.quad(bg, URect::new(o.x, o.y, w, h), None, Color::WHITE);
+    ui.quad_stretch(bg, URect::new(o.x, o.y, w, h), Color::WHITE);
     // The question takes every click while up: block the sounds (and `frontmost` presses) of every
     // button behind it, full screen, not only under the box.
     ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
-    let close = close_slot(ui, o, look);
-    if let Some(t) = ui.record(PROMPT_TEXT) {
-        let tb = TextBox::from_record(&t);
-        if let Some(style) = tb.style.as_deref() {
-            let bw = ui.sc(tb.rect.w);
-            let lh = ui.line_height(style);
-            let mut y = o.y + ui.sc(tb.rect.y);
-            for l in ui.wrap_lines(style, bw, text) {
-                super::widgets::label(
-                    ui,
-                    URect::new(o.x + ui.sc(tb.rect.x), y, bw, lh),
-                    style,
-                    tb.align_x,
-                    &l,
-                );
-                y += lh;
-            }
+    // Close: top-right, keeping its record offset from the right edge as the box widens.
+    let close = ui.record(CLOSE).and_then(|c| {
+        let cx = ui.sc(c.f32("bitmapPositionX").unwrap_or(0.0));
+        let cy = ui.sc(c.f32("bitmapPositionY").unwrap_or(0.0));
+        box_button(
+            ui,
+            &c,
+            Vec2::new(o.x + (w - w0) + cx, o.y + cy),
+            Hit::Close,
+            look,
+        )
+    });
+    if let Some(tb) = &tb
+        && let Some(style) = tb.style.as_deref()
+    {
+        let bw = ui.sc(tb.rect.w);
+        let lh = ui.line_height(style);
+        let mut y = o.y + ui.sc(tb.rect.y);
+        for l in ui.wrap_lines(style, bw, text) {
+            super::widgets::label(
+                ui,
+                URect::new(o.x + ui.sc(tb.rect.x), y, bw, lh),
+                style,
+                tb.align_x,
+                &l,
+            );
+            y += lh;
         }
     }
-    Some((rec, o, close))
+    // Buttons: centred row, anchored to the stock bottom margin (pushed down by `grow`).
+    let btn_h = btns.first().map(|b| b.h).unwrap_or(0.0);
+    let bottom = btns.first().map(|b| h0 - b.y - b.h).unwrap_or(0.0);
+    let by = o.y + h - bottom - btn_h;
+    let mut x = o.x + (w - row_w) * 0.5;
+    let mut rects = Vec::with_capacity(btns.len());
+    for b in &btns {
+        rects.push(box_button(ui, &b.rec, Vec2::new(x, by), b.hit, look)?);
+        x += b.w + gap;
+    }
+    Some((rects, close))
 }
 
 /// Draws the message box with its one Ok button (the `OkButton` of `prompt_manager.dbr`; [`Look`]'s `Yes` is the
@@ -204,13 +273,8 @@ pub fn ok_box(ui: &mut Ui, tag: &str, look: Look) -> Option<(URect, Option<URect
 
 /// [`ok_box`] showing `text` (a tag already localised and filled).
 pub fn ok_text(ui: &mut Ui, text: &str, look: Look) -> Option<(URect, Option<URect>)> {
-    let (rec, o, close) = frame(ui, text, look)?;
-    let b = rec
-        .str("OkButton")
-        .map(str::to_owned)
-        .and_then(|p| ui.record(&p))?;
-    let ok = box_button(ui, &b, o, Hit::Yes, look)?;
-    Some((ok, close))
+    let (rects, close) = frame(ui, text, look, &[("OkButton", Hit::Yes)])?;
+    Some((rects.into_iter().next()?, close))
 }
 
 /// Draws the box: `tag` is the question's text tag; returns the rects of its parts (None when a record is missing).
@@ -221,19 +285,16 @@ pub fn confirm_box(ui: &mut Ui, tag: &str, look: Look) -> Option<ConfirmRects> {
 
 /// [`confirm_box`] asking `text` (a tag already localised and filled).
 pub fn confirm_text(ui: &mut Ui, text: &str, look: Look) -> Option<ConfirmRects> {
-    let (rec, o, close) = frame(ui, text, look)?;
-    let mut rects = [None, None];
-    for (i, (k, hit)) in [("YesButton", Hit::Yes), ("NoButton", Hit::No)]
-        .into_iter()
-        .enumerate()
-    {
-        let b = rec.str(k).map(str::to_owned).and_then(|p| ui.record(&p))?;
-        // Yes / No sound on the press (`ui/widgets.rs`); the close button's sound is its handler's ([`close_sound`]).
-        rects[i] = box_button(ui, &b, o, hit, look);
-    }
+    let (rects, close) = frame(
+        ui,
+        text,
+        look,
+        &[("YesButton", Hit::Yes), ("NoButton", Hit::No)],
+    )?;
+    let mut it = rects.into_iter();
     Some(ConfirmRects {
-        yes: rects[0]?,
-        no: rects[1]?,
+        yes: it.next()?,
+        no: it.next()?,
         close,
     })
 }

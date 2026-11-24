@@ -45,10 +45,13 @@
 //! default-builds (`SoundDescriptor::SoundDescriptor`) and nothing loads (no
 //! `SoundManager::Load` or assignment reaches them), and `mainmenu_constants.dbr` has no slider / dropbox sound field.
 //!
-//! Page layouts: page builder `OptionsWindow::Load`, see
-//! [`Page`]: each page lays its controls down a row cursor from the page origin (`options_mastertable.dbr` `pageX`
-//! / `pageY` 15 / 114 in the window). PORT: the drawn widgets' insides (label offsets, the dropdown box drawn
-//! `width - 3` wide with its arrow outside, the anti-aliasing box in the value column) are the port's own; a
+//! Page layouts: the engine's page builder (`OptionsWindow::Load`) walks a row cursor from the page origin
+//! (`options_mastertable.dbr` `pageX` / `pageY` 15 / 114, `pageExtentX` / `pageExtentY` 850 × 420). PORT: the
+//! pages use an adaptive flow layout ([`pages::layout`]) instead of the engine's fixed cursor: each tab is a set
+//! of columns, every row a fixed height, labels measured with the font (`ui.text_width`) so a control sits just
+//! past its label and the box plus its dropdown arrow stay inside the page's right edge (the bounds come from the
+//! record, not the textures). Omitted options leave no gap. The drawn widgets' insides (the dropdown box with its
+//! arrow outside, the anti-aliasing check with its label on the left) are the port's own; a
 //! dropdown opens a list of its
 //! values under the box ([`choices`]); a slider is set by dragging its knob ([`knob_bitmap`], `input`); the
 //! controls' rollovers: [`rollover`]; Default
@@ -63,8 +66,12 @@
 //! `shadows` false); the shown item is the stored quality clamped to the entries (a file's "ultra" texture quality shows
 //! High and stays stored until a pick). The `reflectionQuality` row (tagVideoOption04) is a Low..Very High
 //! dropdown driving the water's planar reflection (gd-render `render/reflection.rs`). PORT: the Video rows of
-//! options the port does not use (`tripleBuffer`, `alphatocoverage`, `deferredrendering`) are not shown (their
-//! rows stay empty); the options file keeps their lines (`gd_game_core::options`).
+//! options the port does not use (`tripleBuffer`, `alphatocoverage`, `deferredrendering`) are simply absent (the
+//! flow closes the gap); the options file keeps their lines (`gd_game_core::options`).
+//! PORT: the port's own FPS controls have literal English labels (no engine tags exist) and are read live each
+//! frame, so Apply only stores them: "Show FPS" (`showFPS`, the HUD counter `gd_ui::hud::fps_overlay`) is a check
+//! box on the Interface tab, and "FPS Limit" (`maxFPS`, the frame limiter `grimdawn::fps_limit`; Off = 0, uncapped)
+//! a dropdown on the Video tab.
 //!
 //! Performance (PORT, `docs/architecture.md`): the rebuild signature holds only
 //! layout state (size, open, tab, dropdown, rebind, movement type, keys
@@ -84,11 +91,9 @@ mod live;
 mod pages;
 
 use super::contains;
-use gd_ui::state::options::{OptionsInputSet, OptionsWindow, Tab};
 use super::keys::{KeyBindings, action_tag, key_name};
-use gd_ui::window::Rebuild;
-use super::{LiveText, TextAt, Ui};
 use super::text::FontCache;
+use super::{LiveText, TextAt, Ui};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -99,6 +104,8 @@ use gd_formats::options::Value;
 use gd_formats::ui::{Rect as URect, TextAlign, WindowDef};
 use gd_game_core::data::GameData;
 use gd_game_core::options::GameOptions;
+use gd_ui::state::options::{OptionsInputSet, OptionsWindow, Tab};
+use gd_ui::window::Rebuild;
 pub use input::input;
 use live::*;
 use pages::*;
@@ -158,7 +165,7 @@ fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     };
     // `GD_OPTIONS_DROP=<n>` also opens the page's n-th dropdown.
     let dropdown = hooks.ui.options_drop.and_then(|n| {
-        page(tab)
+        ctls(tab)
             .iter()
             .enumerate()
             .filter(|(_, c)| matches!(c, Ctl::Drop(..)))
@@ -175,10 +182,6 @@ fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
         ..default()
     });
 }
-
-
-
-
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Hit {
@@ -299,11 +302,15 @@ fn drop_bar_row(y: f32, top: f32, height: f32, s: f32, rows: usize) -> usize {
     (f * rows.saturating_sub(DROP_ROWS) as f32) as usize
 }
 
-/// A control of a page, in the reference shots' screen coordinates.
+/// A control of a page, in page-local reference coordinates (the page's top-left is (0, 0); [`pages::layout`]
+/// places them, `build` scales them onto the screen).
 #[derive(Clone, Copy)]
 enum Ctl {
-    /// Checkbox: option, label tag, box top-left.
+    /// Checkbox: option, label tag, box top-left (the label sits right of the box).
     Check(&'static str, &'static str, f32, f32),
+    /// Checkbox with its label on the left (the Video anti-aliasing row): option, label tag, label x, centre y,
+    /// box x.
+    CheckLeft(&'static str, &'static str, f32, f32, f32),
     /// Slider: option, label tag, label x, centre y, track x0..x1.
     Slider(&'static str, &'static str, f32, f32, f32, f32),
     /// Dropdown: what it shows, label tag, label x, centre y, box x0..x1.
@@ -326,6 +333,8 @@ enum Shown {
     Shadows,
     ColorBlind,
     Movement,
+    /// PORT: the `maxFPS` frame-limiter cap (Off = 0, uncapped).
+    MaxFps,
 }
 
 /// Whether a checkbox can be changed: "Evade To Cursor" (`tagGameplayOption36`) is greyed out exactly when the
@@ -349,4 +358,3 @@ fn check_state(on: bool, enabled: bool, hovered: bool) -> usize {
         (false, false) => 0,
     }
 }
-

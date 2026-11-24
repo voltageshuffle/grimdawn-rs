@@ -215,7 +215,27 @@ pub fn label(ui: &mut Ui, r: URect, style: &str, align: TextAlign, text: &str) -
     ui.text_with_style(&tb, style, Vec2::ZERO, text)
 }
 
+/// The auto-sized width of a `ButtonStaticText`: its texture width, grown to fit the label plus
+/// `2 * sc(10)` padding when the label is wider (never shrunk below the texture). PORT: the stock
+/// button is fixed at its bitmap's pixel width and a long localised label overflows it; here the
+/// button grows so the label always fits (UX over parity). The caller stretches the bitmap when the
+/// width grows ([`static_button`]); the height stays the texture's.
+pub fn button_width(
+    ui: &mut Ui,
+    rec: &gd_formats::arz::Record,
+    tex_w: f32,
+    text: Option<&str>,
+) -> f32 {
+    let lw = match (rec.str("style"), text) {
+        (Some(style), Some(t)) => ui.text_width(style, t),
+        _ => 0.0,
+    };
+    tex_w.max(lw + 2.0 * ui.sc(10.0))
+}
+
 /// Draws a `ButtonStaticText` record at its `bitmapPosition` from `o`; returns its rect (physical px).
+/// The width auto-grows to fit the label ([`button_width`]), stretching the bitmap; the left edge stays
+/// at `bitmapPosition` so a caller that centres on a point can re-centre from the returned rect.
 /// PORT: a disabled button's label is dimmed like the trade windows' buttons.
 pub fn static_button(
     ui: &mut Ui,
@@ -231,18 +251,24 @@ pub fn static_button(
         _ => "bitmapNameUp",
     };
     let (img, size) = rec.str(key).map(str::to_owned).and_then(|p| ui.image(&p))?;
-    let r = URect::new(
-        o.x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0)),
-        o.y + ui.sc(rec.f32("bitmapPositionY").unwrap_or(0.0)),
-        ui.sc(size.x as f32),
-        ui.sc(size.y as f32),
-    );
-    ui.quad(img, r, None, Color::WHITE);
     let text = match label {
         Label::None => None,
         Label::Record => rec.str("textTag").map(|t| ui.fonts.tag(t).to_string()),
         Label::Text(t) => Some(t.to_owned()),
     };
+    let tex_w = ui.sc(size.x as f32);
+    let w = button_width(ui, rec, tex_w, text.as_deref());
+    let r = URect::new(
+        o.x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0)),
+        o.y + ui.sc(rec.f32("bitmapPositionY").unwrap_or(0.0)),
+        w,
+        ui.sc(size.y as f32),
+    );
+    if w > tex_w {
+        ui.quad_stretch(img, r, Color::WHITE);
+    } else {
+        ui.quad(img, r, None, Color::WHITE);
+    }
     if let (Some(style), Some(t)) = (rec.str("style"), text) {
         let e = self::label(ui, r, style, TextAlign::Center, &t);
         if let (false, Some(e)) = (enabled, e) {

@@ -159,7 +159,7 @@ pub(super) fn live(
             }
             let row = win
                 .dropdown
-                .and_then(|i| page(win.tab).get(i).copied())
+                .and_then(|i| ctls(win.tab).get(i).copied())
                 .and_then(|c| match c {
                     Ctl::Drop(shown, ..) => {
                         let current = shown_text(shown, draft, &ctx);

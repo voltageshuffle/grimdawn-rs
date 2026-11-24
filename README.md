@@ -13,21 +13,39 @@ Targets Grim Dawn **1.3.1.2**. Other game versions may have different data and r
    code faster, more modular or simpler. Each such difference is written down in the doc comment of its module.
 3. **Looks like Grim Dawn.** It only needs to read as the same game. It is not a pixel copy.
 
-Currently out of scope: gamepad support, multiplayer, voice chat, Steam achievements and cloud saves.
-
 ## Status
-Work in progress. The game is playable, but it is not yet complete or faithful to the original everywhere.
-What exists today:
+**Playable single-player, feature-complete for 1.3.1.2's content — but not a pixel copy and not rule-identical
+everywhere.** The campaign, all three expansions, the Crucible and the Shattered Realm run end to end,
+including custom games (mods), quests and story through the Lua host, and saving/loading.
 
-- **Formats:** ARC and ARZ archives, maps, meshes, textures and `.gdc` saves. The virtual file system merges the
-  base game, the expansions and mods.
-- **Gameplay** (headless ECS): combat, skills, devotion, pets, items, loot and loot filters, crafting, the
-  stash, trading, factions, quests and story (through a Lua host), riftgates, Nemesis monsters, saving and
-  loading.
-- **Modes:** the campaign, the Crucible (survival) and the Shattered Realm (endless dungeon).
-- **Client:** deferred rendering, characters, effects, decals, water, weather, world streaming, the UI, the
-  main menu and audio.
-- **Tools:** CLIs to inspect archives, records, maps, meshes, particle effects, textures, saves and story data.
+Not at parity, by decision: gamepad support, multiplayer, voice chat, Steam achievements and cloud saves are
+out of scope. Visuals read as the same game rather than matching it pixel for pixel.
+
+Known approximations and open questions (e.g. attach-point rotation, the `PlayAnimation` flag, `Item.HasAffix`'s
+record→instance bridge, mod database enumeration, Crucible DLC gating) are tracked in
+[`PLAN.md`](PLAN.md), which also lists the remaining optional work. Every deliberate rule difference is
+documented in its module's doc comment (`PORT:` notes).
+
+Save files use the original encodings (`.gdc`, `.gdd`, `.fow`, `.gst`, `map.dat`), so characters move between
+the port and the real game. Two exceptions: the Crucible leaderboard (`leaderboard.brd`) is the port's own
+plain encoding, and `playmenu.cpn` is partially inferred.
+
+### Deliberate differences from the engine
+Highlights; the module doc comments are the reference:
+- **Structure:** eleven crates from formats to binary, headless gameplay ECS, signature-based UI rebuilds,
+  weak asset caches with no timed eviction, backgrounded world streaming.
+- **Mods:** one mod at a time, only `resources/*.arc` mounted, mod indexes kept for the process, Crucible packs
+  always mounted; a start whose save names a different mod is refused instead of remounting it.
+- **Lua:** lenient overload dispatch and sandbox budgets; engine quirks preserved on purpose
+  (`Character.Turn` no-ops, `GetPlayerName` returns "").
+- **UI:** content-sized adaptive layout instead of the engine's fixed texture-sized columns and rows;
+  the FPS toggle lives with the other interface options.
+
+### Added beyond the engine
+- `showFPS` overlay and `maxFPS` frame limiter — the engine has neither.
+- Dev-only verification: `GD_*` hooks, the headless `TestGame` harness
+- `gd-tools`: mod-aware record/story inspection (`--mod`, `--diff`) and `<arc>:<entry>` map reading,
+  without extracting archives.
 
 ## Quick start
 ```sh
@@ -35,24 +53,26 @@ cp local.env.example local.env   # set GD_ROOT to your Grim Dawn install
 scripts/with-env cargo dev       # debug build with dev hooks
 ```
 
-Tests: `scripts/with-env cargo test --workspace`. To skip the tests that read the game install, set
-`GD_SKIP_DATA_TESTS=1`.
+Tests: `scripts/with-env cargo test --workspace` (`GD_SKIP_DATA_TESTS=1` skips the tests that read the
+install). Hooks, recipes and headless runs: [`docs/running.md`](docs/running.md).
 
 ## Layout
-| Crate | Holds |
-|---|---|
-| `gd-formats` | File formats and the virtual file system |
-| `gd-sim` | Engine rules without Bevy: stats, combat, skills, items, navigation, story, Shattered Realm generation |
-| `gd-game` | Headless gameplay ECS and the `TestGame` test harness |
-| `gd-render` | Rendering |
-| `grimdawn` | The game binary: streaming, UI, input, audio |
-| `gd-tools` | Command-line tools for inspecting game data |
+Eleven crates, layered `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core →
+{gd-game ∥ gd-render ∥ gd-ui-kit} → gd-ui → grimdawn`, plus `gd-tools`. What each holds and how the systems
+are structured: [`docs/architecture.md`](docs/architecture.md).
 
 ## Docs
-- [`docs/architecture.md`](docs/architecture.md): how the systems are structured
-- [`docs/running.md`](docs/running.md): running the game, test hooks and tests
+- [`docs/architecture.md`](docs/architecture.md): crates, state flow, gating, session lifecycle, UI conventions
+- [`docs/running.md`](docs/running.md): running the game, mods, test hooks and tests
 - [`docs/reverse-engineering.md`](docs/reverse-engineering.md): how to decompile the original game
 - [`docs/updating.md`](docs/updating.md): porting the project to a new game version
+- [`PLAN.md`](PLAN.md): remaining work, known approximations and constraints
+
+## AI notice
+This port is developed primarily by AI coding agents (large language models) under human direction: the
+code, documentation and commit messages are AI-written, reviewed and tested against the original game's
+data and decompilation rather than taken from model memory. The human maintainer sets the goals, reviews
+the work and owns the repository.
 
 ## Legal
 This is a fan project. It is not affiliated with Crate Entertainment. Grim Dawn and its assets belong to

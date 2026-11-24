@@ -127,7 +127,6 @@
 //! the nearest foe / NPC / targetable breakable (1 m up) / described
 //! decoration (2 m up).
 use crate::record_facts::{RecordFacts, icon_override};
-use gd_ui::state::hover::{Hovered, HoverPoint, Interact, Kind};
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::skinning::SkinnedMesh;
@@ -140,6 +139,7 @@ use gd_render::hover::HoverGlow;
 use gd_render::render::material::GdMaterial;
 use gd_render::render::post::{GLOW_LAYER, OutlineGlow};
 use gd_sim::bounds;
+use gd_ui::state::hover::{HoverPoint, Hovered, Interact, Kind};
 use gd_ui_kit::Ui;
 use gd_ui_kit::text::FontCache;
 use std::sync::Arc;
@@ -175,8 +175,6 @@ impl Plugin for HoverPlugin {
         );
     }
 }
-
-
 
 /// What the world mouse handler remembers between events (`InGameUI::HandleMouseEvent`): the object of the last
 /// event (`InGameUI.lockedObject`: set to the picked object, cleared when none), whether the last left press issued
@@ -227,7 +225,6 @@ fn held_pick(i: &HeldInput) -> HeldPick {
     }
 }
 
-
 /// Test hook `GD_DEBUFF_TARGET=<skill>`: the skill's debuff (as `casting::fire` lands a curse: the wrapper's
 /// buff record, level 1, its `skillActiveDuration`) lands once on each character the pointer hovers, cast by
 /// the player.
@@ -276,7 +273,6 @@ fn hook_debuff(
             / 1000.0,
     });
 }
-
 
 /// The hover target's [`Interact`]: its own mark (`base`), `Attack` added
 /// when a combat enemy is under the cursor (`enemy`, whatever won the

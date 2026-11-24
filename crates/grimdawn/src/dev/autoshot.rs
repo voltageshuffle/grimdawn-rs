@@ -89,7 +89,7 @@ fn tick(
                 shot.path.clone()
             };
             info!("GD_SHOT_ON: capturing {path} {d} s after the trigger");
-            let _ = std::fs::remove_file(&path);
+            drop(std::fs::remove_file(&path));
             commands
                 .spawn(Screenshot::primary_window())
                 .observe(save_to_disk(path.clone()));
@@ -118,7 +118,7 @@ fn tick(
             shot.frame,
             shot.start.elapsed().as_secs_f32()
         );
-        let _ = std::fs::remove_file(&shot.path);
+        drop(std::fs::remove_file(&shot.path));
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(shot.path.clone()));

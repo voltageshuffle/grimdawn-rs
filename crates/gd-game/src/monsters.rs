@@ -74,6 +74,15 @@ pub struct UnifiedPools(pub HashMap<String, usize>);
 #[derive(Resource, Default)]
 pub struct ProxyStates(pub HashMap<(usize, u32), Vec<MonsterState>>);
 
+/// The session's hero-boss registry (`GameEngine::RegisterProxyHeroBoss` / `IsProxyHeroBossInGame`,
+/// Game.dll `0x1802e7720` / `0x1802e7880`): the lowercased record paths of the Hero / Boss / SuperBoss
+/// monsters the proxies spawned. A pool entry whose record is in it never spawns again this session
+/// (`gd_sim::proxy::run_pool`); a proxy that ignores the restriction (`Proxy.Create`'s bool,
+/// `ProxyEndless`) spawns its bosses without registering them. Nothing unregisters
+/// (`UnregisterProxyHeroBoss` has no callers): the registry lasts the session (reset at its end).
+#[derive(Resource, Default)]
+pub struct HeroBosses(pub gd_formats::collections::HashSet<String>);
+
 /// Monster profiles by (record, level).
 #[derive(Resource, Default)]
 pub struct ProfileCache(
@@ -1061,6 +1070,7 @@ pub fn run_proxies(
         ResMut<UnifiedPools>,
         crate::unique::UniqueEntities,
     ),
+    mut bosses: ResMut<HeroBosses>,
 ) {
     let player_level = current_player_level(progress.as_deref(), loaded.as_deref());
     let (mode, asc) = (session.mode(), session.ascendant());
@@ -1211,6 +1221,7 @@ pub fn run_proxies(
                             area,
                             mode,
                             &mut pick,
+                            &bosses.0,
                             &mut rng,
                         ),
                         accessories: gd_sim::proxy::run_endless_accessory(
@@ -1221,6 +1232,7 @@ pub fn run_proxies(
                         )
                         .into_iter()
                         .collect(),
+                        register_bosses: Vec::new(),
                     }
                 } else {
                     gd_sim::proxy::run_proxy_shared(
@@ -1232,9 +1244,12 @@ pub fn run_proxies(
                         gd_sim::ascendant::trove_chance(&assets.data.db, asc, mode),
                         true,
                         &mut pick,
+                        &bosses.0,
+                        false,
                         &mut rng,
                     )
                 };
+                bosses.0.extend(run.register_bosses.iter().cloned());
                 if let (Some(g), Some(i)) = (group, pick) {
                     unified.0.entry(g).or_insert(i);
                 }
@@ -1618,6 +1633,7 @@ pub struct MonstersPlugin;
 impl Plugin for MonstersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SetPieceStates>()
+            .init_resource::<HeroBosses>()
             .init_resource::<gd_game_core::world::ChestStates>()
             .add_systems(
                 Update,
@@ -1656,6 +1672,9 @@ impl Plugin for MonstersPlugin {
 /// quest) at `position` and spawns its monsters; `id` is the story object, so
 /// they are story monsters (slot level `usize::MAX`) left to the story to
 /// despawn. Same rules as level proxies, without the per-session memory.
+/// `limits_at` is `Proxy.Create`'s vec (`Proxy::SetLimitsLocation`, exe `0x14006b610`): the area limits
+/// are read there, the monsters still place at `position`; `ignore_boss` its bool
+/// (`CreateAtIgnoreBoss`, byte +1612): the bosses spawn without registering in [`HeroBosses`].
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_story_proxy(
     commands: &mut Commands,
@@ -1671,11 +1690,16 @@ pub fn spawn_story_proxy(
     factions: Option<&crate::factions::PlayerFactions>,
     id: u32,
     patrol: &[[u32; 4]],
+    limits_at: Option<Vec3>,
+    ignore_boss: bool,
+    bosses: &mut HeroBosses,
 ) -> Vec<Entity> {
     let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let mode = session.mode();
-    // PORT: a script-placed proxy has no region here (engine source not traced): position lookup.
-    let limits = world.and_then(|w| w.level_limits(None, position, mode.difficulty));
+    // PORT: a script-placed proxy has no region here (engine source not traced): position lookup
+    // (`SetLimitsLocation`'s vec when the script gave one).
+    let limits =
+        world.and_then(|w| w.level_limits(None, limits_at.unwrap_or(position), mode.difficulty));
     let area = gd_sim::proxy::area_level(player_level, limits);
     let trove = gd_sim::ascendant::trove_chance(&data.db, session.ascendant(), mode);
     let run = gd_sim::proxy::run_proxy(
@@ -1686,8 +1710,11 @@ pub fn spawn_story_proxy(
         mode,
         trove,
         true,
+        &bosses.0,
+        ignore_boss,
         &mut rng,
     );
+    bosses.0.extend(run.register_bosses.iter().cloned());
     let spawns = run.monsters;
     let extents = gd_sim::proxy::proxy_info(&data.db, record)
         .map(|i| i.placement_extents)

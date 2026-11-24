@@ -49,8 +49,8 @@ use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
 use gd_formats::vfs::Database;
 use gd_rules::Rng;
-use std::collections::BTreeMap;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock, OnceLock};
 
 mod display;
@@ -2249,7 +2249,14 @@ fn global_parts(
                 target <= acc
             })
         };
-        let picked = pick.map(|i| (&cg.one_of[i], Some(g.one_of[i].0), &cg.one_of_dmg[i], Some(i)));
+        let picked = pick.map(|i| {
+            (
+                &cg.one_of[i],
+                Some(g.one_of[i].0),
+                &cg.one_of_dmg[i],
+                Some(i),
+            )
+        });
         for (attrs, own, play_dense, pick_idx) in
             std::iter::once((&cg.all, None, &cg.all_dmg, None)).chain(picked)
         {
@@ -2452,7 +2459,11 @@ impl<'a> DisplayModifiers<'a> {
     fn get(&self, k: &str) -> f32 {
         let gated = &self.profile.combat_cache().gated;
         self.profile.totals.get(k).copied().unwrap_or(0.0)
-            + self.group_mods.iter().find(|x| x.0 == k).map_or(0.0, |x| x.1)
+            + self
+                .group_mods
+                .iter()
+                .find(|x| x.0 == k)
+                .map_or(0.0, |x| x.1)
             + self
                 .gated
                 .iter()
@@ -2500,7 +2511,13 @@ fn collect_damage(
     use CombatType as T;
     let ad = |ty| atk_debuffs.get(ty);
     let out_red = outgoing_reduction(atk_debuffs);
-    global_parts(atk.profile, rng, display, &mut sc.group_mods, &mut sc.group_damage);
+    global_parts(
+        atk.profile,
+        rng,
+        display,
+        &mut sc.group_mods,
+        &mut sc.group_damage,
+    );
     let t = |k: &str| atk.total(k) + sc.group_mods.iter().find(|x| x.0 == k).map_or(0.0, |x| x.1);
     // Damage multipliers (`offensiveDamageMultModifier`, e.g. a gear skill
     // modifier's -30 %) scale the damage after the other modifiers
@@ -2670,7 +2687,11 @@ fn collect_damage(
                                 }
                             } else {
                                 damage.push(combat::Damage::Hit(combat::HitDamage::roll(
-                                    ty, min * k, max * k, 1.0, rng,
+                                    ty,
+                                    min * k,
+                                    max * k,
+                                    1.0,
+                                    rng,
                                 )));
                             }
                         }
@@ -2725,16 +2746,7 @@ fn collect_damage(
     } else {
         &cache.gear
     };
-    collect_source(
-        gear_vals,
-        weapon_scale,
-        true,
-        None,
-        rng,
-        damage,
-        0,
-        display,
-    );
+    collect_source(gear_vals, weapon_scale, true, None, rng, damage, 0, display);
     // The skill's own damage (its record, learned modifiers and parent at their levels). With no
     // skill every field is 0, so the source rolls nothing — skipped.
     if let Some(s) = skill.as_ref() {
@@ -2744,22 +2756,12 @@ fn collect_damage(
     // The global-chance groups' damage stores (rolled in `global_parts`).
     for (owner, gd) in &sc.group_damage {
         let vals = match gd {
-            GroupDmg::Cached { group, pick } => pick.map_or(
-                &cache.groups[*group].all_dmg,
-                |p| &cache.groups[*group].one_of_dmg[p],
-            ),
+            GroupDmg::Cached { group, pick } => pick.map_or(&cache.groups[*group].all_dmg, |p| {
+                &cache.groups[*group].one_of_dmg[p]
+            }),
             GroupDmg::Display(b) => &**b,
         };
-        collect_source(
-            vals,
-            weapon_scale,
-            true,
-            None,
-            rng,
-            damage,
-            *owner,
-            true,
-        );
+        collect_source(vals, weapon_scale, true, None, rng, damage, *owner, true);
     }
     // The gear's and passives' DoTs per owning source (item instance / record): distinct owners
     // stack in the defender's DotManager, the same owner's re-application keeps max (module docs).
@@ -2778,16 +2780,7 @@ fn collect_damage(
             .zip(cache.dots.iter())
             .chain(hand_ds.iter().zip(hand_dense.iter()))
         {
-            collect_source(
-                vals,
-                weapon_scale,
-                true,
-                None,
-                rng,
-                damage,
-                ds.owner,
-                true,
-            );
+            collect_source(vals, weapon_scale, true, None, rng, damage, ds.owner, true);
         }
     }
     // The character's chance-gated instances (`field@chance`, `chance_key`, split once per profile

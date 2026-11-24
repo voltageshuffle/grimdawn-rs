@@ -95,9 +95,9 @@
 //! a reply with an unmet condition is not listed at all (no grey text), see
 //! `Story::advance`. The speech and reply texts keep their `^X` colour markup: `Ui::wrap_lines` carries the active
 //! colour over line breaks and `Ui::text_line` draws it (`gd_formats::ui::layout_text`).
-use crate::fade::{Fader, fade_group, seal_fade_group};
 use super::text::FontCache;
 use super::window::Rebuild;
+use crate::fade::{Fader, fade_group, seal_fade_group};
 
 /// `ConversationWindow::Load`: the window's locked-quests icon.
 const LOCKED_ICON: &str = "ui/conversationwindow/icon_lockedquests.tex";

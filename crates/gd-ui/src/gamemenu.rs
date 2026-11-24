@@ -588,19 +588,14 @@ fn build(
     } else if menu.open
         && let Some(rec) = ui.record(RECORD)
     {
-        let r = WindowDef::from_record(&rec).screen_rect(ui.screen.x, ui.screen.y, s);
-        let o = Vec2::new(r.x, r.y);
+        let mut def = WindowDef::from_record(&rec);
         let field = |k: &str| rec.str(k).unwrap_or("").to_string();
-        if let Some(bg) = ui.record(&field("exitBaseBitmap"))
-            && let Some(path) = bg.str("bitmapName")
-        {
-            ui.bitmap(
-                path,
-                bg.f32("bitmapPositionX").unwrap_or(0.0),
-                bg.f32("bitmapPositionY").unwrap_or(0.0),
-                o,
-            );
-        }
+        // The buttons auto-size to their labels (`widgets::static_button`); measure them first
+        // so the window (and its background) grows by the widest button's growth and every
+        // button keeps its centre in the window. PORT: the stock window is fixed at its record
+        // extent and a long localised label overflows the button (UX over parity).
+        let mut buttons = Vec::new();
+        let mut grow = 0.0f32;
         for (k, part) in [
             ("resumeButton", Part::Resume),
             ("optionsButton", Part::Options),
@@ -610,13 +605,55 @@ fn build(
             let Some(b) = ui.record(&field(k)) else {
                 continue;
             };
+            let Some(tex_w) = b
+                .str("bitmapNameUp")
+                .and_then(|p| ui.image(p))
+                .map(|(_, size)| ui.sc(size.x as f32))
+            else {
+                continue;
+            };
+            let text = b.str("textTag").map(|t| ui.fonts.tag(t).to_string());
+            let w = super::widgets::button_width(&mut ui, &b, tex_w, text.as_deref());
+            grow = grow.max(w - tex_w);
+            buttons.push((b, part, tex_w, w));
+        }
+        def.w += grow / s;
+        let r = def.screen_rect(ui.screen.x, ui.screen.y, s);
+        let o = Vec2::new(r.x, r.y);
+        if let Some(bg) = ui.record(&field("exitBaseBitmap"))
+            && let Some(path) = bg.str("bitmapName")
+        {
+            let (bx, by) = (
+                bg.f32("bitmapPositionX").unwrap_or(0.0),
+                bg.f32("bitmapPositionY").unwrap_or(0.0),
+            );
+            if grow > 0.0
+                && let Some((h, size)) = ui.image(path)
+            {
+                ui.quad_stretch(
+                    h,
+                    URect::new(
+                        o.x + ui.sc(bx),
+                        o.y + ui.sc(by),
+                        ui.sc(size.x as f32) + grow,
+                        ui.sc(size.y as f32),
+                    ),
+                    Color::WHITE,
+                );
+            } else {
+                ui.bitmap(path, bx, by, o);
+            }
+        }
+        for (b, part, tex_w, w) in buttons {
+            // Re-centre: the window grew by `grow`, this button by `w - tex_w`.
+            let ob = o + Vec2::new((grow - (w - tex_w)) * 0.5, 0.0);
             let label = super::widgets::Label::Record;
-            if let Some(br) = super::widgets::static_button(&mut ui, &b, o, true, false, label) {
+            if let Some(br) = super::widgets::static_button(&mut ui, &b, ob, true, false, label) {
                 ui.record_button_sound(br, &b);
                 layout.buttons.push((br, part));
                 // The focus look, shown by `live` while the cursor is on the button.
                 ui.root = layer(ui.commands, Layer::Button(part), Z + 1);
-                super::widgets::static_button(&mut ui, &b, o, true, true, label);
+                super::widgets::static_button(&mut ui, &b, ob, true, true, label);
                 ui.root = root;
             }
         }

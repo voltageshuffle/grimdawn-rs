@@ -29,13 +29,12 @@
 //! = the minimap's width and margin, mode 4 (−15 − `UIPlayerHud.minimapWidth`, 0). See [`hud_shift`]; the mode is
 //! `gd_game::compass::CompassMode` ([`compass_mode`]).
 use super::{URect, Widget};
-use gd_ui::state::survival::{SurvivalView, Zone, PaneRollovers, compass_mode, hud_shift};
 use super::{UiAssets, additive};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{TextBox, WindowDef};
 use gd_game_core::data::GameData;
-
+use gd_ui::state::survival::{PaneRollovers, SurvivalView, Zone, compass_mode, hud_shift};
 
 /// Copies the story's survival state into [`SurvivalView`] (compared in place; it changes about once a second,
 /// and the objective texts are copied only when they differ).
@@ -885,8 +884,6 @@ fn build_endless_pane(
     }
 }
 
-
-
 /// One mutator icon shown (`Game.AddMutator` list).
 #[derive(Clone, PartialEq)]
 struct MutatorIcon {
@@ -1094,8 +1091,6 @@ fn build_mutators(
         x -= spacing;
     }
 }
-
-
 
 /// `Game.PlayFullscreenGlow` (`GameEngine::ShowGlowEffect` -> `InGameUI` glow): a trigger sets
 /// the target to 1 when it is 0; the level follows it at 1 per second and the

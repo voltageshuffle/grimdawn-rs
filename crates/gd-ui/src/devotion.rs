@@ -119,17 +119,23 @@
 //!
 //! Sounds: the enabled top-bar buttons (help, close, zoom, clear search, undo) and the mastery tabs register their
 //! `soundNameDown` (`Ui::record_button_sound`, `ui/widgets.rs`).
+//!
+//! PORT: the top-bar tab segments size to their (localised) titles (`gd_ui_kit::layout::tab_strip`,
+//! contiguous, right-anchored at the stock strip's right edge so they clear the help / close
+//! buttons), the undo button auto-sizes to its label and follows the strip's left edge, and the
+//! reclaim sidebar labels truncate to their text boxes; stock fixes all three to their textures /
+//! boxes (UX over parity).
 use super::additive::{self, AdditiveCache, AdditiveMaterial};
 use super::contains;
 use super::hud::ColorPulse;
 use super::{HudValues, Ui};
-use gd_game::devotion::DevotionState;
 use crate::state::inventory::UiCapture;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::ui::UiTransform;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, TextAlign, TextBox, Widget};
+use gd_game::devotion::DevotionState;
 use gd_game_core::player::Player;
 
 const MASTER: &str = "records/ui/skills/devotion/devotion_mastertable.dbr";
@@ -1664,22 +1670,6 @@ pub fn build(
         }
         Some((x, y, r))
     };
-    // Undo: the disabled bitmap while nothing changed since the window opened
-    // (`DevotionWindow::Update`, see `gd_game::devotion::DevotionUndo`).
-    if let Some(Widget::Button {
-        up, disabled, x, y, ..
-    }) = ui.widget(&mf("undoButton"))
-        && let Some(b) = if values.devotion_undo {
-            up.or(disabled)
-        } else {
-            disabled.or(up)
-        }
-        && let Some((_, r)) = ui.bitmap(&b, x, y, oc)
-        && values.devotion_undo
-    {
-        layout.hits.push((DevHit::Undo, r));
-        ui.record_path_button_sound(r, &mf("undoButton"));
-    }
     btn(ui, "helpButton", Some(DevHit::Help), &mut layout);
     // The search box: its typed text (the engine's box has no background of its own) and, while there is text, the
     // clear button.
@@ -1737,25 +1727,12 @@ pub fn build(
         let t = ui.fonts.tag("tagAerialMapZoomText").to_owned();
         ui.text(&tb, oc, &t);
     }
-    if let Some(r) = ui.record(&mf("undoButton")) {
-        let _ = r;
-        let t = ui.fonts.tag("tagSkillUndoGeneric").to_owned();
-        if let Some(Widget::Button { x, y, .. }) = ui.widget(&mf("undoButton")) {
-            let tb = TextBox {
-                style: None,
-                rect: URect::new(x, y, 68.0, 34.0),
-                align_x: TextAlign::Center,
-                align_y: TextAlign::Center,
-                tag: None,
-                glow: None,
-            };
-            ui.text_with_style(&tb, TAB_STYLE, oc, &t);
-        }
-    }
-    // Tabs: the chosen masteries and this one (`devotionbuttons_tab1/2/3button`).
+    // Tabs: the chosen masteries and this one (`devotionbuttons_tab1/2/3button`), sized to
+    // their titles, contiguous in the records' x order and centred on the stock strip's centre.
     let trees = ui.data.skill_trees();
     let masteries = trees.masteries(&values.skills);
     let shown = (masteries + (masteries < 2) as usize).min(2);
+    let mut segs = Vec::new();
     for (key, tab) in [
         ("skillsTab1Button", 1u8),
         ("skillsTab2Button", 2),
@@ -1770,13 +1747,6 @@ pub fn build(
         let Some(b) = (if tab == 0 { down.or(up) } else { up }) else {
             continue;
         };
-        let Some((_, r)) = ui.bitmap(&b, x, y, oc) else {
-            continue;
-        };
-        if tab != 0 {
-            layout.hits.push((DevHit::Tab(tab), r));
-            ui.record_path_button_sound(r, &mf(key));
-        }
         let title = if tab == 0 {
             ui.fonts.tag("tagSkillDevotion").to_owned()
         } else {
@@ -1794,15 +1764,79 @@ pub fn build(
                 None => ui.fonts.tag("tagSkillClassSelect").to_owned(),
             }
         };
-        let tb = TextBox {
-            style: None,
-            rect: URect::new(x, y, r.w / ui.s, r.h / ui.s),
-            align_x: TextAlign::Center,
-            align_y: TextAlign::Center,
-            tag: None,
-            glow: None,
+        segs.push((key, tab, b, title, x, y));
+    }
+    segs.sort_by(|a, b| a.4.total_cmp(&b.4));
+    let mut placed = Vec::new();
+    let (mut total, mut lo, mut hi) = (0.0, f32::MAX, f32::MIN);
+    for (key, tab, b, title, x, y) in segs {
+        let Some((img, sz)) = ui.image(&b) else {
+            continue;
         };
-        ui.text_with_style(&tb, TAB_STYLE, oc, &title);
+        let (tw, th) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+        let r = gd_ui_kit::layout::tab_strip(
+            ui,
+            TAB_STYLE,
+            &[&title],
+            Vec2::new(total, 0.0),
+            th,
+            ui.sc(10.0),
+            tw,
+        )[0];
+        total += r.w;
+        lo = lo.min(ui.sc(x));
+        hi = hi.max(ui.sc(x) + tw);
+        placed.push((key, tab, img, r, tw, y, title));
+    }
+    // Right-anchored at the stock strip's right edge (the help / close buttons sit just right of
+    // it), growing leftward with its titles; the undo button below follows the strip's left edge.
+    let ox = oc.x + hi - total;
+    for (key, tab, img, mut r, tw, y, title) in placed {
+        r.x += ox;
+        r.y = oc.y + ui.sc(y);
+        if r.w > tw {
+            ui.quad_stretch(img, r, Color::WHITE);
+        } else {
+            ui.quad(img, r, None, Color::WHITE);
+        }
+        if tab != 0 {
+            layout.hits.push((DevHit::Tab(tab), r));
+            ui.record_path_button_sound(r, &mf(key));
+        }
+        super::widgets::label(ui, r, TAB_STYLE, TextAlign::Center, &title);
+    }
+    // Undo: the disabled bitmap while nothing changed since the window opened
+    // (`DevotionWindow::Update`, see `gd_game::devotion::DevotionUndo`). Auto-sized to its label
+    // and anchored just left of the tab strip so the two never overlap; the label keeps the tab style.
+    if let Some(Widget::Button {
+        up, disabled, y, ..
+    }) = ui.widget(&mf("undoButton"))
+        && let Some(b) = if values.devotion_undo {
+            up.or(disabled)
+        } else {
+            disabled.or(up)
+        }
+        && let Some((img, sz)) = ui.image(&b)
+    {
+        let t = ui.fonts.tag("tagSkillUndoGeneric").to_owned();
+        let tex_w = ui.sc(sz.x as f32);
+        let bw = tex_w.max(ui.text_width(TAB_STYLE, &t) + 2.0 * ui.sc(10.0));
+        let r = URect::new(
+            ox - ui.sc(6.0) - bw,
+            oc.y + ui.sc(y),
+            bw,
+            ui.sc(sz.y as f32),
+        );
+        if bw > tex_w {
+            ui.quad_stretch(img, r, Color::WHITE);
+        } else {
+            ui.quad(img, r, None, Color::WHITE);
+        }
+        super::widgets::label(ui, r, TAB_STYLE, TextAlign::Center, &t);
+        if values.devotion_undo {
+            layout.hits.push((DevHit::Undo, r));
+            ui.record_path_button_sound(r, &mf("undoButton"));
+        }
     }
     if let Some(pk) = &view.pick {
         pick_list(ui, pk, values, &mut layout);
@@ -1858,6 +1892,11 @@ fn reclaim_texts(
                 .str("textTag")
                 .map(|t| ui.fonts.tag(t).to_string())
                 .unwrap_or_default();
+            // A long localised label is cut to its text box (the box bitmap stays centred).
+            let t = match tb.style.as_deref() {
+                Some(st) => ui.truncate_line(st, ui.sc(tb.rect.w), &t),
+                None => t,
+            };
             ui.text(&tb, o, &t);
         }
         if let Some(nr) = ui.record(&mf(number)) {

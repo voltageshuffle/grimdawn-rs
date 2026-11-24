@@ -775,10 +775,12 @@ pub(super) fn build_journal(
             layout.groups.push((r, g.to_owned()));
         }
         let glh = ui.line_height(&group_style);
+        // PORT: cut the group name to the tree's right edge (the tracker already truncates its names).
+        let gname = ui.truncate_line(&group_style, (tx + tree_w - rpad - x).max(0.0), g);
         ui.text_line(
             &group_style,
             Vec2::new(x, y + ((gmajor - glh) * 0.5).round()),
-            g,
+            &gname,
             1.0,
         );
         y += gmajor;
@@ -820,10 +822,11 @@ pub(super) fn build_journal(
                 &secondary
             };
             let lh = ui.line_height(style);
+            let qname = ui.truncate_line(style, (tx + tree_w - rpad - x).max(0.0), &q.name);
             ui.text_line(
                 style,
                 Vec2::new(x, y + ((minor - lh) * 0.5).round()),
-                &q.name,
+                &qname,
                 1.0,
             );
             layout.rows.push((URect::new(tx, y, tree_w, minor), q.id));

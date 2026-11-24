@@ -443,8 +443,8 @@ pub(super) fn gather(
         };
         let Some(info) = inv.info(item) else { continue };
         let name = gd_sim::items::naming::item_name(&fonts.tags, &info.resolved);
-        let bitmap = gd_ui::character::rarity_key(info.resolved.display_color_index())
-            .and_then(|k| {
+        let bitmap =
+            gd_ui::character::rarity_key(info.resolved.display_color_index()).and_then(|k| {
                 info_rec
                     .as_ref()?
                     .str(&format!("{k}ItemMapNugget"))

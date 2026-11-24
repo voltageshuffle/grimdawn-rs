@@ -1,291 +1,318 @@
 use super::*;
 use gd_ui::state::options::Tab;
 
-/// The page origin in the reference shots' coordinates: [`ORIGIN`] + `pageX` / `pageY` (15, 114).
-pub(super) const PAGE: Vec2 = Vec2::new(ORIGIN.x + 15.0, ORIGIN.y + 114.0);
-
-/// A page under construction (builders of `OptionsWindow::Load`): `y` is the page's row
-/// cursor (`OptionsPage.rowY`). A check box (`OptionsWindow::AddCheckBox`: x, dy) sits at (x + 20, y), then y += dy; a
-/// slider (`OptionsWindow::AddSlider`) is a 215 x 20 track at (x, y), its label 181 px left of it, then y += 35; a
-/// dropdown (`OptionsWindow::AddQualityDropBox` / `AddIntDropBox` / `AddListDropBox` / `AddAnisotropyDropBox`: label
-/// x, box x, width; 200 when not given) is a width x 23 box at (box x, y), its label at (label x, y), then y += 35. A
-/// new page's cursor is 20 (page ctor `OptionsPage::OptionsPage`).
-pub(super) struct Page {
-    y: f32,
-    ctls: Vec<Ctl>,
-}
-
-impl Page {
-    fn new(y: f32) -> Self {
-        Self {
-            y,
-            ctls: Vec::new(),
-        }
+/// A page's columns of controls, in flow order (column-major). The coordinates are unset here; [`layout`]
+/// measures the labels and places them. Identity-only callers (input, live, the open hook) use [`ctls`].
+///
+/// PORT: the engine's page builder (`OptionsWindow::Load`) walks a fixed row cursor with hard-coded column
+/// offsets and skips rows for options the port does not show; the port lays each tab out as columns of
+/// fixed-height rows instead, so an omitted option leaves no gap and a long label pushes its control right
+/// rather than overflowing.
+pub(super) fn page(tab: Tab) -> Vec<Vec<Ctl>> {
+    fn check(k: &'static str, t: &'static str) -> Ctl {
+        Ctl::Check(k, t, 0.0, 0.0)
     }
-
-    fn check(&mut self, o: &'static str, t: &'static str, x: f32, dy: f32) {
-        self.ctls
-            .push(Ctl::Check(o, t, PAGE.x + 20.0 + x, PAGE.y + self.y));
-        self.y += dy;
+    fn check_left(k: &'static str, t: &'static str) -> Ctl {
+        Ctl::CheckLeft(k, t, 0.0, 0.0, 0.0)
     }
-
-    fn checks(&mut self, opts: &[(&'static str, &'static str)], x: f32, dy: f32) {
-        for (o, t) in opts {
-            self.check(o, t, x, dy);
-        }
+    fn slider(k: &'static str, t: &'static str) -> Ctl {
+        Ctl::Slider(k, t, 0.0, 0.0, 0.0, 0.0)
     }
-
-    fn slider(&mut self, o: &'static str, t: &'static str, x: f32) {
-        let x = PAGE.x + x;
-        self.ctls.push(Ctl::Slider(
-            o,
-            t,
-            x - 181.0,
-            PAGE.y + self.y + 10.0,
-            x,
-            x + 215.0,
-        ));
-        self.y += 35.0;
+    fn drop(s: Shown, t: &'static str) -> Ctl {
+        Ctl::Drop(s, t, 0.0, 0.0, 0.0, 0.0)
     }
-
-    fn drop(&mut self, s: Shown, t: &'static str, label_x: f32, box_x: f32, width: f32) {
-        let x = PAGE.x + box_x;
-        self.ctls.push(Ctl::Drop(
-            s,
-            t,
-            PAGE.x + label_x,
-            PAGE.y + self.y + 11.5,
-            x,
-            x + width - 3.0,
-        ));
-        self.y += 35.0;
-    }
-}
-
-pub(super) fn page(tab: Tab) -> Vec<Ctl> {
-    let mut p = Page::new(20.0);
     match tab {
-        Tab::Gameplay => {
-            p.y = 15.0;
-            p.checks(
-                &[
-                    ("classicCasting", "tagGameplayOption29"),
-                    ("targetLock", "tagGameplayOption20"),
-                    ("gamepadTargetLock", "tagGameplayOption31"),
-                    ("evadeFollowCursor", "tagGameplayOption36"),
-                ],
-                0.0,
-                40.0,
-            );
-            p.y += 20.0;
-            p.checks(
-                &[
-                    ("lockMapRotation", "tagGameplayOption15"),
-                    ("lockItemPickup", "tagGameplayOption11"),
-                    ("dayNightCycle", "tagGameplayOption34"),
-                    ("quickBuy", "tagGameplayOption02"),
-                ],
-                0.0,
-                40.0,
-            );
-            p.y += 20.0;
-            p.check("cloudSaving", "tagGameplayOption07", 0.0, 40.0);
-            p.y = 20.0;
-            p.checks(
-                &[
-                    ("breakingMoveTo", "tagGameplayOption27"),
-                    ("cameraShake", "tagGameplayOption25"),
-                    ("gore", "tagGameplayOption16"),
-                ],
-                340.0,
-                40.0,
-            );
-            p.y += 20.0;
-            // (`tagGameplayOption17`, `blood`, only with more than one entry: its list gets one, so never shown.)
-            p.slider("corpsePersistence", "tagGameplayOption19", 540.0);
-            p.slider("inactiveUpdateRate", "tagGameplayOption23", 540.0);
-            p.slider("autoLootRadius", "tagGameplayOption32", 540.0);
-            p.drop(Shown::Language, "tagGameplayOption09", 360.0, 540.0, 200.0);
-            p.drop(Shown::MainMenu, "tagHUDOption20", 360.0, 540.0, 200.0);
+        Tab::Gameplay => vec![
+            vec![
+                check("classicCasting", "tagGameplayOption29"),
+                check("targetLock", "tagGameplayOption20"),
+                check("gamepadTargetLock", "tagGameplayOption31"),
+                check("evadeFollowCursor", "tagGameplayOption36"),
+                check("lockMapRotation", "tagGameplayOption15"),
+                check("lockItemPickup", "tagGameplayOption11"),
+                check("dayNightCycle", "tagGameplayOption34"),
+                check("quickBuy", "tagGameplayOption02"),
+                check("cloudSaving", "tagGameplayOption07"),
+            ],
+            vec![
+                check("breakingMoveTo", "tagGameplayOption27"),
+                check("cameraShake", "tagGameplayOption25"),
+                check("gore", "tagGameplayOption16"),
+                // (`tagGameplayOption17`, `blood`, only with more than one entry: its list gets one, so never shown.)
+                slider("corpsePersistence", "tagGameplayOption19"),
+                slider("inactiveUpdateRate", "tagGameplayOption23"),
+                slider("autoLootRadius", "tagGameplayOption32"),
+                drop(Shown::Language, "tagGameplayOption09"),
+                drop(Shown::MainMenu, "tagHUDOption20"),
+            ],
+        ],
+        Tab::Interface => vec![
+            vec![
+                check("tutorialTips", "tagGameplayOption18"),
+                check("screenEffects", "tagHUDOption21"),
+                check("errorMessages", "tagGameplayOption30"),
+                check("extraRollovers", "tagGameplayOption05"),
+                check("showMonsterLevelOnRollover", "tagGameplayOption06"),
+                check("displayDamage", "tagGameplayOption04"),
+                check("critMultipliers", "tagGameplayOption22"),
+                check("autoItemTooltips", "tagGameplayOption03"),
+                check("sortConfirmBypass", "tagHUDOption09"),
+                check("newItemHighlight", "tagHUDOption22"),
+                // PORT: the HUD FPS counter lives with the other interface toggles (the engine has no tag for it).
+                check("showFPS", "Show FPS"),
+            ],
+            vec![
+                check("targetOutline", "tagGameplayOption14"),
+                check("showTime", "tagHUDOption19"),
+                check("hotbarCooldownCounter", "tagHUDOption14"),
+                check("toggledAurasSelf", "tagHUDOption15"),
+                check("toggledAurasOther", "tagHUDOption16"),
+                check("toggledWeaponEffects", "tagHUDOption17"),
+                check("detailItemTooltips", "tagHUDOption23"),
+                check("standardHUD", "tagHUDOption24"),
+                check("transferConfirmBypass", "tagHUDOption25"),
+                check("largeCursor", "tagHUDOption26"),
+            ],
+        ],
+        Tab::HealthBars => vec![
+            vec![
+                check("playerLocalBar", "tagHUDOption06"),
+                check("playerBars", "tagHUDOption01"),
+                check("playerHealth", "tagHUDOption02"),
+                check("petBars", "tagHUDOption07"),
+                check("monsterBars", "tagHUDOption03"),
+                check("monsterHealth", "tagHUDOption04"),
+                check("monsterBarsUndamaged", "tagHUDOption08"),
+                check("monsterIcons", "tagHUDOption05"),
+            ],
+            vec![
+                check("healthBarsPercent", "tagHUDOption12"),
+                check("playerBarsLarge", "tagHUDOption18"),
+                check("monsterBarsLarge", "tagHUDOption10"),
+                check("bossBarsLarge", "tagHUDOption11"),
+                check("monsterBarsDebuffs", "tagHUDOption13"),
+            ],
+        ],
+        Tab::Audio => vec![vec![
+            drop(Shown::OutputDevice, "tagAudioOption07"),
+            drop(Shown::InputDevice, "tagAudioOption09"),
+            check("voicechatEnabled", "tagAudioOption11"),
+            check("voicechatPushToTalk", "tagAudioOption13"),
+            check("micLoopback", "tagAudioOption10"),
+            slider("masterVolume", "tagAudioOption01"),
+            slider("musicVolume", "tagAudioOption02"),
+            slider("effectsVolume", "tagAudioOption03"),
+            slider("ambientVolume", "tagAudioOption04"),
+            slider("dialogVolume", "tagAudioOption05"),
+            slider("voiceVolume", "tagAudioOption12"),
+            check("errorSpeech", "tagAudioOption08"),
+        ]],
+        Tab::Video => vec![
+            vec![
+                drop(Shown::RenderDevice, "tagVideoOption30"),
+                drop(Shown::WindowMode, "tagVideoOption29"),
+                drop(Shown::Resolution, "tagVideoOption01"),
+                // Anti-aliasing (the DirectX 11 deferred path): a check box with its label on the left.
+                check_left("fxaa", "tagVideoOption13"),
+                drop(Shown::Aniso, "tagVideoOption25"),
+                drop(Shown::Quality("textureQuality"), "tagVideoOption02"),
+                drop(Shown::Shadows, "tagVideoOption03"),
+                slider("uiScale", "tagVideoOption23"),
+                // "Fullscreen Gamma" (`gamma`): the exclusive fullscreen gamma ramp (gd-render `post.rs`).
+                slider("gamma", "tagVideoOption10"),
+            ],
+            vec![
+                drop(Shown::Quality("detailLevel"), "tagVideoOption24"),
+                drop(Shown::Quality("reflectionQuality"), "tagVideoOption04"),
+                drop(Shown::Quality("fxQuality"), "tagVideoOption27"),
+                drop(Shown::Quality("lightingQuality"), "tagVideoOption28"),
+                drop(Shown::Weather, "tagVideoOption26"),
+                drop(Shown::ColorBlind, "tagVideoOption12"),
+                check("syncToRefresh", "tagVideoOption11"),
+                check("detailObjects", "tagVideoOption09"),
+                check("ambientocclusion", "tagVideoOption15"),
+                // PORT: the frame limiter (literal English label; the engine has no tag for it).
+                drop(Shown::MaxFps, "FPS Limit"),
+            ],
+            vec![
+                check("advancedEffects", "tagVideoOption08"),
+                check("depthOfField", "tagVideoOption05"),
+                check("softParticles", "tagVideoOption06"),
+                check("hdrLighting", "tagVideoOption16"),
+                check("fog", "tagVideoOption32"),
+            ],
+        ],
+        // The key list fills the page above; these two sit in a row along its bottom edge.
+        Tab::KeyBindings => vec![
+            vec![check("gamepadSupport", "tagGameplayOption24S")],
+            vec![drop(Shown::Movement, "tagGameplayOption35")],
+        ],
+        Tab::Network => vec![],
+    }
+}
+
+/// The page's controls in flow order (column-major), coordinates unset: for callers that only read a control's
+/// identity (the open dropdown's [`Shown`], the Default reset's option keys).
+pub(super) fn ctls(tab: Tab) -> Vec<Ctl> {
+    page(tab).into_iter().flatten().collect()
+}
+
+/// The layout environment `build` measures with: the page's content size (reference units, from the window
+/// record's `pageExtent*`), the check-box and dropdown-arrow texture widths (reference units), and a closure
+/// returning a label's measured width in reference units (`ui.text_width / ui.s`).
+pub(super) struct Env<'a> {
+    pub size: Vec2,
+    pub check_w: f32,
+    pub arrow_w: f32,
+    pub measure: &'a mut dyn FnMut(&str) -> f32,
+}
+
+/// Side margin inside the page, gap between a label and its control, and the column gap range.
+const PAD: f32 = 16.0;
+const LABEL_GAP: f32 = 10.0;
+const COL_GAP_MIN: f32 = 20.0;
+const COL_GAP_MAX: f32 = 80.0;
+/// The slider track's natural and minimum width, and the dropdown arrow's offset outside its box (reference
+/// units).
+const TRACK_W: f32 = 215.0;
+const TRACK_MIN: f32 = 120.0;
+const ARROW_GAP: f32 = 3.0;
+/// The smallest a dropdown box may shrink to when the columns must fit a narrow page.
+const DROP_MIN: f32 = 60.0;
+
+/// A dropdown's box width (reference units) at shrink factor `f` (1 = natural): the audio device lists stay
+/// wide, the FPS cap and quality lists shrink toward [`DROP_MIN`].
+fn drop_bw(s: Shown, f: f32) -> f32 {
+    let nat = match s {
+        Shown::OutputDevice | Shown::InputDevice => return 400.0,
+        Shown::MaxFps => 110.0,
+        _ => 200.0,
+    };
+    DROP_MIN + (nat - DROP_MIN) * f
+}
+
+/// The slider track width at shrink factor `f`.
+fn track_w(f: f32) -> f32 {
+    TRACK_MIN + (TRACK_W - TRACK_MIN) * f
+}
+
+/// A tab's row height, top margin, and whether its rows sit along the page bottom (the key list's footer).
+fn tab_metrics(tab: Tab) -> (f32, f32, bool) {
+    match tab {
+        Tab::Gameplay => (40.0, 15.0, false),
+        Tab::Interface => (36.0, 15.0, false),
+        Tab::HealthBars => (40.0, 15.0, false),
+        Tab::Audio => (33.0, 15.0, false),
+        Tab::Video => (35.0, 20.0, false),
+        Tab::KeyBindings => (35.0, 0.0, true),
+        Tab::Network => (35.0, 0.0, false),
+    }
+}
+
+/// Place a tab's controls: measure each column's widest left label, size the columns to their content, spread
+/// them across the page (shrinking dropdown boxes when they would not fit), and set every control just past its
+/// label, clamped so the box and its arrow stay inside the page's right edge. Returns the controls in flow order
+/// with page-local reference coordinates.
+pub(super) fn layout(tab: Tab, env: &mut Env) -> Vec<Ctl> {
+    let mut cols = page(tab);
+    let (row_h, top, bottom) = tab_metrics(tab);
+    let n = cols.len();
+    let usable = env.size.x - 2.0 * PAD;
+    // The widest left label per column (a check box's label sits right of it, so does not push the column).
+    let mut label_max = vec![0.0f32; n];
+    for (i, col) in cols.iter().enumerate() {
+        for c in col {
+            let lw = match *c {
+                Ctl::CheckLeft(_, t, ..) | Ctl::Slider(_, t, ..) | Ctl::Drop(_, t, ..) => {
+                    (env.measure)(t)
+                }
+                _ => 0.0,
+            };
+            label_max[i] = label_max[i].max(lw);
         }
-        Tab::Interface => {
-            p.y = 15.0;
-            p.checks(
-                &[
-                    ("tutorialTips", "tagGameplayOption18"),
-                    ("screenEffects", "tagHUDOption21"),
-                    ("errorMessages", "tagGameplayOption30"),
-                    ("extraRollovers", "tagGameplayOption05"),
-                    ("showMonsterLevelOnRollover", "tagGameplayOption06"),
-                    ("displayDamage", "tagGameplayOption04"),
-                    ("critMultipliers", "tagGameplayOption22"),
-                    ("autoItemTooltips", "tagGameplayOption03"),
-                    ("sortConfirmBypass", "tagHUDOption09"),
-                    ("newItemHighlight", "tagHUDOption22"),
-                ],
-                0.0,
-                40.0,
-            );
-            p.y = 15.0;
-            p.checks(
-                &[
-                    ("targetOutline", "tagGameplayOption14"),
-                    ("showTime", "tagHUDOption19"),
-                    ("hotbarCooldownCounter", "tagHUDOption14"),
-                    ("toggledAurasSelf", "tagHUDOption15"),
-                    ("toggledAurasOther", "tagHUDOption16"),
-                    ("toggledWeaponEffects", "tagHUDOption17"),
-                    ("detailItemTooltips", "tagHUDOption23"),
-                    ("standardHUD", "tagHUDOption24"),
-                    ("transferConfirmBypass", "tagHUDOption25"),
-                    ("largeCursor", "tagHUDOption26"),
-                ],
-                400.0,
-                40.0,
-            );
+    }
+    // A row's width at shrink factor `f` (dropdown boxes and slider tracks shrink together).
+    let mut row_w = |c: &Ctl, lm: f32, f: f32| -> f32 {
+        match *c {
+            Ctl::Check(_, t, ..) => env.check_w + LABEL_GAP + (env.measure)(t),
+            Ctl::CheckLeft(..) => lm + LABEL_GAP + env.check_w,
+            Ctl::Slider(..) => lm + LABEL_GAP + track_w(f),
+            Ctl::Drop(s, ..) => lm + LABEL_GAP + drop_bw(s, f) + ARROW_GAP + env.arrow_w,
         }
-        Tab::HealthBars => {
-            p.y = 15.0;
-            p.checks(
-                &[
-                    ("playerLocalBar", "tagHUDOption06"),
-                    ("playerBars", "tagHUDOption01"),
-                    ("playerHealth", "tagHUDOption02"),
-                    ("petBars", "tagHUDOption07"),
-                    ("monsterBars", "tagHUDOption03"),
-                    ("monsterHealth", "tagHUDOption04"),
-                    ("monsterBarsUndamaged", "tagHUDOption08"),
-                    ("monsterIcons", "tagHUDOption05"),
-                ],
-                0.0,
-                40.0,
-            );
-            p.y = 15.0;
-            p.checks(
-                &[
-                    ("healthBarsPercent", "tagHUDOption12"),
-                    ("playerBarsLarge", "tagHUDOption18"),
-                    ("monsterBarsLarge", "tagHUDOption10"),
-                    ("bossBarsLarge", "tagHUDOption11"),
-                    ("monsterBarsDebuffs", "tagHUDOption13"),
-                ],
-                400.0,
-                40.0,
-            );
-        }
-        Tab::Audio => {
-            p.drop(Shown::OutputDevice, "tagAudioOption07", 20.0, 200.0, 400.0);
-            p.drop(Shown::InputDevice, "tagAudioOption09", 20.0, 200.0, 400.0);
-            p.y += 10.0;
-            p.check("voicechatEnabled", "tagAudioOption11", 0.0, 40.0);
-            p.y = 100.0;
-            p.check("voicechatPushToTalk", "tagAudioOption13", 150.0, 40.0);
-            p.y = 100.0;
-            p.check("micLoopback", "tagAudioOption10", 350.0, 40.0);
-            p.y += 5.0;
-            for (o, t) in [
-                ("masterVolume", "tagAudioOption01"),
-                ("musicVolume", "tagAudioOption02"),
-                ("effectsVolume", "tagAudioOption03"),
-                ("ambientVolume", "tagAudioOption04"),
-                ("dialogVolume", "tagAudioOption05"),
-                ("voiceVolume", "tagAudioOption12"),
-            ] {
-                p.slider(o, t, 200.0);
+    };
+    let mut col_w = |col: &[Ctl], lm: f32, f: f32| -> f32 {
+        col.iter().map(|c| row_w(c, lm, f)).fold(0.0, f32::max)
+    };
+    let mut widths_at =
+        |f: f32| -> Vec<f32> { (0..n).map(|i| col_w(&cols[i], label_max[i], f)).collect() };
+    let fits = |w: &[f32]| -> bool {
+        w.iter().sum::<f32>() + COL_GAP_MIN * n.saturating_sub(1) as f32 <= usable
+    };
+    // The largest shrink factor whose columns fit the page (1 = natural widths; binary search down to 0).
+    let mut f = 1.0;
+    if n > 1 && !fits(&widths_at(f)) {
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..24 {
+            let mid = (lo + hi) * 0.5;
+            if fits(&widths_at(mid)) {
+                lo = mid;
+            } else {
+                hi = mid;
             }
-            p.y += 5.0;
-            p.check("errorSpeech", "tagAudioOption08", 0.0, 40.0);
         }
-        Tab::Video => {
-            p.drop(Shown::RenderDevice, "tagVideoOption30", 20.0, 200.0, 200.0);
-            p.drop(Shown::WindowMode, "tagVideoOption29", 20.0, 200.0, 200.0);
-            p.drop(Shown::Resolution, "tagVideoOption01", 20.0, 200.0, 200.0);
-            // Anti-aliasing (the DirectX 11 deferred path: a check box, `fxaa`, label on its left: [`loose_labels`]).
-            p.ctls.push(Ctl::Check("fxaa", "", 735.0, PAGE.y + p.y));
-            p.y += 40.0;
-            p.drop(Shown::Aniso, "tagVideoOption25", 20.0, 200.0, 200.0);
-            p.drop(
-                Shown::Quality("textureQuality"),
-                "tagVideoOption02",
-                20.0,
-                200.0,
-                200.0,
-            );
-            p.drop(Shown::Shadows, "tagVideoOption03", 20.0, 200.0, 200.0);
-            p.y += 30.0; // `deferredrendering` (tagVideoOption31), not shown.
-            p.y += 20.0;
-            p.slider("uiScale", "tagVideoOption23", 200.0);
-            // "Fullscreen Gamma" (`gamma`; page builder `OptionsWindow::Load` → `OptionsWindow::AddSlider`): the
-            // exclusive fullscreen gamma ramp (gd-render `post.rs` `with_gamma_ramp`).
-            p.slider("gamma", "tagVideoOption10", 200.0);
-            p.y = 20.0;
-            p.drop(
-                Shown::Quality("detailLevel"),
-                "tagVideoOption24",
-                460.0,
-                600.0,
-                200.0,
-            );
-            p.drop(
-                Shown::Quality("reflectionQuality"),
-                "tagVideoOption04",
-                460.0,
-                600.0,
-                200.0,
-            );
-            p.drop(
-                Shown::Quality("fxQuality"),
-                "tagVideoOption27",
-                460.0,
-                600.0,
-                200.0,
-            );
-            p.drop(
-                Shown::Quality("lightingQuality"),
-                "tagVideoOption28",
-                460.0,
-                600.0,
-                200.0,
-            );
-            p.drop(Shown::Weather, "tagVideoOption26", 460.0, 600.0, 200.0);
-            p.drop(Shown::ColorBlind, "tagVideoOption12", 460.0, 600.0, 200.0);
-            p.y = 240.0;
-            p.check("syncToRefresh", "tagVideoOption11", 440.0, 30.0);
-            p.y += 30.0; // `tripleBuffer` (tagVideoOption07), not shown.
-            p.check("detailObjects", "tagVideoOption09", 440.0, 30.0);
-            p.y += 30.0; // `alphatocoverage` (tagVideoOption14), not shown.
-            p.check("ambientocclusion", "tagVideoOption15", 440.0, 30.0);
-            p.y = 240.0;
-            p.checks(
-                &[
-                    ("advancedEffects", "tagVideoOption08"),
-                    ("depthOfField", "tagVideoOption05"),
-                    ("softParticles", "tagVideoOption06"),
-                    ("hdrLighting", "tagVideoOption16"),
-                    ("fog", "tagVideoOption32"),
-                ],
-                640.0,
-                30.0,
-            );
-        }
-        Tab::KeyBindings => {
-            p.y = 383.0;
-            p.check("gamepadSupport", "tagGameplayOption24S", 50.0, 40.0);
-            p.y = 383.0;
-            p.drop(Shown::Movement, "tagGameplayOption35", 470.0, 619.0, 200.0);
-        }
-        Tab::Network => {}
+        f = lo;
     }
-    p.ctls
-}
-
-/// Labels drawn on their own (left of a value-column checkbox): (tag, x,
-/// centre y).
-pub(super) fn loose_labels(tab: Tab) -> &'static [(&'static str, f32, f32)] {
-    match tab {
-        Tab::Video => &[("tagVideoOption13", 557.0, 485.0)],
-        _ => &[],
+    let widths = widths_at(f);
+    let total: f32 = widths.iter().sum();
+    let gap = if n > 1 {
+        ((usable - total) / (n - 1) as f32).clamp(COL_GAP_MIN, COL_GAP_MAX)
+    } else {
+        0.0
+    };
+    let mut x = PAD;
+    for (i, col) in cols.iter_mut().enumerate() {
+        let col_right = (x + widths[i]).min(env.size.x - PAD);
+        let lm = label_max[i];
+        let base_y = if bottom {
+            env.size.y - row_h - 8.0
+        } else {
+            top
+        };
+        for (r, c) in col.iter_mut().enumerate() {
+            let cy = base_y + row_h * r as f32 + row_h * 0.5;
+            let ctrl_x = x + lm + LABEL_GAP;
+            match c {
+                Ctl::Check(_, _, bx, by) => {
+                    *bx = x;
+                    *by = cy - 12.0;
+                }
+                Ctl::CheckLeft(_, _, lx, lcy, bx) => {
+                    *lx = x;
+                    *lcy = cy;
+                    *bx = ctrl_x.min(col_right - env.check_w).max(x);
+                }
+                Ctl::Slider(_, _, lx, lcy, x0, x1) => {
+                    *lx = x;
+                    *lcy = cy;
+                    let tw = track_w(f);
+                    let a = ctrl_x.min(col_right - tw).max(x);
+                    *x0 = a;
+                    *x1 = a + tw;
+                }
+                Ctl::Drop(s, _, lx, lcy, x0, x1) => {
+                    *lx = x;
+                    *lcy = cy;
+                    let bw = drop_bw(*s, f);
+                    let a = ctrl_x.min(col_right - bw - ARROW_GAP - env.arrow_w).max(x);
+                    let bw = (col_right - a - ARROW_GAP - env.arrow_w).min(bw).max(20.0);
+                    *x0 = a;
+                    *x1 = a + bw;
+                }
+            }
+        }
+        x += widths[i] + gap;
     }
+    cols.into_iter().flatten().collect()
 }
 
 /// The environment a dropdown's rows / shown text read besides the draft: the audio device lists, the render
@@ -562,6 +589,15 @@ pub(super) fn shown_text(s: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> String {
             let (tag, en) = MOVEMENT[o.int("movementType").clamp(0, 2) as usize];
             label(ctx, tag, en)
         }
+        // PORT: the frame-limiter cap; a value no row carries shows as its number (like a resolution).
+        Shown::MaxFps => {
+            let n = o.int("maxFPS");
+            if n <= 0 {
+                label(ctx, "tagOptionOff", "Off")
+            } else {
+                format!("{n}")
+            }
+        }
     }
 }
 
@@ -574,6 +610,9 @@ pub(super) const QUALITY: [(&str, &str); 5] = [
     ("tagVideoLevel04", "very high"),
     ("tagVideoLevel06", "ultra"),
 ];
+
+/// PORT: the `maxFPS` dropdown's caps, after the leading Off (0, uncapped).
+const FPS_CAPS: [i32; 5] = [30, 60, 120, 144, 240];
 
 /// The English quality names [`QUALITY`]'s display tags localize (`Options::PrintToConsole`, Engine.dll): the
 /// fallback when a tag is missing (an unknown tag keeps the file default's name, medium).
@@ -620,6 +659,10 @@ pub(super) fn quality_level(o: &GameOptions, k: &str) -> usize {
 pub(super) fn selected(s: Shown, o: &GameOptions) -> usize {
     let max = level_count(s) - 1;
     match s {
+        Shown::MaxFps => FPS_CAPS
+            .iter()
+            .position(|&n| n == o.int("maxFPS"))
+            .map_or(0, |i| i + 1),
         Shown::Quality(k) => quality_level(o, k).min(max),
         Shown::Weather if !o.flag("weatherEnabled") => 0,
         Shown::Weather => quality_level(o, "weatherQuality").min(max) + 1,
@@ -669,6 +712,16 @@ pub(super) fn choices(
         Shown::WindowMode => tagged_ints("screenMode", &WINDOW_MODE),
         Shown::ColorBlind => tagged_ints("colorblind", &COLOR_BLIND),
         Shown::Movement => tagged_ints("movementType", &MOVEMENT),
+        Shown::MaxFps => std::iter::once((
+            label(ctx, "tagOptionOff", "Off"),
+            vec![("maxFPS", Value::Int(0))],
+        ))
+        .chain(
+            FPS_CAPS
+                .iter()
+                .map(|&n| (format!("{n}"), vec![("maxFPS", Value::Int(n))])),
+        )
+        .collect(),
         Shown::Aniso => [1, 2, 4, 8, 16]
             .into_iter()
             .map(|n| {

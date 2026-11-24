@@ -1171,6 +1171,7 @@ pub struct ShrineFights<'w> {
     bodies: ResMut<'w, gd_game_core::creature::BodyCache>,
     session: crate::session::Session<'w>,
     factions: Option<Res<'w, crate::factions::PlayerFactions>>,
+    bosses: ResMut<'w, crate::monsters::HeroBosses>,
 }
 
 impl ShrineFights<'_> {
@@ -1199,6 +1200,9 @@ impl ShrineFights<'_> {
             self.factions.as_deref(),
             id,
             &[],
+            None,
+            false,
+            &mut self.bosses,
         );
         info!("devotion: shrine fight, {} monsters", mobs.len());
         sh.fight = Some(mobs);

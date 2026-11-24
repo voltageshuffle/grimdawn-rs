@@ -125,9 +125,7 @@ mod local;
 mod minimap;
 
 use super::Ui;
-use gd_ui::state::map::MapWindow;
 use super::text::FontCache;
-use gd_ui::state::inventory::UiCapture;
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
@@ -140,6 +138,8 @@ use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
 use gd_game::riftgates::{RiftgateMap, RiftgateRequest, WaypointKind};
 use gd_game_core::data::GameData;
 use gd_sim::minimap_raster::{FogMask, RegionDraw, RegionFog, View, draw_regions};
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::map::MapWindow;
 pub(super) use input::center_map_key;
 use input::*;
 use local::*;
@@ -245,10 +245,6 @@ fn persist_zoom(
         gd_ui_kit::state::settings::store(&options);
     }
 }
-
-
-
-
 
 /// Decoded region minimap images and the two render targets. A region's image decodes in the background the first time
 /// a map needs it; the maps draw it once it lands ([`MapTiles::landed`]), so entering a new area does not stall a frame

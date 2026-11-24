@@ -1,6 +1,6 @@
 //! The UI that stays with the binary: the windows coupled to the audio mixer, the world streaming or
 //! the menu scene (`credits`, `survival`, `options`, `localmap`, `riftmap`, `cinematic`, `view`,
-//! `mainmenu`, `quicktip`), plus the quest-view collector (it reads the streamed map). The movable
+//! `mainmenu`, `quicktip`, `story`), plus the quest-view collector (it reads the streamed map). The movable
 //! window clusters, the rebuild hub, the Esc dispatcher and the shared presentation state are `gd_ui`;
 //! this module registers the staying plugins, fills [`gd_ui::HudValues`] before the rebuild chain
 //! (`view::collect`) and resets the staying state on Exit to Main Menu.
@@ -12,6 +12,7 @@ pub mod options;
 pub mod quests;
 pub mod quicktip;
 pub mod riftmap;
+pub mod story;
 pub mod survival;
 pub mod view;
 
@@ -32,6 +33,7 @@ impl Plugin for UiPlugin {
             options::OptionsUiPlugin,
             mainmenu::MainMenuUiPlugin,
             cinematic::CinematicPlugin,
+            story::StoryViewPlugin,
             quicktip::QuickTipPlugin,
         ))
         // The HUD view collector fills gd_ui's HudValues / HudVitals before the rebuild chain.

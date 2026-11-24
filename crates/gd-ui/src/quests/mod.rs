@@ -65,9 +65,9 @@ mod journal;
 mod lore;
 mod tracker;
 
-use super::window::{Bar, BarHold, ScrollOwner, ScrollThumb, bar_held, pane, scrollbar_live};
 use super::Ui;
 use super::text::FontCache;
+use super::window::{Bar, BarHold, ScrollOwner, ScrollThumb, bar_held, pane, scrollbar_live};
 use crate::state::inventory::UiCapture;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -652,11 +652,7 @@ fn clicks(
 /// Tribute line shows only for mods. Tribute has no floating text: `ScriptableAction_GiveTribute::Execute` and
 /// `Character::AddTribute` send nothing but GameEvent 63 (the Crucible pane's glow and sound,
 /// `ui/survival.rs`), and the exe uses no `tagActionGive*` tag.
-pub fn event_text(
-    fonts: &FontCache,
-    text: String,
-    actions: &[gd_formats::qst::Action],
-) -> String {
+pub fn event_text(fonts: &FontCache, text: String, actions: &[gd_formats::qst::Action]) -> String {
     use gd_formats::qst::Action as A;
     let Some(first) = actions.first() else {
         return text;

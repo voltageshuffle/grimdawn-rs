@@ -1,7 +1,7 @@
 //! The Lua-visible API table: what the port binds and which bindings are stubs.
 
-/// Lua-visible API, per class: (name, implemented). Stubs log once and
-/// return a neutral value.
+/// Lua-visible API, per class: (name, implemented). An unsupported binding
+/// raises a Lua error naming the API (no stock script calls any of them).
 pub const API: &[(&str, &[(&str, bool)])] = &[
     (
         "Script",
@@ -40,7 +40,7 @@ pub const API: &[(&str, &[(&str, bool)])] = &[
             ("PlayersDead", true),
             ("TeleportPlayer", true),
             ("UnlockTutorial", true),
-            ("ScreenShake", false),
+            ("ScreenShake", true),
             ("PlayNetSound", true),
             ("AllowNpcTalk", true),
             ("UnlockNextDifficulty", true),
@@ -122,7 +122,7 @@ pub const API: &[(&str, &[(&str, bool)])] = &[
     ),
     ("Npc", &[("SetAvailableForConversation", true)]),
     ("AreaTrigger", &[("Create", true), ("DestroyItems", true)]),
-    ("Item", &[("Create", true), ("HasAffix", false)]),
+    ("Item", &[("Create", true), ("HasAffix", true)]),
     (
         "Proxy",
         &[
@@ -148,23 +148,23 @@ pub const API: &[(&str, &[(&str, bool)])] = &[
             ("SetFaction", true),
             ("UnlockFaction", true),
             ("GiveItem", true),
-            ("GiveAffixItem", false),
+            ("GiveAffixItem", true),
             ("TakeItem", true),
             ("HasItem", true),
             ("Kill", true),
             ("IsAlive", true),
             ("GetLevel", true),
-            ("Attack", false),
-            ("Move", false),
-            ("Turn", false),
-            ("PlaySound", false),
-            ("Say", false),
+            ("Attack", true),
+            ("Move", true),
+            ("Turn", true),
+            ("PlaySound", true),
+            ("Say", true),
             ("TeleportHome", true),
             ("MoveAction", true),
             ("UseSkillAction", true),
-            ("PlayAnimation", false),
-            ("ToggleSkills", false),
-            ("ToggleInvincible", false),
+            ("PlayAnimation", true),
+            ("ToggleSkills", true),
+            ("ToggleInvincible", true),
         ],
     ),
     (

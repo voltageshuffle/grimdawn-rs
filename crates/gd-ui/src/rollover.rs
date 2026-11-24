@@ -101,8 +101,8 @@
 //! padding, as the item tooltips (`tooltip.rs`). `GD_HUD_HOVER` (hooks.rs) puts the cursor on a HUD
 //! button (`equipSwap1LeftButton`: the open character window's or Illusionist's swap button); `GD_SHEET_HOVER`
 //! on a character-sheet row ([`sheet_lines`]).
-use super::{HudValues, Ui};
 use super::text::FontCache;
+use super::{HudValues, Ui};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, Widget};

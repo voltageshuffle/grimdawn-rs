@@ -133,6 +133,7 @@ impl ScriptHost {
             alive: true,
             locked: flag("locked"),
             open: !item_door && flag("open"),
+            broken: false,
             conversation,
             available_for_conversation: true,
             scripted: false,

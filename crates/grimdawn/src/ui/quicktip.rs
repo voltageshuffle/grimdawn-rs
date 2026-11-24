@@ -34,10 +34,10 @@
 //! from its stored tag, so the tips follow the new language (the engine localises live, `MainMenu::SetState`).
 use super::UiAssets;
 use bevy::prelude::*;
-use gd_ui::fade::{Fader, fade_group, seal_fade_group};
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::Rect as URect;
 use gd_game_core::data::GameData;
+use gd_ui::fade::{Fader, fade_group, seal_fade_group};
 use std::collections::VecDeque;
 
 const TITLE: &str = "records/ui/styles/text/style_rollover_title.dbr";
@@ -97,13 +97,6 @@ const POINTER_FIELDS: [&str; 5] = [
 ];
 const POINTER_RAISE: f32 = 50.0;
 const POINTER_ARROW: &str = "ui/tutorialwindow/tutorialtipbottom.tex";
-
-
-
-
-
-
-
 
 struct Shown {
     record: String,

@@ -1123,6 +1123,7 @@ impl Story {
                 self.effects.push(Effect::GiveItem {
                     record: item.clone(),
                     count: *count,
+                    complete_relic: false,
                 });
             }
             Action::GiveRandomItem { table, count } => self.effects.push(Effect::GiveRandomItem {
@@ -1184,6 +1185,8 @@ impl Story {
             Action::ControllerState { value } => self.effects.push(Effect::PlayAnimation {
                 id: entity,
                 anim: *value,
+                hold: false,
+                flag: false,
             }),
             Action::CinematicText { tag } => self.effects.push(Effect::CinematicText(tag.clone())),
             Action::ScriptEvent { name } => self.effects.push(Effect::ScriptEvent(name.clone())),

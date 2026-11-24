@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 use gd_formats::save::gdc::Gdc;
 use gd_game_core::session::{
-    Choice, GameMode, LoadedCharacter, SessionEpoch, SessionReady, arena_map, last_difficulty,
-    mode_for,
+    Choice, CustomMap, GameMode, LoadedCharacter, SessionEpoch, SessionReady, arena_map,
+    last_difficulty, mode_for,
 };
 use std::sync::Arc;
 
@@ -36,8 +36,9 @@ impl Session<'_> {
 
 /// Mounts the session's mod (`GameData::set_mod`: `Engine::InitializeMod`, or `None`:
 /// `RemoveModDirectory`) and drops the caches built from the other data: monster profiles, creature
-/// bodies and animations (a mod overrides records and files). Nothing is dropped when that mod is
-/// already mounted.
+/// bodies and animations (a mod overrides records and files), and the render caches in the same call
+/// (gd-render's registered drop, [`gd_game_core::data::ModCacheDrop`]), so no frame serves the old
+/// mod's assets. Nothing is dropped when that mod is already mounted.
 pub fn set_mod_data(world: &mut World, name: Option<&str>) -> anyhow::Result<()> {
     let data = world.resource::<gd_game_core::data::GameData>().clone();
     if data.active_mod() == name {
@@ -52,6 +53,10 @@ pub fn set_mod_data(world: &mut World, name: Option<&str>) -> anyhow::Result<()>
     }
     if let Some(mut a) = world.get_resource_mut::<gd_game_core::character::AnimCache>() {
         *a = Default::default();
+    }
+    if let Some(drop) = world.get_resource::<gd_game_core::data::ModCacheDrop>() {
+        let id = drop.0;
+        world.run_system(id)?;
     }
     mounted
 }
@@ -72,46 +77,70 @@ pub fn begin(
     let veteran = veteran && choice.survival.is_none();
     let mode = gd_rules::mode::Mode::new(difficulty, veteran);
     let (veteran, ultimate_veteran) = (mode.veteran(), mode.ultimate_veteran());
-    commands.insert_resource(GameMode(mode));
     // The session's mod is mounted before anything of the session reads it (a Crucible or custom game
-    // started from the menu mounted it already, `grimdawn::world::open_session_map`).
+    // started from the menu mounted it already, `grimdawn::world::open_session_map`). A mod that does
+    // not mount aborts the start: the menu stays as it was; a headless start (`skip_menu`) ends the
+    // process instead of running a mod-labelled session on install data.
     let mod_name = (!choice.mod_name().is_empty()).then(|| choice.mod_name().to_owned());
+    let guard = (choice.clone(), difficulty);
     commands.queue(move |world: &mut World| {
-        if let Err(e) = set_mod_data(world, mod_name.as_deref()) {
-            error!("session: mod {mod_name:?} does not mount: {e:#}");
-        }
-    });
-    if let Some(mut g) = gdc {
-        g.info.last_difficulty = last_difficulty(mode, &choice);
-        choice.hardcore = g.header.hardcore != 0;
-        info!(
-            "session: {:?} level {} ({}), difficulty {}{}",
-            g.header.name,
-            g.bio.level,
-            g.header.class_tag,
-            g.info.difficulty(),
-            if veteran {
-                " (Veteran)"
-            } else if ultimate_veteran {
-                " (Ultimate Veteran)"
-            } else {
-                ""
+        // Same save/mod refusal as the menu (`Choice::mod_mismatch`), for starts that bypass it
+        // (`GD_MOD` / `GD_SAVE` hooks): never run a mod-labelled session over another mod's save.
+        if let Some(msg) = guard.0.mod_mismatch(guard.1) {
+            error!("session: {} does not start: {msg}", guard.0.name);
+            if world
+                .resource::<gd_game_core::hooks::Hooks>()
+                .session
+                .skip_menu
+            {
+                world.write_message(AppExit::error());
             }
-        );
-        commands.insert_resource(LoadedCharacter(Arc::new(g)));
-        commands.insert_resource(crate::save::AutoSave::default());
-    } else {
-        info!(
-            "session: new character {:?}{}",
-            choice.name,
-            if choice.female { " (female)" } else { "" }
-        );
-        commands.insert_resource(crate::save::NewCharacter::roll(&choice));
-        // The engine writes a new character at creation (`save::AutoSave::created`).
-        commands.insert_resource(crate::save::AutoSave::created());
-    }
-    commands.insert_resource(choice);
-    commands.insert_resource(SessionReady);
+            return;
+        }
+        if let Err(e) = set_mod_data(world, mod_name.as_deref()) {
+            error!("session: mod {mod_name:?} does not mount, start aborted: {e:#}");
+            if world
+                .resource::<gd_game_core::hooks::Hooks>()
+                .session
+                .skip_menu
+            {
+                world.write_message(AppExit::error());
+            }
+            return;
+        }
+        world.insert_resource(GameMode(mode));
+        if let Some(mut g) = gdc {
+            g.info.last_difficulty = last_difficulty(mode, &choice);
+            choice.hardcore = g.header.hardcore != 0;
+            info!(
+                "session: {:?} level {} ({}), difficulty {}{}",
+                g.header.name,
+                g.bio.level,
+                g.header.class_tag,
+                g.info.difficulty(),
+                if veteran {
+                    " (Veteran)"
+                } else if ultimate_veteran {
+                    " (Ultimate Veteran)"
+                } else {
+                    ""
+                }
+            );
+            world.insert_resource(LoadedCharacter(Arc::new(g)));
+            world.insert_resource(crate::save::AutoSave::default());
+        } else {
+            info!(
+                "session: new character {:?}{}",
+                choice.name,
+                if choice.female { " (female)" } else { "" }
+            );
+            world.insert_resource(crate::save::NewCharacter::roll(&choice));
+            // The engine writes a new character at creation (`save::AutoSave::created`).
+            world.insert_resource(crate::save::AutoSave::created());
+        }
+        world.insert_resource(choice);
+        world.insert_resource(SessionReady);
+    });
 }
 
 /// Ends the session's gameplay state (gd-game's part of Exit to Main Menu; `grimdawn::exit` adds the
@@ -216,7 +245,13 @@ pub fn load_save(
             .as_deref()
             .filter(|_| epoch.0 == 0)
             .map(arena_map),
-        custom: None,
+        custom: hooks.module.as_ref().map(|module| CustomMap {
+            module: module.clone(),
+            level: hooks
+                .mod_map
+                .clone()
+                .unwrap_or_else(|| "levels/world001.map".to_owned()),
+        }),
     };
     let Some(path) = hooks.save.clone() else {
         begin(&mut commands, new, None, 0, false);

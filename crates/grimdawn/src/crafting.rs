@@ -15,14 +15,13 @@
 //! The Inventor's tabs: dismantling ([`dismantle`]), salvage ([`salvage`]),
 //! set conversion ([`convert`]); reroll in `reroll.rs`.
 use crate::trade::Stash;
-use gd_ui::state::crafting::CraftList;
-use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
 use bevy::prelude::*;
-use gd_ui::trade::CraftScrolled;
 pub use gd_game::crafting::{convert_unlocked, dismantle_unlocked};
 use gd_game_core::inventory::Inventory;
 pub use gd_game_core::stash::count;
-
+use gd_ui::state::crafting::CraftList;
+use gd_ui::trade::CraftScrolled;
+use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
 
 /// Clicks in the crafting window: category tabs, recipe rows, the craft
 /// button; the wheel scrolls the list. `GD_CRAFT` (hooks.rs): once the window is open, select the first
@@ -211,7 +210,6 @@ pub fn craft_clicks(
     });
     trade.version += 1;
 }
-
 
 /// Scrolls the crafting recipe list in place (PERF-23, the journal's `journal_live` pattern):
 /// `Trade::scroll` is not in `TradeSig`, so a wheel step, a bar press or a held arrow / thumb drag

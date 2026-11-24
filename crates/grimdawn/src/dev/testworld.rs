@@ -14,10 +14,10 @@
 use crate::combat::MonsterAi;
 use bevy::prelude::*;
 use gd_game::nav::Nav;
-use gd_game_core::session::PlayerStart;
-pub use gd_game_core::world::Dummy;
 use gd_game_core::combat::Combatant;
 use gd_game_core::rules::CombatRules;
+use gd_game_core::session::PlayerStart;
+pub use gd_game_core::world::Dummy;
 
 pub struct TestWorldPlugin;
 

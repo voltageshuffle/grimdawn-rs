@@ -53,23 +53,31 @@ static FOOTPRINTS: FootprintCache = LazyLock::new(Default::default);
 /// Reads an item bitmap (`.tex`) header to get its footprint, memoised ([`FOOTPRINTS`]).
 pub fn bitmap_footprint(vfs: &Vfs, bitmap: &str) -> Option<Footprint> {
     let path = normalized(bitmap);
-    let key: Cow<str> = match vfs.active_mod() {
-        Some(m) => Cow::Owned(format!("{m}\0{path}")),
-        None => path,
+    let key = |m: Option<&str>| -> Cow<str> {
+        match m {
+            Some(m) => Cow::Owned(format!("{m}\0{path}")),
+            None => Cow::Borrowed(path.as_ref()),
+        }
     };
     if let Some(&fp) = FOOTPRINTS
         .lock()
         .get(&vfs.root)
-        .and_then(|m| m.get(key.as_ref()))
+        .and_then(|m| m.get(key(vfs.active_mod()).as_ref()))
     {
         return fp;
     }
+    let stamp = vfs.mod_stamp();
+    let mounted = vfs.active_mod().map(str::to_owned);
     let fp = read_footprint(vfs, bitmap);
-    FOOTPRINTS
-        .lock()
-        .entry(vfs.root.clone())
-        .or_default()
-        .insert(key.into_owned(), fp);
+    // A mod swap mid-read (even away and back) must not cache the bitmap under the key it was
+    // read from: keep the value for this call only when the stamp is unchanged, else re-read next call.
+    if vfs.mod_stamp() == stamp {
+        FOOTPRINTS
+            .lock()
+            .entry(vfs.root.clone())
+            .or_default()
+            .insert(key(mounted.as_deref()).into_owned(), fp);
+    }
     fp
 }
 

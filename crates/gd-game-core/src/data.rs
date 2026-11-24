@@ -88,22 +88,27 @@ impl GameData {
     /// (`Engine::RemoveModDirectory`). A session sets it before anything reads the data. A mod
     /// that fails to mount leaves the install.
     pub fn set_mod(&self, name: Option<&str>) -> anyhow::Result<()> {
+        let mounted = match name {
+            None => {
+                self.vfs.remove_mod();
+                self.db.remove_mod();
+                Ok(())
+            }
+            Some(name) => self
+                .vfs
+                .initialize_mod(name)
+                .and_then(|()| self.db.initialize_mod(&self.vfs.root, name))
+                .inspect_err(|_| {
+                    self.vfs.remove_mod();
+                    self.db.remove_mod();
+                }),
+        };
+        // Drop after the swap (a failed mount swapped back to the install): a reader that
+        // refilled a cache while the mount ran built from the old data, and nothing would
+        // clear it again.
         self.packs.lock().clear();
         self.trees.lock().take();
         self.engine.lock().take();
-        let Some(name) = name else {
-            self.vfs.remove_mod();
-            self.db.remove_mod();
-            return Ok(());
-        };
-        let mounted = self
-            .vfs
-            .initialize_mod(name)
-            .and_then(|()| self.db.initialize_mod(&self.vfs.root, name));
-        if mounted.is_err() {
-            self.vfs.remove_mod();
-            self.db.remove_mod();
-        }
         mounted
     }
 
@@ -122,17 +127,28 @@ impl GameData {
         self.language.clone()
     }
 
-    /// Sets the localisation language from its archive code; an unknown code falls back to "en"
-    /// (the engine's `LocalizationManager::Load` keeps the install's default for an unsupported
-    /// language). The tag tables are keyed by language ([`Self::tags`]), so nothing is dropped.
+    /// Sets the localisation language from its archive code; an unknown code, or one whose
+    /// `text_<code>/` tag files are not mounted (a mod-only language after its mod unmounted),
+    /// falls back to "en" (the engine's `LocalizationManager::Load` keeps the install's default
+    /// for an unsupported language). The tag tables are keyed by language ([`Self::tags`]), so
+    /// nothing is dropped.
     pub fn set_language(&mut self, code: &str) {
         let code = LANGUAGES
             .iter()
             .find(|l| l.code == code)
             .map_or("en", |l| l.code);
+        let code = if self.text_mounted(code) { code } else { "en" };
         if self.language != code {
             self.language = code.to_owned();
         }
+    }
+
+    /// Whether the VFS serves `text_<code>/` tag files (the install's or the mounted mod's).
+    fn text_mounted(&self, code: &str) -> bool {
+        let prefix = format!("text_{code}/");
+        self.vfs
+            .paths()
+            .any(|p| p.starts_with(&prefix) && TagTable::is_tag_file(p))
     }
 
     /// The languages this install offers: the [`LANGUAGES`] entries whose `text_<code>/` tag files
@@ -155,8 +171,11 @@ impl GameData {
     }
 
     /// The localisation tags (`text_<language>/`) of the mounted data, loaded once per mod and
-    /// language and shared by the story, the UI and the rules that sort by name.
+    /// language and shared by the story, the UI and the rules that sort by name. A language
+    /// whose tag files are not mounted (a mod-only language after its mod unmounted) reads the
+    /// install default's ("en"), so the menu never shows raw tag keys ([`Self::set_language`]).
     pub fn tags(&self) -> Arc<TagTable> {
+        let stamp = self.vfs.mod_stamp();
         let mod_key = self.active_mod().unwrap_or("");
         let mut tables = self.tags.lock();
         if let Some(t) = tables
@@ -166,26 +185,44 @@ impl GameData {
             return t.clone();
         }
         let prefix = format!("text_{}/", self.language);
-        let mut tags = TagTable::default();
         let mut paths: Vec<&str> = self
             .vfs
             .paths()
             .filter(|p| p.starts_with(&prefix) && TagTable::is_tag_file(p))
             .collect();
+        if paths.is_empty() && self.language != "en" {
+            paths = self
+                .vfs
+                .paths()
+                .filter(|p| p.starts_with("text_en/") && TagTable::is_tag_file(p))
+                .collect();
+        }
         TagTable::sort_files(&mut paths);
+        let mut tags = TagTable::default();
         for p in paths {
             if let Ok(b) = self.vfs.read(p) {
                 tags.add_file(&b);
             }
         }
         let tags = Arc::new(tags);
-        tables
-            .entry(mod_key.to_owned())
-            .or_default()
-            .insert(self.language.clone(), tags.clone());
+        // The mount may have swapped mid-build (even away and back): cache only when the stamp
+        // is unchanged, so the key still names the data the files were read from; else rebuild next call.
+        if self.vfs.mod_stamp() == stamp {
+            tables
+                .entry(mod_key.to_owned())
+                .or_default()
+                .insert(self.language.clone(), tags.clone());
+        }
         tags
     }
 }
+
+/// The render caches' synchronous drop on a mod swap: gd-render's `ModelPlugin` registers its
+/// `model::drop_on_mod_change` system here, and `gd_game::session::set_mod_data` runs it in the
+/// same call, so no frame serves the old mod's models / textures between the mount and the next
+/// `First` (gd-game cannot depend on gd-render; the system id is the link).
+#[derive(Resource)]
+pub struct ModCacheDrop(pub bevy::ecs::system::SystemId);
 
 /// The file that marks a Grim Dawn install: the base game's database (the first one
 /// [`Database::open`] reads).

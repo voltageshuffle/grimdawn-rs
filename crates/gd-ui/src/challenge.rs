@@ -13,8 +13,8 @@
 //! the description, the record's styles). The window is shifted with the Crucible / Shattered Realm panes for the
 //! minimap (`survival.rs` module doc). The same update shows the info icon window with the area's mutators
 //! (`survival.rs` `collect_mutators`).
-use crate::state::survival::{PaneRollovers, Zone, compass_mode, hud_shift};
 use super::{HudValues, UiAssets, Widget};
+use crate::state::survival::{PaneRollovers, Zone, compass_mode, hud_shift};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
@@ -142,7 +142,12 @@ fn build(
     if let Some(r) = ui.record(&field("challengeAreaName")) {
         let tb = TextBox::from_record(&r);
         let b = tb.rect;
-        ui.text(&tb, origin, &name);
+        // PORT: cut the area name to its box (stock lets a localised name spill); the rollover keeps the full name.
+        let shown = match tb.style.as_deref() {
+            Some(st) => ui.truncate_line(st, ui.sc(b.w), &name),
+            None => name.clone(),
+        };
+        ui.text(&tb, origin, &shown);
         // The rollover: the name text's box (`ChallengeAreaWindow::UpdateRollover`), lines from the `RolloverLine2`
         // record's styles.
         let rollover = field("challengeAreaRollover");

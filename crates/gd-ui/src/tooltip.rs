@@ -40,7 +40,6 @@
 //! the group goes right of the cursor when it fits,
 //! else left.
 use crate::state::inventory::InvLayout;
-use gd_game::loot::GroundItem;
 use crate::{HudValues, UiPanels};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -48,6 +47,7 @@ use bevy::window::PrimaryWindow;
 use gd_formats::collections::HashMap;
 use gd_formats::save::item::Item;
 use gd_formats::ui::layout_text;
+use gd_game::loot::GroundItem;
 use gd_game_core::data::GameData;
 use gd_game_core::inventory::{Inventory, SLOTS};
 use gd_game_core::player::Player;

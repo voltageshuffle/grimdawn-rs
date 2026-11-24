@@ -316,6 +316,13 @@ pub enum CharState {
     /// [`Character::play_scripted`]): the [`Character::scripted`] slot plays
     /// once, then the character idles.
     Scripted,
+    /// `Character.PlayAnimation(anim, hold=true, flag)` (exe `sub_14005C980`): the
+    /// [`Character::scripted`] slot plays once and its last frame is held past the clip's end
+    /// (no return to idle) until another action takes over. PORT: the engine's hold is an animation
+    /// flag the controller keeps running under; the port's AI scripted-busy checks test
+    /// [`CharState::Scripted`] only, so a held monster's AI may interrupt the pose (a new action
+    /// replaces it, as any other).
+    ScriptedHold,
 }
 
 /// What an idle character plays (module doc): the controller's idle action.
@@ -362,6 +369,9 @@ pub struct Character {
     pub cast_anim: Option<String>,
     /// The slot a [`CharState::Scripted`] character plays.
     pub scripted: AnimType,
+    /// `PlayAnimation`'s fourth arg (exe `sub_14005C980` stores it; its reader is untraced): kept
+    /// for parity, nothing reads it.
+    pub scripted_flag: bool,
     /// Animation of the current cast when there is no special one
     /// (`gd_sim::anim::skill_animation`), its speed and its speed kind.
     pub cast_type: AnimType,
@@ -528,6 +538,7 @@ impl Character {
             idle_ms: 0.0,
             cast_anim: None,
             scripted: AnimType::None,
+            scripted_flag: false,
             cast_type: AnimType::SpellCast,
             cast_speed: 1.0,
             cast_kind: SpeedKind::Cast,
@@ -992,6 +1003,11 @@ impl Character {
     /// The playing clip is the state's own animation ([`wanted_type`], or the move clip `enter_state` fell
     /// back to for it, [`Self::move_fallback`]).
     pub fn plays_own_clip(&self) -> bool {
+        // A held scripted clip keeps its last frame past the "End" ([`CharState::ScriptedHold`]):
+        // the playing slot is its own until another action replaces it.
+        if self.state == CharState::ScriptedHold {
+            return self.playing == self.scripted;
+        }
         wanted_type(self.state, &self.anims).contains(&self.playing)
             || self.move_fallback == Some((self.state, self.playing))
     }
@@ -1051,11 +1067,23 @@ impl Character {
     /// the slot once when the animation set has it, else nothing happens.
     /// PORT: a dead character ignores it (the engine does not check).
     pub fn play_scripted(&mut self, ty: AnimType) -> bool {
+        self.play_scripted_with(ty, false, false)
+    }
+
+    /// [`Self::play_scripted`] with `PlayAnimation`'s hold / flag args (exe `sub_14005C980`):
+    /// `hold` keeps the pose past the clip's end ([`CharState::ScriptedHold`]); `flag` is stored
+    /// ([`Character::scripted_flag`], reader untraced).
+    pub fn play_scripted_with(&mut self, ty: AnimType, hold: bool, flag: bool) -> bool {
         if ty == AnimType::None || self.state == CharState::Death || !self.anims.has(ty) {
             return false;
         }
-        self.state = CharState::Scripted;
+        self.state = if hold {
+            CharState::ScriptedHold
+        } else {
+            CharState::Scripted
+        };
         self.scripted = ty;
+        self.scripted_flag = flag;
         // Restart even when the same type is already playing.
         self.playing = AnimType::None;
         true
@@ -1304,7 +1332,7 @@ impl Character {
                         && (self.play(data, cache, AnimType::Stun, 1.0, None, true)
                             || self.play(data, cache, AnimType::AttackIdle, 1.0, None, true)))
             }
-            CharState::Scripted => {
+            CharState::Scripted | CharState::ScriptedHold => {
                 let ty = self.scripted;
                 self.play(data, cache, ty, 1.0, None, false)
             }
@@ -1327,7 +1355,7 @@ impl Character {
             self.state = CharState::Idle;
             return;
         }
-        if !ok && self.state == CharState::Scripted {
+        if !ok && matches!(self.state, CharState::Scripted | CharState::ScriptedHold) {
             self.state = CharState::Idle;
             return;
         }
@@ -1488,7 +1516,7 @@ fn wanted_type(s: CharState, anims: &AnimSet) -> &'static [AnimType] {
             AnimType::AttackIdle,
         ],
         CharState::GettingUp => &[AnimType::GetUpFaceDown, AnimType::GetUpFaceUp],
-        CharState::Scripted => &[],
+        CharState::Scripted | CharState::ScriptedHold => &[],
     }
 }
 

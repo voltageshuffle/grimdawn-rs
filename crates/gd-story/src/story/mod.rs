@@ -24,7 +24,7 @@ pub use state::{
 };
 pub use trigger::{AreaTrigger, TriggerCall};
 
-use gd_formats::collections::{HashMap, HashSet};
+use gd_formats::collections::HashMap;
 use std::sync::Arc;
 
 pub struct Story {
@@ -70,7 +70,6 @@ pub struct Story {
     /// for a `GenerateEndlessDungeon` before the host pre-built it (`gd_game::endless::sync_endless`
     /// does at session load).
     pub endless_provider: Option<Box<dyn Fn() -> crate::endless::EndlessMap>>,
-    unimplemented_seen: HashSet<String>,
     /// The session's random stream (`gd_game::story::setup_story` seeds it): `GenerateRandomValue` shuffles, the
     /// random-speech pick and the Shattered Realm generator. PORT: one stream for the engine's CRT `rand()` draws.
     pub rng: gd_rules::Rng,
@@ -103,21 +102,12 @@ impl Story {
             log_lines: Vec::new(),
             endless: state::Endless::default(),
             endless_provider: None,
-            unimplemented_seen: HashSet::default(),
             rng: gd_rules::Rng(0x02f6_e2b1),
         }
     }
 
     pub fn log(&mut self, line: String) {
         self.log_lines.push(line);
-    }
-
-    /// Records (once per name) that the port skipped something.
-    pub fn unimplemented(&mut self, what: &str) {
-        if self.unimplemented_seen.insert(what.to_string()) {
-            self.log_lines.push(format!("unimplemented: {what}"));
-            self.effects.push(Effect::Unimplemented(what.to_string()));
-        }
     }
 
     pub fn take_effects(&mut self) -> Vec<Effect> {

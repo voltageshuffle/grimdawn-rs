@@ -329,7 +329,7 @@ pub(super) fn local_map(
             }
         }
         // Legend, zoom buttons.
-        let button = |ui: &mut Ui, path: &str, focus: bool| -> Option<URect> {
+        let button = |ui: &mut Ui, path: &str, focus: bool, label: Option<&str>| -> Option<URect> {
             let b = ui.record(path)?;
             let up = b
                 .str(if focus {
@@ -339,12 +339,22 @@ pub(super) fn local_map(
                 })
                 .or(b.str("bitmapNameUp"))?
                 .to_owned();
-            let (_, r) = ui.bitmap(
-                &up,
-                b.f32("bitmapPositionX").unwrap_or(0.0),
-                b.f32("bitmapPositionY").unwrap_or(0.0),
-                o,
-            )?;
+            let (img, sz) = ui.image(&up)?;
+            // PORT: a labelled button grows to fit its label (the stock one is
+            // fixed at its bitmap's width).
+            let tex_w = ui.sc(sz.x as f32);
+            let w = gd_ui_kit::widgets::button_width(ui, &b, tex_w, label);
+            let r = URect::new(
+                o.x + ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)),
+                o.y + ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0)),
+                w,
+                ui.sc(sz.y as f32),
+            );
+            if w > tex_w {
+                ui.quad_stretch(img, r, Color::WHITE);
+            } else {
+                ui.quad(img, r, None, Color::WHITE);
+            }
             // The record's soundNameDown on press (ui/widgets.rs).
             ui.record_path_button_sound(r, path);
             Some(r)
@@ -373,27 +383,48 @@ pub(super) fn local_map(
             if let Some(t) = ui.record(&format!("records/ui/mapaerial/iconbutton_{k}text.dbr")) {
                 let tb = TextBox::from_record(&t);
                 let text = ui.fonts.tag(t.str("textTag").unwrap_or("")).to_owned();
+                // PORT: the stock legend text overflows its fixed box on a long
+                // localised label; here it truncates to the box's width.
+                let text = match &tb.style {
+                    Some(style) => ui.truncate_line(style, ui.sc(tb.rect.w), &text),
+                    None => text,
+                };
                 ui.text(&tb, o, &text);
             }
         }
         layout.zoom = [
-            button(&mut ui, "records/ui/mapaerial/map_buttonzoomin.dbr", false),
-            button(&mut ui, "records/ui/mapaerial/map_buttonzoomout.dbr", false),
+            button(
+                &mut ui,
+                "records/ui/mapaerial/map_buttonzoomin.dbr",
+                false,
+                None,
+            ),
+            button(
+                &mut ui,
+                "records/ui/mapaerial/map_buttonzoomout.dbr",
+                false,
+                None,
+            ),
         ];
         // The map window's buttons (`UIWorldMap::Draw`): centre, switch ("Local Map"), close.
         if let Some(w) = data.db.get(crate::ui::riftmap::WINDOW) {
             layout.center = w
                 .str("centerButton")
-                .and_then(|p| button(&mut ui, p, win_state.button_hover == Some(1)));
+                .and_then(|p| button(&mut ui, p, win_state.button_hover == Some(1), None));
             if let Some(path) = w.str("switchMapButton") {
-                layout.switch = button(&mut ui, path, win_state.button_hover == Some(2));
+                let text = ui.fonts.tag("tagMapWindowName").to_owned();
+                layout.switch = button(
+                    &mut ui,
+                    path,
+                    win_state.button_hover == Some(2),
+                    Some(&text),
+                );
                 if let (Some(r), Some(style)) = (
                     layout.switch,
                     data.db
                         .get(path)
                         .and_then(|b| b.str("style").map(str::to_owned)),
                 ) {
-                    let text = ui.fonts.tag("tagMapWindowName").to_owned();
                     gd_ui_kit::widgets::label(
                         &mut ui,
                         r,
@@ -405,7 +436,7 @@ pub(super) fn local_map(
             }
             layout.close = w
                 .str("closeButton")
-                .and_then(|p| button(&mut ui, p, win_state.button_hover == Some(0)));
+                .and_then(|p| button(&mut ui, p, win_state.button_hover == Some(0), None));
         }
         win_state.layout = layout;
     }

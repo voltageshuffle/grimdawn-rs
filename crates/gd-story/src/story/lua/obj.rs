@@ -48,10 +48,7 @@ impl UserData for Obj {
         // `Entity::SetShouldServerSpawn(true)`): multiplayer replication only.
         m.add_method("NetworkEnable", |_, _, _: MultiValue| Ok(()));
         // Entity.GetCoords (`LuaEntity::GetCoords` → `Entity::GetCoords`, a
-        // WorldCoords; identity coords if gone). Actor.GetAttachedCoords(name)
-        // (`LuaActor::GetAttachedCoords`) is the coords of a mesh attach point; the port has
-        // no meshes here and returns the entity coords (its one stock use
-        // spawns an effect at a boss).
+        // WorldCoords; identity coords if gone).
         let get_coords_fn = |lua: &Lua, o: &Obj, _: MultiValue| {
             let s = o.ctx.story.borrow();
             let c = if o.id == s.player.id {
@@ -66,7 +63,38 @@ impl UserData for Obj {
             coords_value(lua, &c)
         };
         m.add_method("GetCoords", get_coords_fn);
-        m.add_method("GetAttachedCoords", get_coords_fn);
+        // Actor.GetAttachedCoords(name) (`LuaActor::GetAttachedCoords` →
+        // `Actor::GetAttachedCoords`, Game.dll `0x1800274d0`): the coords of a
+        // mesh attach point (its transform applied to the entity's). PORT: no
+        // meshes here — the host publishes attach offsets
+        // (`Entities::attach_offsets`) added to the entity coords (translation
+        // only, no attach rotation); without a published offset this falls
+        // back to the entity coords (its one stock use spawns an effect at a
+        // boss).
+        m.add_method("GetAttachedCoords", |lua: &Lua, o: &Obj, name: String| {
+            let c = {
+                let s = o.ctx.story.borrow();
+                let base = if o.id == s.player.id {
+                    s.player.position
+                } else {
+                    s.entities.get(o.id).map_or([0.0; 3], |e| e.coords.origin)
+                };
+                let off = s
+                    .entities
+                    .attach_offsets
+                    .get(&(o.id, name.clone()))
+                    .or_else(|| {
+                        s.entities
+                            .attach_offsets
+                            .get(&(o.id, name.to_ascii_lowercase()))
+                    });
+                match off {
+                    Some(d) => Coords::at([base[0] + d[0], base[1] + d[1], base[2] + d[2]]),
+                    None => Coords::at(base),
+                }
+            };
+            coords_value(lua, &c)
+        });
         // Entity.SetCoords(WorldCoords) (`LuaEntity::SetCoords`): moves an
         // entity in the world, or adds it (`World::AddEntity`) if it is not
         // in the world yet — this is how every `Create`d object gets placed.
@@ -139,10 +167,10 @@ impl UserData for Obj {
         // world) then `onDestroy` (`Entity::~Entity`) run, queued since the
         // script is still running) and the Destructible overload
         // Destroy(Vec3 direction, float force, bool) (`LuaDestructible::Destroy`
-        // → `QuestCommandDestroyDestructible` → `Destructible::BreakApart`:
-        // the object breaks but stays a valid object; `onBroken` is only
-        // fired by `Destructible::TakeAttack`). The host takes an object
-        // that is gone or out of the world away (`Story::is_present`).
+        // → `QuestCommandDestroyDestructible` → `Destructible::BreakApart`,
+        // Game.dll `0x18025e650`): the object breaks but stays valid and in
+        // the world (broken mesh + debris; the bool arms a ~1000 ms despawn,
+        // host-side); `onBroken` is only fired by `Destructible::TakeAttack`.
         m.add_method("Destroy", |_, o, args: MultiValue| {
             let mut s = o.ctx.story.borrow_mut();
             if args.is_empty() {
@@ -174,7 +202,19 @@ impl UserData for Obj {
                 && e.alive
             {
                 e.alive = false;
-                e.in_world = false;
+                e.broken = true;
+                let dir = args
+                    .front()
+                    .and_then(get_coords)
+                    .unwrap_or(Coords::at([0.0; 3]));
+                let force = arg_num(&args, 1) as f32;
+                let timed = matches!(args.get(2), Some(Value::Boolean(true)));
+                s.effects.push(Effect::BreakDestructible {
+                    id: o.id,
+                    dir,
+                    force,
+                    timed,
+                });
             }
             Ok(())
         });
@@ -222,10 +262,18 @@ impl UserData for Obj {
                 .get(o.id)
                 .is_some_and(|e| e.open))
         });
-        // SetAutoClose(bool) (`LuaDoor::SetAutoClose` `FixedDoor::SetAutoClose`
-        // / `LuaLever::SetAutoClose` `FixedLever::SetAutoClose`). Kept as a no-op: the
-        // host's doors carry no auto-close state the story layer can set.
-        m.add_method("SetAutoClose", |_, _, _: MultiValue| Ok(()));
+        // SetAutoClose(bool) (`LuaDoor::SetAutoClose` → `FixedDoor::SetAutoClose`,
+        // Game.dll `0x1802a6790` / `LuaLever::SetAutoClose` `FixedLever::SetAutoClose`):
+        // the flag plus a close countdown while the door is open; the host
+        // ticks it (`Effect::SetAutoClose`).
+        m.add_method("SetAutoClose", |_, o, on: bool| {
+            o.ctx
+                .story
+                .borrow_mut()
+                .effects
+                .push(Effect::SetAutoClose { id: o.id, on });
+            Ok(())
+        });
         // Npc.SetAvailableForConversation(bool) (`LuaNpc::SetAvailableForConversation` →
         // `Npc::SetIsAvailabeForConversations`).
         m.add_method("SetAvailableForConversation", |_, o, v: bool| {
@@ -248,15 +296,17 @@ impl UserData for Obj {
             s.effects.push(Effect::Kill { id: o.id });
             Ok(())
         });
-        // Character.GetLevel (`LuaCharacter::GetLevel` → `GetCharLevel`). The
-        // stock scripts only call it on the player; other characters' levels
-        // live in the host, so they read 1 here.
+        // Character.GetLevel (`LuaCharacter::GetLevel` → `GetCharLevel`): the
+        // player's level, else the charLevel the host mirrors into
+        // `Entities::levels` (a script-given level, or the monster's placed
+        // level from `ExperienceLevelControl`'s record equation); 1 when
+        // unknown.
         m.add_method("GetLevel", |_, o, ()| {
             let s = o.ctx.story.borrow();
             Ok(if o.id == s.player.id {
                 s.player.level
             } else {
-                1
+                s.entities.levels.get(&o.id).copied().unwrap_or(1)
             })
         });
         // AdjustMoney/AdjustTribute(int) (`LuaPlayer::AdjustMoney` /
@@ -389,9 +439,9 @@ impl UserData for Obj {
             Ok(o.ctx.story.borrow().player.faction(&f) as i32 as i64)
         });
         // GiveItem(record, count, bool) (`LuaPlayer::GiveItem`: `count`
-        // copies via `Item::CreateItem` + give-to-character; the bool fills a
-        // relic's completion — `Effect::GiveItem` has no such flag, and the
-        // stock scripts always pass false).
+        // copies via `Item::CreateItem` + give-to-character; the bool gives a
+        // relic with a rolled completion bonus, `RollCompletionBonus` —
+        // `Effect::GiveItem.complete_relic`, rolled host-side).
         m.add_method("GiveItem", |_, o, args: MultiValue| {
             let (rec, n) = (
                 arg_str(&args, 0),
@@ -400,20 +450,23 @@ impl UserData for Obj {
             if n <= 0 {
                 return Ok(());
             }
+            let complete_relic = matches!(args.get(2), Some(Value::Boolean(true)));
             let mut s = o.ctx.story.borrow_mut();
             s.player.add_items(&rec, n as i64);
             s.effects.push(Effect::GiveItem {
                 record: rec.into_owned(),
                 count: n,
+                complete_relic,
             });
             Ok(())
         });
         // TakeItem(record, count, bool) (`LuaPlayer::TakeItem` →
-        // `QuestCommandTakeItem(id, record, count, bool)`, which in single
-        // player calls `Player::TakeItemFromStashes(record, count)` — the bool
-        // is not forwarded) and Player.DestroyItem(record)
-        // (`LuaPlayer::DestroyItem`: the same virtual with count 1).
-        let take = |o: &Obj, rec: &str, n: i32| -> mlua::Result<()> {
+        // `QuestCommandTakeItem(id, record, count, bool)` → SP
+        // `Player::TakeItemFromStashes`, Game.dll `0x1803e41b0`: the bool IS
+        // forwarded — `Effect::TakeItem.extra`, its filter semantics applied
+        // host-side) and Player.DestroyItem(record)
+        // (`LuaPlayer::DestroyItem`: the same virtual with count 1, bool false).
+        let take = |o: &Obj, rec: &str, n: i32, extra: bool| -> mlua::Result<()> {
             // (bad data: a count below 1 takes nothing, as `GiveItem` gives
             // nothing)
             if n <= 0 {
@@ -421,18 +474,20 @@ impl UserData for Obj {
             }
             let mut s = o.ctx.story.borrow_mut();
             s.player.add_items(rec, -i64::from(n));
-            s.effects.push(Effect::GiveItem {
+            s.effects.push(Effect::TakeItem {
                 record: rec.to_owned(),
-                count: -n,
+                count: n,
+                extra,
             });
             Ok(())
         };
         m.add_method("TakeItem", move |_, o, args: MultiValue| {
             let n = args.get(1).map_or(1.0, |_| arg_num(&args, 1)) as i32;
-            take(o, &arg_str(&args, 0), n)
+            let extra = matches!(args.get(2), Some(Value::Boolean(true)));
+            take(o, &arg_str(&args, 0), n, extra)
         });
         m.add_method("DestroyItem", move |_, o, args: MultiValue| {
-            take(o, &arg_str(&args, 0), 1)
+            take(o, &arg_str(&args, 0), 1, false)
         });
         // HasItem(record, count, bool) (`LuaPlayer::HasItem` → the Player virtual
         // `Player::GetItemCountInStashes`(record, …, bool, 0, 1, 0) >= count:
@@ -686,40 +741,184 @@ impl UserData for Obj {
                 .and_then(|r| o.ctx.env.record_field(&r, "Class"))
                 .is_some_and(|c| c.eq_ignore_ascii_case("ProxyAmbush")))
         });
-        // Stubs (why each is not implemented):
-        // * Character.Attack(uint target) `LuaCharacter::Attack` `RequestAttack`,
-        //   Move(WorldVec3) `LuaCharacter::Move`, Turn(Vec3) `LuaCharacter::Turn`,
-        //   PlayAnimation(uint, bool, bool) `LuaCharacter::PlayAnimation`, ToggleSkills(bool)
-        //   `LuaCharacter::ToggleSkills`, ToggleInvincible(bool) `LuaCharacter::ToggleInvincible`: no stock
-        //   script calls them.
-        // * PlaySound(uint SoundType) `LuaCharacter::PlaySound` and Say(tag) `LuaCharacter::Say`
-        //   (speech bubble): host audio/UI; no stock script calls them.
-        // * GiveAffixItem(record, prefix, suffix) `LuaPlayer::GiveAffixItem`: unused.
-        // * Item.HasAffix(record) `LuaItem::HasAffix`: unused by the scripts.
-        for (name, ret) in [
-            ("Attack", 0),
-            ("Move", 0),
-            ("Turn", 0),
-            ("PlaySound", 0),
-            ("Say", 0),
-            ("PlayAnimation", 0),
-            ("ToggleSkills", 0),
-            ("ToggleInvincible", 0),
-            ("GiveAffixItem", 0),
-            ("HasAffix", 2),
-        ] {
-            m.add_method(name, move |_, o, _: MultiValue| {
-                o.ctx
-                    .story
-                    .borrow_mut()
-                    .unimplemented(&format!("Lua method :{name}"));
-                Ok(match ret {
-                    1 => Value::Boolean(true),
-                    2 => Value::Boolean(false),
-                    3 => Value::Integer(0),
-                    _ => Value::Nil,
-                })
+        // Character.PlaySound(uint SoundType) (`LuaCharacter::PlaySound`):
+        // 0 `Character::PlayVoxSound`, 1..4 `PlaySpecialAttackSound1..4` —
+        // `PlayOverridableSound3d` with chance 0: the sound plays whenever the
+        // character has it; 5..11 `Character::PlayAnimationSound` for
+        // `genericSound1..4` / `voiceSound1..3`: the own record's
+        // `<name>Chance` gates it (0 never), the roll
+        // `rand() × 0.0030488 + 0.1` (0.1 .. 100). An id above 11 or a
+        // non-character does nothing.
+        // PORT: the story layer knows no shapeshift form, so the override
+        // sound table is not consulted (the own record's entry plays); the
+        // chance roll draws from the session story stream (`Story::rng`),
+        // not the engine's CRT `rand`.
+        m.add_method("PlaySound", |_, o, args: MultiValue| {
+            const SLOTS: [&str; 12] = [
+                "voxSound",
+                "specialAttackSound1",
+                "specialAttackSound2",
+                "specialAttackSound3",
+                "specialAttackSound4",
+                "genericSound1",
+                "genericSound2",
+                "genericSound3",
+                "genericSound4",
+                "voiceSound1",
+                "voiceSound2",
+                "voiceSound3",
+            ];
+            let ty = arg_num(&args, 0) as u32;
+            let Some(slot) = SLOTS.get(ty as usize) else {
+                return Ok(());
+            };
+            let mut s = o.ctx.story.borrow_mut();
+            let record = if o.id == s.player.id {
+                s.player.record.clone()
+            } else {
+                match s.entities.get(o.id) {
+                    Some(e) if e.class.is_character() => e.record.clone(),
+                    _ => return Ok(()),
+                }
+            };
+            let Some(rec) = o.ctx.env.database().and_then(|db| db.get(&record)) else {
+                return Ok(());
+            };
+            let Some(pak) = rec.str(slot).filter(|p| !p.is_empty()) else {
+                return Ok(());
+            };
+            if ty >= 5 {
+                let chance = rec.f32(&format!("{slot}Chance")).unwrap_or(0.0);
+                if s.rng.unit() * 99.9 + 0.1 > chance {
+                    return Ok(());
+                }
+            }
+            let record = pak.to_owned();
+            s.effects.push(Effect::PlaySound {
+                record,
+                at: Some(o.id),
             });
-        }
+            Ok(())
+        });
+        // Character.PlayAnimation(uint anim, bool hold, bool)
+        // (`LuaCharacter::PlayAnimation` → `GameEngine::QuestCommandPlayAnimation`
+        // → `Character::QuestCommandPlayAnimation` → the controller's
+        // "QuestPlayAnimation" state, exe `sub_14005C980`): the
+        // `AnimationSet_Type` slot plays once at speed 1; the first bool holds
+        // the pose past the clip's "End" (no return to Idle), the second is
+        // stored on the controller (its reader not traced — carried for
+        // parity). A non-character does nothing.
+        m.add_method("PlayAnimation", |_, o, args: MultiValue| {
+            let anim = arg_num(&args, 0) as u32;
+            let hold = matches!(args.get(1), Some(Value::Boolean(true)));
+            let flag = matches!(args.get(2), Some(Value::Boolean(true)));
+            let mut s = o.ctx.story.borrow_mut();
+            if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
+                s.effects.push(Effect::PlayAnimation {
+                    id: Some(o.id),
+                    anim,
+                    hold,
+                    flag,
+                });
+            }
+            Ok(())
+        });
+        // Character.Move(WorldVec3) (`LuaCharacter::Move` →
+        // `Character::RequestMove`, Game.dll `0x18006dc50`): the controller's
+        // plain "Move" state — a walk with no quest interruptions
+        // (`Effect::Move`; the quest `MoveAction` is a different command).
+        m.add_method("Move", |_, o, args: MultiValue| {
+            let Some(coords) = args.front().and_then(get_coords) else {
+                return Ok(());
+            };
+            let mut s = o.ctx.story.borrow_mut();
+            if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
+                s.effects.push(Effect::Move { id: o.id, coords });
+            }
+            Ok(())
+        });
+        // Character.Attack(uint target) (`LuaCharacter::Attack` →
+        // `Character::RequestAttack`, Game.dll `0x18006dbb0`): the controller's
+        // "Pursue" state — the host engages only a faction-hostile target
+        // (`Effect::Attack`).
+        m.add_method("Attack", |_, o, args: MultiValue| {
+            let target = arg_id(&args, 0).unwrap_or(0);
+            let mut s = o.ctx.story.borrow_mut();
+            if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
+                s.effects.push(Effect::Attack { id: o.id, target });
+            }
+            Ok(())
+        });
+        // Character.Turn(Vec3) (`LuaCharacter::Turn`): the engine glue passes
+        // ms=0 to `Character::RotateTowards` (exe `0x1400510c9`), a zero-dt
+        // turn — a no-op in the engine too. Preserved: accept and do nothing.
+        m.add_method("Turn", |_, _, _: MultiValue| Ok(()));
+        // Character.Say(tag) (`LuaCharacter::Say`, exe `0x1400513d0`): the
+        // localised tag goes to a UI speech bubble over the object — no
+        // sound, no gameplay. Presentational `Effect::Say`; headless no-op.
+        m.add_method("Say", |_, o, args: MultiValue| {
+            let tag = arg_str(&args, 0).into_owned();
+            o.ctx
+                .story
+                .borrow_mut()
+                .effects
+                .push(Effect::Say { id: o.id, tag });
+            Ok(())
+        });
+        // Character.ToggleSkills(bool) (`LuaCharacter::ToggleSkills` →
+        // `QuestCommandEnableMonsterSkills`, Game.dll `0x1802f2960` →
+        // `Monster::EnableSkills`, gated in `ChooseBestSkill`): off = only
+        // basic attacks.
+        m.add_method("ToggleSkills", |_, o, on: bool| {
+            let mut s = o.ctx.story.borrow_mut();
+            if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
+                s.effects.push(Effect::SetSkillsEnabled { id: o.id, on });
+            }
+            Ok(())
+        });
+        // Character.ToggleInvincible(bool) (`LuaCharacter::ToggleInvincible` →
+        // `QuestCommandToggleInvincible`, Game.dll `0x1802f2b20`): the
+        // Character's invincible byte — damage, debuffs and targeting skip it.
+        m.add_method("ToggleInvincible", |_, o, on: bool| {
+            let mut s = o.ctx.story.borrow_mut();
+            if s.entities.get(o.id).is_some_and(|e| e.class.is_character()) {
+                s.effects.push(Effect::SetInvincible { id: o.id, on });
+            }
+            Ok(())
+        });
+        // Player.GiveAffixItem(record, prefix, suffix)
+        // (`LuaPlayer::GiveAffixItem`, exe `0x140050cf0`): `Item::CreateItem`
+        // of an `ItemReplicaInfo` with the named affixes, given to the player;
+        // the host resolves them at the player's level (`Effect::GiveAffixItem`).
+        m.add_method("GiveAffixItem", |_, o, args: MultiValue| {
+            let rec = arg_str(&args, 0);
+            if rec.is_empty() {
+                return Ok(());
+            }
+            let mut s = o.ctx.story.borrow_mut();
+            s.player.add_items(&rec, 1);
+            s.effects.push(Effect::GiveAffixItem {
+                record: rec.into_owned(),
+                prefix: arg_str(&args, 1).into_owned(),
+                suffix: arg_str(&args, 2).into_owned(),
+            });
+            Ok(())
+        });
+        // Item.HasAffix(record) (`LuaItem::HasAffix` → `Item::HasAffix`,
+        // Game.dll `0x180323ea0`): streq (case-sensitive memcmp,
+        // `sub_180019E40`) of the name against the item's stored prefix and
+        // suffix. The host publishes the live affixes of items the story
+        // knows (`Entities::item_affixes`); an object with none published has
+        // no affix.
+        m.add_method("HasAffix", |_, o, args: MultiValue| {
+            let name = arg_str(&args, 0);
+            Ok(o.ctx
+                .story
+                .borrow()
+                .entities
+                .item_affixes
+                .get(&o.id)
+                .is_some_and(|(p, s)| p == &*name || s == &*name))
+        });
     }
 }

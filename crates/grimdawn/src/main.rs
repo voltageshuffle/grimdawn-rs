@@ -29,6 +29,7 @@ mod doors;
 mod endless_shrine;
 mod evade;
 mod fade;
+mod fps_limit;
 mod gibs;
 mod heap;
 mod hover;
@@ -204,6 +205,7 @@ fn main() {
             ascendant::AscendantPlugin,
             settings::SettingsPlugin,
             render_devices::RenderDevicesPlugin,
+            fps_limit::FpsLimitPlugin,
         ))
         .add_systems(Startup, setup_lighting)
         .add_systems(PostStartup, place_camera)

@@ -3,10 +3,10 @@
 //! in between; logs the resident memory and the entity count at each stop (`exit-cycle:`), so memory kept across
 //! exits shows as growth, and with the `audit` feature, at each menu stop the biggest archetypes (component names
 //! are `DebugName`s, compiled out without `bevy/debug`). Quits at the end of the last session.
-use gd_ui::state::exit::ExitToMenu;
-use gd_ui::state::session::AppState;
 use bevy::prelude::*;
 use gd_game_core::hooks::Hooks;
+use gd_ui::state::exit::ExitToMenu;
+use gd_ui::state::session::AppState;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, exit_cycles);

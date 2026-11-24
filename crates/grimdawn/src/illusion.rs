@@ -26,20 +26,16 @@
 //! drops both hand slots' picks.
 //! The character view is the paper doll (`crate::doll`), wearing the pending
 //! picks (`Paperdoll::SetItemAppearance`), turned by the rotate buttons.
-use gd_ui::state::inventory::UiCapture;
-use gd_ui::state::illusion::{EQUIP_BOXES, PAGE};
-use gd_ui::state::trade::{Button, Trade, TradeLayout};
 use crate::trade::TradeOpen;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::save::item::Item;
 use gd_game::illusion::{ApplyIllusions, Illusions, choices};
 use gd_game_core::inventory::Inventory;
+use gd_ui::state::illusion::{EQUIP_BOXES, PAGE};
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::trade::{Button, Trade, TradeLayout};
 use gd_ui_kit::contains;
-
-
-
-
 
 #[allow(clippy::too_many_arguments)]
 pub fn illusion_clicks(

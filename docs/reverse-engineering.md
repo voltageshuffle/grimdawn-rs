@@ -7,7 +7,7 @@ Use it when stock data doesn't answer a gameplay question. Don't use it to chase
   so most classes and methods are named.
 - The RE folder lives outside the repo, one subfolder per game version (`<re>/1_3_1_2`). `GD_RE_DIR` in
   `local.env` points at the version under work. Each holds IDA databases in `idb/*.i64` (shared: never close
-  another agent's instance; `list_databases` first), decompile notes in `notes/`, extracted archives / record
+  another agent's instance; `dsm.list()` first), decompile notes in `notes/`, extracted archives / record
   dumps (`gd-tools arc-extract` / `arz-dump` regenerate them).
 - Game installs follow the same scheme (`gd_1_3_1_2`); `GD_ROOT` points at the current one.
 - A game update: [`updating.md`](updating.md). Keep the previous version only while porting. The new version's

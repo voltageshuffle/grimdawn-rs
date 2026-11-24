@@ -7,17 +7,21 @@
 //! * Conversations: PORT. [`dialogs`] loads every `conversations/*.cnv` up
 //!   front; the engine loads a character's conversation from its record's
 //!   `conversation` field (Game.dll `Character::Load` reads it).
+//! * Resilience: PORT. A file the VFS cannot read or parse is skipped with a
+//!   warning, not propagated: one malformed mod file must not kill the whole
+//!   story (the engine loads only the world's / character's files, so a bad
+//!   mod file elsewhere never reaches it).
 //! * Text: a non-English session replaces each file's embedded text block with
 //!   the line-ordered `text_<code>/<basename>.txt` override
 //!   ([`gd_formats::text::load_text_override`], `PortableLocalization::Read`).
 //!   PORT: a missing override keeps the embedded English (the engine fails the
 //!   load; the port loads every file up front).
 use super::dialog::Dialogs;
-use super::quest::{QuestDefs, normalize_path};
+use super::quest::{QuestDef, QuestDefs, normalize_path};
 use anyhow::{Context, Result};
 use gd_formats::cnv::Conversation;
 use gd_formats::collections::HashMap;
-use gd_formats::qst::Texts;
+use gd_formats::qst::{Quest, Texts};
 use gd_formats::text::load_text_override;
 use gd_formats::vfs::Vfs;
 use std::sync::Arc;
@@ -31,12 +35,20 @@ pub fn quest_defs(vfs: &Vfs, language: &str) -> Result<QuestDefs> {
         .filter(|p| p.starts_with("quests/") && p.ends_with(".qst"))
         .collect();
     paths.sort();
-    let mut defs = QuestDefs::from_files(
-        paths
-            .into_iter()
-            .map(|p| Ok::<_, anyhow::Error>((p.to_string(), vfs.read(p)?)))
-            .collect::<Result<Vec<_>>>()?,
-    )?;
+    let mut defs = QuestDefs::default();
+    for p in paths {
+        let quest = vfs
+            .read(p)
+            .and_then(|data| Quest::parse(&data))
+            .with_context(|| p.to_string());
+        match quest {
+            Ok(quest) => defs.add(QuestDef {
+                path: normalize_path(p),
+                quest,
+            }),
+            Err(e) => log::warn!("story: skipping quest file {p}: {e:#}"),
+        }
+    }
     if language != "en" {
         for def in &mut defs.list {
             if let Some(lines) = load_text_override(vfs, language, &def.path) {
@@ -57,7 +69,17 @@ pub fn dialogs(vfs: &Vfs, language: &str) -> Result<Dialogs> {
     paths.sort();
     let mut defs = HashMap::default();
     for path in paths {
-        let mut conv = Conversation::parse(&vfs.read(path)?).with_context(|| path.to_string())?;
+        let conv = vfs
+            .read(path)
+            .and_then(|data| Conversation::parse(&data))
+            .with_context(|| path.to_string());
+        let mut conv = match conv {
+            Ok(conv) => conv,
+            Err(e) => {
+                log::warn!("story: skipping conversation file {path}: {e:#}");
+                continue;
+            }
+        };
         if language != "en"
             && let Some(lines) = load_text_override(vfs, language, path)
         {

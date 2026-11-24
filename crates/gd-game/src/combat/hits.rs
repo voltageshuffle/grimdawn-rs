@@ -199,7 +199,9 @@ pub(super) fn apply_hits(
             h.attacker,
             h.target,
             Some((Arc::from(h.skill.as_str()), h.level_index)),
-            h.parent.as_ref().map(|(p, li)| (Arc::from(p.as_str()), *li)),
+            h.parent
+                .as_ref()
+                .map(|(p, li)| (Arc::from(p.as_str()), *li)),
             false,
             h.scale,
             h.projectile,

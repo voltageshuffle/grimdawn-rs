@@ -21,8 +21,6 @@ mod panel;
 mod search;
 mod vendor;
 
-use gd_ui::state::inventory::UiCapture;
-use gd_ui::state::trade::{Trade, TradeLayout, TradeSearch, DismissPrompt, Clipboard, Panel, TradeInputSet};
 use crate::loot::PlayerProgress;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -33,6 +31,10 @@ use gd_game::trade::{ServiceAnswer, ServiceRequest};
 use gd_game_core::inventory::Inventory;
 use gd_game_core::player::Player;
 pub use gd_game_core::stash::Stash;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::trade::{
+    Clipboard, DismissPrompt, Panel, Trade, TradeInputSet, TradeLayout, TradeSearch,
+};
 use panel::panel_clicks;
 use search::{search_hits, search_input};
 use vendor::{trade_clicks, trade_done};
@@ -94,8 +96,6 @@ impl Plugin for TradePlugin {
             );
     }
 }
-
-
 
 /// Keeps `gd_game::save::BoxedItems` equal to the items in the window boxes ([`Trade::slot`],
 /// [`Trade::results`]), so every save writes them (they are in no bag while they sit there).
@@ -177,9 +177,10 @@ fn service_answers(
                     .as_ref()
                     .map(|s| s.formulas.formula_records())
                     .unwrap_or_default();
-                let list = gd_ui::state::crafting::CraftList::build(&data, rec, &learned, &|t: &str| {
-                    fonts.tag(t).to_string()
-                });
+                let list =
+                    gd_ui::state::crafting::CraftList::build(&data, rec, &learned, &|t: &str| {
+                        fonts.tag(t).to_string()
+                    });
                 info!("crafting: {} recipes", list.recipes.len());
                 commands.insert_resource(list);
                 trade.recipe = None;

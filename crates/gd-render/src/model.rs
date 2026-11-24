@@ -100,6 +100,12 @@ impl Plugin for ModelPlugin {
             .resource::<gd_game_core::character::AnimCache>()
             .shared();
         app.world_mut().resource_mut::<ModelCache>().anims = shared;
+        // The same drop runs synchronously inside `gd_game::session::set_mod_data` (the mod
+        // swap and the cache drop in one call, no frame of the old mod's assets); the `First`
+        // run above stays as the backstop for a mount that did not go through it.
+        let drop = app.world_mut().register_system(drop_on_mod_change);
+        app.world_mut()
+            .insert_resource(gd_game_core::data::ModCacheDrop(drop));
     }
 }
 
@@ -159,7 +165,8 @@ pub struct ModChanged;
 /// The render caches keyed by asset path (models, animations, textures, effects, terrain layers, shaders and grass
 /// materials) hold files of the mounted data; when `GameData`'s mounted mod changes
 /// (`gd_game::session::set_mod_data`, which drops `BodyCache` the same way) they are emptied, so a mod's overrides
-/// are loaded and models share the new `BodyCache` meshes. The sound cache clears on [`ModChanged`] (`audio.rs`).
+/// are loaded and models share the new `BodyCache` meshes. `set_mod_data` runs this in the same call
+/// ([`gd_game_core::data::ModCacheDrop`]); the sound cache clears on [`ModChanged`] (`audio.rs`).
 #[allow(clippy::too_many_arguments)]
 pub fn drop_on_mod_change(
     data: Option<Res<GameData>>,

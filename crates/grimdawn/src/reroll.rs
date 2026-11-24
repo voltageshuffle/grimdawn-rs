@@ -3,10 +3,10 @@
 //! `ui/trade.rs`; the slot's clicks and give-back: `crate::trade` `panel_clicks`).
 //! `GD_REROLL` (hooks.rs; `ascend` with `GD_TRADE=ascension`): once the crafter is open, puts the first
 //! bag item into the slot and presses the button.
-use gd_ui::state::trade::{Panel, Trade};
 use crate::trade::TradeOpen;
 use bevy::prelude::*;
 pub use gd_game::reroll::Kind;
+use gd_ui::state::trade::{Panel, Trade};
 
 /// Sends the open reroll tab / ascension window's button press for the slot
 /// item (changed in place, `CreateArtifactCmd`);

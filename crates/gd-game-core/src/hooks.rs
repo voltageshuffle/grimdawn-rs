@@ -67,6 +67,11 @@ pub struct SessionHooks {
     /// (the menu's game-mode window is the player's way, `grimdawn::menu`): the Crucible mod
     /// (`gd_formats::vfs::SURVIVAL_MOD`) is mounted from startup and the story is in survival mode.
     pub survival: Option<String>,
+    /// `GD_MOD=<name>`: a custom-game session on the user mod `mods/<name>` without the menu
+    /// (`Choice::custom`, `gd_game::session::load_save`); `GD_MOD_MAP` picks its map resource
+    /// (default `levels/world001.map`, read through the mounted mod).
+    pub module: Option<String>,
+    pub mod_map: Option<String>,
     /// `GD_OPTIONS`: an options.txt to load instead of the port's.
     pub options_file: Option<String>,
     /// `GD_TESTWORLD` (`far`: the dummies far away), `GD_DUMMY=<record>`, `GD_ARENA_MONSTERS=<record>[*n];...`.
@@ -451,6 +456,7 @@ impl Hooks {
                     "GD_SHOT",
                     "GD_NO_MENU",
                     "GD_CHARS",
+                    "GD_MOD",
                 ]
                 .iter()
                 .any(|v| has(v)),
@@ -472,6 +478,8 @@ impl Hooks {
                     .map(|l| format!("maps/survivalworld_{}.map", l.to_ascii_lowercase()))
             }),
             survival: s("GD_SURVIVAL"),
+            module: s("GD_MOD"),
+            mod_map: s("GD_MOD_MAP"),
             options_file: s("GD_OPTIONS"),
             testworld: s("GD_TESTWORLD"),
             dummy: s("GD_DUMMY"),

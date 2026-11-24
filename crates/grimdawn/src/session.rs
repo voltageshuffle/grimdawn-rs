@@ -2,11 +2,10 @@
 //! respawn point, a uid resolved through the map's instance groups as the engine does. The session
 //! state itself (character choice, [`LoadedCharacter`]) is `gd_game::session`.
 use crate::world::StreamedMap;
-use gd_ui::state::session::AppState;
 use bevy::prelude::*;
 pub use gd_game::session::*; // incl. `in_game`, which `AppState` mirrors
 pub use gd_game_core::session::*;
-
+use gd_ui::state::session::AppState;
 
 /// `AppState` follows the session resources (PreUpdate, so the transition applies the same frame).
 // The area-ready gate reads StreamedMap/Levels/PlayerStart alongside the state mirrors.

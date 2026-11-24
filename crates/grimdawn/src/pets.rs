@@ -24,14 +24,14 @@
 //! gives the selected pets (else the first portrait's) the order of a world
 //! click on the monster nearest the pet or at a point (the monster within
 //! 1.5 m of it, else the ground).
-use gd_ui::state::inventory::UiCapture;
-use gd_ui::state::pets::{PetSelection, PetInputSet};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_game::nav::Nav;
 use gd_game::pets::{Pet, PetCommand, portrait_pets};
 use gd_game_core::combat::{Combatant, Dead};
 use gd_game_core::player::Player;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::pets::{PetInputSet, PetSelection};
 
 pub struct PetInputPlugin;
 
@@ -53,8 +53,6 @@ impl Plugin for PetInputPlugin {
             );
     }
 }
-
-
 
 /// `GD_PET_STANCE`: sets every pet's stance once the first pet exists.
 #[cfg(feature = "dev")]
@@ -260,4 +258,3 @@ fn give_order(
     }
     selection.0.clear();
 }
-

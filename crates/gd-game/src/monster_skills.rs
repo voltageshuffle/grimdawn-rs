@@ -1085,6 +1085,12 @@ pub struct QuestUseSkill {
     pub point: Vec3,
 }
 
+/// `Character:ToggleSkills(false)` (engine `QuestCommandEnableMonsterSkills`, Game.dll
+/// `0x1802f2960` → `Monster::EnableSkills`, gated in `ChooseBestSkill` `0x180137310`): the monster
+/// chooses no skill — it only swings. Removed by `ToggleSkills(true)`; absent by default (enabled).
+#[derive(Component)]
+pub struct SkillsDisabled;
+
 /// Starts the commanded casts once the monster is free.
 #[allow(clippy::type_complexity)]
 fn quest_use_skill(
@@ -1367,6 +1373,7 @@ pub(crate) fn choose_skills(
             &mut MonsterSkills,
             Option<&gd_game_core::casting::RangedWeapon>,
             Has<crate::graeae::ToggleEye>,
+            Has<SkillsDisabled>,
         ),
         (
             Without<Dead>,
@@ -1400,7 +1407,7 @@ pub(crate) fn choose_skills(
     } else {
         Default::default()
     };
-    for (e, mut tf, mut ai, mut cb, mut ch, mut ms, ranged, toggling_eye) in &mut q {
+    for (e, mut tf, mut ai, mut cb, mut ch, mut ms, ranged, toggling_eye, skills_off) in &mut q {
         ms.repick -= dt;
         // The 4 s WheneverPossible checks (`ControllerMonster::Update`).
         ms.poll -= dt;
@@ -1415,6 +1422,7 @@ pub(crate) fn choose_skills(
         // "AlertBeforePursue" one (`combat::Alert`: its handlers are empty), nor
         // a monster down or getting up (`crate::ragdoll`).
         if toggling_eye
+            || skills_off
             || matches!(
                 ch.state,
                 CharState::Alert | CharState::KnockedDown | CharState::GettingUp

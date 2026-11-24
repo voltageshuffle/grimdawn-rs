@@ -75,12 +75,9 @@
 //! `World::AreRegionsConnected`; the pan arrow buttons (`pan*Image`, empty in
 //! stock data) are not drawn; the map opened with `M` waits for the player before centring; label lines drop markup; the wheel step is per
 //! Bevy scroll line; Esc closes.
-use super::contains;
-use gd_ui::state::riftmap::{RiftMapView, RiftLayout, Icon, IconKind};
-use gd_ui::window::Rebuild;
 use super::Ui;
+use super::contains;
 use super::text::FontCache;
-use gd_ui::state::inventory::UiCapture;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -89,6 +86,9 @@ use gd_formats::ui::{Rect as URect, TextAlign, TextBox, WindowDef};
 use gd_game::devotion::DevotionState;
 use gd_game::riftgates::{Rift, RiftgateMap, RiftgateRequest, TravelState, WaypointIndex};
 use gd_game_core::data::GameData;
+use gd_ui::state::inventory::UiCapture;
+use gd_ui::state::riftmap::{Icon, IconKind, RiftLayout, RiftMapView};
+use gd_ui::window::Rebuild;
 
 pub const RECORD: &str = "records/ui/riftgatemap/riftgate_mastertable.dbr";
 
@@ -119,18 +119,12 @@ impl Plugin for RiftMapUiPlugin {
     }
 }
 
-
-
-
 /// The personal portal as the map shows it: its object id, zone record and name.
 pub struct PortalIcon {
     pub id: u32,
     pub zone: String,
     pub name: String,
 }
-
-
-
 
 #[derive(Component)]
 struct RiftRoot;
@@ -586,21 +580,35 @@ fn build(
             let Some((img, sz)) = b.str("bitmapNameUp").and_then(|p| ui.image(p)) else {
                 continue;
             };
+            // PORT: the switch button grows to fit its label (the stock one is
+            // fixed at its bitmap's width); the centre button has none.
+            let text = label.then(|| ui.fonts.tag("tagWorldMapWindowName").to_owned());
+            let tex_w = ui.sc(sz.x as f32);
+            let w = super::widgets::button_width(&mut ui, b, tex_w, text.as_deref());
             let r = URect::new(
                 o.x + ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)),
                 o.y + ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0)),
-                ui.sc(sz.x as f32),
+                w,
                 ui.sc(sz.y as f32),
             );
-            let base = ui.quad(img, r, None, Color::WHITE);
+            let draw = |ui: &mut Ui, img| {
+                if w > tex_w {
+                    ui.quad_stretch(img, r, Color::WHITE)
+                } else {
+                    ui.quad(img, r, None, Color::WHITE)
+                }
+            };
+            let base = draw(&mut ui, img);
             if let Some((img, _)) = b.str("bitmapNameInFocus").and_then(|p| ui.image(p)) {
-                let over = ui.quad(img, r, None, Color::WHITE);
+                let over = draw(&mut ui, img);
                 swap(&mut ui, base, over, Hover::Button(1 + label as usize));
             }
             ui.record_button_sound(r, b);
-            if label && let Some(style) = b.str("style") {
-                let text = ui.fonts.tag("tagWorldMapWindowName").to_owned();
-                super::widgets::label(&mut ui, r, style, TextAlign::Center, &text);
+            if label
+                && let Some(style) = b.str("style")
+                && let Some(t) = &text
+            {
+                super::widgets::label(&mut ui, r, style, TextAlign::Center, t);
             } else if !label {
                 view.layout.center = Some(r);
             }
@@ -696,7 +704,6 @@ fn live(
         }
     }
 }
-
 
 /// Keeps the content node at the current pan (no rebuild while dragging).
 fn pan_content(

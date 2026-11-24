@@ -43,7 +43,7 @@ use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 pub const LAYERS: [&str; 4] = ["", "gdx1", "gdx2", "gdx3"];
 
@@ -114,6 +114,9 @@ struct Mods<T> {
     head: OnceLock<Box<Mounted<T>>>,
     /// 0 = none, `n` = the n-th mod of the list.
     active: AtomicUsize,
+    /// Bumped on every mount / unmount (even back to the same mod), so a reader can tell a
+    /// swap happened mid-build and discard a cache entry keyed by the old mod ([`Vfs::mod_stamp`]).
+    stamp: AtomicU64,
     /// Serialises the appends.
     mounting: Mutex<()>,
 }
@@ -129,6 +132,7 @@ impl<T> Default for Mods<T> {
         Self {
             head: OnceLock::new(),
             active: AtomicUsize::new(0),
+            stamp: AtomicU64::new(0),
             mounting: Mutex::new(()),
         }
     }
@@ -167,11 +171,13 @@ impl<T> Mods<T> {
             }
         };
         self.active.store(i + 1, Ordering::Release);
+        self.stamp.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
     fn remove(&self) {
         self.active.store(0, Ordering::Release);
+        self.stamp.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -237,11 +243,16 @@ impl Vfs {
     }
 
     /// `Engine::InitializeMod(name)`'s resources: the archives of [`mod_layers`] win over the
-    /// install's until [`Vfs::remove_mod`] or the next mod.
+    /// install's until [`Vfs::remove_mod`] or the next mod. A missing mod folder is an error
+    /// (a typo'd name must not mount the install as a "mod"); the expansion packs of the
+    /// Crucible stay optional.
     pub fn initialize_mod(&self, name: &str) -> Result<()> {
+        let layers = mod_layers(name);
+        let dir = self.root.join(&layers[0]);
+        anyhow::ensure!(dir.is_dir(), "mod folder not found: {}", dir.display());
         self.mods.initialize(name, || {
             let mut files = Files::default();
-            for layer in mod_layers(name) {
+            for layer in &layers {
                 files.mount_dir(&self.root.join(layer).join("resources"))?;
             }
             Ok(files)
@@ -256,6 +267,13 @@ impl Vfs {
     /// The mounted mod's name (`None`: the install alone).
     pub fn active_mod(&self) -> Option<&str> {
         self.mods.active().map(|m| m.name.as_str())
+    }
+
+    /// A counter bumped on every mount / unmount. Capture it before reading mod-dependent data
+    /// and re-check after: unchanged means no swap happened mid-read, so a cache entry keyed by
+    /// [`Self::active_mod`] is safe to keep (a name-only re-check is fooled by a swap away and back).
+    pub fn mod_stamp(&self) -> u64 {
+        self.mods.stamp.load(Ordering::Acquire)
     }
 
     fn entry(&self, key: &str) -> Option<(&Arc, &crate::arc::Entry)> {
@@ -366,20 +384,36 @@ impl Database {
 
     /// `Engine::InitializeMod(name)`'s records: `<layer>/database/<layer name>.arz` of each of
     /// [`mod_layers`] (under the game `root`; a layer without one adds nothing) replace the
-    /// install's until [`Database::remove_mod`] or the next mod.
+    /// install's until [`Database::remove_mod`] or the next mod. A missing mod folder is an
+    /// error, and so is a database folder whose `.arz` files all miss the mod's name (the
+    /// records would silently not load).
+    /// PORT: the engine's `LoadDatabase` may enumerate the folder's `.arz` files; the port
+    /// loads only `<name>.arz` and refuses a folder where nothing matches.
     pub fn initialize_mod(&self, root: &Path, name: &str) -> Result<()> {
+        let layers = mod_layers(name);
+        let dir = root.join(&layers[0]);
+        anyhow::ensure!(dir.is_dir(), "mod folder not found: {}", dir.display());
         self.mods.initialize(name, || {
             let mut records = Records::default();
-            for layer in mod_layers(name) {
-                let file = format!("{}.arz", layer.rsplit('/').next().unwrap_or(&layer));
-                let found = files_with_ext(&root.join(&layer).join("database"), "arz")
-                    .into_iter()
-                    .find(|p| {
-                        p.file_name()
-                            .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&file))
-                    });
-                if let Some(p) = found {
-                    records.push(Arz::open(&p)?);
+            for (i, layer) in layers.iter().enumerate() {
+                let file = format!("{}.arz", layer.rsplit('/').next().unwrap_or(layer));
+                let dir = root.join(layer).join("database");
+                let arzs = files_with_ext(&dir, "arz");
+                let found = arzs.iter().find(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&file))
+                });
+                match found {
+                    Some(p) => records.push(Arz::open(p)?),
+                    None if i == 0 && !arzs.is_empty() => anyhow::bail!(
+                        "mod database: no {file} in {} (found: {})",
+                        dir.display(),
+                        arzs.iter()
+                            .map(|p| p.file_name().unwrap().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    None => {}
                 }
             }
             Ok(records)

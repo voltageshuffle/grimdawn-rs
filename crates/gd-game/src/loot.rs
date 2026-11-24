@@ -899,10 +899,12 @@ pub fn refill_energy(
 /// (`ScriptableAction_GiveRandomItem::GenerateItem`). The engine rolls in the action's `OnActivate` before
 /// `Execute` gives the items, and the reward window reads the same rolls back (`GetInfoItem`); the port rolls
 /// here when the effect runs and hands the items to the window through [`crate::quest_reward::RandomRewardRolls`].
-/// Items are equipped as any given item ([`give_item`]). No completion bonus on a given component:
-/// `ScriptableAction_GiveItem::GenerateItem` rolls one (`ItemRelic::RollCompletionBonus` /
-/// `ItemRelic::SetCompletionBonus`) only under the action's `ScriptableAction_GiveItem.rollBonus`, which
-/// `ScriptableAction::Create` and the constructor clear and `Read` never sets.
+/// Items are equipped as any given item ([`give_item`]). Lua `GiveItem`'s fourth bool gives a relic /
+/// component complete (`SetRelicLevel(completedRelicLevel)`, exe `LuaPlayer::GiveItem`; a relic's
+/// completion bonus rolls from its `bonusTableName`, `ItemArtifact::InitializeItem`); the quest action's
+/// own `rollBonus` is never set (`ScriptableAction::Create` and the constructor clear it, `Read` never
+/// sets it), so a quest-given component stays incomplete. `TakeItem` ([`take_item_filtered`]) and
+/// `GiveAffixItem` (the named affixes on a fresh seed, resolved like any loot item) are the Lua shapes.
 #[allow(clippy::too_many_arguments)]
 pub fn story_rewards(
     mut commands: Commands,
@@ -936,7 +938,7 @@ pub fn story_rewards(
         let mut items = Vec::new();
         match &ev.0 {
             // Experience, levels, money and points: `gd_game::progress::story_progress`.
-            Effect::GiveItem { record, count } if *count < 0 => {
+            Effect::GiveItem { record, count, .. } if *count < 0 => {
                 let n = count.unsigned_abs();
                 let removed = inv.remove_by_record(record, n);
                 if removed < n
@@ -951,14 +953,29 @@ pub fn story_rewards(
                 }
                 info!("story: took {n} x {record} ({removed} from the bags)");
             }
-            Effect::GiveItem { record, count } => {
+            Effect::GiveItem {
+                record,
+                count,
+                complete_relic,
+            } => {
+                let rec = data.db.get(record);
+                let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
                 for _ in 0..*count {
-                    items.push(Item {
+                    let mut item = Item {
                         base_name: record.clone(),
                         seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
                         stack_count: 1,
                         ..Default::default()
-                    });
+                    };
+                    if *complete_relic
+                        && let Some(r) = rec
+                            .as_ref()
+                            .filter(|r| r.class == "ItemRelic" || r.class == "ItemArtifact")
+                    {
+                        item.var1 = gd_sim::items::components::shards_needed(r);
+                        item.relic_bonus = gd_sim::items::components::roll_bonus(idb, r, &mut rng);
+                    }
+                    items.push(item);
                 }
             }
             Effect::GiveRandomItem { table, count } => {
@@ -975,12 +992,135 @@ pub fn story_rewards(
                 rolls.push(table, rolled.clone());
                 items.extend(rolled);
             }
+            // `Player:TakeItem(record, count, bool)` (engine `QuestCommandTakeItem` → SP
+            // `TakeItemFromStashes`, Game.dll `0x1803e41b0`): the bool is the relic filter
+            // ([`take_item_filtered`]).
+            Effect::TakeItem {
+                record,
+                count,
+                extra,
+            } => {
+                let n = take_item_filtered(
+                    record,
+                    (*count).max(0) as u32,
+                    *extra,
+                    &mut inv,
+                    stash.as_deref_mut(),
+                    &data.db,
+                );
+                info!("story: took {n} x {record} (relic filter {extra})");
+            }
+            // `Player:GiveAffixItem(record, prefix, suffix)` (exe `0x140050cf0`): `Item::CreateItem` of a
+            // replica with the named affixes and a fresh engine seed; the affixes resolve through the same
+            // seeded path as any loot item (`gd_sim::items::resolve`), the player's level gating the equip
+            // requirements.
+            Effect::GiveAffixItem {
+                record,
+                prefix,
+                suffix,
+            } => {
+                items.push(Item {
+                    base_name: record.clone(),
+                    prefix_name: prefix.clone(),
+                    suffix_name: suffix.clone(),
+                    seed: gd_game_core::rng::u32(1..0x7FFF_FFFF),
+                    stack_count: 1,
+                    ..Default::default()
+                });
+            }
             _ => {}
         }
         for item in items {
             give_item(&mut commands, &mut inv, &data, to, item, false);
         }
     }
+}
+
+/// `Player::TakeItemFromStashes` (Game.dll `0x1803e41b0`): the character's items first (the bags;
+/// equipped gear is skipped, `TakeItemFromCharacter`'s a7), then the materials storage, the private and
+/// the transfer stash. The forwarded bool (a4) picks the relic mode (`Character::TakeItemFromCharacter`
+/// `0x180061000`): true takes only COMPLETE relics / components (`IsComplete`), counting their stack
+/// (`GetStackSize`) and lowering it on a partial take (`SetStackSize`); false counts a relic's shards
+/// (`GetRelicLevel`, `var1`) and lowers the shard count (`SetRelicLevel`) on a partial take, incomplete
+/// ones included. A whole stack taken removes the item; non-relics take the plain stack count either way.
+fn take_item_filtered(
+    record: &str,
+    count: u32,
+    extra: bool,
+    inv: &mut gd_game_core::inventory::Inventory,
+    stash: Option<&mut gd_game_core::stash::Stash>,
+    db: &gd_formats::vfs::Database,
+) -> u32 {
+    let mut left = count;
+    for b in &mut inv.bags {
+        take_sack_filtered(&mut b.items, record, &mut left, extra, db);
+    }
+    if let Some(stash) = stash {
+        for e in &mut stash.materials.entries {
+            if left > 0 && e.record.eq_ignore_ascii_case(record) {
+                let k = e.count.min(left);
+                e.count -= k;
+                left -= k;
+            }
+        }
+        stash.materials.entries.retain(|e| e.count > 0);
+        for p in stash.pages.iter_mut().chain(stash.transfer.iter_mut()) {
+            take_sack_filtered(&mut p.items, record, &mut left, extra, db);
+        }
+    }
+    if left < count {
+        inv.changed();
+    }
+    count - left
+}
+
+/// [`take_item_filtered`] on one sack's items.
+fn take_sack_filtered(
+    items: &mut Vec<gd_formats::inventory::Placed<Item>>,
+    record: &str,
+    left: &mut u32,
+    extra: bool,
+    db: &gd_formats::vfs::Database,
+) {
+    items.retain_mut(|p| {
+        if *left == 0 || !p.item.base_name.eq_ignore_ascii_case(record) {
+            return true;
+        }
+        let rec = db.get(&p.item.base_name);
+        let relic = rec
+            .as_ref()
+            .is_some_and(|r| r.class == "ItemRelic" || r.class == "ItemArtifact");
+        if relic {
+            let complete = rec
+                .as_ref()
+                .is_some_and(|r| gd_sim::items::components::is_complete(r, p.item.var1));
+            if extra && !complete {
+                return true;
+            }
+            let avail = if extra {
+                p.item.stack_count.max(1)
+            } else {
+                p.item.var1.max(1)
+            };
+            let n = avail.min(*left);
+            *left -= n;
+            let rem = avail - n;
+            if rem == 0 {
+                return false;
+            }
+            if extra {
+                p.item.stack_count = rem;
+            } else {
+                p.item.var1 = rem;
+            }
+            true
+        } else {
+            let n = p.item.stack_count.max(1).min(*left);
+            *left -= n;
+            p.item.stack_count = p.item.stack_count.max(1) - n;
+            p.item.stack_count > 0
+        }
+    });
 }
 
 /// Who [`give_item`] gives to: the player's equip requirements and centre (where a refused item is thrown from).

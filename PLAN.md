@@ -1,7 +1,7 @@
 # Improvement plan — remaining work
 
-The 2026-11 audit's correctness, performance, modularity and crate-split program is implemented; git
-history carries the detail. This file keeps only what is left and the constraints future work must respect.
+This file keeps only what is left and the constraints future work must respect; implemented work lives in
+git history and the module doc comments.
 
 ## Remaining work (optional crate splits)
 
@@ -59,3 +59,24 @@ if timings still show gd-render on the critical path.
   edit no longer rebuilds story/mlua, a systems edit no longer rebuilds render, a UI edit rebuilds gd-ui not
   the binary). `-Zthreads=8` measured ~3% net but mixed per-crate (helps gd-game/core, hurts gd-ui/kit/
   render) — not recommended globally. Re-measure with `cargo dev-build --timings`.
+
+## Modding — open questions (verify against the exe before changing)
+- Mod database enumeration: only `<folder>.arz` loads (`gd-formats/src/vfs.rs`); engine `LoadDatabase` may
+  enumerate the folder (mods ship multiple `.arz`). At minimum warn on unmatched `.arz` in the folder.
+- Base `Database::open` loads every `*.arz` per layer vs the engine's named files; a stray `.arz` would
+  override stock. Match named files or document the divergence.
+- Crucible toggle has no DLC/install check (`grimdawn/src/ui/mainmenu.rs`); verify engine `GameModeWindow`
+  gating before adding one.
+- LZ4 amplification is bounded at 255× (`gd-formats/src/util.rs`); an optional cap for hostile mods.
+
+## Lua — known approximations (future work)
+- `GetAttachedCoords`: mesh-space translation only (no bone animation/rotation).
+- `PlayAnimation`'s fourth bool is stored; its engine reader is untraced. AI scripted-busy checks test
+  `Scripted` only, so a held monster may be interrupted.
+- `Item.HasAffix` bridges record → first inventory instance (port items carry no object ids).
+- `BreakDestructible` dir/force are not consumed by port debris; `Say` reuses the quick-tip box look
+  (`records/sandbox/paul/speechwindow.dbr` is not shipped).
+- `Debug.AddStatisticText` raises a Lua error: no engine counterpart found.
+
+Engine quirks preserved on purpose (do not "fix"): `Character.Turn` no-ops (the glue passes ms=0),
+`Player.GetPlayerName` returns "", `Object.Cache/Release` are headless no-ops; overload dispatch stays lenient.

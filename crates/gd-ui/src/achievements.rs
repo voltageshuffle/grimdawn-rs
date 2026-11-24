@@ -28,8 +28,9 @@
 //!   (`UIPlayerHud::ClosePanels`).
 //!
 //! PORT: each group's list scroll is not kept (a new group starts at the top); the description is wrapped at its box
-//! width with the style's line height (`UIMultiLineTextBox::Layout` not read). Hooks (hooks.rs):
-//! `GD_UI_OPEN=achievements`, `GD_UI_TAB=<group>`.
+//! width with the style's line height (`UIMultiLineTextBox::Layout` not read) and its row grows to fit it; the group
+//! buttons share one auto-sized width (the widest label, clamped to the pane) instead of the bitmaps' fixed width
+//! (UX over parity). Hooks (hooks.rs): `GD_UI_OPEN=achievements`, `GD_UI_TAB=<group>`.
 use super::Ui;
 use super::contains;
 use super::window::Rebuild;
@@ -367,7 +368,8 @@ fn build(
 }
 
 /// A `ButtonStaticText2` at `at` (module doc): its bitmap (down when `down`), its hidden in-focus bitmap marked
-/// [`GroupFocus`], its two texts; returns its rect.
+/// [`GroupFocus`], its two texts; returns its rect. `w` is the column's shared auto-sized width ([`draw`]):
+/// the bitmaps stretch to it and a label too long for it truncates.
 fn group_button(
     ui: &mut Ui,
     b: &gd_formats::arz::Record,
@@ -375,6 +377,7 @@ fn group_button(
     down: bool,
     i: usize,
     sub: &str,
+    w: f32,
 ) -> Option<URect> {
     let key = if down {
         "bitmapNameDown"
@@ -382,27 +385,38 @@ fn group_button(
         "bitmapNameUp"
     };
     let (img, size) = b.str(key).map(str::to_owned).and_then(|p| ui.image(&p))?;
-    let r = URect::new(at.x, at.y, ui.sc(size.x as f32), ui.sc(size.y as f32));
-    ui.quad(img, r, None, Color::WHITE);
+    let r = URect::new(at.x, at.y, w, ui.sc(size.y as f32));
+    if w > ui.sc(size.x as f32) {
+        ui.quad_stretch(img, r, Color::WHITE);
+    } else {
+        ui.quad(img, r, None, Color::WHITE);
+    }
     if !down
-        && let Some((img, _)) = b
+        && let Some((img, fs)) = b
             .str("bitmapNameInFocus")
             .map(str::to_owned)
             .and_then(|p| ui.image(&p))
     {
-        let e = ui.quad(img, r, None, Color::WHITE);
+        let e = if w > ui.sc(fs.x as f32) {
+            ui.quad_stretch(img, r, Color::WHITE)
+        } else {
+            ui.quad(img, r, None, Color::WHITE)
+        };
         ui.commands
             .entity(e)
             .insert((GroupFocus(i), Visibility::Hidden));
     }
     // Each text centred on (w / 2, k h): a box as tall as the button, centred there.
     let centred = |k: f32| URect::new(r.x, r.y + r.h * k - r.h * 0.5, r.w, r.h);
+    let max_w = (w - 2.0 * ui.sc(10.0)).max(0.0);
     if let (Some(style), Some(tag)) = (b.str("style"), b.str("textTag")) {
         let t = ui.fonts.tag(tag).to_owned();
+        let t = ui.truncate_line(style, max_w, &t);
         super::widgets::label(ui, centred(0.37), style, TextAlign::Center, &t);
     }
     if let Some(style) = b.str("style2") {
-        super::widgets::label(ui, centred(0.67), style, TextAlign::Center, sub);
+        let t = ui.truncate_line(style, max_w, sub);
+        super::widgets::label(ui, centred(0.67), style, TextAlign::Center, &t);
     }
     Some(r)
 }
@@ -439,7 +453,12 @@ fn draw(
             inv: ui.inv,
         });
         ui.root = inner;
-        let mut y = 0.0;
+        // One width for the whole radio column: the widest button texture or label
+        // (`widgets::button_width`'s rule for the title, the same for the counts line),
+        // clamped to the pane so a long localised name truncates instead of running into
+        // the achievement list. PORT: the stock buttons are fixed at their bitmaps' width.
+        let mut btns = Vec::new();
+        let mut bw = 0.0f32;
         for (i, g) in groups.iter().enumerate() {
             let (list, unlocked) = shown(g, state);
             let sub = fmt(
@@ -450,13 +469,32 @@ fn draw(
             let Some(b) = ui.record(&g.button) else {
                 continue;
             };
+            let Some(tex_w) = b
+                .str("bitmapNameUp")
+                .and_then(|p| ui.image(p))
+                .map(|(_, size)| ui.sc(size.x as f32))
+            else {
+                continue;
+            };
+            let title = b.str("textTag").map(|t| ui.fonts.tag(t).to_owned());
+            let mut w = super::widgets::button_width(ui, &b, tex_w, title.as_deref());
+            if let Some(style) = b.str("style2") {
+                w = w.max(ui.text_width(style, &sub) + 2.0 * ui.sc(10.0));
+            }
+            bw = bw.max(w);
+            btns.push((i, b, sub));
+        }
+        let bw = bw.min(clip.w);
+        let mut y = 0.0;
+        for (i, b, sub) in &btns {
             if let Some(r) = group_button(
                 ui,
-                &b,
+                b,
                 Vec2::new(clip.x, clip.y + y),
-                i == selected,
-                i,
-                &sub,
+                *i == selected,
+                *i,
+                sub,
+                bw,
             ) {
                 y += r.h;
                 layout.groups.push(r);
@@ -519,7 +557,11 @@ fn draw(
                     let text = ui.fonts.tag(&a.description).to_owned();
                     let lh = ui.line_height(&style);
                     let bw = ui.sc(tb.rect.w);
-                    let mut ly = row.y + ui.sc(tb.rect.y);
+                    let top = ui.sc(tb.rect.y);
+                    // The row grows with the wrapped description so a long one never overlaps
+                    // the next row (PORT: the stock row is fixed at its background's height).
+                    h = h.max(top + gd_ui_kit::layout::row_height(ui, &style, &text, bw, 0.0));
+                    let mut ly = row.y + top;
                     for l in ui.wrap_lines(&style, bw, &text) {
                         ui.text_line(&style, Vec2::new(row.x + ui.sc(tb.rect.x), ly), &l, 1.0);
                         ly += lh;

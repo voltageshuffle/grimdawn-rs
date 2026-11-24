@@ -2,9 +2,8 @@ use bevy::prelude::*;
 use gd_game_core::story::StoryRuntime;
 use gd_story::story::quest::{STATE_COMPLETE, STATE_IN_PROGRESS};
 use gd_ui::quests::{QuestEntry, QuestView, TaskView, event_text, plain};
-use std::hash::{Hash, Hasher};
 use gd_ui_kit::text::FontCache;
-
+use std::hash::{Hash, Hasher};
 
 /// Builds [`QuestView`] from the story's quest log, in the repository's
 /// order (the world map's quest list hashed as the engine does).

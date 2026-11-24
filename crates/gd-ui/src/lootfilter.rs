@@ -59,6 +59,12 @@
 //! the first row; the label right after the box bitmap in the checkbox's
 //! `style`.
 //!
+//! PORT: the columns flow to their content (`gd_ui_kit::layout::flow_columns`,
+//! the options pages' pattern) instead of the fixed `lootFilterColumnIndent`
+//! offsets: each column is as wide as its widest box + label row, the column
+//! titles follow their columns, a label wider than its column is cut with
+//! "..." and the Defaults button auto-sizes to its label (UX over parity).
+//!
 //! Defaults asks first (`tagLootFilterResetConfirm`, text tag from the
 //! stock strings; the Yes / No box is the dialog manager's look, as the game
 //! menu's confirmations, `gamemenu.rs`); Esc or No cancels, Yes sends
@@ -381,22 +387,14 @@ fn build(
             o,
         );
     }
-    for t in [
-        "lootFilterWindowTitle",
-        "lootFilterTitle01",
-        "lootFilterTitle02",
-        "lootFilterTitle03",
-        "lootFilterTitle04",
-    ] {
-        if let Some(r) = ui.record(&field(t)) {
-            let tb = TextBox::from_record(&r);
-            let text = tb
-                .tag
-                .as_deref()
-                .map(|t| ui.fonts.tag(t).to_string())
-                .unwrap_or_default();
-            ui.text(&tb, o, &text);
-        }
+    if let Some(r) = ui.record(&field("lootFilterWindowTitle")) {
+        let tb = TextBox::from_record(&r);
+        let text = tb
+            .tag
+            .as_deref()
+            .map(|t| ui.fonts.tag(t).to_string())
+            .unwrap_or_default();
+        ui.text(&tb, o, &text);
     }
     let button =
         |ui: &mut Ui, r: &gd_formats::arz::Record, key: &str, x: f32, y: f32| -> Option<URect> {
@@ -423,21 +421,26 @@ fn build(
         }
     }
     if let Some(b) = ui.record(&field("lootFilterResetButton")) {
-        let r = button(
+        // Auto-sized to its label (kit `static_button`); the stock centre is kept when it grows.
+        let tex_w = b
+            .str("bitmapNameUp")
+            .and_then(|p| ui.image(p))
+            .map(|(_, sz)| ui.sc(sz.x as f32))
+            .unwrap_or(0.0);
+        let text = b.str("textTag").map(|t| ui.fonts.tag(t).to_string());
+        let bw = super::widgets::button_width(&mut ui, &b, tex_w, text.as_deref());
+        let bo = o - Vec2::new((bw - tex_w) * 0.5, 0.0);
+        if let Some(r) = super::widgets::static_button(
             &mut ui,
             &b,
-            "bitmapNameUp",
-            b.f32("bitmapPositionX").unwrap_or(0.0),
-            b.f32("bitmapPositionY").unwrap_or(0.0),
-        );
-        if let (Some(r), Some(style), Some(t)) = (r, b.str("style"), b.str("textTag")) {
-            let text = ui.fonts.tag(t).to_string();
-            super::widgets::label(&mut ui, r, style, TextAlign::Center, &text);
-        }
-        if let Some(r) = r {
+            bo,
+            true,
+            false,
+            super::widgets::Label::Record,
+        ) {
             ui.record_button_sound(r, &b);
+            view.defaults = Some(r);
         }
-        view.defaults = r;
     }
     let (Some(cb), spacer) = (
         ui.record(&field("lootFilterCheckbox")),
@@ -457,33 +460,94 @@ fn build(
         .str("style")
         .or(cb.str("textStyleName"))
         .map(str::to_owned);
+    // The columns flow to their content: a row is as wide as its box + label (or spacer line),
+    // the gaps spread within bounds and each column clamps inside the window's right edge.
+    let box_w = cb
+        .str("bitmapNameUp")
+        .and_then(|p| ui.image(p))
+        .map(|(_, sz)| ui.sc(sz.x as f32))
+        .unwrap_or(0.0);
+    let spacer_geo = spacer.as_ref().and_then(|sp| {
+        let (img, sz) = ui.image(sp.str("bitmapName")?)?;
+        Some((
+            img,
+            ui.sc(sz.x as f32),
+            ui.sc(sz.y as f32),
+            sp.f32("bitmapPositionX").unwrap_or(31.0) - x0,
+            sp.f32("bitmapPositionY").unwrap_or(137.0),
+        ))
+    });
+    let cols: Vec<Vec<gd_ui_kit::layout::FlowRow>> = OPTIONS
+        .iter()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|e| match e {
+                    Some((_, tag)) => {
+                        let text = ui.fonts.tag(tag).to_string();
+                        let lw = label_style
+                            .as_ref()
+                            .map(|st| ui.text_width(st, &text))
+                            .unwrap_or(0.0);
+                        gd_ui_kit::layout::FlowRow::fixed(0.0, box_w + lw)
+                    }
+                    None => gd_ui_kit::layout::FlowRow::fixed(
+                        0.0,
+                        spacer_geo
+                            .as_ref()
+                            .map_or(0.0, |(_, sw, _, dx, _)| ui.sc(*dx) + sw),
+                    ),
+                })
+                .collect()
+        })
+        .collect();
+    let flow = gd_ui_kit::layout::flow_columns(w, ui.sc(x0), &cols, 0.0, ui.sc(16.0), ui.sc(48.0));
+    // The column titles centre over their flowed columns (record y / height / style kept).
+    for (col, t) in [
+        "lootFilterTitle01",
+        "lootFilterTitle02",
+        "lootFilterTitle03",
+        "lootFilterTitle04",
+    ]
+    .iter()
+    .enumerate()
+    {
+        if let Some(r) = ui.record(&field(t)) {
+            let mut tb = TextBox::from_record(&r);
+            tb.rect.x = (flow.col_x[col] - o.x) / ui.s;
+            tb.rect.w = flow.col_w[col] / ui.s;
+            let mut text = tb
+                .tag
+                .as_deref()
+                .map(|t| ui.fonts.tag(t).to_string())
+                .unwrap_or_default();
+            if let Some(st) = tb.style.as_deref() {
+                text = ui.truncate_line(st, ui.sc(tb.rect.w), &text);
+            }
+            ui.text(&tb, o, &text);
+        }
+    }
     for (col, entries) in OPTIONS.iter().enumerate() {
-        let indent = if col == 0 {
-            0.0
-        } else {
-            rec.f32(&format!("lootFilterColumnIndent{}", col + 1))
-                .unwrap_or(244.0 * col as f32)
-        };
-        let x = x0 + indent;
+        let x = flow.ctrl_x(col);
         let mut y = y0;
         for e in entries.iter() {
             match e {
                 Some((opt, tag)) => {
                     // The Ascended box needs the third expansion (always here).
                     let on = filter.options[*opt];
-                    let Some(br) = button(
-                        &mut ui,
-                        &cb,
-                        if on { "bitmapNameDown" } else { "bitmapNameUp" },
-                        x,
-                        y,
-                    ) else {
+                    let key = if on { "bitmapNameDown" } else { "bitmapNameUp" };
+                    let Some((img, sz)) = cb.str(key).map(str::to_owned).and_then(|p| ui.image(&p))
+                    else {
                         continue;
                     };
+                    let br = URect::new(x, o.y + ui.sc(y), ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+                    ui.quad(img, br, None, Color::WHITE);
                     ui.record_button_sound(br, &cb);
                     if let Some(style) = &label_style {
                         let text = ui.fonts.tag(tag).to_string();
-                        let lr = URect::new(br.x + br.w, br.y, ui.sc(200.0), br.h);
+                        let lw = (flow.col_right(col) - br.x - br.w).max(0.0);
+                        let text = ui.truncate_line(style, lw, &text);
+                        let lr = URect::new(br.x + br.w, br.y, lw, br.h);
                         super::widgets::label(&mut ui, lr, style, TextAlign::Start, &text);
                     }
                     view.boxes.push((br, *opt, tag));
@@ -491,14 +555,15 @@ fn build(
                 }
                 None => {
                     y += row2 - row;
-                    if let Some(sp) = &spacer
-                        && let Some(path) = sp.str("bitmapName")
-                    {
-                        let (sx, sy) = (
-                            sp.f32("bitmapPositionX").unwrap_or(31.0),
-                            sp.f32("bitmapPositionY").unwrap_or(137.0),
-                        );
-                        ui.bitmap(path, sx + indent, sy + (y - y0), o);
+                    if let Some((img, sw, sh, dx, sy)) = &spacer_geo {
+                        let sx = flow.col_x[col] + ui.sc(*dx);
+                        let cw = sw.min((flow.col_right(col) - sx).max(0.0));
+                        let r = URect::new(sx, o.y + ui.sc(sy + (y - y0)), cw, *sh);
+                        if cw < *sw {
+                            ui.quad_stretch(img.clone(), r, Color::WHITE);
+                        } else {
+                            ui.quad(img.clone(), r, None, Color::WHITE);
+                        }
                     }
                     y += row2;
                 }

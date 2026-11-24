@@ -62,6 +62,9 @@
 //! there is not in the main quest and is saved under `save/user/` (`Choice::player_folder`), its shared files
 //! under `save/<mod>/` (`Choice::shared_save_dir`). A mod that does not mount, or a listed map its archives do
 //! not hold (a loose `.map`: `InitializeMod` mounts only `resources/*.arc`), refuses Start and the menu stays.
+//! Start also refuses an existing save whose `map.dat` names a different mod than the pick
+//! ([`start`]): the per-map save folder is the map path alone, so a mismatched start would overwrite
+//! another mod's (or the campaign's) quest and fog files.
 //!
 //! Characters (`Game::ListCharacters`): the list holds the characters of `main/` and `user/`. Start in the
 //! campaign (mode 0, no mod) with a character that is not in the main quest (`is_in_main_quest` 0: created in
@@ -284,6 +287,8 @@ pub struct MainMenu {
     pub arena: usize,
     pub custom: Option<CustomMap>,
     pub window: MenuWindow,
+    /// Why the last Start was refused (rendered in the play window); cleared on any menu change.
+    pub error: Option<String>,
     /// Bumped on every change (the screen rebuilds when it moves).
     pub revision: u32,
 }
@@ -530,6 +535,7 @@ pub(crate) fn setup(
         arena: hooks.ui.menu_crucible.unwrap_or(0),
         custom: None,
         window,
+        error: None,
         revision: 0,
     };
     m.select(selected, 12);
@@ -866,6 +872,7 @@ fn run_menu(
         (m.crucible, m.arena, m.custom.clone()),
     );
     if now != before {
+        m.error = None;
         m.revision += 1;
         // A change of what the menu remembers is written at once (the engine writes on menu state changes).
         let hooked = hooks.ui.menu_crucible.is_some() || hooks.ui.menu_pick.is_some();
@@ -877,6 +884,14 @@ fn run_menu(
 
 /// Leaves the menu into a session. A Crucible or custom game opens its mod's map first
 /// (`world::open_session_map`); if that fails the menu stays open.
+///
+/// An existing save's `map.dat` names the mod it was written in (`Choice::read_map_dat`): a pick
+/// whose mod differs is refused before anything is mounted or written, since the per-map folder
+/// (`Choice::map_folder`) is the map path alone — starting would read and overwrite another mod's
+/// (or the campaign's) `quests.gdd` / `map.fow`. The Crucible (mode 1) is exempt: its arena folders
+/// are its own and its behavior is unchanged.
+/// PORT: the engine remounts the save's mod on load (`Game::LoadModMap`); the port refuses the
+/// mismatched start instead, so the menu pick is always the mod that runs.
 pub(crate) fn start(
     commands: &mut Commands,
     choice: Choice,
@@ -884,6 +899,15 @@ pub(crate) fn start(
     difficulty: usize,
     veteran: bool,
 ) {
+    if let Some(msg) = choice.mod_mismatch(difficulty) {
+        error!("menu: {} does not start: {msg}", choice.name);
+        commands.queue(move |world: &mut World| {
+            let mut m = world.resource_mut::<MainMenu>();
+            m.error = Some(msg);
+            m.revision += 1;
+        });
+        return;
+    }
     if choice.game_mode() == 0 {
         commands.remove_resource::<MainMenu>();
         begin(commands, choice, gdc, difficulty, veteran);
@@ -893,7 +917,11 @@ pub(crate) fn start(
     }
     commands.queue(move |world: &mut World| {
         if let Err(e) = crate::world::open_session_map(world, &choice) {
-            error!("menu: {} does not start: {e:#}", choice.map_path());
+            let msg = format!("{e:#}");
+            error!("menu: {} does not start: {msg}", choice.map_path());
+            let mut m = world.resource_mut::<MainMenu>();
+            m.error = Some(msg);
+            m.revision += 1;
             return;
         }
         world.remove_resource::<MainMenu>();

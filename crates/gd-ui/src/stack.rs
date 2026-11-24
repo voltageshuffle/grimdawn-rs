@@ -390,7 +390,9 @@ fn clicks(
     };
     // The stack's window went away, or the stack did: the window goes too.
     let shown = match open.from {
-        ItemLoc::Stash { .. } => matches!(trade.open, Some(gd_game::trade::TradeOpen::Stash { .. })),
+        ItemLoc::Stash { .. } => {
+            matches!(trade.open, Some(gd_game::trade::TradeOpen::Stash { .. }))
+        }
         _ => panels.character,
     };
     let Some(n) = inv

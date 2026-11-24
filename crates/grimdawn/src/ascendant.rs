@@ -24,11 +24,11 @@
 //! if missing, `ui::altar`); `GD_UI_OPEN=altar` opens the window as a view (`ui::altar`); `GD_DREAD_KILLS`
 //! overrides the kill count needed.
 use bevy::prelude::*;
-use gd_ui::state::ascendant::AltarMenu;
 use gd_game::ascendant::{Altar, AltarOpen, AscendantStage};
 use gd_game_core::player::Player;
 use gd_render::character::CharAssets;
 use gd_render::model::Ready;
+use gd_ui::state::ascendant::AltarMenu;
 
 pub struct AscendantPlugin;
 
@@ -58,8 +58,6 @@ struct AltarLooks {
     shown: Option<bool>,
     fx: Option<Entity>,
 }
-
-
 
 /// A new altar gets its model and its shown state once its model is built (the dressing seam; [`AltarLooks`]
 /// marks a dressed one).

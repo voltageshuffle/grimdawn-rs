@@ -321,6 +321,7 @@ pub fn apply_difficulty_unlocks(
         effects.write(gd_game_core::story::StoryEffect(Effect::GiveItem {
             record: UNLOCK_BAG.to_owned(),
             count: 5,
+            complete_relic: false,
         }));
     }
 }

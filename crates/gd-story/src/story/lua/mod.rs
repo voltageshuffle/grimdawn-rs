@@ -14,7 +14,7 @@
 //!   `Script.Event` `LuaGame::BindClass`, MpScript `LuaMpScript::BindClass`).
 //!   `Script.Load/RegisterForUpdate/UnregisterForUpdate` are bound in Engine.dll
 //!   `LuaScript::BindClass`. There is no
-//!   `Debug` table in either binary (the port keeps an inert one).
+//!   `Debug` table in either binary (the port binds one that errors).
 //! * Each class table is the metatable of its objects (`__index` = itself,
 //!   `__base` = parent class), so methods are also reachable as
 //!   `Character.IsAlive(obj)` / `Player.HasMastery(player, id)`, which the
@@ -30,8 +30,19 @@
 //!   the object exists and derives from that class (classInfo walk).
 //!
 //! The comment on each binding names the exe thunk and
-//! the Game.dll function it forwards to; bindings the port leaves as stubs
-//! say why. Stubs log once (`Story::unimplemented`).
+//! the Game.dll function it forwards to. The whole engine binding surface is
+//! implemented; the only stub is `Debug.AddStatisticText` (neither binary
+//! binds a `Debug` table), which raises a Lua error naming the API. Engine
+//! quirks are preserved, not "fixed": `Character.Turn` is a no-op (the glue
+//! passes ms=0 to `Character::RotateTowards`, exe `0x1400510c9`);
+//! `Player.GetPlayerName` returns "" (`0x140061740`); `Character.PlaySound`'s
+//! chance roll matches (`PlayAnimationSound`, Game.dll `0x180025480`);
+//! `Object.Cache/Release` (refcounted preloads) and `Entity.NetworkEnable`
+//! (multiplayer replication) are faithful headless no-ops. `Character.Say`
+//! and `Game.ScreenShake` are presentational effects (speech bubble / camera
+//! shake), headless no-ops. `Item.HasAffix` and `Entity.GetAttachedCoords`
+//! read host-published facts (`Entities::item_affixes` / `attach_offsets`);
+//! the latter falls back to the entity coords when no offset is published.
 //!
 //! PORT: the VM is sandboxed (`ScriptHost::new`): no `os` / `io` / `package`
 //! and no `dofile` / `loadfile` / `require` (no stock script uses them), a

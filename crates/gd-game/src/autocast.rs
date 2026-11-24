@@ -925,18 +925,19 @@ pub(crate) fn trigger_skill_autocasts(
     let dt = time.delta_secs();
     // (owner, trigger, skill used, character involved)
     let mut events: Vec<(Entity, Trigger, Option<Arc<str>>, Entity)> = Vec::new();
-    let mut attack = |attacker: Entity, target: Entity, skill: &Option<Arc<str>>, critical: bool| {
-        if !owners.contains(attacker) {
-            return;
-        }
-        let used = skill
-            .clone()
-            .or_else(|| Some(Arc::from(gd_game_core::casting::DEFAULT_ATTACK)));
-        if critical {
-            events.push((attacker, Trigger::AttackEnemyCrit, used.clone(), target));
-        }
-        events.push((attacker, Trigger::AttackEnemy, used, target));
-    };
+    let mut attack =
+        |attacker: Entity, target: Entity, skill: &Option<Arc<str>>, critical: bool| {
+            if !owners.contains(attacker) {
+                return;
+            }
+            let used = skill
+                .clone()
+                .or_else(|| Some(Arc::from(gd_game_core::casting::DEFAULT_ATTACK)));
+            if critical {
+                events.push((attacker, Trigger::AttackEnemyCrit, used.clone(), target));
+            }
+            events.push((attacker, Trigger::AttackEnemy, used, target));
+        };
     for m in made.read() {
         attack(m.attacker, m.target, &m.skill, m.critical);
     }

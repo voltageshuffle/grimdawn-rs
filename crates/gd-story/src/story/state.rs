@@ -602,6 +602,9 @@ pub struct WorldObject {
     pub alive: bool,
     pub locked: bool,
     pub open: bool,
+    /// Destructible broken by `:Destroy` (engine `Destructible::BreakApart`): the object stays
+    /// valid and queryable; the host shows the broken mesh / despawn.
+    pub broken: bool,
     /// Npc: conversation file from the record (`conversation` field).
     pub conversation: Option<String>,
     pub available_for_conversation: bool,
@@ -616,6 +619,19 @@ pub struct Entities {
     /// Level a script gave `Character.Create(record, level, ...)` (absent:
     /// the host picks it).
     pub levels: BTreeMap<u32, u32>,
+    /// `Character.Create(record, level, origin)`'s third arg: the host clamps the level to the
+    /// region's limits around it (engine `GetLevelLimits`); absent = no origin given.
+    pub origins: BTreeMap<u32, [f32; 3]>,
+    /// `Proxy.Create(record, vec, bool)`'s vec: `Proxy::SetLimitsLocation` before load.
+    pub proxy_limits: BTreeMap<u32, [f32; 3]>,
+    /// `Proxy.Create(record, vec, true)`: `CreateAtIgnoreBoss` (byte +1612).
+    pub proxy_ignore_boss: HashSet<u32>,
+    /// Host-published live affixes of inventory items the story knows (object id → prefix/suffix
+    /// record names), for `Item:HasAffix` (engine `Item::HasAffix` streq's the replica's affixes).
+    pub item_affixes: HashMap<u32, (String, String)>,
+    /// Host-published mesh attach-point offsets (object id, attach name → local offset), for
+    /// `Entity:GetAttachedCoords(name)`; absent = fall back to the entity coords (documented).
+    pub attach_offsets: HashMap<(u32, String), [f32; 3]>,
     /// Characters a script created with `Character.Create` / `CreateNearPlayer`: Grim Dawn.exe
     /// `LuaCharacter::Create` / `LuaCharacter::CreateAtLevel` / `LuaCharacter::CreateNearPlayer` call the new
     /// object's `Character::EnableSpawnAnimation`, so it starts with its Spawn animation (the host's startup);
@@ -655,6 +671,7 @@ impl Entities {
                 alive: true,
                 locked: false,
                 open: false,
+                broken: false,
                 conversation: None,
                 available_for_conversation: true,
                 scripted: true,
@@ -664,6 +681,11 @@ impl Entities {
     }
     pub fn remove(&mut self, id: u32) -> Option<WorldObject> {
         self.levels.remove(&id);
+        self.origins.remove(&id);
+        self.proxy_limits.remove(&id);
+        self.proxy_ignore_boss.remove(&id);
+        self.item_affixes.remove(&id);
+        self.attach_offsets.retain(|(oid, _), _| *oid != id);
         self.spawn_animation.remove(&id);
         self.objects.remove(&id)
     }
@@ -722,6 +744,8 @@ pub enum Effect {
     GiveItem {
         record: String,
         count: i32,
+        /// Fourth bool: a relic is given with a rolled completion bonus (`RollCompletionBonus`).
+        complete_relic: bool,
     },
     GiveRandomItem {
         table: String,
@@ -767,6 +791,10 @@ pub enum Effect {
     PlayAnimation {
         id: Option<u32>,
         anim: u32,
+        /// Third arg: hold the pose past the clip's end instead of reverting.
+        hold: bool,
+        /// Fourth arg: stored by the engine (`sub_14005C980`); reader untraced, kept for parity.
+        flag: bool,
     },
     /// Quest action 22 (`ScriptableAction_CastSkill`): `caster` (the action's owner, a conversation's NPC) casts
     /// `skill` on the main player; None (a quest's action, no owner) does nothing (`gd_game::story::cast_story_skills`).
@@ -832,6 +860,60 @@ pub enum Effect {
     ConversationAvailable {
         npc: u32,
     },
-    /// Something the port does not implement yet (logged once per name).
-    Unimplemented(String),
+    /// `Player:TakeItem(record, count, bool)`: engine `QuestCommandTakeItem` → SP
+    /// `TakeItemFromStashes`; `extra` is the forwarded bool (filter semantics traced by the host).
+    TakeItem {
+        record: String,
+        count: i32,
+        extra: bool,
+    },
+    /// `Character:ToggleInvincible(bool)` → `combat::Invincible` on the entity.
+    SetInvincible {
+        id: u32,
+        on: bool,
+    },
+    /// `Character:ToggleSkills(bool)` → gate in the monster skill chooser.
+    SetSkillsEnabled {
+        id: u32,
+        on: bool,
+    },
+    /// `Character:Move(vec)`: engine `RequestMove` — a plain, non-interruptible walk.
+    Move {
+        id: u32,
+        coords: Coords,
+    },
+    /// `Character:Attack(target)`: engine `RequestAttack` — engage if factions are hostile.
+    Attack {
+        id: u32,
+        target: u32,
+    },
+    /// `Character:Say(tag)`: presentational speech bubble (engine UI vcall); headless no-op.
+    Say {
+        id: u32,
+        tag: String,
+    },
+    /// `Game.ScreenShake(vec, secs, amplitude)`: presentational camera shake; headless no-op.
+    ScreenShake {
+        at: Coords,
+        ms: u32,
+        amplitude: f32,
+    },
+    /// `Player:GiveAffixItem(record, prefix, suffix)`: item with fixed affixes, resolved at player level.
+    GiveAffixItem {
+        record: String,
+        prefix: String,
+        suffix: String,
+    },
+    /// `Destructible:Destroy(dir, force, bool)`: engine `BreakApart` — broken flag, object stays.
+    BreakDestructible {
+        id: u32,
+        dir: Coords,
+        force: f32,
+        timed: bool,
+    },
+    /// `Door:SetAutoClose(bool)`: engine `FixedDoor::SetAutoClose` — close countdown while open.
+    SetAutoClose {
+        id: u32,
+        on: bool,
+    },
 }

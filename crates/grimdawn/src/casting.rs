@@ -2,8 +2,6 @@
 //! (`CastRequest`, `UsePotion`, a channel's held key and aim), and
 //! projectile models and effect decals get their meshes. The casting rules
 //! are `gd_game::casting`.
-use gd_ui::state::inventory::UiCapture;
-use gd_ui::state::casting::{ClickKeys, CastInputStage};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 pub use gd_game::casting::*;
@@ -15,6 +13,8 @@ use gd_game_core::combat::{Combatant, Dead};
 use gd_game_core::player::Player;
 use gd_game_core::visuals::{PendingDecal, ProjectileMesh, ProjectileModelOf};
 use gd_render::fx::{DecalOwner, DropDecal, GroundTilt};
+use gd_ui::state::casting::{CastInputStage, ClickKeys};
+use gd_ui::state::inventory::UiCapture;
 
 pub struct CastingViewPlugin;
 
@@ -133,9 +133,6 @@ fn potion_input(
         out.write(UsePotion::Energy);
     }
 }
-
-
-
 
 /// What a cursor press may aim at: foes, targetable breakables and one's
 /// own pets (the engine's combat enemy / ally, `InGameUIActorCapture::CollectCandidates`; the player
@@ -1174,4 +1171,3 @@ fn ring_alpha(
         }
     }
 }
-

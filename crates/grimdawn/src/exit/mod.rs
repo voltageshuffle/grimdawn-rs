@@ -15,11 +15,10 @@
 //! version counters they compare for equality start from [`gd_game_core::session::SessionEpoch`] so a stale
 //! one never matches a new session's resource; the other latches left are test hooks (they do not
 //! fire twice) and signature caches that differ from the reset state.
-use gd_ui::state::session::AppState;
-use gd_ui::state::exit::ExitToMenu;
 use bevy::prelude::*;
 use gd_formats::collections::HashSet;
-
+use gd_ui::state::exit::ExitToMenu;
+use gd_ui::state::session::AppState;
 
 pub struct ExitPlugin;
 
@@ -116,6 +115,8 @@ fn end_session(world: &mut World) {
     reset::<crate::world::Lingering>(world);
     reset::<gd_render::render::env::TimeOfDay>(world);
     reset::<gd_render::camera::ShakeState>(world);
+    reset::<gd_game::story::ScreenShake>(world);
+    reset::<gd_game::monsters::HeroBosses>(world);
     gd_render::camera::reset_cameras(world);
     reset::<gd_ui::state::hover::Hovered>(world);
     reset::<crate::controller_target::ControllerPick>(world);
@@ -172,6 +173,9 @@ const KEEP: &[&str] = &[
     "gd_render::render::gbuffer_blend::GBufferBlendEntities",
     // The archives and the database; `end_session_state` unmounts the mod (`session::set_mod_data`).
     "gd_game_core::data::GameData",
+    // The registered id of `drop_on_mod_change` (gd-render/model.rs), run by `session::set_mod_data`:
+    // process-lifetime, holds no session data.
+    "gd_game_core::data::ModCacheDrop",
     "gd_game_core::options::GameOptions",
     // The engine's default textures and environment (render/mod.rs).
     "gd_render::render::GdDefaults",

@@ -20,7 +20,8 @@ pub struct StoryEffectsPlugin;
 
 impl Plugin for StoryEffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<StoryEffect>()
+        app.init_resource::<ScreenShake>()
+            .add_message::<StoryEffect>()
             .add_message::<Notify>()
             .add_message::<CinematicText>()
             .add_message::<PlayerSkillCast>()
@@ -45,6 +46,8 @@ impl Plugin for StoryPlugin {
                             .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                         mirror_story_monsters.in_set(StoryStage::Sync),
                         count_story_kills.in_set(StoryStage::Sync),
+                        publish_item_affixes.in_set(StoryStage::Sync),
+                        publish_attach_offsets.in_set(StoryStage::Sync),
                         tick_story.in_set(StoryStage::Tick),
                         pick_up_story_essences,
                         quest_updates,
@@ -59,6 +62,8 @@ impl Plugin for StoryPlugin {
                     play_story_animations,
                     cast_story_skills.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     fire_npc_casts,
+                    say_bubbles,
+                    screen_shake,
                 )
                     .after(tick_story),
             ),
@@ -715,7 +720,6 @@ pub fn tick_story(
                 // The quest reward window reads the task starts / completions (`crate::quest_reward`).
                 out.write(StoryEffect(e.clone()));
             }
-            Effect::Unimplemented(_) => {}
             // `ScriptableAction_ScriptEvent` / `Script.Event` (`GameEngine::ScriptEvent`): it only
             // unlocks achievements (`crate::achievements::script_event_unlocks`).
             Effect::ScriptEvent(name) => {
@@ -752,6 +756,16 @@ pub fn tick_story(
             | Effect::LinkPatrolPointGroup { .. }
             | Effect::TeleportHome { .. }
             | Effect::DestroyItems { .. }
+            | Effect::TakeItem { .. }
+            | Effect::GiveAffixItem { .. }
+            | Effect::SetInvincible { .. }
+            | Effect::SetSkillsEnabled { .. }
+            | Effect::Move { .. }
+            | Effect::Attack { .. }
+            | Effect::Say { .. }
+            | Effect::ScreenShake { .. }
+            | Effect::BreakDestructible { .. }
+            | Effect::SetAutoClose { .. }
             | Effect::TeleportPlayer { .. } => {
                 info!("story: effect {e:?}");
                 out.write(StoryEffect(e.clone()));
@@ -771,7 +785,13 @@ pub fn play_story_animations(
     mut actors: Query<(&StoryActor, &mut gd_game_core::character::Character)>,
 ) {
     for ev in events.read() {
-        let Effect::PlayAnimation { id: Some(id), anim } = &ev.0 else {
+        let Effect::PlayAnimation {
+            id: Some(id),
+            anim,
+            hold,
+            flag,
+        } = &ev.0
+        else {
             continue;
         };
         let Some(ty) = gd_sim::anim::AnimType::from_index(*anim as usize) else {
@@ -779,7 +799,7 @@ pub fn play_story_animations(
         };
         for (a, mut c) in &mut actors {
             if a.0 == *id {
-                c.play_scripted(ty);
+                c.play_scripted_with(ty, *hold, *flag);
             }
         }
     }
@@ -793,20 +813,25 @@ pub fn mirror_story_monsters(
     // PERF: only moved / newly dead / newly armed actors are rewritten; an idle monster's coords and
     // alive flag do not change. `Added<StoryActor>` covers the frame it is armed, before it first moves.
     monsters: Query<
-        (&StoryActor, &Transform, Has<gd_game_core::combat::Dead>),
         (
-            With<gd_game_core::monsters::Monster>,
-            Or<(
-                Changed<Transform>,
-                Added<gd_game_core::combat::Dead>,
-                Added<StoryActor>,
-            )>,
+            &StoryActor,
+            &Transform,
+            Has<gd_game_core::combat::Dead>,
+            &gd_game_core::monsters::Monster,
         ),
+        Or<(
+            Changed<Transform>,
+            Added<gd_game_core::combat::Dead>,
+            Added<StoryActor>,
+        )>,
     >,
 ) {
     let Some(rt) = rt else { return };
     let mut s = rt.story.borrow_mut();
-    for (&StoryActor(id), tf, dead) in &monsters {
+    for (&StoryActor(id), tf, dead, m) in &monsters {
+        // `Character.GetLevel` reads the placed level (the engine's `charLevel` dword,
+        // `ExperienceLevelControl`): the host mirrors what the spawn armed.
+        s.entities.levels.insert(id, m.level.max(0) as u32);
         if let Some(o) = s.entities.get_mut(id) {
             o.coords.origin = tf.translation.to_array();
             if dead {
@@ -877,6 +902,8 @@ pub fn arm_story_characters(
     // Option: factions and progress are optional input (friendly check, level 1).
     factions: Option<Res<crate::factions::PlayerFactions>>,
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
+    levels: Res<gd_game_core::levels::Levels>,
+    session: crate::session::Session,
 ) {
     let Some(rt) = rt else {
         return;
@@ -897,17 +924,39 @@ pub fn arm_story_characters(
         if crate::monsters::stands_as_npc(&data.db, factions.as_deref(), &o.record) {
             continue;
         }
-        let level = story
+        let player = progress.as_ref().map_or(1, |p| p.progress.level);
+        // `Character.Create(record, level, origin)` (exe `0x140051540`): the origin's area limits
+        // (`GetLevelLimits`, sector layer 9): level≠0 → clamp(level+offset, min, max); level 0 →
+        // roll within them; nil origin → (level, level, 0), the level as given. PORT: the binding
+        // stores only non-zero levels, so an origin with no stored level is the 3-arg form's level 0.
+        let limits_at = story
             .entities
-            .levels
+            .origins
             .get(&id)
-            .map(|l| *l as i32)
-            .unwrap_or_else(|| {
-                // No script level: `Character::Load`'s own level at the player's (`monsters::placed_char_level`). PORT: that
-                // the `Character.Create` binding (untraced) keeps it for a nil level.
-                let player = progress.as_ref().map_or(1, |p| p.progress.level);
-                crate::monsters::placed_char_level(&data.db, &o.record, player)
-            });
+            .and_then(|o| levels.level_limits(None, Vec3::from(*o), session.mode().difficulty));
+        let level = match story.entities.levels.get(&id).copied() {
+            Some(l) if l != 0 => limits_at.map_or(l as i32, |lim| {
+                gd_sim::proxy::area_level(l as i32, Some(lim))
+            }),
+            _ => {
+                let roll = if story.entities.origins.contains_key(&id) {
+                    match limits_at {
+                        Some((min, max, _)) if min != 0 || max != 0 => {
+                            let lo = min.max(1);
+                            Some(gd_game_core::rng::u32(lo..=max.max(lo)) as i32)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                // No script level (or level 0 without limits): `Character::Load`'s own level at the
+                // player's (`monsters::placed_char_level`).
+                roll.unwrap_or_else(|| {
+                    crate::monsters::placed_char_level(&data.db, &o.record, player)
+                })
+            }
+        };
         let Some(p) = gd_sim::actor::monster(
             &data.db,
             &rules.0,
@@ -1059,4 +1108,137 @@ pub fn quest_updates(
             }
         }
     }
+}
+
+/// `Character:Say(tag)` (the engine's speech-bubble UI vcall): presentational. The UI draws the
+/// localized tag over the entity until `until` (session seconds); headless nothing reads it.
+#[derive(Component, Debug, Clone)]
+pub struct SayBubble {
+    pub tag: String,
+    pub until: f32,
+}
+
+/// `Game.ScreenShake(vec, secs, amplitude)` (engine GameEvent type 7): presentational camera shake.
+/// The render camera decays `secs_left` and offsets by `amplitude`; headless nothing reads it.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ScreenShake {
+    pub amplitude: f32,
+    pub secs_left: f32,
+}
+
+/// `Character:Say(tag)` (exe `0x1400513d0`: the localized tag goes to the UI speech-bubble vcall; no
+/// sound, no gameplay): a [`SayBubble`] over the entity for ~3 s. The expiry is the host's (the UI only
+/// reads); headless nothing draws it.
+pub fn say_bubbles(
+    mut commands: Commands,
+    mut events: MessageReader<StoryEffect>,
+    time: Res<Time>,
+    actors: Query<(Entity, &StoryActor)>,
+    bubbles: Query<(Entity, &SayBubble)>,
+) {
+    let now = time.elapsed_secs();
+    for ev in events.read() {
+        if let Effect::Say { id, tag } = &ev.0 {
+            for (e, a) in &actors {
+                if a.0 == *id {
+                    commands.entity(e).insert(SayBubble {
+                        tag: tag.clone(),
+                        until: now + 3.0,
+                    });
+                }
+            }
+        }
+    }
+    for (e, b) in &bubbles {
+        if b.until <= now {
+            commands.entity(e).remove::<SayBubble>();
+        }
+    }
+}
+
+/// `Game.ScreenShake(vec, secs, amplitude)` (engine GameEvent type 7, ms): sets the presentational
+/// [`ScreenShake`] the render camera reads; headless nothing does.
+pub fn screen_shake(mut events: MessageReader<StoryEffect>, mut shake: ResMut<ScreenShake>) {
+    for ev in events.read() {
+        if let Effect::ScreenShake { ms, amplitude, .. } = &ev.0 {
+            shake.amplitude = *amplitude;
+            shake.secs_left = *ms as f32 / 1000.0;
+        }
+    }
+}
+
+/// `Item:HasAffix`'s host bridge (LUA-13): the live affixes of the inventory items the story knows.
+/// PORT: the port's items carry no object ids (the engine's `Item` objects do), so a story item object
+/// is bridged to the first inventory instance of its record (bags, worn gear, the stash sacks); an
+/// object with no instance publishes nothing (`HasAffix` false).
+pub fn publish_item_affixes(
+    rt: Option<NonSend<StoryRuntime>>,
+    inv: Option<Res<gd_game_core::inventory::Inventory>>,
+    stash: Option<Res<gd_game_core::stash::Stash>>,
+) {
+    let (Some(rt), Some(inv)) = (rt, inv) else {
+        return;
+    };
+    let mut s = rt.story.borrow_mut();
+    let items: Vec<(u32, String)> = s
+        .entities
+        .objects
+        .values()
+        .filter(|o| o.class == gd_story::story::state::ObjClass::Item)
+        .map(|o| (o.id, o.record.clone()))
+        .collect();
+    for (id, record) in items {
+        let bags = inv
+            .bags
+            .iter()
+            .flat_map(|b| b.items.iter().map(|p| &p.item));
+        let worn = inv.equipped.iter().flatten();
+        let stored = stash
+            .iter()
+            .flat_map(|st| st.pages.iter().chain(&st.transfer))
+            .flat_map(|b| b.items.iter().map(|p| &p.item));
+        let affixes = bags
+            .chain(worn)
+            .chain(stored)
+            .find(|it| it.base_name.eq_ignore_ascii_case(&record))
+            .map(|it| (it.prefix_name.clone(), it.suffix_name.clone()));
+        match affixes {
+            Some(a) => {
+                s.entities.item_affixes.insert(id, a);
+            }
+            None => {
+                s.entities.item_affixes.remove(&id);
+            }
+        }
+    }
+}
+
+/// `Entity:GetAttachedCoords(name)`'s host facts (LUA-18): the mesh attach points of the story
+/// characters (`gd_formats::msh::Mesh::attach_points`), published as local offsets the binding adds to
+/// the entity coords. PORT: translation only — the engine applies the attach point's full transform
+/// (its parent bone's animated frame × the point); the port publishes the point's mesh-space origin
+/// (no bone animation, no attach rotation), keyed lowercase (the engine's name lookup is
+/// case-insensitive). Republished when the body mesh changes (a form); objects without a mesh keep
+/// the binding's entity-coords fallback.
+pub fn publish_attach_offsets(
+    rt: Option<NonSend<StoryRuntime>>,
+    chars: Query<(&StoryActor, &gd_game_core::character::Character)>,
+    mut seen: Local<HashMap<u32, usize>>,
+) {
+    let Some(rt) = rt else { return };
+    let mut s = rt.story.borrow_mut();
+    for (&StoryActor(id), c) in &chars {
+        let ptr = Arc::as_ptr(&c.body) as usize;
+        if seen.get(&id) == Some(&ptr) {
+            continue;
+        }
+        seen.insert(id, ptr);
+        s.entities.attach_offsets.retain(|(oid, _), _| *oid != id);
+        for a in c.body.attach_points() {
+            s.entities
+                .attach_offsets
+                .insert((id, a.name.to_ascii_lowercase()), a.coords.origin);
+        }
+    }
+    seen.retain(|id, _| s.entities.get(*id).is_some());
 }

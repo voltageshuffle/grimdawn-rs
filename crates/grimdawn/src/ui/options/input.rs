@@ -162,7 +162,7 @@ pub fn input(
     );
     // An open list scrolls a row per wheel step, up to its last page (`MenuDropBox::HandleMouseEvent` events 17 / 18).
     if lines != 0.0
-        && let Some(Ctl::Drop(shown, ..)) = w.dropdown.and_then(|i| page(w.tab).get(i).copied())
+        && let Some(Ctl::Drop(shown, ..)) = w.dropdown.and_then(|i| ctls(w.tab).get(i).copied())
     {
         let max = choices(shown, draft, &ctx).len().saturating_sub(DROP_ROWS);
         w.drop_top = scrolled(w.drop_top, lines, max);
@@ -186,7 +186,7 @@ pub fn input(
                 w.drop_top = drop_bar_row(p.y, top, height, s, rows);
                 w.dropdown = Some(i);
             } else if let (Some(Hit::DropRow(row)), Some(Ctl::Drop(shown, ..))) =
-                (h, page(w.tab).get(i).copied())
+                (h, ctls(w.tab).get(i).copied())
                 && let Some((_, sets)) = choices(shown, draft, &ctx).into_iter().nth(row)
             {
                 for (k, v) in sets {
@@ -199,7 +199,7 @@ pub fn input(
         }
         match h {
             Some(Hit::Drop(i)) => {
-                if let Some(Ctl::Drop(shown, ..)) = page(w.tab).get(i).copied() {
+                if let Some(Ctl::Drop(shown, ..)) = ctls(w.tab).get(i).copied() {
                     w.drop_top = drop_first_row(shown, draft, &ctx);
                 }
                 w.dropdown = Some(i);
@@ -228,10 +228,10 @@ pub fn input(
                     sync_keys_mode(w.keys.as_mut(), draft, &mut w.keys_ver);
                 }
                 let defaults = GameOptions::default();
-                for c in page(w.tab) {
+                for c in ctls(w.tab) {
                     // A dropdown resets every option its rows set ([`choices`]).
                     let keys: Vec<&'static str> = match c {
-                        Ctl::Check(k, ..) | Ctl::Slider(k, ..) => vec![k],
+                        Ctl::Check(k, ..) | Ctl::CheckLeft(k, ..) | Ctl::Slider(k, ..) => vec![k],
                         Ctl::Drop(shown, ..) => choices(shown, draft, &ctx)
                             .into_iter()
                             .flat_map(|(_, sets)| sets.into_iter().map(|(k, _)| k))

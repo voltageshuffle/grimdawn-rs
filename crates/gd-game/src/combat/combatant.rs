@@ -23,7 +23,7 @@ pub struct HiddenFromCombat;
 /// (`skill_buffs::land`) and `Monster::IsTargetable` is false (the click pick queries in `grimdawn` skip it). PORT: hits
 /// still resolve (block, hit reactions); only the life loss is undone and
 /// over-time damage skipped. `SetInvincible` is this component's insert / remove (`spirit.rs`
-/// uses it); Lua `ToggleInvincible` (no stock use) stays a stub.
+/// uses it); Lua `ToggleInvincible` (no stock use) raises a Lua error naming the API.
 #[derive(Component)]
 pub struct Invincible;
 

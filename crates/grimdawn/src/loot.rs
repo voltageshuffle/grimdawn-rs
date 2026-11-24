@@ -52,13 +52,13 @@
 //! hidden while [`FilteredOut`]. A thrown item is hidden until its release
 //! (`GameEngineInboundInterface::CreateItem` adds it to the world then).
 use bevy::prelude::*;
-use gd_ui::state::loot::{FilteredOut, HoveredLabel, ItemsHidden};
 pub use gd_game::loot::*;
 use gd_game_core::player::Player;
 pub use gd_game_core::progress::PlayerProgress;
 use gd_render::character::CharAssets;
 use gd_render::hover::LabelGlow;
 use gd_render::model::Ready;
+use gd_ui::state::loot::{FilteredOut, HoveredLabel, ItemsHidden};
 
 pub struct LootPlugin;
 
@@ -97,13 +97,11 @@ impl Plugin for LootPlugin {
     }
 }
 
-
 /// The ground items whose label is listed this frame (in view, not filtered out; drawn or pushed off by the
 /// stacking) and the selected one when its outline shows (no button held on), set by [`place_labels`]: the label
 /// manager outlines them (`hover.rs`).
 #[derive(Resource, Default)]
 pub struct ListedLabels(pub Vec<Entity>, pub Option<Entity>);
-
 
 /// A ground item the cursor cannot pick in the current [`PickMode`].
 #[derive(Component)]
@@ -117,7 +115,6 @@ pub struct LabelMode(pub gd_sim::items::loot_filter::Mode);
 /// Which ground items the cursor and the Pickup key may pick (module doc).
 #[derive(Resource, Default, PartialEq)]
 pub struct PickMode(pub gd_sim::items::loot_filter::Mode);
-
 
 #[allow(clippy::too_many_arguments)]
 fn label_mode(
@@ -650,7 +647,7 @@ fn label_box(
             }
             n
         }
-        (Some(st), Some(LoadedFont::Dynamic(h))) => commands
+        (Some(st), Some(LoadedFont::Dynamic(h, _))) => commands
             .spawn((
                 Text::new(gd_formats::text::strip_markup(text)),
                 TextFont {

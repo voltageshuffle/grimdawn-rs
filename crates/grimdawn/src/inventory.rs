@@ -27,16 +27,16 @@
 //! `gd_game_core::stash::StashRequest::QuickMove`), Inventor or Runekeeper slot (the chain in [`clicks`]); with none
 //! open Shift is ignored. A bag item never goes to the ground from a click (`BagWidget_HandleMouseEvent` has no drop
 //! branch; the drop of the gamepad handler `BagWidget_HandleJoystickEvent` is out of scope).
-use gd_ui::UiPanels;
-use gd_ui::state::inventory::{InvLayout, UiCapture};
 use bevy::prelude::*;
-use gd_ui::apply::question_up;
 use bevy::window::PrimaryWindow;
 use gd_formats::inventory::{Footprint, Sack, overlaps};
 use gd_formats::save::item::Item;
 use gd_formats::ui::Rect as URect;
 use gd_game_core::player::{Loadout, Player};
 use gd_render::character::{self, CharAssets};
+use gd_ui::UiPanels;
+use gd_ui::apply::question_up;
+use gd_ui::state::inventory::{InvLayout, UiCapture};
 use gd_ui_kit::contains;
 
 pub use gd_game_core::inventory::{InvRequest, Inventory, InventorySet, slot_index};
@@ -49,11 +49,7 @@ impl Plugin for InventoryPlugin {
             .init_resource::<InvLayout>()
             .add_systems(
                 Update,
-                (
-                    clicks,
-                    gd_ui::skills::clicks,
-                    gd_ui::devotion::clicks,
-                )
+                (clicks, gd_ui::skills::clicks, gd_ui::devotion::clicks)
                     .chain()
                     .in_set(InventorySet)
                     .after(gd_game_core::inventory::InventoryStage::Requirements)
@@ -75,12 +71,6 @@ impl Plugin for InventoryPlugin {
             .add_systems(Update, sheet_wheel.in_set(gd_ui_kit::UiInputSet));
     }
 }
-
-
-
-
-
-
 
 #[allow(clippy::too_many_arguments)]
 fn clicks(
@@ -333,8 +323,8 @@ fn clicks(
             && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
             && let Some(placed) = inv.bags[*b].item_at(cx, cy)
         {
-            use gd_ui::state::trade::Panel;
             use crate::trade::TradeOpen;
+            use gd_ui::state::trade::Panel;
             match trade.open {
                 Some(TradeOpen::Stash { .. }) => {
                     stash_req.write(gd_game_core::stash::StashRequest::QuickMove {

@@ -213,38 +213,61 @@ fn button(
         _ => "bitmapNameUp",
     };
     let (img, size) = rec.str(key).map(str::to_owned).and_then(|p| ui.image(&p))?;
-    let p = place(ui, rec, c, "bitmap");
-    let r = URect::new(p.x, p.y, ui.sc(size.x as f32), ui.sc(size.y as f32));
+    let text = text
+        .map(str::to_owned)
+        .or_else(|| rec.str("textTag").map(|t| localize(ui.fonts, t)));
+    let style = rec.str("textFont").map(str::to_owned);
+    // PORT: the stock button is fixed at its bitmap's pixel width; here it
+    // grows to fit the label (`widgets::button_width`'s rule), keeping its
+    // alignment, so a long localised label never overflows.
+    let tex_w = ui.sc(size.x as f32);
+    let lw = match (&style, &text) {
+        (Some(st), Some(t)) => t
+            .split('\n')
+            .map(|l| ui.text_width(st, l))
+            .fold(0.0, f32::max),
+        _ => 0.0,
+    };
+    let w = tex_w.max(lw + 2.0 * ui.sc(10.0));
+    let grow = w - tex_w;
+    let mut p = place(ui, rec, c, "bitmap");
+    p.x = (p.x
+        - match rec.str("bitmapAlignmentX").unwrap_or("Left") {
+            "Right" => grow,
+            "Center" => grow * 0.5,
+            _ => 0.0,
+        })
+    .round();
+    let r = URect::new(p.x, p.y, w, ui.sc(size.y as f32));
     // `MenuButton::Draw` (menubutton draw): a disabled button without a
     // `bitmapNameDisabled` draws its up bitmap multiplied by (0.6, 0.6, 0.6, 1).
     let disabled_up = state == State::Disabled && key == "bitmapNameUp";
-    let e = ui.quad(
-        img.clone(),
-        r,
-        None,
-        if disabled_up {
-            Color::srgb(0.6, 0.6, 0.6)
-        } else {
-            Color::WHITE
-        },
-    );
+    let tint = if disabled_up {
+        Color::srgb(0.6, 0.6, 0.6)
+    } else {
+        Color::WHITE
+    };
+    // A grown button stretches; [`live`] swaps only the handle and size, so the
+    // stretch mode keeps the hover bitmap filling the grown rect.
+    let e = if grow > 0.0 {
+        ui.quad_stretch(img.clone(), r, tint)
+    } else {
+        ui.quad(img.clone(), r, None, tint)
+    };
     if state == State::Up
         && let Some(h) = hit
     {
         let over = rec
             .str("bitmapNameInFocus")
             .and_then(|p| ui.image(p))
-            .map(|(h, sz)| (h, Vec2::new(ui.sc(sz.x as f32), ui.sc(sz.y as f32))));
+            .map(|(h, sz)| (h, Vec2::new(w.max(ui.sc(sz.x as f32)), ui.sc(sz.y as f32))));
         ui.commands.entity(e).insert(HoverLook::Button {
             hit: h,
             up: (img, Vec2::new(r.w, r.h)),
             over,
         });
     }
-    let text = text
-        .map(str::to_owned)
-        .or_else(|| rec.str("textTag").map(|t| localize(ui.fonts, t)));
-    if let (Some(style), Some(t)) = (rec.str("textFont").map(str::to_owned), text) {
+    if let (Some(style), Some(t)) = (style, text) {
         let h = ui.line_height(&style);
         let dy = ui.sc(rec.f32("textOffsetY").unwrap_or(0.0));
         // `MenuButton::Draw`: a disabled button's text colour and shadow
@@ -318,6 +341,11 @@ fn check(ui: &mut Ui, rec: &Record, c: URect, down: bool, hit: Hit) -> Option<UR
 /// A `menulabel` record: `text` (else its tag) at its anchor, wrapped at
 /// `maxWidth`, over its glow bitmap padded by `bitmapPadding`.
 fn label(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>) {
+    label_dy(ui, rec, c, text, 0.0);
+}
+
+/// `label` shifted vertically by `dy` (negative lifts); see [`section_header`].
+fn label_dy(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, dy: f32) {
     let Some(style) = rec.str("textFont").map(str::to_owned) else {
         return;
     };
@@ -342,11 +370,11 @@ fn label(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>) {
         .map_or(lh, |f| f.scaled_size(ui.s) as f32);
     let step = rec.f32("ySpacing").map_or(lh, |k| (size * k).round());
     let total = step * (lines.len().max(1) - 1) as f32 + lh;
-    let y0 = if top {
+    let y0 = (if top {
         p.y
     } else {
         (p.y - total * 0.5).round()
-    };
+    }) + dy;
     if let Some(bg) = rec.str("bitmapName").map(str::to_owned)
         && let Some((img, _)) = ui.image(&bg)
     {
@@ -374,6 +402,39 @@ fn label(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>) {
     for (i, l) in lines.iter().enumerate() {
         text_at(ui, &style, p.x, y0 + step * i as f32, l, !left, 1.0);
     }
+}
+
+/// A section header (the gold-glow `mapLabel` / `boardLabel`) lifted so its text bottom sits a gap
+/// above the box it heads. The record's bitmap anchor is centred only ~14 px above the box, so the
+/// header text and the box's outward border collide; deriving the height from the box keeps them
+/// apart at any scale. PORT: vertical placement from the box, not the tight record anchor.
+fn section_header(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, box_top: f32) {
+    let Some(style) = rec.str("textFont").map(str::to_owned) else {
+        return;
+    };
+    let body = text.map(str::to_owned).unwrap_or_else(|| {
+        rec.str("textTag")
+            .map_or(String::new(), |t| localize(ui.fonts, t))
+    });
+    let p = place(ui, rec, c, "bitmap");
+    let lh = ui.line_height(&style);
+    let n = match rec.f32("maxWidth").map(|w| ui.sc(w)).filter(|w| *w > 0.0) {
+        Some(w) => ui.wrap_lines(&style, w, &body).len(),
+        None => body.split('\n').count(),
+    };
+    let size = ui
+        .fonts
+        .style(ui.data, &style)
+        .map_or(lh, |f| f.scaled_size(ui.s) as f32);
+    let step = rec.f32("ySpacing").map_or(lh, |k| (size * k).round());
+    let total = step * (n.max(1) - 1) as f32 + lh;
+    let bottom = if rec.str("textAlignmentY") == Some("Top") {
+        p.y + total
+    } else {
+        p.y + total * 0.5
+    };
+    let dy = (box_top - ui.sc(12.0) - bottom).min(0.0);
+    label_dy(ui, rec, c, text, dy);
 }
 
 /// The eight pieces of a `name_*.tex` border pattern around `r` (pieces
@@ -586,6 +647,7 @@ fn build(
         ("optionsButton", Some(Hit::Options), true, None),
         ("creditsButton", Some(Hit::Credits), true, None),
     ];
+    let mut buttons_top = f32::MAX;
     for (k, hit, enabled, text) in buttons {
         let Some(rec) = field(k) else { continue };
         let open = matches!(
@@ -602,16 +664,27 @@ fn build(
         } else {
             State::Disabled
         };
-        if let Some(r) = button(&mut ui, rec, screen, state, text, hit)
-            && let Some(h) = hit.filter(|_| enabled)
-        {
-            // Under a modal window the play menu takes no clicks, so it plays no sounds either
-            // (Options registers a full-screen blocker of its own).
-            if !modal {
-                ui.record_button_sound(r, rec);
+        if let Some(r) = button(&mut ui, rec, screen, state, text, hit) {
+            buttons_top = buttons_top.min(r.y);
+            if let Some(h) = hit.filter(|_| enabled) {
+                // Under a modal window the play menu takes no clicks, so it plays no sounds either
+                // (Options registers a full-screen blocker of its own).
+                if !modal {
+                    ui.record_button_sound(r, rec);
+                }
+                hits.push((r, h));
             }
-            hits.push((r, h));
         }
+    }
+    // A refused Start (save/mod mismatch, mod map failure) says why, above the button row.
+    if let Some(err) = menu.error.clone() {
+        let style = "records/ui/styles/text/style_mainmenu_createoptions01.dbr";
+        let max_w = screen.w - ui.sc(24.0);
+        let t = ui.truncate_line(style, max_w, &format!("^r{err}"));
+        let lh = ui.line_height(style);
+        let cx = screen.x + screen.w * 0.5;
+        let y = buttons_top - lh - ui.sc(6.0);
+        text_at(&mut ui, style, cx, y, &t, true, 1.0);
     }
     if let Some(list) = field("characterPicker") {
         character_list(&mut ui, list, &menu, &mut hits, &mut layout.rows);
@@ -1238,14 +1311,19 @@ fn gametype_window(
     if g.crucible {
         // (`mapLabel` is the custom campaigns' list heading: it would sit on the drop-down.)
         if let Some(l) = child(ui, &rec, "boardLabel") {
-            label(ui, &l, c, None);
+            let box_top = child(ui, &rec, "boardList")
+                .map_or(c.y, |b| c.y + ui.sc(b.f32("positionY").unwrap_or(270.0)));
+            section_header(ui, &l, c, None, box_top);
         }
         leaderboard(ui, &rec, c, &lists.board);
         arena_drop(ui, &rec, c, g, &lists.arenas, hits);
     }
     if g.custom {
         if let Some(l) = child(ui, &rec, "mapLabel") {
-            label(ui, &l, c, None);
+            let box_top = child(ui, &rec, "modText").map_or(c.y, |b| {
+                c.y + ui.sc(b.f32("textPositionY").unwrap_or(246.0))
+            });
+            section_header(ui, &l, c, None, box_top);
         }
         mod_text(
             ui,
@@ -1311,9 +1389,17 @@ fn mod_list(
         return;
     };
     let f = |k: &str, d: f32| rec.f32(k).unwrap_or(d);
+    // The list sits below the selected-map text box (`modText`); the record anchors overlap by a
+    // few px, so the list's top border strikes the text. Lift the list to clear it (PORT).
+    let mut top = c.y + ui.sc(f("positionY", 0.0));
+    if let Some(mt) = child(ui, window, "modText") {
+        let mt_bottom = c.y + ui
+            .sc(mt.f32("textPositionY").unwrap_or(0.0) + mt.f32("textBoxYSize").unwrap_or(28.0));
+        top = top.max(mt_bottom + ui.sc(4.0));
+    }
     let r = URect::new(
         c.x + ui.sc(f("positionX", 0.0)),
-        c.y + ui.sc(f("positionY", 0.0)),
+        top,
         ui.sc(f("listBoxXSize", 400.0)),
         ui.sc(f("listBoxYSize", 190.0)),
     );
@@ -1576,10 +1662,14 @@ fn create_window(ui: &mut Ui, new: &crate::menu::NewCharacter, hits: &mut Vec<(U
     if let Some(bg) = child(ui, &rec, "backgroundImage") {
         image_at(ui, &bg, c, false);
     }
-    for k in ["windowTitle", "nameLabel"] {
-        if let Some(l) = child(ui, &rec, k) {
-            label(ui, &l, c, None);
-        }
+    if let Some(l) = child(ui, &rec, "windowTitle") {
+        label(ui, &l, c, None);
+    }
+    if let Some(l) = child(ui, &rec, "nameLabel") {
+        let box_top = child(ui, &rec, "playerName").map_or(c.y, |b| {
+            c.y + ui.sc(b.f32("textPositionY").unwrap_or(125.0))
+        });
+        section_header(ui, &l, c, None, box_top);
     }
     let mut name_box = None;
     if let Some(tb) = child(ui, &rec, "playerName") {
@@ -1652,7 +1742,10 @@ fn delete_window(ui: &mut Ui, menu: &MainMenu, typed: &str, hits: &mut Vec<(URec
             .current()
             .map_or(String::new(), |e| e.gdc.header.name.clone());
         let text = format!("{name}\n{}", localize(ui.fonts, "tagMenuDelete01"));
-        label(ui, &l, c, Some(&text));
+        let box_top = child(ui, &rec, "confirmTextBox").map_or(c.y, |b| {
+            c.y + ui.sc(b.f32("textPositionY").unwrap_or(175.0))
+        });
+        section_header(ui, &l, c, Some(&text), box_top);
     }
     if let Some(tb) = child(ui, &rec, "confirmTextBox") {
         text_box(ui, &tb, c, &format!("{typed}_"));

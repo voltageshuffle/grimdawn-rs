@@ -14,7 +14,8 @@
 //!   `factionPositiveBooster` / `factionNegativeBooster` marks while the pack has a reputation / infamy boost, and
 //!   one of `factionPositiveBar` / `factionNeutralBar` / `factionNegativeBar`, [`gd_rules::faction::row_bar`],
 //!   labelled with the level name, `GetFactionLevelName`); row placement: the cursor starts at `s`, the bar sits
-//!   at its record y below the name box (+ 2 s), the next row starts 2 s below the list item. A row bar under the
+//!   at its record y below the name box (+ 2 s), the next row starts 2 s below the row's content (item, name
+//!   or bar, whichever is lowest). A row bar under the
 //!   cursor, while not full, shows `value − min / max − min` instead of the name (bar text mode 1,
 //!   `UIBar::GetDisplayNumbers`). The bars draw their empty bitmap, then the full one stretched into the filled width
 //!   (`UIBar::Render`);
@@ -43,8 +44,10 @@
 //!
 //! PORT: the info text sits at the info scroll window's origin (its widget has no record); the name box height is
 //! its record height; the 400 px reward wrap is UI-scaled; the scroll windows are the journal's
-//! (`window::pane` / `scrollbar_live`). Hooks (hooks.rs): `GD_UI_OPEN=factions`, `GD_FACTION_SELECT=<row>`,
-//! `GD_FACTION_HOVER=bar|tier<n>|row<n>|rowbar<n>|booster<n>`.
+//! (`window::pane` / `scrollbar_live`). The faction name and the bar texts truncate to their box / bar, and the
+//! row pitch follows the content (name + bar) rather than the item texture's height, so long localised labels and
+//! swapped bitmaps flow instead of overflowing (UX over parity). Hooks (hooks.rs): `GD_UI_OPEN=factions`,
+//! `GD_FACTION_SELECT=<row>`, `GD_FACTION_HOVER=bar|tier<n>|row<n>|rowbar<n>|booster<n>`.
 use super::Ui;
 use super::contains;
 use super::window::Rebuild;
@@ -338,13 +341,15 @@ fn draw_bar(ui: &mut Ui, bar: &gd_formats::ui::BarGraph, at: Vec2, frac: f32) ->
 /// A bar's centred text (`UIBar::GetDisplayNumbers`) in its `FontStyle`.
 fn bar_text(ui: &mut Ui, bar: &gd_formats::ui::BarGraph, r: URect, text: &str) -> Option<Entity> {
     let style = bar.font_style.clone()?;
+    // PORT: stock centres the text in the fixed bar and lets a long standing name spill; cut it to the bar.
+    let text = ui.truncate_line(&style, r.w, text);
     let tb = TextBox {
         rect: URect::new(0.0, 0.0, r.w / ui.s, r.h / ui.s),
         align_x: TextAlign::Center,
         align_y: TextAlign::Center,
         ..Default::default()
     };
-    ui.text_with_style(&tb, &style, Vec2::new(r.x, r.y), text)
+    ui.text_with_style(&tb, &style, Vec2::new(r.x, r.y), &text)
 }
 
 fn numbers(v: &BarValue) -> String {
@@ -855,11 +860,19 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
             }
             let (name_y, name_h) = match &name_tb {
                 Some(tb) => {
-                    ui.text(tb, at, name);
+                    // PORT: the name is one line cut to its box (stock lets a localised name spill).
+                    let shown = match tb.style.as_deref() {
+                        Some(st) => ui.truncate_line(st, ui.sc(tb.rect.w), name),
+                        None => name.clone(),
+                    };
+                    ui.text(tb, at, &shown);
                     (at.y + ui.sc(tb.rect.y), ui.sc(tb.rect.h))
                 }
                 None => (at.y, 0.0),
             };
+            // Row pitch follows the content (name + bar), not the item texture's height, so a swapped
+            // bitmap never clips the bar below it (PORT: stock pitches by the texture).
+            let mut row_bottom = (ir.y + ir.h).max(name_y + name_h);
             let below = name_y + name_h + 2.0 * s;
             let v = value(*i);
             let bv = gd_rules::faction::row_bar(&levels, v);
@@ -871,6 +884,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
             if let Some(bar) = bar {
                 let bat = Vec2::new(at.x + ui.sc(bar.x), (below + ui.sc(bar.y)).round());
                 if let Some(br) = draw_bar(ui, bar, bat, bv.frac()) {
+                    row_bottom = row_bottom.max(br.y + br.h);
                     let label = ui.fonts.tag(&levels.tag(v as f32)).to_owned();
                     if let Some(e) = bar_text(ui, bar, br, &label) {
                         ui.commands.entity(e).insert(BarText {
@@ -895,7 +909,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
                         .insert(at_bar.unwrap_or(0), (br, Part::RowBar(row)));
                 }
             }
-            c = ir.y - clip.y + ir.h + 2.0 * s;
+            c = row_bottom - clip.y + 2.0 * s;
         }
         // The selection's and the hovered row's highlights (`FactionWindow::Render`).
         if let Some((tex, _)) = ui.image(HIGHLIGHT) {

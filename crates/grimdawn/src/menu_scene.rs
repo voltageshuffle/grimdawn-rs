@@ -60,8 +60,8 @@
 //! area music's volume (0.6).
 use crate::world::{LevelCpu, Levels};
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use bevy::tasks::futures_lite::future;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use gd_formats::map::MapFile;
 use gd_formats::options::Value;
 use gd_game_core::data::GameData;

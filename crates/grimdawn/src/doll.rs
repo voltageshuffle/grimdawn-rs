@@ -80,31 +80,30 @@ impl Plugin for DollPlugin {
             Update,
             (rotate_input, menu_drag, rotate_looks, sync_dolls).chain(),
         )
-            .add_systems(
-                Update,
-                long_idle.after(gd_game_core::character::CharacterStage::Drive),
-            )
-            .add_systems(
-                Update,
-                menu_idle.before(gd_game_core::character::CharacterStage::Drive),
-            )
-            .add_systems(
-                Update,
-                doll_forms
-                    .after(gd_game_core::shapeshift::ShapeshiftSet::Wear)
-                    .before(gd_render::character::CharacterRenderStage::WearForms),
-            )
-            .add_systems(
-                PostUpdate,
-                keep_layers.after(gd_render::model::ModelSpawnSet),
-            );
+        .add_systems(
+            Update,
+            long_idle.after(gd_game_core::character::CharacterStage::Drive),
+        )
+        .add_systems(
+            Update,
+            menu_idle.before(gd_game_core::character::CharacterStage::Drive),
+        )
+        .add_systems(
+            Update,
+            doll_forms
+                .after(gd_game_core::shapeshift::ShapeshiftSet::Wear)
+                .before(gd_render::character::CharacterRenderStage::WearForms),
+        )
+        .add_systems(
+            PostUpdate,
+            keep_layers.after(gd_render::model::ModelSpawnSet),
+        );
     }
 }
 
 pub use gd_render::character::{DollBody, DollView};
 
 const VIEWS: [DollView; 3] = [DollView::Character, DollView::Illusionist, DollView::Menu];
-
 
 /// The rotate buttons, drag and wheel (module doc).
 fn rotate_input(

@@ -1,6 +1,6 @@
 //! The shared UI kit: the record-driven widget builder ([`Ui`], [`UiAssets`]), the font cache
-//! ([`text`]), the common chrome ([`widgets`], [`tip`], [`confirm`]), the key bindings
-//! ([`keys`]) and the additive / masked UI materials ([`additive`], [`masked`]).
+//! ([`text`]), the common chrome ([`widgets`], [`tip`], [`confirm`]), the adaptive layout helpers
+//! ([`layout`]), the key bindings ([`keys`]) and the additive / masked UI materials ([`additive`], [`masked`]).
 //!
 //! Layout is computed in physical pixels with the engine's rules (`gd_formats::ui`): UI scale factor
 //! from the resolution, window alignment, `round(pos × scale)` for child positions and `texture size ×
@@ -18,6 +18,7 @@
 pub mod additive;
 pub mod confirm;
 pub mod keys;
+pub mod layout;
 pub mod masked;
 pub mod state;
 pub mod text;
@@ -522,6 +523,10 @@ impl Ui<'_, '_, '_> {
                 )
                 .height as f32
             }
+            Some(LoadedFont::Dynamic(_, face)) => face
+                .as_ref()
+                .map(|f| text::dynamic_line_height(f, size as f32))
+                .unwrap_or((size as f32 * 1.2).round()),
             _ => (size as f32 * 1.2).round(),
         }
     }
@@ -604,6 +609,12 @@ impl Ui<'_, '_, '_> {
                         text::bitmap_width(font, size, style.flags, t)
                     }))
                 }
+                Some(LoadedFont::Dynamic(_, Some(f))) => {
+                    out.extend(text::wrap_by(&part_c, max_w.trunc(), |t| {
+                        text::dynamic_width(f, size as f32, t)
+                    }))
+                }
+                Some(LoadedFont::Dynamic(_, None)) => out.push(part_c),
                 _ => out.push(part_c),
             }
         }
@@ -665,7 +676,7 @@ impl Ui<'_, '_, '_> {
                 let h = ti.image.clone();
                 Some(self.quad(h, dst, None, tint))
             }
-            LoadedFont::Dynamic(handle) => {
+            LoadedFont::Dynamic(handle, _) => {
                 let (c, t) = (style.color0, tint.to_srgba());
                 let e = self
                     .commands
@@ -688,6 +699,10 @@ impl Ui<'_, '_, '_> {
                             c[2] * t.blue,
                             t.alpha,
                         )),
+                        TextLayout {
+                            linebreak: LineBreak::NoWrap,
+                            ..default()
+                        },
                     ))
                     .id();
                 self.commands.entity(self.root).add_child(e);
@@ -875,28 +890,56 @@ impl Ui<'_, '_, '_> {
                 let h = ti.image.clone();
                 Some(self.quad(h, dst, None, Color::WHITE))
             }
-            LoadedFont::Dynamic(handle) => {
+            LoadedFont::Dynamic(handle, _) => {
                 let plain = gd_formats::text::strip_markup(text);
                 let c = style.color0;
-                let justify = match tb.align_x {
-                    gd_formats::ui::TextAlign::Start => Justify::Left,
-                    gd_formats::ui::TextAlign::End => Justify::Right,
-                    gd_formats::ui::TextAlign::Center => Justify::Center,
+                let font_comp = TextFont {
+                    font: FontSource::Handle(handle.clone()),
+                    font_size: FontSize::Px(size as f32 * self.inv),
+                    ..default()
                 };
-                let e = self
-                    .commands
-                    .spawn((
-                        self.node(bx),
-                        Text::new(plain),
-                        TextFont {
-                            font: FontSource::Handle(handle.clone()),
-                            font_size: FontSize::Px(size as f32 * self.inv),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(c[0], c[1], c[2])),
-                        TextLayout::justify(justify),
-                    ))
-                    .id();
+                let color = TextColor(Color::srgb(c[0], c[1], c[2]));
+                let lh = self.line_height(style_path);
+                let e = if bx.h <= lh * 1.5 {
+                    // One line (titles, dropdown values, rows): measure and pre-place by alignment
+                    // like the bitmap path; an auto-width node never word-wraps, so ellipsised
+                    // values stay on one line and centred titles stay centred.
+                    let w = self.text_width(style_path, text);
+                    let x = tb.align_x.place(bx.x, bx.w, w as i32);
+                    let y = tb.align_y.place(bx.y, bx.h, lh as i32);
+                    self.commands
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(x * self.inv),
+                                top: Val::Px(y * self.inv),
+                                ..default()
+                            },
+                            Text::new(plain),
+                            font_comp,
+                            color,
+                            TextLayout {
+                                linebreak: LineBreak::NoWrap,
+                                ..default()
+                            },
+                        ))
+                        .id()
+                } else {
+                    let justify = match tb.align_x {
+                        gd_formats::ui::TextAlign::Start => Justify::Left,
+                        gd_formats::ui::TextAlign::End => Justify::Right,
+                        gd_formats::ui::TextAlign::Center => Justify::Center,
+                    };
+                    self.commands
+                        .spawn((
+                            self.node(bx),
+                            Text::new(plain),
+                            font_comp,
+                            color,
+                            TextLayout::justify(justify),
+                        ))
+                        .id()
+                };
                 self.commands.entity(self.root).add_child(e);
                 Some(e)
             }

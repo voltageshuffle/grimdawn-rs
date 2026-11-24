@@ -697,13 +697,15 @@ impl Plugin for UiPlugin {
         .configure_sets(
             Update,
             (
-                UiInputSet
-                    .after(gd_game_core::inventory::InventorySet)
-                    .before(gd_game_core::player::PlayerSet),
-                HudSet.after(gd_game_core::inventory::InventorySet),
+                (
+                    UiInputSet
+                        .after(gd_game_core::inventory::InventorySet)
+                        .before(gd_game_core::player::PlayerSet),
+                    HudSet.after(gd_game_core::inventory::InventorySet),
+                )
+                    .in_set(UiPlaySet),
                 HudBuildSet.in_set(HudSet),
-            )
-                .in_set(UiPlaySet),
+            ),
         )
         .add_systems(
             PostUpdate,
@@ -783,11 +785,12 @@ impl Plugin for UiPlugin {
                     status::buff_tooltip,
                     skills::tooltip,
                     hud::clock,
+                    hud::fps_overlay,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(HudSet),
             )
-                .chain()
-                .in_set(HudSet),
+                .chain(),
         );
     }
 }

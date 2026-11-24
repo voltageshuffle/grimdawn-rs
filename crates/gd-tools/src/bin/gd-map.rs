@@ -1,6 +1,8 @@
 //! World map tools: validate `.map` files, dump levels, render top-down PNGs.
+//! A map path may be `<archive.arc>:<entry>` to read a map inside an arc without extracting it.
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use gd_formats::arc::Arc;
 use gd_formats::collections::HashMap;
 use gd_formats::map::{Level, MapFile};
 use gd_formats::vfs::Database;
@@ -97,7 +99,7 @@ fn main() -> Result<()> {
         }
         Cmd::Info { map, regions } => info(&map, regions),
         Cmd::Clusters { map, filter } => {
-            let m = MapFile::open(&map)?;
+            let m = open_map(&map)?;
             let n = gd_formats::map::links::neighbours(&m.regions);
             let f = filter.to_lowercase();
             let mut seen = vec![false; m.regions.len()];
@@ -128,7 +130,7 @@ fn main() -> Result<()> {
             filter,
             members,
         } => {
-            let m = MapFile::open(&map)?;
+            let m = open_map(&map)?;
             let f = filter.to_lowercase();
             for g in m.instance_groups.iter() {
                 if !g.name.to_lowercase().contains(&f) && !g.kind.to_lowercase().contains(&f) {
@@ -171,6 +173,24 @@ fn main() -> Result<()> {
     }
 }
 
+/// A loose `.map` path, or `<archive.arc>:<entry>` (entry separators `/` or `\`).
+fn open_map(path: &Path) -> Result<MapFile> {
+    let s = path.to_string_lossy();
+    if let Some((arc, entry)) = s.split_once(':')
+        && Path::new(arc)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("arc"))
+    {
+        let a = Arc::open(arc).with_context(|| format!("open {arc}"))?;
+        let e = a
+            .find(entry)
+            .or_else(|| a.find(&entry.replace('/', "\\")))
+            .with_context(|| format!("{entry} not found in {arc}"))?;
+        return MapFile::from_source(s.into_owned(), a.open_entry(e)?);
+    }
+    MapFile::open(path)
+}
+
 fn pick(m: &MapFile, s: &str) -> Result<usize> {
     if let Ok(i) = s.parse::<usize>()
         && i < m.regions.len()
@@ -201,7 +221,7 @@ fn level_rect(m: &MapFile, i: usize, lvl: Option<&Level>) -> [f32; 4] {
 
 fn check(path: &Path, db: Option<&Database>) -> Result<()> {
     let t0 = std::time::Instant::now();
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     println!(
         "{}: MAP v{} {} bytes, {} regions, {} quests, {} spawn points, {} instance groups, {} sector-data layers ({} name sectors), other header chunks {:?}, minimap blob {:?}",
         path.display(),
@@ -344,7 +364,7 @@ fn check(path: &Path, db: Option<&Database>) -> Result<()> {
 }
 
 fn info(path: &Path, nreg: usize) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     println!(
         "MAP v{} regions {} quests {}",
         m.version,
@@ -474,7 +494,7 @@ fn info(path: &Path, nreg: usize) -> Result<()> {
 }
 
 fn level_cmd(path: &Path, sel: &str, nent: usize) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let i = pick(&m, sel)?;
     let r = &m.regions[i];
     let l = m.level(i)?;
@@ -691,7 +711,7 @@ fn entity_color(rec: &str) -> Option<[u8; 3]> {
 }
 
 fn area(path: &Path, sel: &str, out: &Path, margin: i32, scale: f32) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let i = pick(&m, sel)?;
     let center = m.level(i)?;
     let cr = level_rect(&m, i, Some(&center));
@@ -792,7 +812,7 @@ fn area(path: &Path, sel: &str, out: &Path, margin: i32, scale: f32) -> Result<(
 }
 
 fn world(path: &Path, out: &Path, width: u32) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let rects: Vec<[f32; 4]> = (0..m.regions.len())
         .map(|i| level_rect(&m, i, None))
         .collect();
@@ -844,7 +864,7 @@ fn world(path: &Path, out: &Path, width: u32) -> Result<()> {
 }
 
 fn minimap(path: &Path, sel: &str, out: &Path) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let i = pick(&m, sel)?;
     // Rows in file order, as the engine uploads them (`gd_formats::map::minimap`).
     let img = m.minimap_image(i)?.context("no minimap")?;
@@ -863,7 +883,7 @@ fn minimap(path: &Path, sel: &str, out: &Path) -> Result<()> {
 }
 
 fn find_record(path: &Path, needle: &str) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let needle = needle.to_ascii_lowercase();
     for (i, r) in m.regions.iter().enumerate() {
         let Ok(l) = m.level(i) else { continue };
@@ -883,7 +903,7 @@ fn find_record(path: &Path, needle: &str) -> Result<()> {
 }
 
 fn find_uid(path: &Path, uids: &[String]) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let want: Vec<[u32; 4]> = uids
         .iter()
         .map(|s| {
@@ -906,7 +926,7 @@ fn find_uid(path: &Path, uids: &[String]) -> Result<()> {
 
 fn env(path: &Path) -> Result<()> {
     use gd_formats::map::sector::{EnvironmentFields, SectorEntry};
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     if let Some((_, entries)) = m.sector_data.layers.first() {
         for e in entries {
             if let SectorEntry::Fog(b, v) = e
@@ -951,7 +971,7 @@ fn env(path: &Path) -> Result<()> {
 
 fn sector_at(path: &Path, x: f32, z: f32) -> Result<()> {
     use gd_formats::map::sector::SECTOR_LAYER_NAMES;
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     for i in 0..m.regions.len() {
         let [x0, z0, x1, z1] = level_rect(&m, i, None);
         if x < x0 || z < z0 || x >= x1 || z >= z1 {
@@ -989,7 +1009,7 @@ fn sector_at(path: &Path, x: f32, z: f32) -> Result<()> {
 }
 
 fn challenge_cells(path: &Path, filter: &str) -> Result<()> {
-    let m = MapFile::open(path)?;
+    let m = open_map(path)?;
     let entries = m.sector_data.tail_layers()?.later.challenge;
     let f = filter.to_lowercase();
     for i in 0..m.regions.len() {

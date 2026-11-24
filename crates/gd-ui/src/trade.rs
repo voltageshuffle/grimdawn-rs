@@ -40,12 +40,12 @@
 use super::Ui;
 use crate::state::crafting::CraftList;
 use crate::state::trade::{Button, Panel, Trade, TradeLayout};
-use gd_game::trade::{Markets, TradeOpen, VENDOR_W};
-use gd_game_core::stash::{STASH_W, Stash};
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_formats::ui::{Rect as URect, Widget, WindowDef};
+use gd_game::trade::{Markets, TradeOpen, VENDOR_W};
 use gd_game_core::inventory::Inventory;
+use gd_game_core::stash::{STASH_W, Stash};
 
 const VENDOR: &str = "records/ui/vendors/vendor_mastertable.dbr";
 const FACTION_VENDOR: &str = "records/ui/vendors/faction_vendor_mastertable.dbr";
@@ -234,10 +234,9 @@ pub fn afford(
             let Some(stash) = stash else {
                 return (false, false);
             };
-            let plan = trade
-                .slot
-                .as_ref()
-                .and_then(|it| gd_game::reroll::plan(data, &idb, it, gd_game::reroll::Kind::Ascend));
+            let plan = trade.slot.as_ref().and_then(|it| {
+                gd_game::reroll::plan(data, &idb, it, gd_game::reroll::Kind::Ascend)
+            });
             plan_afford(plan.as_ref(), gold, inv, stash)
         }
         TradeOpen::Illusionist { .. } => {
@@ -1046,6 +1045,24 @@ fn button_rect(
     Some((h, r))
 }
 
+/// [`button_rect`] with the width grown to fit the record's `textTag`
+/// ([`super::widgets::button_width`]), the bitmap stretched and the rect re-centred on
+/// the texture's centre so a centred panel button stays centred. PORT: the stock button
+/// is fixed at its bitmap's width and a long localised label overflows it (UX over parity).
+fn sized_button(ui: &mut Ui, rec: &gd_formats::arz::Record, key: &str, o: Vec2) -> Option<URect> {
+    let (h, mut r) = button_rect(ui, rec, key, o)?;
+    let text = rec.str("textTag").map(|t| ui.fonts.tag(t).to_string());
+    let tex_w = r.w;
+    r.w = super::widgets::button_width(ui, rec, tex_w, text.as_deref());
+    r.x -= (r.w - tex_w) * 0.5;
+    if r.w > tex_w {
+        ui.quad_stretch(h, r, Color::WHITE);
+    } else {
+        ui.quad(h, r, None, Color::WHITE);
+    }
+    Some(r)
+}
+
 /// A text box record's rect, scaled and placed at `o`.
 fn item_box(ui: &Ui, rec: &gd_formats::arz::Record, o: Vec2) -> URect {
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
@@ -1177,7 +1194,7 @@ fn convert_panel(
         let Some(b) = tab.str(key).and_then(|b| ui.record(b)) else {
             continue;
         };
-        let Some((h, r)) = button_rect(
+        let Some(r) = sized_button(
             ui,
             &b,
             if trade.random_set == random {
@@ -1189,7 +1206,6 @@ fn convert_panel(
         ) else {
             continue;
         };
-        ui.quad(h, r, None, Color::WHITE);
         layout.buttons.push((Button::ConvertMode(random), r));
         ui.record_button_sound(r, &b);
         if let (Some(style), Some(t)) = (b.str("style"), b.str("textTag")) {
@@ -1436,7 +1452,10 @@ fn crafter_window(
                         );
                         indent += w + 3.0;
                     }
-                    let text = ui.fonts.tag(crate::state::crafting::GROUPS[g].1).to_string();
+                    let text = ui
+                        .fonts
+                        .tag(crate::state::crafting::GROUPS[g].1)
+                        .to_string();
                     ui.text_with_style(&tb(indent), &header_style, o, &text);
                 }
                 crate::state::crafting::Row::Recipe(i) => {
@@ -1598,9 +1617,12 @@ fn crafter_window(
             &super::character::money_text(cost),
         );
     }
+    // The craft button's re-centring shift, applied to the crafter's emblem so it
+    // stays in the button's circle when the button grows.
+    let mut craft_dx = 0.0;
     if let Some(b) = tab.str("createArtifactButton").and_then(|b| ui.record(b)) {
         let ok = afford.1;
-        if let Some((h, r)) = button_rect(
+        if let Some(r) = sized_button(
             ui,
             &b,
             if ok {
@@ -1610,7 +1632,7 @@ fn crafter_window(
             },
             o,
         ) {
-            ui.quad(h, r, None, Color::WHITE);
+            craft_dx = r.x - (o.x + ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)));
             layout.craft = Some(r);
             if ok {
                 ui.record_button_sound(r, &b);
@@ -1619,8 +1641,8 @@ fn crafter_window(
                 let tb = gd_formats::ui::TextBox {
                     style: None,
                     rect: gd_formats::ui::Rect::new(
-                        b.f32("bitmapPositionX").unwrap_or(0.0),
-                        b.f32("bitmapPositionY").unwrap_or(0.0),
+                        (r.x - o.x) / ui.s,
+                        (r.y - o.y) / ui.s,
                         r.w / ui.s,
                         r.h / ui.s,
                     ),
@@ -1648,7 +1670,7 @@ fn crafter_window(
             &icon,
             p.f32("bitmapPositionX").unwrap_or(0.0),
             p.f32("bitmapPositionY").unwrap_or(0.0),
-            o,
+            o + Vec2::new(craft_dx, 0.0),
         );
     }
 }
@@ -1739,12 +1761,15 @@ fn faction_header(
             glow: None,
         };
         let text = ui.fonts.tag(&f.levels.tag(f.value)).to_string();
+        // A long standing name truncates to the bar instead of overflowing it (PORT).
+        let text = ui.truncate_line(&style, r.w, &text);
         ui.text_with_style(&tb, &style, o, &text);
     }
 }
 
 /// An action button (`bitmapNameUp` / `Disabled`, its `textTag` centred
-/// with the record's `style`); enabled ones are clickable.
+/// with the record's `style`), auto-sized to its label ([`sized_button`]);
+/// enabled ones are clickable.
 fn action_button(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -1753,7 +1778,7 @@ fn action_button(
     which: Button,
     layout: &mut TradeLayout,
 ) {
-    let Some((h, r)) = button_rect(
+    let Some(r) = sized_button(
         ui,
         rec,
         if enabled {
@@ -1765,7 +1790,6 @@ fn action_button(
     ) else {
         return;
     };
-    ui.quad(h, r, None, Color::WHITE);
     if enabled {
         layout.buttons.push((which, r));
         ui.record_button_sound(r, rec);
@@ -2091,7 +2115,8 @@ fn reroll_panel(
         afford.0,
     );
     if let Some(b) = tab.str("rerollNowButton").and_then(|b| ui.record(b)) {
-        let ok = picked.is_some_and(|(it, k)| gd_game::reroll::kind_state(&idb, it, k, test).is_ok())
+        let ok = picked
+            .is_some_and(|(it, k)| gd_game::reroll::kind_state(&idb, it, k, test).is_ok())
             && afford.1;
         action_button(ui, &b, o, ok, Button::Go, layout);
     }

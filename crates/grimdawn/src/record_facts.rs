@@ -1,10 +1,10 @@
 //! Per-record facts the mouse hover (`crate::hover`) and the controller targeting (`crate::controller_target`)
 //! share: one cache, resolved on first use, cleared when the mod data changes.
 
-use gd_ui::state::hover::Interact;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
 use gd_game_core::data::GameData;
+use gd_ui::state::hover::Interact;
 use gd_ui_kit::text::FontCache;
 use std::sync::Arc;
 

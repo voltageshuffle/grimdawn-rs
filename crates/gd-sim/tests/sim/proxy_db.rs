@@ -17,6 +17,7 @@ fn raptor_pool() {
             5,
             5,
             Mode::default(),
+            &Default::default(),
             &mut rng,
         );
         // spawnMin 4, spawnMax 6 (+1 from `challengeAdjustment`, applied on
@@ -103,6 +104,8 @@ fn chest_proxies_and_container_loot() {
                 Mode::default(),
                 0.0,
                 true,
+                &Default::default(),
+                false,
                 &mut rng,
             )
         })
@@ -126,6 +129,8 @@ fn chest_proxies_and_container_loot() {
         Mode::default(),
         0.0,
         true,
+        &Default::default(),
+        false,
         &mut rng,
     );
     assert!(hero.accessories.is_empty() && !hero.monsters.is_empty());

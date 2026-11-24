@@ -45,7 +45,6 @@
 //! places them; a
 //! destroyed system's sound fades out over 3 s.
 use crate::audio::{BaseVolume, ENGINE_HZ, Fade, SoundClass, spawn_2d};
-use gd_ui::state::session::AppState;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -72,6 +71,7 @@ use gd_render::camera::GameCamera;
 use gd_render::fx::{FxAssets, render};
 use gd_render::render::weather::WeatherState;
 use gd_sim::weather::{ClimateSet, Kind, Particle, Weather};
+use gd_ui::state::session::AppState;
 use std::borrow::Cow;
 
 /// The fade-out of a destroyed system's sound (ms).

@@ -597,6 +597,27 @@ pub fn story_doors(
                     }
                 }
             }
+            // `Door:SetAutoClose(bool)` (`FixedDoor::SetAutoClose`, Game.dll `0x1802a6790`): the flag
+            // with the record's `autoClosePeriod`; an open door arms its countdown at once (the
+            // [`auto_close`] tick closes it). PORT: the port's item doors share the flag (the engine's
+            // `FixedItemDoorBase` auto-close is another rule, not traced).
+            gd_story::story::Effect::SetAutoClose { id, on } => {
+                for (_, _, mut d) in &mut doors {
+                    if d.story == Some(id) {
+                        d.auto_close = on.then(|| {
+                            (data
+                                .db
+                                .get(&d.record)
+                                .and_then(|r| r.f32("autoClosePeriod"))
+                                .unwrap_or(0.0)
+                                * 1000.0) as i32
+                        });
+                        if on && d.open {
+                            d.close_in_ms = d.auto_close.unwrap_or(0);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }

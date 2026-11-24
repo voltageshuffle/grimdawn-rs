@@ -19,6 +19,9 @@
 //! `hudPortraitAndStatsSummary` (P, orbs and the top panel). P is placed
 //! directly above T (`P.y = T.y − P.h`) whatever its own `windowDefaultY`.
 //! Child positions are `round(record pos × scale)` added to their anchor.
+//!
+//! PORT: `showFPS` (a port-only option, the engine has no FPS display) draws a smoothed FPS counter in the
+//! top-left corner ([`fps_overlay`]); the frame limiter is `grimdawn::fps_limit` (`maxFPS`).
 use super::window::Rebuild;
 use super::{HudValues, Ui};
 use bevy::prelude::*;
@@ -1110,6 +1113,107 @@ pub fn clock(
     let tb = TextBox::from_record(if labelled { &r } else { &label });
     let at = Vec2::new(ui.sc(tb.rect.x), ui.sc(tb.rect.y));
     ui.text_line(&style, at, text, 1.0);
+}
+
+#[derive(Component)]
+pub struct FpsRoot;
+
+/// The counter's [`gd_ui_kit::LiveText`] node ([`fps_overlay`] updates it in place).
+#[derive(Component)]
+pub struct FpsText;
+
+/// PORT: "Show FPS" (`showFPS`, a port-only option): a live FPS counter in the top-left corner, in the
+/// clock's mono style. The rate is an exponential moving average of `Time<Real>` deltas (0.5 s time
+/// constant); the text redraws in place at most 4 times a second, and the root rebuilds only when the
+/// window size, the option or the font generation changes.
+#[allow(clippy::too_many_arguments)]
+pub fn fps_overlay(
+    mut fresh: gd_game_core::session::NewSession,
+    mut commands: Commands,
+    window: Query<&Window, With<PrimaryWindow>>,
+    data: Res<GameData>,
+    options: Res<gd_game_core::options::GameOptions>,
+    roots: Query<Entity, With<FpsRoot>>,
+    real: Res<Time<Real>>,
+    mut texts: Query<(Entity, &mut gd_ui_kit::LiveText), With<FpsText>>,
+    mut built: Local<Rebuild<(UVec2, bool, u64)>>,
+    mut ema: Local<f32>,
+    mut tick: Local<i64>,
+    mut assets: gd_ui_kit::UiAssets,
+) {
+    if fresh.begun() {
+        built.reset();
+        *ema = 0.0;
+        *tick = -1;
+    }
+    let dt = real.delta_secs();
+    if dt > 0.0 {
+        let inst = 1.0 / dt;
+        let a = 1.0 - (-dt / 0.5).exp();
+        *ema = if *ema == 0.0 {
+            inst
+        } else {
+            *ema + (inst - *ema) * a
+        };
+    }
+    let Ok(win) = window.single() else { return };
+    let size = UVec2::new(win.physical_width(), win.physical_height());
+    if size.x == 0 {
+        return;
+    }
+    let shown = options.flag("showFPS");
+    let bucket = (real.elapsed_secs() * 4.0) as i64;
+    if built.changed((size, shown, assets.fonts.generation)) {
+        super::window::despawn_all(&mut commands, &roots);
+        if shown {
+            let root = super::spawn_hud_overlay(&mut commands, FpsRoot);
+            let mut ui = assets.ui(
+                &mut commands,
+                &data,
+                root,
+                assets.scale(size),
+                1.0 / win.scale_factor(),
+                Vec2::new(size.x as f32, size.y as f32),
+            );
+            // The clock's mono style (`hudClockText`), so the digits do not jitter.
+            let Some(m) = ui.record(ui.hud_master()) else {
+                return;
+            };
+            let clock = m.str("hudClockText").unwrap_or("").to_string();
+            let Some(style) = ui
+                .record(&clock)
+                .and_then(|r| r.str("style").map(str::to_owned))
+            else {
+                return;
+            };
+            let text = format!("{:.0} FPS", *ema);
+            let e = ui.live_text(
+                gd_ui_kit::TextAt::Line {
+                    style,
+                    at: Vec2::new(ui.sc(12.0), ui.sc(8.0)),
+                    centre: false,
+                    tint: Color::WHITE,
+                },
+                &text,
+            );
+            commands.entity(e).insert(FpsText);
+            *tick = bucket;
+        }
+        return;
+    }
+    if !shown || bucket == *tick {
+        return;
+    }
+    *tick = bucket;
+    if let Ok((e, mut t)) = texts.single_mut() {
+        t.set(
+            e,
+            &format!("{:.0} FPS", *ema),
+            &mut commands,
+            &data,
+            &mut assets,
+        );
+    }
 }
 
 /// The HUD master field of the teleport button shown.

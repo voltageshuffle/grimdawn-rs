@@ -31,7 +31,19 @@
 //! from sector layer 9 (`GameEngine::GetLevelLimits`), or for proxies with a
 //! `difficultyLimitsFile` (only the main menu's) from that record. Pool
 //! entries are still filtered by the raw player level.
+//!
+//! The hero/boss restriction (`ProxyPool::Load`'s entry loader, Game.dll `sub_18041DF10`): an entry whose
+//! record's `monsterClassification` resolves to Hero, Boss or SuperBoss (`ResolveMonsterClassificationEnum`
+//! 2 / 3 / 5) is a boss entry. One already in the game (`GameEngine::IsProxyHeroBossInGame`, the session's
+//! hero-boss registry) has its limit zeroed — it never spawns again this session; a new one is marked, and
+//! `ProxyPool::CreateEntry` registers its record when it spawns unless the proxy ignores the restriction
+//! (`Proxy::SetIgnoreBossRestriction`, byte +1612; `LuaProxy::CreateAtIgnoreBoss`; a `ProxyEndless` sets it in
+//! its constructor). The registry is passed in ([`run_pool`]'s `bosses`) and the registrations come back out
+//! ([`ProxyRun::register_bosses`]); nothing unregisters (`UnregisterProxyHeroBoss` has no callers): a boss
+//! stays registered for the session. PORT: the registry keys are lowercased record paths (the engine's map
+//! compares the strings as written; stock pool names are lowercase).
 use gd_formats::arz::Record;
+use gd_formats::collections::HashSet;
 use gd_formats::vfs::Database;
 use gd_rules::Rng;
 use gd_rules::mode::Mode;
@@ -44,6 +56,9 @@ pub struct Spawn {
     /// it: the entry is created like any other (`ProxyPool::CreateEntry`);
     /// being a champion comes from the record's `monsterClassification`.
     pub champion: bool,
+    /// A boss entry (`monsterClassification` Hero / Boss / SuperBoss): its record registers in the
+    /// session's hero-boss registry when it spawns (unless the proxy ignores the restriction).
+    pub boss: bool,
 }
 
 /// What a proxy record says about placement.
@@ -95,9 +110,10 @@ struct Entry {
     always: bool,
     min_level: i32,
     max_level: i32,
+    boss: bool,
 }
 
-fn entries(r: &Record, prefix: &str, default_limit: i32) -> Vec<Entry> {
+fn entries(db: &Database, r: &Record, prefix: &str, default_limit: i32) -> Vec<Entry> {
     let mut out = Vec::new();
     for i in 1..=20 {
         let key = |k: &str| format!("{k}{prefix}{i}");
@@ -116,6 +132,12 @@ fn entries(r: &Record, prefix: &str, default_limit: i32) -> Vec<Entry> {
             always: r.bool(&key("alwaysSpawn")),
             min_level: r.i32(&key("minPlayerLevel")).unwrap_or(0),
             max_level: r.i32(&key("maxPlayerLevel")).unwrap_or(200),
+            // `ProxyPool::Load`'s entry loader: the monster record's classification decides the boss
+            // flag (Hero / Boss / SuperBoss; the enum resolver's memcmp is case-sensitive).
+            boss: db
+                .get(name)
+                .and_then(|m| m.str("monsterClassification"))
+                .is_some_and(|c| matches!(c, "Hero" | "Boss" | "SuperBoss")),
         });
     }
     out
@@ -223,6 +245,7 @@ pub fn run_pool(
     player_level: i32,
     area: i32,
     mode: Mode,
+    bosses: &HashSet<String>,
     rng: &mut Rng,
 ) -> Vec<Spawn> {
     let difficulty = mode.difficulty;
@@ -309,8 +332,14 @@ pub fn run_pool(
         *v = (*v).min(MAX_SPAWNS);
     }
 
-    let mut normal = entries(r, "", raw_max);
-    let mut champs = entries(r, "Champion", raw_champ_max);
+    let mut normal = entries(db, r, "", raw_max);
+    let mut champs = entries(db, r, "Champion", raw_champ_max);
+    // The hero/boss restriction (module doc): a boss already in the game never spawns again.
+    for e in normal.iter_mut().chain(&mut champs) {
+        if e.boss && bosses.contains(&e.name.to_ascii_lowercase()) {
+            e.limit = 0;
+        }
+    }
     let mut out: Vec<Spawn> = Vec::new();
     let emit =
         |list: &mut Vec<Entry>, i: usize, champion: bool, out: &mut Vec<Spawn>, rng: &mut Rng| {
@@ -319,6 +348,7 @@ pub fn run_pool(
                 record: e.name.clone(),
                 level: monster_level(db, e, area, rng),
                 champion,
+                boss: e.boss,
             });
         };
 
@@ -376,6 +406,9 @@ pub struct ProxyRun {
     pub monsters: Vec<Spawn>,
     /// Accessory objects (chests, ...): records placed like the monsters.
     pub accessories: Vec<String>,
+    /// Boss records this run spawned and the proxy does not ignore the restriction for
+    /// (`ProxyPool::CreateEntry` → `RegisterProxyHeroBoss`): the host adds them to the session registry.
+    pub register_bosses: Vec<String>,
 }
 
 /// Runs a proxy record: the chance to run, the pool choice, the pool, the
@@ -389,6 +422,8 @@ pub fn run_proxy(
     mode: Mode,
     trove_chance: f32,
     is_day: bool,
+    bosses: &HashSet<String>,
+    ignore_boss: bool,
     rng: &mut Rng,
 ) -> ProxyRun {
     run_proxy_shared(
@@ -400,6 +435,8 @@ pub fn run_proxy(
         trove_chance,
         is_day,
         &mut None,
+        bosses,
+        ignore_boss,
         rng,
     )
 }
@@ -419,6 +456,8 @@ pub fn run_proxy_shared(
     trove_chance: f32,
     is_day: bool,
     pick: &mut Option<usize>,
+    bosses: &HashSet<String>,
+    ignore_boss: bool,
     rng: &mut Rng,
 ) -> ProxyRun {
     let mut out = ProxyRun::default();
@@ -456,10 +495,18 @@ pub fn run_proxy_shared(
         }
     };
     if let Some(i) = chosen {
-        out.monsters = run_pool(db, &pools[i].0, player_level, area, mode, rng);
+        out.monsters = run_pool(db, &pools[i].0, player_level, area, mode, bosses, rng);
     }
     out.accessories
         .extend(run_accessory(db, r, mode.difficulty, trove_chance, rng));
+    if !ignore_boss {
+        out.register_bosses = out
+            .monsters
+            .iter()
+            .filter(|m| m.boss)
+            .map(|m| m.record.to_ascii_lowercase())
+            .collect();
+    }
     out
 }
 
@@ -480,6 +527,7 @@ pub fn run_proxy_shared(
 /// unified member that first group is its "Unified Entities" one, so the caller keys both by that name. PORT: the
 /// caller (`gd_game::monsters`) passes the stored index for any `ProxyEndless` of a unified group; the engine only
 /// asks for one of an "Endless Dungeon Proxies" group (type != 0), which no stock data tells apart.
+#[allow(clippy::too_many_arguments)]
 pub fn run_endless_proxy(
     db: &Database,
     proxy: &str,
@@ -487,6 +535,7 @@ pub fn run_endless_proxy(
     area: i32,
     mode: Mode,
     pick: &mut Option<usize>,
+    bosses: &HashSet<String>,
     rng: &mut Rng,
 ) -> Vec<Spawn> {
     let Some(r) = db.get(proxy) else {
@@ -528,7 +577,7 @@ pub fn run_endless_proxy(
         }
     };
     match chosen {
-        Some((pool, _)) => run_pool(db, pool, player_level, area, mode, rng),
+        Some((pool, _)) => run_pool(db, pool, player_level, area, mode, bosses, rng),
         None => Vec::new(),
     }
 }

@@ -194,11 +194,16 @@ impl ScriptHost {
         g.set("UI", ui)?;
 
         // Not bound by the game (no `Debug` table in the exe or Engine.dll,
-        // and no stock script uses it); kept inert for modded scripts.
+        // and no stock script uses it); a mod script that calls it gets a
+        // loud error, as every unsupported binding does.
         let debug = lua.create_table()?;
         debug.set(
             "AddStatisticText",
-            lua.create_function(|_, _: MultiValue| Ok(()))?,
+            lua.create_function(|_, _: MultiValue| -> mlua::Result<()> {
+                Err(mlua::Error::runtime(
+                    "Debug.AddStatisticText is not supported by the port's Lua host",
+                ))
+            })?,
         )?;
         g.set("Debug", debug)?;
 
@@ -728,9 +733,32 @@ impl ScriptHost {
                 )?;
             }
         }
-        // Stubs (`LuaGame::BindClass`). Why each is not implemented:
-        // * ScreenShake(WorldVec3, float secs, float) `LuaGame::ScreenShake` (a camera
-        //   shake game event): by design a stub, no stock script calls it.
+        // Game.ScreenShake(WorldVec3, float secs, float amplitude)
+        // (`LuaGame::ScreenShake`): a type-7 camera-shake game event, the
+        // seconds converted to ms. Presentational `Effect::ScreenShake`;
+        // headless no-op.
+        {
+            let c = ctx.clone();
+            game.set(
+                "ScreenShake",
+                lua.create_function(move |_, args: MultiValue| {
+                    let at = args
+                        .front()
+                        .and_then(get_coords)
+                        .unwrap_or(Coords::at([0.0; 3]));
+                    let ms = (arg_num(&args, 1) * 1000.0).max(0.0) as u32;
+                    let amplitude = arg_num(&args, 2) as f32;
+                    c.story
+                        .borrow_mut()
+                        .effects
+                        .push(Effect::ScreenShake { at, ms, amplitude });
+                    Ok(())
+                })?,
+            )?;
+        }
+        // Unsupported `Game` functions (`LuaGame::BindClass`): a loud Lua
+        // error, not a silent neutral value — no stock script calls them
+        // (every `Scripts.arc` checked), so a mod author sees the failure.
         for (cls, fns) in API {
             if *cls != "Game" {
                 continue;
@@ -739,22 +767,13 @@ impl ScriptHost {
                 if *implemented {
                     continue;
                 }
-                let c = ctx.clone();
                 let name = *name;
                 game.set(
                     name,
-                    lua.create_function(move |_, _: MultiValue| {
-                        c.story.borrow_mut().unimplemented(&format!("Game.{name}"));
-                        Ok(match name {
-                            "GetSurvivalWaveTier"
-                            | "GetSurvivalRestarts"
-                            | "GetEndlessDungeonsGenerated" => Value::Integer(0),
-                            "GetSurvivalMultiplier" => Value::Number(1.0),
-                            n if n.starts_with("Is") || n.starts_with("In") => {
-                                Value::Boolean(false)
-                            }
-                            _ => Value::Nil,
-                        })
+                    lua.create_function(move |_, _: MultiValue| -> mlua::Result<()> {
+                        Err(mlua::Error::runtime(format!(
+                            "Game.{name} is not supported by the port's Lua host"
+                        )))
                     })?,
                 )?;
             }
@@ -857,7 +876,10 @@ impl ScriptHost {
             //   `Proxy::SetLimitsLocation`, the bool `Proxy::SetIgnoreBossRestriction`).
             // `LuaCharacter::CreateAtLevel` (no origin): a non-zero level goes
             // straight to `Character::SetCharLevel` (the uint of the Lua
-            // number, truncated); `Entities::levels` carries it to the host.
+            // number, truncated); `Entities::levels` carries it to the host
+            // and `Entities::origins` the origin (the host clamps the level
+            // to the region's limits around it); the proxy's vec/bool go to
+            // `Entities::proxy_limits` / `proxy_ignore_boss`.
             // Both Character overloads (and `CreateNearPlayer`) enable the
             // spawn animation (`Entities::spawn_animation`).
             let c = ctx.clone();
@@ -869,12 +891,23 @@ impl ScriptHost {
                         return Ok(Value::Nil);
                     }
                     let id = c.create(&rec, None);
-                    let level = arg_num(&args, 1).max(0.0) as u32;
                     if cls == "Character" {
+                        let level = arg_num(&args, 1).max(0.0) as u32;
                         let mut s = c.story.borrow_mut();
                         s.entities.spawn_animation.insert(id);
                         if level > 0 {
                             s.entities.levels.insert(id, level);
+                        }
+                        if let Some(origin) = args.get(2).and_then(get_coords) {
+                            s.entities.origins.insert(id, origin.origin);
+                        }
+                    } else if cls == "Proxy" {
+                        let mut s = c.story.borrow_mut();
+                        if let Some(at) = args.get(1).and_then(get_coords) {
+                            s.entities.proxy_limits.insert(id, at.origin);
+                        }
+                        if matches!(args.get(2), Some(Value::Boolean(true))) {
+                            s.entities.proxy_ignore_boss.insert(id);
                         }
                     }
                     c.obj_value(lua, id)

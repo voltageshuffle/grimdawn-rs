@@ -505,4 +505,28 @@ impl Choice {
             .inspect_err(|e| warn!("{}: {e:#}", path.display()))
             .ok()
     }
+
+    /// Why this pick must not start an existing save: its `map.dat` names a different mod, and the
+    /// per-map folder is the map path alone, so starting would read and overwrite another mod's (or
+    /// the campaign's) quest/fog state. The Crucible (mode 1) is exempt: its arena folders are its own.
+    /// `None` when the save is fresh or agrees with the pick.
+    pub fn mod_mismatch(&self, difficulty: usize) -> Option<String> {
+        if self.game_mode() == 1 {
+            return None;
+        }
+        let dat = self.read_map_dat(difficulty)?;
+        (!dat.mod_name.eq_ignore_ascii_case(self.mod_name())).then(|| {
+            format!(
+                "{} was saved in {}; the pick is {}",
+                self.map_path(),
+                mod_label(&dat.mod_name),
+                mod_label(self.mod_name()),
+            )
+        })
+    }
+}
+
+/// A mod name in a refusal message: the campaign when empty (`map.dat`'s `modName`).
+fn mod_label(m: &str) -> &str {
+    if m.is_empty() { "the campaign" } else { m }
 }

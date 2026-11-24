@@ -1,24 +1,38 @@
 //! Print merged database records: `cargo run -p gd-tools --bin gd-rec -- <game dir> <record>...`
 //! (`<game dir>` defaults to `GD_ROOT` when no argument is given).
+//! `--mod <name>` mounts `mods/<name>` over the install (the Crucible packs for `survivalmode`);
 //! `--classes <prefix>` counts the classes of records under a path prefix;
 //! `--with <field> <prefix>` lists records there with a non-empty `field`;
 //! `--diff <old game dir> [prefix]` lists the records added, removed and changed (field by field, old → new)
-//! from the old install to this one: the record side of a game update.
+//! from the old install to this one: the record side of a game update. With `--mod` and no old dir,
+//! `--diff [prefix]` compares the install against the mod.
 use anyhow::Context;
 use gd_formats::arz::RawValue;
 use gd_formats::testdata::game_dir;
 use gd_formats::vfs::Database;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
-    let root = args
-        .next()
-        .map(PathBuf::from)
-        .or_else(game_dir)
-        .context("pass the game root or set GD_ROOT")?;
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut mod_name = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--mod" {
+            anyhow::ensure!(i + 1 < args.len(), "--mod needs a mod name");
+            mod_name = Some(args.remove(i + 1));
+            args.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    let root = match args.first() {
+        Some(a) if !a.starts_with("--") => PathBuf::from(args.remove(0)),
+        _ => game_dir().context("pass the game root or set GD_ROOT")?,
+    };
     let db = Database::open(&root)?;
-    let args: Vec<String> = args.collect();
+    if let Some(m) = &mod_name {
+        db.initialize_mod(&root, m)?;
+    }
     if args.first().is_some_and(|a| a == "--classes") {
         let prefix = args
             .get(1)
@@ -40,9 +54,22 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "--diff") {
-        let old = Database::open(args.get(1).context("--diff needs the old game dir")?)?;
+        // With --mod, `--diff [prefix]` needs no old dir: only an existing directory is one.
+        let old_dir = args
+            .get(1)
+            .filter(|a| !a.starts_with("--") && (mod_name.is_none() || Path::new(a).is_dir()));
+        let old = match old_dir {
+            Some(d) => Database::open(d)?,
+            None => {
+                anyhow::ensure!(
+                    mod_name.is_some(),
+                    "--diff needs the old game dir, or --mod to diff the mod against the install"
+                );
+                Database::open(&root)?
+            }
+        };
         let prefix = args
-            .get(2)
+            .get(if old_dir.is_some() { 2 } else { 1 })
             .map(|p| p.to_ascii_lowercase())
             .unwrap_or_default();
         let under = |n: &&str| n.to_ascii_lowercase().starts_with(&prefix);

@@ -9,9 +9,9 @@
 //! - `GD_MEM_TOUR=<n>@<secs>` travels to `n` riftgates spread over the map's index, `secs` after each arrival.
 //! - `GD_MEM_EXIT=<secs>`: the first session exits to the main menu `secs` after it began (after the tour), and the
 //!   same character starts again from the menu 5 s later.
-use gd_ui::state::session::AppState;
 use bevy::prelude::*;
 use gd_game_core::hooks::Hooks;
+use gd_ui::state::session::AppState;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -40,11 +40,17 @@ fn jemalloc_dump() -> bool {
         *mut libc::c_void,
         usize,
     ) -> libc::c_int;
+    // SAFETY: `dlsym` only reads the symbol table (`RTLD_DEFAULT` searches the loaded images);
+    // a null result is checked below.
     let sym = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"mallctl".as_ptr()) };
     if sym.is_null() {
         return false;
     }
+    // SAFETY: `sym` is non-null (checked above) and is jemalloc's `mallctl`, whose C ABI matches
+    // the `Mallctl` fn type.
     let mallctl: Mallctl = unsafe { std::mem::transmute(sym) };
+    // SAFETY: `mallctl` is the resolved symbol; the name is a static NUL-terminated string and the
+    // out pointers/sizes follow the jemalloc API (null where the value is unused).
     unsafe {
         mallctl(
             c"prof.dump".as_ptr(),
@@ -103,6 +109,7 @@ fn log(
     *last = now;
     if hooks.audit.mem_trim {
         let (before, t) = (rss_mb(), std::time::Instant::now());
+        // SAFETY: plain libc call with no memory-safety invariants (releases free heap pages).
         unsafe { libc::malloc_trim(0) };
         info!(
             "mem: malloc_trim {:.1} ms, rss {before:.0} -> {:.0} MB",
@@ -110,6 +117,7 @@ fn log(
             rss_mb()
         );
     }
+    // SAFETY: plain libc allocator-statistics call with no memory-safety invariants.
     let heap = unsafe { libc::mallinfo2() };
     let mb = |b: usize| b as f64 / 1.0e6;
     let (meshes, images, std_mats, terrain_mats) = assets;

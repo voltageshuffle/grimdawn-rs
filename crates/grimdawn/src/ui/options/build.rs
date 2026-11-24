@@ -82,11 +82,8 @@ pub(super) fn rollover(
                     gd_ui::rollover::MenuTipRoot,
                     gd_ui::hud::KeepsShown,
                     Visibility::Hidden,
-                    gd_ui_kit::tip::TipDelay::menu(
-                        tag.clone(),
-                        gd_ui::rollover::MENU_TIP_DELAY,
-                    )
-                    .with_ms(((now - *first) * 1000.0).max(0.0)),
+                    gd_ui_kit::tip::TipDelay::menu(tag.clone(), gd_ui::rollover::MENU_TIP_DELAY)
+                        .with_ms(((now - *first) * 1000.0).max(0.0)),
                 ),
                 gd_ui::window::Z_OPTIONS + 5,
             );
@@ -128,9 +125,8 @@ pub(super) fn rollover(
     node.left = Val::Px(o.x);
     node.top = Val::Px(o.y);
     if *state.get() != gd_ui::state::session::AppState::InGame {
-        let shown = first.is_some_and(|t| {
-            time.elapsed_secs() - t >= gd_ui::rollover::MENU_TIP_DELAY / 1000.0
-        });
+        let shown = first
+            .is_some_and(|t| time.elapsed_secs() - t >= gd_ui::rollover::MENU_TIP_DELAY / 1000.0);
         vis.set_if_neq(if shown {
             Visibility::Inherited
         } else {
@@ -261,7 +257,9 @@ pub(super) fn color4(rec: &Record, k: &str) -> Color {
 
 /// A thin button (Default / Apply / Close): bitmap and centred label, drawn in
 /// its enabled / disabled up look; [`live`] swaps the bitmap on hover and dims
-/// the label (a child of the quad, so it hides with it).
+/// the label (a child of the quad, so it hides with it). PORT: the stock button
+/// is fixed at its bitmap's pixel width; here it grows to fit the label
+/// (`widgets::button_width`'s rule), staying centred on its anchor.
 pub(super) fn bottom_button(
     ui: &mut Ui,
     rec: &Record,
@@ -284,10 +282,19 @@ pub(super) fn bottom_button(
         .map(str::to_owned)
         .and_then(|p| ui.image(&p))
         .map(|(h, _)| h);
+    let tex_w = ui.sc(size.x as f32);
+    let label = match (rec.str("textFont"), rec.str("textTag")) {
+        (Some(style), Some(tag)) => Some((style.to_owned(), ui.fonts.tag(tag).to_string())),
+        _ => None,
+    };
+    let w = match &label {
+        Some((style, t)) => tex_w.max(ui.text_width(style, t) + 2.0 * ui.sc(10.0)),
+        None => tex_w,
+    };
     let r = URect::new(
-        (centre_x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0))).round(),
+        (centre_x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0)) - (w - tex_w) * 0.5).round(),
         bottom - ui.sc(rec.f32("bitmapPositionY").unwrap_or(0.0)),
-        ui.sc(size.x as f32),
+        w,
         ui.sc(size.y as f32),
     );
     let img = if enabled {
@@ -295,7 +302,12 @@ pub(super) fn bottom_button(
     } else {
         disabled.clone().unwrap_or_else(|| up.clone())
     };
-    let e = ui.quad(img, r, None, Color::WHITE);
+    // The stretch keeps its size across [`live`]'s bitmap swaps (it writes only the handle).
+    let e = if w > tex_w {
+        ui.quad_stretch(img, r, Color::WHITE)
+    } else {
+        ui.quad(img, r, None, Color::WHITE)
+    };
     // A disabled button without a disabled bitmap is hidden, as the old
     // None-return would ([`live`] keeps it hidden while disabled).
     if !enabled && disabled.is_none() {
@@ -303,17 +315,16 @@ pub(super) fn bottom_button(
     }
     let root = ui.root;
     ui.root = e;
-    if let (Some(style), Some(tag)) = (rec.str("textFont"), rec.str("textTag")) {
-        let t = ui.fonts.tag(tag).to_string();
-        if let Some(le) = gd_ui_kit::widgets::label(
+    if let Some((style, t)) = &label
+        && let Some(le) = gd_ui_kit::widgets::label(
             ui,
             URect::new(0.0, 0.0, r.w, r.h),
             style,
             TextAlign::Center,
-            &t,
-        ) {
-            ui.commands.entity(le).insert(Look::Label(hit));
-        }
+            t,
+        )
+    {
+        ui.commands.entity(le).insert(Look::Label(hit));
     }
     ui.root = root;
     ui.commands.entity(e).insert(Look::Bottom {
@@ -534,6 +545,65 @@ pub(super) fn build(
         .str("dropboxButtonUpBitmap")
         .unwrap_or("ui/generic/buttoncarrowlg_downup.tex")
         .to_string();
+    // The page's content rect (reference units) from the window record, and its origin on screen.
+    let page_size = Vec2::new(
+        rec.f32("pageExtentX").unwrap_or(850.0),
+        rec.f32("pageExtentY").unwrap_or(420.0),
+    );
+    let po = Vec2::new(
+        o.x + ui.sc(rec.f32("pageX").unwrap_or(15.0)),
+        o.y + ui.sc(rec.f32("pageY").unwrap_or(114.0)),
+    );
+    let check_w = ui
+        .image(&check.replace('*', "up"))
+        .map_or(24.0, |(_, s)| s.x as f32);
+    let arrow_w = ui.image(&drop_arrow).map_or(20.0, |(_, s)| s.x as f32);
+    // Measure the labels in reference units and lay the page out (the closure's mutable borrow of `ui` ends
+    // with this block, before the drawing below).
+    let placed = {
+        let mut measure = |tag: &str| {
+            if tag.is_empty() {
+                return 0.0;
+            }
+            let text = ui.fonts.tag(tag).trim().to_string();
+            ui.text_width(&label_style, &text) / ui.s
+        };
+        let mut env = Env {
+            size: page_size,
+            check_w,
+            arrow_w,
+            measure: &mut measure,
+        };
+        pages::layout(win.tab, &mut env)
+    };
+    // Page-local reference coordinates → screen.
+    let pat = |ui: &Ui, x: f32, y: f32| Vec2::new(po.x + ui.sc(x), po.y + ui.sc(y));
+    // A check box's state bitmaps and hit (`MenuCheckBox::Render`: a disabled box draws the `Disabled` bitmap,
+    // else `Up` tinted 0.6 grey when that one is missing; all five states resolved once, [`live`] swaps them).
+    let draw_check =
+        |ui: &mut Ui, layout: &mut OptionsLayout, k: &'static str, tag: &'static str, p: Vec2| {
+            let enabled = check_enabled(k, &draft);
+            let on = enabled && draft.flag(k);
+            if let Some((up_h, up_sz)) = ui.image(&check.replace('*', "up")) {
+                let grey = (up_h.clone(), Color::srgb(0.6, 0.6, 0.6));
+                let states = CHECK_STATES.map(|s| {
+                    ui.image(&check.replace('*', s))
+                        .map(|(h, _)| (h, Color::WHITE))
+                        .unwrap_or_else(|| grey.clone())
+                });
+                let r = URect::new(p.x, p.y, ui.sc(up_sz.x as f32), ui.sc(up_sz.y as f32));
+                let (img, tint) = states[check_state(on, enabled, false)].clone();
+                let e = ui.quad(img, r, None, tint);
+                ui.commands.entity(e).insert(Look::Check { k, states });
+                // A disabled box takes no mouse, so shows no rollover either (`MenuButton::HandleMouseEvent`).
+                if enabled {
+                    let r = URect::new(r.x, r.y, ui.sc(24.0), r.h);
+                    layout.hits.push((r, Hit::Check(k)));
+                    ui.button_sound(r, check_over.as_deref(), check_down.as_deref());
+                    layout.tips.push((r, rollover_tag(tag)));
+                }
+            }
+        };
     let label = |ui: &mut Ui, tag: &str, x: f32, cy: f32| {
         if tag.is_empty() {
             return;
@@ -548,43 +618,24 @@ pub(super) fn build(
         );
     };
     let mut open_list = None;
-    for (ci, c) in page(win.tab).into_iter().enumerate() {
+    for (ci, c) in placed.into_iter().enumerate() {
         match c {
             Ctl::Check(k, tag, x, y) => {
-                let enabled = check_enabled(k, &draft);
-                let on = enabled && draft.flag(k);
-                // `Grim Dawn.exe` `MenuCheckBox::Render` (the check box's draw; its bitmaps are the pattern with
-                // `Up` / `Down` / `Over` / `Disabled`, `MenuCheckBox::LoadBitmaps`, and `DownOver`,
-                // `MenuCheckBox::MenuCheckBox`): a disabled box (`MenuCheckBox.enabled` clear), on or off, draws the
-                // `Disabled` bitmap (else `Up` tinted 0.6 grey when that one is
-                // missing). All five states are resolved once; [`live`] swaps them.
-                let p = at(&ui, x, y);
-                if let Some((up_h, up_sz)) = ui.image(&check.replace('*', "up")) {
-                    let grey = (up_h.clone(), Color::srgb(0.6, 0.6, 0.6));
-                    let states = CHECK_STATES.map(|s| {
-                        ui.image(&check.replace('*', s))
-                            .map(|(h, _)| (h, Color::WHITE))
-                            .unwrap_or_else(|| grey.clone())
-                    });
-                    let r = URect::new(p.x, p.y, ui.sc(up_sz.x as f32), ui.sc(up_sz.y as f32));
-                    let (img, tint) = states[check_state(on, enabled, false)].clone();
-                    let e = ui.quad(img, r, None, tint);
-                    ui.commands.entity(e).insert(Look::Check { k, states });
-                    // A disabled box takes no mouse, so shows no rollover either (`MenuButton::HandleMouseEvent`).
-                    if enabled {
-                        let r = URect::new(r.x, r.y, ui.sc(24.0), r.h);
-                        layout.hits.push((r, Hit::Check(k)));
-                        ui.button_sound(r, check_over.as_deref(), check_down.as_deref());
-                        layout.tips.push((r, rollover_tag(tag)));
-                    }
-                }
-                let (lx, ly) = (p.x + ui.sc(34.0), p.y + ui.sc(12.0));
+                let p = pat(&ui, x, y);
+                draw_check(&mut ui, &mut layout, k, tag, p);
+                let (lx, ly) = (p.x + ui.sc(check_w + 10.0), p.y + ui.sc(12.0));
                 label(&mut ui, tag, lx, ly);
             }
-            Ctl::Slider(k, tag, lx, cy, x0, x1) => {
-                let l = at(&ui, lx, cy);
+            Ctl::CheckLeft(k, tag, lx, cy, bx) => {
+                let l = pat(&ui, lx, cy);
                 label(&mut ui, tag, l.x, l.y);
-                let (a, b) = (at(&ui, x0, cy), at(&ui, x1, cy));
+                let p = pat(&ui, bx, cy - 12.0);
+                draw_check(&mut ui, &mut layout, k, tag, p);
+            }
+            Ctl::Slider(k, tag, lx, cy, x0, x1) => {
+                let l = pat(&ui, lx, cy);
+                label(&mut ui, tag, l.x, l.y);
+                let (a, b) = (pat(&ui, x0, cy), pat(&ui, x1, cy));
                 let track_y = (a.y - ui.sc(6.0)).round();
                 let left = ui.image("ui/mainmenu/sliderleft.tex");
                 let right = ui.image("ui/mainmenu/sliderright.tex");
@@ -641,9 +692,9 @@ pub(super) fn build(
                 layout.tips.push((r, rollover_tag(tag)));
             }
             Ctl::Drop(shown, tag, lx, cy, x0, x1) => {
-                let l = at(&ui, lx, cy);
+                let l = pat(&ui, lx, cy);
                 label(&mut ui, tag, l.x, l.y);
-                let (a, b) = (at(&ui, x0, cy), at(&ui, x1, cy));
+                let (a, b) = (pat(&ui, x0, cy), pat(&ui, x1, cy));
                 let h = ui.sc(20.0);
                 let r = URect::new(a.x, (a.y - h * 0.5).round(), b.x - a.x, h);
                 thin_box(&mut ui, &drop_border, r, drop_back);
@@ -683,10 +734,6 @@ pub(super) fn build(
                 }
             }
         }
-    }
-    for (tag, x, cy) in loose_labels(win.tab) {
-        let p = at(&ui, *x, *cy);
-        label(&mut ui, tag, p.x, p.y);
     }
     if win.tab == Tab::KeyBindings {
         let (tl, br) = (at(&ui, 545.0, 362.0), at(&ui, 1372.0, 717.0));
@@ -910,17 +957,40 @@ pub(super) fn key_list(
         URect::new(r.x + ui.sc(4.0), r.y + head_y, r.w - ui.sc(8.0), head_h),
         color4(consts, "optionsKeyBindingHeaderColor"),
     );
-    let cols = [0.0, ui.sc(370.0), ui.sc(540.0)];
-    let hl = ui.line_height(&header_style);
-    for (i, tag) in [
+    // PORT: the stock list fixes the action column at 370 px and the primary
+    // key column at 540 (`KeyBindingList`); here each column measures its
+    // content (headers, action names, key names): the key columns keep their
+    // measured widths and the action column takes the rest, so a long
+    // localised action name truncates before the key cells, never over them.
+    let rows = binding_rows(ui.fonts, o, b);
+    let headers = [
         "tagKeybindingTitle02",
         "tagKeybindingTitle03",
         "tagKeybindingTitle04",
     ]
-    .iter()
-    .enumerate()
-    {
-        let t = ui.fonts.tag(tag).to_string();
+    .map(|tag| ui.fonts.tag(tag).to_string());
+    let gap = ui.sc(10.0);
+    let mut act_w = ui.text_width(&header_style, &headers[0]);
+    let mut key_w = [
+        ui.text_width(&header_style, &headers[1]),
+        ui.text_width(&header_style, &headers[2]),
+    ];
+    for (_, f, p, s) in &rows {
+        act_w = act_w.max(ui.text_width(&row_style, f));
+        key_w[0] = key_w[0].max(ui.text_width(&row_style, p));
+        key_w[1] = key_w[1].max(ui.text_width(&row_style, s));
+    }
+    // The cells' span: the list's inner width less the scroll bar's reserve.
+    let avail = r.w - pad - ui.sc(24.0);
+    let floor = ui.sc(120.0).min(avail * 0.5);
+    let k2 = (key_w[1] + gap).min((avail - floor).max(0.0));
+    let k1 = (key_w[0] + gap).min((avail - floor - k2).max(0.0));
+    let a = (avail - k1 - k2).min(act_w + gap);
+    let cols = [0.0, a, a + k1];
+    let cell_w = [a - gap, k1 - gap, avail - a - k1];
+    let hl = ui.line_height(&header_style);
+    for (i, t) in headers.iter().enumerate() {
+        let t = ui.truncate_line(&header_style, cell_w[i], t);
         ui.text_line(
             &header_style,
             Vec2::new(
@@ -931,7 +1001,6 @@ pub(super) fn key_list(
             1.0,
         );
     }
-    let rows = binding_rows(ui.fonts, o, b);
     let row_h = ui.sc(20.0);
     let top = r.y + ui.sc(30.0);
     let visible = (((r.y + r.h) - top) / row_h).floor().max(1.0) as usize;
@@ -972,10 +1041,11 @@ pub(super) fn key_list(
             } else {
                 t.as_str()
             };
+            let t = ui.truncate_line(&row_style, cell_w[i], t);
             ui.text_line(
                 &row_style,
                 Vec2::new(r.x + pad + cols[i], (y + (row_h - rl) * 0.5).round()),
-                t,
+                &t,
                 1.0,
             );
         }
