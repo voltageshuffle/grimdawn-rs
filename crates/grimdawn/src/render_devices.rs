@@ -1,6 +1,7 @@
 //! The render adapters the options window's Video tab lists: `device` (int 7). Index i is entry i of the
-//! list (0-based, no Default row — the engine's device index selects a listed adapter directly), sorted by
-//! (name, backend) for stable indices. An out-of-range index falls back to Bevy's default adapter.
+//! list (0-based, no Default row — the engine's device index selects a listed adapter directly), sorted
+//! best-first ([`enumerate`]) so the factory default `device` 0 is the GPU Bevy would pick itself, like the
+//! engine's adapter 0 (the primary D3D adapter). An out-of-range index falls back to Bevy's default adapter.
 //!
 //! PORT: the engine lists the D3D adapters (`OptionsWindow::Load` fills the render-device dropdown from the
 //! graphics engine's adapter list); the port lists wgpu's adapters instead. The choice is applied at the NEXT
@@ -48,27 +49,59 @@ fn init_adapters(mut adapters: ResMut<RenderAdapters>) {
     }
 }
 
-/// The host's wgpu adapters, sorted by (name, backend) for stable indices, identical (name, backend)
-/// pairs deduped.
+/// The host's wgpu adapters, best first and stable across launches: by device type (discrete, integrated,
+/// virtual, other, then software such as WARP's "Microsoft Basic Render Driver"), then backend (Vulkan, Metal,
+/// Dx12, Gl: the order wgpu's own adapter request prefers), then name. Identical (name, backend) pairs deduped.
+/// A name-only order would make index 0 — the default `device` — whatever sorts first alphabetically, e.g.
+/// the software WARP adapter on an NVIDIA-only Windows machine.
 pub fn enumerate() -> Vec<RenderAdapter> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
-    let mut entries: Vec<RenderAdapter> =
+    let mut infos: Vec<wgpu::AdapterInfo> =
         bevy::tasks::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
             .into_iter()
-            .map(|a| {
-                let info = a.get_info();
-                RenderAdapter {
-                    name: info.name,
-                    backend: format!("{:?}", info.backend),
-                }
-            })
+            .map(|a| a.get_info())
             .collect();
-    entries.sort_by(|a, b| (&a.name, &a.backend).cmp(&(&b.name, &b.backend)));
+    infos.sort_by(|a, b| {
+        (type_rank(a.device_type), backend_rank(a.backend), &a.name).cmp(&(
+            type_rank(b.device_type),
+            backend_rank(b.backend),
+            &b.name,
+        ))
+    });
+    let mut entries: Vec<RenderAdapter> = infos
+        .into_iter()
+        .map(|info| RenderAdapter {
+            name: info.name,
+            backend: format!("{:?}", info.backend),
+        })
+        .collect();
     entries.dedup_by(|a, b| a.name == b.name && a.backend == b.backend);
     entries
+}
+
+/// [`enumerate`]'s device type order: hardware GPUs first, software rasterizers last.
+fn type_rank(t: wgpu::DeviceType) -> u8 {
+    match t {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        wgpu::DeviceType::VirtualGpu => 2,
+        wgpu::DeviceType::Other => 3,
+        wgpu::DeviceType::Cpu => 4,
+    }
+}
+
+/// [`enumerate`]'s backend order: the native APIs wgpu's adapter request tries first, GL last.
+fn backend_rank(b: wgpu::Backend) -> u8 {
+    match b {
+        wgpu::Backend::Vulkan => 0,
+        wgpu::Backend::Metal => 1,
+        wgpu::Backend::Dx12 => 2,
+        wgpu::Backend::Gl => 3,
+        _ => 4,
+    }
 }
 
 /// The `wgpu::Backend` a listed backend string names (the `Debug` spelling [`enumerate`] stores); None
