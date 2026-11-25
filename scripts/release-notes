@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Prints a release's title (`--title`) or its Markdown notes: the Grim Dawn version it is for (Cargo.toml
+# `[workspace.metadata.grimdawn] game-version`) and the changelog, the commits since the previous `v*` tag.
+# Usage: scripts/release-notes [--title] <tag or ref>   (preview: scripts/release-notes HEAD)
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+title=0
+if [ "${1:-}" = "--title" ]; then title=1; shift; fi
+[ $# -eq 1 ] || { echo "usage: scripts/release-notes [--title] <tag or ref>" >&2; exit 2; }
+ref=$1
+
+game=$(sed -n '/^\[workspace\.metadata\.grimdawn\]/,/^\[/s/^game-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+[ -n "$game" ] || { echo "Cargo.toml: no [workspace.metadata.grimdawn] game-version" >&2; exit 1; }
+grep -qF "Grim Dawn **$game**" README.md ||
+  { echo "README.md does not name Grim Dawn **$game** (Cargo.toml game-version): update one of them" >&2; exit 1; }
+
+if [ "$title" -eq 1 ]; then
+  echo "$ref (Grim Dawn $game)"
+  exit 0
+fi
+
+prev=$(git describe --tags --abbrev=0 --match 'v*' "$ref^" 2>/dev/null || true)
+range=${prev:+$prev..}$ref
+
+cat <<EOF
+**For Grim Dawn $game.** You need that version installed (Steam or GOG, with whichever expansions you own); see
+the README for setup. Other game versions may have different data and rules, and may not work.
+
+## Changes${prev:+ since $prev}
+
+EOF
+git log --reverse --no-merges --format='### %s%n%n%b' "$range"

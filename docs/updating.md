@@ -73,7 +73,8 @@ Only port what is reachable. A new visual field is not worth a renderer change u
 - `scripts/with-env scripts/check-re-refs` against **both** tables: no addresses left in comments, no cited
   name missing from the table.
 - `cargo clippy --workspace --all-targets`, then `scripts/with-env cargo test --workspace` on the new data.
-- Bump the version in `README.md`.
+- Bump the version in `README.md` and `game-version` in the root `Cargo.toml` (`[workspace.metadata.grimdawn]`):
+  release titles and notes name it, and `scripts/release-notes` refuses to run while the two differ.
 - New findings go in the implementing module's doc comment; new names go in the table
   (`docs/reverse-engineering.md`, "Citing the game"). A function new in this version gets a `gone` row in the
   old table.

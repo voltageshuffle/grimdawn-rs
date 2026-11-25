@@ -1,6 +1,7 @@
 # Release builds of the game binary for x86-64 Linux (Wayland + X11) and Windows.
 # Runs by hand (Actions → Release → Run workflow) or on a `v*` tag; a tag also publishes a GitHub release
-# with both archives. Builds with the latest stable Rust.
+# with both archives, titled with the Grim Dawn version it is for, and notes from scripts/release-notes (that
+# game version, then the commits since the previous `v*` tag). Builds with the latest stable Rust.
 name: Release
 
 on:
@@ -81,11 +82,22 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags: the notes list the commits since the previous tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Release notes
+        run: |
+          echo "title=$(scripts/release-notes --title "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+          scripts/release-notes "$GITHUB_REF_NAME" > release-notes.md
+        id: notes
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
       - uses: softprops/action-gh-release@v3
         with:
+          name: ${{ steps.notes.outputs.title }}
+          body_path: release-notes.md
           files: |
             grimdawn-rs-linux-x86_64.tar.gz
             grimdawn-rs-windows-x86_64.zip
