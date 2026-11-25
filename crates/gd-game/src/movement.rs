@@ -717,28 +717,7 @@ pub fn move_request(
         }
         Err(_) => {}
     }
-    find(straight_move_point(nav, from, to)).ok()
-}
-
-/// `NavManager::FindStraightMovePoint` for a move: [`crate::nav::straight_move_point`], also stopping before the
-/// first step a dynamic obstacle covers (Detour's raycast meets the polygons the tile cache carved around it).
-/// PORT: 0.25 m steps over the cells, as `straight_move_point`.
-fn straight_move_point(nav: &gd_sim::nav::NavWorld, from: Vec3, to: Vec3) -> Vec3 {
-    let end = crate::nav::straight_move_point(nav, from, to);
-    let flat = (end - from).with_y(0.0);
-    let steps = (flat.length() / 0.25).ceil() as i32;
-    let mut at = from;
-    for i in 1..=steps {
-        let p = from + flat * (i as f32 / steps as f32);
-        let p = Vec3::new(p.x, nav.ground([p.x, at.y + 1.0, p.z]).unwrap_or(at.y), p.z);
-        // A cell is unenterable when an obstacle covers its centre (`NavWorld::set_obstacles`).
-        let cell = nav.locate([p.x, p.y + 0.5, p.z]).map(|c| nav.pos(c));
-        if cell.is_none_or(|c| nav.blocked(c) || nav.blocked(p.to_array())) {
-            break;
-        }
-        at = p;
-    }
-    at
+    find(crate::nav::straight_move_point(nav, from, to)).ok()
 }
 
 /// The crowd agent follows a path (agent state 2). PORT: the run / walk / charge state.

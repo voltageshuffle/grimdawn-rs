@@ -98,7 +98,13 @@ impl Plugin for GdRenderPlugin {
                 .init_resource::<grass::ExtractedGrassWrites>()
                 .add_systems(
                     bevy::render::ExtractSchedule,
-                    (grass::extract_offsets, no_indirect_drawing),
+                    (
+                        grass::extract_offsets,
+                        // Before the cameras read the mode: a first frame extracted in culling mode leaves the
+                        // views' retained work-item buffers indirect while the next frame's `NoIndirectDrawing`
+                        // selects the direct preprocess pipeline (wgpu bind group mismatch, quits at startup).
+                        no_indirect_drawing.before(bevy::render::camera::extract_cameras),
+                    ),
                 )
                 .add_systems(
                     bevy::render::Render,

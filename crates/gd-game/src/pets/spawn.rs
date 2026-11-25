@@ -550,6 +550,8 @@ pub(super) fn spawn_pets(
                     walk: crate::melee::Walk::of(Some(prec)),
                     anger: Vec::new(),
                     anger_timer: 0.0,
+                    anger_tick: gd_game_core::rng::u32(..251) as f32 / 1000.0,
+                    find_timer: 0.0,
                     follow_check: 0.0,
                     following: false,
                     slot: None,

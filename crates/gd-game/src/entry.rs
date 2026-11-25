@@ -3,8 +3,9 @@
 //! Grim Dawn.exe, the client's world load (`Game::LoadModMap`): a character that has not been in the game
 //! (`Player::GetHasBeenInGame` false: a new one) is set as having been in it, gets the new-character time of day and
 //! tutorial page 7 (shown). [`first_entry`] is that branch ([`crate::tutorials::UnlockTutorial`], the clock's
-//! [`gd_game_core::day_clock::DayClock::set`]); a port save is written with `has_been_in_game` set
-//! (`crate::save::new_character`), as the engine's after this. The time of day is [`crate::day_clock`]'s.
+//! [`gd_game_core::day_clock::DayClock::set`]). The menu's Create Character writes the file with the flag clear
+//! (`crate::save::create_character`) and every session save sets it (`crate::save::save_game`), as the engine's
+//! saves after this. The time of day is [`crate::day_clock`]'s.
 //!
 //! The engine also queues its intro video `video/intro.ogg` here (without a mod): `grimdawn::video` plays it for
 //! the same first entry (`first_time_in_game`), and the story's `PlayVideo` action.
@@ -19,6 +20,7 @@ impl Plugin for EntryPlugin {
         app.add_systems(
             Update,
             first_entry
+                .run_if(resource_exists::<gd_game_core::session::SessionReady>)
                 .run_if(not(resource_exists::<EnteredGame>))
                 .after(gd_game_core::player::PlayerSet)
                 .before(crate::tutorials::unlock_tutorials),

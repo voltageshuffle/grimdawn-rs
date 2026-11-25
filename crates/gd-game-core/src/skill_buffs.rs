@@ -258,10 +258,17 @@ pub struct TimedBuffs {
 
 impl TimedBuffs {
     /// A buff starts (or starts again) under `skill`'s name; the old
-    /// entry's modifiers go with it.
+    /// entry's modifiers go with it. Names match ignoring case, as [`Self::running`].
     pub fn add(&mut self, skill: &str, li: usize, secs: f32) {
-        self.list.retain(|b| b.0 != skill);
-        self.mods.remove(skill);
+        if let Some(i) = self
+            .list
+            .iter()
+            .position(|b| b.0.eq_ignore_ascii_case(skill))
+        {
+            let (old, ..) = self.list.remove(i);
+            self.mods.remove(&old);
+            self.full.remove(&old);
+        }
         self.list.push((skill.to_owned(), li, secs));
         self.full.insert(skill.to_owned(), secs);
     }
@@ -273,9 +280,8 @@ impl TimedBuffs {
 
     /// The full duration of `skill`'s running buff.
     pub fn full(&self, skill: &str) -> Option<f32> {
-        self.running(skill)
-            .then(|| self.full.get(skill).copied())
-            .flatten()
+        let b = self.list.iter().find(|b| b.0.eq_ignore_ascii_case(skill))?;
+        self.full.get(&b.0).copied()
     }
 
     /// Runs the list down by `dt`, except the entries `held` names (a life monitor waiting for life to come back,

@@ -197,7 +197,7 @@ pub fn collect(
     let vitals = &mut *vitals;
     let mut changed = false;
     let v = hud.bypass_change_detection();
-    changed |= put(&mut v.skill_undo, skill_undo.available());
+    changed |= put(&mut v.skill_undo, skill_undo.pending());
     changed |= put(
         &mut v.reclaim,
         gd_ui::reclamation::ReclaimView::of(reclaim.as_deref(), devotion_state.as_deref()),
@@ -449,7 +449,9 @@ pub fn collect(
             let stat_key = (
                 (ls.map_or(0, |p| p.play_time) + session.play_seconds) / 60,
                 ls.map_or(session.kills, |p| p.kills + session.kills),
-                ls.map_or(0, |p| p.champion_kills + session.champion_kills),
+                ls.map_or(session.champion_kills, |p| {
+                    p.champion_kills + session.champion_kills
+                }),
                 ls.map_or(session.deaths, |p| p.deaths + session.deaths),
                 (ls.map_or(0.0, |p| p.greatest_damage_inflicted)
                     .max(session.greatest_damage_inflicted)
@@ -1129,11 +1131,17 @@ fn stat_rows(
     }
     let difficulty = mode.map_or(0, |m| m.0.difficulty);
     let st = gd_sim::sheet::SheetStats {
-        play_seconds: ps.as_ref().map_or(0, |p| p.play_time),
+        play_seconds: ps.as_ref().map_or(session.play_seconds, |p| p.play_time),
         kills: ps.as_ref().map_or(session.kills, |p| p.kills),
-        champion_kills: ps.as_ref().map_or(0, |p| p.champion_kills),
-        greatest_damage_dealt: ps.as_ref().map_or(0.0, |p| p.greatest_damage_inflicted),
-        greatest_damage_taken: ps.as_ref().map_or(0.0, |p| p.greatest_damage_received),
+        champion_kills: ps
+            .as_ref()
+            .map_or(session.champion_kills, |p| p.champion_kills),
+        greatest_damage_dealt: ps.as_ref().map_or(session.greatest_damage_inflicted, |p| {
+            p.greatest_damage_inflicted
+        }),
+        greatest_damage_taken: ps.as_ref().map_or(session.greatest_damage_received, |p| {
+            p.greatest_damage_received
+        }),
         deaths: ps.as_ref().map_or(session.deaths, |p| p.deaths),
         greatest_monster: session
             .greatest(loaded.map(|c| &c.0.stats), difficulty)

@@ -10,8 +10,8 @@
 //! `bossFloorList` as the boss floor (no queue). `specialFloors` is not read by it (the special
 //! floors are inside `floorList`). `PickProxies`: a nemesis / shrine count is a
 //! weighted index of its weight list (shrines capped by the shared `maxShrines`).
-//! `ResolveEquationVariable`: `tierDifficulty` = dungeons generated, `commonProxies`,
-//! `heroProxies`, `killCounter`.
+//! `ResolveEquationVariable`: `tierDifficulty` = dungeons generated, `commonProxies` / `heroProxies` = the
+//! proxies `LoadProxies` placed on the floor being totalled (not the ruleset's counts), `killCounter`.
 //!
 //! PORT: the shuffle is the port's Park–Miller [`Rng`] (the engine uses C `rand()` through
 //! `std::shuffle`, so the order is not reproducible either way); when exactly the recent queue is
@@ -150,31 +150,44 @@ impl Ruleset {
         })
     }
 
-    fn vars<'a>(&'a self, tier: u32, kill_counter: u32) -> impl Fn(&str) -> Option<f32> + 'a {
+    /// `ResolveEquationVariable`. `proxies`: the common / hero proxies the last `LoadProxies` placed
+    /// (`PickProxies` keeps them per floor for the floor's total); the timer and kill-chain equations, which no
+    /// stock ruleset writes with them, get 0.
+    fn vars(
+        &self,
+        tier: u32,
+        kill_counter: u32,
+        proxies: [usize; 2],
+    ) -> impl Fn(&str) -> Option<f32> {
         move |k| match k {
             "tierDifficulty" => Some(tier as f32),
-            "commonProxies" => Some(self.common_proxies as f32),
-            "heroProxies" => Some(self.hero_proxies as f32),
+            "commonProxies" => Some(proxies[0] as f32),
+            "heroProxies" => Some(proxies[1] as f32),
             "killCounter" => Some(kill_counter as f32),
             _ => None,
         }
     }
 
-    /// A normal floor's progress total (`floorTotal*`); a boss floor's is 100.
-    pub fn floor_total(&self, tier: u32, boss: bool) -> f32 {
+    /// A floor's progress total (`PickProxies`): a normal floor's is the `floorTotal*` equation with the common /
+    /// hero proxies actually placed on it (`proxies`, not the ruleset's counts: a small floor holds fewer), stored
+    /// as an integer (truncated: `133.4` needs 133) since progress counts whole units (`IncrementProgress`); a
+    /// boss floor's is 100.
+    pub fn floor_total(&self, tier: u32, boss: bool, proxies: [usize; 2]) -> f32 {
         if boss {
             return 100.0;
         }
-        self.floor_total
-            .as_ref()
-            .map_or(0.0, |e| finite(e.eval(&self.vars(tier, 0))))
+        self.floor_total.as_ref().map_or(0.0, |e| {
+            finite(e.eval(&self.vars(tier, 0, proxies)))
+                .max(0.0)
+                .trunc()
+        })
     }
 
     /// The starting bonus timer (ms): the `timer*` equation.
     pub fn timer_ms(&self, tier: u32) -> i32 {
         self.timer
             .as_ref()
-            .map_or(0, |e| finite(e.eval(&self.vars(tier, 0))) as i32)
+            .map_or(0, |e| finite(e.eval(&self.vars(tier, 0, [0; 2]))) as i32)
     }
 
     /// Bonus time (ms) a kill of this `monsterClassification` adds to the timer (`OnCreatureDeath`: hero, boss and
@@ -198,11 +211,13 @@ impl Ruleset {
     }
 
     /// The kill chain's bonus (ms) once it pauses with `kill_counter >= killCountMinimum` kills.
+    /// `EndlessDungeon_Generator::Update`: the equation's seconds are truncated to an integer before the
+    /// ×1000 (`3.5 + ...` at 25 kills pays 3 s).
     pub fn kill_chain_bonus_ms(&self, kill_counter: u32) -> Option<i32> {
         (kill_counter >= self.kill_count_minimum).then(|| {
-            self.kill_count_bonus
-                .as_ref()
-                .map_or(0, |e| (e.eval(&self.vars(0, kill_counter)) * 1000.0) as i32)
+            self.kill_count_bonus.as_ref().map_or(0, |e| {
+                (e.eval(&self.vars(0, kill_counter, [0; 2])) as i32).saturating_mul(1000)
+            })
         })
     }
 }
@@ -552,7 +567,7 @@ pub fn pick_exits(floors: &mut [FloorState], map: &EndlessMap, rng: &mut Rng) {
 }
 
 /// `LoadProxies`: up to `count` entities of the groups of `kind` that lie in the floor's
-/// regions, each group's members shuffled.
+/// regions, each group's members shuffled; returns how many it placed.
 /// PORT: the engine shuffles every group (`EndlessDungeon_Generator::ShuffleGroup`, `std::random_shuffle` on the
 /// CRT `rand()`) and
 /// only breaks the take loop at `count`; that generator is separate from the one modelled here, so returning early
@@ -563,7 +578,7 @@ fn load_proxies(
     kind: ProxyKind,
     count: usize,
     rng: &mut Rng,
-) {
+) -> usize {
     let mut taken = 0;
     for (k, members) in &map.proxy_groups {
         if *k != kind {
@@ -573,7 +588,7 @@ fn load_proxies(
         shuffle(&mut members, rng);
         for m in members {
             if taken >= count {
-                return;
+                return taken;
             }
             if floor.regions.contains(&m.region) {
                 floor.proxies.push(ProxyInfo {
@@ -585,29 +600,32 @@ fn load_proxies(
             }
         }
     }
+    taken
 }
 
-/// `PickProxies`: per floor the common / hero / trap counts of the ruleset (the boss
-/// floor: `bossProxies`), a nemesis count from `nemesisProxyWeights` and a shrine count from
-/// `shrineProxyWeights` under the `maxShrines` budget shared by the floors.
-pub fn pick_proxies(floors: &mut [FloorState], rs: &Ruleset, map: &EndlessMap, rng: &mut Rng) {
+/// `PickProxies`: every floor (the boss floor and a floor without an entrance too) rolls a nemesis count from
+/// `nemesisProxyWeights` and a shrine count from `shrineProxyWeights` under the `maxShrines` budget shared by the
+/// floors, then loads the common, hero, trap, nemesis, shrine and boss (`bossProxies`) groups lying in its regions,
+/// and sets its total ([`Ruleset::floor_total`] with the common / hero proxies placed).
+pub fn pick_proxies(
+    floors: &mut [FloorState],
+    rs: &Ruleset,
+    map: &EndlessMap,
+    rng: &mut Rng,
+    tier: u32,
+) {
     let mut shrines_left = rs.max_shrines;
     for f in floors.iter_mut() {
-        if f.regions.is_empty() {
-            continue;
-        }
-        if f.floor.boss {
-            load_proxies(f, map, ProxyKind::Boss, rs.boss_proxies, rng);
-            continue;
-        }
-        load_proxies(f, map, ProxyKind::Common, rs.common_proxies, rng);
-        load_proxies(f, map, ProxyKind::Hero, rs.hero_proxies, rng);
-        load_proxies(f, map, ProxyKind::Traps, rs.trap_proxies, rng);
         let nemesis = weighted_index(&rs.nemesis_weights, rng);
-        load_proxies(f, map, ProxyKind::Nemesis, nemesis, rng);
         let shrines = weighted_index(&rs.shrine_weights, rng).min(shrines_left);
         shrines_left -= shrines;
+        let common = load_proxies(f, map, ProxyKind::Common, rs.common_proxies, rng);
+        let hero = load_proxies(f, map, ProxyKind::Hero, rs.hero_proxies, rng);
+        load_proxies(f, map, ProxyKind::Traps, rs.trap_proxies, rng);
+        load_proxies(f, map, ProxyKind::Nemesis, nemesis, rng);
         load_proxies(f, map, ProxyKind::Shrine, shrines, rng);
+        load_proxies(f, map, ProxyKind::Boss, rs.boss_proxies, rng);
+        f.total = rs.floor_total(tier, f.floor.boss, [common, hero]);
     }
 }
 
@@ -627,16 +645,16 @@ pub fn generate(
     let mut floors: Vec<FloorState> = pick_floors(rs, db, recent, rng, map.forced_floor.as_deref())
         .into_iter()
         .map(|floor| FloorState {
-            total: rs.floor_total(tier, floor.boss),
             floor,
             regions: Vec::new(),
             entrance: None,
             proxies: Vec::new(),
             progress: 0.0,
+            total: 0.0,
         })
         .collect();
     pick_exits(&mut floors, map, rng);
-    pick_proxies(&mut floors, rs, map, rng);
+    pick_proxies(&mut floors, rs, map, rng, tier);
     Dungeon {
         ruleset: rs.name.clone(),
         tier,
@@ -735,7 +753,7 @@ mod tests {
             treasure_floors: vec![],
             difficulty_adjustment: None,
         };
-        pick_proxies(&mut floors, &rs, &map, &mut rng);
+        pick_proxies(&mut floors, &rs, &map, &mut rng, 1);
         for f in &floors[..2] {
             let common: Vec<_> = f
                 .proxies

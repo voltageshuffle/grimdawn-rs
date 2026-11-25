@@ -192,7 +192,11 @@ impl Floater {
     }
 
     /// `UpdateSelf`'s step: whether the bob turned (the disturbance), and the height offset.
+    /// PORT: a record without a positive `bobTime` stays still (the bob's phase divides by it).
     fn step(&mut self, dt_ms: i32) -> (bool, f32) {
+        if self.period_ms <= 0 {
+            return (false, 0.0);
+        }
         self.timer_ms += dt_ms;
         let turned = self.timer_ms > self.period_ms;
         if turned {

@@ -785,9 +785,11 @@ fn foreign_map<'a>(
     home: Option<&Mesh>,
 ) -> &'a mut ForeignMap {
     maps.retain(|m| m.mesh.strong_count() > 0);
+    // By address, no `upgrade` (two atomic ops per entry, per armour piece, per frame): a live `Weak`
+    // keeps its allocation, so an equal address is `mesh` itself.
     if let Some(i) = maps
         .iter()
-        .position(|m| m.mesh.upgrade().is_some_and(|x| Arc::ptr_eq(&x, mesh)))
+        .position(|m| std::ptr::eq(m.mesh.as_ptr(), Arc::as_ptr(mesh)))
     {
         return &mut maps[i];
     }
@@ -1220,7 +1222,7 @@ pub fn pose_abs_attached_into(
     let roots_stale = map
         .roots
         .as_ref()
-        .is_none_or(|(p, _)| p.upgrade().is_none_or(|p| !Arc::ptr_eq(&p, parent)));
+        .is_none_or(|(p, _)| !std::ptr::eq(p.as_ptr(), Arc::as_ptr(parent)));
     if roots_stale {
         let roots = mesh
             .bones
@@ -1267,11 +1269,17 @@ fn pose_abs_from(
     abs.clear();
     abs.resize(n, Coords::IDENTITY);
     let mut done = BoneSet::new(n);
+    let key_of = |i: usize| {
+        match bone_map {
+            None => keys.get(i).copied(),
+            Some(m) => m.get(i).and_then(|&k| keys.get(k as usize)).copied(),
+        }
+        .unwrap_or(IDENTITY_KEY)
+    };
     fn go(
         i: usize,
         mesh: &Mesh,
-        keys: &[Key],
-        bone_map: Option<&[u16]>,
+        key_of: &impl Fn(usize) -> Key,
         root: &impl Fn(usize) -> Option<Coords>,
         abs: &mut [Coords],
         done: &mut BoneSet,
@@ -1280,22 +1288,27 @@ fn pose_abs_from(
             return abs[i];
         }
         let b = &mesh.bones[i];
-        let key = match bone_map {
-            None => keys.get(i).copied(),
-            Some(m) => m.get(i).and_then(|&k| keys.get(k as usize)).copied(),
-        }
-        .unwrap_or(IDENTITY_KEY);
         abs[i] = match b.parent {
-            Some(p) => go(p, mesh, keys, bone_map, root, abs, done)
+            Some(p) => go(p, mesh, key_of, root, abs, done)
                 .mul(&b.local)
-                .mul(&key.to_coords()),
-            None => root(i).unwrap_or_else(|| b.local.mul(&key.to_coords())),
+                .mul(&key_of(i).to_coords()),
+            None => root(i).unwrap_or_else(|| b.local.mul(&key_of(i).to_coords())),
         };
         done.insert(i);
         abs[i]
     }
-    for i in 0..n {
-        go(i, mesh, keys, bone_map, &root, abs, &mut done);
+    for (i, b) in mesh.bones.iter().enumerate() {
+        match b.parent {
+            // Stock skeletons list every parent before its children: its frame is in (every bone
+            // before `i` is), so no recursion. The same product as `go`'s.
+            Some(p) if p < i => {
+                abs[i] = abs[p].mul(&b.local).mul(&key_of(i).to_coords());
+                done.insert(i);
+            }
+            _ => {
+                go(i, mesh, &key_of, &root, abs, &mut done);
+            }
+        }
     }
 }
 

@@ -37,6 +37,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
 
+      # Defender scans every object and rlib the build writes; the hosted runner is throwaway.
+      - name: Windows Defender off
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       - name: Toolchain
         run: |
           rustup toolchain install stable --profile minimal --target ${{ matrix.target }}

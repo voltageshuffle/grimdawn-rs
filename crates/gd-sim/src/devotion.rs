@@ -96,31 +96,33 @@ impl Devotions {
                 continue;
             };
             let Some(c) = db.get(path) else { continue };
-            let mut stars = Vec::new();
-            for k in 1..=40 {
-                let Some(b) = c
-                    .str(&format!("devotionButton{k}"))
-                    .filter(|s| !s.is_empty())
-                else {
-                    continue;
-                };
-                let Some(br) = db.get(b) else { continue };
-                let links = c
-                    .f32s(&format!("devotionLinks{k}"))
-                    .iter()
-                    .filter(|v| **v >= 1.0)
-                    .map(|v| *v as usize - 1)
-                    .collect();
-                stars.push(Star {
+            // The resolved buttons with their slot numbers: `devotionLinksN` names a slot, which
+            // differs from the star's index once a slot is empty or unresolved.
+            let buttons: Vec<_> = (1..=40)
+                .filter_map(|k| {
+                    let b = c
+                        .str(&format!("devotionButton{k}"))
+                        .filter(|s| !s.is_empty())?;
+                    Some((k, b, db.get(b)?))
+                })
+                .collect();
+            let stars = buttons
+                .iter()
+                .map(|(k, b, br)| Star {
                     skill: br.str("skillName").unwrap_or("").to_ascii_lowercase(),
-                    button: b.to_owned(),
+                    button: (*b).to_owned(),
                     pos: [
                         br.f32("bitmapPositionX").unwrap_or(0.0),
                         br.f32("bitmapPositionY").unwrap_or(0.0),
                     ],
-                    links,
-                });
-            }
+                    links: c
+                        .f32s(&format!("devotionLinks{k}"))
+                        .iter()
+                        .filter(|v| **v >= 1.0)
+                        .filter_map(|v| buttons.iter().position(|x| x.0 == *v as usize))
+                        .collect(),
+                })
+                .collect();
             list.push(Constellation {
                 record: path.to_owned(),
                 name_tag: c.str("constellationDisplayTag").unwrap_or("").to_owned(),

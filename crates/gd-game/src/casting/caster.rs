@@ -254,7 +254,7 @@ pub(super) fn regen_and_cooldowns(time: Res<Time>, mut q: Query<(&mut Caster, &C
         // applies); only switched-on toggles reserve
         // (`Skill_BuffSelfToggled::CollectPassiveCharAttributes`
         // checks the active flag; the port's `SkillBook.inactive`).
-        let max = (cb.profile.sheet.energy - cb.profile.sheet.energy_reserve).max(0.0);
+        let max = cb.profile.sheet.usable_energy();
         c.energy = (c.energy + cb.profile.sheet.energy_regen_per_sec.max(0.0) * dt).min(max);
         c.cooldowns.tick(dt);
     }

@@ -1592,7 +1592,9 @@ fn formula(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
 /// each member (23 not equipped / 24 equipped), a blank, then per piece count
 /// `tagSetItems` with the bonuses that count adds (headers class 24 when
 /// reached, else 23; lines 26 / 28). A count whose bonuses equal the previous
-/// count's shows nothing.
+/// count's shows nothing. Tiers run to [`super::sets::set_size`] (`setSize`,
+/// else the member count); every `setMembers` entry is listed, variants of one
+/// piece included, owned by record path.
 pub fn set_lines(ctx: &TipCtx, set: &str) -> Vec<Line> {
     let Some(rec) = ctx.db.get(set) else {
         return Vec::new();
@@ -1629,7 +1631,7 @@ pub fn set_lines(ctx: &TipCtx, set: &str) -> Vec<Line> {
     }
     out.push(blank());
     let mut prev: Vec<super::resolve::Attr> = Vec::new();
-    for level in 1..=members.len() {
+    for level in 1..=super::sets::set_size(rec) {
         let attrs: Vec<_> = record_attrs_at(rec, Source::Base, level - 1);
         let mut body = Vec::new();
         let reached = level as u32 <= have;

@@ -933,7 +933,10 @@ pub fn resolve_records(
             let b = base.string("bitmap");
             let art = base.string("artifactBitmap");
             let formula = base.string("artifactFormulaBitmapName");
-            if !b.is_empty() {
+            if base.class == "ItemNote" {
+                // `ItemNote::GetBitmap`: the `noteBitmap` texture `ItemNote::Load` loads (no `bitmap`).
+                base.string("noteBitmap").to_string()
+            } else if !b.is_empty() {
                 b.to_string()
             } else if !formula.is_empty() {
                 // `ItemArtifactFormula::Load`: the

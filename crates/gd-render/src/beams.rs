@@ -398,7 +398,7 @@ pub(crate) fn ribbon_ready(
     let data = assets.data.clone();
     assets
         .textures
-        .ready(&data, ribbon_texture(beam), true, &mut assets.images)
+        .ready(&data, ribbon_texture(beam), false, &mut assets.images)
 }
 
 /// The `LineEffect2` record's material: its texture, alpha blended for `trailcombine`, else additive.
@@ -406,9 +406,12 @@ pub(crate) fn ribbon_material(
     beam: &gd_formats::arz::Record,
     assets: &mut crate::character::CharAssets,
 ) -> Handle<StandardMaterial> {
-    let img = assets
-        .textures
-        .get(&assets.data, ribbon_texture(beam), true, &mut assets.images);
+    let img = assets.textures.get(
+        &assets.data,
+        ribbon_texture(beam),
+        false,
+        &mut assets.images,
+    );
     let combine = beam
         .str("shader")
         .or(beam.str("Shader"))

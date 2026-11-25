@@ -32,14 +32,16 @@
 //!
 //! * The player's controller states have no handler (`ControllerAI::
 //!   ProjectileNotification` forwards to the state's slot, empty
-//!   in every `ControllerPlayerState*`), so only pets react to a monster's
-//!   projectile: a pet is a `ControllerMonster` (`pets.rs`), same rules and
-//!   its controller record's `DodgeChance` (`Pet::projectile_notified`).
+//!   in every `ControllerPlayerState*`), so of the player's side only pets react
+//!   to a foe's projectile: a pet is a `ControllerMonster` (`pets.rs`), same rules and
+//!   its controller record's `DodgeChance` (`Pet::projectile_notified`). The foe test
+//!   is the skill victim rule (`combat::Side::foe`): an `Allied` guard ignores the
+//!   player's projectiles, monsters of foe factions notice each other's.
 //!
 //! PORT: a pet does not release its attack slot when it dodges and "Return"
 //! is its idle (nor does a pet dodge mid-swing); the sphere test is centre to
 //! centre.
-use crate::combat::{MonsterAi, QuestMove};
+use crate::combat::{MonsterAi, QuestMove, Side, SideRef};
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -111,6 +113,7 @@ pub fn notify_monsters(
             &Character,
             Has<crate::movement::Stunned>,
             Has<QuestMove>,
+            Has<crate::combat::Allied>,
         ),
         Without<Dead>,
     >,
@@ -121,6 +124,7 @@ pub fn notify_monsters(
             &mut crate::pets::Pet,
             &Combatant,
             &Character,
+            Option<&crate::combat::JoinedPack>,
         ),
         (
             Without<Dead>,
@@ -160,26 +164,70 @@ pub fn notify_monsters(
             .and_then(|r| r.f32("notificationRadius"))
             .unwrap_or(5.0);
         let at = ptf.translation;
-        let mult = pets.get(owner).map_or(1.0, |p| p.2.anger_multiplier);
-        if hostile {
-            // A monster's projectile tells the player's pets (the player's
-            // controller states have no handler).
-            for (e, tf, mut pet, cb, ch) in &mut pets {
-                if e != owner && tf.translation.distance(at) <= radius {
-                    pet.projectile_notified(
-                        e,
-                        (tf.translation, cb.radius, at),
-                        (owner, ch.state),
-                        &nav,
-                        &mut scratch,
-                    );
+        // `AngerManager::AddAnger` scales by the owner's `angerMultiplier` (0 without `causesAnger`,
+        // `ShouldRemoveEnemy`), for a monster's and a pet's anger alike: a monster's `as_target`, a pet's record,
+        // else (the player) 1.
+        let mult = monsters
+            .get(owner)
+            .map(|m| {
+                let t = m.2.as_target;
+                if t.causes_anger {
+                    t.anger_multiplier
+                } else {
+                    0.0
                 }
+            })
+            .or_else(|_| {
+                pets.get(owner).map(|p| {
+                    if p.2.causes_anger {
+                        p.2.anger_multiplier
+                    } else {
+                        0.0
+                    }
+                })
+            })
+            .unwrap_or(1.0);
+        // The owner's side: a live monster's or pet's, else the one the projectile kept (`Side::lookup_kept`).
+        let side = monsters
+            .get(owner)
+            .ok()
+            .map(|m| Side::Monster {
+                pack: m.2.faction.clone(),
+                allied: m.7,
+            })
+            .or_else(|| {
+                pets.get(owner).ok().map(|p| {
+                    p.5.map_or(Side::Player, |j| Side::Monster {
+                        pack: j.pack.clone(),
+                        allied: j.allied,
+                    })
+                })
+            })
+            .or_else(|| p.side.clone())
+            .unwrap_or_else(|| Side::from_hostile(hostile));
+        // The pets among its foes (the player's controller states have no handler).
+        for (e, tf, mut pet, cb, ch, joined) in &mut pets {
+            let victim = joined.map_or(SideRef::Player, |j| SideRef::Monster {
+                pack: &j.pack,
+                allied: j.allied,
+            });
+            if e != owner && tf.translation.distance(at) <= radius && side.foe(victim) {
+                pet.projectile_notified(
+                    e,
+                    (tf.translation, cb.radius, at),
+                    (owner, ch.state, mult),
+                    &nav,
+                    &mut scratch,
+                );
             }
-            continue;
         }
-        for (e, tf, mut ai, cb, ch, stunned, quest) in &mut monsters {
+        for (e, tf, mut ai, cb, ch, stunned, quest, allied) in &mut monsters {
             let me = tf.translation;
-            if e == owner || me.distance(at) > radius {
+            let victim = SideRef::Monster {
+                pack: &ai.faction,
+                allied,
+            };
+            if e == owner || me.distance(at) > radius || !side.foe(victim) {
                 continue;
             }
             if ai.dodge.timer > 0.0 {

@@ -690,6 +690,7 @@ pub(super) fn find_enemy(
     foes: &Foes,
     pets: &[Entity],
     asleep: impl Fn(Entity) -> bool,
+    living: &crate::anger_rolls::Living,
     dt: f32,
 ) {
     let before = ai.enemy;
@@ -697,7 +698,7 @@ pub(super) fn find_enemy(
     let ticked = ai.find_timer <= 0.0;
     if ticked {
         ai.find_timer += 0.2 * (1.0 - ai.find_timer / 0.2).floor().max(1.0);
-        let ignore_pets = crate::anger_rolls::ignores_pets(ai, |e| pets.contains(&e));
+        let ignore_pets = crate::anger_rolls::ignores_pets(ai, |e| pets.contains(&e), living);
         let ignore_sleeping = ai.ignore_sleeping;
         let skip = |e: Entity| (ignore_pets && pets.contains(&e)) || (ignore_sleeping && asleep(e));
         let kept: Vec<(Entity, Vec3, f32)>;
@@ -775,13 +776,13 @@ pub(super) fn new_target(
     .map(|(e, _, _)| e)
 }
 
-/// The characters' sleep, for [`MonsterAi::ignore_sleeping`]: a `Player` is never skipped (the `Player` class
-/// test in `GetNewTarget` / `ShouldRemoveEnemy` / `FindEnemyUpdate`); pets and monsters are.
-pub(super) type Sleepers<'w, 's> =
+/// The characters' sleep, for [`MonsterAi::ignore_sleeping`] and a pet controller's: a `Player` is never skipped
+/// (the `Player` class test in `GetNewTarget` / `ShouldRemoveEnemy` / `FindEnemyUpdate`); pets and monsters are.
+pub(crate) type Sleepers<'w, 's> =
     Query<'w, 's, &'static crate::afflictions::Afflictions, Without<Player>>;
 
 /// `e` is asleep and not a player ([`Sleepers`]).
-pub(super) fn asleep(q: &Sleepers, e: Entity) -> bool {
+pub(crate) fn asleep(q: &Sleepers, e: Entity) -> bool {
     q.get(e).is_ok_and(|a| a.asleep())
 }
 
@@ -819,6 +820,7 @@ pub fn quest_interrupt(
         Without<Dead>,
     >,
     sleepers: Sleepers,
+    living: crate::anger_rolls::Living,
 ) {
     if !q
         .iter()
@@ -864,6 +866,7 @@ pub fn quest_interrupt(
             lists.get(side),
             &pets,
             |e| asleep(&sleepers, e),
+            &living,
             time.delta_secs(),
         );
         ai.flee.request = None;

@@ -71,7 +71,8 @@ pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut car
 /// monsters' (and the player's) attributes: the rules are rebuilt ([`gd_sim::actor::Rules::with_survival_ramp`],
 /// [`gd_sim::actor::Rules::with_mutators`]), the profile cache cleared, and live monsters and the
 /// player are marked for a profile rebuild (the engine reloads their base attributes:
-/// `Monster::OnDifficultyRampLevel`; mutators likewise).
+/// `Monster::OnDifficultyRampLevel`; mutators likewise). The session's [`gd_game_core::session::GameMode`] carries
+/// the ramp for the proxies' spawn counts: `Some` throughout a Crucible session.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_rules(
     rt: Option<NonSend<StoryRuntime>>,
@@ -96,19 +97,26 @@ pub fn apply_rules(
         *applied = Default::default();
     }
     let Some(rt) = rt else { return };
-    let want = {
+    let (crucible, want) = {
         let s = rt.story.borrow();
+        let crucible = s.game.survival_mode;
+        // The proxies' spawn counts read the ramp (`gd_sim::proxy::run_pool`): `Some` for the whole Crucible session,
+        // ramp 0 included (`GameEngine::GetChallengeAdjustment` in mode 1 is the survival pak from the start; `None`
+        // would give the arena's first spawns the campaign's challenge offsets).
+        let ramp = crucible.then_some(s.game.survival.difficulty_ramp);
+        if mode.0.ramp != ramp {
+            mode.0.ramp = ramp;
+        }
         // The Crucible, or a running Shattered Realm dungeon (its mutators); else nothing.
-        let (ramp, mutators): (u32, &[String]) =
-            if s.game.survival_mode || s.endless.dungeon.is_some() {
-                (s.game.survival.difficulty_ramp, &s.game.survival.mutators)
-            } else {
-                (0, &[])
-            };
+        let (ramp, mutators): (u32, &[String]) = if crucible || s.endless.dungeon.is_some() {
+            (s.game.survival.difficulty_ramp, &s.game.survival.mutators)
+        } else {
+            (0, &[])
+        };
         if (ramp, mutators) == (applied.0, applied.1.as_slice()) {
             return;
         }
-        (ramp, mutators.to_vec())
+        (crucible, (ramp, mutators.to_vec()))
     };
     // `GameEngine::AddMutatorInbound`: a mutator added plays the
     // `mutatorSound` pak of `survivalinfo.dbr` as a 2D sound (5 s cooldown), and, when a new mutator `affectsPlayers`,
@@ -157,18 +165,12 @@ pub fn apply_rules(
     );
     // The ramp is the Crucible's (it would drop an Ultimate Veteran's challenge pak otherwise); the Shattered Realm
     // only has mutators.
-    let crucible = rt.story.borrow().game.survival_mode;
     let base = if crucible {
         rules.0.with_survival_ramp(&data.db, want.0)
     } else {
         (*rules.0).clone()
     };
     rules.0 = std::sync::Arc::new(base.with_mutators(&data.db, &want.1));
-    // The proxies' spawn counts read the ramp (`gd_sim::proxy::run_pool`).
-    let ramp = crucible.then_some(want.0);
-    if mode.0.ramp != ramp {
-        mode.0.ramp = ramp;
-    }
     *applied = want;
     profiles.0.clear();
     for mut ms in &mut monsters {
@@ -462,7 +464,12 @@ impl Plugin for SurvivalPlugin {
             (
                 tick_survival,
                 respawn_control,
-                apply_rules.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
+                // After the scripts ran (`SurvivalEvent_SpawnNext` raises the ramp, then creates the wave's proxies)
+                // and before their monsters spawn, so a wave spawns at its own ramp, rules and spawn counts alike.
+                apply_rules
+                    .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
+                    .after(gd_game_core::story::StoryStage::Tick)
+                    .before(crate::story_world::sync_actors),
                 save_score.run_if(resource_exists::<gd_game_core::session::SaveDir>),
                 autosave.run_if(resource_exists::<gd_game_core::session::SaveDir>),
                 test_kill_all,

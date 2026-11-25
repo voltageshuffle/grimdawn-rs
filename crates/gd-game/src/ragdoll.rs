@@ -44,7 +44,9 @@
 //! ([`reach`]). The simulation ends (`Character::PhysicsUpdate`, `DefaultDeathHandler::Update`)
 //! when the body rests, is hidden, after the 10 s countdown ([`MAX_SECONDS`]) or the record's
 //! `physicsTimeLimit` (the player's 2.5 s). A living one stays on the path mesh (`FindStraightMovePoint` each
-//! update). The world is the loot's (`gd_sim::drop_body`: 1/60 s steps, gravity 14, restitution 0 so nothing
+//! update, [`slide_stays`]). Both straight moves are the nav's ([`crate::nav::straight_move_point`]): Detour's
+//! raycast over the tile cache's mesh, so a closed door or another dynamic obstacle stops the body as it stops a
+//! walk. The world is the loot's (`gd_sim::drop_body`: 1/60 s steps, gravity 14, restitution 0 so nothing
 //! bounces, a contact's friction the product, here the bodies' mass-weighted `friction` × the world's 1).
 //! A body's first ground contact plays the character's `bodyFallSound` when its mesh flags it `playFallSound`
 //! (`Character::CollisionCallback` → `PlayBodyFallSound`; no stock mesh sets it, so
@@ -130,9 +132,6 @@ const OWN_MOMENT: f32 = 0.05;
 const BODY_MIDDLE: f32 = 0.5;
 /// PORT: the lever (m) of a sliding body's yaw friction: the spin slows by friction × gravity / it.
 const SPIN_LEVER: f32 = 0.5;
-/// PORT: the straight-move check's step along the path mesh (m), and the most it climbs or drops per step (m).
-const NAV_STEP: f32 = 0.25;
-const NAV_CLIMB: f32 = 1.0;
 /// The water's `PhysicsSurface` (`gd_sim::surface`): no fall sound (the engine plays a splash), no decal.
 const WATER: u32 = gd_sim::surface::Surface::Water as u32;
 
@@ -351,7 +350,8 @@ pub fn floor(coll: &WorldCollision, nav: &Nav, prev: Vec3, p: Vec3) -> (f32, Vec
 
 /// `Character::PhysicsSetup`'s straight-move check of a living TakeHit throw (module doc): the share of the
 /// strength that keeps the predicted flight `offset` from `from` on the path mesh: all of it when the straight
-/// move stops within 1 m of the flight's end, else the share of the way it got, none from off the mesh.
+/// move ([`crate::nav::straight_move_point`], a closed door stops it) ends within 1 m of the flight's end, else
+/// the share of the way it got, none from off the mesh.
 fn reach(nav: &Nav, from: Vec3, offset: Vec3) -> f32 {
     if nav.0.locate(from.to_array()).is_none() {
         return 0.0;
@@ -361,21 +361,21 @@ fn reach(nav: &Nav, from: Vec3, offset: Vec3) -> f32 {
     if full <= 1.0 {
         return 1.0;
     }
-    let steps = (full / NAV_STEP).ceil() as usize;
-    let mut reached = from;
-    for k in 1..=steps {
-        let q = from + flat * (k as f32 / steps as f32);
-        let Some(c) = nav.0.locate([q.x, reached.y, q.z]) else {
-            break;
-        };
-        let y = nav.0.pos(c)[1];
-        if (y - reached.y).abs() > NAV_CLIMB {
-            break;
-        }
-        reached = Vec3::new(q.x, y, q.z);
-    }
+    let reached = crate::nav::straight_move_point(&nav.0, from, from + flat);
     let got = (reached - from).with_y(0.0).length();
     if full - got > 1.0 { got / full } else { 1.0 }
+}
+
+/// `Character::PhysicsUpdate`'s straight move of a living body's slide from `pos` to `next` (module doc):
+/// whether [`crate::nav::straight_move_point`] from the path mesh's ground under `pos` gets all the way (off the
+/// mesh, a mesh edge or a dynamic obstacle such as a closed door stops it).
+fn slide_stays(nav: &Nav, pos: Vec3, next: Vec3) -> bool {
+    let Some(g) = nav.0.ground([pos.x, pos.y + 0.5, pos.z]) else {
+        return false;
+    };
+    let to = next.with_y(g);
+    let end = crate::nav::straight_move_point(&nav.0, pos.with_y(g), to);
+    (end - to).with_y(0.0).length_squared() < 1e-6
 }
 
 /// `Character::PhysicsSetup` (module doc): the bodies' start velocities by the motion's effect, made one
@@ -501,15 +501,16 @@ impl Ragdoll {
     }
 
     /// One world step of the body standing at `pos` (module doc): gravity; a wall (or, alive, the path mesh's
-    /// edge) stops its slide; the floor stops its fall (the world's restitution is 0) and its friction takes the
-    /// slide, at the contact as much as the fall it stopped. Returns the floor met (height, normal).
+    /// edge or a dynamic obstacle, [`slide_stays`]) stops its slide; the floor stops its fall (the world's
+    /// restitution is 0) and its friction takes the slide, at the contact as much as the fall it stopped. Returns
+    /// the floor met (height, normal).
     fn step(&mut self, coll: &WorldCollision, nav: &Nav, pos: &mut Vec3) -> Option<(f32, Vec3)> {
         self.vel.y -= GRAVITY * STEP;
         let mut next = *pos + self.vel * STEP;
         let mid = Vec3::Y * BODY_MIDDLE;
         let slides = (next - *pos).with_y(0.0).length_squared() > 0.0;
         if slides
-            && ((self.alive && nav.0.locate(next.to_array()).is_none())
+            && ((self.alive && !slide_stays(nav, *pos, next))
                 || coll
                     .segment_hit(*pos + mid, next.with_y(pos.y) + mid)
                     .is_some())

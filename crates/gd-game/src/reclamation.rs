@@ -40,7 +40,8 @@
 //!   ([`crate::save::SaveRequest`]). The pane's `OnHide` makes the refunds final (`crate::points::SkillUndo`).
 //! * Refund: click callback `UISkillPane::OnButtonClick` in the mode: not a mastery at level 1, the level goes down
 //!   (`DecrementSkillLevel`), `UseReclamationPoints(1)` charges the price (short of money: the level goes back up),
-//!   one skill point comes back and the window's change record takes it (`SkillUndo`, undo pays the price back).
+//!   one skill point comes back and its pane's change record takes it (`SkillUndo`, per tree; that pane's undo
+//!   pays its refunds back).
 //!   A disabled button (`gd_sim::reclamation::Flags::disabled`) takes no click; the request is refused the same way.
 //! * Saved: the refund count, save block 8 `skill_reclamation_points_used` (`crate::save`).
 //!
@@ -371,8 +372,8 @@ fn run_reclamation(
                 state.used += 1;
                 loadout.skills.lower(skill, 1);
                 progress.progress.skill_points += 1;
-                undo.record(skill, -1);
-                undo.refunds += 1;
+                undo.record(tree, skill, -1);
+                undo.refund(tree);
                 info!(
                     "reclamation: {skill} -> {} for {cost} iron bits ({} refunds)",
                     loadout.skills.level(skill),

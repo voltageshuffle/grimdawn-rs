@@ -14,13 +14,13 @@ pub fn take_bonus(
     (life_pts, life_pct, life_slow, mana_pct): (f32, f32, f32, f32),
 ) {
     let sheet = &cb.profile.sheet;
-    let (life_max, energy_max) = (sheet.life, sheet.energy);
+    let (life_max, energy_max, energy_cap) = (sheet.life, sheet.energy, sheet.usable_energy());
     let h = 1.0 + sheet.heal_increase * 0.01;
     let heal = bonus_life(sheet, life_pts, life_pct);
     let gain = energy_max * mana_pct * 0.01;
     let slow_life = life_max * life_slow * 0.01 * h;
     cb.life = (cb.life + heal).min(life_max);
-    caster.energy = (caster.energy + gain).min(energy_max);
+    caster.energy = (caster.energy + gain).min(energy_cap);
     if slow_life > 0.0 {
         let (_, life_cap, _, _) = resource_behavior(data);
         let old = pools.map_or(0.0, |p| p.life);
@@ -103,10 +103,7 @@ pub fn potions(
         let (id, short) = if skill == HEALTH_POTION {
             ("1", cb.life.max(0.0) < sheet.life)
         } else {
-            (
-                "2",
-                caster.energy.max(0.0) < sheet.energy - sheet.energy_reserve,
-            )
+            ("2", caster.energy.max(0.0) < sheet.usable_energy())
         };
         if short {
             commands.write_message(crate::error_vox::ErrorVox::new(
@@ -118,7 +115,7 @@ pub fn potions(
     }
     let potency = 1.0 + (total("modifierPotency") + total("potionTransfusion")) * 0.01;
     let sheet = &cb.profile.sheet;
-    let (life_max, energy_max) = (sheet.life, sheet.energy);
+    let (life_max, energy_max, energy_cap) = (sheet.life, sheet.energy, sheet.usable_energy());
     let h = 1.0 + sheet.heal_increase * 0.01;
     // The potion's own fields (none with transfusion; infusion moves the
     // instant parts into the pool), then each modifier's × potency.
@@ -141,8 +138,12 @@ pub fn potions(
     let mut mana_flat_slow = 0.0;
     if infusion > 0.0 {
         let m = 1.0 + infusion * 0.01;
-        (life_flat, life_slow, mana_flat_slow, mana_slow) =
-            (life_flat * m, life_pct * m, mana_flat * m, mana_pct * m);
+        (life_flat, life_slow, mana_flat_slow, mana_slow) = (
+            life_flat * m,
+            life_slow + life_pct * m,
+            mana_flat * m,
+            mana_slow + mana_pct * m,
+        );
         (life_pct, mana_flat, mana_pct) = (0.0, 0.0, 0.0);
     }
     let from = |k: &str| from_mods(k) * potency;
@@ -161,14 +162,13 @@ pub fn potions(
     let slow_life = (life_flat + life_max * life_slow * 0.01) * h;
     let slow_energy = mana_flat_slow + energy_max * mana_slow * 0.01;
     cb.life = (cb.life + heal).min(life_max);
-    caster.energy = (caster.energy + gain).min(energy_max);
+    caster.energy = (caster.energy + gain).min(energy_cap);
     if slow_life > 0.0 || slow_energy > 0.0 {
         let (_, life_cap, _, mana_cap) = resource_behavior(&data);
-        let usable = (cb.profile.sheet.energy - cb.profile.sheet.energy_reserve).max(0.0);
         let (old_life, old_energy) = pools.map_or((0.0, 0.0), |p| (p.life, p.energy));
         commands.entity(e).try_insert(PotionOverTime {
             life: (old_life + slow_life).min(life_cap * life_max),
-            energy: (old_energy + slow_energy).min(mana_cap * usable),
+            energy: (old_energy + slow_energy).min(mana_cap * energy_cap),
         });
     }
     let absorb = total("absorbShieldPercentHealth") * 0.01 * life_max * potency;
@@ -229,7 +229,7 @@ pub(super) fn potion_over_time(
     let (life_feed, _, mana_feed, _) = resource_behavior(&data);
     for (e, mut p, mut cb, mut c) in &mut q {
         let sheet = &cb.profile.sheet;
-        let usable = (sheet.energy - sheet.energy_reserve).max(0.0);
+        let usable = sheet.usable_energy();
         let life = (sheet.life / life_feed * dt).min(p.life);
         let energy = (usable / mana_feed * dt).min(p.energy);
         p.life -= life;

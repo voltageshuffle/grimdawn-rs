@@ -7,8 +7,8 @@
 //!
 //! * `BeginQuestTask(quest, task, force)`: unless forced, ignored when the task
 //!   is in progress or complete. `Start`: if the task was *available* its
-//!   incentive events run (conditions → actions); state becomes 2 and the task
-//!   joins the active list.
+//!   incentive events run (conditions → actions; a repeatable quest's task first unlocks the
+//!   bounty tutorial page); state becomes 2 and the task joins the active list.
 //! * Every 500 ms each active task runs `Update`: per objective, evaluate its
 //!   conditions (all/any). Objective state 0 → 1/2 without running actions;
 //!   2 → 1 runs the objective's actions; 1 → 2 whenever it stops holding.
@@ -43,6 +43,10 @@ pub const STATE_COMPLETE: u32 = 3;
 
 /// `Quest2Repository::kUpdatePeriod` (Update resets its timer to 500).
 pub const UPDATE_PERIOD_MS: i32 = 500;
+
+/// The tutorial page (`helpindex.dbr` `tutorialPages` index) `Quest2Task::Start` unlocks for a repeatable quest:
+/// `tutorial_p56_bounty`.
+const BOUNTY_TUTORIAL_PAGE: u32 = 55;
 
 pub struct QuestDef {
     /// Normalised resource path (`quests/mq_wakingtomisery.qst`).
@@ -532,6 +536,12 @@ impl Story {
         let defs = self.quests.defs.clone();
         let task = &defs.list[qi].quest.tasks[ti];
         if state == STATE_AVAILABLE {
+            // `Quest2Task::Start`: a repeatable quest's task (the bounties) unlocks tutorial page 55
+            // (`tutorial_p56_bounty`), shown, before the incentives run.
+            if defs.list[qi].quest.repeatable() {
+                self.effects
+                    .push(Effect::UnlockTutorial(BOUNTY_TUTORIAL_PAGE));
+            }
             for ev in &task.incentives {
                 if self.eval_conditions(ev.conditions.as_ref(), &[]) {
                     self.exec_actions(&ev.actions, None);
@@ -667,10 +677,20 @@ impl Story {
         for (qi, ti) in active {
             self.update_task(qi, ti);
         }
-        // Quest2::Update: repeatable quests reset once every task is complete.
-        let mut changed = std::mem::take(&mut self.quests.changed_quests);
-        changed.retain(|&qi| {
-            let rt = &mut self.quests.rt[qi];
+        // Quest2::Update: repeatable quests reset once every task is complete. `Quest2::Reset` →
+        // `Quest2Task::Reset` (complete tasks only): the current difficulty's state (`Quest2Task.state` and its
+        // `Quest2Task.difficultyStates` entry) back to available and its objectives cleared (satisfied 0, counters
+        // reset); the other difficulties' states and every `finished` / `rewarded` flag stay.
+        let d = self.difficulty();
+        let QuestLog {
+            defs,
+            rt,
+            revision,
+            changed_quests,
+            ..
+        } = &mut self.quests;
+        changed_quests.retain(|&qi| {
+            let rt = &mut rt[qi];
             if !rt.changed {
                 return false;
             }
@@ -678,13 +698,19 @@ impl Story {
                 return true;
             }
             rt.changed = false;
-            let quest = &self.quests.defs.list[qi].quest;
-            if quest.repeatable() {
-                *rt = fresh_rt(quest);
+            if defs.list[qi].quest.repeatable() {
+                for t in &mut rt.tasks {
+                    t.state = STATE_AVAILABLE;
+                    t.per_difficulty[d] = STATE_AVAILABLE;
+                    for o in &mut t.objectives {
+                        o.satisfied = 0;
+                        o.counters.fill(0);
+                    }
+                }
+                *revision += 1;
             }
             false
         });
-        self.quests.changed_quests = changed;
     }
 
     /// `Quest2Task::Update`.

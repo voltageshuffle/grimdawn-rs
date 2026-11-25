@@ -189,7 +189,7 @@ fn spawn_bolts(
         let img = rec.str("Texture").and_then(|p| {
             assets
                 .textures
-                .get(&assets.data, p, true, &mut assets.images)
+                .get(&assets.data, p, false, &mut assets.images)
         });
         // `Load`: colours default to 0.
         let c = |k: &str| rec.i32(k).unwrap_or(0) as f32 / 255.0;
@@ -372,7 +372,7 @@ fn spawn_bolt2(
         &assets.data,
         rec.str("texture")
             .unwrap_or("FX/Textures/lightningbolt128_02.tex"),
-        true,
+        false,
         &mut assets.images,
     );
     // `SetEnd` with `fromSky`: the bolt starts 20 m above its end.

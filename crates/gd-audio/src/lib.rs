@@ -8,7 +8,8 @@
 //!
 //! Volumes (`gd_game_core::options`): every sound has a [`SoundClass`]; its gain is `masterVolume` × the class's option
 //! (`musicVolume`, `effectsVolume`, `ambientVolume`, `dialogVolume`), read into `listener::Listener` when the options
-//! change.
+//! change. A voice plays at its own volume × that gain clamped to 1 (`Listener::voice_volume`: DirectSound never
+//! amplifies); a 3D voice's distance gain and pan come on top (`Listener::gains`).
 //! A sound's voice starts paused at zero volume; `mixer::mix` runs in `Last` (after every system that starts a
 //! sound), sets the final volume and starts it the same frame its event fires.
 //!

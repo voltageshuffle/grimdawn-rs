@@ -869,6 +869,13 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
     };
     let mut parts = Vec::new();
     for fs in &msh.face_sets {
+        // A skinned mesh's set with an empty bone palette has only zero blend weights (`Msh::validate`): the
+        // engine's skinning collapses it to the model origin, so it never shows. Stock female armour carries
+        // such a leftover 20-face box beside the right upper arm; the weight fallback below would pin it to
+        // bone 0 and draw it.
+        if skinned && fs.bones.is_empty() {
+            continue;
+        }
         let s = fs.start_face as usize * 3;
         let e = (s + fs.num_faces as usize * 3).min(msh.indices.len());
         if s >= e {

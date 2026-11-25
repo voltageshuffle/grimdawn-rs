@@ -42,13 +42,21 @@
 //! single player: one note, after the table's items, no chance roll); the
 //! port drops it with the loot when the chest opens (`chests.rs`).
 //!
-//! Level-placed notes: `ItemNote::InitialUpdate`: when the
-//! note entity appears, `Actor::SetVisibility(!Player::GetItemInLoreCodex)`
-//! for the main player. The engine saves no per-level item state (the save's
+//! Notes already read: `ItemNote::InitialUpdate`: whenever a note entity
+//! enters the world (placed in a level, dropped by a monster or a chest),
+//! `Actor::SetVisibility(!Player::GetItemInLoreCodex)` for the main player, so
+//! a note in the codex is hidden and never taken again (the drop code,
+//! `ControllerMonster::DropLoot` / `FixedItemController::LoadDropLoot`, does
+//! not check the codex). The port does not spawn such a note
+//! ([`LoreCodex::knows`]: `monsters::spawn_level_objects`, `loot::on_kill`,
+//! `chests.rs`; a monster's or chest's note is still rolled and seeded, so the
+//! loot stream stays the engine's). The codex exists from the session start
+//! ([`init_lore`]) and the level objects wait for it, so a loaded character's
+//! read notes are never placed around its start point.
+//! The engine saves no per-level item state (the save's
 //! `map.dat` holds only the map path and spawn coordinates), so the only
 //! memory of a taken placed note is the codex (block 12): a note still in the
-//! bags unread reappears with its level, a read one never does
-//! ([`LoreCodex::knows`], `monsters::spawn_level_objects`).
+//! bags unread reappears with its level, a read one never does.
 //! PORT: a taken note is also not re-placed while the session runs
 //! (`ChestStates::opened`), as a level streaming back in would else duplicate
 //! it; stack counts of notes are 1 in the stock data, so a used note is always
@@ -76,18 +84,13 @@ pub fn is_note(db: &gd_formats::vfs::Database, record: &str) -> bool {
         .is_some_and(|r| r.str("Class") == Some("ItemNote"))
 }
 
-/// The codex from the loaded character, once the player exists (no save: empty).
+/// The codex from the loaded character, at the session start (no save: empty).
 pub fn init_lore(
     mut commands: Commands,
-    // Option: `codex` is the existence check (this system creates it); `loaded` is absent for a new character.
-    codex: Option<Res<LoreCodex>>,
+    // Option: `loaded` is absent for a new character.
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     data: Res<gd_game_core::data::GameData>,
-    players: Query<(), With<gd_game_core::player::Player>>,
 ) {
-    if codex.is_some() || players.is_empty() {
-        return;
-    }
     let notes = loaded
         .map(|c| {
             c.0.notes
@@ -245,7 +248,7 @@ impl Plugin for LorePlugin {
                 Update,
                 (
                     init_lore
-                        .after(gd_game_core::player::PlayerSet)
+                        .run_if(resource_exists::<gd_game_core::session::SessionReady>)
                         .run_if(not(resource_exists::<LoreCodex>)),
                     read_notes
                         .after(crate::consumables::ConsumableStage::Use)

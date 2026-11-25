@@ -47,6 +47,14 @@
 //! Story doors take their story object's open / locked state when they
 //! spawn ([`story_doors`]). A dungeon entrance opens on its first use and
 //! travels on the next ([`Door::use_action`]).
+//!
+//! Level doors keep their state across streaming ([`DoorStates`]): `Region::Unload` saves its levels' entities
+//! (`Level::SaveState`) and `Region::Load` restores them (`Level::RestoreState`). `FixedDoor::SaveState` writes
+//! open for a door opening or open (states 2 / 3), closed for an `autoClose` one, and `FixedDoor::RestoreState`
+//! sets it fully open (state 3) or fully closed (state 0) at once; an item door's state is its `FixedItem` state
+//! (`FixedItem::SaveState` / `RestoreState`). Here: [`remember_doors`] keeps (level, uid) → open as the level
+//! unloads, [`restore_doors`] puts a door spawned again in that state at its animation's end. The lock is
+//! saved too, but a level door's only changes for story doors, which follow their story object.
 use crate::chests::LockedUse;
 use crate::movement::MovePath;
 use crate::nav::NavObstacle;
@@ -69,6 +77,7 @@ pub struct DoorsPlugin;
 impl Plugin for DoorsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DungeonExits>()
+            .init_resource::<DoorStates>()
             .init_resource::<PendingTravel>()
             .init_resource::<TeleportActivity>()
             .add_message::<DestinationReady>()
@@ -82,7 +91,60 @@ impl Plugin for DoorsPlugin {
                         .chain()
                         .after(gd_game_core::player::PlayerSet),
                 ),
-            );
+            )
+            .add_systems(
+                PostUpdate,
+                restore_doors.run_if(resource_exists::<GameData>),
+            )
+            .add_systems(Last, remember_doors.before(crate::levels::despawn_unloaded));
+    }
+}
+
+/// The open state of the level doors whose level streamed out this session, by (level, uid) (module doc).
+#[derive(Resource, Default)]
+pub struct DoorStates(pub HashMap<(usize, [u32; 4]), bool>);
+
+/// `FixedDoor::SaveState` as a door's level unloads (module doc): an `autoClose` door is saved closed.
+pub fn remember_doors(
+    mut states: ResMut<DoorStates>,
+    doors: Query<(&Door, &gd_game_core::levels::LevelMember), With<gd_game_core::levels::Unload>>,
+) {
+    for (d, m) in &doors {
+        if let Some(uid) = d.uid {
+            states
+                .0
+                .insert((m.0, uid), d.open && d.auto_close.is_none());
+        }
+    }
+}
+
+/// `FixedDoor::RestoreState`: a level door spawned again takes its remembered state at once (module doc).
+pub fn restore_doors(
+    mut commands: Commands,
+    states: Res<DoorStates>,
+    data: Res<GameData>,
+    mut anims: ResMut<AnimCache>,
+    mut doors: Query<(Entity, &mut Door, &gd_game_core::levels::LevelMember), Added<Door>>,
+) {
+    if states.0.is_empty() {
+        return;
+    }
+    for (e, mut d, m) in &mut doors {
+        let Some(&open) = d.uid.and_then(|uid| states.0.get(&(m.0, uid))) else {
+            continue;
+        };
+        if d.open == open {
+            continue;
+        }
+        let Some(rec) = data.db.get(&d.record) else {
+            continue;
+        };
+        let d = &mut *d;
+        set_open(&mut commands, &mut anims, &data, e, d, rec, open);
+        // At once: the animation at its end (an item door's callbacks run to it in `advance_doors`).
+        if let Some(a) = d.anim.as_mut() {
+            a.time = a.anim.num_frames as f32 / a.anim.frame_rate.max(1) as f32;
+        }
     }
 }
 

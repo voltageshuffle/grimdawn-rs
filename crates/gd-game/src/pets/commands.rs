@@ -16,7 +16,18 @@ pub(super) fn pet_commands(
     casters: Query<(Entity, &gd_game_core::casting::Caster), (With<Player>, Without<Dead>)>,
     mut stances: Query<&mut PetStances>,
     leaders: Query<&Transform, Without<Pet>>,
-    monsters: Query<&Transform, (With<MonsterAi>, Without<Dead>, Without<Pet>)>,
+    // The characters an order may name as its foe (`FactionManager::IsFoe` of the player's side, as
+    // `ControllerPlayer::HandlePetAction` tests it): hostile monsters and a convert's pets, not a guard or an
+    // allied monster (a click on one is a move order for a selected pet; the Pet Attack skill's attack request
+    // is refused by `IsEnemyValid`).
+    monsters: Query<
+        (&Transform, crate::combat::SideData),
+        (
+            Or<(With<MonsterAi>, With<Pet>)>,
+            Without<Dead>,
+            Without<Player>,
+        ),
+    >,
     mut pets: Query<
         (
             Entity,
@@ -54,7 +65,11 @@ pub(super) fn pet_commands(
     }
     list.extend(orders.read().copied());
     for cmd in list {
-        let foe = cmd.target.filter(|t| monsters.contains(*t));
+        let foe = cmd.target.filter(|t| {
+            monsters
+                .get(*t)
+                .is_ok_and(|(_, sd)| crate::combat::Side::Player.foe(sd.side_ref()))
+        });
         let Ok(leader) = leaders.get(cmd.owner).map(|t| t.translation) else {
             continue;
         };
@@ -93,7 +108,7 @@ pub(super) fn pet_commands(
                     &mut cb,
                     (e, tf.translation),
                     t,
-                    monsters.get(t).ok().map(|m| m.translation),
+                    monsters.get(t).ok().map(|m| m.0.translation),
                     leader,
                     &slots,
                 ),

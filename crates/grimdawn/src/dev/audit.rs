@@ -1,5 +1,5 @@
 //! Session audit: `GD_CENSUS` (hooks.rs) writes, `GD_CENSUS_SECS` (default
-//! 25) seconds after the session entered `Loading`, what the session added to the world since then:
+//! 25) seconds after the session began (`SessionReady` added), what the session added to the world since then:
 //! resources created, resources that existed before and were mutated, and the entity kinds spawned
 //! (archetype census). It is the checklist for an in-process session teardown. Component and resource
 //! names need Bevy's `debug` feature: `cargo dev-build --features audit`.
@@ -21,8 +21,11 @@ impl Plugin for AuditPlugin {
             .census
             .is_some()
         {
-            app.add_systems(OnEnter(AppState::Loading), baseline)
-                .add_systems(Update, report.run_if(in_state(AppState::InGame)));
+            app.add_systems(
+                First,
+                baseline.run_if(resource_added::<gd_game_core::session::SessionReady>),
+            )
+            .add_systems(Update, report.run_if(in_state(AppState::InGame)));
         }
     }
 }

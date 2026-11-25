@@ -142,10 +142,16 @@
 //! AI: pets run the monster AI (`ControllerPet` is a
 //! `ControllerMonster` whose `RegisterStates` are the monster's) with the
 //! pet record's `controller` and the owner as leader:
-//! - targets: the angriest foe (`ControllerMonster::FindEnemy` →
-//!   `AngerManager::GetNewTarget`); anger from sight within `ViewDistance`
-//!   (`ProcessAngerTarget`, same rates as `combat::sight_anger`), from hits
-//!   taken (`UnderAttack`: `AttackedAnger`, at most every 500 ms), decaying
+//! - targets: every 200 ms the angriest foe (`ControllerMonster::FindEnemy` →
+//!   `AngerManager::GetNewTarget`: anger × 1.3 for the current target, at least
+//!   `AngerTolerance`; `petTargetGreatestHealth`, the Salazar chthonian item pet's
+//!   controllers, ranks by life percent first; `ignoreSleepingEnemies` skips a
+//!   sleeping foe); anger from sight within `ViewDistance` on the monsters' 250 ms
+//!   `AngerUpdate` tick (`ProcessAngerTarget`, same rates and `pathingViewDistance`
+//!   test as `combat::sight_anger`), from hits taken by an attacker in pursuit
+//!   range (`UnderAttack`: `AttackedAnger`, at most every 500 ms), each scaled by
+//!   the foe's `angerMultiplier` (`AngerManager::AddAnger`; traps, crates and
+//!   tentacles have 0, so a pet ignores them unless ordered), decaying
 //!   by `ForgiveRate`; a foe counts while within `MaxPursuitDistance` of the
 //!   home point, which for a follower is its leader (`InPursuitRange` /
 //!   `GetHomePosition`) and within `MaxYViewDistance` in height;

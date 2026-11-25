@@ -4,7 +4,9 @@
 //! Epics / altar / personal portals, see `gd_game::session::begin`); this is the port's equivalent.
 //! A session leaves three kinds of state, all found with the session audit (`GD_CENSUS`, `dev/audit.rs`;
 //! `GD_EXIT_CYCLES`, `dev/exit_cycles.rs`, shows what still grows across exits):
-//! - entities: everything not alive when `Loading` began is despawned (`Baseline`);
+//! - entities: everything not alive when the session began is despawned (`gd_game_core::session::SessionBaseline`,
+//!   taken by `gd_game::session::begin` as it inserts `SessionReady`: a menu start can spawn the player in that
+//!   same frame, and a player kept by the baseline would outlive the exit);
 //! - resources the session created: removed (the `init_*` systems create them again);
 //! - resources that exist from startup but hold session state: reset to `Default`
 //!   (`Levels`, `StreamedMap` and `StreamFocus` are rebuilt by `gd_world::open_world` → `install_world`).
@@ -16,27 +18,15 @@
 //! one never matches a new session's resource; the other latches left are test hooks (they do not
 //! fire twice) and signature caches that differ from the reset state.
 use bevy::prelude::*;
-use gd_formats::collections::HashSet;
 use gd_ui::state::exit::ExitToMenu;
-use gd_ui::state::session::AppState;
 
 pub struct ExitPlugin;
 
 impl Plugin for ExitPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ExitToMenu>()
-            .add_systems(OnEnter(AppState::Loading), capture_baseline)
             .add_systems(Last, end_session.run_if(on_message::<ExitToMenu>));
     }
-}
-
-/// The entities alive when the session began (cameras, lights, cursor, the persistent UI).
-#[derive(Resource, Default)]
-struct Baseline(HashSet<Entity>);
-
-fn capture_baseline(world: &mut World) {
-    let alive = world.iter_entities().map(|e| e.id()).collect();
-    world.insert_resource(Baseline(alive));
 }
 
 fn reset<T: Resource + FromWorld>(world: &mut World) {
@@ -51,7 +41,10 @@ fn remove<T: Resource>(world: &mut World) {
 fn end_session(world: &mut World) {
     info!("exit to the main menu: tearing the session down");
     // The session's entities (children go with their parents; stale ids are skipped).
-    let baseline = world.remove_resource::<Baseline>().unwrap_or_default().0;
+    let baseline = world
+        .remove_resource::<gd_game_core::session::SessionBaseline>()
+        .unwrap_or_default()
+        .0;
     // Only the roots of the doomed set: despawning a parent takes its children along (despawning a
     // child first queues a hierarchy update on a parent that is gone by the time it applies).
     let doomed: Vec<Entity> = world

@@ -205,17 +205,28 @@ fn sync_reflection(
 ) {
     let quality = option_quality(&options);
     let main = mains.single().ok();
-    let plane = main.and_then(|(.., frustum)| {
+    // The nearest plane: the least distance from the camera to one of its in-view blocks' centres.
+    let plane = main.and_then(|(_, main_tf, _, frustum)| {
         water
             .iter()
             .filter(|(w, _, _, vis)| vis.get() && w.reflection_blend() > 0.0)
-            .find(|(_, blocks, gt, _)| {
+            .filter_map(|(w, blocks, gt, _)| {
                 let affine = gt.affine();
-                blocks.0.iter().any(|(lo, hi)| {
-                    frustum.intersects_obb(&Aabb::from_min_max(*lo, *hi), &affine, true, true)
-                })
+                blocks
+                    .0
+                    .iter()
+                    .filter(|(lo, hi)| {
+                        frustum.intersects_obb(&Aabb::from_min_max(*lo, *hi), &affine, true, true)
+                    })
+                    .map(|(lo, hi)| {
+                        let c = affine.transform_point3((*lo + *hi) * 0.5);
+                        c.distance_squared(main_tf.translation)
+                    })
+                    .min_by(f32::total_cmp)
+                    .map(|d| (d, w.height()))
             })
-            .map(|(w, ..)| w.height())
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, h)| h)
     });
     let setup = (|| {
         if quality == 0 {

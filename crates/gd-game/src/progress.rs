@@ -31,7 +31,8 @@ impl Plugin for ProgressPlugin {
             .add_systems(
                 Update,
                 (
-                    init_progress,
+                    // A session's own (a `Player` outside one must not build a new character's progress).
+                    init_progress.run_if(resource_exists::<gd_game_core::session::SessionReady>),
                     kill_experience
                         .run_if(resource_exists::<CombatRules>)
                         .run_if(resource_exists::<PlayerProgress>),

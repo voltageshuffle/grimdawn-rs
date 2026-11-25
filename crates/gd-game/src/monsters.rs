@@ -1649,6 +1649,8 @@ impl Plugin for MonstersPlugin {
                     spawn_level_objects
                         .in_set(MonsterStage::LevelObjects)
                         .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
+                        // A loaded character's read notes are not placed (`crate::lore` module doc).
+                        .run_if(resource_exists::<crate::lore::LoreCodex>)
                         .after(run_proxies),
                     ambushes.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     cull_monsters,
@@ -1816,12 +1818,12 @@ pub fn spawn_level_objects(
     mut commands: Commands,
     levels: Query<(Entity, &LevelProxies), (With<LevelPopulated>, Without<LevelObjectsSpawned>)>,
     // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
-    // a new character; the codex is optional input.
+    // a new character.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<crate::nav::Nav>,
     chests: Res<gd_game_core::world::ChestStates>,
-    codex: Option<Res<crate::lore::LoreCodex>>,
+    codex: Res<crate::lore::LoreCodex>,
     set_states: Res<SetPieceStates>,
     broken: Res<gd_game_core::world::Broken>,
     (data, mut bodies, mut anims): (
@@ -1939,7 +1941,7 @@ pub fn spawn_level_objects(
                 continue;
             };
             let radius = match kind {
-                crate::riftgates::WaypointKind::Riftgate => r.f32("radius").unwrap_or(3.0),
+                crate::riftgates::WaypointKind::Riftgate => r.f32("radius").unwrap_or(5.0),
                 crate::riftgates::WaypointKind::Respawner => r.f32("bindRadius").unwrap_or(8.0),
             };
             let mut e = commands.spawn((
@@ -1949,7 +1951,7 @@ pub fn spawn_level_objects(
                     uid: *uid,
                     record: rec.to_ascii_lowercase(),
                     radius,
-                    bind_radius: r.f32("bindRadius").unwrap_or(0.0),
+                    bind_radius: r.f32("bindRadius").unwrap_or(5.0),
                     level: lp.level,
                     locked: r.bool("locked"),
                 },
@@ -2015,7 +2017,7 @@ pub fn spawn_level_objects(
                     rec,
                     at,
                     key,
-                    chests.opened.contains(&key) || codex.as_deref().is_some_and(|c| c.knows(rec)),
+                    chests.opened.contains(&key) || codex.knows(rec),
                 ) {
                     commands.entity(e).insert(LevelProp(lp.level));
                 }

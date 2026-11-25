@@ -12,9 +12,13 @@
 //! GetText`): duration damage shows the total (per-second value
 //! × duration, `DamageSingleFormat` / `DamageRangeFormat`), then the type tag,
 //! then `tagPerSecond` for a 1 s duration, else `DamageSingleFormatTime` /
-//! `DamageRangeFormatTime`; nothing without both damage and duration. Any
-//! chance > 0 prefixes the class's chance tag (`tagChanceOf`, `tagChanceTo`
-//! for freeze reflexes).
+//! `DamageRangeFormatTime`; nothing without both damage and duration. Fixed
+//! duration effects (`DamageAttributeDurFixed::GetText`: slows, reductions,
+//! OA / DA, fumble) show the value itself, the tag right after it and the
+//! `DamageFixed*` time ("30% Slow target for 3 Seconds"); reflexes and
+//! influences (stun, freeze, confusion...) pass that time as the tag's `%t0`
+//! (`DamageFixed*` / `RetaliationFixed*`). Any chance > 0 prefixes the class's
+//! chance tag (`tagChanceOf`, `tagChanceTo` for freeze reflexes).
 //! Line order (`Armor` / `Weapon` / `WeaponArmor::CreateUIAttributeText`):
 //! each store's attributes write into its text
 //! lists in creation order; base lines come first (armour: base protection;
@@ -286,6 +290,47 @@ pub fn attack_speed_line(
     Some(render(f, &[Arg::Num(speed)], rich))
 }
 
+/// The fixed-duration tag stem of a reflex / influence class (`DamageFixed` /
+/// `RetaliationFixed`, the `DamageAttributeReflex` / `DamageAttributeInfluence`
+/// constructors and their retaliation subclasses'), `None` for other classes.
+fn fixed_time_stem(class: &str) -> Option<&'static str> {
+    let (kind, stem) = if let Some(k) = class.strip_prefix("DamageAttribute") {
+        (k, "DamageFixed")
+    } else {
+        (class.strip_prefix("RetaliationAttribute")?, "RetaliationFixed")
+    };
+    let influence = kind.strip_prefix("Abs_").is_some_and(|k| {
+        matches!(k, "Confusion" | "Convert" | "Disruption" | "Fear" | "Taunt")
+    });
+    (kind.starts_with("Reflex_") || influence).then_some(stem)
+}
+
+/// A `DamageAttributeDurFixed` class (its `GetText` / `CreateRangeNumbers`): the
+/// `DamageAttributeDur_*` / `RetaliationAttributeDur_*` effects that are no damage
+/// over time (slows, reductions, OA / DA, fumble, damage multiplier).
+fn is_dur_fixed(class: &str) -> bool {
+    let Some(ty) = class
+        .strip_prefix("DamageAttributeDur_")
+        .or_else(|| class.strip_prefix("RetaliationAttributeDur_"))
+    else {
+        return false;
+    };
+    !matches!(
+        ty,
+        "Physical"
+            | "Bleeding"
+            | "Cold"
+            | "Fire"
+            | "Lightning"
+            | "Poison"
+            | "Chaos"
+            | "Life"
+            | "Aether"
+            | "LifeLeach"
+            | "ManaLeach"
+    )
+}
+
 fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -> Option<String> {
     let t = |k: &str| tags.get(k);
     // `ConversionAttribute` text (`ConversionAttribute::GetText`): `tagDamageConversion`
@@ -379,7 +424,16 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             if (min == 0.0 && max == 0.0) || (dmin == 0.0 && dmax == 0.0) {
                 return None;
             }
-            let (lo, hi) = (min * dmin, max * dmax);
+            // `DamageAttributeDurFixed::GetText` (slows, reductions, OA / DA, fumble...): the
+            // value itself (`DamageSingleFormat` / `DamageRangeFormat`), the type tag right
+            // after it ("30" + "% Slow target"), then `DamageFixedSingleFormatSecond` (1 s) /
+            // `DamageFixedSingleFormatTime` / `DamageFixedRangeFormatTime`.
+            let fixed = is_dur_fixed(def.class) || is_dur_fixed(a.class);
+            let (lo, hi) = if fixed {
+                (min, max)
+            } else {
+                (min * dmin, max * dmax)
+            };
             let total = if lo == hi {
                 let f = t("DamageSingleFormat").unwrap_or("%.0f0");
                 render(f, &[Arg::Num(lo)], rich)
@@ -387,8 +441,18 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
                 let f = t("DamageRangeFormat").unwrap_or("%.0f0-%.0f1");
                 render(f, &[Arg::Num(lo), Arg::Num(hi)], rich)
             };
-            let body = render(t(tag)?, &[], rich);
-            let time = if dmin != dmax {
+            let raw_tag = t(tag)?;
+            let body = render(raw_tag, &[], rich);
+            let time = if fixed {
+                let key = if dmin != dmax {
+                    "DamageFixedRangeFormatTime"
+                } else if dmin == 1.0 {
+                    "DamageFixedSingleFormatSecond"
+                } else {
+                    "DamageFixedSingleFormatTime"
+                };
+                render(t(key).unwrap_or(""), &[Arg::Num(dmin), Arg::Num(dmax)], rich)
+            } else if dmin != dmax {
                 let f = t("DamageRangeFormatTime").unwrap_or("");
                 render(f, &[Arg::Num(dmin), Arg::Num(dmax)], rich)
             } else if dmin == 1.0 {
@@ -398,10 +462,12 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
                 render(f, &[Arg::Num(dmin)], rich)
             };
             let mut s = total;
-            for part in [body, time] {
+            if !fixed || raw_tag.starts_with(char::is_whitespace) {
                 s.push(' ');
-                s.push_str(&part);
             }
+            s.push_str(&body);
+            s.push(' ');
+            s.push_str(&time);
             trim_in_place(&mut s);
             s
         }
@@ -437,37 +503,43 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             if min == 0.0 && max == 0.0 {
                 return None;
             }
-            // PORT: a damage reflex (knockdown, stun, freeze...) passes its duration
-            // as `%t0` text, the `DamageFixed*` tag (" for 1.5 Seconds"; matches the
-            // real skill window); the tag choice by min/max is not decompiled.
-            if a.class.starts_with("DamageAttributeReflex_") {
-                let key = if max > min + 0.05 {
-                    "DamageFixedRangeFormatTime"
-                } else if (min - 1.0).abs() < 0.05 {
-                    "DamageFixedSingleFormatSecond"
+            // A reflex or influence (`DamageAttributeReflex` / `DamageAttributeInfluence`
+            // and their `RetaliationAttribute*` copies: knockdown, stun, freeze, confusion,
+            // fear, mind control, disruption...) passes its duration as `%t0` text
+            // (`DamageAttributeAbs::GetText`): the constructors' `DamageFixed*` /
+            // `RetaliationFixed*` tags, `...SingleFormatSecond` when min == max == 1,
+            // `...SingleFormatTime` when min == max, else `...RangeFormatTime`; the
+            // chance prefix below applies as to any damage.
+            if let Some(stem) = fixed_time_stem(def.class).or_else(|| fixed_time_stem(a.class)) {
+                let max = max.max(min);
+                let key = if max != min {
+                    "RangeFormatTime"
+                } else if min == 1.0 {
+                    "SingleFormatSecond"
                 } else {
-                    "DamageFixedSingleFormatTime"
+                    "SingleFormatTime"
                 };
-                let f = t(key).unwrap_or("");
+                let f = t(&format!("{stem}{key}")).unwrap_or("");
                 let when = render(f, &[Arg::Num(min), Arg::Num(max)], rich);
-                return Some(render(
+                render(
                     t(tag)?,
                     &[Arg::Str(&format!(" {}", when.trim_start()))],
                     rich,
-                ));
-            }
-            // A negative value without a max field is no range (a curse's
-            // "-50% Movement Speed").
-            let ranged = max > min + 0.5 && max > 0.0;
-            match t(&format!("{tag}R")) {
-                Some(fr) if ranged => render(fr, &[Arg::Num(min), Arg::Num(max)], rich),
-                // No range tag: `%t0` takes the `DamageRangeFormat` text.
-                None if ranged => {
-                    let f = t("DamageRangeFormat").unwrap_or("%.0f0-%.0f1");
-                    let range = render(f, &[Arg::Num(min), Arg::Num(max)], rich);
-                    render(t(tag)?, &[Arg::Str(&range)], rich)
+                )
+            } else {
+                // A negative value without a max field is no range (a curse's
+                // "-50% Movement Speed").
+                let ranged = max > min + 0.5 && max > 0.0;
+                match t(&format!("{tag}R")) {
+                    Some(fr) if ranged => render(fr, &[Arg::Num(min), Arg::Num(max)], rich),
+                    // No range tag: `%t0` takes the `DamageRangeFormat` text.
+                    None if ranged => {
+                        let f = t("DamageRangeFormat").unwrap_or("%.0f0-%.0f1");
+                        let range = render(f, &[Arg::Num(min), Arg::Num(max)], rich);
+                        render(t(tag)?, &[Arg::Str(&range)], rich)
+                    }
+                    _ => render(t(tag)?, &[Arg::Num(min)], rich),
                 }
-                _ => render(t(tag)?, &[Arg::Num(min)], rich),
             }
         }
     };
@@ -616,28 +688,6 @@ pub fn range_numbers(tags: &TagTable, min: &Attr, max: &Attr, rich: bool) -> Opt
         }
         return join(vec![pair("DamageSingleFormat", a, b)]);
     }
-    let fixed_dur = |c: &str| {
-        let Some(ty) = c
-            .strip_prefix("DamageAttributeDur_")
-            .or_else(|| c.strip_prefix("RetaliationAttributeDur_"))
-        else {
-            return false;
-        };
-        !matches!(
-            ty,
-            "Physical"
-                | "Bleeding"
-                | "Cold"
-                | "Fire"
-                | "Lightning"
-                | "Poison"
-                | "Chaos"
-                | "Life"
-                | "Aether"
-                | "LifeLeach"
-                | "ManaLeach"
-        )
-    };
     match () {
         _ if class.contains("AbsMod_") => join(vec![pair(
             "DamageSingleFormat",
@@ -668,7 +718,7 @@ pub fn range_numbers(tags: &TagTable, min: &Attr, max: &Attr, rich: bool) -> Opt
             let ((a0, a1, ad0, ad1), (b0, b1, bd0, bd1)) = (v(min), v(max));
             let (sf, rf) = ("DamageSingleFormat", "DamageRangeFormat");
             let mut parts = Vec::new();
-            if fixed_dur(class) {
+            if is_dur_fixed(class) {
                 if a0 != 0.0 || a1 != 0.0 || b0 != 0.0 || b1 != 0.0 {
                     parts.push(append(&span(sf, rf, a0, a1), &span(sf, rf, b0, b1)));
                 }

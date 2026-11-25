@@ -184,16 +184,8 @@ pub fn start_evade(
     if dir == Vec3::ZERO {
         return;
     }
-    // As far along the line as the ground is walkable.
-    let mut to = tf.translation;
-    let steps = (dist / 0.25).ceil() as i32;
-    for i in 1..=steps {
-        let p = tf.translation + dir * (dist * i as f32 / steps as f32);
-        match nav.0.ground([p.x, p.y + 1.0, p.z]) {
-            Some(g) if (g - to.y).abs() < 1.5 => to = Vec3::new(p.x, g, p.z),
-            _ => break,
-        }
-    }
+    // As far along the line as the ground is walkable (a closed door stops it).
+    let to = crate::nav::straight_move_point(&nav.0, tf.translation, tf.translation + dir * dist);
     if to.distance(tf.translation) < 0.5 {
         return;
     }

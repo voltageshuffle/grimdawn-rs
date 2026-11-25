@@ -949,6 +949,11 @@ impl PlayerRegen {
 }
 
 impl CharacterSheet {
+    /// The energy cap: max − reserve (`CharacterBio::TakeBonus`' cap; toggled skills hold the reserve).
+    pub fn usable_energy(&self) -> f32 {
+        (self.energy - self.energy_reserve).max(0.0)
+    }
+
     /// Replaces the per-second regen with the player equations at
     /// elapsedTime 1 (what the character window shows).
     pub fn apply_player_regen(&mut self, eq: &PlayerRegen) {

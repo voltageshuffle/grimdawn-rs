@@ -115,6 +115,7 @@ impl Plugin for LootPlugin {
             Update,
             on_kill
                 .run_if(resource_exists::<PlayerProgress>)
+                .run_if(resource_exists::<crate::lore::LoreCodex>)
                 .after(gd_game_core::player::PlayerSet)
                 .after(init_progress)
                 .before(kill_experience),
@@ -170,7 +171,8 @@ pub struct SavedItem {
 
 /// The ground items of a level that unloaded leave the world into [`LevelItems`] (as `crate::monsters::
 /// cull_monsters` takes the other entities of an unloaded level out: on a change of the loaded levels, or for an
-/// item that took a level already gone).
+/// item that took a level already gone). A level's placed note ([`crate::lore::PlacedNote`]) only leaves: the
+/// level's load places it again (`crate::monsters::spawn_level_objects`), unless taken.
 #[allow(clippy::type_complexity)]
 pub fn stash_ground_items(
     mut commands: Commands,
@@ -183,12 +185,17 @@ pub fn stash_ground_items(
         Option<&Tossed>,
         Has<NoBeam>,
         Has<crate::item_drop::DroppedByPlayer>,
+        Has<crate::lore::PlacedNote>,
     )>,
     mut saved: ResMut<LevelItems>,
 ) {
     let all = levels.is_changed();
-    for (e, ground, level, at, tossed, no_beam, by_player) in &items {
+    for (e, ground, level, at, tossed, no_beam, by_player, placed) in &items {
         if !(all || level.is_added()) || levels.is_loaded(level.0) {
+            continue;
+        }
+        commands.entity(e).try_insert(gd_game_core::levels::Unload);
+        if placed {
             continue;
         }
         saved.0.entry(level.0).or_default().push(SavedItem {
@@ -198,7 +205,6 @@ pub fn stash_ground_items(
             no_beam,
             by_player,
         });
-        commands.entity(e).try_insert(gd_game_core::levels::Unload);
     }
 }
 
@@ -208,10 +214,14 @@ pub fn stash_ground_items(
 pub struct Restored;
 
 /// A level that loaded again gets its saved ground items back (`Level::RestoreState`), where they lay.
+/// A lore note read meanwhile stays hidden: `ItemNote::InitialUpdate` hides a note entity already in
+/// the codex (`Player::GetItemInLoreCodex`), so it is dropped here, as for level-placed notes and fresh
+/// drops (`crate::lore` module doc).
 pub fn restore_ground_items(
     mut commands: Commands,
     levels: Res<gd_game_core::levels::Levels>,
     mut saved: ResMut<LevelItems>,
+    codex: Option<Res<crate::lore::LoreCodex>>,
 ) {
     if !levels.is_changed() || saved.0.is_empty() {
         return;
@@ -221,6 +231,10 @@ pub fn restore_ground_items(
             return true;
         }
         for s in items.drain(..) {
+            let known_note = |it: &Item| codex.as_ref().is_some_and(|c| c.knows(&it.base_name));
+            if s.ground.item.as_ref().is_some_and(known_note) {
+                continue;
+            }
             let mut e = commands.spawn((
                 s.at,
                 GlobalTransform::from(s.at),
@@ -254,6 +268,7 @@ pub fn on_kill(
     mut fresh: gd_game_core::session::NewSession,
     worn: Query<&crate::monsters::Worn>,
     session: crate::session::Session,
+    codex: Res<crate::lore::LoreCodex>,
     (rt, monsters, challenged, bodies): (
         Option<NonSend<gd_game_core::story::StoryRuntime>>,
         Query<&gd_game_core::monsters::Monster>,
@@ -297,7 +312,8 @@ pub fn on_kill(
                 .map(|d| d.to_item()),
         );
         let rec = data.db.get(&ev.record);
-        // Lore notes (`lore::monster_note_drops`, `rand() % 101`).
+        // Lore notes (`lore::monster_note_drops`, `rand() % 101`); one already read is rolled and seeded but
+        // not dropped (hidden, `crate::lore` module doc).
         if let Some(r) = &rec {
             items.extend(
                 crate::lore::monster_note_drops(r, || gd_game_core::rng::u32(0..101))
@@ -307,7 +323,8 @@ pub fn on_kill(
                         stack_count: 1,
                         seed: rng.next().max(1),
                         ..Default::default()
-                    }),
+                    })
+                    .filter(|it| !codex.knows(&it.base_name)),
             );
         }
         let drops = items;
@@ -885,7 +902,7 @@ pub fn refill_energy(
 ) {
     for ev in leveled.read() {
         if let Ok((cb, mut c)) = players.get_mut(ev.player) {
-            c.energy = (cb.profile.sheet.energy - cb.profile.sheet.energy_reserve).max(0.0);
+            c.energy = cb.profile.sheet.usable_energy();
         }
     }
 }

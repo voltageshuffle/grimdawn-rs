@@ -135,6 +135,7 @@ pub fn open_chests(
     world: Res<gd_game_core::levels::Levels>,
     nav: Res<Nav>,
     data: Res<gd_game_core::data::GameData>,
+    codex: Res<crate::lore::LoreCodex>,
     (mut opened_out, mut stats): (
         MessageWriter<ChestOpened>,
         MessageWriter<crate::play_stats::PlayStat>,
@@ -287,7 +288,7 @@ pub fn open_chests(
         chest.record.rsplit('/').next().unwrap_or(""),
         drops.len()
     );
-    // The chest's lore note (PORT, `lore` module doc).
+    // The chest's lore note (PORT, `lore` module doc); one already read is seeded but not dropped (hidden).
     let note = rec
         .str("perPartyMemberDropItemName")
         .filter(|n| !n.is_empty())
@@ -296,7 +297,8 @@ pub fn open_chests(
             stack_count: 1,
             seed: rng.next().max(1),
             ..Default::default()
-        });
+        })
+        .filter(|it| !codex.knows(&it.base_name));
     // `FixedItem::GetLootDropCoords` / `GetLootDropRadius` (`crate::loot` doc).
     let body = rec.str("mesh").and_then(|m| bodies.get(&data, m));
     let drop = crate::loot::fixed_drop_point(&nav, at, gt.rotation(), body.as_deref());
@@ -442,7 +444,10 @@ impl Plugin for ChestsPlugin {
             .add_message::<LockedUse>()
             .add_systems(
                 Update,
-                (test_open, open_chests)
+                (
+                    test_open,
+                    open_chests.run_if(resource_exists::<crate::lore::LoreCodex>),
+                )
                     .chain()
                     .after(gd_game_core::player::PlayerSet),
             )

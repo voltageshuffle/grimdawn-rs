@@ -63,8 +63,6 @@ use gd_game_core::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 use gd_game_core::story::StoryRuntime;
 use gd_story::story::lua::ScriptEnv as _;
 
-/// How long a soul buff lasts after the last essence (s).
-const SOUL_SECS: f32 = 18.0;
 use bevy::prelude::*;
 
 /// The tutorial page the Shattered Realm HUD unlocks when a Shard's boss dies (index 66 of `helpindex.dbr`'s
@@ -314,21 +312,36 @@ pub fn progress(
         else {
             continue;
         };
-        let max = data
-            .db
-            .get(&buff)
-            .and_then(|b| b.f32("skillMaxLevel"))
-            .unwrap_or(1.0)
-            .max(1.0) as u32;
-        e.soul_charges = (e.soul_charges + 1).min(max);
+        // `OneShot_Skill::Use` -> `Skill_ChargedBuffOther::IncrementCharge(skillIncrement)` (default 1): below
+        // the cap the charge grows by the increment, then is clamped to the cap, the buff's `skillChargeLevel` at
+        // the skill's level (one value in every stock record).
+        let buff_rec = data.db.get(&buff);
+        let max = buff_rec
+            .and_then(|b| gd_sim::stats::level_value(b, "skillChargeLevel", 0))
+            .unwrap_or(0.0)
+            .max(0.0) as u32;
+        let inc = rec.f32("skillIncrement").unwrap_or(1.0).max(0.0) as u32;
+        e.soul_charges = e.soul_charges.saturating_add(inc).min(max);
         debug!("endless: essence {item}: soul charges {}", e.soul_charges);
+        if e.soul_charges == 0 {
+            continue;
+        }
         if let Ok((player, list)) = players.single_mut() {
             // `Skill_ChargedBuffOther::TargetResult` at the charge's level (`crate::play_stats`).
             stats.write(crate::play_stats::PlayStat::Essence {
                 buff: buff.clone(),
                 level: e.soul_charges,
             });
-            // Each pickup refreshes the 18 s timer (PORT: the duration is the engine's, not read from data).
+            // Each pickup refreshes the buff for the buff's `skillChargeDuration` at the charge level (`TargetResult`).
+            let secs = buff_rec
+                .and_then(|b| {
+                    gd_sim::stats::level_value(
+                        b,
+                        "skillChargeDuration",
+                        e.soul_charges as usize - 1,
+                    )
+                })
+                .unwrap_or(0.0);
             let b = ReceivedBuff::new(
                 &data.db,
                 &buff,
@@ -336,7 +349,7 @@ pub fn progress(
                 e.soul_charges as usize - 1,
                 player,
                 Vec::new(),
-                SOUL_SECS,
+                secs,
             );
             match list {
                 Some(mut l) => {
@@ -353,9 +366,10 @@ pub fn progress(
                 .try_insert(gd_game_core::player::ProfileDirty);
         }
     }
-    // The kill chain pays out once it pauses.
+    // The kill chain pays out once it pauses (`Update`: only a positive bonus reaches the timer).
     let kills = e.chain.count;
     if let Some(ms) = e.chain.tick(dt, e.boss_dead, rs)
+        && ms > 0
         && st.game.survival.timer_ms > 0
     {
         st.game.survival.timer_add(ms);

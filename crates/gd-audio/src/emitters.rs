@@ -6,9 +6,9 @@ use super::mixer::{EarGains, OnEnd, Voice, Voice3d, VoiceStart, attach_voice};
 use super::pak::{audible_gain, could_possibly_hear, volume_set};
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
-use gd_sim::sound3d::distance_gain;
 
-/// A placed looping sound: attenuated by [`distance_gain`], panned, and started / stopped by [`loop_rule`]. Spawned
+/// A placed looping sound: attenuated and panned by `Listener::gains` (`gd_sim::sound3d::distance_gain`), its
+/// volume clamped as every voice's (`Listener::voice_volume`), and started / stopped by [`loop_rule`]. Spawned
 /// when its level loads, gone with it. A stereo file's loop (no 3D buffer, `pak` module doc) is not cut by the d²
 /// limit of [`loop_rule`] (`SoundManager::Update` checks the buffer's 3D flag `SoundBuffer.is3d`); `spawnAtCameraY`
 /// is not applied to loops (no stock looping pak has it).
@@ -34,8 +34,8 @@ pub struct Emitter {
 enum LoopState {
     Off,
     Playing,
-    /// `FadeLastPlayedSound`: seconds left of `.2`, the base volume it fades from.
-    Fading(f32, f32, f32),
+    /// `FadeLastPlayedSound`: seconds left of .1, which the pak's `volume` fades over (`SoundManager::Update`).
+    Fading(f32, f32),
 }
 
 pub fn spawn_emitter(
@@ -210,24 +210,24 @@ pub(super) fn emitters(
         };
         let class = em.class;
         let d = at.distance(listener);
-        let base = em.volume
-            * em.ears
-                .as_ref()
-                .map_or(1.0, |_| distance_gain(em.falloff, d));
         if let Some(ears) = &em.ears {
-            ears.set(sounds.listener.gains(at));
+            ears.set(sounds.listener.gains(at, em.falloff));
         }
         match em.state {
-            LoopState::Fading(left, from, total) => {
+            LoopState::Fading(left, total) => {
                 let left = left - time.delta_secs().min(0.1);
                 if left <= 0.0 {
                     debug!("loop {} faded out", em.pak);
                     stop(&mut commands, e);
                     em.state = LoopState::Off;
                 } else {
-                    em.state = LoopState::Fading(left, from, total);
+                    em.state = LoopState::Fading(left, total);
                     if let Some(voice) = voice {
-                        voice.set_volume(from * left / total * sounds.listener.gain_final(class));
+                        voice.set_volume(
+                            sounds
+                                .listener
+                                .voice_volume(class, em.volume * left / total),
+                        );
                     }
                 }
                 continue;
@@ -259,7 +259,7 @@ pub(super) fn emitters(
                 sounds.listener.voices += 1;
                 let ears = file.mono.then(|| {
                     let ears = EarGains::default();
-                    ears.set(sounds.listener.gains(at));
+                    ears.set(sounds.listener.gains(at, em.falloff));
                     ears
                 });
                 em.ears = ears.clone();
@@ -275,7 +275,7 @@ pub(super) fn emitters(
             }
             LoopState::Playing if em.stop.is_some() => {
                 let fade = em.stop.unwrap_or(LOOP_FADE);
-                em.state = LoopState::Fading(fade, base, fade);
+                em.state = LoopState::Fading(fade, fade);
             }
             LoopState::Playing => match loop_rule(true, em.ears.is_some(), em.falloff, d) {
                 LoopStep::Stop => {
@@ -283,10 +283,10 @@ pub(super) fn emitters(
                     stop(&mut commands, e);
                     em.state = LoopState::Off;
                 }
-                LoopStep::Fade => em.state = LoopState::Fading(LOOP_FADE, base, LOOP_FADE),
+                LoopStep::Fade => em.state = LoopState::Fading(LOOP_FADE, LOOP_FADE),
                 _ => {
                     if let Some(voice) = voice {
-                        voice.set_volume(base * sounds.listener.gain_final(class));
+                        voice.set_volume(sounds.listener.voice_volume(class, em.volume));
                     }
                 }
             },

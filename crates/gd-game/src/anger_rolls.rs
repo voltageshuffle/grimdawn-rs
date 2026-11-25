@@ -66,10 +66,18 @@ impl AngerRolls {
     }
 }
 
-/// `ShouldIgnorePets`: the rolled flag, unless every foe on the anger list
-/// is a pet (`is_pet`).
-pub fn ignores_pets(ai: &MonsterAi, is_pet: impl Fn(Entity) -> bool) -> bool {
-    ai.rolls.ignore_pets && ai.anger.iter().any(|(e, _)| !is_pet(*e))
+/// The living characters (`Character::IsAlive`): [`ignores_pets`]' test of an anger-list entry.
+pub type Living<'w, 's> = Query<'w, 's, (), (With<gd_game_core::combat::Combatant>, Without<Dead>)>;
+
+/// `ShouldIgnorePets`: the rolled flag, unless `AngerManager::HasOnlyPetTargets` (no entry on the anger list
+/// is a living character without a master: a dead or despawned target left on the list until the next
+/// `AngerUpdate` tick does not count; `is_pet` tells the pets).
+pub fn ignores_pets(ai: &MonsterAi, is_pet: impl Fn(Entity) -> bool, living: &Living) -> bool {
+    ai.rolls.ignore_pets
+        && ai
+            .anger
+            .iter()
+            .any(|(e, _)| !is_pet(*e) && living.contains(*e))
 }
 
 /// The `Update` part of both rolls (runs before the monster AI).
@@ -84,6 +92,7 @@ pub fn update(
             Without<MonsterAi>,
         ),
     >,
+    living: Living,
 ) {
     let dt = time.delta_secs();
     // (foe, position, a pet, its anger multiplier), gathered at the frame's first roll.
@@ -120,7 +129,7 @@ pub fn update(
                 })
                 .collect()
         });
-        let skip_pets = ignores_pets(&ai, |e| foes.iter().any(|f| f.0 == e && f.2));
+        let skip_pets = ignores_pets(&ai, |e| foes.iter().any(|f| f.0 == e && f.2), &living);
         let (view, view_y) = (ai.view, ai.view_y());
         let seen: Vec<(Entity, f32)> = foes
             .iter()

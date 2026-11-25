@@ -4,12 +4,15 @@
 //!
 //! Skills window undo (`UISkillPane` in GrimDawn.exe: click callback
 //! `UISkillPane::OnButtonClick`, undo = `UISkillPane::Undo`, `UISkillPane::OnHide`,
-//! enable flag in `UISkillPane::Update`): every point spent in the window
-//! is recorded per skill ([`SkillUndo`], the entry's `SkillUndoEntry.delta`; the window's
-//! `UISkillPane.undoPending` "something to undo" flag = a non-empty record). The button is enabled
-//! only while that flag is set; undo takes every recorded level back, returns the
-//! points and empties the record (it is all-or-nothing, not a stack). Hiding the
-//! window ([`CommitSkillUndo`]) clears the record, making the spending permanent.
+//! enable flag in `UISkillPane::Update`): every point spent in the window is recorded per pane, i.e. per
+//! mastery (class tree), and per skill ([`SkillUndo`], the entry's `SkillUndoEntry.delta`; the pane's
+//! `UISkillPane.undoPending` "something to undo" flag = a non-empty record). A pane's button is enabled
+//! only while its flag is set; its undo ([`UndoSkillPoints`] naming the tree) takes every level recorded in
+//! that pane back, returns those points and empties that record alone (all-or-nothing, not a stack): the
+//! other pane keeps its spending. `UISkillPane::Undo` only walks its own skill list and re-checks no
+//! requirement: each skill gets its own delta back. Nothing can be left orphaned, because a skill only
+//! requires its own tree's mastery bar and every level that bar gained in this pane is reverted with it.
+//! Hiding the window ([`CommitSkillUndo`]) clears every record, making the spending permanent.
 //! Only skill points: attributes and devotion have their own buttons.
 //! In reclamation mode (`crate::reclamation`) a click refunds a point instead;
 //! the record keeps it as a negative entry and counts the refunds (the window's
@@ -104,43 +107,74 @@ pub struct RaiseSkill {
     pub skill: String,
 }
 
-/// Undo every skill point spent since the skills window opened.
-#[derive(Message, Debug, Clone, Copy)]
-pub struct UndoSkillPoints;
+/// Undo the skill points spent in the skills window's pane of class tree `tree` since the window opened.
+#[derive(Message, Debug, Clone)]
+pub struct UndoSkillPoints {
+    pub tree: String,
+}
 
 /// The skills window was hidden: the spent points stay.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CommitSkillUndo;
 
-/// Changes made in the open skills window: (skill, levels: spent > 0,
-/// refunded < 0) in order of first change, and the refunds made.
-#[derive(Resource, Default, Debug, Clone)]
-pub struct SkillUndo {
+/// One pane's changes in the open skills window: (skill, levels: spent > 0, refunded < 0) in order of first
+/// change, and the refunds made (`UISkillPane.refundCount`).
+#[derive(Default, Debug, Clone)]
+pub struct PaneUndo {
+    pub tree: String,
     pub levels: Vec<(String, i32)>,
     pub refunds: u32,
 }
 
+/// The open skills window's changes, per pane (module doc).
+#[derive(Resource, Default, Debug, Clone)]
+pub struct SkillUndo {
+    pub panes: Vec<PaneUndo>,
+}
+
 impl SkillUndo {
-    /// Whether the window's undo button is enabled.
-    pub fn available(&self) -> bool {
-        !self.levels.is_empty()
+    fn pane(&mut self, tree: &str) -> &mut PaneUndo {
+        let i = match self
+            .panes
+            .iter()
+            .position(|p| p.tree.eq_ignore_ascii_case(tree))
+        {
+            Some(i) => i,
+            None => {
+                self.panes.push(PaneUndo {
+                    tree: tree.to_owned(),
+                    ..default()
+                });
+                self.panes.len() - 1
+            }
+        };
+        &mut self.panes[i]
     }
 
-    /// Records `delta` levels of `skill`.
-    pub fn record(&mut self, skill: &str, delta: i32) {
-        match self
-            .levels
+    /// The trees whose pane's undo button is enabled.
+    pub fn pending(&self) -> Vec<String> {
+        self.panes
+            .iter()
+            .filter(|p| !p.levels.is_empty())
+            .map(|p| p.tree.clone())
+            .collect()
+    }
+
+    /// Records `delta` levels of `skill` in the pane of `tree`.
+    pub fn record(&mut self, tree: &str, skill: &str, delta: i32) {
+        let levels = &mut self.pane(tree).levels;
+        match levels
             .iter_mut()
             .find(|(s, _)| s.eq_ignore_ascii_case(skill))
         {
             Some(e) => e.1 += delta,
-            None => self.levels.push((skill.to_owned(), delta)),
+            None => levels.push((skill.to_owned(), delta)),
         }
     }
 
-    fn clear(&mut self) {
-        self.levels.clear();
-        self.refunds = 0;
+    /// Counts one refund made in the pane of `tree`.
+    pub fn refund(&mut self, tree: &str) {
+        self.pane(tree).refunds += 1;
     }
 }
 
@@ -238,7 +272,7 @@ fn raise_skills(
             loadout.skills.inactive.insert(skill.to_ascii_lowercase());
         }
         progress.progress.skill_points -= 1;
-        undo.record(skill, 1);
+        undo.record(tree, skill, 1);
         info!(
             "skill point spent: {skill} -> {} ({} left)",
             loadout.skills.level(skill),
@@ -257,32 +291,43 @@ fn undo_skill_points(
     mut undo: ResMut<SkillUndo>,
     mut progress: ResMut<PlayerProgress>,
     // Option: created with the player (`reclamation::init_reclamation`); no refunds before it exists.
-    reclaim: Option<ResMut<crate::reclamation::SkillReclamation>>,
+    mut reclaim: Option<ResMut<crate::reclamation::SkillReclamation>>,
     mut players: Query<(Entity, &mut Loadout), With<Player>>,
 ) {
-    let undone = undos.read().count() > 0;
     let committed = commits.read().count() > 0;
-    if undone && let Ok((player, mut loadout)) = players.single_mut() {
-        for (skill, d) in undo.levels.drain(..) {
-            if d > 0 {
-                loadout.skills.lower(&skill, d as u32);
-            } else {
-                loadout.skills.restore(&skill, d.unsigned_abs());
+    if let Ok((player, mut loadout)) = players.single_mut() {
+        for UndoSkillPoints { tree } in undos.read() {
+            let Some(i) = undo
+                .panes
+                .iter()
+                .position(|p| p.tree.eq_ignore_ascii_case(tree))
+            else {
+                continue;
+            };
+            let pane = undo.panes.swap_remove(i);
+            for (skill, d) in pane.levels {
+                if d > 0 {
+                    loadout.skills.lower(&skill, d as u32);
+                } else {
+                    loadout.skills.restore(&skill, d.unsigned_abs());
+                }
+                progress.progress.skill_points += d;
             }
-            progress.progress.skill_points += d;
+            if let Some(r) = reclaim.as_mut()
+                && pane.refunds > 0
+            {
+                let n = pane.refunds.min(r.used);
+                let back = gd_sim::reclamation::payback(&data.db, r.used, n);
+                r.used -= n;
+                crate::loot::add_gold(&mut progress.gold, back as i64);
+                info!("reclamation: undo {n} refund(s), {back} iron bits back");
+            }
+            commands.entity(player).insert(ProfileDirty);
         }
-        if let Some(mut r) = reclaim
-            && undo.refunds > 0
-        {
-            let n = undo.refunds.min(r.used);
-            let back = gd_sim::reclamation::payback(&data.db, r.used, n);
-            r.used -= n;
-            crate::loot::add_gold(&mut progress.gold, back as i64);
-            info!("reclamation: undo {n} refund(s), {back} iron bits back");
-        }
-        undo.refunds = 0;
-        commands.entity(player).insert(ProfileDirty);
-    } else if committed {
-        undo.clear();
+    } else {
+        undos.clear();
+    }
+    if committed {
+        undo.panes.clear();
     }
 }

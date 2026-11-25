@@ -61,7 +61,7 @@ pub(super) fn monster_ai(
     mut slot_q: crate::melee::SlotQuery,
     skills: Query<&crate::monster_skills::MonsterSkills>,
     starts: Query<&gd_game_core::casting::ChargeStarts>,
-    (mut commands, mode, lead_targets, mut anim_cache, mut crowd, sleepers, charging): (
+    (mut commands, mode, lead_targets, mut anim_cache, mut crowd, sleepers, charging, living): (
         Commands,
         Res<gd_game_core::session::GameMode>,
         Query<
@@ -79,6 +79,7 @@ pub(super) fn monster_ai(
             Has<gd_game_core::casting::Charge>,
             Option<&crate::casting::ChargePursuit>,
         )>,
+        crate::anger_rolls::Living,
     ),
 ) {
     let dt = time.delta_secs();
@@ -200,6 +201,7 @@ pub(super) fn monster_ai(
                 foes,
                 &pets,
                 |e| super::ai::asleep(&sleepers, e),
+                &living,
                 dt,
             );
         }

@@ -566,9 +566,9 @@ pub(super) fn apply_hits(
             && let Ok((c, p)) = casters.get_mut(target)
         {
             if let Some(mut c) = c {
-                c.energy = (c.energy + hit.energy_absorbed).min(tprof.sheet.energy);
+                c.energy = (c.energy + hit.energy_absorbed).min(tprof.sheet.usable_energy());
             } else if let Some(mut p) = p {
-                p.energy = (p.energy + hit.energy_absorbed).min(tprof.sheet.energy);
+                p.energy = (p.energy + hit.energy_absorbed).min(tprof.sheet.usable_energy());
             }
         }
         debug!(
@@ -676,9 +676,11 @@ pub(super) fn apply_hits(
                         && let Ok((lc, lp)) = casters.get_mut(link.target)
                     {
                         if let Some(mut c) = lc {
-                            c.energy = (c.energy + r.energy_absorbed).min(lprof.sheet.energy);
+                            c.energy =
+                                (c.energy + r.energy_absorbed).min(lprof.sheet.usable_energy());
                         } else if let Some(mut p) = lp {
-                            p.energy = (p.energy + r.energy_absorbed).min(lprof.sheet.energy);
+                            p.energy =
+                                (p.energy + r.energy_absorbed).min(lprof.sheet.usable_energy());
                         }
                     }
                     counters.write(CounterHit {
@@ -747,9 +749,11 @@ pub(super) fn apply_hits(
                     && let Ok((c, p)) = casters.get_mut(attacker)
                 {
                     if let Some(mut c) = c {
-                        c.energy = (c.energy + r.energy_absorbed).min(own_prof.sheet.energy);
+                        c.energy =
+                            (c.energy + r.energy_absorbed).min(own_prof.sheet.usable_energy());
                     } else if let Some(mut p) = p {
-                        p.energy = (p.energy + r.energy_absorbed).min(own_prof.sheet.energy);
+                        p.energy =
+                            (p.energy + r.energy_absorbed).min(own_prof.sheet.usable_energy());
                     }
                 }
                 counters.write(CounterHit {
@@ -831,9 +835,9 @@ pub(super) fn apply_hits(
             && let Ok((c, p)) = casters.get_mut(attacker)
         {
             if let Some(mut c) = c {
-                c.energy = (c.energy + r.energy_absorbed).min(own_prof.sheet.energy);
+                c.energy = (c.energy + r.energy_absorbed).min(own_prof.sheet.usable_energy());
             } else if let Some(mut p) = p {
-                p.energy = (p.energy + r.energy_absorbed).min(own_prof.sheet.energy);
+                p.energy = (p.energy + r.energy_absorbed).min(own_prof.sheet.usable_energy());
             }
         }
         // Retaliation convert joins the attacker to the defender (`TakeAttack` style 3 runs `Execute` alike).

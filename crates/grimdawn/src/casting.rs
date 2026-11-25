@@ -117,14 +117,20 @@ fn release_mouse_on_focus_loss(
 }
 
 /// Potion keys (scan codes 19/18 = actions 30/29, named by `KeyBindings::GetActionByName`):
-/// R health, E energy; not while the UI took the input.
+/// R health, E energy; not while the UI took the input, nor while the riftgate map, a conversation or the
+/// altar menu takes the keys (as the hot slot keys).
 fn potion_input(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
     capture: Res<UiCapture>,
+    (rift_map, altar, dialog): (
+        Res<gd_game::riftgates::RiftgateMap>,
+        Res<gd_ui::state::ascendant::AltarMenu>,
+        Res<gd_game::conversation::Conversation>,
+    ),
     mut out: MessageWriter<UsePotion>,
 ) {
-    if capture.0 {
+    if capture.0 || rift_map.open || dialog.view.is_some() || altar.open {
         return;
     }
     if bindings.just_pressed(gd_ui_kit::keys::DRINK_HEALTH, &keys) {

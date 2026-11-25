@@ -11,12 +11,11 @@
 //! still apply to it.
 use super::Sounds;
 use super::cache::Loaded;
-use super::listener::{BaseVolume, Listener, SoundClass, VOICES, sound};
+use super::listener::{Listener, SoundClass, VOICES, sound};
 use super::mixer::{EarGains, OnEnd, PlaysWhilePaused, Voice3d, attach_voice};
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_game_core::data::GameData;
-use gd_sim::sound3d::distance_gain;
 use std::sync::Arc;
 
 /// The frequency every engine sound buffer is set to unless pitched: `SoundDescriptor::SoundDescriptor`
@@ -219,7 +218,6 @@ fn start_named(
         .map(|(pos, falloff)| Positioned {
             target: on,
             at: pos,
-            volume: info.volume,
             falloff: falloff.max(0.1),
             ears: EarGains::default(),
         });
@@ -271,7 +269,9 @@ pub(super) fn replay_pending(
     }
 }
 
-/// Starts a file, as a 3D voice at `place` or else plain.
+/// Starts a file, as a 3D voice at `place` or else plain. `volume` is the sound's own
+/// ([`BaseVolume`](super::listener::BaseVolume)); a 3D voice's distance gain and pan are its [`EarGains`]
+/// ([`Listener::gains`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_voice(
     commands: &mut Commands,
@@ -288,13 +288,11 @@ pub(super) fn start_voice(
         attach_voice(commands, e, Voice3d::of(file, false, None));
         return e;
     };
-    let mut base = volume;
-    if let Some(ears) = listener.ears {
-        base *= distance_gain(place.falloff, place.at.distance(ears));
-        place.ears.set(listener.gains(place.at));
-    }
+    place.ears.set(listener.gains(place.at, place.falloff));
     let voice = Voice3d::of(file, false, Some(place.ears.clone()));
-    let e = commands.spawn((place, sound(class, base, end, speed))).id();
+    let e = commands
+        .spawn((place, sound(class, volume, end, speed)))
+        .id();
     attach_voice(commands, e, voice);
     e
 }
@@ -377,31 +375,27 @@ pub(super) fn numbered(rec: &Record, key: &str) -> Vec<String> {
 pub struct Positioned {
     pub(super) target: Option<Entity>,
     pub(super) at: Vec3,
-    pub(super) volume: f32,
     pub(super) falloff: f32,
     pub(super) ears: EarGains,
 }
 
-/// [`Positioned`] sounds' distance gain and ear gains for this frame's listener (the volume itself is applied by
-/// `mixer::mix` when the [`BaseVolume`] changes).
+/// [`Positioned`] sounds' 3D gains (distance and pan, [`Listener::gains`]) for this frame's listener; their own volume
+/// ([`BaseVolume`](super::listener::BaseVolume)) stays as it started.
 pub(super) fn positioned_sounds(
-    mut q: Query<(&mut Positioned, &mut BaseVolume)>,
+    mut q: Query<&mut Positioned>,
     at: Query<&GlobalTransform>,
     sounds: Res<Sounds>,
 ) {
-    let Some(listener) = sounds.listener.ears else {
+    if sounds.listener.ears.is_none() {
         return;
-    };
-    for (mut p, mut base) in &mut q {
+    }
+    for mut p in &mut q {
         match p.target.map(|t| at.get(t)) {
             Some(Ok(g)) => p.at = g.translation(),
             Some(Err(_)) => p.target = None,
             None => {}
         }
-        base.set_if_neq(BaseVolume(
-            p.volume * distance_gain(p.falloff, p.at.distance(listener)),
-        ));
-        p.ears.set(sounds.listener.gains(p.at));
+        p.ears.set(sounds.listener.gains(p.at, p.falloff));
     }
 }
 

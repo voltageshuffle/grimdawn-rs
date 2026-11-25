@@ -65,8 +65,15 @@ pub fn teleport_landing(nav: &gd_sim::nav::NavWorld, dest: Vec3) -> Option<Vec3>
 }
 
 /// `NavManager::FindStraightMovePointOnSlopes(from, to)`: the farthest point toward `to` that the straight line from
-/// `from` reaches over walkable ground. PORT: the nav ground is walked in 0.25 m steps (as the evade's), stopping at
-/// the first step without ground or 1.5 m above / below the last; `from` itself when the first step fails.
+/// `from` reaches over walkable ground. A step a dynamic obstacle covers (a closed door) ends it too: the skills'
+/// drop and spawn points call it with its nav probe (`NavManager::ProbeWalkableHeight`), which misses the polygons
+/// the tile cache carved around the obstacle, and a plain move or an evade checks its point with
+/// `NavManager::FindStraightMovePoint`'s raycast over the same mesh (PORT: the keyboard aim's call, without the
+/// probe, stops there too). PORT: the nav ground is walked in 0.25 m steps, stopping at the first step without
+/// ground, 1.5 m above / below the last or on a cell whose centre (or the step itself) an obstacle covers
+/// ([`NavWorld::set_obstacles`]); `from` itself when the first step fails.
+///
+/// [`NavWorld::set_obstacles`]: gd_sim::nav::NavWorld::set_obstacles
 pub fn straight_move_point(nav: &gd_sim::nav::NavWorld, from: Vec3, to: Vec3) -> Vec3 {
     let flat = (to - from).with_y(0.0);
     let dist = flat.length();
@@ -78,7 +85,14 @@ pub fn straight_move_point(nav: &gd_sim::nav::NavWorld, from: Vec3, to: Vec3) ->
     for i in 1..=steps {
         let p = from + flat * (i as f32 / steps as f32);
         match nav.ground([p.x, at.y + 1.0, p.z]) {
-            Some(g) if (g - at.y).abs() < 1.5 => at = Vec3::new(p.x, g, p.z),
+            Some(g) if (g - at.y).abs() < 1.5 => {
+                let p = Vec3::new(p.x, g, p.z);
+                let cell = nav.locate([p.x, g + 0.5, p.z]).map(|c| nav.pos(c));
+                if cell.is_none_or(|c| nav.blocked(c) || nav.blocked(p.to_array())) {
+                    break;
+                }
+                at = p;
+            }
             _ => break,
         }
     }

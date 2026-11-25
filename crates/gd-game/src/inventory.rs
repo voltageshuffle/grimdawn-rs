@@ -56,7 +56,10 @@ impl Plugin for InventoryPlugin {
             .add_systems(
                 Update,
                 (
-                    init_inventory.in_set(InventoryStage::Init),
+                    // A session's own (a `Player` outside one must not build a new character's inventory).
+                    init_inventory
+                        .in_set(InventoryStage::Init)
+                        .run_if(resource_exists::<gd_game_core::session::SessionReady>),
                     sync_requirements
                         .in_set(InventoryStage::Requirements)
                         .run_if(resource_exists::<Inventory>),

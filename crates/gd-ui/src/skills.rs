@@ -8,9 +8,34 @@
 //! the points line and the reclaim money/price texts belong to the mastery pane
 //! only (`skills_classpanelconfiguration.dbr` / `skillpanebase.tpl`), not the
 //! selection table (`masterypane.tpl`), so they are drawn only when the active
-//! tab has a chosen mastery. Hovering a skill shows its tooltip (`tooltip`, text from
+//! tab shows a mastery pane. Hovering a skill shows its tooltip (`tooltip`, text from
 //! `gd_sim::skill_tooltip`). Left click spends a point
 //! (`gd_sim::skills` rules). Skills the rules refuse are drawn darkened.
+//!
+//! Selection pane (`MasterySelectPane::Load`, `masterypane.tpl`): hovering a mastery button (`UIButton::HitTest`, which
+//! ignores the disabled state; `MasterySelectPane::HandleMouseEvent`) makes it the described one
+//! ([`UiPanels::mastery_hover`](super::UiPanels)); it stays described after the cursor leaves, until the pane is
+//! replaced (a pick, an undo-pick, a new session: a new pane). `MasterySelectPane::Update` then shows its
+//! `masteryMasterySelectedBitmapNames` image in `masterySelectedMasteryBitmap` and its
+//! `masteryMasterySelectedDescriptionTags` text in `masterySelectedMasteryDescription`, a child of
+//! `masterySelectedMasteryDescriptionScrollWindow` widened to the window's width − 20 with its height fitted to the
+//! text; nothing described yet: the record's own image and `masteryDefaultTextTag`. The pane plays no narration
+//! (no sound besides the buttons' `soundNameDown`; Sound.arc holds no class narration), and `masteryConfirmSelectionButton`
+//! is never read (no `tagSkillMasteryConfirm` text either): the pick is confirmed by the mastery point below.
+//! PORT: the description is drawn unscrolled (the stock texts fit the scroll window) and without `GenderizeText`
+//! (no gender markup in the stock description texts).
+//!
+//! Picking a mastery spends nothing (`MasterySelectPane::OnButtonClick` → `SkillsWindow::SetPane`): that slot's
+//! selection pane is swapped for the mastery's `UISkillPane` ([`UiPanels::mastery_picks`](super::UiPanels)),
+//! whose mastery bar is then raised like any skill (`UISkillPane::OnButtonClick`, `SubtractSkillPoint`). The window
+//! keeps one pane per slot (`SkillsWindow::BuildPanes` / `SetPane`): a slot's pane stays until replaced, so a picked
+//! mastery keeps its slot whatever its points; only an empty slot takes a chosen mastery (loaded, in tree order),
+//! else it shows a selection pane. A slot's selection buttons are enabled while `GetSkillMasteriesAllowed` covers
+//! that slot (≥ slot + 1; `MasterySelectPane::SetEnabled`), points or not, except the other slot's mastery (disabled
+//! on the selection pane). While a pane's mastery skill is at 0
+//! (`UISkillPane::IsMasteryUnchosen`; e.g. after the points undo) and outside reclamation mode, the pane draws
+//! `undoMasterySelectionButton`, which brings back that slot's selection alone (`SkillsWindow::SetPane` with the
+//! selection pane); the other slot keeps its pane.
 //!
 //! Input, `Grim Dawn.exe`: the skill buttons sit in the pane's push button group (`UISkillPane.buttonGroup`, mouse
 //! `UIPushButtonGroup::HandleMouseEvent`): only a left press (event type 1) on an enabled button calls the click
@@ -53,8 +78,16 @@ pub enum SkillHit {
         tree: String,
         skill: String,
     },
-    /// `undoButton`: revert the points spent since the window opened.
-    Undo,
+    /// A mastery on a slot's selection pane (`skill` = its mastery skill, for the tooltip): shows its pane there.
+    Pick {
+        slot: u8,
+        tree: String,
+        skill: String,
+    },
+    /// `undoMasterySelectionButton` on a slot's pane: back to that slot's selection pane.
+    UndoPick(u8),
+    /// `undoButton` on the pane of `tree`: revert the points spent there since the window opened.
+    Undo(String),
     Close,
 }
 
@@ -63,6 +96,8 @@ pub enum SkillHit {
 pub struct SkillLayout {
     pub window: Option<URect>,
     pub hits: Vec<(SkillHit, URect)>,
+    /// The selection pane's mastery buttons (`masteryMasteryButtons` index): hovering one describes it.
+    pub masteries: Vec<(u8, URect)>,
 }
 
 /// Registers the button record at `rec`'s press sound (`soundNameDown`, `ui/widgets.rs`) for its rect `r`.
@@ -81,7 +116,31 @@ fn chosen(ui: &Ui, values: &HudValues) -> Vec<(u32, String)> {
         .collect()
 }
 
-pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
+/// The (class number, tree) of the pane each slot shows, `None` for its selection pane (module doc): the slot's
+/// pick, else the chosen masteries no slot shows fill the empty slots in order.
+fn slots(ui: &Ui, values: &HudValues, picks: &[Option<String>; 2]) -> [Option<(u32, String)>; 2] {
+    let trees = class_trees(&ui.data.db);
+    let mut slots = picks
+        .clone()
+        .map(|p| p.and_then(|p| trees.iter().find(|(_, t)| *t == p).cloned()));
+    for m in chosen(ui, values) {
+        if !slots.iter().flatten().any(|(_, t)| *t == m.1)
+            && let Some(s) = slots.iter_mut().find(|s| s.is_none())
+        {
+            *s = Some(m);
+        }
+    }
+    slots
+}
+
+/// `picks`: [`UiPanels::mastery_picks`](super::UiPanels); `hover`: [`UiPanels::mastery_hover`](super::UiPanels).
+pub fn build(
+    ui: &mut Ui,
+    values: &HudValues,
+    tab: u8,
+    picks: &[Option<String>; 2],
+    hover: Option<u8>,
+) {
     let Some(m) = ui.record(MASTER) else { return };
     let field = |k: &str| m.str(k).map(str::to_string).unwrap_or_default();
     let w = WindowDef::from_record(&m).screen_rect(ui.screen.x, ui.screen.y, ui.s);
@@ -89,7 +148,7 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
     ui.sound_blocker(w);
     let mut layout = SkillLayout {
         window: Some(w),
-        hits: Vec::new(),
+        ..default()
     };
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&field("skillsBaseBitmap")) {
         ui.bitmap(&bitmap, x, y, o);
@@ -98,9 +157,14 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
         layout.hits.push((SkillHit::Close, r));
     }
     let masteries = chosen(ui, values);
-    let can_select = masteries.len() < 2;
-    let ntabs = masteries.len() + can_select as usize;
-    let tab = (tab.max(1) as usize).min(ntabs.max(1));
+    // Tab n shows slot n − 1; the second slot's tab once the first holds a mastery's pane or the second does.
+    let panes = slots(ui, values, picks);
+    let ntabs = if panes.iter().all(Option::is_none) {
+        1
+    } else {
+        2
+    };
+    let tab = (tab.max(1) as usize).min(ntabs);
     // Tabs sized to their titles, contiguous in the records' x order (mastery 1, the devotion
     // graphic, mastery 2 / select) and centred on the stock strip's centre.
     let tab_style = "records/ui/styles/text/style_special_classtabs.dbr";
@@ -113,7 +177,7 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
         let Some(b) = (if i == tab { down.or(up) } else { up }) else {
             continue;
         };
-        let title = match masteries.get(i - 1) {
+        let title = match &panes[i - 1] {
             Some((n, _)) => ui
                 .record(&field(&format!("skillCtrlPane{n}")))
                 .and_then(|t| t.str("skillTabTitle").map(str::to_string))
@@ -181,8 +245,9 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
             .unwrap_or(44.0)),
     );
     let level = values.level as i32;
-    let in_mastery = masteries.get(tab - 1).is_some();
-    match masteries.get(tab - 1) {
+    let slot = tab - 1;
+    let in_mastery = panes[slot].is_some();
+    match &panes[slot] {
         Some((n, tree)) => mastery_pane(
             ui,
             values,
@@ -194,21 +259,49 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
         ),
         None => select_pane(
             ui,
-            values,
             &field("masterySelectWindow"),
             pane_o,
-            level,
+            (
+                slot as u8,
+                panes[1 - slot].as_ref().map(|(_, t)| t.as_str()),
+            ),
+            (level, hover),
             &mut layout,
         ),
     }
     // Undo button (`undoButton`, `ButtonStaticText`; the disabled bitmap while
-    // nothing was spent since the window opened, `UISkillPane::Update`:
+    // nothing was spent in this pane since the window opened, `UISkillPane::Update`:
     // disabled flag = no pending change; click = the `UISkillPane` virtual
     // `UISkillPane::Undo`, see `gd_game::points`) and the points line (`pointsRemaining`; localized
     // `SkillPointsAvailable{,Singular}` / `NoSkillPointsAvailable` in `^r`,
     // GrimDawn.exe `UISkillPane::Update`). Mastery-pane only: the selection
     // table has no undo/points fields, so neither is drawn on a free slot.
-    if in_mastery {
+    // A pane whose mastery has no point draws `undoMasterySelectionButton` instead, outside reclamation mode (module
+    // doc).
+    if let Some(pane) = &panes[slot] {
+        let unchosen = !masteries.contains(pane);
+        if unchosen
+            && values.reclaim.is_none()
+            && let Some(ur) = base
+                .as_ref()
+                .and_then(|b| b.str("undoMasterySelectionButton").map(str::to_string))
+                .and_then(|p| ui.record(&p))
+            && let Some(r) = super::widgets::static_button(
+                ui,
+                &ur,
+                pane_o,
+                true,
+                false,
+                super::widgets::Label::Record,
+            )
+        {
+            ui.record_button_sound(r, &ur);
+            layout.hits.push((SkillHit::UndoPick(slot as u8), r));
+        }
+        let pending = values
+            .skill_undo
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(&pane.1));
         let undo = base
             .as_ref()
             .and_then(|b| b.str("undoButton").map(str::to_string))
@@ -218,17 +311,17 @@ pub fn build(ui: &mut Ui, values: &HudValues, tab: u8) {
                     ui,
                     &ur,
                     pane_o,
-                    values.skill_undo,
+                    pending,
                     false,
                     super::widgets::Label::Record,
                 )?;
                 Some((ur, r))
             });
         if let Some((ur, r)) = undo
-            && values.skill_undo
+            && pending
         {
             ui.record_button_sound(r, &ur);
-            layout.hits.push((SkillHit::Undo, r));
+            layout.hits.push((SkillHit::Undo(pane.1.clone()), r));
         }
         if let Some(r) = base
             .as_ref()
@@ -847,12 +940,14 @@ fn mastery_pane(
     // (only the constructor and destructor touch the field).
 }
 
+/// `(slot, other)`: the slot shown and the other slot's mastery (tree); `(level, hover)`: the character level and
+/// [`UiPanels::mastery_hover`](super::UiPanels).
 fn select_pane(
     ui: &mut Ui,
-    values: &HudValues,
     table: &str,
     po: Vec2,
-    level: i32,
+    (slot, other): (u8, Option<&str>),
+    (level, hover): (i32, Option<u8>),
     layout: &mut SkillLayout,
 ) {
     let Some(t) = ui.record(table) else { return };
@@ -861,14 +956,43 @@ fn select_pane(
     {
         ui.bitmap(&bitmap, x, y, po);
     }
+    // The described mastery's image and text, else the record's image and the default text (module doc).
+    let described =
+        |k: &str| hover.and_then(|i| t.strs(k).get(usize::from(i)).map(|s| s.to_string()));
+    let (image, text) = match (
+        described("masteryMasterySelectedBitmapNames"),
+        described("masteryMasterySelectedDescriptionTags"),
+    ) {
+        (Some(image), Some(tag)) => (Some(image), tag),
+        _ => (
+            None,
+            t.str("masteryDefaultTextTag").unwrap_or("").to_string(),
+        ),
+    };
+    if let Some(Widget::Bitmap { bitmap, x, y }) =
+        ui.widget(t.str("masterySelectedMasteryBitmap").unwrap_or(""))
+    {
+        ui.bitmap(&image.unwrap_or(bitmap), x, y, po);
+    }
+    let rec = |ui: &Ui, k: &str| t.str(k).and_then(|p| ui.record(p));
+    if let Some(sw) = rec(ui, "masterySelectedMasteryDescriptionScrollWindow")
+        && let Some(d) = rec(ui, "masterySelectedMasteryDescription")
+        && let Some(style) = d.str("style").map(str::to_string)
+    {
+        let num = |k: &str| sw.f32(k).unwrap_or(0.0);
+        let tb = TextBox::from_record(&d);
+        let w = ui.sc(num("width") - 20.0);
+        let x = po.x + ui.sc(num("positionX") + tb.rect.x);
+        let mut y = po.y + ui.sc(num("positionY") + tb.rect.y);
+        let lh = ui.line_height(&style);
+        let text = super::quests::plain(ui.fonts.tag(&text));
+        for l in ui.wrap_lines(&style, w, &text) {
+            super::widgets::label(ui, URect::new(x, y, w, lh), &style, tb.align_x, &l);
+            y += lh;
+        }
+    }
     let trees = class_trees(&ui.data.db);
-    let chosen: Vec<String> = ui
-        .data
-        .skill_trees()
-        .learned(&values.skills)
-        .map(|t| t.path.clone())
-        .collect();
-    let free = masteries_allowed(level) > chosen.len() && values.skill_points > 0;
+    let free = masteries_allowed(level) > usize::from(slot);
     let texts: Vec<String> = t
         .strs("masteryMasteryText")
         .into_iter()
@@ -889,15 +1013,17 @@ fn select_pane(
         else {
             continue;
         };
-        let usable = free && !chosen.contains(tree);
+        let usable = free && other != Some(tree.as_str());
         let bmp = if usable { up } else { disabled.or(up) };
         let Some((_, r)) = bmp.and_then(|b| ui.bitmap(&b, x, y, po)) else {
             continue;
         };
+        layout.masteries.push((i as u8, r));
         if usable && let Some(mastery) = tree_skills(&ui.data.db, tree).first().cloned() {
             button_sound(ui, r, &b);
             layout.hits.push((
-                SkillHit::Raise {
+                SkillHit::Pick {
+                    slot,
                     tree: tree.clone(),
                     skill: mastery,
                 },
@@ -952,7 +1078,13 @@ pub fn clicks(
         Option<Res<gd_game::reclamation::SkillReclamation>>,
     ),
     mut was_open: Local<bool>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    // A pick is the old character's pane (`SkillsWindow::SetPane`): a new session starts on a new selection.
+    if fresh.begun() {
+        panels.mastery_picks = Default::default();
+        panels.mastery_hover = None;
+    }
     // The window hid (`UISkillPane::OnHide`): the spent points are final.
     if *was_open && !panels.skills {
         commit.write(gd_game::points::CommitSkillUndo);
@@ -967,7 +1099,12 @@ pub fn clicks(
     let scripted = gd_game_core::hooks::take_due(script, time.elapsed_secs()).map(|c| c.at);
     let (p, clicked) = match scripted {
         Some(p) => (p, true),
-        None => match super::cursor_px(&hooks, win) {
+        // `GD_SKILL_HOVER` (hooks.rs) fakes the cursor, as for the tooltip.
+        None => match hooks
+            .ui
+            .skill_hover
+            .or_else(|| super::cursor_px(&hooks, win))
+        {
             Some(c) => (c, super::widgets::button_pressed(&buttons)),
             None => return,
         },
@@ -977,6 +1114,12 @@ pub fn clicks(
         return;
     }
     capture.0 = true;
+    // Hovering a mastery button describes it (module doc).
+    if let Some(&(i, _)) = layout.masteries.iter().find(|(_, r)| contains(r, p))
+        && panels.mastery_hover != Some(i)
+    {
+        panels.mastery_hover = Some(i);
+    }
     if !clicked {
         return;
     }
@@ -995,8 +1138,17 @@ pub fn clicks(
             panels.skills = false;
             panels.devotion = true;
         }
-        SkillHit::Undo => {
-            undo.write(gd_game::points::UndoSkillPoints);
+        SkillHit::Undo(tree) => {
+            undo.write(gd_game::points::UndoSkillPoints { tree: tree.clone() });
+        }
+        // Both replace that slot's pane alone: a new selection pane describes nothing yet.
+        SkillHit::Pick { slot, tree, .. } => {
+            panels.mastery_picks[usize::from(*slot)] = Some(tree.clone());
+            panels.mastery_hover = None;
+        }
+        SkillHit::UndoPick(slot) => {
+            panels.mastery_picks[usize::from(*slot)] = None;
+            panels.mastery_hover = None;
         }
         // In reclamation mode a click takes a point back (`gd_game::reclamation`).
         SkillHit::Raise { tree, skill } if reclaim.as_ref().is_some_and(|r| r.skills_mode()) => {
@@ -1060,7 +1212,11 @@ pub fn tooltip(
 
     let hover = match (&layout, cursor) {
         (l, Some(p)) if panels.skills => l.hits.iter().find_map(|(h, r)| match h {
-            SkillHit::Raise { tree, skill } if contains(r, p) => Some((tree, skill, *r)),
+            SkillHit::Raise { tree, skill } | SkillHit::Pick { tree, skill, .. }
+                if contains(r, p) =>
+            {
+                Some((tree, skill, *r))
+            }
             _ => None,
         }),
         _ => None,

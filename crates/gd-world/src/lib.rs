@@ -132,8 +132,6 @@ struct Linger {
 
 impl Lingering {
     /// Lingering levels let go so far: their assets were freed if nothing else holds them.
-    // Read only by `heap.rs`'s trim, which exists on glibc only.
-    #[cfg_attr(not(all(target_os = "linux", target_env = "gnu")), expect(dead_code))]
     pub fn released(&self) -> u64 {
         self.released
     }
@@ -207,7 +205,6 @@ impl StreamedMap {
     }
 
     /// Levels are still building or spawning (`heap.rs` holds its trim until streaming settles).
-    #[cfg_attr(not(all(target_os = "linux", target_env = "gnu")), expect(dead_code))]
     pub fn busy(&self) -> bool {
         !self.pending.is_empty() || !self.spawning.is_empty()
     }
@@ -1893,17 +1890,24 @@ pub fn open_session_map(
 }
 
 /// Despawns the levels streamed so far: their roots, with their trees and the skeleton joints of the models in
-/// them (`model::Joints`).
+/// them (`model::Joints`), and the partial roots of the levels still spawning; their nav, collision and decal
+/// receivers go with them (the new map's levels reuse the region indices).
 fn drop_streamed_levels(world: &mut World) {
-    let roots: Vec<Entity> = world
+    let mut roots: Vec<Entity> = world
         .resource::<gd_game_core::levels::Levels>()
         .loaded
         .values()
         .copied()
         .collect();
+    if let Some(mut map) = world.get_resource_mut::<StreamedMap>() {
+        roots.extend(map.spawning.drain().filter_map(|(_, job)| job.root));
+    }
     for e in roots {
         if let Ok(e) = world.get_entity_mut(e) {
             e.despawn();
         }
     }
+    world.insert_resource(Nav::default());
+    world.insert_resource(gd_game::collision::WorldCollision::default());
+    world.insert_resource(gd_render::decal::DecalReceivers::default());
 }

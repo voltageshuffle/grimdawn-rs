@@ -139,6 +139,9 @@ pub fn begin(
             world.insert_resource(crate::save::AutoSave::created());
         }
         world.insert_resource(choice);
+        // The exit's baseline, in this step: nothing of the session exists yet (`SessionBaseline`).
+        let alive = world.iter_entities().map(|e| e.id()).collect();
+        world.insert_resource(gd_game_core::session::SessionBaseline(alive));
         world.insert_resource(SessionReady);
     });
 }
@@ -186,6 +189,7 @@ pub fn end_session_state(world: &mut World) {
     world.insert_resource(crate::nav::Nav::default());
     world.insert_resource(crate::collision::WorldCollision::default());
     world.insert_resource(gd_game_core::world::ChestStates::default());
+    world.insert_resource(crate::doors::DoorStates::default());
     world.insert_resource(crate::save::BoxedItems::default());
     world.insert_resource(crate::patrol::PatrolGroups::default());
     world.insert_resource(crate::monsters::ProxyStates::default());

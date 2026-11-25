@@ -633,7 +633,9 @@ pub(crate) fn tick(
         // Leech over time: drained from this character, given to the source
         // 1:1, the gain capped at the life / energy the target has left
         // (`DurationDamageManager::ExecuteDamage` types 20/21;
-        // characters without energy give none); per frame here.
+        // characters without energy give none); per frame here. An invincible
+        // target loses no life (`Character::SubtractLife`), so its life leech heals nothing.
+        let invincible_now = invincible.contains(e);
         for l in a.leech.iter_mut() {
             let secs = dt.min(l.2);
             l.2 -= dt;
@@ -643,7 +645,11 @@ pub(crate) fn tick(
             }
             match l.0 {
                 T::LifeLeech => {
-                    let take = amount.min((cb.life - lost).max(0.0));
+                    let take = if invincible_now {
+                        0.0
+                    } else {
+                        amount.min((cb.life - lost).max(0.0))
+                    };
                     lost += amount;
                     credits.push((l.3, T::LifeLeech, take));
                     took.push((l.3, amount));
@@ -913,7 +919,7 @@ pub(crate) fn tick(
         if ty == T::LifeLeech {
             cb.life = (cb.life + amount).min(cb.profile.sheet.life);
         } else if let Some(mut c) = caster {
-            c.energy = (c.energy + amount).min(cb.profile.sheet.energy);
+            c.energy = (c.energy + amount).min(cb.profile.sheet.usable_energy());
         }
     }
 }

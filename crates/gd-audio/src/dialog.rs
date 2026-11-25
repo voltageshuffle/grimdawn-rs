@@ -129,7 +129,6 @@ pub(super) fn npc_voices(
         let place = file.mono.then(|| Positioned {
             target: None,
             at: line.at,
-            volume: VOICE_VOLUME,
             falloff: NPC_VOICE_FALLOFF,
             ears: EarGains::default(),
         });

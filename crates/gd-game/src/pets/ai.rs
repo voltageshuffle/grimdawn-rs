@@ -71,7 +71,11 @@ pub(super) fn pet_ai(
     owners: Query<&Transform, (With<Combatant>, Without<Pet>)>,
     mut slot_q: crate::melee::SlotQuery,
     charges: PetCharges,
-    rooted: Query<(), With<crate::movement::Rooted>>,
+    // Rooted pets, and the characters' sleep (`ignoreSleepingEnemies`).
+    (rooted, sleepers): (
+        Query<(), With<crate::movement::Rooted>>,
+        crate::combat::Sleepers,
+    ),
     mut pets: Query<
         (
             Entity,
@@ -179,27 +183,85 @@ pub(super) fn pet_ai(
             (e, tf.translation, cb.life, frac(cb), side_of(j), by_leader)
         }));
     }
-    // Hits taken (`ControllerMonster::UnderAttack`): at most every 500 ms the
-    // attacker gains `AttackedAnger` (a monster has no master to share it).
+    // The pets as foes of one another (a converted one and the rest).
+    struct OtherPet {
+        e: Entity,
+        at: Vec3,
+        radius: f32,
+        side: crate::combat::Side,
+        /// `angerMultiplier` (0 without `causesAnger`).
+        mult: f32,
+        /// Life percent (`AngerManager::Update`'s entry value for the health comparator).
+        life: f32,
+    }
+    let life_pct = |cb: &Combatant| cb.life.max(0.0) / cb.profile.sheet.life.max(1.0) * 100.0;
+    let pet_sides: Vec<OtherPet> = pets
+        .iter()
+        .map(|(e, tf, pet, cb, _, _, j)| OtherPet {
+            e,
+            at: tf.translation,
+            radius: cb.radius,
+            side: side_of(j),
+            mult: if pet.causes_anger {
+                pet.anger_multiplier
+            } else {
+                0.0
+            },
+            life: life_pct(cb),
+        })
+        .collect();
+    // `AngerManager::AddAnger` scales anger by the target's `angerMultiplier`; one without `causesAnger` gets none
+    // (`ShouldRemoveEnemy`), as `combat::anger_from_hits`: a monster's `as_target`, a pet's record, else 1.
+    let anger_mult = |m: Entity| -> f32 {
+        match chars.get(m) {
+            Ok((.., sd)) => sd.ai.map_or(1.0, |ai| {
+                if ai.as_target.causes_anger {
+                    ai.as_target.anger_multiplier
+                } else {
+                    0.0
+                }
+            }),
+            Err(_) => pet_sides.iter().find(|p| p.e == m).map_or(1.0, |p| p.mult),
+        }
+    };
+    let position = |m: Entity| -> Option<Vec3> {
+        chars
+            .get(m)
+            .map(|c| c.1.translation)
+            .ok()
+            .or_else(|| pet_sides.iter().find(|p| p.e == m).map(|p| p.at))
+    };
+    // The hit-anger gate decays before this frame's hits (as `combat::monster_ai`): one armed now keeps 500 ms.
+    for (.., mut pet, _, _, _, _) in &mut pets {
+        if pet.anger_timer > 0.0 {
+            pet.anger_timer -= dt;
+        }
+    }
+    // Hits taken (`ControllerMonster::UnderAttack`): only an attacker within the pursuit range (`InPursuitRange`
+    // from the leader) counts; at most every 500 ms it gains `AttackedAnger` (a monster has no master to share it).
     for h in landed.read() {
-        let Ok((_, _, mut pet, ..)) = pets.get_mut(h.target) else {
+        let Ok((_, tf, mut pet, _, _, _, joined)) = pets.get_mut(h.target) else {
             continue;
         };
+        let m = anger_mult(h.attacker);
         if h.taunt > 0.0 {
-            add_anger(&mut pet.anger, h.attacker, h.taunt);
+            add_anger(&mut pet.anger, h.attacker, h.taunt * m);
         }
-        if pet.anger_timer > 0.0 {
+        let leader = joined.map_or(pet.owner, |j| j.leader);
+        let in_range = owners
+            .get(leader)
+            .or_else(|_| owners.get(pet.owner))
+            .is_ok_and(|l| {
+                position(h.attacker)
+                    .is_some_and(|p| pet.ctl.in_pursuit(l.translation, p, tf.translation))
+            });
+        if !in_range || pet.anger_timer > 0.0 {
             continue;
         }
         pet.anger_timer = 0.5;
-        let amount = pet.ctl.attacked_anger;
+        let amount = pet.ctl.attacked_anger * m;
         add_anger(&mut pet.anger, h.attacker, amount);
     }
-    // The pets as foes of one another (a converted one and the rest): (entity, position, radius, side).
-    let pet_sides: Vec<(Entity, Vec3, f32, crate::combat::Side)> = pets
-        .iter()
-        .map(|(e, tf, _, cb, _, _, j)| (e, tf.translation, cb.radius, side_of(j)))
-        .collect();
     for (e, mut tf, mut pet, mut cb, mut ch, casting, joined) in &mut pets {
         let Ok(otf) = owners.get(pet.owner) else {
             commands.entity(e).try_despawn();
@@ -254,11 +316,11 @@ pub(super) fn pet_ai(
             pet.startup = false;
         }
         cb.cooldown -= dt;
-        pet.anger_timer -= dt;
-        // Energy regenerates up to the maximum (`CharacterBio::
-        // UpdateHealthAndMana`).
-        pet.energy =
-            (pet.energy + cb.profile.sheet.energy_regen_per_sec * dt).min(cb.profile.sheet.energy);
+        pet.find_timer -= dt;
+        // Energy regenerates up to the cap (`CharacterBio::
+        // UpdateHealthAndMana`; max − reserve, as the player's).
+        pet.energy = (pet.energy + cb.profile.sheet.energy_regen_per_sec * dt)
+            .min(cb.profile.sheet.usable_energy());
         let found_enemy = pet.found_enemy;
         for s in &mut pet.specials {
             s.timer -= dt;
@@ -273,12 +335,6 @@ pub(super) fn pet_ai(
         // A foe counts within `MaxPursuitDistance` of the leader and
         // `MaxYViewDistance` in height (`InPursuitRange`).
         let in_pursuit = |p: Vec3, me: Vec3| ctl.in_pursuit(owner, p, me);
-        // Forgiving, then sight anger (`ProcessAngerTarget`).
-        let forgive = ctl.forgive * dt;
-        if forgive > 0.0 {
-            pet.anger.iter_mut().for_each(|a| a.1 -= forgive);
-            pet.anger.retain(|a| a.1 >= 0.0);
-        }
         let me = tf.translation;
         // A foe of the pet's side, alive: (entity, position, radius).
         let foe_at = |m: Entity| -> Option<(Entity, Vec3, f32)> {
@@ -289,37 +345,69 @@ pub(super) fn pet_ai(
                 }
                 Err(_) => pet_sides
                     .iter()
-                    .find(|p| p.0 == m && m != e && side.foe(p.3.as_ref()))
-                    .map(|p| (p.0, p.1, p.2)),
+                    .find(|p| p.e == m && m != e && side.foe(p.side.as_ref()))
+                    .map(|p| (p.e, p.at, p.radius)),
             }
         };
-        let (inner, rate, inner_rate) = ctl.sight;
-        // The sight sphere (`GetCharactersInSphere`, as the monsters' `combat::sight`) skips a
-        // character that causes no anger (`CausesAnger`: a training dummy, a turret); an attack order or a hit
-        // still makes it a target.
-        let seen = chars
-            .iter()
-            .filter(|c| {
-                side.foe(c.3.side_ref()) && c.3.ai.is_none_or(|ai| ai.as_target.causes_anger)
-            })
-            .map(|c| (c.0, c.1.translation))
-            .chain(
-                pet_sides
-                    .iter()
-                    .filter(|p| p.0 != e && side.foe(p.3.as_ref()))
-                    .map(|p| (p.0, p.1)),
-            );
-        for (m, mt) in seen {
-            let d = mt.distance(me);
-            if d > ctl.view || !in_pursuit(mt, me) {
-                continue;
+        let ignored = |m: Entity| ctl.ignore_sleeping && crate::combat::asleep(&sleepers, m);
+        // `AngerUpdate` (as the monsters' `combat::sight_anger`): every 250 ms forgiving and dropping the entries
+        // `ShouldRemoveEnemy` refuses (gone, dead, a friend, asleep while `ignoreSleepingEnemies`), then the sight
+        // anger × the elapsed ticks.
+        pet.anger_tick -= dt;
+        if pet.anger_tick < 0.0 {
+            let ticks = (1.0 - pet.anger_tick / 0.25).floor().max(1.0);
+            pet.anger_tick += 0.25 * ticks;
+            let secs = 0.25 * ticks;
+            let forgive = ctl.forgive * secs;
+            pet.anger.retain_mut(|a| {
+                a.1 -= forgive;
+                a.1 >= 0.0 && foe_at(a.0).is_some() && !ignored(a.0)
+            });
+            let (inner, rate, inner_rate) = ctl.sight;
+            // The sight sphere (`GetCharactersInSphere`): foes within `ViewDistance`; one that causes no anger
+            // (`CausesAnger`: a training dummy, a turret) or has `angerMultiplier` 0 (traps, crates, tentacles)
+            // gains none, an attack order still makes it a target.
+            let seen = chars
+                .iter()
+                .filter(|c| c.1.translation.distance(me) <= ctl.view && side.foe(c.3.side_ref()))
+                .map(|c| (c.0, c.1.translation))
+                .chain(
+                    pet_sides
+                        .iter()
+                        .filter(|p| {
+                            p.e != e && p.at.distance(me) <= ctl.view && side.foe(p.side.as_ref())
+                        })
+                        .map(|p| (p.e, p.at)),
+                );
+            for (m, mt) in seen {
+                let mult = anger_mult(m);
+                if mult <= 0.0 || !in_pursuit(mt, me) || ignored(m) {
+                    continue;
+                }
+                // `pathingViewDistance`: a foe whose path is longer gains nothing (a failed search passes).
+                if ctl.pathing_view > 0.0
+                    && let Some(path) = nav.0.find_path(
+                        &mut scratch.borrow_mut(),
+                        me.to_array(),
+                        mt.to_array(),
+                        crate::nav::PATH_BUDGET,
+                    )
+                    && path
+                        .windows(2)
+                        .map(|w| Vec3::from(w[0]).distance(Vec3::from(w[1])))
+                        .sum::<f32>()
+                        > ctl.pathing_view
+                {
+                    continue;
+                }
+                let d = mt.distance(me);
+                let r = if d < inner {
+                    inner_rate
+                } else {
+                    (1.0 - d / ctl.view.max(1e-3) * 0.1) * rate
+                };
+                add_anger(&mut pet.anger, m, r * secs * mult);
             }
-            let r = if d < inner {
-                inner_rate
-            } else {
-                (1.0 - d / ctl.view.max(1e-3) * 0.1) * rate
-            };
-            add_anger(&mut pet.anger, m, r * dt);
         }
         // Down or getting up (`crate::ragdoll`): no state is requested until the get-up clip has ended.
         if matches!(ch.state, CharState::KnockedDown | CharState::GettingUp) {
@@ -503,8 +591,13 @@ pub(super) fn pet_ai(
         }
         // Target (`AngerManager::GetNewTarget`): the commanded enemy while it
         // is valid (`IsEnemyValid`; else Pursue "Return"s and the leader
-        // states clear it), else the angriest valid foe. None while a move
-        // command runs (the "Move" state does not fight).
+        // states clear it), else every 200 ms (`FindEnemyUpdate`) the valid foes on the anger list whose
+        // anger (× 1.3 for the current target) reaches `AngerTolerance` and that are not asleep while
+        // `ignoreSleepingEnemies`, ranked by the comparator: the angriest; `petTargetGreatestHealth` the highest
+        // life percent first, then the angriest; a totem's (`SetDistanceAngerComparator`) the nearest. In between
+        // the current target stays while valid. None while a move command runs (the "Move" state does not fight).
+        // PORT: `petTargetLeastAttacked` (no stock controller sets it) and `petTargetLevelRange` (1000 in
+        // every stock one) take no part.
         let target = if pet.moving.is_some() || pet.dodging {
             None
         } else {
@@ -515,16 +608,36 @@ pub(super) fn pet_ai(
             if hated.is_none() {
                 pet.most_hated = None;
             }
-            // A totem's comparator is the distance: the nearest first.
-            let totem = ctl.class == gd_game_core::combat::ControllerClass::Totem;
             hated.or_else(|| {
-                let valid = pet.anger.iter().filter_map(|(m, v)| {
-                    foe_at(*m)
+                if pet.find_timer > 0.0 {
+                    return cb
+                        .target
+                        .and_then(foe_at)
+                        .filter(|(_, mt, _)| in_pursuit(*mt, me));
+                }
+                pet.find_timer += 0.2 * (1.0 - pet.find_timer / 0.2).floor().max(1.0);
+                let totem = ctl.class == gd_game_core::combat::ControllerClass::Totem;
+                let life = |m: Entity| {
+                    chars.get(m).map_or_else(
+                        |_| pet_sides.iter().find(|p| p.e == m).map_or(0.0, |p| p.life),
+                        |c| life_pct(c.2),
+                    )
+                };
+                let valid = pet.anger.iter().filter_map(|&(m, v)| {
+                    let v = v * if cb.target == Some(m) { 1.3 } else { 1.0 };
+                    (v >= ctl.tolerance && !ignored(m))
+                        .then(|| foe_at(m))
+                        .flatten()
                         .filter(|(_, mt, _)| in_pursuit(*mt, me))
-                        .map(|x| (x, *v))
+                        .map(|x| (x, v))
                 });
                 if totem {
                     valid.min_by(|a, b| a.0.1.distance(me).total_cmp(&b.0.1.distance(me)))
+                } else if ctl.greatest_health {
+                    valid
+                        .map(|x| (x, life(x.0.0)))
+                        .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.1.total_cmp(&b.0.1)))
+                        .map(|(x, _)| x)
                 } else {
                     valid.max_by(|a, b| a.1.total_cmp(&b.1))
                 }

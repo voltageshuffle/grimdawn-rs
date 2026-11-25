@@ -1330,7 +1330,7 @@ pub fn world_effects(
     }
 }
 
-/// `Destructible:Destroy`'s timed despawn (`BreakApart`'s bool: byte +2129, 1000 ms at +2124): the
+/// `Destructible:Destroy`'s timed despawn (`BreakApart`'s flag starts a 1000 ms delay): the
 /// broken object leaves the world after the delay; it stays in the story (queryable, broken).
 pub fn despawn_broken(
     time: Res<Time>,

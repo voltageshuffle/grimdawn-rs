@@ -274,6 +274,11 @@ pub struct Pet {
     pub(super) anger: Vec<(Entity, f32)>,
     /// `UnderAttack`'s 500 ms gate.
     pub(super) anger_timer: f32,
+    /// Seconds to the next `AngerUpdate` tick (250 ms period, phase `rand() % 251` ms, as
+    /// `combat::MonsterAi`'s): sight anger and forgiving.
+    pub(super) anger_tick: f32,
+    /// Seconds to the next `FindEnemyUpdate` (200 ms period): the target is picked afresh only then.
+    pub(super) find_timer: f32,
     /// Seconds to the next look at its spot by the owner.
     pub(super) follow_check: f32,
     pub(super) following: bool,
@@ -304,6 +309,14 @@ pub(super) struct PetController {
     pub(super) sight: (f32, f32, f32),
     pub(super) forgive: f32,
     pub(super) attacked_anger: f32,
+    /// `AngerTolerance` (default 10): least anger a target needs (`GetNewTarget`).
+    pub(super) tolerance: f32,
+    /// `pathingViewDistance` (0: off): sight anger only for foes a path no longer than it reaches.
+    pub(super) pathing_view: f32,
+    /// `ignoreSleepingEnemies`: a sleeping foe that is not a player gains no anger and is no target.
+    pub(super) ignore_sleeping: bool,
+    /// `petTargetGreatestHealth`: `GetNewTarget`'s comparator ranks by life percent first.
+    pub(super) greatest_health: bool,
     /// `PursuitTime` (ms) and `randomRepositionChance` (`ControllerMonster`).
     pub(super) pursuit_ms: i32,
     pub(super) random_reposition: i32,
@@ -365,12 +378,12 @@ impl Pet {
     }
 
     /// `ControllerMonster::ProjectileNotification` for a pet (`dodge.rs`
-    /// module docs): `at` is the foe's projectile, `from` its owner.
+    /// module docs): `at` is the foe's projectile, `from` its owner, `mult` the owner's anger multiplier.
     pub fn projectile_notified(
         &mut self,
         e: Entity,
         (me, radius, at): (Vec3, f32, Vec3),
-        (from, state): (Entity, CharState),
+        (from, state, mult): (Entity, CharState, f32),
         nav: &Nav,
         scratch: &mut gd_sim::nav::PathScratch,
     ) {
@@ -410,7 +423,7 @@ impl Pet {
             self.dodging = true;
             self.following = false;
         }
-        add_anger(&mut self.anger, from, anger);
+        add_anger(&mut self.anger, from, anger * mult);
         self.dodge_timer = delay;
     }
 }
@@ -460,6 +473,10 @@ impl PetController {
             ),
             forgive: f("ForgiveRate", 50.0),
             attacked_anger: f("AttackedAnger", 100.0),
+            tolerance: f("AngerTolerance", 10.0),
+            pathing_view: f("pathingViewDistance", 0.0),
+            ignore_sleeping: ctl.is_some_and(|c| c.bool("ignoreSleepingEnemies")),
+            greatest_health: ctl.is_some_and(|c| c.bool("petTargetGreatestHealth")),
             pursuit_ms: ctl.and_then(|c| c.i32("PursuitTime")).unwrap_or(10000),
             random_reposition: ctl
                 .and_then(|c| c.i32("randomRepositionChance"))

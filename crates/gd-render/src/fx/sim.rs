@@ -409,9 +409,24 @@ impl EmitterState {
 
     fn update_particles(&mut self, d: &Data, dt: f32, dtc: f32) {
         let (gravity_dt, drag_k) = if d.converge() { (0.0, 0.0) } else { (dtc, 1.0) };
-        let rot_half = d.curve(c::ROTATION_SPEED).range * 0.5;
-        let grav_half = d.curve(c::GRAVITY).range * 0.5;
-        let orbit_half = d.curve(c::ORBIT).range * 0.5;
+        // The per-particle curves, looked up once per emitter instead of per particle.
+        let (size, stretch, orbit, spin, gravity, drag) = (
+            d.curve(c::SIZE),
+            d.curve(c::STRETCH),
+            d.curve(c::ORBIT),
+            d.curve(c::ROTATION_SPEED),
+            d.curve(c::GRAVITY),
+            d.curve(c::DRAG),
+        );
+        let (red, green, blue, alpha) = (
+            d.curve(c::RED),
+            d.curve(c::GREEN),
+            d.curve(c::BLUE),
+            d.curve(c::ALPHA),
+        );
+        let rot_half = spin.range * 0.5;
+        let grav_half = gravity.range * 0.5;
+        let orbit_half = orbit.range * 0.5;
         let local = d.local();
         let frames = self.frames as i32;
         // Drag is applied once per engine update (no dt): the engine
@@ -435,24 +450,27 @@ impl EmitterState {
                 }
                 continue;
             }
-            p.size = d.curve(c::SIZE).eval(age) * self.scale;
-            p.stretch = d.curve(c::STRETCH).eval(age);
+            p.size = size.eval(age) * self.scale;
+            p.stretch = stretch.eval(age);
             p.pos += p.vel * dt;
-            let orbit = d.curve(c::ORBIT).eval(age);
-            if (orbit - orbit_half).abs() >= 0.01 && local {
-                p.pos = Mat3::from_rotation_y((orbit - orbit_half) * dt) * p.pos;
+            // Orbit turns only a local emitter's particles (the curve is not read otherwise).
+            if local {
+                let orbit = orbit.eval(age);
+                if (orbit - orbit_half).abs() >= 0.01 {
+                    p.pos = Mat3::from_rotation_y((orbit - orbit_half) * dt) * p.pos;
+                }
             }
-            p.rotation += (d.curve(c::ROTATION_SPEED).eval(age) - rot_half) * dt;
-            p.vel.y -= (d.curve(c::GRAVITY).eval(age) - grav_half) * gravity_dt;
-            let drag = d.curve(c::DRAG).eval(age) * drag_k;
-            if drag != 0.0 {
-                p.vel *= (1.0 - drag).max(0.0).powf(drag_steps);
+            p.rotation += (spin.eval(age) - rot_half) * dt;
+            p.vel.y -= (gravity.eval(age) - grav_half) * gravity_dt;
+            let slow = drag.eval(age) * drag_k;
+            if slow != 0.0 {
+                p.vel *= (1.0 - slow).max(0.0).powf(drag_steps);
             }
             p.color = Vec4::new(
-                d.curve(c::RED).eval(age),
-                d.curve(c::GREEN).eval(age),
-                d.curve(c::BLUE).eval(age),
-                d.curve(c::ALPHA).eval(age),
+                red.eval(age),
+                green.eval(age),
+                blue.eval(age),
+                alpha.eval(age),
             );
             self.max_alpha = self.max_alpha.max(p.color.w);
             p.frame = if d.fps != 0 {

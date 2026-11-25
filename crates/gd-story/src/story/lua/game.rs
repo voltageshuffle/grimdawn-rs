@@ -650,11 +650,13 @@ impl ScriptHost {
                         e.entrance_door = door;
                         e.generated = start.unwrap_or(e.generated + 1);
                         e.next_id += 1;
-                        // `EndlessDungeon_Generator::Clear`: bossDead and the section's timer latch
-                        // (`EndlessDungeon_Generator.timerLatch`) reset, the timer-ran / bonus flags
-                        // (`EndlessDungeon_Generator.timerRan` / `EndlessDungeon_Generator.bonusFlag`) are kept.
+                        // `EndlessDungeon_Generator::Clear`: bossDead, the section's timer latch
+                        // (`EndlessDungeon_Generator.timerLatch`) and the kill chain's counter reset, the timer-ran /
+                        // bonus flags (`EndlessDungeon_Generator.timerRan` / `EndlessDungeon_Generator.bonusFlag`) are
+                        // kept.
                         e.boss_dead = false;
                         e.timer_started = false;
+                        e.chain.count = 0;
                         let mut recent = std::mem::take(&mut e.recent);
                         let d = crate::endless::generate(
                             &rs,

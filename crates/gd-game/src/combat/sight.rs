@@ -12,7 +12,8 @@ use super::*;
 /// `InPursuitRange`, else `InnerSightAngerRate` within `InnerViewDistance`,
 /// else `SightAngerRate` × (1 − 0.1 × distance / `ViewDistance`), per
 /// second. There is no line-of-sight test anywhere on this path. The same
-/// tick runs `AngerManager::Update` (forgiving) with the elapsed time.
+/// tick runs `AngerManager::Update` (forgiving, and `ShouldRemoveEnemy` dropping dead, despawned and friendly
+/// entries) with the elapsed time.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sight_anger(
     time: Res<Time>,
@@ -31,6 +32,7 @@ pub(super) fn sight_anger(
     // A converted pet is seen as a creature of its joined pack (`JoinedPack`).
     joined: Query<(Entity, &GlobalTransform, &crate::pets::Pet, &JoinedPack), Without<Dead>>,
     sleepers: super::ai::Sleepers,
+    living: crate::anger_rolls::Living,
 ) {
     let dt = time.delta_secs();
     let seen: Vec<(Entity, Vec3, f32)> = foes
@@ -70,6 +72,9 @@ pub(super) fn sight_anger(
         }));
     }
     let index = gd_sim::grid::Grid::new(grid::CELL, rivals.iter().map(|r| grid::xz(r.1)));
+    // The rivals by entity: `ShouldRemoveEnemy`'s friend test of a monster on an anger list.
+    let rival_of: bevy::ecs::entity::EntityHashMap<usize> =
+        rivals.iter().enumerate().map(|(i, r)| (r.0, i)).collect();
     let (mut near, mut mine): (Vec<usize>, Vec<(Entity, Vec3, f32)>) = (Vec::new(), Vec::new());
     for (me_e, gt, mut ai, allied) in &mut monsters {
         ai.anger_tick -= dt;
@@ -93,6 +98,23 @@ pub(super) fn sight_anger(
         if ignore_sleeping {
             ai.anger.retain(|a| !super::ai::asleep(&sleepers, a.0));
         }
+        // `ShouldRemoveEnemy` drops the rest of the entries that are no enemy any more: gone or dead
+        // (`IsAlive`), or a monster / converted pet whose pack is now a friend of this one (`FactionManager::
+        // IsFriend`). PORT: the player's side is never dropped as a friend (an `Allied` monster's anger at it
+        // stays until forgiven; it never targets it, `FoeLists`).
+        {
+            let ai = &mut *ai;
+            let faction = &ai.faction;
+            ai.anger.retain(|a| {
+                let friend = rival_of.get(&a.0).is_some_and(|&i| {
+                    match (faction, rivals[i].3.and_then(|p| packs[p].as_ref())) {
+                        (Some(mine), Some(theirs)) => mine.is_friend(theirs),
+                        _ => false,
+                    }
+                });
+                living.contains(a.0) && !friend
+            });
+        }
         // The sight anger first, then `AngerManager::Update`'s snapshot (`GetAngerDiff`'s base).
         'sight: {
             if ai.view <= 0.0 {
@@ -101,7 +123,7 @@ pub(super) fn sight_anger(
             let me = gt.translation();
             let (inner, rate, inner_rate) = ai.sight;
             // `ShouldIgnorePets` leaves pets out of the sphere (anger_rolls.rs).
-            let skip_pets = crate::anger_rolls::ignores_pets(&ai, |e| pets.contains(e));
+            let skip_pets = crate::anger_rolls::ignores_pets(&ai, |e| pets.contains(e), &living);
             // The player and their pets for a hostile monster, and the monsters of foe factions in view (`IsFoe(me, it)`).
             let players: &[(Entity, Vec3, f32)] = if allied { &[] } else { &seen };
             mine.clear();
@@ -198,6 +220,7 @@ pub(super) fn anger_from_hits(
     tfs: Query<&GlobalTransform>,
     pets: Query<&crate::pets::Pet>,
     mut calls: Local<Vec<(Entity, Entity)>>,
+    living: crate::anger_rolls::Living,
 ) {
     if landed.is_empty() && killed.is_empty() {
         return;
@@ -237,7 +260,7 @@ pub(super) fn anger_from_hits(
         }
         // While ignoring pets a pet's hit is not passed on to its master
         // (`UnderAttack`, anger_rolls.rs): the pet gets both shares.
-        let ignoring = crate::anger_rolls::ignores_pets(&ai, |e| pets.contains(e));
+        let ignoring = crate::anger_rolls::ignores_pets(&ai, |e| pets.contains(e), &living);
         let master = pets
             .get(h.attacker)
             .map_or(h.attacker, |p| if ignoring { h.attacker } else { p.owner });

@@ -98,6 +98,7 @@
 use crate::monster_skills::MonsterSkills;
 use crate::pets::Pet;
 use bevy::prelude::*;
+use gd_formats::collections::HashMap;
 use gd_formats::vfs::Database;
 use gd_game_core::combat::Dead;
 use gd_game_core::data::GameData;
@@ -284,6 +285,36 @@ fn hash_names<'a>(h: &mut impl Hasher, names: impl Iterator<Item = (&'a str, usi
     }
 }
 
+/// What a character's effect sources are read from: whether it is dead, its buff, aura and toggle names
+/// with their levels ([`sync_skill_fx`]'s signature, hashed with the port's hasher every frame).
+struct SourceNames<'a> {
+    dead: bool,
+    loadout: Option<&'a Loadout>,
+    auras: Option<&'a ReceivedBuffs>,
+    pet: Option<&'a Pet>,
+    ms: Option<&'a MonsterSkills>,
+}
+
+impl Hash for SourceNames<'_> {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.dead.hash(h);
+        if let Some(l) = self.loadout {
+            hash_names(h, l.buffs.list.iter().map(|b| (b.0.as_str(), b.1)));
+        }
+        if let Some(a) = self.auras {
+            hash_names(h, a.list.iter().map(|b| (b.buff.as_str(), b.level_index)));
+        }
+        if let Some(p) = self.pet {
+            hash_names(h, p.toggled().iter().map(|b| (b.0.as_str(), b.1)));
+            hash_names(h, p.buffs().iter().map(|b| (b.0.as_str(), b.1)));
+        }
+        if let Some(m) = self.ms {
+            hash_names(h, m.toggled().iter().map(|b| (b.0.as_str(), b.1)));
+            hash_names(h, m.buffs.list.iter().map(|b| (b.0.as_str(), b.1)));
+        }
+    }
+}
+
 /// Keeps every character's [`WeaponEnchantments`] and its toggles'
 /// [`ToggleFx`] effects in step with the buffs on it (module docs).
 #[allow(clippy::too_many_arguments)]
@@ -303,11 +334,14 @@ pub fn sync_skill_fx(
     fx: Query<(Entity, &BuffFx, &ToggleFx)>,
 ) {
     let db = &data.db;
+    // The toggle effects by owner, gathered once on the first rebuild of the frame (the commands apply after the
+    // loop, so the query reads the same all through it): a buff landing on a crowd rebuilds many characters at once.
+    let mut by_owner: Option<HashMap<Entity, Vec<(Entity, &str, &Vec<String>)>>> = None;
     for (e, loadout, links, pet, ms, auras, ench, dead) in &mut chars {
         if loadout.is_none() && pet.is_none() && ms.is_none() {
             continue;
         }
-        // No buffs, toggles or auras (most characters): the signature is just `dead`, without SipHash. The hash of the
+        // No buffs, toggles or auras (most characters): the signature is just `dead`, without hashing. The hash of the
         // names has its top bit set, so the two kinds never collide.
         let bare = loadout.is_none_or(|l| l.buffs.list.is_empty())
             && auras.is_none_or(|a| a.list.is_empty())
@@ -316,26 +350,13 @@ pub fn sync_skill_fx(
         let sig = if bare {
             dead as u64
         } else {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            dead.hash(&mut h);
-            if let Some(l) = loadout.as_deref() {
-                hash_names(&mut h, l.buffs.list.iter().map(|b| (b.0.as_str(), b.1)));
-            }
-            if let Some(a) = auras {
-                hash_names(
-                    &mut h,
-                    a.list.iter().map(|b| (b.buff.as_str(), b.level_index)),
-                );
-            }
-            if let Some(p) = pet {
-                hash_names(&mut h, p.toggled().iter().map(|b| (b.0.as_str(), b.1)));
-                hash_names(&mut h, p.buffs().iter().map(|b| (b.0.as_str(), b.1)));
-            }
-            if let Some(m) = ms {
-                hash_names(&mut h, m.toggled().iter().map(|b| (b.0.as_str(), b.1)));
-                hash_names(&mut h, m.buffs.list.iter().map(|b| (b.0.as_str(), b.1)));
-            }
-            h.finish() | 1 << 63
+            gd_formats::collections::hash_one(SourceNames {
+                dead,
+                loadout: loadout.as_deref(),
+                auras,
+                pet,
+                ms,
+            }) | 1 << 63
         };
         let loadout_changed = loadout.as_ref().is_some_and(|l| l.is_changed())
             || links.as_ref().is_some_and(|l| l.is_changed());
@@ -390,12 +411,17 @@ pub fn sync_skill_fx(
         }
         // Toggle effects: restart the ones whose paks changed, stop the
         // ones whose toggle went off.
-        let have: Vec<(Entity, &str, &Vec<String>)> = fx
-            .iter()
-            .filter(|(_, b, _)| b.owner == e)
-            .map(|(f, b, t)| (f, b.skill.as_str(), &t.0))
-            .collect();
-        for (f, key, paks) in &have {
+        let by_owner = by_owner.get_or_insert_with(|| {
+            let mut m: HashMap<Entity, Vec<_>> = HashMap::default();
+            for (f, b, t) in &fx {
+                m.entry(b.owner)
+                    .or_default()
+                    .push((f, b.skill.as_str(), &t.0));
+            }
+            m
+        });
+        let have = by_owner.get(&e).map_or(&[][..], Vec::as_slice);
+        for (f, key, paks) in have {
             if !sources.iter().any(|s| {
                 s.key == *key && &s.paks == *paks && (!s.paks.is_empty() || s.aura.is_some())
             }) {

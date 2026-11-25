@@ -105,7 +105,8 @@ pub(super) fn fade_sounds(
     }
 }
 
-/// The two ears' gains of one playing 3D voice, shared with the mixing thread.
+/// The two ears' gains of one playing 3D voice (distance gain × pan, `Listener::gains`), shared with the mixing
+/// thread; they scale the voice's clamped volume.
 #[derive(Clone, Default)]
 pub struct EarGains(Arc<[AtomicU32; 2]>);
 
@@ -964,7 +965,7 @@ pub(super) fn mix(
         if let Some(b) = base
             && (reread || voice.is_changed() || b.is_changed())
         {
-            voice.set_volume(b.0 * l.gain_final(*class));
+            voice.set_volume(l.voice_volume(*class, b.0));
         }
         if repause || voice.is_changed() {
             let play = !pause.unfocused && (exempt || !pause.paused());

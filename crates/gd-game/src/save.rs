@@ -12,7 +12,7 @@
 //! [`new_character`] (named by `GD_NAME`, default "Player"; [`NewCharacter`], rolled once per session, so
 //! every save keeps its UID and seed); level,
 //! experience, points, attributes (`Loadout::bio` plus every spent point, `Loadout::allocated`, baked in
-//! like `BioStore::allocate`; the load splits them off again, `player::split_bio`), money, the loot filter options, equipment (both weapon sets and the active one), bags, the personal stash, skill levels and the skill refund count (`crate::reclamation`), discovered riftgates and respawn points, the lore codex (`lore.rs`), the unlocked tutorial pages (`tutorials.rs`),
+//! like `BioStore::allocate`; the load splits them off again, `player::split_bio`), money, the loot filter options, equipment (both weapon sets and the active one), bags, the personal stash, skill levels, the mastery slot count (`gd_sim::skills::masteries_allowed` of the level, never lowered) and the skill refund count (`crate::reclamation`), discovered riftgates and respawn points, the lore codex (`lore.rs`), the unlocked tutorial pages (`tutorials.rs`),
 //! the devotions, factions, play stats, the header's class name tag (`gd_sim::progress::class_tag`) and
 //! the story state are replaced; the rest of the template is written back unchanged. The transfer stash goes to
 //! `transfer.gst` in the session's shared folder (the save folder root; `<mod>/` in a custom game:
@@ -46,11 +46,13 @@
 //!
 //! Order and failures: the shared files are written first, then `player.gdc`, `map.dat`, `map.fow` and the story
 //! files. Each file is written on its own (write then rename): a failure is logged, the remaining files are still
-//! written, and the save reports every file it could not write. The item stores (transfer stash, reagents) go
-//! before the character, and when one of them fails the character's files are not written this time: the disk
-//! keeps the last save's character beside the last save's store, so an item moved between the bags and that store
-//! is never in neither file (a failed `player.gdc` after the stores leaves it in both, a duplicate). PORT: the
-//! engine has no such rule; the next save tries again. The story
+//! written, and the save reports every file it could not write. The files an item moves between, the item stores
+//! (transfer stash, reagents, and the blueprints a read blueprint item becomes) and `player.gdc`, are all written
+//! to their temp files first and renamed in (stores first) only when every one was written; else none is, nor
+//! the character's other files: the disk keeps the last save's character beside the last save's stores, so an
+//! item moved either way between the bags and a store is never in neither file. Only a failed rename can still
+//! split them (the character's after the stores': an item moved into a store is in both, one taken out in
+//! neither). PORT: the engine has no such rule; the next save tries again. The story
 //! files are the current difficulty's `quests.gdd` / `conversations.gdd` and, when they changed, the other
 //! difficulties' `quests.gdd` (their rewarded flags, set by a completion on a higher difficulty:
 //! `gd_story::story::save`); a difficulty with no file gets one only when the story holds quest state of it.
@@ -174,6 +176,11 @@ fn build_gdc(
     g.bio.attribute_points = p.attribute_points.max(0) as u32;
     g.bio.skill_points = p.skill_points.max(0) as u32;
     g.header.level = g.bio.level;
+    // `SkillManager::UpdateMasteriesAllowed` (on every experience gain) opens the mastery slots of the level.
+    g.skills.masteries_allowed = g
+        .skills
+        .masteries_allowed
+        .max(gd_sim::skills::masteries_allowed(p.level) as u32);
     // Every spent attribute point goes into the bio (`BioStore::allocate`) on the base without them
     // (`Loadout::bio`, `player::split_bio`; a new character's is the template's).
     let l = &rules.levels;
@@ -530,6 +537,14 @@ pub fn write_map_dat(
 }
 
 pub(crate) fn write(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    // Write then rename, so a crash never leaves half a save.
+    let tmp = stage(path, bytes)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// [`write`]'s first half: `bytes` in the temp file beside `path`, which the caller renames over `path`.
+fn stage(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<std::path::PathBuf> {
     anyhow::ensure!(
         !path.to_string_lossy().contains(LIVE_SAVES),
         "refusing to write into the game's save folder: {}",
@@ -538,11 +553,9 @@ pub(crate) fn write(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> 
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    // Write then rename, so a crash never leaves half a save.
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    Ok(tmp)
 }
 
 /// Writes the account-wide `file` into the session's shared folder (`Choice::shared_file`), unless it
@@ -555,15 +568,28 @@ pub(crate) fn write_shared(
     file: Shared,
     bytes: &[u8],
 ) -> anyhow::Result<()> {
+    match shared_target(shared, choice, save_dir, file) {
+        Some(path) => write(&path, bytes),
+        None => Ok(()),
+    }
+}
+
+/// Where [`write_shared`] writes `file`; None (logged) for a file it leaves as it is.
+fn shared_target(
+    shared: &gd_game_core::stash::SharedFiles,
+    choice: &gd_game_core::session::Choice,
+    save_dir: &SaveDir,
+    file: Shared,
+) -> Option<std::path::PathBuf> {
     let path = choice.shared_file(save_dir, file);
     if !shared.writable(&path) {
         error!(
             "save: {} was unreadable at load and is not written",
             path.display()
         );
-        return Ok(());
+        return None;
     }
-    write(&path, bytes)
+    Some(path)
 }
 
 /// Save now (the game sends it for F5 and when the window closes).
@@ -611,6 +637,9 @@ pub fn create_character(
     // The session's difficulty, as `session::begin` and `save_game` set it; no challenge in the Crucible.
     let mode = gd_rules::mode::Mode::new(difficulty, veteran && choice.survival.is_none());
     g.info.last_difficulty = gd_game_core::session::last_difficulty(mode, choice);
+    // Not in the game yet (`Player::GetHasBeenInGame`): its first entry gets the intro, the new-character time of
+    // day and tutorial page 7 (`crate::entry`); the session's saves set the flag.
+    g.info.has_been_in_game = 0;
     let dir = choice.player_folder(save_dir, &g.header.name, g.info.is_in_main_quest != 0);
     anyhow::ensure!(!dir.exists(), "{} already exists", dir.display());
     let path = dir.join("player.gdc");
@@ -883,6 +912,8 @@ pub fn save_game(
     );
     // The session's difficulty, challenge and game mode, for a new character as for a loaded one.
     g.info.last_difficulty = gd_game_core::session::last_difficulty(game_mode.0, &choice);
+    // Saved from inside the game: the character has been in it (`Player::SetHasBeenInGame` on its first entry).
+    g.info.has_been_in_game = 1;
     if let Some(c) = caster {
         // Mouse slots back in set order (`weapon_sets::save_order`).
         for (set, page) in c.pages() {
@@ -941,8 +972,17 @@ pub fn save_game(
             false
         }
     };
-    // The item stores: a failed one keeps the character's files at the last save (module doc).
-    let mut stores_ok = true;
+    if let Some(i) = &illusions {
+        attempt(
+            "transmutes",
+            i.file
+                .encode()
+                .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Transmutes, &b)),
+        );
+    }
+    // The files an item moves between: the stores, then the character, all staged before any is renamed in
+    // (module doc).
+    let mut items: Vec<(&str, std::path::PathBuf, anyhow::Result<Vec<u8>>)> = Vec::new();
     if let Some(s) = &stash {
         let mut t = s.transfer_file.clone();
         t.sacks = gd_game_core::stash::to_sacks(
@@ -957,43 +997,41 @@ pub fn save_game(
             _ => choice.mod_name().to_owned(),
         };
         t.expansion_status = gd_game_core::stash::LOADED_EXPANSIONS;
-        stores_ok &= attempt(
-            "transfer stash",
-            t.encode()
-                .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Transfer, &b)),
-        );
         let mut m = s.materials.clone();
         m.count = m.entries.len() as u32;
-        stores_ok &= attempt(
-            "reagents",
-            m.encode()
-                .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Reagents, &b)),
-        );
-        attempt(
-            "formulas",
-            s.formulas
-                .encode()
-                .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Formulas, &b)),
-        );
+        for (what, file, bytes) in [
+            ("transfer stash", Shared::Transfer, t.encode()),
+            ("reagents", Shared::Reagents, m.encode()),
+            ("formulas", Shared::Formulas, s.formulas.encode()),
+        ] {
+            if let Some(path) = shared_target(&shared, &choice, &save_dir, file) {
+                items.push((what, path, bytes));
+            }
+        }
     }
-    if let Some(i) = &illusions {
-        attempt(
-            "transmutes",
-            i.file
-                .encode()
-                .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Transmutes, &b)),
-        );
+    items.push(("player.gdc", dir.join("player.gdc"), g.encode()));
+    let mut staged = Vec::new();
+    let mut all_staged = true;
+    for (what, path, bytes) in items {
+        match bytes.and_then(|b| stage(&path, &b)) {
+            Ok(tmp) => staged.push((what, tmp, path)),
+            Err(e) => all_staged &= attempt(what, Err(e)),
+        }
     }
-    if !stores_ok {
+    if !all_staged {
+        for (_, tmp, _) in &staged {
+            if let Err(e) = std::fs::remove_file(tmp) {
+                warn!("save: {}: {e}", tmp.display());
+            }
+        }
         error!(
-            "save failed: an item store was not written, so the character's files keep the last save"
+            "save failed: an item store or the character was not written, so all of them keep the last save"
         );
         return;
     }
-    attempt(
-        "player.gdc",
-        g.encode().and_then(|b| write(&dir.join("player.gdc"), &b)),
-    );
+    for (what, tmp, path) in staged {
+        attempt(what, std::fs::rename(&tmp, &path).map_err(Into::into));
+    }
     let map_folder = dir.join(choice.map_folder());
     // `map.dat` beside the quests, for the current difficulty. PORT: the current respawn
     // point's position comes from the map-wide waypoint index (the player's own position

@@ -118,8 +118,8 @@ pub struct HudValues {
     pub skill_breakdown: [Vec<(bool, gd_sim::attributes::CombatType, f32, f32)>; 2],
     pub attribute_points: u32,
     pub skill_points: u32,
-    /// The skills window's undo button is enabled (`gd_game::points::SkillUndo`).
-    pub skill_undo: bool,
+    /// The class trees whose skills-window pane has its undo button enabled (`gd_game::points::SkillUndo`).
+    pub skill_undo: Vec<String>,
     /// The skills window is in reclamation mode (`reclamation.rs`).
     pub reclaim: Option<reclamation::ReclaimView>,
     /// The devotion window's reclaim mode (`reclamation::DevotionReclaimView`).
@@ -176,7 +176,7 @@ impl Default for HudValues {
             skill_breakdown: Default::default(),
             attribute_points: 0,
             skill_points: 0,
-            skill_undo: false,
+            skill_undo: Vec::new(),
             reclaim: None,
             devotion_reclaim: None,
             devotion_undo: false,
@@ -252,6 +252,12 @@ pub struct UiPanels {
     /// Skills window (`S`) and its tab (1-based).
     pub skills: bool,
     pub skill_tab: u8,
+    /// The mastery (class tree) picked on each slot's selection pane: its pane shows in that slot until undone
+    /// there (`skills` module doc).
+    pub mastery_picks: [Option<String>; 2],
+    /// The mastery (`masteryMasteryButtons` index) the free slot's selection pane describes: the last one hovered
+    /// (`skills` module doc).
+    pub mastery_hover: Option<u8>,
     /// Character stats tab 1..=4 (tab pane shown inside the character window).
     pub tab: u8,
     /// Devotion window (`Y`).
@@ -270,6 +276,8 @@ impl UiPanels {
             character,
             skills,
             skill_tab,
+            mastery_picks: _,
+            mastery_hover: _,
             tab,
             devotion,
             sheet_scroll: _,
@@ -556,7 +564,9 @@ struct SkillsSig {
     open: (bool, u8, bool),
     level: u32,
     points: u32,
-    undo: bool,
+    picks: [Option<String>; 2],
+    hover: Option<u8>,
+    undo: Vec<String>,
     skills: gd_sim::skills::SkillBook,
     /// Reclamation mode and, in it, the money (its texts and the f8 flags).
     reclaim: Option<(reclamation::ReclaimView, u64)>,
@@ -577,7 +587,9 @@ impl SkillsSig {
             open: Self::open(l),
             level: v.level,
             points: v.skill_points,
-            undo: v.skill_undo,
+            picks: l.panels.mastery_picks.clone(),
+            hover: l.panels.mastery_hover,
+            undo: v.skill_undo.clone(),
             skills: v.skills.clone(),
             reclaim: Self::reclaim(v).map(|(r, g)| (r.clone(), g)),
         }
@@ -592,6 +604,8 @@ impl SkillsSig {
             && self.open == Self::open(l)
             && self.level == v.level
             && self.points == v.skill_points
+            && self.picks == l.panels.mastery_picks
+            && self.hover == l.panels.mastery_hover
             && self.undo == v.skill_undo
             && self.skills == v.skills
             && self.reclaim.as_ref().map(|(r, g)| (r, *g)) == Self::reclaim(v)
@@ -1218,7 +1232,13 @@ fn rebuild(
         built.skills = Some(SkillsSig::of(&live));
         if panels.skills {
             let root = spawn(&mut commands, Group::Skills);
-            skills::build(&mut ui!(root), &values, panels.skill_tab);
+            skills::build(
+                &mut ui!(root),
+                &values,
+                panels.skill_tab,
+                &panels.mastery_picks,
+                panels.mastery_hover,
+            );
         } else {
             retire(&mut commands, Group::Skills);
             commands.insert_resource(skills::SkillLayout::default());

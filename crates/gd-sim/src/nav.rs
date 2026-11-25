@@ -24,8 +24,10 @@
 //! 8 × 8 block joined within it); A* over block nodes gives a corridor (the path's nodes and their neighbours) and
 //! the cell search stays inside it. Measured near Devil's Crossing: paths about 2 % longer than an unrestricted
 //! cell search's (worst 22 %), strict searches half the time, detours past the old budget found. Dynamic obstacles
-//! are seen by the cell search only: a corridor that does not reach the goal falls back to the whole nav. A
-//! strict search toward another component fails at once ([`NavWorld::connected`]).
+//! are seen by the cell search only: a corridor that does not reach the goal falls back to the whole nav, unless
+//! (strict) an obstacle covers the goal cell or the obstacles shut the goal in (a flood from it within a quarter of
+//! the budget, `NavWorld::enclosed`; the static connections are symmetric, every step of the Devil's Crossing nav
+//! has its way back). A strict search toward another component fails at once ([`NavWorld::connected`]).
 use gd_formats::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -173,6 +175,9 @@ const NO_NODE: u16 = u16::MAX;
 /// A coarse search expands at most a 16th of the cell budget in block nodes: about four times the area the cell
 /// search covers, so it finds the long detours the cell search gives up on.
 const COARSE_SHARE: usize = 16;
+/// The enclosure check of a strict search (`NavWorld::enclosed`) lists at most a 4th of the cell budget: a room
+/// behind a closed door up to about 900 m² at 0.25 m cells.
+const ENCLOSED_SHARE: usize = 4;
 
 /// A cell where a move can leave its layer, across the layer's edge or through a portal (direction `d`).
 #[derive(Clone, Copy)]
@@ -1039,6 +1044,10 @@ impl NavWorld {
         if !partial && self.connected(start, goal) == Some(false) {
             return None;
         }
+        // An obstacle covering the goal cell keeps every path out of it.
+        if !partial && start != goal && !self.obstacles.is_empty() && self.blocked(self.pos(goal)) {
+            return None;
+        }
         let fine = |scratch: &mut PathScratch, corridor| {
             self.fine(scratch, start, goal, max_nodes, partial, corridor)
         };
@@ -1048,9 +1057,62 @@ impl NavWorld {
             Coarse::Nearest => fine(scratch, true).map(|p| p.0),
             Coarse::Reached => match fine(scratch, true) {
                 Some((p, true)) => Some(p),
+                _ if !partial
+                    && self.enclosed(scratch, goal, start, max_nodes / ENCLOSED_SHARE) =>
+                {
+                    None
+                }
                 _ => fine(scratch, false).map(|p| p.0),
             },
         }
+    }
+
+    /// Whether the obstacles shut `goal` in: every cell a path could reach it from (the cells stepping out of it
+    /// reach, the connections being symmetric) is listed within `budget` without meeting `start`. A strict search
+    /// toward a goal behind a closed door then fails at once instead of exhausting its budget over the whole nav.
+    fn enclosed(
+        &self,
+        scratch: &mut PathScratch,
+        goal: Cell<'_>,
+        start: Cell<'_>,
+        budget: usize,
+    ) -> bool {
+        let PathScratch { open, seen, .. } = scratch;
+        open.clear();
+        seen.clear();
+        seen.insert(goal.key(), (0.0, goal.key()));
+        open.push(Open {
+            f: 0.0,
+            g: 0.0,
+            cell: goal.key(),
+        });
+        while let Some(Open { cell: key, .. }) = open.pop() {
+            if seen.len() > budget {
+                return false;
+            }
+            let cell = Cell::from_key(key);
+            for d in 0..4 {
+                // A path may leave an obstacle-covered start cell: its way back in counts.
+                let Some(n) = self
+                    .step_static(cell, d)
+                    .filter(|&n| n == start || !self.blocked(self.pos(n)))
+                else {
+                    continue;
+                };
+                if n == start {
+                    return false;
+                }
+                if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(n.key()) {
+                    v.insert((0.0, key));
+                    open.push(Open {
+                        f: 0.0,
+                        g: 0.0,
+                        cell: n.key(),
+                    });
+                }
+            }
+        }
+        true
     }
 
     /// The block node of `c`, once its layer is labelled ([`Self::settle`]).

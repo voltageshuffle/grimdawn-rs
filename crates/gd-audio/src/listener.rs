@@ -4,7 +4,7 @@ use super::mixer::{OnEnd, Voice, VoiceStart};
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use gd_render::camera::CameraFocus;
-use gd_sim::sound3d::ear_gains;
+use gd_sim::sound3d::{distance_gain, ear_gains};
 
 /// Concurrent sounds the engine plays: `SoundManager` has 128 playing slots (`GetEmptyCurrentPlayingIndex`); a
 /// stream takes one too (`StartStream`), so the port's slots are every playing sound entity, the music included.
@@ -36,17 +36,27 @@ impl Listener {
         self.class[c as usize]
     }
 
-    /// The final gain of a class: master × class option, clamped to 0..1.
-    pub(super) fn gain_final(&self, c: SoundClass) -> f32 {
-        (self.master * self.gain(c)).clamp(0.0, 1.0)
+    /// The volume a voice plays at, from the sound's own `volume` (a pak's `volume`, faded or not):
+    /// `SoundManager::Play3D` / `Play2D` / `SoundManager::UpdateVolume` hand the sound buffer `volume` × its volume
+    /// set's option × `masterVolume`, and `DS8SoundSample::SetVolume` (DS8Sound.dll; a stream's alike) takes that to
+    /// millibels clamped to 0 dB, silent below 0.001. A buffer is never amplified: a pak `volume` above 1 (652 of the
+    /// 1 923 stock paks, up to 7) only keeps the sound at full volume against lower sliders. A 3D sound's distance
+    /// gain and pan come on top of the clamped volume ([`Listener::gains`]).
+    pub(super) fn voice_volume(&self, c: SoundClass, volume: f32) -> f32 {
+        let v = self.master * self.gain(c) * volume;
+        if v < 0.001 { 0.0 } else { v.min(1.0) }
     }
 
-    /// The ears' gains of a sound at `at`.
-    pub(super) fn gains(&self, at: Vec3) -> [f32; 2] {
-        ear_gains(
-            self.front,
-            self.ears.map_or([0.0; 3], |e| (at - e).to_array()),
-        )
+    /// The ears' gains of a 3D sound at `at` with min distance `falloff`: DirectSound's 3D processing of the buffer,
+    /// its distance gain ([`distance_gain`]) times its pan ([`ear_gains`]), after the buffer's own clamped volume
+    /// ([`Listener::voice_volume`]). Silent without ears.
+    pub(super) fn gains(&self, at: Vec3, falloff: f32) -> [f32; 2] {
+        let Some(ears) = self.ears else {
+            return [0.0; 2];
+        };
+        let to = at - ears;
+        let d = distance_gain(falloff, to.length());
+        ear_gains(self.front, to.to_array()).map(|g| g * d)
     }
 
     /// Reads `masterVolume` and the class volumes from the options.

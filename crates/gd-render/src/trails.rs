@@ -235,7 +235,7 @@ fn update_trails(
                 rec.str("Texture")
                     .filter(|p| !p.is_empty())
                     .unwrap_or("System/Textures/White.tex"),
-                true,
+                false,
                 &mut assets.images,
             );
             let c = |k: &str| rec.i32(k).unwrap_or(0) as f32 / 255.0;

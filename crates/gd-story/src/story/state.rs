@@ -187,22 +187,25 @@ impl KillChain {
         self.timer_ms = reset_ms;
     }
 
-    /// The pause timer runs; once it is out the chain ends and, when it had enough kills and the boss is not dead,
-    /// its bonus (ms) is returned for the caller to add to the running timer.
+    /// The pause timer runs; once it is out with `killCountMinimum` kills the chain ends and, when the boss is not
+    /// dead, its bonus (ms) is returned for the caller to add to the running timer. `EndlessDungeon_Generator::Update`:
+    /// a pause below the minimum keeps the count (only a payout or the generator's `Clear` zeroes it), so the next
+    /// kills add to it.
     pub fn tick(
         &mut self,
         dt_ms: i32,
         boss_dead: bool,
         rs: &crate::endless::Ruleset,
     ) -> Option<i32> {
-        if self.count == 0 {
+        if self.count == 0 || self.timer_ms <= 0 {
             return None;
         }
         self.timer_ms -= dt_ms;
-        if self.timer_ms > 0 {
+        if self.timer_ms > 0 || self.count < rs.kill_count_minimum {
             return None;
         }
         let kills = std::mem::take(&mut self.count);
+        self.timer_ms = 0;
         if boss_dead {
             return None;
         }

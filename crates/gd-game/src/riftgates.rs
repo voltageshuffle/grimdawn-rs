@@ -143,7 +143,7 @@ pub struct Waypoint {
     pub uid: Uid,
     pub record: String,
     pub radius: f32,
-    /// The record's `bindRadius` (0 when absent).
+    /// The record's `bindRadius` (`StaticTeleporter::Load`'s default 5 when absent).
     pub bind_radius: f32,
     pub level: usize,
     /// `StaticTeleporter.locked`: the record's `locked`, then the scripts'

@@ -83,6 +83,13 @@ impl MessageDrain for App {
 #[derive(Resource)]
 pub struct SessionReady;
 
+/// The entities alive when the session began: `gd_game::session::begin` takes it in the same step that inserts
+/// [`SessionReady`], and the exit to the main menu despawns every entity not in it (`grimdawn::exit`). Not on a later
+/// frame: a session started from the menu can resolve its start point and spawn the player in the frame it begins,
+/// and a player kept by the baseline would outlive the exit.
+#[derive(Resource, Default)]
+pub struct SessionBaseline(pub gd_formats::collections::HashSet<Entity>);
+
 /// Run condition of everything that shows or reads the playing session (HUD,
 /// windows, tooltips, hover): the session is chosen ([`SessionReady`]) and its
 /// player is fully loaded, i.e. spawned with its progress and inventory

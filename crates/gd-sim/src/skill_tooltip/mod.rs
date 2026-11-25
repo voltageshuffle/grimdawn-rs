@@ -1181,18 +1181,30 @@ fn refresh_trigger_lines(
             level_f(prof, "refreshDurationAmount", level),
             level_f(prof, "refreshDurationMax", level),
         );
+        let (unit, max_unit) = (seconds_unit(ctx, amount), seconds_unit(ctx, max));
         let text = match (name.is_empty(), max > 0.0) {
             (true, false) => ctx.fmt(
                 "tagSkillDurationRefresh",
-                &[Arg::Str(&cond), Arg::Num(amount)],
+                &[Arg::Str(&cond), Arg::Num(amount), Arg::Str(&unit)],
             ),
             (false, false) => ctx.fmt(
                 "tagSkillDurationRefreshName",
-                &[Arg::Str(&cond), Arg::Str(&name), Arg::Num(amount)],
+                &[
+                    Arg::Str(&cond),
+                    Arg::Str(&name),
+                    Arg::Num(amount),
+                    Arg::Str(&unit),
+                ],
             ),
             (true, true) => ctx.fmt(
                 "tagSkillDurationRefreshMax",
-                &[Arg::Str(&cond), Arg::Num(amount), Arg::Num(max)],
+                &[
+                    Arg::Str(&cond),
+                    Arg::Num(amount),
+                    Arg::Str(&unit),
+                    Arg::Num(max),
+                    Arg::Str(&max_unit),
+                ],
             ),
             (false, true) => ctx.fmt(
                 "tagSkillDurationRefreshNameMax",
@@ -1200,7 +1212,9 @@ fn refresh_trigger_lines(
                     Arg::Str(&cond),
                     Arg::Str(&name),
                     Arg::Num(amount),
+                    Arg::Str(&unit),
                     Arg::Num(max),
+                    Arg::Str(&max_unit),
                 ],
             ),
         };
@@ -1219,20 +1233,35 @@ fn refresh_trigger_lines(
             name_of(&target),
             level_f(prof, "refreshCooldownAmount", level),
         );
+        let unit = seconds_unit(ctx, amount);
         let text = if name.is_empty() {
             ctx.fmt(
                 "tagSkillCooldownRefresh",
-                &[Arg::Str(&cond), Arg::Num(amount)],
+                &[Arg::Str(&cond), Arg::Num(amount), Arg::Str(&unit)],
             )
         } else {
             ctx.fmt(
                 "tagSkillCooldownRefreshName",
-                &[Arg::Str(&cond), Arg::Str(&name), Arg::Num(amount)],
+                &[
+                    Arg::Str(&cond),
+                    Arg::Str(&name),
+                    Arg::Num(amount),
+                    Arg::Str(&unit),
+                ],
             )
         };
         out.push(line(class, text));
     }
     out
+}
+
+/// The `%z` time unit word of `secs`: `tagSecond` for exactly 1 s, else `tagSeconds`.
+fn seconds_unit(ctx: &SkillTipCtx, secs: f32) -> String {
+    ctx.tag(if secs == 1.0 {
+        "tagSecond"
+    } else {
+        "tagSeconds"
+    })
 }
 
 /// `tagRefreshSkillCondition<NN>` of a refresh trigger type.
@@ -1428,11 +1457,7 @@ fn refresh_lines(
         ctx.fmt("tagSkillRefreshTimeInfinate", &[])
     } else {
         let secs = t as f32 * 0.001;
-        let unit = ctx.tag(if secs == 1.0 {
-            "tagSecond"
-        } else {
-            "tagSeconds"
-        });
+        let unit = seconds_unit(ctx, secs);
         ctx.fmt("tagSkillRefreshTime", &[Arg::Num(secs), Arg::Str(&unit)])
     };
     vec![line(class, text)]

@@ -2498,6 +2498,10 @@ fn spawn_minions(
     time: Res<Time>,
     mut assets: crate::creature::Spawner,
 ) {
+    // This run's spawns (owner, minion, skill, time) and dismissals: the queries see neither until the commands
+    // apply, so a second event for the same skill this frame counts them here against `petLimit`.
+    let mut fresh: Vec<(Entity, Entity, String, f32)> = Vec::new();
+    let mut culled: Vec<Entity> = Vec::new();
     for ev in events.read() {
         let Ok((otf, owner, oai, ..)) = owners.get(ev.owner) else {
             continue;
@@ -2531,8 +2535,14 @@ fn spawn_minions(
         let ttl = crate::pets::spawn_time_to_live(&assets.data.db, rec, ev.level_index, &[]);
         let mut mine: Vec<(Entity, f32)> = minions
             .iter()
-            .filter(|(_, m)| m.owner == ev.owner && m.summon == ev.skill)
+            .filter(|(e, m)| m.owner == ev.owner && m.summon == ev.skill && !culled.contains(e))
             .map(|(e, m)| (e, m.spawned_at))
+            .chain(
+                fresh
+                    .iter()
+                    .filter(|f| f.0 == ev.owner && f.2 == ev.skill && !culled.contains(&f.1))
+                    .map(|f| (f.1, f.3)),
+            )
             .collect();
         mine.sort_by(|a, b| a.1.total_cmp(&b.1));
         let mirage = rec.class == MIRAGE;
@@ -2642,6 +2652,7 @@ fn spawn_minions(
             // through `KillMe(overkillOnDismiss)` (`pets` module docs).
             while !generator && limit > 0 && mine.len() >= limit {
                 let (old, _) = mine.remove(0);
+                culled.push(old);
                 let overkill = minions.get(old).is_ok_and(|(_, m)| m.overkill_on_dismiss);
                 dismiss(&mut commands, old, overkill);
             }
@@ -2702,6 +2713,7 @@ fn spawn_minions(
                 },
             ));
             mine.push((e, time.elapsed_secs()));
+            fresh.push((ev.owner, e, ev.skill.clone(), time.elapsed_secs()));
             debug!("monster {} summons {rec_name}", ev.owner);
         }
     }

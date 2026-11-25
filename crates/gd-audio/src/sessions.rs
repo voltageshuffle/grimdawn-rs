@@ -724,7 +724,6 @@ pub(super) fn ambient_oneshots(
             .map(|ears| Positioned {
                 target: None,
                 at: ambient_spot(ears, fastrand::u32(..)),
-                volume: class.volume,
                 falloff: DEFAULT_FALLOFF,
                 ears: EarGains::default(),
             });

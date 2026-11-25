@@ -34,6 +34,7 @@
 //! set uses one).
 use super::db::ItemDb;
 use super::resolve::{Attr, ResolvedItem, Source, record_attrs_at};
+use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
 use gd_formats::vfs::{Database, normalize};
 use std::collections::BTreeMap;
@@ -166,12 +167,24 @@ pub fn set_skill_bonuses(db: &Database, items: &[Item]) -> crate::skills::SkillB
     (skills, masteries, all)
 }
 
+/// Number of bonus tiers a set's tooltip lists: `setSize`, or the
+/// `setMembers` count when it is 0 (`ItemSet::LoadFromDatabase` reads it,
+/// `ItemSet::GetUIDisplayText` falls back). Not the distinct piece count:
+/// `setMembers` may list variants of one piece (Dagallon's Destruction,
+/// `itemset_d116`: 6 entries, the two guns each with a `b` copy, `setSize`
+/// 4); every entry gets its own member line, as in the game.
+pub fn set_size(rec: &Record) -> usize {
+    match rec.i32("setSize").unwrap_or(0) {
+        n if n > 0 => n as usize,
+        _ => rec.strs("setMembers").len(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveSet {
     pub record: String,
     pub name_tag: String,
     pub equipped: u32,
-    pub members: u32,
     /// Bonus attributes at the equipped count.
     pub bonus: Vec<Attr>,
 }
@@ -188,7 +201,6 @@ pub fn active_sets(db: &ItemDb, equipped: &[&ResolvedItem]) -> Vec<ActiveSet> {
             record: set,
             name_tag: rec.str("setName").unwrap_or("").to_string(),
             equipped: n,
-            members: rec.strs("setMembers").len() as u32,
             bonus: record_attrs_at(rec, Source::Base, (n as usize).saturating_sub(1))
                 .into_iter()
                 .filter(|a| a.values.iter().any(|(_, v)| *v != 0.0))

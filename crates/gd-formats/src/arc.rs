@@ -42,8 +42,16 @@ pub struct Arc {
     pub parts: Vec<Part>,
     /// File length: every offset of the tables is checked against it before a read.
     len: u64,
-    /// Shared by concurrent [`Arc::read`]s through positional reads (no cursor, no lock).
+    /// Shared by concurrent [`Arc::read`]s through positional reads (`pread`: no cursor, no lock).
+    #[cfg(unix)]
     file: File,
+    /// The handles [`Arc::read`]s borrow, one per read in flight. Windows serializes every request on a synchronous
+    /// handle (the I/O manager holds the file object's lock for each read, a positional `seek_read` too), so readers
+    /// sharing one handle would queue behind each other's disk reads: a read takes a free handle, or opens another
+    /// when all are lent out, and puts it back after. Kept for the archive's life: at most as many as reads ever ran
+    /// at once.
+    #[cfg(windows)]
+    files: parking_lot::Mutex<Vec<File>>,
 }
 
 impl Arc {
@@ -126,7 +134,10 @@ impl Arc {
             entries,
             parts,
             len,
+            #[cfg(unix)]
             file,
+            #[cfg(windows)]
+            files: parking_lot::Mutex::new(vec![file]),
         })
     }
 
@@ -182,18 +193,38 @@ impl Arc {
     pub fn read(&self, e: &Entry) -> Result<Vec<u8>> {
         let parts = self.parts_of(e)?;
         let mut out = vec![0; e.size as usize];
-        let Some(parts) = parts else {
-            read_exact_at(&self.file, &mut out, e.offset as u64)?;
-            return Ok(out);
-        };
-        let (mut buf, mut at) = (Vec::new(), 0);
-        for p in parts {
-            let end = at + p.size as usize;
-            decode_part(&self.file, p, &mut buf, &mut out[at..end])
-                .with_context(|| format!("part of {}", e.name))?;
-            at = end;
-        }
+        self.with_file(|file| {
+            let Some(parts) = parts else {
+                return Ok(read_exact_at(file, &mut out, e.offset as u64)?);
+            };
+            let (mut buf, mut at) = (Vec::new(), 0);
+            for p in parts {
+                let end = at + p.size as usize;
+                decode_part(file, p, &mut buf, &mut out[at..end])
+                    .with_context(|| format!("part of {}", e.name))?;
+                at = end;
+            }
+            Ok(())
+        })?;
         Ok(out)
+    }
+
+    /// Runs `read` on a handle of the archive: unix shares `file`; Windows lends one of `files` for the call.
+    fn with_file<T>(&self, read: impl FnOnce(&File) -> Result<T>) -> Result<T> {
+        #[cfg(unix)]
+        return read(&self.file);
+        #[cfg(windows)]
+        {
+            let free = self.files.lock().pop();
+            let file = match free {
+                Some(f) => f,
+                None => File::open(&self.path)
+                    .with_context(|| format!("open {}", self.path.display()))?,
+            };
+            let r = read(&file);
+            self.files.lock().push(file);
+            r
+        }
     }
 
     /// A seekable reader of `e` on a file handle of its own (no contention with [`Arc::read`]).
@@ -229,7 +260,8 @@ impl Arc {
     }
 }
 
-/// One positional read (no cursor): the primitive behind [`read_exact_at`] and [`EntryReader`].
+/// One positional read: the primitive behind [`read_exact_at`] and [`EntryReader`]. Nothing here reads at the
+/// cursor (Windows' `seek_read` moves it, unix's `pread` does not).
 fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     #[cfg(unix)]
     return std::os::unix::fs::FileExt::read_at(file, buf, offset);
@@ -237,8 +269,8 @@ fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     return std::os::windows::fs::FileExt::seek_read(file, buf, offset);
 }
 
-/// Reads exactly `buf.len()` bytes at `offset` without touching the file cursor, so concurrent
-/// readers share one handle without a lock.
+/// Reads exactly `buf.len()` bytes at `offset` without reading at the file cursor, so readers on other threads
+/// cannot move this one's position (`Arc::files` for Windows, where they would still queue on one handle).
 fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
         let n = read_at(file, buf, offset)?;

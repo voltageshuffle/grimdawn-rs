@@ -79,16 +79,18 @@ fn is_potion_skill(class: &str) -> bool {
         || class.starts_with("SkillSecondary_")
 }
 
-/// Adds the potion skills a character lacks (level 0, locked per record).
+/// Adds the potion skills a character lacks (level 0, locked per record): every skill of the player's two potion
+/// trees (`customPotionTree1/2`) in tree order, as the real game's saves hold exactly those, not every potion
+/// record in [`DIR`] (the `_blank` and unused ones).
 pub fn ensure_skills(db: &Database, book: &mut SkillBook) {
-    let mut names: Vec<String> = db
-        .names()
-        .filter(|n| n.starts_with(DIR))
-        .map(str::to_owned)
+    let Some(pc) = db.get(PLAYER) else {
+        return;
+    };
+    let names: Vec<String> = ["customPotionTree1", "customPotionTree2"]
+        .iter()
+        .filter_map(|k| pc.str(k))
+        .flat_map(|tree| crate::skills::tree_skills(db, tree))
         .collect();
-    // The database index is a hash map: sorted, the added skills (and so
-    // the saved skill list) come in the same order every run.
-    names.sort();
     for n in names {
         if book.skills.iter().any(|(s, _)| s.eq_ignore_ascii_case(&n)) {
             continue;
