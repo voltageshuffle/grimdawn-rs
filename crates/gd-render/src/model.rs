@@ -1,6 +1,13 @@
-//! `.msh` models in Bevy: one mesh per face set, skeletons as joint entities
+//! `.msh` models in Bevy: one mesh per material and fading section, skeletons as joint entities
 //! whose `GlobalTransform` is written directly from the engine's pose math
 //! (`gd_sim::anim::pose_abs_into`, the engine's `GetAbsCoords` math) so non-uniform/sheared bone keys are exact.
+//!
+//! PORT: the engine draws a mesh face set by face set (`GraphicsMesh`); the port merges the face sets that
+//! share a material and fading section (`part_sections`) into one Bevy mesh with their index ranges
+//! concatenated in face-set order, holding only the vertices they use. Bevy meshes cannot share a vertex
+//! buffer, so one mesh per face set uploaded the whole vertex set again for each; merged, a model costs one
+//! draw and one skin per material instead of per face set. Bone indices are already global
+//! (`Msh::global_bone_indices`), so the face sets' palettes are not needed to draw.
 //!
 //! Conventions: object space is right-handed, Y-up, matching
 //! Bevy; the game winds front faces clockwise, so triangles are reversed.
@@ -41,6 +48,10 @@
 //! PORT: the model cache holds its models weakly (`gd_game_core::weak_cache`) and each spawned part holds its model
 //! ([`ModelRef`]), so a model and its meshes go with its last instance instead of 5 s after (the engine's
 //! `BaseResourceManager`).
+//! PORT: an animated object model out of every view (its bounds beyond `character::POSE_MARGIN` of every active
+//! camera's frustum, the characters' rule) still advances its channel, so its clock, callbacks and entity events run
+//! on and it resumes in phase, but is not posed and its joints are not written until it comes back
+//! ([`animate_skeletons`]): most looping weather decorations of the loaded levels are off screen.
 use crate::render::material::{MaterialAssets, MeshFacts, PartMaterial};
 use crate::textures::Textures;
 use bevy::asset::RenderAssetUsages;
@@ -109,7 +120,8 @@ impl Plugin for ModelPlugin {
     }
 }
 
-/// GPU-ready parts of a model, shared by every instance (each part holds it, [`ModelRef`]).
+/// GPU-ready parts of a model, shared by every instance (each part holds it, [`ModelRef`]). A part is the face
+/// sets of one material and fading section merged (module doc).
 pub struct ModelAsset {
     pub msh: Arc<Msh>,
     pub parts: Vec<(Handle<Mesh>, PartMaterial)>,
@@ -119,9 +131,9 @@ pub struct ModelAsset {
     /// part; `None` when the part's material can never fade (no "…T.ssh"
     /// variant of its shader, [`transparent_variant_exists`]).
     pub part_sections: Vec<Option<u32>>,
-    /// Static culling AABB per part; skinned parts use a generous one ([`conservative_bounds`])
-    /// instead of `DynamicSkinnedMeshBounds`' per-frame recompute.
-    pub part_bounds: Vec<Aabb>,
+    /// Static culling AABB of every skinned part, the whole mesh's ([`conservative_bounds`]), instead of
+    /// `DynamicSkinnedMeshBounds`' per-frame recompute.
+    pub skinned_bounds: Aabb,
     /// What the materials were built for ([`MaterialAssets::reshade`]).
     pub mesh: MeshFacts,
     pub inverse_bindposes: Option<Handle<SkinnedMeshInverseBindposes>>,
@@ -237,6 +249,9 @@ pub(crate) struct ObjectAnim {
     pose: Pose,
     /// The last mesh-space pose: a settled clip keeps it.
     abs: Vec<Coords>,
+    /// The joints lag [`Self::pose`] or the root: posing was skipped while the model was out of
+    /// view (`character::near_view`); the first frame back in view poses it again.
+    stale: bool,
     /// (anim, time, speed, looped) the channel was last synced with.
     synced: Option<(Arc<Animation>, f32, f32, bool)>,
     /// The entity events the advance crossed, until [`anim_entities`] drains them.
@@ -818,16 +833,31 @@ pub fn msh_tangents(msh: &Msh) -> Vec<[f32; 4]> {
 struct ModelCpu {
     msh: Arc<Msh>,
     facts: MeshFacts,
-    /// The vertex colours, given only to the parts whose material uses them ([`finish_model`]).
-    colors: Vec<[f32; 4]>,
-    /// Each face set's mesh (no colours yet), material index and fading section.
-    parts: Vec<(Mesh, u32, Option<u32>)>,
+    /// Each part's mesh (no colours yet), material index and fading section ([`model_cpu`]).
+    parts: Vec<CpuPart>,
+    /// The skinned parts' culling bound ([`conservative_bounds`] of the whole mesh).
+    bounds: Option<Aabb>,
     inverse_bindposes: Option<Vec<Mat4>>,
     creations: Arc<[crate::fx::MeshCreation]>,
     /// The materials' textures by normalized path (`None`: unreadable), decoded for a background load.
     textures: Vec<(String, Option<Image>)>,
     /// The materials' `.ssh` analyses (cache key, info), for a background load.
     shaders: Vec<(String, Option<crate::render::material::ShaderInfo>)>,
+}
+
+/// One part of a [`ModelCpu`]: the face sets of one material and fading section merged into one mesh over the
+/// vertices they use (module doc).
+struct CpuPart {
+    mesh: Mesh,
+    material: u32,
+    section: Option<u32>,
+    /// The part's vertex colours, given to it only when its material uses them ([`finish_model`]).
+    colors: Option<Vec<[f32; 4]>>,
+}
+
+/// `src`'s values at the vertices `used`, in that order.
+fn gather<T: Copy>(src: &[T], used: &[u32]) -> Vec<T> {
+    used.iter().map(|&u| src[u as usize]).collect()
 }
 
 fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu {
@@ -867,7 +897,15 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
     } else {
         Vec::new()
     };
-    let mut parts = Vec::new();
+    // Whether each material can fade: its shader has a "…T.ssh" variant ([`transparent_variant_exists`]).
+    let fades: Vec<bool> = msh
+        .materials
+        .iter()
+        .map(|m| transparent_variant_exists(&data.vfs, &m.shader))
+        .collect();
+    // The face sets merged by (material, fading section), in face-set order (module doc): their triangles in the
+    // mesh's vertex numbering.
+    let mut groups: Vec<(u32, Option<u32>, Vec<u16>)> = Vec::new();
     for fs in &msh.face_sets {
         // A skinned mesh's set with an empty bone palette has only zero blend weights (`Msh::validate`): the
         // engine's skinning collapses it to the model origin, so it never shows. Stock female armour carries
@@ -881,33 +919,63 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
         if s >= e {
             continue;
         }
+        let section = fades
+            .get(fs.material as usize)
+            .is_some_and(|f| *f)
+            .then_some(fs.section.max(0) as u32);
+        let g = match groups
+            .iter()
+            .position(|(m, sec, _)| *m == fs.material && *sec == section)
+        {
+            Some(g) => g,
+            None => {
+                groups.push((fs.material, section, Vec::new()));
+                groups.len() - 1
+            }
+        };
         // Reverse winding: game front faces are clockwise.
-        let mut idx: Vec<u16> = Vec::with_capacity(e - s);
         for t in msh.indices[s..e].as_chunks::<3>().0 {
-            idx.extend_from_slice(&[t[0], t[2], t[1]]);
+            groups[g].2.extend_from_slice(&[t[0], t[2], t[1]]);
+        }
+    }
+    // Each part keeps only the vertices its triangles use, renumbered in first-use order.
+    let mut remap = vec![u32::MAX; n];
+    let mut parts = Vec::with_capacity(groups.len());
+    for (material, section, mut idx) in groups {
+        let mut used: Vec<u32> = Vec::new();
+        for i in &mut idx {
+            let r = &mut remap[*i as usize];
+            if *r == u32::MAX {
+                *r = used.len() as u32;
+                used.push(*i as u32);
+            }
+            *i = *r as u16;
+        }
+        for &u in &used {
+            remap[u as usize] = u32::MAX;
         }
         let usage = RenderAssetUsages::RENDER_WORLD;
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, usage)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, v.positions.clone());
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, gather(&v.positions, &used));
         if v.normals.len() == n {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, v.normals.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, gather(&v.normals, &used));
         }
         if let Some(uv) = v.uvs.first().filter(|u| u.len() == n) {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, gather(uv, &used));
         }
         // TEXCOORD1: detail-map UVs (standard*detail shaders).
         if let Some(uv) = v.uvs.get(1).filter(|u| u.len() == n) {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, gather(uv, &used));
         }
         if !tangents.is_empty() {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, gather(&tangents, &used));
         }
         if let Some(j) = &joints {
             mesh.insert_attribute(
                 Mesh::ATTRIBUTE_JOINT_INDEX,
-                VertexAttributeValues::Uint16x4(j.clone()),
+                VertexAttributeValues::Uint16x4(gather(j, &used)),
             );
-            mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, gather(&weights, &used));
         }
         mesh.insert_indices(Indices::U16(idx));
         if skinned {
@@ -920,11 +988,12 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
                     )
                 });
         }
-        let fades = msh
-            .materials
-            .get(fs.material as usize)
-            .is_some_and(|m| transparent_variant_exists(&data.vfs, &m.shader));
-        parts.push((mesh, fs.material, fades.then_some(fs.section.max(0) as u32)));
+        parts.push(CpuPart {
+            mesh,
+            material,
+            section,
+            colors: has_colors.then(|| gather(&colors, &used)),
+        });
     }
     let mut textures = Vec::new();
     let mut analysed = Vec::new();
@@ -965,8 +1034,8 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
             tangents: !tangents.is_empty(),
             colors: has_colors,
         },
-        colors,
         parts,
+        bounds: skinned.then(|| conservative_bounds(&v.positions)),
         inverse_bindposes: skinned.then(|| {
             msh.bones
                 .iter()
@@ -993,8 +1062,8 @@ fn finish_model(
     let ModelCpu {
         msh,
         facts,
-        colors,
         parts: cpu_parts,
+        bounds,
         inverse_bindposes,
         creations,
         textures: decoded,
@@ -1028,16 +1097,22 @@ fn finish_model(
     let mut parts = Vec::with_capacity(cpu_parts.len());
     let mut part_materials = Vec::with_capacity(cpu_parts.len());
     let mut part_sections = Vec::with_capacity(cpu_parts.len());
-    let mut part_bounds = Vec::with_capacity(cpu_parts.len());
-    for (mut mesh, material, section) in cpu_parts {
-        if color_material.get(material as usize) == Some(&true) {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors.clone());
+    for CpuPart {
+        mut mesh,
+        material,
+        section,
+        colors,
+    } in cpu_parts
+    {
+        if color_material.get(material as usize) == Some(&true)
+            && let Some(c) = colors
+        {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, c);
         }
         let mat = materials
             .get(material as usize)
             .cloned()
             .unwrap_or_else(|| materials[0].clone());
-        part_bounds.push(conservative_bounds(&mesh));
         parts.push((meshes.add(mesh), mat));
         part_materials.push(material);
         part_sections.push(section);
@@ -1048,7 +1123,7 @@ fn finish_model(
         parts,
         part_materials,
         part_sections,
-        part_bounds,
+        skinned_bounds: bounds.unwrap_or_default(),
         mesh: facts,
         inverse_bindposes: inverse_bindposes
             .map(|b| bindposes.add(SkinnedMeshInverseBindposes::from(b))),
@@ -1059,20 +1134,17 @@ fn finish_model(
 /// parts use this instead of `DynamicSkinnedMeshBounds`, whose per-frame recompute
 /// (`update_skinned_mesh_bounds`) is a measurable CPU cost in crowded scenes. A conservative
 /// static bound culls almost as well (actors are small relative to the view) and never pops a
-/// visible actor: twice the bind-pose half-extents plus half a metre covers limb/weapon motion.
-fn conservative_bounds(mesh: &Mesh) -> Aabb {
-    let (min, max) = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(p)) => {
-            let (mut mn, mut mx) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-            for &v in p {
-                let v = Vec3::from_array(v);
-                mn = mn.min(v);
-                mx = mx.max(v);
-            }
-            (mn, mx)
-        }
-        _ => (Vec3::splat(-0.5), Vec3::splat(0.5)),
-    };
+/// visible actor: twice the whole mesh's bind-pose half-extents plus half a metre covers limb/weapon motion.
+fn conservative_bounds(positions: &[[f32; 3]]) -> Aabb {
+    let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+    for &v in positions {
+        let v = Vec3::from_array(v);
+        min = min.min(v);
+        max = max.max(v);
+    }
+    if positions.is_empty() {
+        (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
+    }
     let a = Aabb::from_min_max(min, max);
     Aabb {
         center: a.center,
@@ -1168,12 +1240,7 @@ fn spawn_parts(
             }
         });
     }
-    for (((mesh, mat), mi), bounds) in model
-        .parts
-        .iter()
-        .zip(&model.part_materials)
-        .zip(&model.part_bounds)
-    {
+    for ((mesh, mat), mi) in model.parts.iter().zip(&model.part_materials) {
         let mut e = commands.spawn((
             Mesh3d(mesh.clone()),
             Transform::IDENTITY,
@@ -1189,7 +1256,7 @@ fn spawn_parts(
                     inverse_bindposes: ibp.clone(),
                     joints: joints.clone(),
                 },
-                *bounds,
+                model.skinned_bounds,
             ));
         }
         let id = e.id();
@@ -1228,6 +1295,8 @@ pub struct Joints(Vec<Entity>);
 /// rewritten only when its root moves. An `Animator` whose clip, speed and loop flag stay and
 /// only its time moved (a decoration chaining its one clip, the same clip re-inserted) seeks the
 /// channel instead of restarting it with a cross-fade.
+///
+/// Off view, the channel advances but nothing is posed (module doc).
 pub(crate) fn animate_skeletons(
     time: Res<Time>,
     mut roots: Query<
@@ -1240,12 +1309,31 @@ pub(crate) fn animate_skeletons(
         Without<ExternalPose>,
     >,
     mut joints: Query<&mut GlobalTransform, Without<Skeleton>>,
+    cameras: Query<(&Camera, &bevy::camera::primitives::Frustum)>,
     mut out: MessageWriter<AnimCallback>,
     mut buf: Local<Vec<Coords>>,
+    mut frusta: Local<Vec<bevy::camera::primitives::Frustum>>,
 ) {
     let dt_ms = time.delta_secs() * 1000.0;
+    crate::character::view_frusta(&cameras, &mut frusta);
+    let frusta = &*frusta;
     for (e, root_tf, skel, animator) in &mut roots {
         let root = root_tf.affine();
+        // Whether the model's bounds are near a view (`character::near_view`).
+        let near = || match skel.msh.bounding_box {
+            Some((lo, hi)) => {
+                let (lo, hi) = (Vec3A::from(lo), Vec3A::from(hi));
+                let m = root.matrix3;
+                let scale = m
+                    .x_axis
+                    .length()
+                    .max(m.y_axis.length())
+                    .max(m.z_axis.length());
+                let centre = root.transform_point3a((lo + hi) * 0.5);
+                crate::character::near_view(frusta, centre, (hi - lo).length() * 0.5 * scale)
+            }
+            None => crate::character::near_view(frusta, root.translation, 0.0),
+        };
         let coords: &[Coords] = match animator {
             Some((mut a, st)) => {
                 // A replaced or mutated Animator restarts the channel (with a
@@ -1261,11 +1349,21 @@ pub(crate) fn animate_skeletons(
                     }
                     None => (true, false),
                 };
-                if !changed && st.channel.settled() && !st.abs.is_empty() {
-                    if !root_tf.is_changed() && !skel.is_changed() {
+                // A settled clip keeps its pose (`abs`, or `pose` while stale).
+                if !changed && st.channel.settled() && (!st.abs.is_empty() || st.stale) {
+                    if !st.stale && !root_tf.is_changed() && !skel.is_changed() {
                         continue;
                     }
-                    &st.into_inner().abs
+                    let st = st.into_inner();
+                    if !near() {
+                        st.stale = true;
+                        continue;
+                    }
+                    if st.stale {
+                        pose_object(&skel.msh, &st.pose, &mut st.abs);
+                        st.stale = false;
+                    }
+                    &st.abs
                 } else {
                     let st = st.into_inner();
                     if changed {
@@ -1276,12 +1374,11 @@ pub(crate) fn animate_skeletons(
                         st.synced = Some((a.anim.clone(), a.time, a.speed, a.looped));
                     }
                     let ev = st.channel.update(dt_ms, &skel.msh, &mut st.pose);
-                    // Objects pin root motion themselves (below): put the sampled
-                    // root translation back, then pose from the blended keys.
+                    // Objects pin root motion themselves (`pose_object`): put the
+                    // sampled root translation back for the pose.
                     if let Some(ri) = skel.msh.root_bone {
                         st.pose.set_root_translation(ri, ev.root_translation);
                     }
-                    anim::pose_abs_into(&skel.msh, &st.pose, &mut st.abs);
                     st.events.extend(ev.entities);
                     // The same callback path as characters (the engine walks the
                     // callback array for every actor, doors and chests included).
@@ -1301,23 +1398,12 @@ pub(crate) fn animate_skeletons(
                     if let Some(s) = &mut st.synced {
                         s.1 = a.time;
                     }
-                    // Root motion is applied by the movement code, not the pose:
-                    // pin the root-motion bone's translation to the bind pose.
-                    if let Some(ri) = skel.msh.root_bone
-                        && let Some(&posed) = st.abs.get(ri)
-                    {
-                        let bind = skel.msh.bones[ri].abs.origin;
-                        let delta = [
-                            posed.origin[0] - bind[0],
-                            posed.origin[1] - bind[1],
-                            posed.origin[2] - bind[2],
-                        ];
-                        for c in st.abs.iter_mut() {
-                            for k in [0, 2] {
-                                c.origin[k] -= delta[k];
-                            }
-                        }
+                    if !near() {
+                        st.stale = true;
+                        continue;
                     }
+                    pose_object(&skel.msh, &st.pose, &mut st.abs);
+                    st.stale = false;
                     &st.abs
                 }
             }
@@ -1331,6 +1417,28 @@ pub(crate) fn animate_skeletons(
         for (j, c) in skel.joints.iter().zip(coords) {
             if let Ok(mut g) = joints.get_mut(*j) {
                 *g = GlobalTransform::from(root * coords_to_affine(c));
+            }
+        }
+    }
+}
+
+/// An object's mesh-space pose from its channel's blended keys (root translation included) into
+/// `abs` ([`animate_skeletons`]). Root motion is applied by the movement code, not the pose: the
+/// root-motion bone's translation is pinned to the bind pose.
+fn pose_object(msh: &Arc<Msh>, pose: &Pose, abs: &mut Vec<Coords>) {
+    anim::pose_abs_into(msh, pose, abs);
+    if let Some(ri) = msh.root_bone
+        && let Some(&posed) = abs.get(ri)
+    {
+        let bind = msh.bones[ri].abs.origin;
+        let delta = [
+            posed.origin[0] - bind[0],
+            posed.origin[1] - bind[1],
+            posed.origin[2] - bind[2],
+        ];
+        for c in abs.iter_mut() {
+            for k in [0, 2] {
+                c.origin[k] -= delta[k];
             }
         }
     }

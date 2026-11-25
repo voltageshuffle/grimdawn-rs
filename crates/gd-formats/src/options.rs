@@ -16,8 +16,8 @@
 //! `blood` is int 4, left at the fill's 1). So map zoom, brightness, contrast,
 //! gamma and UI scale are 0.5, resolution (0, 0), and all seven qualities
 //! Medium, straight from the fills.
-//! PORT: `showFPS` (default off) and `maxFPS` (default 0, uncapped) are the port's own options — the FPS
-//! overlay and the frame limiter; the engine's table has neither.
+//! PORT: `showFPS` (default off) and `maxFPS` (default 0, uncapped) are the port's own options — the FPS overlay
+//! and the frame limiter; the engine's table has neither.
 //! PORT: `mapZoom` is stored as the engine's 0.5; the local map reads it in
 //! its own 40..135 zoom units (`ui::localmap` clamps on read). The Default
 //! button's per-group overrides (`Options::SetToDefaults`: corpse persistence

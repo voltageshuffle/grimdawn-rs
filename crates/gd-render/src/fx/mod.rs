@@ -18,6 +18,14 @@
 //! bools[7] and not in simple mode one casts a point shadow of priority 1
 //! ([`crate::render::point_shadow`]).
 //!
+//! Draw entities are frustum-culled by an origin-centred `Aabb` refitted each frame from the particles
+//! ([`render::half_extents`]); an emitter culled in every view last frame keeps simulating (its lights,
+//! decals and completion depend on it) but skips the buffer fill and upload.
+//!
+//! PORT: the effects simulate in parallel across the task pool ([`update_effects`]; each emitter draws from its
+//! own `rand()` stream, [`sim`]); what touches the world (decals, meshes, buffers, lights, despawns) follows in
+//! one serial pass in query order.
+//!
 //! PORT: a finished emitter's material + storage buffer return to a pool ([`FxAssets`]) and the next
 //! emitter reuses them (the fields rewritten, the grown buffer kept) — no fresh GPU allocation per cast;
 //! and during the loading cover [`preload_effects`] parses the player's skill effect pfx and every placed
@@ -28,7 +36,12 @@
 //! background read is held for [`gd_game_core::weak_cache::FRESH_FRAMES`] (`FxAssets::fresh_*`), so a fight with more
 //! than [`gd_game_core::weak_cache::RECENT`] flipbooks in play cannot evict an effect's early files before its last one
 //! arrives (the engine's resource manager keeps a released resource 5 s instead).
+//!
+//! PORT: the additive and alpha-blended particles draw at half resolution and are composited onto the frame
+//! before the fog ([`half_res`]): a fill-rate saving for effect-heavy fights; they draw after the other
+//! transparent items (and the weather quads) instead of interleaved with them by the sort.
 pub mod enchant;
+pub mod half_res;
 pub mod items;
 pub mod mesh;
 pub mod render;
@@ -36,11 +49,14 @@ pub mod sim;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::embedded_asset;
-use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
+use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::{NoAutoAabb, RenderLayers};
+use bevy::ecs::batching::BatchingStrategy;
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
+use bevy::platform::collections::AlignedVec;
 use bevy::prelude::*;
-use bevy::render::storage::ShaderBuffer;
+use bevy::render::storage::{ShaderBuffer, ShaderBufferData};
 use gd_formats::collections::HashMap;
 use gd_formats::pfx::Pfx;
 use gd_game_core::data::GameData;
@@ -106,6 +122,7 @@ impl Plugin for FxPlugin {
                 items::ItemFxPlugin,
                 enchant::EnchantPlugin,
                 mesh::FxMeshPlugin,
+                half_res::HalfResPlugin,
             ));
         #[cfg(feature = "dev")]
         app.init_resource::<FxStats>();
@@ -191,6 +208,18 @@ pub struct Draw {
     pub mesh: Handle<Mesh>,
     pub buffer: Handle<ShaderBuffer>,
     pub cap: usize,
+    /// This frame's simulation output, from [`update_effects`]' parallel pass to its serial one.
+    drawn: Option<Drawn>,
+}
+
+/// A drawn emitter with particles this frame, as [`update_effects`]' parallel pass leaves it for the serial one.
+struct Drawn {
+    /// The render frame: the effect's coords for a local emitter, identity for a world one.
+    frame: Transform,
+    /// The particles' [`render::half_extents`] about the effect origin.
+    ext: Vec3,
+    /// The buffer contents ([`render::fill_buffer`]); `None` while the draw is off-screen.
+    fill: Option<Vec<[f32; 4]>>,
 }
 
 /// How many finished emitters' material + buffer pairs the pool keeps (a busy fight draws tens at once;
@@ -219,8 +248,6 @@ pub struct FxAssets {
     quads: HashMap<usize, Handle<Mesh>>,
     /// Finished emitters' (material, buffer) pairs, ready for the next emitter ([`cleanup_effect`]).
     pool: Vec<(Handle<ParticleMaterial>, Handle<ShaderBuffer>)>,
-    /// Scratch for [`render::fill_buffer`].
-    scratch: Vec<[f32; 4]>,
 }
 
 /// A background read of [`FxAssets`] (`None`: the file failed to load).
@@ -591,6 +618,8 @@ fn init_effects(
     cams: Query<&crate::camera::GameCamera>,
     mut held: Local<HashMap<Entity, FxWaiting>>,
     mut taken: Local<FxWaiting>,
+    // The emitters started so far: each one's `rand()` stream (`EmitterState::new`).
+    mut started: Local<u32>,
 ) {
     held.retain(|e, _| q.contains(*e));
     let focus = cams.iter().next().map(|c| c.target);
@@ -726,7 +755,10 @@ fn init_effects(
                         MeshMaterial3d(mat),
                         Transform::IDENTITY,
                         Visibility::Hidden,
-                        NoFrustumCulling,
+                        // Bounds from the particles each frame (`update_effects`); the quad
+                        // mesh's positions are all zero.
+                        Aabb::default(),
+                        NoAutoAabb,
                         NotShadowCaster,
                     ))
                     .id();
@@ -738,11 +770,13 @@ fn init_effects(
                     mesh,
                     buffer,
                     cap,
+                    drawn: None,
                 })
             } else {
                 None
             };
-            let mut state = EmitterState::new(d, frames, fx_density());
+            let mut state = EmitterState::new(d, frames, fx_density(), *started);
+            *started = started.wrapping_add(1);
             state.scale = spec.scale;
             state.loop_allowed = !spec.no_loop;
             let light = d.light().then(|| {
@@ -754,6 +788,8 @@ fn init_effects(
                             ..default()
                         },
                         Transform::IDENTITY,
+                        // Read from render::env's buffer, not Bevy's clusters.
+                        Visibility::Hidden,
                     ))
                     .id()
             });
@@ -829,6 +865,12 @@ pub fn simulated(
         && (other_view || focus.is_none_or(|f| f.distance(pos) < SIM_RADIUS))
 }
 
+/// Advances the effects and hands the results to their draw entities and lights, in two passes. The parallel
+/// one (`par_iter_mut`) does all the per-particle work, touching only the effect itself: each simulated
+/// effect's emitters update (each draws from its own `rand()` stream, [`sim`]) and its drawn emitters' bounds
+/// and buffer contents are computed ([`Drawn`]). The serial one, in query order as one loop over the effects
+/// would, applies what touches the world: the drop decals, the mesh growth, the buffer uploads, the draw and
+/// light components, the despawns and restarts.
 #[allow(clippy::too_many_arguments)]
 fn update_effects(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -845,7 +887,13 @@ fn update_effects(
         Option<&gd_game_core::visuals::EffectAnchors>,
     )>,
     mut draws: Query<
-        (&mut Transform, &mut GlobalTransform, &mut Visibility),
+        (
+            &mut Transform,
+            &mut GlobalTransform,
+            &mut Visibility,
+            &ViewVisibility,
+            &mut Aabb,
+        ),
         (With<Mesh3d>, Without<Effect>),
     >,
     mut lights: Query<
@@ -862,14 +910,81 @@ fn update_effects(
     let t0 = std::time::Instant::now();
     let dt = time.delta_secs();
     let focus = cams.iter().next().map(|c| c.target);
-    for (e, mut effect, g, inherited, restart, stop, other_view, anchored) in &mut fx {
+    // At least 8 effects per task (a quiet scene's few run as one task, its overhead a fraction of their work),
+    // up to 4 tasks per thread so idle threads take over from busy ones (particle counts differ a hundredfold).
+    let batching = BatchingStrategy::new()
+        .min_batch_size(8)
+        .batches_per_thread(4);
+    let shown = &draws;
+    fx.par_iter_mut().batching_strategy(batching).for_each(
+        |(_, mut effect, g, inherited, _, stop, other_view, anchored)| {
+            let coords = coords_of(g);
+            let effect = &mut *effect;
+            if stop {
+                for em in &mut effect.emitters {
+                    em.state.stopped = true;
+                }
+            }
+            if !simulated(coords.pos, inherited, other_view, focus) {
+                return;
+            }
+            for (d, em) in effect.pfx.emitters.iter().zip(effect.emitters.iter_mut()) {
+                // `EffectEntity::UpdateSelf`: a `SetAnchored` effect hands its
+                // anchors to every emitter before the update.
+                if let Some(a) = anchored {
+                    em.state.set_anchors(a.0, a.1);
+                }
+                em.state.update(d, coords, dt);
+                let particles = &em.state.particles;
+                let Some(dr) = &mut em.draw else {
+                    continue;
+                };
+                if particles.is_empty() {
+                    continue;
+                }
+                let Ok((_, _, vis, seen, _)) = shown.get(dr.entity) else {
+                    continue;
+                };
+                // Render frame: local particles live in the effect's coords
+                // (translation only with localOrientFix); world ones in world space.
+                let frame = if d.local() {
+                    if effect.local_orient_fix {
+                        Transform::from_translation(coords.pos)
+                    } else {
+                        let (rotation, scale) = rot_transform(coords.rot);
+                        Transform {
+                            translation: coords.pos,
+                            rotation,
+                            scale,
+                        }
+                    }
+                } else {
+                    Transform::IDENTITY
+                };
+                let anchor = frame
+                    .compute_affine()
+                    .inverse()
+                    .transform_point3(coords.pos);
+                // Off-screen last frame (frustum-culled in every view): keep simulating but
+                // skip the fill + upload. Always fill when just shown (a pooled or stale
+                // buffer) or about to grow; the padded bounds make it visible slightly early.
+                let fill = (particles.len() > dr.cap || *vis != Visibility::Visible || seen.get())
+                    .then(|| {
+                        let mut out = Vec::new();
+                        render::fill_buffer(particles, d.velocity_aligned(), anchor, &mut out);
+                        out
+                    });
+                dr.drawn = Some(Drawn {
+                    frame,
+                    ext: render::half_extents(particles, anchor),
+                    fill,
+                });
+            }
+        },
+    );
+    for (e, mut effect, g, inherited, restart, stop, other_view, _) in &mut fx {
         let coords = coords_of(g);
         let effect = &mut *effect;
-        if stop {
-            for em in &mut effect.emitters {
-                em.state.stopped = true;
-            }
-        }
         if !simulated(coords.pos, inherited, other_view, focus) {
             if stop && effect.despawn_when_complete {
                 commands.entity(e).try_despawn();
@@ -879,7 +994,7 @@ fn update_effects(
             // loaded level passes here each frame.
             for em in &effect.emitters {
                 if let Some(dr) = &em.draw
-                    && let Ok((_, _, mut vis)) = draws.get_mut(dr.entity)
+                    && let Ok((_, _, mut vis, _, _)) = draws.get_mut(dr.entity)
                 {
                     vis.set_if_neq(Visibility::Hidden);
                 }
@@ -894,12 +1009,6 @@ fn update_effects(
         }
         let mut complete = true;
         for (d, em) in effect.pfx.emitters.iter().zip(effect.emitters.iter_mut()) {
-            // `EffectEntity::UpdateSelf`: a `SetAnchored` effect hands its
-            // anchors to every emitter before the update.
-            if let Some(a) = anchored {
-                em.state.set_anchors(a.0, a.1);
-            }
-            em.state.update(d, coords, dt);
             // Dead particles' drop decals (sim space → world: local emitters
             // live in the effect's coords).
             for (p, yaw) in em.state.dropped.drain(..) {
@@ -923,61 +1032,42 @@ fn update_effects(
                 ));
             }
             complete &= em.state.is_complete();
-            if let Some(dr) = &mut em.draw
-                && let Ok((mut t, mut gt, mut vis)) = draws.get_mut(dr.entity)
-            {
-                // Render frame: local particles live in the effect's coords
-                // (translation only with localOrientFix); world ones in world space.
-                let frame = if d.local() {
-                    if effect.local_orient_fix {
-                        Transform::from_translation(coords.pos)
-                    } else {
-                        let (rotation, scale) = rot_transform(coords.rot);
-                        Transform {
-                            translation: coords.pos,
-                            rotation,
-                            scale,
+            if let Some(dr) = &mut em.draw {
+                let drawn = dr.drawn.take();
+                if let Ok((mut t, mut gt, mut vis, _, mut aabb)) = draws.get_mut(dr.entity) {
+                    // `None`: no particles.
+                    if let Some(Drawn { frame, ext, fill }) = drawn {
+                        // Grow-only power-of-two capacity: a bigger quad mesh and buffer.
+                        let n = em.state.particles.len();
+                        if n > dr.cap {
+                            dr.cap = n.next_power_of_two();
+                            dr.mesh = assets.quads(dr.cap, &mut meshes);
+                            commands.entity(dr.entity).insert(Mesh3d(dr.mesh.clone()));
                         }
+                        aabb.set_if_neq(Aabb::from_min_max(-ext, ext));
+                        if let Some(fill) = fill
+                            && let Some(mut b) = buffers.get_mut(&dr.buffer)
+                        {
+                            // The filled vec becomes the upload as it is (no copy).
+                            b.data = ShaderBufferData::Initialized {
+                                data: AlignedVec::from(fill),
+                                buffer_size: render::buffer_bytes(dr.cap),
+                            };
+                        }
+                        // The draw entity sits at the effect origin (the sort centre of the
+                        // static mesh); the particles are relative to it. Write only on change:
+                        // a stationary placed effect flags nothing changed each frame.
+                        let new = Transform {
+                            translation: coords.pos,
+                            rotation: frame.rotation,
+                            scale: frame.scale,
+                        };
+                        t.set_if_neq(new);
+                        gt.set_if_neq(GlobalTransform::from(new));
+                        vis.set_if_neq(Visibility::Visible);
+                    } else {
+                        vis.set_if_neq(Visibility::Hidden);
                     }
-                } else {
-                    Transform::IDENTITY
-                };
-                let anchor = frame
-                    .compute_affine()
-                    .inverse()
-                    .transform_point3(coords.pos);
-                let n = em.state.particles.len();
-                if n == 0 {
-                    vis.set_if_neq(Visibility::Hidden);
-                } else {
-                    // Grow-only power-of-two capacity: a bigger quad mesh and buffer.
-                    if n > dr.cap {
-                        dr.cap = n.next_power_of_two();
-                        dr.mesh = assets.quads(dr.cap, &mut meshes);
-                        commands.entity(dr.entity).insert(Mesh3d(dr.mesh.clone()));
-                    }
-                    render::fill_buffer(
-                        &em.state.particles,
-                        d.velocity_aligned(),
-                        anchor,
-                        &mut assets.scratch,
-                    );
-                    if let Some(mut b) = buffers.get_mut(&dr.buffer) {
-                        b.clear();
-                        b.extend_from_slice(&assets.scratch);
-                        b.resize_buffer(render::buffer_bytes(dr.cap));
-                    }
-                    // The draw entity sits at the effect origin (the sort centre of the
-                    // static mesh); the particles are relative to it. Write only on change:
-                    // a stationary placed effect flags nothing changed each frame.
-                    let new = Transform {
-                        translation: coords.pos,
-                        rotation: frame.rotation,
-                        scale: frame.scale,
-                    };
-                    t.set_if_neq(new);
-                    gt.set_if_neq(GlobalTransform::from(new));
-                    vis.set_if_neq(Visibility::Visible);
                 }
             }
             if let Some(l) = em.light

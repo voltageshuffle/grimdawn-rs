@@ -1101,7 +1101,7 @@ pub fn spawn_level(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     terrain_mats: &mut Assets<TerrainMaterial>,
-    decal_mats: &mut Assets<DecalMaterial>,
+    decal_mats: &mut gd_render::decal::DecalMats,
     mats: &mut gd_render::render::material::MaterialAssets,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
     cache: &mut ModelCache,
@@ -1277,7 +1277,6 @@ fn spawn_level_root(
         commands.entity(root).add_child(e);
     }
     if let Some(mut t) = cpu.terrain.take().filter(|_| !hooks.no_terrain) {
-        let blocks = t.blocks.clone();
         // The terrain layers' grass (render/grass.rs): terrain-local blades.
         gd_render::render::grass::spawn(
             commands,
@@ -1290,23 +1289,27 @@ fn spawn_level_root(
             meshes,
             mats,
         );
+        // Its layer textures stay decoded for the next level builds while it is loaded.
         let held = std::mem::take(&mut t.held);
-        let (mesh, mat) = t.material(cpu.origin, images, &mats.defaults);
+        let e = commands.spawn((held, Name::new("terrain layers"))).id();
+        commands.entity(root).add_child(e);
+        // One entity per mesh chunk, sharing the level's material (render/terrain.rs).
+        let (chunks, mat) = t.material(cpu.origin, images, &mats.defaults);
         let mat = terrain_mats.add(mat);
         cpu.terrain_mat = Some(mat.clone());
-        let e = commands
-            .spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(mat),
-                Transform::from_translation(cpu.origin),
-                // The terrain only receives sun shadows (render/terrain.rs).
-                bevy::light::NotShadowCaster,
-                blocks,
-                // Its layer textures stay decoded for the next level builds while it is loaded.
-                held,
-            ))
-            .id();
-        commands.entity(root).add_child(e);
+        for chunk in chunks {
+            let e = commands
+                .spawn((
+                    Mesh3d(meshes.add(chunk.mesh)),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::from_translation(cpu.origin),
+                    // The terrain only receives sun shadows (render/terrain.rs).
+                    bevy::light::NotShadowCaster,
+                    chunk.blocks,
+                ))
+                .id();
+            commands.entity(root).add_child(e);
+        }
     }
     for fx in &cpu.effects {
         let e = gd_render::fx::spawn_placed(commands, fx);
@@ -1585,7 +1588,7 @@ fn spawn_level_decals(
     defaults: &gd_render::render::GdDefaults,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
-    decal_mats: &mut Assets<DecalMaterial>,
+    decal_mats: &mut gd_render::decal::DecalMats,
     textures: &mut Textures,
     receivers: &gd_render::decal::DecalReceivers,
     mut held: Option<&mut Vec<Handle<Image>>>,
@@ -1677,7 +1680,7 @@ fn spawn_levels(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
-    mut decal_mats: ResMut<Assets<DecalMaterial>>,
+    mut decal_mats: gd_render::decal::DecalMats,
     mut mats: gd_render::render::material::MaterialAssets,
     (mut cache, bodies): (ResMut<ModelCache>, Res<gd_game_core::creature::BodyCache>),
     mut textures: ResMut<Textures>,

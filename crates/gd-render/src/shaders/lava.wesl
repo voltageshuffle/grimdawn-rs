@@ -6,8 +6,8 @@
 // on layers, (0, textureScroll · time) on paths) and the bump frame's tangent (layers:
 // the normalised textureDirection, paths: the vertex's flow tangent, uv_b); vertex
 // colour r = the depth opacity (water.rs depth_opacity), a = the painted alpha.
-// The bump (bumpSampler) is the type's NoiseTexture, normalMap = 0 on the stock lava
-// record (lavadefault.dbr): the raw composite height, as water.wesl's noise_height.
+// The bump (bumpSampler) is the type's NoiseTexture target (water.rs render_noise), normalMap = 0
+// on the stock lava record (lavadefault.dbr): the raw composite height, its r channel.
 // No reflection, no sky, no specular, no glow style (the technique list has none):
 // the glow view gets nothing, like the water. Gamma-space output.
 import bevy_pbr::{
@@ -19,15 +19,13 @@ struct WaterParams {
     surface: vec4<f32>,        // surfaceParams: x normal-z weight, y melt scale, z (unused here)
     water_color: vec4<f32>,
     tex_scale_dir: vec4<f32>,  // xy textureScale, zw textureDirection
-    scroll_time: vec4<f32>,    // x textureScroll, y 1 = a path, z 1/noise size, w 1 = normalMap
-    noise_levels: vec4<f32>,   // NoiseTexture octave weights
+    scroll_time: vec4<f32>,    // x textureScroll, y 1 = a path, z unused, w 1 = normalMap
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> water: WaterParams;
-@group(constants::MATERIAL_BIND_GROUP) @binding(1) var noise_textures: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var noise_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var noise_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var<storage, read> env: array<vec4<f32>>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(8) var<storage, read> noise_state: array<vec4<f32>>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var lava_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var lava_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(11) var lava_normal: texture_2d<f32>;
@@ -36,18 +34,6 @@ struct WaterParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var ash_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var ash_normal: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var ash_normal_sampler: sampler;
-
-// water.wesl noise_height: the NoiseTexture composite (noisetexturegen.ssh compositePS).
-fn noise_height(uv: vec2<f32>) -> f32 {
-    var h = 0.0;
-    for (var i = 0; i < 4; i = i + 1) {
-        let k = exp2(f32(i));
-        let p = textureSample(noise_textures, noise_sampler, uv * k, i32(noise_state[1][i])).r;
-        let c = textureSample(noise_textures, noise_sampler, uv * k, i32(noise_state[2][i])).r;
-        h = h + water.noise_levels[i] * mix(p, c, noise_state[0][i]);
-    }
-    return h;
-}
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -63,7 +49,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         scroll = vec2(0.0, water.scroll_time.x * time);
         tangent = vec3(in.uv_b.x, 0.0, in.uv_b.y);
     }
-    let h = noise_height(uv + time * vec2(0.0025, 0.00125));
+    let h = textureSample(noise_texture, noise_sampler, uv + time * vec2(0.0025, 0.00125)).r;
     // The melt: noise height × (surfaceParams.y − 10) / 495 × depth opacity, against
     // the ash texture's alpha. Above it the lava shows, within 0.1 the two blend.
     let melt = h * (water.surface.y - 10.0) * in.color.r * 0.0020202;

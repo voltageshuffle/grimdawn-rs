@@ -2,7 +2,8 @@
 //! from the environment ([`gd_game_core::hooks`]) and these exist: screenshots ([`autoshot`]), the session census
 //! ([`audit`]), exit cycles ([`exit_cycles`]), the memory audit ([`memory`]), the test arena ([`testworld`]), the character scene
 //! ([`chars`]), the effect checks ([`fx`], registered here unless `GD_NO_FX`), the model viewer (`GD_MODELS`), the
-//! frame-time log (`GD_FPS`), the path test (`GD_PATH_TEST`) and the scripted mouse ([`mouse`], `GD_MOUSE`). A build without `dev` inserts `Hooks::default()`:
+//! frame-time log (`GD_FPS`), the per-pass GPU times (`GD_GPU_TIMES`), the path test (`GD_PATH_TEST`) and the
+//! scripted mouse ([`mouse`], `GD_MOUSE`). A build without `dev` inserts `Hooks::default()`:
 //! the hook reads left in the game's systems are inert, and the scripted test systems next to the systems they
 //! drive are gated the same way.
 pub mod audit;
@@ -46,7 +47,40 @@ impl Plugin for DevPlugin {
         if !app.world().resource::<Hooks>().render.no_fx {
             fx::plugin(app);
         }
+        if app.world().resource::<Hooks>().render.gpu_times {
+            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
+                .add_systems(Last, gpu_times_log);
+        }
     }
+}
+
+/// `GD_GPU_TIMES`: every second, the passes' GPU times (timestamp queries; Bevy's passes and the port's post
+/// passes), largest first, and their sum.
+fn gpu_times_log(
+    time: Res<Time>,
+    mut since: Local<f32>,
+    store: Res<bevy::diagnostic::DiagnosticsStore>,
+) {
+    *since += time.delta_secs();
+    if *since < 1.0 {
+        return;
+    }
+    *since = 0.0;
+    let mut spans: Vec<(f64, &str)> = store
+        .iter()
+        .filter_map(|d| {
+            let path = d.path().as_str().strip_suffix("/elapsed_gpu")?;
+            Some((d.average()?, path.strip_prefix("render/").unwrap_or(path)))
+        })
+        .collect();
+    spans.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let total: f64 = spans.iter().map(|s| s.0).sum();
+    let list: Vec<String> = spans
+        .iter()
+        .take(14)
+        .map(|(ms, p)| format!("{p} {ms:.2}"))
+        .collect();
+    info!("gpu ms (sum {total:.2}): {}", list.join(", "));
 }
 
 /// A dev scene (`GD_MODELS`, `GD_CHARS`) placed the camera: `main`'s `place_camera` leaves it.

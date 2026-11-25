@@ -195,7 +195,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let tuv = vec2(uv.x * decal.variant_scale + decal.variant_offset, uv.y);
     let texel = textureSample(decal_texture, decal_sampler, tuv);
-    // A fading decal's opacity: 1 − the f32 bits in its MeshTag (decal.rs `fade_tag`; untagged = 1).
+    // The layer's opacity (the record's, faded, × a ring alpha; its material is shared and unfaded): 1 − the f32
+    // bits in its MeshTag (decal.rs `alpha_tag`; untagged = 1).
     let fade = 1.0 - bitcast<f32>(mesh_functions::get_tag(in.instance_index));
     let a = texel.a * decal.opacity * fade;
     if decal.glow > 0.0 {

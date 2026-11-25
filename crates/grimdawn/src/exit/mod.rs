@@ -188,6 +188,10 @@ const KEEP: &[&str] = &[
     "gd_render::render::post::HeldComposite",
     // Render world: the G-buffer blend items held between two systems of one frame (render/gbuffer_blend.rs).
     "gd_render::render::gbuffer_blend::HeldGBufferBlend",
+    // Render world: the water noise pass's pipeline and this frame's passes (rebuilt every frame from the
+    // extracted water types, render/water.rs).
+    "gd_render::water::NoisePipeline",
+    "gd_render::water::NoisePasses",
     // The process's test hooks.
     "gd_game_core::hooks::Hooks",
     "gd_ui_kit::keys::KeyBindings",
@@ -206,6 +210,9 @@ const KEEP: &[&str] = &[
     "gd_render::model::ModelCache",
     // The .ssh analyses, grass materials and material variants; `model::drop_on_mod_change` empties it.
     "gd_render::render::material::MaterialCache",
+    // Shared decal materials by texture set; entries are ids only (freed with their last decal), a reloaded
+    // texture keys a new entry, so no session state.
+    "gd_render::decal::DecalMatCache",
     // The `detailLevel` render setting (settings.rs writes it); not session state.
     "gd_render::render::grass::GrassQuality",
     // The UI-scale slider (`settings::apply_ui_scale` writes it from the options and the app state).
@@ -217,6 +224,10 @@ const KEEP: &[&str] = &[
     "gd_render::render::post::CompositeEntities",
     // Render pipelines and shader handles (render/post.rs).
     "gd_render::render::post::PostPipelines",
+    // Render world: the half-resolution particle pipelines and the particle items held between two systems of
+    // one frame (fx/half_res.rs).
+    "gd_render::fx::half_res::HalfResPipelines",
+    "gd_render::fx::half_res::HeldParticles",
     "gd_game_core::session::SaveDir",
     // Dev scenes (`GD_MODELS`, `GD_CHARS`) that place the camera themselves (dev/mod.rs): no session.
     "grimdawn::dev::SceneCamera",

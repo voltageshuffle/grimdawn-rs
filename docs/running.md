@@ -10,7 +10,10 @@ holding `database/database.arz`). Then either `source local.env`, or prefix comm
 - `cargo dev`: a debug build with the `dev` feature (hooks, screenshots, test scenes). gd-formats and gd-sim
   are built at opt-level 3.
 - Frame times: `cargo run -p grimdawn --profile profiling --features profile` (release code with line tables,
-  Chrome trace) plus `GD_FPS=1`.
+  Chrome trace) plus `GD_FPS=1`. The trace inflates CPU time a lot under load: for real numbers use
+  `--features dev` and `GD_FPS=1`, with `GD_GPU_TIMES=1` for per-pass GPU times (timestamp queries) and
+  `perf record` for CPU hot spots. Stress scene: `GD_SPAWN_MONSTER` around the start, `GD_FX` +
+  `GD_FX_GRID`, `GD_GOD GD_AUTO_FIGHT`, and `GD_OPTIONS` pointing at an options file with every quality maxed.
 - Shipped build: `cargo build -p grimdawn --release` (thin LTO, panic = abort, stripped). Linux (Wayland and
   X11) and Windows x86-64; `.github/workflows/release.yml` builds both on a `v*` tag or by hand.
 - Saves go to `GD_SAVE_DIR` (default `$XDG_DATA_HOME/grimdawn-rs/save`, `%APPDATA%\grimdawn-rs\save` on

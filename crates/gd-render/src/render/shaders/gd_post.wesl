@@ -40,6 +40,8 @@ struct GammaOut {
 @group(0) @binding(3) var aux_tex: texture_2d<f32>;
 @group(0) @binding(4) var depth_tex: texture_depth_2d;
 @group(0) @binding(5) var<uniform> view: View;
+// The depth of field's half-size blur (other passes bind any texture here).
+@group(0) @binding(6) var blur_tex: texture_2d<f32>;
 
 // Hardware depth at uv (reverse Z: 0 = nothing drawn / infinitely far).
 fn depth_at(uv: vec2<f32>) -> f32 {
@@ -58,13 +60,13 @@ fn view_depth(d: f32) -> f32 {
 // was drawn, a = max(sat((z − start)·inv)·density, sat((h − start)·inv)·density)
 // with z the view depth and h the world height (the engine passes the height
 // start relative to the camera and dots the camera-space position with the
-// up vector: the same), colour = fogColor.
+// up vector: the same), colour = fogColor. Blended onto the frame by the
+// pipeline (the alpha channel keeps the frame's).
 @fragment
 fn fog(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let c = textureSample(src_tex, smp, in.uv);
     let d = depth_at(in.uv);
     if d <= 0.0 {
-        return c;
+        discard;
     }
     let z = view_depth(d);
     let ndc = vec4<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0, d, 1.0);
@@ -73,7 +75,7 @@ fn fog(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let df = saturate((z - settings.depth_fog.x) * settings.depth_fog.y) * settings.depth_fog.z;
     let hf = saturate((h - settings.height_fog.x) * settings.height_fog.y) * settings.height_fog.z;
     let a = max(df, hf);
-    return vec4<f32>(mix(c.rgb, settings.fog_color.rgb, a), c.a);
+    return vec4<f32>(settings.fog_color.rgb, a);
 }
 
 // deferred.ssh tonemapPS (`PerformTonemapping`, hdrLighting only): in log2 space, below
@@ -216,15 +218,17 @@ fn ao_create(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(vec3<f32>(occ * (1.0 - settings.ao.y) + settings.ao.y), 1.0);
 }
 
-// `GraphicsCanvas_Blur8Tap` with gain 1 and spread 1 (`Engine.ssaoBlurSpread`).
+// `GraphicsCanvas_Blur8Tap` with gain 1 and spread 1 (`Engine.ssaoBlurSpread`). The occlusion is
+// half size here (post.rs module doc), so the steps are half a texel: one full-size pixel, as in
+// the engine.
 @fragment
 fn ao_blur_v(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    return blur(in.uv, step_v(), 1.0);
+    return blur(in.uv, step_v() * 0.5, 1.0);
 }
 
 @fragment
 fn ao_blur_h(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    return blur(in.uv, step_h(), 1.0);
+    return blur(in.uv, step_h() * 0.5, 1.0);
 }
 
 // ssao.ssh renderPS: a plain sample, multiplied onto the scene (blend Dst / Zero).
@@ -258,7 +262,7 @@ fn graded(uv: vec2<f32>) -> vec3<f32> {
     return c;
 }
 
-// Into the frame (gamma values, the UI is drawn over them) or the UNORM frame copy that the depth of field reads.
+// Into the frame (gamma values, the UI is drawn over them) or the UNORM frame copy that FXAA reads.
 @fragment
 fn finish(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(graded(in.uv), 1.0);
@@ -276,19 +280,23 @@ fn to_linear(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(srgb_to_linear(c), 1.0);
 }
 
-// downsample.ssh `normal`: one bilinear tap per half-size texel (its centre
-// lies between 2 × 2 source texels: their mean).
+// downsample.ssh `normal` over the graded frame: one bilinear tap per half-size texel (its centre
+// lies between 2 × 2 source texels: their mean). The graded frame is not stored, so the 4 texels
+// are graded here (taps at their centres) and averaged.
 @fragment
 fn downsample(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSample(src_tex, smp, in.uv).rgb, 1.0);
+    let o = vec2<f32>(0.5) / vec2<f32>(textureDimensions(src_tex));
+    let c = graded(in.uv + vec2<f32>(-o.x, -o.y)) + graded(in.uv + vec2<f32>(o.x, -o.y))
+        + graded(in.uv + vec2<f32>(-o.x, o.y)) + graded(in.uv + vec2<f32>(o.x, o.y));
+    return vec4<f32>(c * 0.25, 1.0);
 }
 
 // depthoffield.ssh: f = sat((1.27·z − dofDistance) / dofRange), out =
-// lerp(frame, half-size blur, f).
+// lerp(frame, half-size blur, f), the frame graded here.
 @fragment
 fn depth_of_field(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let base = textureSample(src_tex, smp, in.uv).rgb;
-    let blur = textureSample(aux_tex, smp, in.uv).rgb;
+    let base = graded(in.uv);
+    let blur = textureSample(blur_tex, smp, in.uv).rgb;
     let d = depth_at(in.uv);
     // Nothing drawn: the cleared depth is the far plane (blurred).
     var f = 1.0;

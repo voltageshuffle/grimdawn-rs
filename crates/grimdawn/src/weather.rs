@@ -771,6 +771,8 @@ fn weather_flash(
                             ..default()
                         },
                         Transform::from_translation(at),
+                        // Read from render::env's buffer, not Bevy's clusters.
+                        Visibility::Hidden,
                         Name::new("lightning"),
                     ))
                     .id(),

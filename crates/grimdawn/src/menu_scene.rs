@@ -261,7 +261,7 @@ fn finish_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain_mats: ResMut<Assets<gd_world::TerrainMaterial>>,
-    mut decal_mats: ResMut<Assets<gd_world::DecalMaterial>>,
+    mut decal_mats: gd_render::decal::DecalMats,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut mats: gd_render::render::material::MaterialAssets,

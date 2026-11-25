@@ -41,12 +41,13 @@ impl Plugin for MonstersPlugin {
 
 /// `GD_SPAWN_MONSTER` (hooks.rs) spawns story-slot monsters
 /// (never culled) at those level coordinates, each once the nav mesh covers
-/// its spot, at the player's level.
+/// its spot, at the player's level (a new character's too).
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn spawn_test_monsters(
     mut commands: Commands,
     mut pending: Local<Option<Vec<(String, f32, f32)>>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<gd_game::nav::Nav>,
     mut assets: CharAssets,
@@ -55,9 +56,10 @@ fn spawn_test_monsters(
     factions: Option<Res<gd_game::factions::PlayerFactions>>,
     hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
-    let (Some(rules), Some(loaded)) = (rules, loaded) else {
+    let (Some(rules), Some(_)) = (rules, progress.as_ref()) else {
         return;
     };
+    let level = gd_game::monsters::current_player_level(progress.as_deref(), loaded.as_deref());
     let list = pending.get_or_insert_with(|| hooks.gameplay.spawn_monster.clone());
     list.retain(|(rec, x, z)| {
         let Some(y) = nav.0.ground([*x, 100.0, *z]) else {
@@ -65,7 +67,7 @@ fn spawn_test_monsters(
         };
         let m = gd_game::monsters::MonsterState {
             record: rec.clone(),
-            level: loaded.0.bio.level as i32,
+            level,
             position: Vec3::new(*x, y, *z),
             yaw: 0.0,
             variant: 0,

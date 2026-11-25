@@ -15,7 +15,12 @@
 //!   `RenderReflection` creates the surface at the viewport size).
 //!   The quality does NOT size it: it sets the reflection scene's content flags
 //!   (`GraphicsScene.contentFlags`: medium 0x408, high 0x40A, very high 0x60A, ultra 0x61A; the main
-//!   scene is 0x7FF) which select what reflects, and the caster distance.
+//!   scene is 0x7FF) which select what reflects, and the caster distance. The bits the renderables
+//!   test: 0x1 terrain (`TerrainRenderInterface::RenderGround`), 0x2 grass (`TerrainPatch::RenderGrass`),
+//!   0x8 actors (`Actor::ShouldRenderForScene`), 0x10 particles (`Emitter::AddToScene`), 0x20 decals
+//!   (`Decal::AddToScene`), 0x400 every mesh (`GraphicsMeshInstance::RenderPass`); 0x200 is tested
+//!   nowhere in Engine.dll. So every enabled quality reflects the meshes and actors (monsters
+//!   included), high adds the grass, ultra the particles; the terrain and decals never reflect.
 //! - `reflectionStyle` (every mesh): `base × (sat(N·L)·sun + hemisphere ambient)`,
 //!   alpha `base.a`, clipped at the water plane — no point lights, shadows,
 //!   specular or glow. `reflectPS` then samples the target at the water pixel's
@@ -32,25 +37,41 @@
 //! draws nothing there. The target is the engine's fixed 512 wide
 //! ([`reflection_target_size`]), kept at the screen's aspect so the reflection
 //! lines up with the screen uv the water samples; the caster distance is the
-//! engine's 64 m / far ([`reflection_caster_distance`]). The content flags select
-//! which renderables reflect per-renderable in the engine; PORT: the port reflects
-//! the whole scene (terrain + meshes) at every enabled quality. One pass for the
+//! engine's 64 m / far ([`reflection_caster_distance`]). One pass for the
 //! nearest reflecting plane (the engine: one per plane).
+//!
+//! What reflects follows the content flags (`cull_reflection`, which filters the view's
+//! `VisibleEntities` after Bevy's visibility check, so no spawn site tags anything): every
+//! `GdMaterial` mesh (props, buildings, characters, monsters), the grass from high up, the
+//! other meshes (particles, ribbons, ...) at ultra only, the terrain never. PORT: the particle
+//! shader (like the decal and water ones) draws nothing in this view, so the ultra particles
+//! the engine reflects do not show.
 //!
 //! PORT (performance): the pass runs only while a reflecting surface has a block
 //! in the main camera's frustum (last frame's, so the reflection starts one frame
-//! after the water enters the screen edge), and the view renders no sun shadow
-//! map (`shadow::NoSunShadow`: `reflectionStyle` has no shadows).
+//! after the water enters the screen edge), and then only every
+//! [`REFLECTION_INTERVAL`]th frame (at once on activation and on a resize; the
+//! target keeps its last image between, so the reflection trails the camera by up to a
+//! frame). Bevy drops an inactive view's phases and per-view specializations, so each
+//! rendered frame queues the reflected set afresh.
+//! The view renders no sun shadow map (`shadow::NoSunShadow`) and clusters point lights
+//! into one cluster only (`ClusterConfig` Single; None breaks Bevy 0.20's GPU clustering):
+//! `reflectionStyle` reads neither.
+use super::GdMaterial;
+use super::grass::GrassWind;
 use super::shadow::{NoSunShadow, SceneBlocks};
+use super::terrain::GdTerrainMaterial;
 use crate::camera::GameCamera;
 use crate::water::WaterPoints;
 use bevy::camera::primitives::{Aabb, Frustum};
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::visibility::{RenderLayers, VisibilitySystems, VisibleEntities};
 use bevy::camera::{ClearColorConfig, Exposure, RenderTarget};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
+use bevy::light::cluster::ClusterConfig;
 use bevy::math::reflection_matrix;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureFormat};
+use std::any::TypeId;
 
 /// The reflection view's exposure marker (ev100 −2 → exposure 2^2 / 1.2 ≈ 3.33).
 /// The scene shaders test `view.exposure > 2.0` (`is_reflection_view`); the glow
@@ -62,6 +83,8 @@ pub const REFLECTION_SIZE: u32 = 512;
 /// The engine's reflection caster distance (`BuildReflections` v8): 64 m below
 /// ultra, the scene far plane at ultra.
 pub const REFLECTION_DISTANCE: f32 = 64.0;
+/// The reflection renders every this many frames while it is on (module doc).
+pub const REFLECTION_INTERVAL: u32 = 2;
 
 pub struct ReflectionPlugin;
 
@@ -73,9 +96,12 @@ impl Plugin for ReflectionPlugin {
         // `prepare_lights`), and its mirrored transform would lag a frame.
         app.add_systems(PostStartup, setup_reflection).add_systems(
             PostUpdate,
-            sync_reflection
-                .after(crate::camera::CameraSet)
-                .before(bevy::transform::TransformSystems::Propagate),
+            (
+                sync_reflection
+                    .after(crate::camera::CameraSet)
+                    .before(bevy::transform::TransformSystems::Propagate),
+                cull_reflection.after(VisibilitySystems::CheckVisibility),
+            ),
         );
     }
 }
@@ -178,6 +204,7 @@ fn setup_reflection(
         Exposure {
             ev100: REFLECTION_EV100,
         },
+        ClusterConfig::Single,
         RenderLayers::layer(0),
         Transform::default(),
         Projection::Perspective(crate::camera::world_projection()),
@@ -186,7 +213,8 @@ fn setup_reflection(
 }
 
 /// Follows the main camera across the nearest reflecting water plane, sizes the
-/// target by the option, and turns the pass off when there is nothing to reflect.
+/// target by the option, turns the pass off when there is nothing to reflect, and
+/// renders it every [`REFLECTION_INTERVAL`]th frame (module doc).
 fn sync_reflection(
     options: Res<gd_game_core::options::GameOptions>,
     mains: Query<
@@ -202,6 +230,8 @@ fn sync_reflection(
     target: Res<ReflectionTarget>,
     mut images: ResMut<Assets<Image>>,
     mut refl: Query<(&mut Camera, &mut Transform, &mut Projection), With<ReflectionCamera>>,
+    // Frames to skip before the next render.
+    mut wait: Local<u32>,
 ) {
     let quality = option_quality(&options);
     let main = mains.single().ok();
@@ -242,8 +272,11 @@ fn sync_reflection(
         Some((*tf, persp, size, height))
     })();
     let Some((main_tf, persp, size, height)) = setup else {
+        *wait = 0;
         for (mut c, ..) in &mut refl {
-            c.is_active = false;
+            if c.is_active {
+                c.is_active = false;
+            }
         }
         return;
     };
@@ -251,16 +284,31 @@ fn sync_reflection(
     // water samples (the engine's square target is stretched the same way).
     let width = reflection_target_size(quality).max(1);
     let height_px = ((width as f32 * size.y as f32 / size.x as f32).round() as u32).max(1);
-    if images
+    let resized = images
         .get(&target.image)
-        .is_some_and(|i| i.size() != UVec2::new(width, height_px))
-        && let Some(mut img) = images.get_mut(&target.image)
-    {
+        .is_some_and(|i| i.size() != UVec2::new(width, height_px));
+    if resized && let Some(mut img) = images.get_mut(&target.image) {
         img.resize(Extent3d {
             width,
             height: height_px,
             depth_or_array_layers: 1,
         });
+    }
+    // A resized target holds no image yet: render it now.
+    let render = resized || *wait == 0;
+    *wait = if render {
+        REFLECTION_INTERVAL - 1
+    } else {
+        *wait - 1
+    };
+    if !render {
+        // The target keeps the last image; the camera stays where it drew it.
+        for (mut c, ..) in &mut refl {
+            if c.is_active {
+                c.is_active = false;
+            }
+        }
+        return;
     }
     let (mirror, mut mirror_proj) = reflection_camera(&main_tf, persp, height);
     // The engine cuts the reflection casters at 64 m (ultra: the far plane).
@@ -269,5 +317,35 @@ fn sync_reflection(
         c.is_active = true;
         *t = mirror;
         *p = Projection::Perspective(mirror_proj.clone());
+    }
+}
+
+/// Drops from the reflection view's visible meshes what the quality's content flags
+/// leave out (module doc): the terrain always, the grass below high, every mesh
+/// but the `GdMaterial` ones below ultra.
+fn cull_reflection(
+    options: Res<gd_game_core::options::GameOptions>,
+    mut views: Query<(&Camera, &mut VisibleEntities), With<ReflectionCamera>>,
+    meshes: Query<(
+        Has<MeshMaterial3d<GdTerrainMaterial>>,
+        Has<MeshMaterial3d<GdMaterial>>,
+        Has<GrassWind>,
+    )>,
+) {
+    let quality = option_quality(&options);
+    for (cam, mut visible) in &mut views {
+        if !cam.is_active {
+            continue;
+        }
+        visible.get_mut(TypeId::of::<Mesh3d>()).retain(|&e| {
+            meshes
+                .get(e)
+                .is_ok_and(|(terrain, gd, grass)| match (terrain, grass, gd) {
+                    (true, ..) => false,
+                    (_, true, _) => quality >= 2,
+                    (_, _, true) => true,
+                    _ => quality >= 4,
+                })
+        });
     }
 }

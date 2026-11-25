@@ -710,7 +710,6 @@ fn run_menu(
         }
         MenuWindow::GameType(g) => {
             typed.clear();
-            let offered = gd_game_core::session::available_arenas(data.root());
             // The toggles (`GameModeWindow::HandleToggle`): one of the three is down; Custom shows its view (the map
             // list read again, the current custom map selected), the others hide it.
             match hit {
@@ -734,6 +733,7 @@ fn run_menu(
                 // the campaign; leaving a mode other than Custom re-applies the character (its difficulty
                 // clamped), picking Custom does not.
                 let was_custom = m.custom.is_some();
+                let offered = gd_game_core::session::available_arenas(data.root());
                 (m.crucible, m.arena) = (g.crucible, g.arena.min(offered.len()));
                 m.custom = g.custom.then(|| g.maps.get(g.pick).cloned()).flatten();
                 if m.custom.is_none() && !was_custom {

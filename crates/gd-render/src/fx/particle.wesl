@@ -139,5 +139,12 @@ fn fragment(in: Out) -> @location(0) vec4<f32> {
     }
     return vec4(mix(vec3(1.0), t.rgb, a) * screen, a);
 }
-    return t * in.color;
+    // Both blends weigh the colour by its alpha (SrcAlpha/One, SrcAlpha/InvSrcAlpha): a fragment below
+    // 1/1024 changes no 8-bit channel, so it is dropped before the blend (the soft sprites' empty corners
+    // and fringes: most of a dense effect's fill).
+    let c = t * in.color;
+    if c.a < 1.0 / 1024.0 {
+        discard;
+    }
+    return c;
 }

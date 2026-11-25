@@ -50,6 +50,12 @@
 //! Opacity (`Decal::GetOpacity`, times in integer ms,
 //! the age advanced by `UpdateSelf`): see [`DecalTiming::opacity`];
 //! the shader's `opacity` scales the texel alpha (the glow layer's colour).
+//! PORT: every layer's opacity (the record's, a fade's, a particle decal's
+//! ring alpha) reaches the shader through the entity's `MeshTag`
+//! ([`alpha_tag`]), and the materials hold the unfaded values, so decals of
+//! one record share one material per layer ([`DecalMats`]): placing,
+//! fading or re-ranking a decal changes no asset, and a ring of blood decals
+//! batches into a few draws.
 //! A decal with `life` > 0 is removed when its age reaches it, level (static)
 //! decals too. `UpdateSelf`: while updating (`Decal.updating`, set by `Load`),
 //! at age ≥ life the decal stops updating and, in the world, is removed and
@@ -130,7 +136,45 @@ impl Plugin for DecalPlugin {
         embedded_asset!(app, "shaders/decal.wesl");
         app.add_plugins(MaterialPlugin::<DecalMaterial>::default())
             .init_resource::<DecalReceivers>()
+            .init_resource::<DecalMatCache>()
             .add_systems(Update, (fade_decals, gate_level_decals, grow_decals));
+    }
+}
+
+/// The shared decal materials ([`spawn`]): one per (texture, bump / glow texture, variant strip, unlit, layer),
+/// by id only, so the material goes once no decal uses it (and a texture reloaded under a new handle gets a new
+/// entry). Holds no strong handle, so nothing to reset between sessions.
+#[derive(Resource, Default)]
+pub struct DecalMatCache(HashMap<DecalMatKey, AssetId<DecalMaterial>>);
+
+/// (texture, bump or glow texture, variant offset / scale bits, unlit, glow layer).
+type DecalMatKey = (AssetId<Image>, Option<AssetId<Image>>, [u32; 2], bool, bool);
+
+/// The decal material assets with their sharing cache, what [`spawn`] takes.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct DecalMats<'w> {
+    pub assets: ResMut<'w, Assets<DecalMaterial>>,
+    cache: ResMut<'w, DecalMatCache>,
+}
+
+impl DecalMats<'_> {
+    /// The shared material of `key`, made by `make` when there is none (or its decals all went).
+    fn get_or_add(
+        &mut self,
+        key: DecalMatKey,
+        make: impl FnOnce() -> DecalMaterial,
+    ) -> Handle<DecalMaterial> {
+        if let Some(h) = self
+            .cache
+            .0
+            .get(&key)
+            .and_then(|id| self.assets.get_strong_handle(*id))
+        {
+            return h;
+        }
+        let h = self.assets.add(make());
+        self.cache.0.insert(key, h.id());
+        h
     }
 }
 
@@ -657,20 +701,10 @@ pub fn quad(c: Vec3, rot: Quat, w: f32, h: f32, lift: f32) -> Mesh {
 /// `k` (0 = oldest) of a ring holding `n` (≤ 256): its rank from the ring head,
 /// 256 − n + k, capped at 255, so the newest is opaque and each later decal
 /// fades every older one by 1/255. The decal shaders' deferredPS multiply the
-/// texel by the vertex colour (rgb white), so it scales the alpha
-/// ([`set_layer_alpha`]).
+/// texel by the vertex colour (rgb white), so it scales the alpha (× the
+/// opacity, into [`alpha_tag`]).
 pub fn ring_alpha(n: usize, k: usize) -> f32 {
     ((256 - n.min(256) + k).min(255)) as f32 / 255.0
-}
-
-/// A decal layer's alpha: the base layer's opacity, the glow layer's gain.
-pub fn set_layer_alpha(mat: &mut DecalMaterial, a: f32) {
-    let p = &mut mat.extension.params;
-    if p.glow > 0.0 {
-        p.glow = DECAL_GLOW_GAIN * a;
-    } else {
-        p.opacity = a;
-    }
 }
 
 /// A particle decal placed with `DecalSet` flag 0x40000 (per
@@ -707,8 +741,7 @@ pub fn extent(w: f32, h: f32, dynamic: bool) -> f32 {
 }
 
 /// On a decal layer entity whose opacity changes ([`DecalTiming::animated`]). The opacity reaches the shader through
-/// the entity's `MeshTag` ([`fade_tag`]), not its material: a fading decal changes no asset, so a fight's blood and
-/// scorch decals re-prepare no material and rebuild no bind group each frame.
+/// the entity's `MeshTag` ([`alpha_tag`]), not its material: a fading decal changes no asset.
 #[derive(Component)]
 pub struct DecalFade {
     pub age: f32,
@@ -729,9 +762,9 @@ impl DecalFade {
     }
 }
 
-/// The `MeshTag` of a fading decal at opacity `o`: the bits of `1 − o` (`shaders/decal.wesl` scales its alpha /
-/// glow by `1 − tag`, so an untagged decal, tag 0, is unfaded).
-fn fade_tag(o: f32) -> MeshTag {
+/// The `MeshTag` of a decal layer at opacity `o` (the record's, faded, × a ring alpha): the bits of `1 − o`
+/// (`shaders/decal.wesl` scales its alpha / glow by `1 − tag`, so an untagged decal, tag 0, is at full opacity).
+pub fn alpha_tag(o: f32) -> MeshTag {
     MeshTag::new((1.0 - o).to_bits())
 }
 
@@ -757,7 +790,8 @@ pub fn textures_ready(
 }
 
 /// Spawns the decal's layers (lit / unlit base, the additive glow) on `mesh`
-/// and returns them; each with its own material (its own opacity). Decodes a texture not loaded yet on the spot
+/// and returns them, each on its record's shared material ([`DecalMats`]) with its opacity in its `MeshTag`
+/// ([`alpha_tag`]). Decodes a texture not loaded yet on the spot
 /// (a streaming caller waits on [`textures_ready`] first).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
@@ -768,7 +802,7 @@ pub fn spawn(
     data: &gd_game_core::data::GameData,
     textures: &mut crate::textures::Textures,
     images: &mut Assets<Image>,
-    mats: &mut Assets<DecalMaterial>,
+    mats: &mut DecalMats,
     fade: Option<Option<Entity>>,
 ) -> Vec<Entity> {
     // UNORM like every texture: the decal is shaded in gamma space (an sRGB
@@ -781,20 +815,26 @@ pub fn spawn(
         .as_deref()
         .and_then(|t| textures.get(data, t, false, images));
     let o = dec.timing.opacity(0);
-    // A fading decal's material holds the unfaded values; its `MeshTag` carries the opacity ([`DecalFade`]).
-    let base = if fade.is_some() { 1.0 } else { o };
     let env = defaults.env.clone();
     let mut out = Vec::new();
     let params = DecalParams {
         bump: if bump.is_some() { 1.0 } else { 0.0 },
-        ..dec.params(base)
+        ..dec.params(1.0)
     };
+    let strip = [dec.variant_offset.to_bits(), dec.variant_scale.to_bits()];
     // decal_selfillum.ssh has no `deferred` technique: its only pass
     // (`emissiveStyle`, sort 3500) adds texel × alpha × opacity
     // (SrcAlpha / One, DepthWrite false) after the lighting, so it is
     // additive and not part of the G-buffer blend (a green glyph turns the
     // sand under it yellow-green rather than painting it green).
-    let mat = mats.add(ExtendedMaterial {
+    let key = (
+        tex.id(),
+        bump.as_ref().map(Handle::id),
+        strip,
+        dec.unlit,
+        false,
+    );
+    let mat = mats.get_or_add(key, || ExtendedMaterial {
         base: StandardMaterial {
             alpha_mode: if dec.unlit {
                 AlphaMode::Add
@@ -810,12 +850,13 @@ pub fn spawn(
             params,
             texture: tex.clone(),
             env: env.clone(),
-            bump: bump.unwrap_or_else(|| tex.clone()),
+            bump: bump.clone().unwrap_or_else(|| tex.clone()),
         },
     });
     let mut e = commands.spawn((
         Mesh3d(mesh.clone()),
         MeshMaterial3d(mat),
+        alpha_tag(o),
         bevy::light::NotShadowCaster,
         Name::new("decal"),
     ));
@@ -823,7 +864,7 @@ pub fn spawn(
         e.insert(crate::render::gbuffer_blend::GBufferBlend::Decal);
     }
     if let Some(owner) = fade {
-        e.insert((DecalFade::new(dec.timing, owner), fade_tag(o)));
+        e.insert(DecalFade::new(dec.timing, owner));
     }
     out.push(e.id());
     if let Some(glow) = dec
@@ -831,7 +872,8 @@ pub fn spawn(
         .as_deref()
         .and_then(|t| textures.get(data, t, false, images))
     {
-        let mat = mats.add(ExtendedMaterial {
+        let key = (tex.id(), Some(glow.id()), strip, dec.unlit, true);
+        let mat = mats.get_or_add(key, || ExtendedMaterial {
             base: StandardMaterial {
                 alpha_mode: AlphaMode::Add,
                 depth_bias: 11.0,
@@ -840,8 +882,8 @@ pub fn spawn(
             },
             extension: DecalExt {
                 params: DecalParams {
-                    glow: DECAL_GLOW_GAIN * base,
-                    ..dec.params(base)
+                    glow: DECAL_GLOW_GAIN,
+                    ..dec.params(1.0)
                 },
                 texture: tex,
                 env,
@@ -851,12 +893,13 @@ pub fn spawn(
         let mut e = commands.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(mat),
+            alpha_tag(o),
             bevy::light::NotShadowCaster,
             crate::render::post::glow_aware_layers(),
             Name::new("decal glow"),
         ));
         if let Some(owner) = fade {
-            e.insert((DecalFade::new(dec.timing, owner), fade_tag(o)));
+            e.insert(DecalFade::new(dec.timing, owner));
         }
         out.push(e.id());
     }
@@ -864,7 +907,7 @@ pub fn spawn(
 }
 
 /// Ages decals (`Decal::UpdateSelf`), removes them at `life` or with their
-/// owner, and sets their opacity ([`DecalTiming::opacity`], through [`fade_tag`]).
+/// owner, and sets their opacity ([`DecalTiming::opacity`], through [`alpha_tag`]).
 fn fade_decals(
     mut commands: Commands,
     time: Res<Time>,
@@ -885,6 +928,6 @@ fn fade_decals(
             continue;
         }
         d.last = o;
-        *tag = fade_tag(o);
+        *tag = alpha_tag(o);
     }
 }

@@ -22,6 +22,12 @@
 //! technique passes, which the terrain*.ssh shaders do not have. It receives
 //! them (deferred directional pass, gd_terrain.wesl).
 //!
+//! PORT: the engine draws one batch of the blocks in the view frustum (`Terrain::AddToScene`, 9×9 cells each,
+//! `TerrainRT::BuildBlockIndices`); the port builds one mesh per 4 × 4 blocks (36 cells, [`TerrainChunk`], the grass
+//! chunks' size), all sharing the level's material, so Bevy's frustum culling drops the chunks out of view. A chunk
+//! with every cell a hole is not built (its blocks leave the scene bounds). The chunks keep the level grid's
+//! terrain-local positions, UVs and normals, so shared edge vertices are identical.
+//!
 //! Terrain quality 3 (`detailLevel` ultra). `GraphicsEngine::UpdateFromOptions`: quality
 //! (`GraphicsEngine.terrainQuality`) 3 when `detailLevel` = 4 (ultra) and the deferred flag; then
 //! `TerrainRT::SetupLayerShader` (the layer shader) takes the TerrainType's
@@ -81,6 +87,7 @@ use gd_formats::map::terrain::Terrain;
 use gd_formats::tex::Tex;
 use gd_game_core::data::GameData;
 use parking_lot::Mutex;
+use std::ops::Range;
 use std::sync::Arc;
 
 /// Layer textures are resampled to this size for the per-level arrays.
@@ -249,8 +256,14 @@ pub fn is_ultra(options: &gd_game_core::options::GameOptions) -> bool {
     matches!(options.get("detailLevel"), Some(gd_formats::options::Value::Quality(q)) if q == "ultra")
 }
 
+/// Cells per side of the engine's terrain block (`TerrainBase::ConstructBlocks`).
+const BLOCK: usize = 9;
+/// Blocks per side of a terrain mesh chunk (module doc), 36 cells: the grass chunks' size (render/grass.rs).
+const CHUNK: usize = 4;
+
 /// The terrain's blocks of 9×9 cells as the engine culls them, local AABBs
-/// (min, max). Engine.dll `TerrainBase::ConstructBlocks`:
+/// (min, max), over the block-aligned cell range `xs` × `zs` (a mesh chunk). Engine.dll
+/// `TerrainBase::ConstructBlocks`:
 /// ⌈(w − 1) / 9⌉ × ⌈(h − 1) / 9⌉ blocks, block (i, j) spans
 /// the vertices 9i ..= min(9i + 9, w − 1) (same in z); its box
 /// (`TerrainBlock::ComputeBounds`) covers them in x / z and their height range in y.
@@ -258,17 +271,14 @@ pub fn is_ultra(options: &gd_game_core::options::GameOptions) -> bool {
 /// one render batch whose box is their union
 /// (`TerrainRenderInterfaceBase::AddToScene`): that, not the
 /// level's whole terrain, is what the scene bounds see (render/shadow.rs
-/// [`SceneBlocks`]).
-pub fn terrain_blocks(t: &Terrain) -> SceneBlocks {
-    let (w, h) = (t.width as usize, t.height as usize);
+/// [`SceneBlocks`], read per visible chunk).
+fn terrain_blocks(t: &Terrain, xs: Range<usize>, zs: Range<usize>) -> SceneBlocks {
+    let w = t.width as usize;
     let mut out = Vec::new();
-    if w < 2 || h < 2 {
-        return SceneBlocks(out);
-    }
-    for z0 in (0..h - 1).step_by(9) {
-        let z1 = (z0 + 9).min(h - 1);
-        for x0 in (0..w - 1).step_by(9) {
-            let x1 = (x0 + 9).min(w - 1);
+    for z0 in zs.clone().step_by(BLOCK) {
+        let z1 = (z0 + BLOCK).min(zs.end);
+        for x0 in xs.clone().step_by(BLOCK) {
+            let x1 = (x0 + BLOCK).min(xs.end);
             let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
             for z in z0..=z1 {
                 for x in x0..=x1 {
@@ -286,17 +296,24 @@ pub fn terrain_blocks(t: &Terrain) -> SceneBlocks {
     SceneBlocks(out)
 }
 
+/// One mesh chunk of a level's terrain: [`CHUNK`] × [`CHUNK`] blocks in terrain-local coordinates (module doc).
+pub struct TerrainChunk {
+    pub mesh: Mesh,
+    /// Its blocks, for the scene bounds.
+    pub blocks: SceneBlocks,
+}
+
 /// Everything built off the main thread for one level's terrain.
 pub struct TerrainCpu {
-    pub mesh: Mesh,
-    pub blocks: SceneBlocks,
+    /// The mesh chunks with a cell drawn; all share the level's material.
+    pub chunks: Vec<TerrainChunk>,
     /// The layers' grass blades (render/grass.rs).
     pub grass: super::grass::TerrainGrass,
     colors: Image,
     normals: Image,
     opacity: Image,
     params: TerrainParams,
-    /// The layer textures it was built from, for the terrain entity to hold ([`HeldLayers`]).
+    /// The layer textures it was built from, for the level to hold ([`HeldLayers`]).
     pub held: HeldLayers,
 }
 
@@ -306,7 +323,7 @@ impl TerrainCpu {
         origin: Vec3,
         images: &mut Assets<Image>,
         defaults: &GdDefaults,
-    ) -> (Mesh, GdTerrainMaterial) {
+    ) -> (Vec<TerrainChunk>, GdTerrainMaterial) {
         let mut params = self.params;
         params.origin = origin.extend(params.origin.w);
         let m = GdTerrainMaterial {
@@ -317,7 +334,7 @@ impl TerrainCpu {
             env: defaults.env.clone(),
             depth: defaults.depth.clone(),
         };
-        (self.mesh, m)
+        (self.chunks, m)
     }
 }
 
@@ -332,25 +349,19 @@ pub fn build(
 ) -> anyhow::Result<TerrainCpu> {
     let (w, h) = (t.width as usize, t.height as usize);
     let hgt = |x: usize, z: usize| t.heights[z.min(h - 1) * w + x.min(w - 1)];
-    let mut positions = Vec::with_capacity(w * h);
-    let mut normals = Vec::with_capacity(w * h);
-    let mut uvs = Vec::with_capacity(w * h);
-    for z in 0..h {
-        for x in 0..w {
-            positions.push([x as f32, hgt(x, z), z as f32]);
-            // TerrainRT normal (`TerrainRT::ComputeNormal`): (h[x−1]−h[x+1], 2, h[z−1]−h[z+1]), doubled at edges.
-            let mut dx = hgt(x.saturating_sub(1), z) - hgt(x + 1, z);
-            if x == 0 || x == w - 1 {
-                dx *= 2.0;
-            }
-            let mut dz = hgt(x, z.saturating_sub(1)) - hgt(x, z + 1);
-            if z == 0 || z == h - 1 {
-                dz *= 2.0;
-            }
-            normals.push(Vec3::new(dx, 2.0, dz).normalize().to_array());
-            uvs.push([x as f32, z as f32]);
+    // TerrainRT normal (`TerrainRT::ComputeNormal`): (h[x−1]−h[x+1], 2, h[z−1]−h[z+1]), doubled at edges. From the
+    // level's heights, so the chunks' shared edge vertices match.
+    let normal = |x: usize, z: usize| {
+        let mut dx = hgt(x.saturating_sub(1), z) - hgt(x + 1, z);
+        if x == 0 || x == w - 1 {
+            dx *= 2.0;
         }
-    }
+        let mut dz = hgt(x, z.saturating_sub(1)) - hgt(x, z + 1);
+        if z == 0 || z == h - 1 {
+            dz *= 2.0;
+        }
+        Vec3::new(dx, 2.0, dz).normalize().to_array()
+    };
     // Terrain holes: a vertex is invisible when bit 0 of its first layer-mask
     // byte is clear (Engine.dll `TerrainRT::IsInvisible`); a cell
     // is left out when its own (lowest x, lowest z) corner is (the
@@ -362,24 +373,55 @@ pub fn build(
             .get((z * w + x) * bpv)
             .is_none_or(|m| m & 1 != 0)
     };
-    let mut idx = Vec::with_capacity((w - 1) * (h - 1) * 6);
-    for z in 0..h - 1 {
-        for x in 0..w - 1 {
-            if !visible(x, z) {
+    // Mesh chunks of CHUNK × CHUNK blocks (module doc), terrain-local like the single grid; at most 37 × 37
+    // vertices, so 16-bit indices.
+    let span = CHUNK * BLOCK;
+    let mut chunks = Vec::new();
+    for z0 in (0..h - 1).step_by(span) {
+        let z1 = (z0 + span).min(h - 1);
+        for x0 in (0..w - 1).step_by(span) {
+            let x1 = (x0 + span).min(w - 1);
+            let row = (x1 - x0 + 1) as u16;
+            let mut idx = Vec::with_capacity((x1 - x0) * (z1 - z0) * 6);
+            for z in z0..z1 {
+                for x in x0..x1 {
+                    if !visible(x, z) {
+                        continue;
+                    }
+                    let i = (z - z0) as u16 * row + (x - x0) as u16;
+                    let (a, b, c, d) = (i, i + 1, i + row, i + row + 1);
+                    // Counter-clockwise seen from +Y.
+                    idx.extend_from_slice(&[a, c, b, b, c, d]);
+                }
+            }
+            if idx.is_empty() {
                 continue;
             }
-            let i = (z * w + x) as u32;
-            let (a, b, c, d) = (i, i + 1, i + w as u32, i + w as u32 + 1);
-            // Counter-clockwise seen from +Y.
-            idx.extend_from_slice(&[a, c, b, b, c, d]);
+            let n = (x1 - x0 + 1) * (z1 - z0 + 1);
+            let mut positions = Vec::with_capacity(n);
+            let mut normals = Vec::with_capacity(n);
+            let mut uvs = Vec::with_capacity(n);
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    positions.push([x as f32, hgt(x, z), z as f32]);
+                    normals.push(normal(x, z));
+                    uvs.push([x as f32, z as f32]);
+                }
+            }
+            let mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+            .with_inserted_indices(Indices::U16(idx));
+            chunks.push(TerrainChunk {
+                mesh,
+                blocks: terrain_blocks(t, x0..x1, z0..z1),
+            });
         }
     }
-    let usage = RenderAssetUsages::RENDER_WORLD;
-    let mesh = Mesh::new(PrimitiveTopology::TriangleList, usage)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(idx));
 
     let n = t.layers.len().clamp(1, MAX_LAYERS);
     let (cw, ch) = (w - 1, h - 1);
@@ -451,8 +493,7 @@ pub fn build(
     );
     opacity_img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     Ok(TerrainCpu {
-        mesh,
-        blocks: terrain_blocks(t),
+        chunks,
         grass: super::grass::build(t, data, high),
         colors: colors_img,
         normals: normals_img,

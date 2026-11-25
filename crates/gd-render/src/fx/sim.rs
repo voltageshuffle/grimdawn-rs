@@ -4,18 +4,14 @@
 //!
 //! Matrices: the engine uses row vectors (`p' = p·M`); here everything is in
 //! glam's column form, so an engine product `R·M` becomes `M * R`.
+//!
+//! Random draws are the CRT's `rand()` (MSVC, [`CrtRand`]) as in the engine. PORT: the engine's emitters share
+//! the process's one stream; here each emitter draws from its own (seeded by [`EmitterState::new`]'s `stream`), so
+//! an emitter's update touches nothing but its own state and the effects simulate in parallel
+//! (`super::update_effects`).
 use bevy::math::{Mat3, Vec3, Vec4};
 use gd_formats::pfx::{Emitter as Data, Shape, curve as c};
-
-/// MSVC `rand()`: 0..=32767.
-fn rand() -> u32 {
-    gd_game_core::rng::u32(0..=32767)
-}
-
-/// `rand() * (1/32767)`.
-fn rand01() -> f32 {
-    rand() as f32 * 0.000_030_518_51
-}
+use gd_sim::crt::CrtRand;
 
 const DEG: f32 = 0.017_453_292;
 /// The `fxQuality` option's particle density (`Engine::SetFxQualityModifier`:
@@ -121,6 +117,8 @@ pub struct EmitterState {
     /// fifth entry has pushed one out.
     anchors: Vec<(Vec3, Vec3)>,
     anchors_full: bool,
+    /// The emitter's own `rand()` stream (module doc).
+    rng: CrtRand,
 }
 
 /// The emitter's light this frame (bools[6]).
@@ -135,8 +133,10 @@ pub struct LightState {
 
 impl EmitterState {
     /// `density` is the fx-quality setting ([`fx_density`]) the caller passes in: an explicit input, so
-    /// the emitter tests do not read the process global the settings test writes.
-    pub fn new(d: &Data, frames: u32, density: f32) -> Self {
+    /// the emitter tests do not read the process global the settings test writes. `stream` picks the emitter's
+    /// `rand()` stream (module doc): distinct values give unrelated streams (hashed into the CRT seed, since
+    /// LCG seeds that differ little start out drawing nearly the same numbers).
+    pub fn new(d: &Data, frames: u32, density: f32, stream: u32) -> Self {
         // Emitter::Reset: identity, then X, Y, Z increments of floats[1..3] degrees.
         let rot = Mat3::from_rotation_x(d.rotation[0] * DEG)
             * Mat3::from_rotation_y(d.rotation[1] * DEG)
@@ -164,6 +164,7 @@ impl EmitterState {
             dropped: Vec::new(),
             anchors: Vec::new(),
             anchors_full: false,
+            rng: CrtRand(lowbias32(stream)),
         }
     }
 
@@ -298,7 +299,7 @@ impl EmitterState {
         if a == b {
             b.x += 0.01;
         }
-        let r = || (rand() % 1000) as f32 * 0.001;
+        let mut r = || (self.rng.rand() % 1000) as f32 * 0.001;
         let pos = a + (b - a) * r();
         let dir = Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5);
         let mut vel = dir.normalize_or_zero() * d.curve(c::SPEED).eval(self.time);
@@ -314,7 +315,7 @@ impl EmitterState {
             ..Default::default()
         };
         if d.random_rotation() {
-            part.rotation = (rand() % 360) as f32;
+            part.rotation = (self.rng.rand() % 360) as f32;
         }
         self.particles.push(part);
     }
@@ -328,9 +329,9 @@ impl EmitterState {
         let polar = if spread == 0.0 {
             0.0
         } else {
-            rand01() * spread - spread * 0.5
+            self.rng.unit() * spread - spread * 0.5
         } + 1.57;
-        let azimuth = rand() as f32 * 0.000_191_753_45 - spread * 0.5;
+        let azimuth = self.rng.rand() as f32 * 0.000_191_753_45 - spread * 0.5;
         let mut dir = Vec3::new(
             polar.cos() * azimuth.cos(),
             polar.sin(),
@@ -342,14 +343,14 @@ impl EmitterState {
         let vel_e = dir.normalize_or_zero() * d.curve(c::SPEED).eval(t);
         let mut p = self.offset * self.scale;
         let r = (self.scale * d.curve(c::RADIUS).eval(t)).max(0.01);
-        let in_ball = |dims: usize| -> Vec3 {
+        let in_ball = |rng: &mut CrtRand, dims: usize| -> Vec3 {
             // Rejection sampling in the cube [-r, r]; gives up after 10 tries.
             let mut tries = 0;
             loop {
-                let mut v = Vec3::new(rand01() * 2.0 * r - r, 0.0, 0.0);
-                v.y = rand01() * 2.0 * r - r;
+                let mut v = Vec3::new(rng.unit() * 2.0 * r - r, 0.0, 0.0);
+                v.y = rng.unit() * 2.0 * r - r;
                 if dims == 3 {
-                    v.z = rand01() * 2.0 * r - r;
+                    v.z = rng.unit() * 2.0 * r - r;
                 } else {
                     // 2D: the second sample is z.
                     v = Vec3::new(v.x, 0.0, v.y);
@@ -364,15 +365,15 @@ impl EmitterState {
             }
         };
         match d.shape {
-            Shape::Sphere => p += in_ball(3),
-            Shape::Disc => p += in_ball(2),
+            Shape::Sphere => p += in_ball(&mut self.rng, 3),
+            Shape::Disc => p += in_ball(&mut self.rng, 2),
             Shape::Ring => {
-                let a = rand01() * std::f32::consts::TAU;
+                let a = self.rng.unit() * std::f32::consts::TAU;
                 p += Vec3::new(a.cos() * r, 0.0, a.sin() * r);
             }
             // y += rand(0, r) (r is never 0 after the 0.01 clamp).
-            Shape::Line => p.y += rand01() * r,
-            Shape::SphereSurface => p += in_ball(3).normalize_or_zero() * r,
+            Shape::Line => p.y += self.rng.unit() * r,
+            Shape::SphereSurface => p += in_ball(&mut self.rng, 3).normalize_or_zero() * r,
             Shape::Point => {}
         }
         let mut vel = w.rot * (self.rot * vel_e);
@@ -402,7 +403,7 @@ impl EmitterState {
             }
         }
         if d.random_rotation() {
-            part.rotation = (rand() % 360) as f32;
+            part.rotation = (self.rng.rand() % 360) as f32;
         }
         self.particles.push(part);
     }
@@ -446,7 +447,7 @@ impl EmitterState {
                 let pos = p.pos;
                 self.particles.swap_remove(i);
                 if !d.drop_decal.is_empty() {
-                    self.dropped.push((pos, (rand() % 360) as f32));
+                    self.dropped.push((pos, (self.rng.rand() % 360) as f32));
                 }
                 continue;
             }
@@ -510,4 +511,13 @@ fn catmull_rom(p: [Vec3; 4], t: f32) -> Vec3 {
         + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * t * t
         + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * t * t * t)
         * 0.5
+}
+
+/// An integer hash with full avalanche (Wellons' "lowbias32"): the CRT seed of emitter `stream`.
+fn lowbias32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^ (x >> 16)
 }

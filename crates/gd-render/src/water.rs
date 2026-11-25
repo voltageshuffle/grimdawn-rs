@@ -18,13 +18,15 @@
 //! crossfades each of 4 octaves between two of them at the record's `rates` (`NoiseTexture::UpdateLayers`),
 //! composites them at UV scales (1, 2, 4, 8) weighted by `levels` (`noisetexturegen.ssh` `compositeBaseStyle`, Engine.dll
 //! `Engine::NoiseOctaveUvScales`) into a `size`² target, and converts the height to a normal map with the ×8 gradient
-//! at ±1/size (`noisetexturegen.ssh` `convertStyle`). PORT: `shaders/water.wesl` evaluates the same composite +
-//! convert per water pixel (3 heights × 8 array samples) instead of rendering the 256² target; the bank is one
-//! 256-layer 32×32 array ([`noise_bank`]), the octave state lives in [`WaterMaterials`] and steps in
-//! [`update_water_noise`], which rewrites one fixed-size [`ShaderBuffer`] per water type in place (binding 8,
-//! shared by every material of the type): the phase moves every frame, but a same-size buffer write is one
-//! `write_buffer` — no material change, no bind-group re-prepare (the engine sets the noise params per draw,
-//! `NoiseTexture::UpdateLayers`). `normalMap = 0` (lava records) reads the raw height as the bump, as `basePS` does.
+//! at ±1/size (`noisetexturegen.ssh` `convertStyle`), which the water samples bilinearly (repeat). The port does the
+//! same: the bank is one 256-layer 32×32 array ([`noise_bank`]), the octave state lives in [`WaterMaterials`] and
+//! steps in [`update_water_noise`], which rewrites one fixed-size [`ShaderBuffer`] per water type in place (a
+//! same-size write is one `write_buffer`), and [`render_noise`] draws each type's composite + convert into its `size`²
+//! target (`shaders/water_noise.wesl`) before the cameras render; every material of the type binds that target
+//! (binding 1), so a water pixel pays one bilinear tap. `normalMap = 0` (lava records) writes the raw height, which
+//! `basePS` reads as the bump. PORT: one pass evaluates the three heights each texel's convert needs (the engine
+//! composites, then converts in a second pass); the target is `Rg16Float` (the engine's is 8-bit); a type with no
+//! water entity visible in any view skips its pass that frame (its target keeps the last image).
 //! The sun / sky ambient are the scene constants every material reads (`render/env.rs` `EnvGpu` via
 //! [`crate::render::GdDefaults`]): `basePS`'s `lightColor·lightDirection.y + skyAmbientColor` and the specular
 //! direction are the same per-frame cb1 values, not a separate light.
@@ -83,24 +85,40 @@
 //! with `detailObjects` (`Water::AddToScene`) by `WaterRipple.ssh` (`shaders/ripple.wesl`): one
 //! quad per live ripple, texture `WaterWalkRipple_01.tex`, SrcAlpha / InvSrcAlpha, no depth write, sort 4020 (before
 //! the effect particles, after the water). PORT: the engine keeps one set per region's water; the port one for all.
+//! The quad entity is hidden (no buffer write) while no ripple is drawn.
 use crate::render::GdDefaults;
 use crate::textures::Textures;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
+use bevy::core_pipeline::FullscreenShader;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, Extent3d,
-    RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDataOrder,
-    TextureFormat, TextureViewDescriptor, TextureViewDimension,
+use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::binding_types::{
+    sampler, storage_buffer_read_only_sized, texture_2d_array,
 };
-use bevy::render::storage::ShaderBuffer;
+use bevy::render::render_resource::{
+    AsBindGroup, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId,
+    ColorTargetState, ColorWrites, Extent3d, FragmentState, LoadOp, Operations, PipelineCache,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
+    ShaderStages, ShaderType, SpecializedMeshPipelineError, StoreOp, TextureDataOrder,
+    TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension,
+};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderGraphSystems};
+use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
+use bevy::render::texture::GpuImage;
+use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderRef;
 use gd_formats::collections::HashMap;
 use gd_formats::map::terrain::Terrain;
 use gd_formats::map::water::{ControlPoint, Water, WaterPath, WaterType};
 use gd_game_core::data::GameData;
+
+const NOISE_SHADER: &str = "embedded://gd_render/shaders/water_noise.wesl";
+/// The NoiseTexture targets' format ([`noise_target`]): the convert's bump (or the raw height) in rg.
+const NOISE_FORMAT: TextureFormat = TextureFormat::Rg16Float;
 
 pub struct WaterPlugin;
 
@@ -108,6 +126,7 @@ impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/water.wesl");
         embedded_asset!(app, "shaders/ripple.wesl");
+        embedded_asset!(app, "shaders/water_noise.wesl");
         bevy::asset::load_internal_asset!(app, LAVA_SHADER, "shaders/lava.wesl", Shader::from_wesl);
         app.add_plugins((
             MaterialPlugin::<WaterMaterial>::default(),
@@ -122,6 +141,19 @@ impl Plugin for WaterPlugin {
                 update_ripples.after(crate::render::weather::WeatherSet),
             ),
         );
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .init_resource::<NoisePasses>()
+            .add_systems(RenderStartup, init_noise_pipeline)
+            .add_systems(ExtractSchedule, extract_noise)
+            .add_systems(
+                Render,
+                prepare_noise.in_set(RenderSystems::PrepareBindGroups),
+            )
+            // `Begin` runs before the cameras render, so every view samples this frame's target.
+            .add_systems(RenderGraph, render_noise.in_set(RenderGraphSystems::Begin));
     }
 }
 
@@ -130,9 +162,8 @@ pub struct WaterUniform {
     pub surface: Vec4,
     pub water_color: Vec4,
     pub tex_scale_dir: Vec4,
-    /// x textureScroll, y 1 = a path, z 1 / noise size (the convert gradient step), w 1 = normalMap.
+    /// x textureScroll, y 1 = a path, z unused, w 1 = normalMap.
     pub scroll_time: Vec4,
-    pub noise_levels: Vec4,
 }
 
 /// The `lavabasic.ssh` fragment program (`shaders/lava.wesl`), swapped in by [`WaterMaterial::specialize`].
@@ -144,8 +175,9 @@ const LAVA_SHADER: Handle<Shader> =
 pub struct WaterMaterial {
     #[uniform(0)]
     pub params: WaterUniform,
-    /// The engine's NoiseTexture bank: 256 32×32 slices ([`noise_bank`]).
-    #[texture(1, dimension = "2d_array")]
+    /// The type's NoiseTexture target ([`noise_target`], drawn every frame by [`render_noise`]; shared by the
+    /// type's materials).
+    #[texture(1)]
     #[sampler(2)]
     pub noise: Handle<Image>,
     #[texture(3, dimension = "cube")]
@@ -158,10 +190,6 @@ pub struct WaterMaterial {
     #[texture(6)]
     #[sampler(7)]
     pub reflection: Handle<Image>,
-    /// The type's live octave crossfade ([`noise_gpu`]): phase, prev, cur as vec4s, rewritten in place every
-    /// frame by [`update_water_noise`] (one buffer per water type, shared by its materials).
-    #[storage(8, read_only)]
-    pub noise_state: Handle<ShaderBuffer>,
     /// `lavabasic.ssh`'s `lavaTexture`, `lavaNormal`, `ashTexture`, `ashNormal` (the type's shader params; the
     /// default white image on water, whose program reads none of them).
     #[texture(9)]
@@ -334,8 +362,8 @@ struct WaterMaterials {
     /// One state per water type name (the engine: one NoiseTexture per WaterType; PORT: `gd_game_core::rng`
     /// for the engine's `rand()`).
     states: HashMap<String, NoiseState>,
-    /// The GPU copy of each state ([`noise_gpu`]), keyed by the same water type name.
-    noise_buffers: HashMap<String, Handle<ShaderBuffer>>,
+    /// The GPU side of each state, keyed by the same water type name.
+    gpu: HashMap<String, NoiseGpu>,
     /// Sky cubemaps by path (`None`: unreadable), decoded in the background ([`finish_water`] waits for them).
     skies: HashMap<String, Option<Handle<Image>>>,
     sky_loads: HashMap<String, bevy::tasks::Task<Option<Image>>>,
@@ -354,6 +382,13 @@ struct NoiseState {
     cur: [u32; 4],
 }
 
+/// A water type's noise pass ([`render_noise`]): its state as the pass reads it ([`noise_gpu`]), rewritten in place
+/// every frame by [`update_water_noise`], and the `size`² target its materials sample ([`noise_target`]).
+struct NoiseGpu {
+    state: Handle<ShaderBuffer>,
+    target: Handle<Image>,
+}
+
 /// `NoiseTexture::UpdateLayers`: phase += dt·rate; on wrap prev = cur,
 /// cur = (cur + rand() % 256) % 256, phase = frac (one wrap per frame, as the engine).
 fn advance_noise(s: &mut NoiseState, dt: f32) {
@@ -367,9 +402,29 @@ fn advance_noise(s: &mut NoiseState, dt: f32) {
     }
 }
 
-/// The octave state as the shader reads it (binding 8): [phase, prev, cur], the slice indices as f32.
-fn noise_gpu(s: &NoiseState) -> [[f32; 4]; 3] {
-    [s.phase, s.prev.map(|i| i as f32), s.cur.map(|i| i as f32)]
+/// The octave state as the noise pass reads it (`shaders/water_noise.wesl`): [phase, prev, cur, levels,
+/// (size, normalMap, 0, 0)], the slice indices and flags as f32.
+fn noise_gpu(s: &NoiseState) -> [[f32; 4]; 5] {
+    [
+        s.phase,
+        s.prev.map(|i| i as f32),
+        s.cur.map(|i| i as f32),
+        s.levels,
+        [s.size as f32, f32::from(u8::from(s.normal_map)), 0.0, 0.0],
+    ]
+}
+
+/// A type's NoiseTexture target: `size`², [`NOISE_FORMAT`], sampled bilinear and repeating (the composite tiles
+/// over one uv unit), only ever written by [`render_noise`].
+fn noise_target(size: u32) -> Image {
+    let mut img = Image::new_target_texture(size, size, NOISE_FORMAT, None);
+    img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::linear()
+    });
+    img
 }
 
 /// The engine's 256 noise textures as one 32×32 × 256 array (Engine.dll `NoiseTexture::GenerateNoise` /
@@ -780,10 +835,9 @@ fn uniform_for(wt: &WaterType, path: bool, noise: &NoiseState) -> WaterUniform {
         scroll_time: Vec4::new(
             p[4] / p[9].max(1e-3),
             if path { 1.0 } else { 0.0 },
-            1.0 / noise.size as f32,
+            0.0,
             if noise.normal_map { 1.0 } else { 0.0 },
         ),
-        noise_levels: Vec4::from_array(noise.levels),
     }
 }
 
@@ -900,25 +954,28 @@ fn finish_water(
             mats: mat_cache,
             bank,
             states,
-            noise_buffers,
+            gpu,
             skies,
             ..
         } = &mut *cache;
         let mat = mat_cache
             .entry(key)
             .or_insert_with(|| {
-                let bank = bank.get_or_insert_with(|| images.add(noise_bank())).clone();
+                // The bank only feeds the noise pass ([`render_noise`]).
+                bank.get_or_insert_with(|| images.add(noise_bank()));
                 let state = states
                     .entry(wt.name.clone())
                     .or_insert_with(|| wt_noise(wt, &data));
-                let noise_state = noise_buffers
+                let noise = gpu
                     .entry(wt.name.clone())
-                    .or_insert_with(|| {
-                        buffers.add(ShaderBuffer::new(
+                    .or_insert_with(|| NoiseGpu {
+                        state: buffers.add(ShaderBuffer::new(
                             noise_gpu(state).to_vec(),
                             RenderAssetUsages::RENDER_WORLD,
-                        ))
+                        )),
+                        target: images.add(noise_target(state.size)),
                     })
+                    .target
                     .clone();
                 let param = |name: &str| {
                     wt.shader_params
@@ -957,11 +1014,10 @@ fn finish_water(
                     });
                 mats.add(WaterMaterial {
                     params: uniform_for(wt, ws.path, state),
-                    noise: bank,
+                    noise,
                     sky,
                     env: defaults.env.clone(),
                     reflection: reflection_target.image.clone(),
-                    noise_state,
                     lava,
                     lava_normal,
                     ash,
@@ -1013,7 +1069,7 @@ fn sky_ready(
 
 /// Steps each water type's NoiseTexture crossfade (`NoiseTexture::UpdateLayers`) and rewrites its
 /// shared [`ShaderBuffer`] in place: the size never changes, so the write is one `write_buffer` per type and
-/// the materials' bind groups stay prepared (module doc).
+/// the noise pass's bind group needs no new buffer (module doc).
 fn update_water_noise(
     time: Res<Time<Virtual>>,
     mut cache: ResMut<WaterMaterials>,
@@ -1023,19 +1079,167 @@ fn update_water_noise(
     if dt <= 0.0 {
         return;
     }
-    let WaterMaterials {
-        states,
-        noise_buffers,
-        ..
-    } = &mut *cache;
+    let WaterMaterials { states, gpu, .. } = &mut *cache;
     for (name, s) in states.iter_mut() {
         advance_noise(s, dt);
-        if let Some(h) = noise_buffers.get(name)
-            && let Some(mut b) = buffers.get_mut(h)
+        if let Some(g) = gpu.get(name)
+            && let Some(mut b) = buffers.get_mut(&g.state)
         {
             b.clear();
             b.extend_from_slice(&noise_gpu(s));
         }
+    }
+}
+
+/// The noise pass's pipeline (`shaders/water_noise.wesl` `composite`, fullscreen into a [`NOISE_FORMAT`] target).
+#[derive(Resource)]
+struct NoisePipeline {
+    layout: BindGroupLayoutDescriptor,
+    pipeline: CachedRenderPipelineId,
+}
+
+/// This frame's noise passes: per water type with water visible in some view, its bank, state buffer and target
+/// ([`extract_noise`]), then each pass's bind group and target view ([`prepare_noise`]).
+#[derive(Resource, Default)]
+struct NoisePasses {
+    jobs: Vec<(AssetId<Image>, AssetId<ShaderBuffer>, AssetId<Image>)>,
+    binds: Vec<(BindGroup, TextureView)>,
+}
+
+fn init_noise_pipeline(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+    fullscreen: Res<FullscreenShader>,
+    cache: Res<PipelineCache>,
+) {
+    let layout = BindGroupLayoutDescriptor::new(
+        "gd_water_noise_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d_array(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                storage_buffer_read_only_sized(false, None),
+            ),
+        ),
+    );
+    let pipeline = cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("gd_water_noise".into()),
+        layout: vec![layout.clone()],
+        vertex: fullscreen.to_vertex_state(),
+        fragment: Some(FragmentState {
+            shader: assets.load(NOISE_SHADER),
+            entry_point: Some("composite".into()),
+            targets: vec![Some(ColorTargetState {
+                format: NOISE_FORMAT,
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+            ..default()
+        }),
+        ..default()
+    });
+    commands.insert_resource(NoisePipeline { layout, pipeline });
+}
+
+/// The water types to composite this frame: those with a water entity visible in any view (after frustum culling).
+fn extract_noise(
+    mut passes: ResMut<NoisePasses>,
+    cache: Extract<Res<WaterMaterials>>,
+    water: Extract<Query<(&MeshMaterial3d<WaterMaterial>, &ViewVisibility)>>,
+    mut seen: Local<Vec<AssetId<WaterMaterial>>>,
+) {
+    passes.jobs.clear();
+    let Some(bank) = &cache.bank else {
+        return;
+    };
+    seen.clear();
+    seen.extend(water.iter().filter(|(_, v)| v.get()).map(|(m, _)| m.id()));
+    for ((name, ..), mat) in &cache.mats {
+        if !seen.contains(&mat.id()) {
+            continue;
+        }
+        let Some(g) = cache.gpu.get(name) else {
+            continue;
+        };
+        let job = (bank.id(), g.state.id(), g.target.id());
+        if !passes.jobs.contains(&job) {
+            passes.jobs.push(job);
+        }
+    }
+}
+
+fn prepare_noise(
+    mut passes: ResMut<NoisePasses>,
+    pipeline: Option<Res<NoisePipeline>>,
+    cache: Res<PipelineCache>,
+    images: Res<RenderAssets<GpuImage>>,
+    buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    device: Res<RenderDevice>,
+) {
+    let NoisePasses { jobs, binds } = &mut *passes;
+    binds.clear();
+    let Some(p) = pipeline.as_deref() else {
+        return;
+    };
+    if jobs.is_empty() {
+        return;
+    }
+    let layout = cache.get_bind_group_layout(&p.layout);
+    for &(bank, state, target) in jobs.iter() {
+        let (Some(bank), Some(state), Some(target)) =
+            (images.get(bank), buffers.get(state), images.get(target))
+        else {
+            continue;
+        };
+        let bind = device.create_bind_group(
+            "gd_water_noise",
+            &layout,
+            &BindGroupEntries::sequential((
+                &bank.texture_view,
+                &bank.sampler,
+                state.buffer.as_entire_binding(),
+            )),
+        );
+        binds.push((bind, target.texture_view.clone()));
+    }
+}
+
+/// `NoiseTexture`'s composite + convert (module doc): each visible water type's target, overwritten whole.
+fn render_noise(
+    passes: Res<NoisePasses>,
+    pipeline: Option<Res<NoisePipeline>>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let Some(p) = pipeline.as_deref() else {
+        return;
+    };
+    let Some(pipe) = cache.get_render_pipeline(p.pipeline) else {
+        return;
+    };
+    for (bind, target) in &passes.binds {
+        let mut pass = ctx
+            .command_encoder()
+            .begin_render_pass(&RenderPassDescriptor {
+                label: Some("gd_water_noise"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Default::default()),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        pass.set_pipeline(pipe);
+        pass.set_bind_group(0, bind, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 
@@ -1115,6 +1319,8 @@ pub struct RippleSet {
     /// This frame's `CreateRipple(pos, size, strength)` calls, placed by [`update_ripples`].
     pub requests: Vec<(Vec3, f32, f32)>,
     draw: Option<(Entity, Handle<ShaderBuffer>, Handle<RippleMaterial>)>,
+    /// Whether the draw entity is `Visible` (hidden, its buffer untouched, while no ripple is drawn).
+    shown: bool,
     scratch: Vec<[f32; 4]>,
 }
 
@@ -1124,6 +1330,7 @@ impl RippleSet {
         if let Some((e, ..)) = self.draw.take() {
             commands.entity(e).try_despawn();
         }
+        self.shown = false;
         self.sim = Default::default();
         self.requests.clear();
     }
@@ -1200,7 +1407,13 @@ pub(crate) fn update_ripples(
     }
     let n = (set.scratch.len() - 1) / 2;
     set.scratch[0][0] = f32::from_bits(n as u32);
-    if n == 0 && set.draw.is_none() {
+    if n == 0 {
+        if set.shown
+            && let Some((e, ..)) = &set.draw
+        {
+            commands.entity(*e).try_insert(Visibility::Hidden);
+        }
+        set.shown = false;
         return;
     }
     // `lightDirection` points towards the light (the water programs' convention).
@@ -1236,10 +1449,15 @@ pub(crate) fn update_ripples(
             ))
             .id();
         set.draw = Some((e, buffer, mat));
+        set.shown = true;
     }
-    let Some((_, buffer, mat)) = &set.draw else {
+    let Some((e, buffer, mat)) = &set.draw else {
         return;
     };
+    if !set.shown {
+        commands.entity(*e).try_insert(Visibility::Visible);
+        set.shown = true;
+    }
     if mats.get(mat).is_some_and(|m| m.params != params)
         && let Some(mut m) = mats.get_mut(mat)
     {

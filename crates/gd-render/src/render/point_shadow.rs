@@ -70,6 +70,12 @@
 //! bytes (64 MB at ultra). Non-Grim Dawn materials would draw with the spot's
 //! own projection (trails, beams, FX, weather and water are `NotShadowCaster`). The player light's priority (4 at
 //! `lightingQuality` 3, `env.rs`) is a [`ShadowPriority`] like the others.
+//!
+//! PORT (performance): a half map costs a shadow view and a whole S² layer clear,
+//! as a full one does, so below ultra [`pools`] hands out half the engine's half
+//! maps (rounded up: 2 / 2 / 3 / 4 at low / medium / high / very high, so 3 / 4 /
+//! 6 / 7 maps in all instead of 4 / 6 / 9 / 11); the lights of least screen area
+//! past them get no map, as past the engine's pools. Ultra keeps the engine's 4 + 12.
 use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::light::{DirectionalLightShadowMap, SimulationLightSystems};
@@ -133,13 +139,14 @@ pub fn lights_cast(options: Option<&gd_game_core::options::GameOptions>) -> bool
     )
 }
 
-/// (full map size, full count, half count) of a quality (`GraphicsEngine::GetShadowMapSizes`).
+/// (full map size, full count, half count) of a quality (`GraphicsEngine::GetShadowMapSizes`; half
+/// the half maps below ultra, module doc PORT).
 pub fn pools(quality: u32) -> (u32, usize, usize) {
     match quality {
-        0 => (256, 1, 3),
-        1 => (384, 2, 4),
-        2 => (512, 3, 6),
-        3 => (1024, 3, 8),
+        0 => (256, 1, 2),
+        1 => (384, 2, 2),
+        2 => (512, 3, 3),
+        3 => (1024, 3, 4),
         _ => (2048, 4, 12),
     }
 }
@@ -214,6 +221,18 @@ struct AssignScratch {
     new_spots: Vec<(Entity, (u32, Vec3, f32))>,
 }
 
+/// `Light::AddToScene`'s frustum test: the light's sphere (position, radius)
+/// meets the camera frustum (also render/env.rs's shaded-light pick).
+pub fn in_view(frustum: &Frustum, pos: Vec3, range: f32) -> bool {
+    frustum.intersects_sphere(
+        &Sphere {
+            center: pos.into(),
+            radius: range,
+        },
+        true,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assign_point_shadows(
     mut commands: Commands,
@@ -277,13 +296,7 @@ fn assign_point_shadows(
             if !priority_casts(p.0, s.quality)
                 || l.range <= 0.0
                 || c.red.max(c.green).max(c.blue) * k <= 0.03
-                || !frustum.intersects_sphere(
-                    &Sphere {
-                        center: pos.into(),
-                        radius: l.range,
-                    },
-                    true,
-                )
+                || !in_view(frustum, pos, l.range)
             {
                 continue;
             }

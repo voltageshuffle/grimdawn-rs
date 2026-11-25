@@ -240,7 +240,8 @@ pub fn update_fire_lights(
     }
 }
 
-/// Spawns a point light read by `render::env` (`light_from_record`).
+/// Spawns a point light read by `render::env` (`light_from_record`). Spawned hidden (`Visibility`): Bevy neither
+/// clusters nor extracts it (the materials read `render::env`'s buffer; `rig_lights` skipped it anyway).
 pub fn spawn_light(commands: &mut Commands, l: &LightCpu) -> Entity {
     let color = Color::linear_rgb(l.color.x, l.color.y, l.color.z);
     let mut e = commands.spawn((
@@ -252,6 +253,7 @@ pub fn spawn_light(commands: &mut Commands, l: &LightCpu) -> Entity {
             ..default()
         },
         Transform::from_translation(l.position),
+        Visibility::Hidden,
     ));
     if let Some(f) = l.flicker {
         e.insert(f);

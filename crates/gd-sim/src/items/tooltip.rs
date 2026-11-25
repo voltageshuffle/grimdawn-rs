@@ -297,11 +297,14 @@ fn fixed_time_stem(class: &str) -> Option<&'static str> {
     let (kind, stem) = if let Some(k) = class.strip_prefix("DamageAttribute") {
         (k, "DamageFixed")
     } else {
-        (class.strip_prefix("RetaliationAttribute")?, "RetaliationFixed")
+        (
+            class.strip_prefix("RetaliationAttribute")?,
+            "RetaliationFixed",
+        )
     };
-    let influence = kind.strip_prefix("Abs_").is_some_and(|k| {
-        matches!(k, "Confusion" | "Convert" | "Disruption" | "Fear" | "Taunt")
-    });
+    let influence = kind
+        .strip_prefix("Abs_")
+        .is_some_and(|k| matches!(k, "Confusion" | "Convert" | "Disruption" | "Fear" | "Taunt"));
     (kind.starts_with("Reflex_") || influence).then_some(stem)
 }
 
@@ -451,7 +454,11 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
                 } else {
                     "DamageFixedSingleFormatTime"
                 };
-                render(t(key).unwrap_or(""), &[Arg::Num(dmin), Arg::Num(dmax)], rich)
+                render(
+                    t(key).unwrap_or(""),
+                    &[Arg::Num(dmin), Arg::Num(dmax)],
+                    rich,
+                )
             } else if dmin != dmax {
                 let f = t("DamageRangeFormatTime").unwrap_or("");
                 render(f, &[Arg::Num(dmin), Arg::Num(dmax)], rich)

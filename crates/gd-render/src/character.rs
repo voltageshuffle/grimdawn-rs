@@ -1117,13 +1117,31 @@ fn dress(
     })
 }
 
-/// PORT: radius (m) around a character that must touch an active camera's frustum for `pose_bodies` to pose it. A character
+/// PORT: radius (m) around a character, or beyond an animated object model's bounds, that must touch an active camera's
+/// frustum for `pose_bodies` (characters) and `model::animate_skeletons` (object models) to pose it ([`near_view`]). A model
 /// further out is invisible and casts no shadow into the view (the engine's casters lie in the camera volume extruded toward
 /// the sun; a 10 m tall character's shadow is under 40 m for a sun above ~14 degrees), and nothing on screen reads its joints
-/// (the skinned-mesh AABB, item FX, trails and weapon dressing all belong to the same character). It resumes with the current
-/// pose the frame it comes back; the animation clock (`advance_animations`, gameplay) never stops. Paper dolls and the player are
-/// always posed. The engine's own rule for off-screen animation was not decompiled.
+/// (the skinned-mesh AABB, item FX, trails and weapon dressing all belong to the same character; an object's bone effects
+/// and lights hold still out there). It resumes with the current pose the frame it comes back; the animation clock never
+/// stops (`advance_animations` for characters, gameplay; an object's channel with its callbacks and entity events). Paper
+/// dolls and the player are always posed. The engine's own rule for off-screen animation was not decompiled.
 const POSE_MARGIN: f32 = 40.0;
+
+/// The frusta of the active cameras, refilled into `out` (the views [`near_view`] tests).
+pub(crate) fn view_frusta(cameras: &Query<(&Camera, &Frustum)>, out: &mut Vec<Frustum>) {
+    out.clear();
+    out.extend(cameras.iter().filter(|(c, _)| c.is_active).map(|(_, f)| *f));
+}
+
+/// Whether a model reaching `extent` m from `center` lies within [`POSE_MARGIN`] of one of `frusta`
+/// ([`view_frusta`]); with no active camera every model is near.
+pub(crate) fn near_view(frusta: &[Frustum], center: Vec3A, extent: f32) -> bool {
+    let sphere = Sphere {
+        center,
+        radius: POSE_MARGIN + extent,
+    };
+    frusta.is_empty() || frusta.iter().any(|f| f.intersects_sphere(&sphere, false))
+}
 
 /// Writes joints of every part and places weapons from the character's posed bones
 /// (`Character::posed`), shows and hides hands on their callbacks. Runs after transform
@@ -1172,22 +1190,15 @@ pub(crate) fn pose_bodies(
             }
         }
     }
-    frusta.clear();
-    frusta.extend(cameras.iter().filter(|(c, _)| c.is_active).map(|(_, f)| *f));
+    view_frusta(&cameras, &mut frusta);
     let frusta = &*frusta;
     chars.par_iter().for_each_init(
         Vec::<Coords>::new,
         |part_abs, (root_tf, c, body, doll, player, _)| {
             let root = root_tf.affine();
             // PORT: characters well outside every camera's view keep their last pose (see POSE_MARGIN).
-            if !doll && !player && !frusta.is_empty() {
-                let sphere = Sphere {
-                    center: root.translation + Vec3A::Y * 1.5,
-                    radius: POSE_MARGIN,
-                };
-                if !frusta.iter().any(|f| f.intersects_sphere(&sphere, false)) {
-                    return;
-                }
+            if !doll && !player && !near_view(frusta, root.translation + Vec3A::Y * 1.5, 0.0) {
+                return;
             }
             // The root as `Coords`: `Coords::mul` (gd-formats, opt 3 in dev builds) does the per-joint
             // `root * joint`, faster than glam's generic `Affine3A` maths in an unoptimised dev build.

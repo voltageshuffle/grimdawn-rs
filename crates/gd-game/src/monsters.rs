@@ -969,7 +969,7 @@ pub fn cull_monsters(
 /// The player's level now, for what spawns: [`gd_game_core::progress::PlayerProgress`] (the one source of the level
 /// in a session). Before `init_progress` created it (the menu backdrop, the frames a session's first levels
 /// stream in ahead of the player) it is the level that resource starts from (`PlayerProgress::from_save`).
-fn current_player_level(
+pub fn current_player_level(
     progress: Option<&gd_game_core::progress::PlayerProgress>,
     loaded: Option<&gd_game_core::session::LoadedCharacter>,
 ) -> i32 {

@@ -220,6 +220,26 @@ pub fn fill_buffer(
     }
 }
 
+/// Half extents of an origin-centred box holding every particle's quad, in the
+/// draw entity's local space (positions relative to `anchor`, as in [`fill_buffer`]).
+/// Centred on the origin so the transparent sort centre stays the effect origin
+/// (see [`quad_mesh`]). Each quad is bounded by a sphere of `size · (2 + stretch·speed)`
+/// (the shader's corner reach for any facing: `U`, `V` unit, `V` scaled by
+/// `1 + stretch·speed`), padded 25 %.
+pub fn half_extents(particles: &[Particle], anchor: Vec3) -> Vec3 {
+    let mut ext = Vec3::ZERO;
+    for p in particles {
+        let stretch = if p.stretch > 0.01 {
+            p.stretch * p.vel.length()
+        } else {
+            0.0
+        };
+        let reach = p.size.abs() * (2.0 + stretch.abs()) * 1.25;
+        ext = ext.max((p.pos - anchor).abs() + reach);
+    }
+    ext
+}
+
 /// `.tex` → 2D array image, one layer per flipbook frame. Frames that do not
 /// match frame 0's size/format are dropped.
 pub fn flipbook_image(tex: &gd_formats::tex::Tex) -> anyhow::Result<(Image, u32)> {

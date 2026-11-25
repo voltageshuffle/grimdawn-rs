@@ -223,9 +223,11 @@ pub struct RenderHooks {
     pub no_glow: bool,
     pub no_dof: bool,
     pub fog: bool,
-    /// `GD_CLEAR` (magenta clear colour), `GD_FPS` (frame time log).
+    /// `GD_CLEAR` (magenta clear colour), `GD_FPS` (frame time log), `GD_GPU_TIMES` (per-pass GPU times every
+    /// second, from timestamp queries; a pass several views draw reports its mean per view, not the sum).
     pub clear: bool,
     pub fps: bool,
+    pub gpu_times: bool,
     /// `GD_DOLL_ROT=<radians>`, `GD_DOLL_HOLD=0|1`.
     pub doll_rot: f32,
     pub doll_hold: Option<usize>,
@@ -643,6 +645,7 @@ impl Hooks {
             fog: is("GD_FOG", "1"),
             clear: has("GD_CLEAR"),
             fps: has("GD_FPS"),
+            gpu_times: has("GD_GPU_TIMES"),
             doll_rot: f("GD_DOLL_ROT").unwrap_or(0.0),
             doll_hold: n("GD_DOLL_HOLD").filter(|i| *i < 2),
             char_keys: has("GD_CHAR_KEYS"),

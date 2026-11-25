@@ -5,6 +5,11 @@
 //! `GetLightDirection`, `AmbianceManager::Update`) plus the level's point lights, packed into the storage
 //! buffer every Grim Dawn material reads; bloom / adjustment go to the
 //! camera's [`super::post::GammaOut`].
+//!
+//! PORT: the point lights are Bevy `PointLight`s spawned hidden (`Visibility`), so Bevy never clusters or
+//! extracts them; the materials read only this buffer. It holds the [`MAX_LIGHTS`] nearest the camera
+//! target among those whose sphere meets the game camera's frustum (`Light::AddToScene`'s test,
+//! `point_shadow::in_view`); the engine has no cap.
 use super::GdDefaults;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
@@ -16,7 +21,7 @@ use std::f32::consts::PI;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnvSystems;
 
-/// At most this many point lights (nearest to the camera target) are shaded.
+/// At most this many point lights (in view, nearest to the camera target) are shaded.
 const MAX_LIGHTS: usize = 64;
 
 pub struct EnvPlugin;
@@ -136,6 +141,8 @@ fn player_light(
                     ..default()
                 },
                 Transform::from_xyz(0.0, 3.5, 0.0),
+                // Read from this module's buffer, not Bevy's clusters (render/lights.rs `spawn_light`).
+                Visibility::Hidden,
                 DayNightColors { day, night },
                 PlayerLight { base: radius },
                 Name::new("player light"),
@@ -842,7 +849,10 @@ fn update_env(
     defaults: Option<Res<GdDefaults>>,
     data: Res<gd_game_core::data::GameData>,
     time: Res<TimeOfDay>,
-    cams: Query<&crate::camera::GameCamera>,
+    cams: Query<(
+        &crate::camera::GameCamera,
+        Option<&bevy::camera::primitives::Frustum>,
+    )>,
     lights: Query<
         (
             &GlobalTransform,
@@ -868,7 +878,9 @@ fn update_env(
     story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
 ) {
     let Some(defaults) = defaults else { return };
-    let target = cams.iter().next().map(|c| c.target).unwrap_or(Vec3::ZERO);
+    let cam = cams.iter().next();
+    let target = cam.map_or(Vec3::ZERO, |c| c.0.target);
+    let frustum = cam.and_then(|c| c.1);
     // The main menu's scene lights itself from its own map (render/menu.rs).
     let sector_data = match &menu {
         Some(m) => m.map.as_ref().map(|m| &m.sector_data),
@@ -898,10 +910,9 @@ fn update_env(
             .unwrap_or(0.0);
     }
     let t = menu.as_ref().map_or(time.0, |m| m.time);
-    let cam = cams.iter().next();
     // The menu: `SetDepthFogClamp(0)` (render/menu.rs).
     let fog_clamp = match (&menu, cam) {
-        (None, Some(c)) => depth_fog_clamp(
+        (None, Some((c, _))) => depth_fog_clamp(
             c.distance,
             c.distance_min,
             c.distance_max,
@@ -960,7 +971,7 @@ fn update_env(
     }
     let cam_distance = match &menu {
         Some(b) => b.cam_distance(),
-        None => cam.map_or(0.0, |c| c.distance),
+        None => cam.map_or(0.0, |c| c.0.distance),
     };
     if !post.is_empty() {
         let video = options
@@ -1015,34 +1026,43 @@ fn update_env(
     // (`Light::AddToScene`, `RenderDeferredPointLight`).
     let ls = &mut cache.lights;
     ls.clear();
-    ls.extend(lights.iter().map(|(gt, l, dn, shadow, simple)| {
-        let p = gt.translation();
-        let c = match dn {
-            Some(dn) => {
-                let v = dn.day.lerp(dn.night, night);
-                bevy::color::LinearRgba::rgb(v.x, v.y, v.z)
-            }
-            None => l.color.to_linear(),
-        };
-        // Brightness: `intensity` relative to the level lights' 40 000 ×
-        // range (1 for those; effect lights fade with their emitter and
-        // are 0 once it is done or hidden).
-        let k = if l.range > 0.0 {
-            (l.intensity / (40_000.0 * l.range)).clamp(0.0, 4.0)
-        } else {
-            0.0
-        };
-        (
-            p.distance_squared(target),
-            GpuLight {
-                position: p,
-                radius: l.range,
-                color: Vec3::new(c.red, c.green, c.blue) * k * light_gain,
-                blur: shadow.map_or(0.0, |s| s.bluriness()),
-                specular: !simple,
-            },
-        )
-    }));
+    // `Light::AddToScene`'s frustum test first: a light whose sphere misses the
+    // view lights nothing on screen, and the shaders loop over every listed light.
+    ls.extend(
+        lights
+            .iter()
+            .filter(|(gt, l, ..)| {
+                frustum.is_none_or(|f| super::point_shadow::in_view(f, gt.translation(), l.range))
+            })
+            .map(|(gt, l, dn, shadow, simple)| {
+                let p = gt.translation();
+                let c = match dn {
+                    Some(dn) => {
+                        let v = dn.day.lerp(dn.night, night);
+                        bevy::color::LinearRgba::rgb(v.x, v.y, v.z)
+                    }
+                    None => l.color.to_linear(),
+                };
+                // Brightness: `intensity` relative to the level lights' 40 000 ×
+                // range (1 for those; effect lights fade with their emitter and
+                // are 0 once it is done or hidden).
+                let k = if l.range > 0.0 {
+                    (l.intensity / (40_000.0 * l.range)).clamp(0.0, 4.0)
+                } else {
+                    0.0
+                };
+                (
+                    p.distance_squared(target),
+                    GpuLight {
+                        position: p,
+                        radius: l.range,
+                        color: Vec3::new(c.red, c.green, c.blue) * k * light_gain,
+                        blur: shadow.map_or(0.0, |s| s.bluriness()),
+                        specular: !simple,
+                    },
+                )
+            }),
+    );
     // The nearest MAX_LIGHTS without sorting all of them, then in position order.
     if ls.len() > MAX_LIGHTS {
         ls.select_nth_unstable_by(MAX_LIGHTS, |a, b| a.0.total_cmp(&b.0));

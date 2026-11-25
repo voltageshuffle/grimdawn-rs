@@ -772,7 +772,7 @@ fn fx_decals(
     new: Query<(Entity, &PendingDecal, &Transform, Option<&DecalOwner>)>,
     cold: Query<(Entity, &ColdDecal)>,
     mut assets: gd_render::character::CharAssets,
-    mut decal_mats: ResMut<Assets<gd_render::decal::DecalMaterial>>,
+    mut decal_mats: gd_render::decal::DecalMats,
     mut loads: ResMut<DecalTextureLoads>,
     options: Res<gd_game_core::options::GameOptions>,
 ) {
@@ -936,7 +936,7 @@ fn place_fx_decal(
     coll: &crate::collision::WorldCollision,
     recv: &gd_render::decal::DecalReceivers,
     assets: &mut gd_render::character::CharAssets,
-    decal_mats: &mut Assets<gd_render::decal::DecalMaterial>,
+    decal_mats: &mut gd_render::decal::DecalMats,
     dec: &gd_render::decal::DecalRecord,
     c: Vec3,
     rot: Quat,
@@ -996,11 +996,11 @@ fn ground_patch(
     patch.build(c, rot * Vec3::Z, w, h)
 }
 
-/// The placed particle decals, oldest first, whether a decal came in since the ring's alphas were set, and the
-/// shared quad mesh per decal size (`f32::to_bits` of width, height).
+/// The placed particle decals, oldest first (layers, the record's opacity), whether a decal came in since the
+/// ring's alphas were set, and the shared quad mesh per decal size (`f32::to_bits` of width, height).
 #[derive(Resource, Default)]
 pub(crate) struct DropDecals(
-    std::collections::VecDeque<Vec<Entity>>,
+    std::collections::VecDeque<(Vec<Entity>, f32)>,
     bool,
     gd_formats::collections::HashMap<(u32, u32), Handle<Mesh>>,
 );
@@ -1037,7 +1037,7 @@ fn drop_decals(
     options: Res<gd_game_core::options::GameOptions>,
     mut placed: ResMut<DropDecals>,
     mut assets: gd_render::character::CharAssets,
-    mut decal_mats: ResMut<Assets<gd_render::decal::DecalMaterial>>,
+    mut decal_mats: gd_render::decal::DecalMats,
     mut records: Local<
         gd_formats::collections::HashMap<String, Option<gd_render::decal::DecalRecord>>,
     >,
@@ -1055,7 +1055,7 @@ fn drop_decals(
     }
     // The decals whose level unloaded are out of the ring.
     if !new.is_empty() {
-        placed.0.retain(|d| d.iter().any(|e| live.contains(*e)));
+        placed.0.retain(|d| d.0.iter().any(|e| live.contains(*e)));
     }
     for (e, d, tf, grow, tilt) in &new {
         commands.entity(e).try_despawn();
@@ -1144,10 +1144,10 @@ fn drop_decals(
             dec.height,
             grow.is_some()
         );
-        placed.0.push_back(layers);
+        placed.0.push_back((layers, dec.timing.opacity(0)));
         placed.1 = true;
         while placed.0.len() > RING {
-            for l in placed.0.pop_front().unwrap_or_default() {
+            for l in placed.0.pop_front().map(|d| d.0).unwrap_or_default() {
                 if let Ok(mut ec) = commands.get_entity(l) {
                     ec.despawn();
                 }
@@ -1157,22 +1157,19 @@ fn drop_decals(
 }
 
 /// `DecalSet::Update`'s per-decal alpha after decals came in
-/// ([`gd_render::decal::ring_alpha`]).
-fn ring_alpha(
-    mut placed: ResMut<DropDecals>,
-    layers: Query<&MeshMaterial3d<gd_render::decal::DecalMaterial>>,
-    mut mats: ResMut<Assets<gd_render::decal::DecalMaterial>>,
-) {
+/// ([`gd_render::decal::ring_alpha`]) × the record's opacity, into the layers' `MeshTag`s
+/// (`gd_render::decal::alpha_tag`; their materials are shared and stay untouched).
+fn ring_alpha(mut placed: ResMut<DropDecals>, mut tags: Query<&mut bevy::mesh::MeshTag>) {
     if !placed.1 {
         return;
     }
     placed.1 = false;
     let n = placed.0.len();
-    for (k, decal) in placed.0.iter().enumerate() {
-        let a = gd_render::decal::ring_alpha(n, k);
-        for m in decal.iter().filter_map(|e| layers.get(*e).ok()) {
-            if let Some(mut mat) = mats.get_mut(&m.0) {
-                gd_render::decal::set_layer_alpha(&mut mat, a);
+    for (k, (decal, o)) in placed.0.iter().enumerate() {
+        let tag = gd_render::decal::alpha_tag(o * gd_render::decal::ring_alpha(n, k));
+        for e in decal {
+            if let Ok(mut t) = tags.get_mut(*e) {
+                t.set_if_neq(tag.clone());
             }
         }
     }
