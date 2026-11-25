@@ -109,7 +109,7 @@ fn init(
             m.record,
             super_skill.as_ref().map(|s| &s.skill)
         );
-        commands.entity(e).insert(Synergy {
+        commands.entity(e).try_insert(Synergy {
             mode: Mode::Idle,
             radius: f("synergyRadius", 0.0),
             team_size: i("synergyTeamSize", 6).max(1) as usize,

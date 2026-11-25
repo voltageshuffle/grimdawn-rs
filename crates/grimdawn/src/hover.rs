@@ -1132,7 +1132,8 @@ struct HoverFill {
 }
 
 /// What the widget was built for: the target, whether it has a bar, its level and the player's level, the window
-/// size, the debuff strip. The bar's fill is not here: it changes in place.
+/// size, the debuff strip, the UI scale (window size and UI-scale option). The bar's fill is not here: it changes
+/// in place.
 type Shown = (
     Hovered,
     bool,
@@ -1140,6 +1141,7 @@ type Shown = (
     i32,
     UVec2,
     Vec<gd_ui::status::TargetDebuff>,
+    u32,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -1184,13 +1186,15 @@ fn describe(
     } else {
         &[]
     };
-    let same = shown.as_ref().is_some_and(|s| {
-        s.0 == *hovered
-            && s.1 == ratio.is_some()
-            && s.2 == level
-            && s.3 == plevel
-            && s.4 == size
-            && s.5 == strip
+    let s = assets.scale(size);
+    let same = shown.as_ref().is_some_and(|sh| {
+        sh.0 == *hovered
+            && sh.1 == ratio.is_some()
+            && sh.2 == level
+            && sh.3 == plevel
+            && sh.4 == size
+            && sh.5 == strip
+            && sh.6 == s.to_bits()
     });
     let clear = hovered.entity.is_none() || hovered.name.is_empty() || size.x == 0;
     gd_ui_kit::retire_roots(
@@ -1218,6 +1222,7 @@ fn describe(
         plevel,
         size,
         strip.to_vec(),
+        s.to_bits(),
     ));
     if clear {
         return;
@@ -1230,7 +1235,7 @@ fn describe(
         &mut commands,
         &data,
         root,
-        assets.scale(size),
+        s,
         1.0 / win.scale_factor(),
         size.as_vec2(),
     );

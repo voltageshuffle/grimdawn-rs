@@ -71,15 +71,6 @@ impl Offering {
         false
     }
 
-    /// Takes back the last reagent of the boxes, else the centre's.
-    pub fn take_last(&mut self) {
-        if let Some(b) = self.boxes.iter_mut().rev().find(|b| b.is_some()) {
-            *b = None;
-        } else {
-            self.center = None;
-        }
-    }
-
     /// The placed reagents, the centre first (`gd_game::ascendant::activate_altar`'s order).
     pub fn placed(&self) -> Vec<String> {
         self.center

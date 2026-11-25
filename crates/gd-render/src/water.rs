@@ -1361,7 +1361,7 @@ pub(crate) fn update_ripples(
 ) {
     let (images, meshes, mats, buffers) = &mut res;
     let set = &mut rt.ripples;
-    for (p, size, strength) in std::mem::take(&mut set.requests) {
+    for (p, size, strength) in set.requests.drain(..) {
         let w = water_above(layers.iter(), p - Vec3::Y * 2.0);
         set.sim.create(p.to_array(), w, size, strength);
     }

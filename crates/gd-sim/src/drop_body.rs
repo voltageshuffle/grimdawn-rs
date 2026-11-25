@@ -271,15 +271,13 @@ impl DropBody {
 
     /// The world box around the body.
     pub fn aabb(&self) -> (V3, V3) {
-        let ext: V3 = std::array::from_fn(|i| {
-            (0..3)
-                .map(|a| {
-                    let mut axis = [0.0; 3];
-                    axis[a] = 1.0;
-                    rotate(self.rot, axis)[i].abs() * self.half[a]
-                })
-                .sum()
+        let axes: [V3; 3] = std::array::from_fn(|a| {
+            let mut axis = [0.0; 3];
+            axis[a] = 1.0;
+            rotate(self.rot, axis)
         });
+        let ext: V3 =
+            std::array::from_fn(|i| (0..3).map(|a| axes[a][i].abs() * self.half[a]).sum());
         (sub(self.pos, ext), add(self.pos, ext))
     }
 
@@ -506,16 +504,12 @@ impl DropBody {
         let touching = !self.manifolds.is_empty();
         if touching {
             let mu = self.friction.clamp(0.0, MAX_FRICTION);
-            let points: Vec<ManifoldPoint> = self
-                .manifolds
-                .iter()
-                .flat_map(|m| m.1.iter().copied())
-                .collect();
-            let mut normals = Vec::with_capacity(points.len());
-            let mut frictions = Vec::with_capacity(points.len());
+            let count = self.manifolds.iter().map(|m| m.1.len()).sum();
+            let mut normals = Vec::with_capacity(count);
+            let mut frictions = Vec::with_capacity(count);
             let (v0, w0) = (self.vel, self.spin);
             let (mut v, mut w) = (self.vel, self.spin);
-            for c in &points {
+            for c in self.manifolds.iter().flat_map(|m| &m.1) {
                 let r = rotate(self.rot, c.local);
                 let pv = self.point_vel(v0, w0, r);
                 let vn = dot(c.n, pv);

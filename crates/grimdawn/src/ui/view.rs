@@ -8,13 +8,13 @@
 //! write UI state; the windows read only this view (or the gameplay
 //! components directly), so they cannot drift from what the game uses.
 use crate::afflictions::Afflictions;
-use crate::loot::PlayerProgress;
-use crate::sheet_dps::{SheetDps, SheetDpsValues};
 use bevy::prelude::*;
+use gd_game::sheet_dps::{SheetDps, SheetDpsValues};
 use gd_game_core::casting::Caster;
 use gd_game_core::combat::Combatant;
 use gd_game_core::data::GameData;
 use gd_game_core::player::{EffectiveSkills, Player};
+use gd_game_core::progress::PlayerProgress;
 use gd_game_core::rules::CombatRules;
 use gd_game_core::session::LoadedCharacter;
 use gd_ui::status::{BuffBar, DotIcon, debuff_icon};
@@ -198,9 +198,10 @@ pub fn collect(
     let mut changed = false;
     let v = hud.bypass_change_detection();
     changed |= put(&mut v.skill_undo, skill_undo.pending());
-    changed |= put(
+    changed |= gd_ui::reclamation::ReclaimView::put(
         &mut v.reclaim,
-        gd_ui::reclamation::ReclaimView::of(reclaim.as_deref(), devotion_state.as_deref()),
+        reclaim.as_deref(),
+        devotion_state.as_deref(),
     );
     let dv = gd_ui::reclamation::DevotionReclaimView::of(reclaim.as_deref(), || {
         stash
@@ -412,11 +413,12 @@ pub fn collect(
                         _ => true,
                     }
                     || *d != dps.0
-                    || *f != foes
+                    || !foes.is(f)
                     || *r != red
             });
             if sheet_changed {
                 let pet = pet.map(|p| (p.1.profile.clone(), p.0.buff_stats(&data.db, p.2)));
+                let foes = foes.owned();
                 (cache.1, cache.2) = sheet(
                     cb,
                     &rules.0,
@@ -573,7 +575,6 @@ pub fn collect(
             };
             let st = gd_game::buff_bar::PlayerState {
                 loadout: l,
-                caster: c,
                 links,
                 pool,
                 pets: summons,
@@ -857,18 +858,17 @@ fn hot_statics(
         ("hudPriSkillButton", slot(SLOT_LEFT)),
         ("hudSecSkillButton", slot(SLOT_RIGHT)),
     ]);
+    // The worn items' granted skills: one walk of the loadout for every slot.
+    let grants = loadout.map(|l| gd_sim::skills::item_skill_grants(&data.db, &l.items));
     let mut out = Vec::new();
     for (field, skill) in shown {
         let Some(skill) = skill else { continue };
         let is_default =
             skill == crate::evade::EVADE || skill == HEALTH_POTION || skill == ENERGY_POTION;
         let level = book.level(skill);
-        let gear = loadout.map_or(0, |l| {
-            gd_sim::skills::granted_level(
-                &gd_sim::skills::item_skill_grants(&data.db, &l.items),
-                skill,
-            )
-        });
+        let gear = grants
+            .as_deref()
+            .map_or(0, |g| gd_sim::skills::granted_level(g, skill));
         // An unlearned slotted skill that worn gear or a form grants for a while (`Skill.grantedByItem`).
         let granted = !is_default
             && level == 0
@@ -1033,10 +1033,7 @@ pub fn target_strip(
         })
         .collect();
     use gd_ui::status::TargetDebuff;
-    let made: Vec<&gd_game_core::skill_buffs::ReceivedBuff> = received
-        .map(|r| r.list.iter().rev().collect())
-        .unwrap_or_default();
-    for b in made {
+    for b in received.into_iter().flat_map(|r| r.list.iter().rev()) {
         let Some(icon) = icon_of(&b.buff) else {
             continue;
         };

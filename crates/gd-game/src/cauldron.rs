@@ -2,7 +2,7 @@
 //! two modifiers. This module owns whether the window is open
 //! ([`PotionWindow`]) and applies the player's [`PotionRequest`]s with the
 //! rules in `gd_sim::potions` (lists, slots, choices); the game draws the
-//! window (`grimdawn::ui::potions`) from [`PotionWindow`] and the player's
+//! window (`gd_ui::potions`) from [`PotionWindow`] and the player's
 //! skill book.
 //!
 //! * Opening: Game.dll `NpcCauldron::OnPlayerInteract` (the

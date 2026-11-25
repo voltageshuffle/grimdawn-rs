@@ -109,9 +109,9 @@ pub struct Trade {
     pub search: TradeSearch,
 }
 
-/// The trade windows' search box (module doc): its text, focus, and what the
-/// text finds in the open market or stash ([`search_hits`]); the crafting
-/// panel filters its recipe list with the query instead (`crafting.rs`).
+/// The trade windows' search box (`gd_ui::trade` module doc): its text, focus, and what the
+/// text finds in the open market or stash (the binary's `trade/search.rs` `search_hits`); the
+/// crafting panel filters its recipe list with the query instead (`crafting.rs`).
 #[derive(Default)]
 pub struct TradeSearch {
     pub text: String,
@@ -132,12 +132,12 @@ impl TradeSearch {
 }
 
 /// Answers No to [`Trade::prompt`] or the dismantle warning ([`Trade::confirm`]) (the Esc dispatcher's;
-/// [`trade_clicks`] owns the prompt state).
+/// the binary's `trade_clicks` owns the prompt state).
 #[derive(Message)]
 pub struct DismissPrompt;
 
 /// The dialog manager's box over the vendor / caravan window (`ui/confirm.rs`); it takes every click while up,
-/// Esc and its close button answer No ([`trade_clicks`]). `BuyPage`: the caravan's buy tab question
+/// Esc and its close button answer No (the binary's `trade_clicks`). `BuyPage`: the caravan's buy tab question
 /// `tagTransferPurchase01` with the cost (`gd_game_core::stash::StashRequest::BuyPage`, sent on Yes); `Message`: an
 /// Ok box, a refusal of gd-game ([`gd_game::trade::TradeRefused`]) or the buy tab's short-of-gold box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,15 +156,12 @@ impl Prompt {
     }
 }
 
-/// The vendor search box record (`marketSearchBox` of both market windows).
-pub const SEARCH_BOX: &str = "records/ui/vendors/vendor_searchbox.dbr";
-
-/// The open window's search box record (its `Style` and `Width` size the text,
-/// [`search_input`]): the vendor's, the caravan window's `searchBox`, the
+/// The open window's search box record (its `Style` and `Width` size the text, the binary's
+/// `search_input`): the vendor's `marketSearchBox`, the caravan window's `searchBox`, the
 /// crafting panel's `searchBox`; `None` for a window without one.
 pub fn search_box_record(open: &TradeOpen) -> Option<&'static str> {
     match open {
-        TradeOpen::Vendor { .. } => Some(SEARCH_BOX),
+        TradeOpen::Vendor { .. } => Some("records/ui/vendors/vendor_searchbox.dbr"),
         TradeOpen::Stash { .. } => Some("records/ui/caravan/caravan_searchbox.dbr"),
         TradeOpen::Crafter { .. } => {
             Some("records/ui/inventor/craftingpanel/crafting_searchbox.dbr")

@@ -1,5 +1,5 @@
 //! `.pfx` particle effects (`GAME::EffectData`, Engine.dll). The layout
-//! and runtime rules are below and in `grimdawn::fx`.
+//! and runtime rules are below and in `gd_render::fx`.
 //!
 //! File = `u32 101`, then emitters until EOF: `{str name, "PFX1", u32 0,
 //! u32 bodyBytes, u32 n × str (texture, shader, drop decal), u32 n × u32 bools,
@@ -150,6 +150,8 @@ pub struct Emitter {
     pub shader: String,
     /// Decal placed where each particle dies (`DecalType` record), usually empty.
     pub drop_decal: String,
+    /// Read through the accessors below; unread slots: bools[8] scales the light by the night factor,
+    /// bools[13] shows the light at every light-quality setting.
     pub bools: [bool; NUM_BOOLS],
     /// ints[0]: spawn shape.
     pub shape: Shape,
@@ -200,10 +202,6 @@ impl Emitter {
     pub fn light_shadows(&self) -> bool {
         self.bools[7]
     }
-    /// bools[8]: light intensity scaled by the night factor.
-    pub fn light_night_only(&self) -> bool {
-        self.bools[8]
-    }
     /// bools[11]: the light is in simple mode (`Emitter::UpdateLight` copies it to the
     /// light's `Light.simpleMode`): `Light::AddToScene` gives it neither specular nor a shadow.
     pub fn light_simple(&self) -> bool {
@@ -212,10 +210,6 @@ impl Emitter {
     /// bools[10]: billboards lie in the emitter's XZ plane (`orientVertically`).
     pub fn orient_vertically(&self) -> bool {
         self.bools[10]
-    }
-    /// bools[13]: light shown at every light-quality setting.
-    pub fn light_always(&self) -> bool {
-        self.bools[13]
     }
     /// Emitter duration = domain of the emitter-time curves (`Emitter::Update`
     /// reads curve 15's domain).

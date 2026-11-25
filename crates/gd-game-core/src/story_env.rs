@@ -14,7 +14,6 @@
 //!   ([`gd_formats::text::load_text_override`], `PortableLocalization::Read`).
 //! * Item footprints ([`ScriptEnv::item_footprint`], `Player.IsSpaceAvailable`): a fresh item of the record,
 //!   resolved and sized from its bitmap as the inventory places it.
-use anyhow::Result;
 use gd_formats::arz::{RawValue, Record};
 use gd_formats::collections::HashMap;
 use gd_formats::text::TagTable;
@@ -61,12 +60,12 @@ impl DataEnv {
     }
 
     /// Every `quests/*.qst` of the VFS ([`gd_story::story::load::quest_defs`]).
-    pub fn quest_defs(&self) -> Result<QuestDefs> {
+    pub fn quest_defs(&self) -> QuestDefs {
         load::quest_defs(&self.vfs, &self.language)
     }
 
     /// Every `conversations/*.cnv` of the VFS ([`gd_story::story::load::dialogs`]).
-    pub fn dialogs(&self) -> Result<Dialogs> {
+    pub fn dialogs(&self) -> Dialogs {
         load::dialogs(&self.vfs, &self.language)
     }
 }

@@ -240,11 +240,11 @@ pub fn half_extents(particles: &[Particle], anchor: Vec3) -> Vec3 {
     ext
 }
 
-/// `.tex` → 2D array image, one layer per flipbook frame. Frames that do not
-/// match frame 0's size/format are dropped.
+/// `.tex` → 2D array image, one layer per flipbook frame. From the first frame that does not match frame 0's
+/// size / format / mip count on, the frames are dropped.
 pub fn flipbook_image(tex: &gd_formats::tex::Tex) -> anyhow::Result<(Image, u32)> {
-    let first = crate::textures::dds_to_image(&tex.frames[0], false)?;
-    let mut data = first.data.clone().unwrap_or_default();
+    let mut first = crate::textures::dds_to_image(&tex.frames[0], false)?;
+    let mut data = first.data.take().unwrap_or_default();
     let mut layers = 1;
     for f in &tex.frames[1..] {
         let img = crate::textures::dds_to_image(f, false)?;

@@ -358,7 +358,7 @@ pub fn sync_slots(
     dead: Query<Entity, (With<gd_game_core::combat::Dead>, With<MeleeSlots>)>,
 ) {
     for e in &dead {
-        commands.entity(e).remove::<MeleeSlots>();
+        commands.entity(e).try_remove::<MeleeSlots>();
     }
     for (e, tf, cb, monster, slots) in &mut q {
         if let Some(mut s) = slots {
@@ -377,7 +377,7 @@ pub fn sync_slots(
         attack.set_num_slots(count("numAttackSlots"));
         let mut defense = SlotManager::new(SlotMode::Defense);
         defense.set_num_slots(count("numDefenseSlots"));
-        commands.entity(e).insert(MeleeSlots {
+        commands.entity(e).try_insert(MeleeSlots {
             attack,
             defense,
             pos: tf.translation,
@@ -690,11 +690,6 @@ impl MeleeAi {
         self.reposition_on = Some(enemy);
         self.st = St::Reposition;
         self.pathed = false;
-    }
-
-    /// The reposition flag the attack's end reads.
-    pub fn reposition_flag(&self) -> bool {
-        self.roll
     }
 
     /// `Character::CrowdAgentError`: the crowd failed the move (the path is

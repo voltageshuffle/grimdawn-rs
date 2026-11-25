@@ -380,6 +380,6 @@ impl Rules {
 /// Ultimate Veteran's adjustment pak.
 pub fn ultimate_challenge(db: &Database) -> Option<&Record> {
     db.get("records/game/gameascendant.dbr")
-        .and_then(|e| e.str("ultimateChallangeAdjustment").map(str::to_owned))
-        .and_then(|p| db.get(&p))
+        .and_then(|e| e.str("ultimateChallangeAdjustment"))
+        .and_then(|p| db.get(p))
 }

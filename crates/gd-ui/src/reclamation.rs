@@ -53,18 +53,29 @@ pub struct ReclaimView {
 }
 
 impl ReclaimView {
-    /// The view of an active mode.
-    pub fn of(
+    /// Writes the view of an active mode (`None` without one) into `slot`, allocating only when it differs;
+    /// whether it changed.
+    pub fn put(
+        slot: &mut Option<Self>,
         r: Option<&SkillReclamation>,
         devotion: Option<&gd_game::devotion::DevotionState>,
-    ) -> Option<Self> {
-        let r = r.filter(|r| r.skills_mode())?;
-        Some(Self {
+    ) -> bool {
+        let Some(r) = r.filter(|r| r.skills_mode()) else {
+            return slot.take().is_some();
+        };
+        let bindings = devotion.map_or(&[][..], |d| &d.bindings[..]);
+        if let Some(v) = slot
+            && v.used == r.used
+            && v.bound.len() == bindings.len()
+            && v.bound.iter().zip(bindings).all(|(a, b)| *a == b.skill)
+        {
+            return false;
+        }
+        *slot = Some(Self {
             used: r.used,
-            bound: devotion
-                .map(|d| d.bindings.iter().map(|b| b.skill.clone()).collect())
-                .unwrap_or_default(),
-        })
+            bound: bindings.iter().map(|b| b.skill.clone()).collect(),
+        });
+        true
     }
 
     pub fn is_bound(&self, skill: &str) -> bool {

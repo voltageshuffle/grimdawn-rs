@@ -283,7 +283,7 @@ pub fn test_break(
     >,
     q: Query<(Entity, &GlobalTransform), (With<Breakable>, With<Combatant>, Without<Dead>)>,
 ) {
-    let Some(mode) = hooks.gameplay.break_mode.clone() else {
+    let Some(mode) = hooks.gameplay.break_mode.as_deref() else {
         return;
     };
     let Ok((tf, mut cb, mut primary)) = players.single_mut() else {

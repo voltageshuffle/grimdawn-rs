@@ -82,7 +82,6 @@ use gd_formats::collections::HashMap;
 use gd_formats::map::{Uid, uid_bytes, uid_words};
 use gd_game_core::data::GameData;
 use gd_game_core::player::{Loadout, Player, ProfileDirty};
-use gd_game_core::session::MessageDrain;
 use gd_rules::Rng;
 use gd_sim::devotion::Devotions;
 use gd_sim::items::ItemDb;
@@ -198,11 +197,6 @@ impl Plugin for DevotionRequestsPlugin {
             .add_message::<UndoDevotion>()
             .add_message::<CommitDevotionUndo>()
             .init_resource::<DevotionUndo>()
-            .drain_messages_unless::<TakeStar, _>(resource_exists::<DevotionState>)
-            .drain_messages_unless::<RemoveStar, _>(resource_exists::<DevotionState>)
-            .drain_messages_unless::<BindPower, _>(resource_exists::<DevotionState>)
-            .drain_messages_unless::<UndoDevotion, _>(resource_exists::<DevotionState>)
-            .drain_messages_unless::<CommitDevotionUndo, _>(resource_exists::<DevotionState>)
             .add_systems(
                 Update,
                 (devotion_requests, undo_devotion)
@@ -300,7 +294,7 @@ impl DevotionUndo {
 /// refunds (`GetCurrentDevotionReclamationCost`: the cost of the first tier
 /// band `[tiers[i], tiers[i + 1])` holding the count, else the last).
 pub fn reclaim_cost(db: &gd_formats::vfs::Database, reclaimed: u32) -> (u64, u32) {
-    let Some(rec) = db.get("records/creatures/pc/malepc01.dbr") else {
+    let Some(rec) = db.get(gd_sim::reclamation::PLAYER_RECORD) else {
         return (0, 0);
     };
     let tiers = rec.f32s("devotionReclamationPointTiers");
@@ -477,6 +471,7 @@ pub fn undo_devotion(
     mut undo: ResMut<DevotionUndo>,
     mut state: ResMut<DevotionState>,
     mut players: Query<(Entity, &mut Loadout), With<Player>>,
+    // Option: the refunds go back to whichever of these exist.
     (mut stash, mut inv): (
         Option<ResMut<gd_game_core::stash::Stash>>,
         Option<ResMut<gd_game_core::inventory::Inventory>>,
@@ -492,7 +487,10 @@ pub fn undo_devotion(
 ) {
     let undone = undos.read().count() > 0;
     let committed = commits.read().count() > 0;
-    if undone && let Ok((player, mut loadout)) = players.single_mut() {
+    if undone
+        && !undo.0.is_empty()
+        && let Ok((player, mut loadout)) = players.single_mut()
+    {
         let engine = data.engine();
         let crystal = engine.aether_crystal.as_deref();
         // The material storage takes the crystals back only while the save writes it (`crate::stash` module
@@ -579,8 +577,6 @@ pub struct DevotionPlugin;
 impl Plugin for DevotionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ShrineWindow>()
-            .drain_messages_unless::<ShrineRequest, _>(shrine_window_inputs)
-            .drain_messages_unless::<ShrineCleansed, _>(resource_exists::<DevotionState>)
             .add_message::<ShrineLock>()
             .add_message::<ShrineRequest>()
             .add_message::<ShrineCleansed>()
@@ -670,22 +666,21 @@ pub fn offering_slots(
     inv: &gd_game_core::inventory::Inventory,
     stash: Option<&gd_game_core::stash::Stash>,
 ) -> [Option<(String, bool)>; 3] {
-    let count = |rec: &str| {
-        let names = [rec.to_owned()];
+    let count = |rec: &String| {
         stash.map_or_else(
             || inv.count_by_record(rec),
-            |s| gd_game_core::stash::count(&names, inv, s),
+            |s| gd_game_core::stash::count(std::slice::from_ref(rec), inv, s),
         )
     };
     std::array::from_fn(|i| {
-        let rec = sh.offerings[i].clone()?;
+        let rec = sh.offerings[i].as_ref()?;
         let earlier = sh.offerings[..i]
             .iter()
             .flatten()
-            .filter(|o| o.eq_ignore_ascii_case(&rec))
+            .filter(|o| o.eq_ignore_ascii_case(rec))
             .count() as u32;
-        let have = count(&rec) > earlier;
-        Some((rec, have))
+        let have = count(rec) > earlier;
+        Some((rec.clone(), have))
     })
 }
 
@@ -1162,10 +1157,11 @@ pub fn use_shrine(
 /// What starting a shrine's proxy fight needs.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ShrineFights<'w> {
-    // Option (SystemParam): the fight is optional input; `start` does nothing without rules or levels.
+    // Option (SystemParam): `start` does nothing without rules; the progress (else level 1) and the factions are
+    // optional input.
     progress: Option<Res<'w, gd_game_core::progress::PlayerProgress>>,
     rules: Option<Res<'w, gd_game_core::rules::CombatRules>>,
-    world: Option<Res<'w, gd_game_core::levels::Levels>>,
+    world: Res<'w, gd_game_core::levels::Levels>,
     nav: Res<'w, Nav>,
     data: Res<'w, GameData>,
     bodies: ResMut<'w, gd_game_core::creature::BodyCache>,
@@ -1192,7 +1188,7 @@ impl ShrineFights<'_> {
             &mut self.bodies,
             &self.nav,
             rules,
-            self.world.as_deref(),
+            Some(&*self.world),
             &proxy,
             at,
             player_level,
@@ -1222,7 +1218,8 @@ pub fn shrine_requests(
     mut shrines: Query<(&GlobalTransform, &mut Shrine)>,
     players: Query<&Transform, With<Player>>,
     s: Res<DevotionState>,
-    (mut inv, stash): (
+    // Option (stash): without it the offerings are counted and taken from the bags alone.
+    (mut inv, mut stash): (
         ResMut<gd_game_core::inventory::Inventory>,
         Option<ResMut<gd_game_core::stash::Stash>>,
     ),
@@ -1243,7 +1240,6 @@ pub fn shrine_requests(
         window.set(None, false);
         return;
     }
-    let mut stash = stash;
     let at = gt.translation();
     for r in requests.read() {
         if window.shrine.is_none() {
@@ -1262,9 +1258,10 @@ pub fn shrine_requests(
                     continue;
                 }
                 for (rec, _) in slots.iter().flatten() {
-                    let names = [rec.clone()];
                     match stash.as_deref_mut() {
-                        Some(st) => gd_game_core::stash::take(&names, 1, &mut inv, st),
+                        Some(st) => {
+                            gd_game_core::stash::take(std::slice::from_ref(rec), 1, &mut inv, st)
+                        }
                         None => {
                             inv.remove_by_record(rec, 1);
                         }
@@ -1389,6 +1386,7 @@ pub fn shrine_fights(
     >,
     mut s: ResMut<DevotionState>,
     mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
+    // Option: the loot's player level is 1 without it.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     world: Res<gd_game_core::levels::Levels>,
     nav: Res<Nav>,

@@ -89,15 +89,17 @@ fn story_locks(
     }
 }
 
-/// Dormant or restored animation and looping effect.
+/// Dormant or restored animation and looping effect; the restore plays `dormantToRestoredSound` (as the Shattered
+/// Realm's buff shrines, the same `StaticShrine` class: `crate::endless_shrine`).
 fn shrine_looks(
     mut commands: Commands,
     state: Option<Res<DevotionState>>,
-    mut shrines: Query<(Entity, &Shrine, &mut ShrineLook)>,
+    mut shrines: Query<(Entity, &Shrine, &GlobalTransform, &mut ShrineLook)>,
     mut assets: CharAssets,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
     let Some(s) = state else { return };
-    for (e, sh, mut look) in &mut shrines {
+    for (e, sh, gt, mut look) in &mut shrines {
         let restored = s.restored.contains(&sh.uid) || s.totems_done.contains(&sh.uid);
         if look.shown == Some(restored) {
             continue;
@@ -141,9 +143,12 @@ fn shrine_looks(
         }
         if restored
             && !first
-            && let Some(snd) = rec.str("dormantToRestoredSound")
+            && let Some(snd) = rec.str("dormantToRestoredSound").filter(|s| !s.is_empty())
         {
-            debug!("devotion: shrine restored sound {snd}");
+            sound.write(gd_game_core::visuals::PlaySound {
+                pak: snd.to_owned(),
+                at: Some(gt.translation()),
+            });
         }
     }
 }

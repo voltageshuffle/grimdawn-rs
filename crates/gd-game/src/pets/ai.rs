@@ -25,7 +25,7 @@ pub(super) fn start_pet_cast(
     }
     // `AttackAction::Execute`: the pet turns to its target (`crate::turning`).
     ch.begin_cast(tf, Some((target, at)), at);
-    commands.entity(e).insert(Casting {
+    commands.entity(e).try_insert(Casting {
         skill: a.skill.clone(),
         level_index: a.level_index,
         kind: a.kind,

@@ -208,9 +208,9 @@ impl Bonus {
         li: usize,
         mods: &[(String, usize)],
     ) -> Self {
-        let mods: Vec<(Record, usize)> = mods
+        let mods: Vec<(&Record, usize)> = mods
             .iter()
-            .filter_map(|(m, l)| db.get_owned(m).map(|r| (r, *l)))
+            .filter_map(|(m, l)| db.get(m).map(|r| (r, *l)))
             .collect();
         Self::of(|k| level_f(rec, k, li) + mods.iter().map(|(r, l)| level_f(r, k, *l)).sum::<f32>())
     }
@@ -344,52 +344,46 @@ pub(super) fn self_buff_heals(
         // monster's / pet's toggles are read fresh.
         let fresh_toggles: Vec<(String, usize)>;
         let loadout_on: &[(String, usize)] = match (loadout.as_deref(), effective.as_deref()) {
-            (Some(l), Some(eff)) => {
-                let stale = toggle_cache.as_deref().is_none_or(|_| {
-                    loadout.as_ref().is_some_and(|r| r.is_changed())
+            (Some(l), Some(eff)) => match toggle_cache.as_mut() {
+                Some(c) => {
+                    if loadout.as_ref().is_some_and(|r| r.is_changed())
                         || effective.as_ref().is_some_and(|r| r.is_changed())
-                });
-                if stale {
-                    fresh_toggles = loadout_toggles(db, l, eff);
-                    match toggle_cache.as_mut() {
-                        Some(c) => c.0 = fresh_toggles.clone(),
-                        None => {
-                            commands
-                                .entity(e)
-                                .try_insert(SelfBuffToggles(fresh_toggles.clone()));
-                        }
+                    {
+                        c.0 = loadout_toggles(db, l, eff);
                     }
-                    &fresh_toggles
-                } else {
-                    &toggle_cache
-                        .as_deref()
-                        .expect("a present cache when fresh")
-                        .0
+                    &c.0
                 }
-            }
+                None => {
+                    fresh_toggles = loadout_toggles(db, l, eff);
+                    commands
+                        .entity(e)
+                        .try_insert(SelfBuffToggles(fresh_toggles.clone()));
+                    &fresh_toggles
+                }
+            },
             _ => &[],
         };
-        let mut on: Vec<(String, usize)> = Vec::new();
         let timed = loadout
             .as_deref()
             .map(|l| l.buffs.list.as_slice())
             .or(ms.map(|m| m.buffs.list.as_slice()))
             .or(pet.map(|p| p.buffs()))
             .unwrap_or_default();
-        on.extend(
-            timed
-                .iter()
-                .filter(|b| b.2 > 0.0)
-                .map(|b| (b.0.clone(), b.1)),
-        );
-        on.extend(loadout_on.iter().cloned());
-        on.extend(
-            ms.map(|m| m.toggled())
-                .or(pet.map(|p| p.toggled()))
-                .unwrap_or_default()
-                .iter()
-                .cloned(),
-        );
+        let toggled = ms
+            .map(|m| m.toggled())
+            .or(pet.map(|p| p.toggled()))
+            .unwrap_or_default();
+        let mut on: Vec<(&str, usize)> = timed
+            .iter()
+            .filter(|b| b.2 > 0.0)
+            .map(|b| (b.0.as_str(), b.1))
+            .chain(
+                loadout_on
+                    .iter()
+                    .chain(toggled)
+                    .map(|(s, li)| (s.as_str(), *li)),
+            )
+            .collect();
         // A buff record another character put in the timed list (a monster's buff-other on the player) is a
         // `SkillBuff` (`SkillBuff::Update`, the same bonus); so is the player's own radius buff, which the
         // engine's pass puts on the player too (`crate::auras`: the port keeps it here).
@@ -406,7 +400,7 @@ pub(super) fn self_buff_heals(
             }
             continue;
         };
-        heals.0.retain(|(s, _)| on.iter().any(|o| &o.0 == s));
+        heals.0.retain(|(s, _)| on.iter().any(|o| o.0 == s));
         for (s, li) in on {
             let t = match heals.0.iter_mut().find(|h| h.0 == s) {
                 Some((_, t)) => {
@@ -414,7 +408,7 @@ pub(super) fn self_buff_heals(
                     t
                 }
                 None => {
-                    heals.0.push((s.clone(), 0.0));
+                    heals.0.push((s.to_owned(), 0.0));
                     &mut heals.0.last_mut().expect("just pushed").1
                 }
             };
@@ -422,17 +416,17 @@ pub(super) fn self_buff_heals(
                 continue;
             }
             *t = 1.0;
-            let Some(rec) = db.get(&s).map(|r| {
+            let Some(rec) = db.get(s).map(|r| {
                 gd_sim::skills::profile_name(r)
                     .and_then(|b| db.get(b))
                     .unwrap_or(r)
             }) else {
                 continue;
             };
-            let mods = links.map_or(&[][..], |l| l.mods_of(&s));
-            let mods: Vec<(Record, usize)> = mods
+            let mods: Vec<(&Record, usize)> = links
+                .map_or(&[][..], |l| l.mods_of(s))
                 .iter()
-                .filter_map(|(m, l)| db.get_owned(m).map(|r| (r, *l)))
+                .filter_map(|(m, l)| db.get(m).map(|r| (r, *l)))
                 .collect();
             Bonus::buff_duration(|k| {
                 level_f(rec, k, li) + mods.iter().map(|(r, l)| level_f(r, k, *l)).sum::<f32>()

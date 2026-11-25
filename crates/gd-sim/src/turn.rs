@@ -56,16 +56,6 @@ pub enum Turned {
     Reached(f32),
 }
 
-impl Turned {
-    /// The new yaw, if any.
-    pub fn yaw(self) -> Option<f32> {
-        match self {
-            Turned::Ignored => None,
-            Turned::Turning(y) | Turned::Reached(y) => Some(y),
-        }
-    }
-}
-
 /// One tick of `Character::RotateTowards` (module doc) for a character whose facing is `yaw` (radians from +Z
 /// toward +X, the facing `(sin yaw, 0, cos yaw)`), turning toward `dir` (any length) over `dt_ms`.
 pub fn rotate_towards(
@@ -77,7 +67,7 @@ pub fn rotate_towards(
     disallow: bool,
 ) -> Turned {
     let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-    if len == 0.0 || len < MIN_DIRECTION {
+    if len < MIN_DIRECTION {
         return Turned::Ignored;
     }
     let flat = (dir[0] * dir[0] + dir[2] * dir[2]).sqrt();

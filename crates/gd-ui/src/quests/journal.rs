@@ -199,7 +199,7 @@ pub(super) fn build_journal(
     (mut built, mut picked): (
         Local<
             Option<(
-                UVec2,
+                UVec3,
                 QuestView,
                 QuestJournal,
                 usize,
@@ -218,21 +218,18 @@ pub(super) fn build_journal(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     // The tab's quests in the repository's order (no main-first sort).
-    let list: Vec<&QuestEntry> = view
-        .quests
-        .iter()
-        .filter(|q| {
-            if journal.completed {
-                q.completed()
-            } else {
-                q.in_progress()
-            }
-        })
-        .collect();
+    let completed = journal.completed;
+    let listed = move |q: &&QuestEntry| {
+        if completed {
+            q.completed()
+        } else {
+            q.in_progress()
+        }
+    };
     // `GD_QUEST_SELECT`: selected once it is listed.
     if !*picked
-        && let Some(name) = hooks.ui.quest_select.clone()
-        && let Some(q) = list.iter().find(|q| q.name == name)
+        && let Some(name) = hooks.ui.quest_select.as_deref()
+        && let Some(q) = view.quests.iter().filter(listed).find(|q| q.name == name)
     {
         *picked = true;
         journal.selected = Some(q.id);
@@ -240,10 +237,14 @@ pub(super) fn build_journal(
     // Keep a valid selection (the first quest of the tab).
     let sel = journal
         .selected
-        .filter(|id| list.iter().any(|q| q.id == *id))
-        .or(list.first().map(|q| q.id));
+        .filter(|id| view.quests.iter().filter(listed).any(|q| q.id == *id))
+        .or_else(|| view.quests.iter().find(listed).map(|q| q.id));
     if journal.selected != sel {
         journal.selected = sel;
+    }
+    // Closed, and built closed: nothing to draw.
+    if !journal.open && built.as_ref().is_some_and(|(_, _, j, ..)| !j.open) {
+        return;
     }
     let notes = lore.as_deref().map_or(&[][..], |l| &l.notes[..]);
     let dsig = devotion.as_ref().map_or(0, |d| {
@@ -253,6 +254,7 @@ pub(super) fn build_journal(
             ^ index.as_ref().map_or(0, |i| i.0.len() as u64) << 20
     });
     let generation = assets.fonts.generation;
+    let sk = size.extend(assets.scale(size).to_bits());
     // `scroll` and `hover` are not in the signature: `journal_live` moves the panes, the scroll bar
     // thumbs and the hover shade in place, so a scroll or hover change does not rebuild the window.
     let same_journal = |j: &QuestJournal| {
@@ -270,7 +272,7 @@ pub(super) fn build_journal(
     // The Help tab's text names the bound keys: a rebind rebuilds it.
     if size.x == 0
         || built.as_ref().is_some_and(|(s, v, j, n, d, b, g)| {
-            *s == size
+            *s == sk
                 && v == &*view
                 && same_journal(j)
                 && *n == notes.len()
@@ -282,7 +284,7 @@ pub(super) fn build_journal(
         return;
     }
     *built = Some((
-        size,
+        sk,
         view.clone(),
         journal.clone(),
         notes.len(),
@@ -307,6 +309,7 @@ pub(super) fn build_journal(
         Vec2::new(size.x as f32, size.y as f32),
     );
     ui.req = reqs.single().copied().unwrap_or_default();
+    layout.s = ui.s;
     let field = |r: &gd_formats::arz::Record, k: &str| r.str(k).unwrap_or("").to_string();
     let wr = WindowDef::from_record(rec).screen_rect(ui.screen.x, ui.screen.y, ui.s);
     let o = Vec2::new(wr.x, wr.y);
@@ -445,6 +448,7 @@ pub(super) fn build_journal(
     // width less twice it, `itemSpacing` apart (`QuestJournalPage::AddRewards` /
     // `QuestJournalPage::AddRewardItems`), each with its rarity plate. Incentives are not shown
     // (the page asks for them but draws nothing).
+    let list: Vec<&QuestEntry> = view.quests.iter().filter(listed).collect();
     let jpane = URect::new(
         o.x + jx,
         o.y + jy + ui.sc(num(&jr, "topGuardBand")),
@@ -566,24 +570,21 @@ pub(super) fn build_journal(
                     );
                     y += minor;
                 }
-                let items: Vec<(Item, Vec2)> = match Some(&*inv) {
-                    Some(inv) => t
-                        .reward_items
-                        .iter()
-                        .filter_map(|rec| {
-                            let item = Item {
-                                base_name: rec.clone(),
-                                stack_count: 1,
-                                var1: 1,
-                                ..Default::default()
-                            };
-                            let info = inv.info(&item)?;
-                            let (_, sz) = ui.image(&info.resolved.bitmap)?;
-                            Some((item, Vec2::new(ui.sc(sz.x as f32), ui.sc(sz.y as f32))))
-                        })
-                        .collect(),
-                    None => Vec::new(),
-                };
+                let items: Vec<(Item, Vec2)> = t
+                    .reward_items
+                    .iter()
+                    .filter_map(|rec| {
+                        let item = Item {
+                            base_name: rec.clone(),
+                            stack_count: 1,
+                            var1: 1,
+                            ..Default::default()
+                        };
+                        let info = inv.info(&item)?;
+                        let (_, sz) = ui.image(&info.resolved.bitmap)?;
+                        Some((item, Vec2::new(ui.sc(sz.x as f32), ui.sc(sz.y as f32))))
+                    })
+                    .collect();
                 if !t.rewards.is_empty() || !items.is_empty() {
                     let title = ui.fonts.tag("tagQuestRewards").to_string();
                     let rtitle = field(&jr, "rewardTitleStyle");
@@ -595,7 +596,7 @@ pub(super) fn build_journal(
                         1.0,
                     );
                 }
-                if let (false, inv) = (items.is_empty(), &*inv) {
+                if !items.is_empty() {
                     y += ui.sc(num(&jr, "itemSectionSpacing"));
                     let border = ui.sc(num(&jr, "itemBorderAdjust"));
                     let spacing = ui.sc(num(&jr, "itemSpacing"));
@@ -605,7 +606,7 @@ pub(super) fn build_journal(
                     for ((item, sz), at) in items.iter().zip(places) {
                         crate::character::item_cell(
                             &mut ui,
-                            inv,
+                            &inv,
                             item,
                             URect::new(
                                 (content_x + border + at.x).round(),
@@ -720,12 +721,13 @@ pub(super) fn build_journal(
         num(&tree, "hoverColor.B") / 255.0,
         num(&tree, "hoverColor.A") / 255.0,
     );
-    let hover_node = |ui: &mut Ui, key: String, y: f32, h: f32| {
+    // A tree row's hit rect and hover key for `clicks`, and its hover shade.
+    let hover_node = |ui: &mut Ui, layout: &mut JournalLayout, key: String, y: f32, h: f32| {
         if let Some((img, _)) = node.clone() {
             let e = ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), hover_color);
             let shown = journal.hover.as_deref() == Some(key.as_str());
             ui.commands.entity(e).insert((
-                RowHover(key),
+                RowHover(key.clone()),
                 if shown {
                     Visibility::Inherited
                 } else {
@@ -733,6 +735,7 @@ pub(super) fn build_journal(
                 },
             ));
         }
+        layout.hovers.push((URect::new(tx, y, tree_w, h), key));
     };
     if list.is_empty() {
         let tag = if journal.completed {
@@ -759,10 +762,7 @@ pub(super) fn build_journal(
     };
     for g in groups {
         let open = !journal.collapsed.iter().any(|c| c == g);
-        hover_node(&mut ui, format!("g{g}"), y, gmajor);
-        layout
-            .group_rows
-            .push((URect::new(tx, y, tree_w, gmajor), g.to_owned()));
+        hover_node(&mut ui, &mut layout, format!("g{g}"), y, gmajor);
         let mut x = tx;
         if let Some(r) = centred(
             &mut ui,
@@ -796,7 +796,7 @@ pub(super) fn build_journal(
                     sel_color,
                 );
             }
-            hover_node(&mut ui, format!("q{}", q.id), y, minor);
+            hover_node(&mut ui, &mut layout, format!("q{}", q.id), y, minor);
             let mut x = tx + indent;
             let tracked = !journal.untracked.contains(&q.id);
             if !journal.completed

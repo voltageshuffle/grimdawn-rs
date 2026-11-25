@@ -31,7 +31,7 @@
 //! `tagRerollQuantity` line shows the reroll count); `rerollNowButton` is
 //! enabled with a kind, enough money and every reagent, and sends
 //! `CreateArtifactCmd` at once (no confirm prompt; the item stays in the slot
-//! and is changed in place). Window UI in `ui/trade.rs` (`reroll_panel`).
+//! and is changed in place). Window UI in `gd_ui::trade` (`reroll_panel`).
 //! The Runekeeper (`NpcItemAscension`, GrimDawn.exe
 //! `UIItemAscensionWindow::Update` / `UIItemAscensionWindow::AscendItem`): the item's rarity picks the window's
 //! `<rarity>Recipe`, which costs its `creationCost` and first reagent
@@ -42,7 +42,7 @@
 //! checked (`Item::CanReroll` is used by the reroll tab only, `UIEnchanterRerollTab::AcceptsItem`).
 //! The ascend button (`UIItemAscensionWindow::Ascend`, `UIItemAscensionWindow::AscendItem`) runs at
 //! once, no prompt; enabled by `UIItemAscensionWindow::IsReady` (item, all reagent boxes,
-//! enough money, ascendant name empty). Window UI in `ui/trade.rs`
+//! enough money, ascendant name empty). Window UI in `gd_ui::trade`
 //! (`ascension_window`). Shift + left click on a bag item moves it into the
 //! slot (`BagWidget_HandleMouseEvent`, `grimdawn` `inventory.rs`).
 //! Hook `GD_REROLL=seed|prefix|suffix|ascended|ascend` (`ascend` with

@@ -52,15 +52,20 @@ fn show(
     let shown = rt.as_ref().and_then(|r| r.notices.current());
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let key = shown.map(|(t, _)| (t.to_owned(), size));
-    if *drawn != key {
+    // The text compared in place: no copy per frame while a notification shows.
+    let same = match (&*drawn, shown) {
+        (Some((t, s)), Some((text, _))) => t == text && *s == size,
+        (None, None) => true,
+        _ => false,
+    };
+    if !same {
         super::window::despawn_all(&mut commands, &roots);
-        *drawn = key;
+        *drawn = shown.map(|(t, _)| (t.to_owned(), size));
         *group = None;
         let (Some((text, alpha)), Some(rec)) = (shown, data.db.get(MANAGER)) else {
             return;
         };
-        let Some(style) = rec.str("fontStyle").map(str::to_owned) else {
+        let Some(style) = rec.str("fontStyle") else {
             return;
         };
         let s = assets.scale(size);
@@ -77,14 +82,14 @@ fn show(
         );
         // Built opaque; the group fades it.
         let g = fade_group(&mut ui, root, alpha);
-        let lh = ui.line_height(&style);
+        let lh = ui.line_height(style);
         let lines: Vec<&str> = text.lines().collect();
         let cx = r.x + r.w * 0.5;
         let top = r.y + r.h * 0.5 - (lh * lines.len() as f32 * 0.5).floor();
         for (i, l) in lines.iter().enumerate() {
-            let w = ui.text_width(&style, l);
+            let w = ui.text_width(style, l);
             ui.text_line(
-                &style,
+                style,
                 Vec2::new((cx - w * 0.5).round(), (top + lh * i as f32).round()),
                 l,
                 1.0,

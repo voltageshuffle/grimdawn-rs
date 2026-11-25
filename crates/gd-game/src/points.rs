@@ -34,7 +34,6 @@ use gd_game_core::data::GameData;
 use gd_game_core::inventory::InventorySet;
 use gd_game_core::player::{Loadout, Player, ProfileDirty};
 use gd_game_core::progress::PlayerProgress;
-use gd_game_core::session::MessageDrain;
 
 pub struct PointsPlugin;
 
@@ -64,12 +63,7 @@ impl Plugin for PointsPlugin {
                     .chain()
                     .in_set(PlayerRequests)
                     .run_if(resource_exists::<PlayerProgress>),
-            )
-            .drain_messages_unless::<SpendAttribute, _>(resource_exists::<PlayerProgress>)
-            .drain_messages_unless::<ResetAttributes, _>(resource_exists::<PlayerProgress>)
-            .drain_messages_unless::<RaiseSkill, _>(resource_exists::<PlayerProgress>)
-            .drain_messages_unless::<UndoSkillPoints, _>(resource_exists::<PlayerProgress>)
-            .drain_messages_unless::<CommitSkillUndo, _>(resource_exists::<PlayerProgress>);
+            );
     }
 }
 

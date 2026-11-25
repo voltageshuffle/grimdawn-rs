@@ -2,7 +2,7 @@
 //!
 //! GrimDawn.exe `CursorHandlerMgr::HandleMouseEvent`, Game.dll `CursorHandlerItemMove::ActivateWorld`: a
 //! left or right press on the world (no window took it) with an item on the cursor drops it, the whole
-//! stack ([`DropHeld`], sent by `grimdawn` `ui/apply.rs` `world_click`). Quest items drop like any other.
+//! stack ([`DropHeld`], sent by `gd_ui` `apply.rs` `world_click`). Quest items drop like any other.
 //! An item whose record is `soulbound` or `untradeable` (`Item::Load`, `Item.soulbound` / `Item.untradeable`) is
 //! not dropped: the Yes / No question `tagDestroySoulbound` (`tagDestroyUntradeable` when it is only
 //! untradeable; `DialogManager::AddDialog` type 21) comes up ([`Inventory::destroying`]) and the press
@@ -22,7 +22,7 @@
 //! own drop is only picked up by clicking it ([`DroppedByPlayer`], `crate::loot::pick_up`).
 //!
 //! The drop key (GrimDawn.exe `CursorHandlerMgr_OnKeyAction`):
-//! key action 32 `DropItem` on key down ([`DropKey`], sent by `grimdawn` `ui/apply.rs` `drop_key`) gives the
+//! key action 32 `DropItem` on key down ([`DropKey`], sent by `gd_ui` `apply.rs` `drop_key`) gives the
 //! active cursor handler its `ActivateWorld`, as a world press does but with no mouse-position test (any
 //! window may be open; only the chat window blocks it, PORT: the port has none). So an item on the cursor
 //! drops exactly as [`DropHeld`] (`CursorHandlerItemMove::ActivateWorld`); the relic combine / enchant /
@@ -35,7 +35,7 @@
 //! GrimDawn.exe imports no `CursorHandler` of that class), so stock has no hot-slot drag to drop.
 //!
 //! PORT: a dropped item is a ground item like any drop: it stays while the session runs (the port keeps
-//! ground items across level streaming; `grimdawn` `exit.rs` despawns them with the session) and is not
+//! ground items across level streaming; `grimdawn` `exit/mod.rs` despawns them with the session) and is not
 //! saved (the save holds no world items; it has left the inventory).
 use crate::loot::GroundItem;
 use bevy::prelude::*;

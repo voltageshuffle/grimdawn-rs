@@ -54,11 +54,11 @@
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
-use gd_game_core::casting::{Casting, Kind};
+use gd_game_core::casting::{Casting, Kind, level_f};
 use gd_game_core::character::{CharState, Character};
 use gd_game_core::data::GameData;
 use gd_game_core::player::{Loadout, Player};
-use gd_game_core::weapon_pool::{Charge, PoolCharges, SkillLinks, is_pool_parent, lv};
+use gd_game_core::weapon_pool::{Charge, PoolCharges, SkillLinks, is_pool_parent};
 use gd_rules::Rng;
 use gd_sim::equip::WeaponType;
 
@@ -359,7 +359,7 @@ fn tick_charges(
             if rec.class == "Skill_WeaponPool_ChargedScaling" {
                 c.count -= 1;
                 c.decay = if c.count > 0 {
-                    lv(rec, "skillChargeDuration", c.count as usize - 1)
+                    level_f(rec, "skillChargeDuration", c.count as usize - 1)
                 } else {
                     0.0
                 };

@@ -51,14 +51,12 @@ impl Plugin for CharacterPlugin {
             )
             .add_systems(
                 PostUpdate,
-                crate::turning::turn_characters
-                    .in_set(CharacterStage::Turn)
-                    .before(TransformSystems::Propagate),
+                crate::turning::turn_characters.before(TransformSystems::Propagate),
             )
             // `Animate` dispatches in Update; its PostUpdate readers (audio's
             // `character_callbacks`) order after the set, which crosses schedules and
             // would otherwise drop them before propagation: keep the set after it, so
-            // they read propagated transforms as before.
+            // they read propagated transforms.
             .configure_sets(
                 PostUpdate,
                 CharacterStage::Animate.after(TransformSystems::Propagate),
@@ -91,7 +89,7 @@ fn collect_anim_loads(mut cache: ResMut<AnimCache>) {
 /// Parses a new character's whole clip set in the background and hands it the clips ([`HeldAnims`]), so its
 /// attack / hit / death clips are parsed before it first plays them instead of on the game thread mid-fight (PORT:
 /// the port's analogue of the engine's background `ResourceLoader`, as `SoundPak::PreLoad` is for sounds). A clip
-/// played before its set lands is parsed on the spot, as before.
+/// played before its set lands is parsed on the spot.
 fn preload_anims(
     mut commands: Commands,
     data: Res<GameData>,
@@ -445,9 +443,9 @@ pub fn finish_actions(
                     c.state = CharState::Idle;
                     c.playing = AnimType::None;
                 }
-                // The scripted clip keeps playing (as before the action-queue work): a looped one (the doll's and
-                // the player's long idle) wraps with an "End" every cycle, and clearing `playing` here made Idle
-                // restart the combat idle and the scripted clip every wrap (the doll's twitch).
+                // The scripted clip keeps playing: a looped one (the doll's and the player's long idle) wraps with
+                // an "End" every cycle, and clearing `playing` here would make Idle restart the combat idle and the
+                // scripted clip every wrap (the doll's twitch).
                 (CharState::Scripted, t) if t == c.scripted => c.state = CharState::Idle,
                 (CharState::Attack, t) if anim::is_attack(t) => {
                     if hooks.render.char_state.as_deref() == Some("attack") {

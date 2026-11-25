@@ -123,14 +123,15 @@ impl Body {
 /// neighbours that may push it, each (r_a + r_b − d) / d × 0.35 of the separation vector, averaged over them.
 /// Coincident agents (d ≤ 1 mm) part by 1 mm along the agent's direction (x negated for the earlier agent, z for
 /// the later one: the engine orders by address, PORT: by index). A still agent only takes a push of at least
-/// √0.001 m; all pushes are computed from the same positions and applied together.
-pub fn depenetration(bodies: &[Body]) -> Vec<V2> {
+/// √0.001 m; all pushes are computed from the same positions and applied together. `out` receives one push per
+/// body; `grid` and `near` are the caller's reused scratch (rebuilt here).
+pub fn depenetration(bodies: &[Body], grid: &mut Grid, near: &mut Vec<usize>, out: &mut Vec<V2>) {
     let max_r = bodies.iter().map(|b| b.radius).fold(0.0, f32::max);
-    let mut out = vec![[0.0; 2]; bodies.len()];
-    let grid = Grid::new(grid_cell(max_r), bodies.iter().map(|b| b.pos));
+    out.clear();
+    out.resize(bodies.len(), [0.0; 2]);
+    grid.rebuild(grid_cell(max_r), bodies.iter().map(|b| b.pos));
     // (|radius|: negative radii, bad data, still overlap by |r_a + r_b|.)
     let reach = bodies.iter().map(|b| b.radius.abs()).fold(0.0, f32::max);
-    let mut near: Vec<usize> = Vec::new();
     for (i, a) in bodies.iter().enumerate() {
         if !a.collides || !a.pushable {
             continue;
@@ -143,8 +144,8 @@ pub fn depenetration(bodies: &[Body]) -> Vec<V2> {
         let (mut sum, mut n) = ([0.0f32; 2], 0.0f32);
         // Only overlapping neighbours count (d < |r_a + r_b| ≤ |r_a| + the largest |radius|). By index, the
         // engine's order (as the agents were added).
-        grid.near(a.pos, a.radius.abs() + reach, &mut near);
-        for &j in &near {
+        grid.near(a.pos, a.radius.abs() + reach, near);
+        for &j in near.iter() {
             let b = &bodies[j];
             if i == j || !a.meets(b, range) {
                 continue;
@@ -181,7 +182,6 @@ pub fn depenetration(bodies: &[Body]) -> Vec<V2> {
             out[i] = sum;
         }
     }
-    out
 }
 
 /// A moving monster's separation (the planning pass, for agents with a separation weight and no "no collision"

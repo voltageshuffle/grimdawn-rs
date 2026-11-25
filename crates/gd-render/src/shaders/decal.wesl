@@ -33,7 +33,6 @@ import bevy_pbr::render::{
 struct DecalParams {
     variant_offset: f32,
     variant_scale: f32,
-    opacity: f32,
     // > 0: the additive decal_glow layer (bumpTexture rgb x alpha x gain).
     glow: f32,
     // 1: decal_bump (decal_bump binding: normal rgb, specular a).
@@ -42,6 +41,7 @@ struct DecalParams {
     unlit: f32,
     pad0: f32,
     pad1: f32,
+    pad2: f32,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> decal: DecalParams;
@@ -195,10 +195,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let tuv = vec2(uv.x * decal.variant_scale + decal.variant_offset, uv.y);
     let texel = textureSample(decal_texture, decal_sampler, tuv);
-    // The layer's opacity (the record's, faded, × a ring alpha; its material is shared and unfaded): 1 − the f32
+    // The layer's opacity (the record's, faded, × a ring alpha; its material is shared): 1 − the f32
     // bits in its MeshTag (decal.rs `alpha_tag`; untagged = 1).
     let fade = 1.0 - bitcast<f32>(mesh_functions::get_tag(in.instance_index));
-    let a = texel.a * decal.opacity * fade;
+    let a = texel.a * fade;
     if decal.glow > 0.0 {
         // decal_glow deferredPS: the G-buffer glow target gets
         // bumpTexture rgb x alpha x 4, blended by the base alpha x opacity

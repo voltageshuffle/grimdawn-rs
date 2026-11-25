@@ -86,26 +86,7 @@ fn a_shrine_is_used_once_and_gives_a_timed_buff() {
     g.flat_ground(Vec3::ZERO, 24.0);
     let player = g.spawn_player();
     setup(&mut g, 1, 0);
-    let at = g.get::<Transform>(player).translation;
-    let shrine = g
-        .app
-        .world_mut()
-        .spawn((
-            Transform::from_translation(at),
-            GlobalTransform::from(Transform::from_translation(at)),
-            EndlessShrine {
-                record: "records/endlessdungeon/shrines/buffshrine_02.dbr".into(),
-                radius: 1.25,
-                used: false,
-                key: (0, 0),
-            },
-            Interactable::fixed(1.25),
-        ))
-        .id();
-    g.steps(1);
-    g.interact(shrine);
-    g.steps(2);
-    assert!(g.get::<EndlessShrine>(shrine).used);
+    let shrine = use_buff_shrine(&mut g, player, 2);
     let buffs = g.get::<ReceivedBuffs>(player);
     assert_eq!(buffs.list.len(), 1);
     assert!(buffs.list[0].buff.contains("oleronbloodlust_buff"));

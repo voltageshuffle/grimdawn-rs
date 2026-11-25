@@ -105,14 +105,20 @@ const FRAME: [&str; 8] = [
 /// The pick template record's empty pick (`displayBitmap`, `displayTag`
 /// localized).
 pub fn empty_pick(ui: &mut Ui, sel: &Record) -> Pick {
-    let pick = ui.record(sel.str("pickTemplate").unwrap_or(""));
-    let name = pick
+    display_pick(ui, sel.str("pickTemplate").unwrap_or(""))
+}
+
+/// A pick template record's own pick (`displayBitmap` icon, `displayTag` text localized): the empty
+/// pick and the paging arrows.
+fn display_pick(ui: &mut Ui, path: &str) -> Pick {
+    let rec = ui.record(path);
+    let name = rec
         .as_ref()
         .and_then(|r| r.str("displayTag"))
         .map(|t| ui.fonts.tag(t).to_string())
         .unwrap_or_default();
     Pick {
-        icon: pick
+        icon: rec
             .as_ref()
             .and_then(|r| r.str("displayBitmap"))
             .map(str::to_owned),
@@ -380,21 +386,7 @@ fn draw_paged_live(
         if !on {
             continue;
         }
-        let rec = ui.record(sel.str(field).unwrap_or(""));
-        let name = rec
-            .as_ref()
-            .and_then(|r| r.str("displayTag"))
-            .map(|t| ui.fonts.tag(t).to_string())
-            .unwrap_or_default();
-        let k = Pick {
-            icon: rec
-                .as_ref()
-                .and_then(|r| r.str("displayBitmap"))
-                .map(str::to_owned),
-            name,
-            selected: false,
-            look: PickLook::Normal,
-        };
+        let k = display_pick(ui, sel.str(field).unwrap_or(""));
         draw_pick(ui, &k, ax, ay, false, live.then_some(LiveTint::Arrow(next)));
         let r = Some(URect::new(ax, ay, col_w, icon_h));
         if next { paged.next = r } else { paged.prev = r }

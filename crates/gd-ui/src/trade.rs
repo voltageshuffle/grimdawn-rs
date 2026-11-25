@@ -157,7 +157,7 @@ pub fn build(
 /// The open window's gold-derived looks (PERF-24): `(cost affordable, action enabled)` — whether the
 /// shown cost takes its normal (not the red `tooExpensive*`) colour, and whether the gold-gated
 /// action button is enabled. One source: the panels read these same decisions and `TradeSig`
-/// (`ui/mod.rs`) keys on them instead of gold, so a pickup that flips neither rebuilds nothing. The
+/// (`lib.rs`) keys on them instead of gold, so a pickup that flips neither rebuilds nothing. The
 /// crafter's per-row craftable counts and the Illusionist's gold total are not here: they animate in
 /// place ([`live_gold`]).
 pub fn afford(
@@ -202,8 +202,8 @@ pub fn afford(
                     let tab = data
                         .db
                         .get(crate::state::crafting::WINDOW)
-                        .and_then(|m| m.str("enchanterDismantleTab").map(str::to_owned))
-                        .and_then(|t| data.db.get(&t));
+                        .and_then(|m| m.str("enchanterDismantleTab"))
+                        .and_then(|t| data.db.get(t));
                     let ok = trade
                         .slot
                         .as_ref()
@@ -464,7 +464,7 @@ fn vendor(
         } else {
             "bitmapNameUp"
         };
-        let Some((h, size)) = b.str(key).map(str::to_owned).and_then(|t| ui.image(&t)) else {
+        let Some((h, size)) = b.str(key).and_then(|t| ui.image(t)) else {
             continue;
         };
         let r = URect::new(
@@ -498,10 +498,7 @@ fn vendor(
             && let Some(lock) = m
                 .str(&format!("marketTab{}Bitmap", i + 1))
                 .and_then(|p| ui.record(p))
-            && let Some((lh, _)) = lock
-                .str("bitmapName")
-                .map(str::to_owned)
-                .and_then(|t| ui.image(&t))
+            && let Some((lh, _)) = lock.str("bitmapName").and_then(|t| ui.image(t))
         {
             super::additive::quad(ui, lh, r, Color::WHITE);
         }
@@ -822,7 +819,7 @@ fn stash_window(
             } else {
                 "bitmapNameUp"
             };
-            let Some((h, size)) = b.str(key).map(str::to_owned).and_then(|t| ui.image(&t)) else {
+            let Some((h, size)) = b.str(key).and_then(|t| ui.image(t)) else {
                 continue;
             };
             let tr = URect::new(
@@ -897,7 +894,7 @@ fn stash_window(
             } else {
                 "bitmapNameDisabled"
             };
-            let Some((h, size)) = b.str(key).map(str::to_owned).and_then(|t| ui.image(&t)) else {
+            let Some((h, size)) = b.str(key).and_then(|t| ui.image(t)) else {
                 break;
             };
             let tr = URect::new(
@@ -1035,7 +1032,7 @@ fn button_rect(
     key: &str,
     o: Vec2,
 ) -> Option<(Handle<Image>, URect)> {
-    let (h, size) = rec.str(key).map(str::to_owned).and_then(|t| ui.image(&t))?;
+    let (h, size) = rec.str(key).and_then(|t| ui.image(t))?;
     let r = URect::new(
         o.x + ui.sc(rec.f32("bitmapPositionX").unwrap_or(0.0)),
         o.y + ui.sc(rec.f32("bitmapPositionY").unwrap_or(0.0)),
@@ -1063,7 +1060,7 @@ fn sized_button(ui: &mut Ui, rec: &gd_formats::arz::Record, key: &str, o: Vec2) 
     Some(r)
 }
 
-/// A text box record's rect, scaled and placed at `o`.
+/// An item box record's rect (`itemX` / `itemY`, `itemXSize` / `itemYSize`), scaled and placed at `o`.
 fn item_box(ui: &Ui, rec: &gd_formats::arz::Record, o: Vec2) -> URect {
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
     URect::new(
@@ -1258,11 +1255,10 @@ fn recover_panel(
         item_slot(ui, r, trade.slot.as_ref(), inv, layout);
     }
     let idb = ui.data.item_db();
-    let data = ui.data.clone();
     let cost = trade
         .slot
         .as_ref()
-        .map(|it| gd_game::crafting::salvage_cost(&data, &idb, it));
+        .map(|it| gd_game::crafting::salvage_cost(ui.data, &idb, it));
     cost_texts(
         ui,
         &tab,
@@ -1663,11 +1659,11 @@ fn crafter_window(
         }
     }
     if let (Some(icon), Some(p)) = (
-        list.bitmap.clone(),
+        list.bitmap.as_deref(),
         tab.str("crafterIcon").and_then(|p| ui.record(p)),
     ) {
         ui.bitmap(
-            &icon,
+            icon,
             p.f32("bitmapPositionX").unwrap_or(0.0),
             p.f32("bitmapPositionY").unwrap_or(0.0),
             o + Vec2::new(craft_dx, 0.0),
@@ -2141,7 +2137,7 @@ fn ascension_window(
     let o = Vec2::new(w.x, w.y);
     layout.window = Some(w);
     draw_field(ui, &m, "backgroundBitmap", o);
-    draw_field(ui, &m, "closeButton", o);
+    close_field(ui, &m, "closeButton", o, layout);
     npc_headings(
         ui,
         &m,
@@ -2280,11 +2276,11 @@ fn illusionist_window(
             b.f32("backgroundShadeColorBlue").unwrap_or(0.0),
             b.f32("backgroundShadeColorAlpha").unwrap_or(0.75),
         );
-        let border = b.str("selectionBorder").map(str::to_owned);
+        let border = b.str("selectionBorder");
         let picked = v
             .slot
             .and_then(|s| v.picks.iter().find(|(p, _)| *p == s))
-            .map(|(_, l)| l.clone());
+            .map(|(_, l)| l.as_str());
         for i in 0..PAGE {
             let r = URect::new(
                 base.x + (i % cols) as f32 * dx,
@@ -2295,11 +2291,9 @@ fn illusionist_window(
             ui.solid(r, shade);
             let n = v.page * PAGE + i;
             let Some(look) = v.list.get(n) else { continue };
-            if picked
-                .as_deref()
-                .is_some_and(|p| p.eq_ignore_ascii_case(look))
-                && let Some(t) = m.str("transmutedBitmap").map(str::to_owned)
-                && let Some((h, _)) = ui.image(&t)
+            if picked.is_some_and(|p| p.eq_ignore_ascii_case(look))
+                && let Some(t) = m.str("transmutedBitmap")
+                && let Some((h, _)) = ui.image(t)
             {
                 ui.quad_stretch(h, r, Color::WHITE);
             }
@@ -2313,7 +2307,7 @@ fn illusionist_window(
             if shown
                 .as_deref()
                 .is_some_and(|s| s.eq_ignore_ascii_case(look))
-                && let Some((h, _)) = border.as_deref().and_then(|t| ui.image(t))
+                && let Some((h, _)) = border.and_then(|t| ui.image(t))
             {
                 ui.quad_stretch(h, r, Color::WHITE);
             }
@@ -2345,24 +2339,20 @@ fn illusionist_window(
             continue;
         };
         let r = item_box(ui, &b, o);
-        match inv.equipped[slot].clone() {
+        match &inv.equipped[slot] {
             Some(it) => {
                 let look = Item {
-                    base_name: gd_sim::items::illusion::look_record(&it).to_owned(),
+                    base_name: gd_sim::items::illusion::look_record(it).to_owned(),
                     stack_count: 1,
                     var1: 1,
                     ..Default::default()
                 };
                 super::character::item_icon(ui, inv, &look, r);
-                layout.boxes.push((it, r));
+                layout.boxes.push((it.clone(), r));
                 layout.buttons.push((Button::IllusionSlot(slot), r));
             }
             None => {
-                if let Some((h, size)) = b
-                    .str("silhouette")
-                    .map(str::to_owned)
-                    .and_then(|t| ui.image(&t))
-                {
+                if let Some((h, size)) = b.str("silhouette").and_then(|t| ui.image(t)) {
                     let (sw, sh) = (ui.sc(size.x as f32), ui.sc(size.y as f32));
                     ui.quad(
                         h,
@@ -2379,10 +2369,7 @@ fn illusionist_window(
             }
         }
         if v.slot == Some(slot)
-            && let Some((h, _)) = b
-                .str("selectionBorder")
-                .map(str::to_owned)
-                .and_then(|t| ui.image(&t))
+            && let Some((h, _)) = b.str("selectionBorder").and_then(|t| ui.image(t))
         {
             ui.quad_stretch(h, r, Color::WHITE);
         }

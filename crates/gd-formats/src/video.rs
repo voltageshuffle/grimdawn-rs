@@ -180,20 +180,12 @@ pub fn subtitles(text: &str) -> Vec<(f32, String)> {
     text.lines()
         .filter_map(|l| {
             let (t, s) = l.split_once('=')?;
-            Some((atof(t), s.trim_end_matches('\r').to_owned()))
+            Some((
+                crate::util::atof(t) as f32,
+                s.trim_end_matches('\r').to_owned(),
+            ))
         })
         .collect()
-}
-
-/// `atof`: the longest leading number, 0 without one.
-fn atof(s: &str) -> f32 {
-    let s = s.trim_start();
-    let end = s
-        .char_indices()
-        .take_while(|&(i, c)| c.is_ascii_digit() || c == '.' || (i == 0 && (c == '-' || c == '+')))
-        .last()
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    s[..end].parse().unwrap_or(0.0)
 }
 
 /// Opens a video by its engine path (`video/intro.ogg`) under the install `root`, each path component matched

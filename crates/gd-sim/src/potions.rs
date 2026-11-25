@@ -69,8 +69,6 @@ use crate::skills::SkillBook;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
 
-pub const DIR: &str = "records/skills/itemskillsgdx3/potionmodifiers/";
-
 /// Containers and modifiers: `Skill_PotionModifier` and the secondary
 /// effects (`SkillSecondary_*`: Stoneskin, Explosive, ...) — the 46 potion
 /// skills of a character's save; not their `_buff` records.
@@ -81,7 +79,7 @@ fn is_potion_skill(class: &str) -> bool {
 
 /// Adds the potion skills a character lacks (level 0, locked per record): every skill of the player's two potion
 /// trees (`customPotionTree1/2`) in tree order, as the real game's saves hold exactly those, not every potion
-/// record in [`DIR`] (the `_blank` and unused ones).
+/// record in `records/skills/itemskillsgdx3/potionmodifiers/` (the `_blank` and unused ones).
 pub fn ensure_skills(db: &Database, book: &mut SkillBook) {
     let Some(pc) = db.get(PLAYER) else {
         return;
@@ -359,36 +357,34 @@ pub fn potion_bitmap(db: &Database, book: &SkillBook, tree: &PotionTree) -> Opti
         .containers
         .iter()
         .rfind(|c| on(book, c))
-        .map(|c| c.to_ascii_lowercase())
-        .unwrap_or_default();
-    let mut chosen: Vec<String> = tree
-        .modifiers
-        .iter()
-        .filter(|m| on(book, m))
-        .map(|m| m.to_ascii_lowercase())
-        .collect();
-    chosen.sort();
+        .map_or("", String::as_str);
+    // The sorted key list matters only by its length and its last (byte-order largest) name.
+    let mut chosen = 0;
+    let mut last: Option<String> = None;
+    for m in tree.modifiers.iter().filter(|m| on(book, m)) {
+        chosen += 1;
+        let m = m.to_ascii_lowercase();
+        if last.as_ref().is_none_or(|l| m > *l) {
+            last = Some(m);
+        }
+    }
     let engine = db.get(crate::ascendant::GAME_ASCENDANT)?;
-    let has = |list: &[String], name: &str| list.iter().any(|m| m.eq_ignore_ascii_case(name));
+    let has = |list: &[&str], name: &str| list.iter().any(|m| m.eq_ignore_ascii_case(name));
     for path in engine
-        .strs("healthPotionModifierCombos")
-        .into_iter()
-        .chain(engine.strs("energyPotionModifierCombos"))
+        .strs_iter("healthPotionModifierCombos")
+        .chain(engine.strs_iter("energyPotionModifierCombos"))
     {
         let Some(c) = db.get(path) else { continue };
         if !c
             .str("container")
             .unwrap_or("")
-            .eq_ignore_ascii_case(&container)
+            .eq_ignore_ascii_case(container)
         {
             continue;
         }
-        let (m1, m2): (Vec<String>, Vec<String>) = (
-            c.strs("modifier1").into_iter().map(Into::into).collect(),
-            c.strs("modifier2").into_iter().map(Into::into).collect(),
-        );
-        let hit = match chosen.last() {
-            _ if chosen.len() == 1 && !m1.is_empty() && !m2.is_empty() => false,
+        let (m1, m2) = (c.strs("modifier1"), c.strs("modifier2"));
+        let hit = match &last {
+            _ if chosen == 1 && !m1.is_empty() && !m2.is_empty() => false,
             None => m1.is_empty() && m2.is_empty(),
             Some(last) => has(&m1, last) || has(&m2, last),
         };

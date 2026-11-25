@@ -28,10 +28,6 @@ impl WeaponEnchantments {
     pub fn shown(&self) -> Option<&str> {
         self.list.last().map(|(_, p)| p.as_str())
     }
-
-    pub fn list(&self) -> &[(String, String)] {
-        &self.list
-    }
 }
 
 /// On a [`BuffFx`] that `gd_game::skill_fx` spawned for a toggle's character effects: the paks

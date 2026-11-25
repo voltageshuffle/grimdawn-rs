@@ -610,16 +610,6 @@ impl Pet {
         self.most_hated
     }
 
-    /// Where a move command sends it, while it runs there.
-    pub fn moving_to(&self) -> Option<Vec3> {
-        self.moving
-    }
-
-    /// The controller's `ViewDistance`.
-    pub fn view_distance(&self) -> f32 {
-        self.ctl.view
-    }
-
     /// The toggled skills its AI switched on (skill, level index).
     pub fn toggled(&self) -> &[(String, usize)] {
         &self.toggled

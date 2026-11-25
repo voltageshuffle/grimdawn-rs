@@ -9,7 +9,7 @@ use super::*;
 /// totems, runes, traps, mini pets and other pets that cause no anger
 /// (every such pet record also has `causesAnger` 0 and `angerMultiplier` 0,
 /// so monsters never pick them), quest / flavour NPCs. Ported at query time:
-/// [`Side::hits`] (and [`NotHiding`] for the player's channels) leaves it out of
+/// [`Side::hits`] leaves it out of
 /// every skill target query, projectiles' and orbiters' paths included; the
 /// attack itself does not test it.
 #[derive(Component)]
@@ -23,7 +23,8 @@ pub struct HiddenFromCombat;
 /// (`skill_buffs::land`) and `Monster::IsTargetable` is false (the click pick queries in `grimdawn` skip it). PORT: hits
 /// still resolve (block, hit reactions); only the life loss is undone and
 /// over-time damage skipped. `SetInvincible` is this component's insert / remove (`spirit.rs`
-/// uses it); Lua `ToggleInvincible` (no stock use) raises a Lua error naming the API.
+/// uses it); Lua `ToggleInvincible` (no stock use) emits `Effect::SetInvincible`, which
+/// `story_world.rs` applies the same way.
 #[derive(Component)]
 pub struct Invincible;
 

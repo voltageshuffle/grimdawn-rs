@@ -49,7 +49,7 @@
 //!
 //! Opacity (`Decal::GetOpacity`, times in integer ms,
 //! the age advanced by `UpdateSelf`): see [`DecalTiming::opacity`];
-//! the shader's `opacity` scales the texel alpha (the glow layer's colour).
+//! it scales the texel alpha (the glow layer's colour).
 //! PORT: every layer's opacity (the record's, a fade's, a particle decal's
 //! ring alpha) reaches the shader through the entity's `MeshTag`
 //! ([`alpha_tag`]), and the materials hold the unfaded values, so decals of
@@ -102,7 +102,6 @@ pub struct DecalExt {
 pub struct DecalParams {
     pub variant_offset: f32,
     pub variant_scale: f32,
-    pub opacity: f32,
     /// 0: the lit base layer; > 0: the additive `decal_glow.ssh` layer
     /// (`bumpTexture` rgb × alpha × this gain).
     pub glow: f32,
@@ -112,6 +111,7 @@ pub struct DecalParams {
     pub unlit: f32,
     pub _pad0: f32,
     pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 impl MaterialExtension for DecalExt {
@@ -322,16 +322,17 @@ impl DecalRecord {
         })
     }
 
-    pub fn params(&self, opacity: f32) -> DecalParams {
+    /// The record's layer flags; the opacity is the entity's ([`alpha_tag`]).
+    pub fn params(&self) -> DecalParams {
         DecalParams {
             variant_offset: self.variant_offset,
             variant_scale: self.variant_scale,
-            opacity,
             glow: 0.0,
             bump: 0.0,
             unlit: if self.unlit { 1.0 } else { 0.0 },
             _pad0: 0.0,
             _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -586,13 +587,10 @@ impl DecalPatch {
                     [(x, z), (x, z + 1), (x + 1, z)],
                     [(x + 1, z), (x, z + 1), (x + 1, z + 1)],
                 ] {
-                    let Some(v) = tri
-                        .iter()
-                        .map(|&(x, z)| p(x, z))
-                        .collect::<Option<Vec<Vec3>>>()
-                    else {
+                    let [Some(v0), Some(v1), Some(v2)] = tri.map(|(x, z)| p(x, z)) else {
                         continue;
                     };
+                    let v = [v0, v1, v2];
                     let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
                     if !box_overlaps(lo, hi, c, e) {
                         continue;
@@ -819,7 +817,7 @@ pub fn spawn(
     let mut out = Vec::new();
     let params = DecalParams {
         bump: if bump.is_some() { 1.0 } else { 0.0 },
-        ..dec.params(1.0)
+        ..dec.params()
     };
     let strip = [dec.variant_offset.to_bits(), dec.variant_scale.to_bits()];
     // decal_selfillum.ssh has no `deferred` technique: its only pass
@@ -883,7 +881,7 @@ pub fn spawn(
             extension: DecalExt {
                 params: DecalParams {
                     glow: DECAL_GLOW_GAIN,
-                    ..dec.params(1.0)
+                    ..dec.params()
                 },
                 texture: tex,
                 env,

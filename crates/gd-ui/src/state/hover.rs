@@ -35,9 +35,9 @@ pub enum Kind {
 /// targetable breakable nearest to the player); so a container, door or
 /// non-interest NPC that wins the hover over an enemy still gets `Attack`,
 /// while an NPC's merchant / dialog marks outrank it in `ui::cursor::select`
-/// ([`marks`]). While an enemy-target skill runs (`IsRunningSkill`, the running skill's `GetTargetType` 2),
-/// an ally under the cursor drops the object: no hover target, no mark. With `targetLock` the held button keeps
-/// the object ([`held_pick`]).
+/// (the binary's `hover::marks`). While an enemy-target skill runs (`IsRunningSkill`, the running skill's
+/// `GetTargetType` 2), an ally under the cursor drops the object: no hover target, no mark. With `targetLock`
+/// the held button keeps the object (`hover::held_pick`).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Interact {
     #[default]
@@ -49,7 +49,7 @@ pub enum Interact {
 
 /// The pointer position the pick used this frame (logical px; the
 /// `GD_HOVER` stand-in when set), `None` outside the window. Written by
-/// [`pick`] only.
+/// the binary's `hover::pick` only.
 #[derive(Resource, Default, PartialEq, Clone, Copy, Debug)]
 pub struct HoverPoint(pub Option<Vec2>);
 

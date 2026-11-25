@@ -308,8 +308,7 @@ pub(super) fn bottom_button(
     } else {
         ui.quad(img, r, None, Color::WHITE)
     };
-    // A disabled button without a disabled bitmap is hidden, as the old
-    // None-return would ([`live`] keeps it hidden while disabled).
+    // A disabled button without a disabled bitmap is hidden ([`live`] keeps it hidden while disabled).
     if !enabled && disabled.is_none() {
         ui.commands.entity(e).insert(Visibility::Hidden);
     }

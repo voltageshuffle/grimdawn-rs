@@ -103,11 +103,7 @@ impl Ribbon {
 }
 
 /// An emitting `EffectEntity` record at `at`, removed once stopped and finished.
-pub(crate) fn start_effect(
-    commands: &mut Commands,
-    record: Option<&str>,
-    at: Vec3,
-) -> Option<Entity> {
+fn start_effect(commands: &mut Commands, record: Option<&str>, at: Vec3) -> Option<Entity> {
     let r = record.filter(|r| !r.is_empty())?;
     gd_game_core::visuals::notify(commands, r);
     let mut spec = EffectSpec::record(r);
@@ -124,7 +120,7 @@ pub(crate) fn start_effect(
 }
 
 /// `EffectEntity::StopEmitting` + `SetSelfRemove(true)`.
-pub(crate) fn stop_effect(commands: &mut Commands, e: &mut Option<Entity>) {
+fn stop_effect(commands: &mut Commands, e: &mut Option<Entity>) {
     if let Some(e) = e.take() {
         commands
             .entity(e)
@@ -391,10 +387,7 @@ fn ribbon_texture(beam: &gd_formats::arz::Record) -> &str {
 
 /// Whether the beam's ribbon texture is decoded: else it decodes in the background and the beam is drawn on a later
 /// frame ([`crate::textures::Textures::ready`]), instead of stalling this one.
-pub(crate) fn ribbon_ready(
-    beam: &gd_formats::arz::Record,
-    assets: &mut crate::character::CharAssets,
-) -> bool {
+fn ribbon_ready(beam: &gd_formats::arz::Record, assets: &mut crate::character::CharAssets) -> bool {
     let data = assets.data.clone();
     assets
         .textures
@@ -660,7 +653,11 @@ fn update_link(
     r.ribbon.scroll(&mut r.scroll, dt);
     let d = b - a;
     let len = d.length();
+    // The ends together: no ribbon (as a beam ray's), rather than last frame's left where it was.
     if len <= 0.1 {
+        if r.mesh.take().is_some() {
+            commands.entity(e).try_remove::<Mesh3d>();
+        }
         return;
     }
     set_ribbon(

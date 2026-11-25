@@ -327,9 +327,16 @@ impl MapFile {
         Ok(v)
     }
 
+    /// Region `i`, or an error for an index past the directory.
+    fn region(&self, i: usize) -> Result<&RegionInfo> {
+        self.regions
+            .get(i)
+            .with_context(|| format!("region {i} of {}", self.regions.len()))
+    }
+
     /// Raw `.lvl` bytes of region `i`.
-    pub fn level_bytes(&self, i: usize) -> Result<Vec<u8>> {
-        let r = &self.regions[i];
+    fn level_bytes(&self, i: usize) -> Result<Vec<u8>> {
+        let r = self.region(i)?;
         if r.level_size == 0 {
             bail!("region {} ({}) has no embedded level", i, r.name);
         }
@@ -343,7 +350,7 @@ impl MapFile {
 
     /// Minimap image of region `i` (a 32-bit TGA, run-length encoded or not: `minimap::MinimapImage`).
     pub fn minimap_bytes(&self, i: usize) -> Result<Option<Vec<u8>>> {
-        let r = &self.regions[i];
+        let r = self.region(i)?;
         if r.minimap_size == 0 {
             return Ok(None);
         }

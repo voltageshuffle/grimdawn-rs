@@ -1952,7 +1952,6 @@ pub fn spawn_level_objects(
                     record: rec.to_ascii_lowercase(),
                     radius,
                     bind_radius: r.f32("bindRadius").unwrap_or(5.0),
-                    level: lp.level,
                     locked: r.bool("locked"),
                 },
                 LevelProp(lp.level),

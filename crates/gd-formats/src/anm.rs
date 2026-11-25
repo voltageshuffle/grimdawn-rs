@@ -252,8 +252,7 @@ impl Animation {
         let mut tracks = Vec::with_capacity(nbones as usize);
         for _ in 0..nbones {
             let bone = if version == 1 {
-                let s = r.bytes(32)?;
-                latin1(&s[..s.iter().position(|&c| c == 0).unwrap_or(32)])
+                crate::msh::name32(&mut r)?
             } else {
                 r.string()?
             };
@@ -294,14 +293,6 @@ impl Animation {
             .find(|t| t.bone.eq_ignore_ascii_case(bone))
     }
 
-    pub fn duration_secs(&self) -> f32 {
-        if self.frame_rate == 0 {
-            0.0
-        } else {
-            self.num_frames.saturating_sub(1) as f32 / self.frame_rate as f32
-        }
-    }
-
     pub fn callback_points(&self) -> Vec<CallbackPoint> {
         self.trailer
             .iter()
@@ -313,22 +304,16 @@ impl Animation {
             .collect()
     }
 
-    fn entity_events(&self, kind: &str) -> Vec<EntityEvent> {
+    pub fn create_entities(&self) -> Vec<EntityEvent> {
         self.trailer
             .iter()
-            .filter(|b| b.kind == kind)
+            .filter(|b| b.kind == "CreateEntity")
             .map(|b| EntityEvent {
                 frame: b.int("frame").unwrap_or(-1),
                 entity: b.str("entity").unwrap_or_default().to_owned(),
                 attach: b.str("attach").unwrap_or_default().to_owned(),
             })
             .collect()
-    }
-    pub fn create_entities(&self) -> Vec<EntityEvent> {
-        self.entity_events("CreateEntity")
-    }
-    pub fn remove_entities(&self) -> Vec<EntityEvent> {
-        self.entity_events("RemoveEntity")
     }
     /// `RagDollData { effectType, direction (Push|Pull), elevation (Upward|Downward), push (Left|Right) }`:
     /// `GraphicsAnim::GetRagDollEffectType` & co. A skill captures the block of the clip it starts with
@@ -374,11 +359,10 @@ pub fn pose_mesh_abs_into(
     abs.resize(n, Coords::IDENTITY);
     let mut maps = anim.bone_maps.lock();
     maps.retain(|m| m.mesh.strong_count() > 0);
-    let at = maps.iter().position(|m| {
-        m.mesh
-            .upgrade()
-            .is_some_and(|x| std::sync::Arc::ptr_eq(&x, mesh))
-    });
+    // The dead entries are gone, so a live `Weak` pointing at `mesh` is `mesh`'s.
+    let at = maps
+        .iter()
+        .position(|m| std::ptr::eq(m.mesh.as_ptr(), std::sync::Arc::as_ptr(mesh)));
     let tracks = match at {
         Some(i) => &maps[i].tracks,
         None => {

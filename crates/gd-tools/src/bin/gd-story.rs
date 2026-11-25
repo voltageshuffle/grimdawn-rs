@@ -6,6 +6,7 @@
 //! gd-story quest <name-substring>      dump matching quests (tasks, objectives, conditions, texts)
 //! gd-story conv <name-substring>       dump matching conversations as an indented tree
 //! gd-story conv-file <file.cnv>...     dump conversation files (e.g. the Crucible's, extracted)
+//! gd-story save <quests.gdd>           match a save's quest / task uids and condition words against the data
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use gd_formats::arc::Arc;
@@ -318,8 +319,10 @@ fn main() -> Result<()> {
                             st.id,
                             st.state,
                             st.conditions
-                                .chunks(4)
-                                .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .map(|w| u32::from_le_bytes(*w))
                                 .collect::<Vec<_>>()
                         );
                     }

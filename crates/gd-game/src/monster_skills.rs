@@ -1112,7 +1112,7 @@ fn quest_use_skill(
     >,
 ) {
     for (e, mut tf, mut ch, m, cmd) in &mut q {
-        commands.entity(e).remove::<QuestUseSkill>();
+        commands.entity(e).try_remove::<QuestUseSkill>();
         let Some(rec) = data.db.get(&m.record) else {
             continue;
         };

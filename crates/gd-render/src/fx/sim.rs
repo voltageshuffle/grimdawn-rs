@@ -132,8 +132,7 @@ pub struct LightState {
 }
 
 impl EmitterState {
-    /// `density` is the fx-quality setting ([`fx_density`]) the caller passes in: an explicit input, so
-    /// the emitter tests do not read the process global the settings test writes. `stream` picks the emitter's
+    /// `density` is the fx-quality setting ([`fx_density`]) the caller passes in. `stream` picks the emitter's
     /// `rand()` stream (module doc): distinct values give unrelated streams (hashed into the CRT seed, since
     /// LCG seeds that differ little start out drawing nearly the same numbers).
     pub fn new(d: &Data, frames: u32, density: f32, stream: u32) -> Self {
@@ -436,7 +435,6 @@ impl EmitterState {
         // (`Engine::UpdateTime`) and effects update in it
         // (`EffectEntity::UpdateSelf` → `Effect::Update` → `Emitter::Update`).
         // The port also updates once per rendered frame, so once per call.
-        let drag_steps = 1.0;
         self.max_alpha = 0.0;
         let mut i = 0;
         while i < self.particles.len() {
@@ -465,7 +463,7 @@ impl EmitterState {
             p.vel.y -= (gravity.eval(age) - grav_half) * gravity_dt;
             let slow = drag.eval(age) * drag_k;
             if slow != 0.0 {
-                p.vel *= (1.0 - slow).max(0.0).powf(drag_steps);
+                p.vel *= (1.0 - slow).max(0.0);
             }
             p.color = Vec4::new(
                 red.eval(age),

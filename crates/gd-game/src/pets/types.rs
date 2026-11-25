@@ -344,11 +344,6 @@ impl Pet {
         self.dirty = true;
     }
 
-    /// Whether it is angry at `foe`.
-    pub fn has_anger_at(&self, foe: Entity) -> bool {
-        self.anger.iter().any(|a| a.0 == foe && a.1 > 0.0)
-    }
-
     /// `ControllerMonsterStateAttack::ProjectileCollisionCallback` for a pet
     /// ([`crate::melee::ProjectileCollided`]); `can_move`: not rooted and a
     /// moving controller class.
@@ -356,25 +351,6 @@ impl Pet {
         let chance = self.ctl.reposition_chance;
         self.melee
             .projectile_collided(chance, can_move && self.ctl.class.can_move());
-    }
-
-    /// Tests: the Attack state's reposition flag and whether it is in that state.
-    #[doc(hidden)]
-    pub fn attack_reposition_flag(&self) -> (bool, bool) {
-        (self.melee.in_attack(), self.melee.reposition_flag())
-    }
-
-    /// Tests: sets the controller's `RepositionChance`.
-    #[doc(hidden)]
-    pub fn set_reposition_chance(&mut self, chance: i32) {
-        self.ctl.reposition_chance = chance;
-    }
-
-    /// Tests: sets the controller's `DodgeChance` and `MinDodgeDistance`.
-    #[doc(hidden)]
-    pub fn set_dodge(&mut self, chance: i32, min: f32) {
-        self.ctl.dodge.0 = chance;
-        self.ctl.dodge.3 = min;
     }
 
     /// `ControllerMonster::ProjectileNotification` for a pet (`dodge.rs`

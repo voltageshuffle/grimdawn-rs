@@ -53,7 +53,6 @@ use gd_formats::save::gst::{TransmuteEntry, Transmutes};
 use gd_formats::save::item::Item;
 use gd_formats::vfs::Database;
 use gd_game_core::inventory::{Inventory, SLOTS};
-use gd_game_core::session::MessageDrain;
 use gd_sim::items::illusion::{fits, item_type, same_look, sort_key, takes_illusion};
 
 /// The window record (`transmuterwindow.tpl`).
@@ -418,8 +417,6 @@ impl Plugin for IllusionPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ApplyIllusions>()
             .add_message::<UseTransmuteSet>()
-            .drain_messages_unless::<ApplyIllusions, _>(has_apply_inputs)
-            .drain_messages_unless::<UseTransmuteSet, _>(has_set_inputs)
             .add_systems(
                 Update,
                 (

@@ -34,7 +34,7 @@
 //! PORT: `animateAtWindSpeed` (no stock record sets it) and the
 //! `windDirectionBone` turn toward the wind (`WeatherDecoration::TweakPose`) /
 //! its weather particle funnel are not ported; `rand()` and `FGenerate` are
-//! `fastrand`; `alwaysBob` is read but its consumer is not traced; a floater's
+//! `fastrand`; `alwaysBob` is not read (its consumer is not traced); a floater's
 //! region box is its mesh box through its placement (world axes).
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -152,7 +152,6 @@ pub struct Floater {
     /// `bobTime` in ms.
     period_ms: i32,
     max: f32,
-    pub always: bool,
     /// The start and target heights of the current bob, ms into it.
     from: f32,
     to: f32,
@@ -163,19 +162,16 @@ pub struct Floater {
 }
 
 impl Floater {
-    /// `Floater::Load` (then [`Floater::place`]).
+    /// `Floater::Load`; its first target is drawn by [`Floater::place`].
     pub fn from_record(rec: &Record) -> Option<Self> {
         if rec.class != "Floater" {
             return None;
         }
-        let max = rec.f32("bobMax").unwrap_or(0.0);
-        let to = generate(max * 0.5, max);
         Some(Self {
             period_ms: (rec.f32("bobTime").unwrap_or(0.0) * 1000.0) as i32,
-            max,
-            always: rec.bool("alwaysBob"),
-            from: -to,
-            to,
+            max: rec.f32("bobMax").unwrap_or(0.0),
+            from: 0.0,
+            to: 0.0,
             timer_ms: 0,
             base_y: 0.0,
             radius: 0.0,

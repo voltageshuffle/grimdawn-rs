@@ -169,7 +169,7 @@ pub fn button_pressed(buttons: &ButtonInput<MouseButton>) -> bool {
 /// The edit boxes' shared key routing over [`gd_sim::edit`] (the stack amount and the devotion
 /// search): Ctrl+A / C / V and the caret / delete keys. `None`: a key the shared routing
 /// does not take — the caller applies its own text and Enter rules (Esc is the dispatcher's,
-/// `super::esc_dispatcher`).
+/// `gd_ui::esc_dispatcher`).
 pub fn edit_key(
     logical: &bevy::input::keyboard::Key,
     code: KeyCode,

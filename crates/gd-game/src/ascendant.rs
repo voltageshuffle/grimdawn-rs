@@ -17,7 +17,6 @@ use bevy::prelude::*;
 use gd_game_core::ascendant::{AltarState, Offering, formula_levels, reagent_quantity};
 use gd_game_core::combat::Combatant;
 use gd_game_core::player::Player;
-use gd_game_core::session::MessageDrain;
 
 #[derive(Resource, Default)]
 pub struct DreadCount(pub u32, pub Option<Entity>);
@@ -212,9 +211,6 @@ impl Plugin for AscendantPlugin {
                     .run_if(resource_exists::<gd_game_core::inventory::Inventory>)
                     .after(gd_game_core::inventory::InventorySet)
                     .before(gd_game_core::player::PlayerSet),
-            )
-            .drain_messages_unless::<MonsterKilled, _>(
-                resource_exists::<gd_game_core::rules::CombatRules>,
             )
             .add_systems(
                 Update,
@@ -427,7 +423,7 @@ pub fn apply_altar(
     rules: Option<ResMut<gd_game_core::rules::CombatRules>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     data: Res<gd_game_core::data::GameData>,
-    profiles: Option<ResMut<crate::monsters::ProfileCache>>,
+    mut profiles: ResMut<crate::monsters::ProfileCache>,
     // (dungeon stamp, ruleset slot) -> the adjustment pak of its ruleset.
     mut pak: Local<Option<((u32, u32), Option<String>)>>,
     mut fresh: gd_game_core::session::NewSession,
@@ -454,15 +450,16 @@ pub fn apply_altar(
         )
     });
     if let Some(mut rules) = rules {
-        let want = match dungeon {
-            Some(d) => d.into_iter().collect(),
-            None => state.formulas.monster_paks.clone(),
+        let same = match &dungeon {
+            Some(d) => rules.0.ascendant_paks.as_slice() == d.as_slice(),
+            None => rules.0.ascendant_paks == state.formulas.monster_paks,
         };
-        if rules.0.ascendant_paks != want {
-            std::sync::Arc::make_mut(&mut rules.0).ascendant_paks = want;
-            if let Some(mut p) = profiles {
-                p.0.clear();
-            }
+        if !same {
+            std::sync::Arc::make_mut(&mut rules.0).ascendant_paks = match dungeon {
+                Some(d) => d.into_iter().collect(),
+                None => state.formulas.monster_paks.clone(),
+            };
+            profiles.0.clear();
         }
     }
     if let Some(rt) = rt {

@@ -539,7 +539,8 @@ pub struct Mesh {
     pub unknown_chunks: Vec<u32>,
 }
 
-fn name32(r: &mut Reader) -> Result<String> {
+/// A NUL-padded 32-byte name (bone and hit-box names; v1 `.anm` bone names).
+pub(crate) fn name32(r: &mut Reader) -> Result<String> {
     let b = r.bytes(32)?;
     let end = b.iter().position(|&c| c == 0).unwrap_or(32);
     Ok(latin1(&b[..end]))

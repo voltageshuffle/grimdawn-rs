@@ -28,7 +28,6 @@ fn waypoint(g: &mut TestGame, kind: WaypointKind, uid: [u32; 4], at: Vec3) -> En
             record: "records/interactive/test.dbr".into(),
             radius: 4.0,
             bind_radius: 0.0,
-            level: 0,
             locked: false,
         },
     ));

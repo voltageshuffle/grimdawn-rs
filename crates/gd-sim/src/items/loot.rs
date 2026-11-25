@@ -932,47 +932,11 @@ pub fn chance_roll(chance: f32, rng: &mut Rng) -> bool {
     (rng.next() as i32 as f32 * 4.651_956_3e-8) + 0.1 <= chance
 }
 
-/// Everything a monster record drops: equipped slots (`LoadLoot`) then the
-/// three misc slots (`GetDropMiscItems`), from one stream (the engine seeds
-/// the two passes separately; pass a fresh stream per pass for exactness).
-pub fn monster_drops(db: &ItemDb, monster: &str, p: &LootParams, rng: &mut Rng) -> Vec<LootRoll> {
-    monster_drops_tagged(db, monster, p, rng)
-        .into_iter()
-        .map(|(_, r)| r)
-        .collect()
-}
-
-/// Like [`monster_drops`], with `true` for items the monster wears (equipment
-/// slots) — those drop on death only when not Broken
-/// (`Monster::DropIfNotBroken`: classification 5 is
-/// destroyed instead); `false` for the misc slots.
-pub fn monster_drops_tagged(
-    db: &ItemDb,
-    monster: &str,
-    p: &LootParams,
-    rng: &mut Rng,
-) -> Vec<(bool, LootRoll)> {
-    monster_slots(
-        db,
-        monster,
-        p,
-        rng,
-        &EQUIP_ORDER
-            .into_iter()
-            .chain([10, 11, 12])
-            .collect::<Vec<_>>(),
-        None,
-    )
-}
-
 /// The items a monster wears (`Character::LoadLoot`: each
 /// slot's item is created from its loot table and equipped), rolled
 /// when it is created.
 pub fn monster_worn(db: &ItemDb, monster: &str, p: &LootParams, rng: &mut Rng) -> Vec<LootRoll> {
     monster_slots(db, monster, p, rng, &EQUIP_ORDER, None)
-        .into_iter()
-        .map(|(_, r)| r)
-        .collect()
 }
 
 /// The misc drop slots (`GetDropMiscItems`), rolled on death, for a monster in the challenge area `area`
@@ -986,9 +950,6 @@ pub fn monster_misc_in(
     rng: &mut Rng,
 ) -> Vec<LootRoll> {
     monster_slots(db, monster, p, rng, &[10, 11, 12], area)
-        .into_iter()
-        .map(|(_, r)| r)
-        .collect()
 }
 
 fn monster_slots(
@@ -998,7 +959,7 @@ fn monster_slots(
     rng: &mut Rng,
     slots: &[usize],
     area: Option<&str>,
-) -> Vec<(bool, LootRoll)> {
+) -> Vec<LootRoll> {
     let Some(rec) = db.get(monster) else {
         return Vec::new();
     };
@@ -1018,7 +979,7 @@ fn monster_slots(
     if let Some(a) = area
         && let Some(r) = challenge_misc_drop(db, a, class, rng)
     {
-        out.push((false, r));
+        out.push(r);
     }
     // Worn slots (`CreateItemFromLootTable`, monsters that are not pets):
     // × (1 + the Ascendant `equippedItemDropModifier`); misc slots
@@ -1032,7 +993,7 @@ fn monster_slots(
         if chance_roll(chance, rng)
             && let Some(r) = loot_loader(db, rec, loc, p, rng)
         {
-            out.push((!(10..=12).contains(&loc), r));
+            out.push(r);
         }
     }
     out
@@ -1058,24 +1019,21 @@ pub fn container_drops(
     p: &LootParams,
     rng: &mut Rng,
 ) -> Vec<LootRoll> {
-    container_drops_known(db, container, p, &[], &mut DroppedEpics::default(), rng)
+    container_drops_in(
+        db,
+        container,
+        p,
+        None,
+        &[],
+        &mut DroppedEpics::default(),
+        rng,
+    )
 }
 
-/// [`container_drops`] re-rolling blueprints the player knows and the
-/// session's dropped Epics / Legendaries ([`fixed_item_loot_known`]).
-pub fn container_drops_known(
-    db: &ItemDb,
-    container: &str,
-    p: &LootParams,
-    known: &[&str],
-    dropped: &mut DroppedEpics,
-    rng: &mut Rng,
-) -> Vec<LootRoll> {
-    container_drops_in(db, container, p, None, known, dropped, rng)
-}
-
-/// [`container_drops_known`] for a container standing in the challenge area `area` (`LootContainer::GenerateFixedItem`:
-/// the area at the container's coords, its chest weights replace the engine's, [`weight_mods_in`]).
+/// [`container_drops`] for a container standing in the challenge area `area` (`LootContainer::GenerateFixedItem`:
+/// the area at the container's coords, its chest weights replace the engine's, [`weight_mods_in`]), re-rolling
+/// the blueprints the player knows (`known`) and the session's dropped Epics / Legendaries (`dropped`,
+/// [`fixed_item_loot_known`]).
 pub fn container_drops_in(
     db: &ItemDb,
     container: &str,

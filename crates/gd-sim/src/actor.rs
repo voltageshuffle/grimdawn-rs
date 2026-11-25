@@ -697,14 +697,7 @@ pub fn conversion_type(name: &str) -> Option<CombatType> {
 }
 
 /// A record's conversions at a level (`conversionInType`/`OutType`/
-/// `Percentage`, and the `…2` pair).
-pub fn conversions_of(rec: &Record, li: usize) -> Vec<(CombatType, CombatType, f32)> {
-    let mut v = Vec::new();
-    conversions_of_into(rec, li, &mut v);
-    v
-}
-
-/// [`conversions_of`] appended into a caller-held buffer (PERF-36).
+/// `Percentage`, and the `…2` pair), appended into `v`.
 fn conversions_of_into(rec: &Record, li: usize, v: &mut Vec<(CombatType, CombatType, f32)>) {
     const CONVERSION_FIELDS: [[&str; 3]; 2] = [
         [
@@ -778,7 +771,7 @@ fn chance_key(
 /// The chance-gated instances (`field@chance`, [`chance_key`]) of a totals
 /// map, grouped by attribute class and chance, their fields under the plain
 /// names: one group per engine attribute instance, to roll on its own.
-pub(crate) fn chance_instances(
+fn chance_instances(
     totals: &BTreeMap<String, f32>,
     families: &[crate::attributes::AttrFamily],
 ) -> Vec<(f32, BTreeMap<String, f32>)> {
@@ -1014,14 +1007,18 @@ fn offense_fields(rec: &Record, li: usize) -> Arc<[SlotVals; OFFENSE_SLOTS]> {
 fn skill_offense_vals(s: &SkillUse, tooltip: bool) -> [SlotVals; OFFENSE_SLOTS] {
     let rec = offense_fields(s.record, s.level_index);
     let parent = s.parent.as_ref().map(|p| skill_offense_vals(p, false));
-    let mods: Vec<Arc<[SlotVals; OFFENSE_SLOTS]>> = if tooltip {
-        Vec::new()
-    } else {
-        s.mods
-            .iter()
-            .map(|(r, li)| offense_fields(r, *li))
-            .collect()
-    };
+    // The learned modifiers' sum per value, in `mods` order (a tooltip drops them).
+    let mut ms = [SlotVals::default(); OFFENSE_SLOTS];
+    if !tooltip {
+        for (r, li) in &s.mods {
+            let m = offense_fields(r, *li);
+            for (acc, mv) in ms.iter_mut().zip(m.iter()) {
+                for (a, v) in acc.0.iter_mut().zip(mv.0) {
+                    *a += v;
+                }
+            }
+        }
+    }
     let mut out = [SlotVals::default(); OFFENSE_SLOTS];
     for i in 0..OFFENSE_SLOTS {
         for f in 0..5 {
@@ -1030,11 +1027,7 @@ fn skill_offense_vals(s: &SkillUse, tooltip: bool) -> [SlotVals; OFFENSE_SLOTS] 
             out[i].0[f] = if tooltip {
                 rec_term + pv
             } else {
-                let mut ms = 0.0;
-                for m in &mods {
-                    ms += m[i].0[f];
-                }
-                (rec_term + ms) + pv
+                (rec_term + ms[i].0[f]) + pv
             };
         }
     }
@@ -1223,7 +1216,7 @@ fn contribution(rec: &Record, level_index: usize, owner: u64) -> Contribution {
     let chance = own.get("offensiveGlobalChance").copied().unwrap_or(0.0);
     let group = split_global(&mut own, chance, owner).filter(|_| chance > 0.0);
     // Each field's chance key, and whether it is one of the record's ungated DoTs, their own source (the
-    // chance-gated instances stay in `totals`: `chance_instances` rolls them per attack).
+    // chance-gated instances stay in `totals`: `chance_instances` splits them, each rolled per attack).
     let mut ungated = BTreeMap::new();
     let mut totals = Vec::with_capacity(own.len());
     for (k, v) in own {
@@ -1766,7 +1759,7 @@ fn player_inner(
     p.racial = crate::racial::of_skills(skills.iter().map(|(r, li)| (r, *li)));
     // Passive skills / devotions (`Skill_Passive::CollectPassiveConversionAttributes`).
     for (sk, li) in skills {
-        p.conversions.extend(conversions_of(sk, *li));
+        conversions_of_into(sk, *li, &mut p.conversions);
     }
     Some(p)
 }
@@ -1972,12 +1965,26 @@ pub fn range_scale(rec: &Record, distance: f32) -> Option<f32> {
     ) {
         return None;
     }
-    (1..=3).find_map(|n| {
-        let (lo, hi) = (
-            rec.float(&format!("projectileDamageRange{n}Min")),
-            rec.float(&format!("projectileDamageRange{n}Max")),
-        );
-        let scale = rec.int(&format!("projectileDamageRange{n}Scale"));
+    const KEYS: [[&str; 3]; 3] = [
+        [
+            "projectileDamageRange1Min",
+            "projectileDamageRange1Max",
+            "projectileDamageRange1Scale",
+        ],
+        [
+            "projectileDamageRange2Min",
+            "projectileDamageRange2Max",
+            "projectileDamageRange2Scale",
+        ],
+        [
+            "projectileDamageRange3Min",
+            "projectileDamageRange3Max",
+            "projectileDamageRange3Scale",
+        ],
+    ];
+    KEYS.iter().find_map(|[min, max, scale]| {
+        let (lo, hi) = (rec.float(min), rec.float(max));
+        let scale = rec.int(scale);
         ((lo != 0.0 || hi != 0.0) && distance > lo && distance <= hi && scale != 0)
             .then_some(scale as f32 * 0.01)
     })
@@ -2009,11 +2016,11 @@ pub fn skill_energy_cost(
     if item_skill || rec.class == "Skill_ChargePotion" {
         return cost;
     }
-    let mut rolled = |k: &str| -> f32 {
+    let mut rolled = |k: &str, chance: &str| -> f32 {
         std::iter::once((rec, level_index))
             .chain(mods.iter().copied())
             .map(|(r, li)| {
-                let c = level_value(r, &format!("{k}Chance"), li).unwrap_or(0.0);
+                let c = level_value(r, chance, li).unwrap_or(0.0);
                 if c > 0.0 && c < 100.0 && !roll(c) {
                     0.0
                 } else {
@@ -2022,8 +2029,12 @@ pub fn skill_energy_cost(
             })
             .sum()
     };
-    let v = rolled("skillManaCostReduction");
-    let cut = v + v.abs() * rolled("skillManaCostReductionModifier") * PCT + char_reduction;
+    let v = rolled("skillManaCostReduction", "skillManaCostReductionChance");
+    let m = rolled(
+        "skillManaCostReductionModifier",
+        "skillManaCostReductionModifierChance",
+    );
+    let cut = v + v.abs() * m * PCT + char_reduction;
     (cost * (1.0 - cut * PCT)).max(0.0)
 }
 

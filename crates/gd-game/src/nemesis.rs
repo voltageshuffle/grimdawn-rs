@@ -43,14 +43,12 @@ use gd_game_core::combat::Combatant;
 use gd_game_core::monsters::Monster;
 use gd_game_core::player::Player;
 use gd_game_core::rules::CombatRules;
-use gd_game_core::session::MessageDrain;
 
 pub struct NemesisPlugin;
 
 impl Plugin for NemesisPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Nemeses>()
-            .drain_messages_unless::<MonsterKilled, _>(has_nemesis_inputs)
             .add_systems(Update, nemesis_kills.run_if(has_nemesis_inputs));
     }
 }

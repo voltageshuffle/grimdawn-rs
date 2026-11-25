@@ -377,12 +377,13 @@ pub struct SlotText {
     secs: i64,
 }
 
-/// What the overlay was built for: the window size, the UI scale (`f32` bits), the counter option, the slots
-/// cooling down (field, skill: a potion's skill picks its mask, and the redrawn key label) and the skill book
-/// (the potion's bitmap).
+/// What the overlay was built for: the window size, the UI scale (`f32` bits), the font generation (a language
+/// swap redraws the seconds), the counter option, the slots cooling down (field, skill: a potion's skill picks
+/// its mask, and the redrawn key label) and the skill book (the potion's bitmap).
 pub struct Layout {
     size: UVec2,
     scale: u32,
+    generation: u64,
     counter: bool,
     slots: Vec<(&'static str, String, String)>,
     skills: gd_sim::skills::SkillBook,
@@ -403,8 +404,9 @@ fn mask_rect(r: URect, top: f32, region: f32, completion: f32) -> URect {
     URect::new(r.x, r.y + top, r.w, (region * (1.0 - completion)).max(0.0))
 }
 
-/// Builds the overlay when the slots cooling down (or the window, the counter option, the skills) change; every
-/// other frame swaps the wipe bitmaps, sizes the masked fills and redraws the seconds in place.
+/// Builds the overlay when the slots cooling down (or the window, the UI scale, the font generation, the counter
+/// option, the skills) change; every other frame swaps the wipe bitmaps, sizes the masked fills and redraws the
+/// seconds in place.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut fresh: gd_game_core::session::NewSession,
@@ -441,11 +443,17 @@ pub fn draw(
         wipes.clear();
         maps.clear();
     }
-    let Ok(win) = window.single() else { return };
-    let size = UVec2::new(win.physical_width(), win.physical_height());
-    if size.x == 0 || size.y == 0 {
+    // No layout without a window: the next one rebuilds (the skill book compare below only looks at
+    // `values` when it changed since this system's last run, which a return here would skip).
+    let Some((win, size)) = window
+        .single()
+        .ok()
+        .map(|w| (w, UVec2::new(w.physical_width(), w.physical_height())))
+        .filter(|(_, s)| s.x > 0 && s.y > 0)
+    else {
+        *last = None;
         return;
-    }
+    };
     // `standardHUD` moves the slots: redraw.
     if std::mem::replace(&mut *classic, assets.classic_hud()) != *classic {
         *last = None;
@@ -453,9 +461,11 @@ pub fn draw(
     let counter = options.flag("hotbarCooldownCounter");
     let cooldowns = &vitals.cooldowns;
     let scale = assets.scale(size).to_bits();
+    let generation = assets.fonts.generation;
     let same = last.as_ref().is_some_and(|l| {
         l.size == size
             && l.scale == scale
+            && l.generation == generation
             && l.counter == counter
             && l.slots.len() == cooldowns.len()
             && l.slots
@@ -523,6 +533,7 @@ pub fn draw(
     *last = Some(Layout {
         size,
         scale,
+        generation,
         counter,
         slots: cooldowns
             .iter()

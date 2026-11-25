@@ -131,6 +131,7 @@ pub fn cast_story_skills(
     mut events: MessageReader<StoryEffect>,
     data: Res<GameData>,
     rt: Option<NonSend<StoryRuntime>>,
+    // Option: factions are optional input (the friendly check, `monsters::is_friendly`).
     factions: Option<Res<crate::factions::PlayerFactions>>,
     actors: Query<(Entity, &StoryActor, &Transform)>,
     mut targets: Query<
@@ -151,6 +152,9 @@ pub fn cast_story_skills(
     mut player_casts: MessageReader<PlayerSkillCast>,
     mut npc_chars: Query<&mut gd_game_core::character::Character, With<StoryActor>>,
 ) {
+    if events.is_empty() && player_casts.is_empty() {
+        return;
+    }
     let Some((player, ptf)) = targets.iter().find(|t| t.4).map(|t| (t.0, *t.1)) else {
         return;
     };
@@ -195,9 +199,9 @@ pub fn cast_story_skills(
         let level_index = npc.as_ref().map_or(0, |n| n.1.saturating_sub(1) as usize);
         let npc = npc.map(|n| n.0);
         if matches!(rec.class.as_str(), "Skill_BuffOther" | "Skill_BuffRadius")
-            && let Some(buff) = rec.str("buffSkillName").map(str::to_owned)
+            && let Some(buff) = rec.str("buffSkillName")
         {
-            let brec = data.db.get(&buff);
+            let brec = data.db.get(buff);
             let secs = brec
                 .as_ref()
                 .and_then(|b| b.f32("skillActiveDuration"))
@@ -228,7 +232,7 @@ pub fn cast_story_skills(
                 }
                 let b = gd_game_core::skill_buffs::ReceivedBuff::new(
                     &data.db,
-                    &buff,
+                    buff,
                     skill,
                     level_index,
                     from,
@@ -367,13 +371,7 @@ pub fn setup_story(world: &mut World) {
         Some(data.tags()),
         lang.clone(),
     ));
-    let (defs, dialogs) = match (env.quest_defs(), env.dialogs()) {
-        (Ok(q), Ok(d)) => (q, d),
-        (Err(e), _) | (_, Err(e)) => {
-            error!("story: {e:#}");
-            return;
-        }
-    };
+    let (defs, dialogs) = (env.quest_defs(), env.dialogs());
     let (nq, nc) = (defs.list.len(), dialogs.defs.len());
     let choice = world.resource::<gd_game_core::session::Choice>().clone();
     let mut player = StoryPlayer::new_character(PLAYER_ID, &choice.name);
@@ -638,7 +636,7 @@ pub fn tick_story(
     hooks: Res<gd_game_core::hooks::Hooks>,
     (mut fresh, mut lua_ran): (gd_game_core::session::NewSession, Local<bool>),
     players: Query<
-        (Ref<Transform>, Has<gd_game_core::combat::Dead>),
+        (&Transform, Has<gd_game_core::combat::Dead>),
         With<gd_game_core::player::Player>,
     >,
     // Option: progress and devotion are optional input (the story runs without them).
@@ -656,12 +654,9 @@ pub fn tick_story(
     publish_shrines(&mut rt.story.borrow_mut(), devotion.as_deref());
     if let Ok((t, dead)) = players.single() {
         let mut s = rt.story.borrow_mut();
-        // PERF: the position only moves when the Transform does. The scalar facts stay unconditional:
-        // the scripts mutate them mid-frame (`gd_story::story`) and the game's player is their source of
-        // truth, restored every tick; `dead` is a bool that must also track the respawn (Dead removed).
-        if t.is_changed() {
-            s.player.position = t.translation.to_array();
-        }
+        // The scripts mutate the player facts mid-frame (`gd_story::story`): they are restored every tick.
+        // `dead` also tracks the respawn (Dead removed).
+        s.player.position = t.translation.to_array();
         s.player.dead = dead;
         // The game's player is the source of truth for level/xp/money.
         if let Some(p) = &progress {
@@ -820,7 +815,9 @@ pub fn play_story_animations(
 pub fn mirror_story_monsters(
     rt: Option<NonSend<StoryRuntime>>,
     // PERF: only moved / newly dead / newly armed actors are rewritten; an idle monster's coords and
-    // alive flag do not change. `Added<StoryActor>` covers the frame it is armed, before it first moves.
+    // alive flag do not change. The later of `Added<StoryActor>` / `Added<Monster>` covers the frame it is
+    // armed (a hooked character has its `Monster` first, a story character gets it from
+    // `arm_story_characters`), before it first moves.
     monsters: Query<
         (
             &StoryActor,
@@ -832,6 +829,7 @@ pub fn mirror_story_monsters(
             Changed<Transform>,
             Added<gd_game_core::combat::Dead>,
             Added<StoryActor>,
+            Added<gd_game_core::monsters::Monster>,
         )>,
     >,
 ) {
@@ -1048,6 +1046,7 @@ pub fn game_won(
 pub fn quest_updates(
     mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<StoryRuntime>>,
+    // Option: the item counts' sources are optional input (an objective's count reads what is there).
     inv: Option<Res<gd_game_core::inventory::Inventory>>,
     stash: Option<Res<gd_game_core::stash::Stash>>,
     clock: Res<Time<Real>>,
@@ -1179,13 +1178,20 @@ pub fn screen_shake(mut events: MessageReader<StoryEffect>, mut shake: ResMut<Sc
 /// `Entity:GetAttachedCoords(name)`'s host facts (LUA-18): every frame, the world coords of each story
 /// character's mesh attach points (`Actor::GetAttachedCoords`: the entity coords × the point in its posed
 /// parent bone's frame, `Character::posed`, scaled by the actor scale). Names as the mesh spells them.
-/// The names are rebuilt only when the body mesh changes (a form); the coords are refreshed in place. A
-/// character no longer in the world publishes nothing (the binding falls back to the entity coords).
+/// The names are rebuilt when the body mesh changes (a form) or the story's list lost them (`Entities::remove`
+/// drops it); the coords are refreshed in place. A character no longer in the world publishes nothing (the
+/// binding falls back to the entity coords).
 pub fn publish_attach_coords(
     rt: Option<NonSend<StoryRuntime>>,
     chars: Query<(&StoryActor, &gd_game_core::character::Character, &Transform)>,
-    mut seen: Local<HashMap<u32, (usize, bool)>>,
+    (mut seen, mut fresh): (
+        Local<HashMap<u32, (usize, bool)>>,
+        gd_game_core::session::NewSession,
+    ),
 ) {
+    if fresh.begun() {
+        seen.clear();
+    }
     let Some(rt) = rt else { return };
     let mut s = rt.story.borrow_mut();
     seen.values_mut().for_each(|(_, live)| *live = false);
@@ -1193,7 +1199,7 @@ pub fn publish_attach_coords(
         let points = c.body.attach_points();
         let list = s.entities.attach_coords.entry(id).or_default();
         let ptr = Arc::as_ptr(&c.body) as usize;
-        if seen.insert(id, (ptr, true)).map(|(p, _)| p) != Some(ptr) {
+        if seen.insert(id, (ptr, true)).map(|(p, _)| p) != Some(ptr) || list.len() != points.len() {
             list.clear();
             list.extend(
                 points

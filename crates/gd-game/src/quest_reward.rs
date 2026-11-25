@@ -1,5 +1,5 @@
 //! The Quest Complete / Quest Progress window's content (`hudQuestRewardWindow`, `UIQuestRewardWindow`; the window is
-//! `grimdawn::ui::questpopup`).
+//! `gd_ui::questpopup`).
 //!
 //! Rules:
 //! - trigger (Game.dll): `Quest2Task::Start` of an available task whose start events have reward actions and
@@ -127,8 +127,7 @@ pub fn rewards(
     uids: &[u32],
     rolls: &mut RandomRewardRolls,
 ) -> Option<QuestRewardShown> {
-    let defs = story.quests.defs.clone();
-    let quest = &defs.list[qi].quest;
+    let quest = &story.quests.defs.list[qi].quest;
     let mut actions: Vec<&Action> = Vec::new();
     for &uid in uids {
         let Some(ti) = story.quests.task_index(qi, uid) else {
@@ -237,6 +236,7 @@ pub fn rewards(
 
 /// The frame's started / completed tasks with rewards become [`QuestRewardShown`]s, one per quest (module doc).
 pub fn show_rewards(
+    // Option: no story outside a session (the frame's effects and rolls are dropped).
     rt: Option<NonSend<StoryRuntime>>,
     mut effects: MessageReader<StoryEffect>,
     mut out: MessageWriter<QuestRewardShown>,
@@ -248,7 +248,7 @@ pub fn show_rewards(
         return;
     };
     let story = rt.story.borrow();
-    let defs = story.quests.defs.clone();
+    let defs = &story.quests.defs;
     let mut queued: Vec<(usize, Vec<u32>)> = Vec::new();
     for StoryEffect(e) in effects.read() {
         let (quest, task, start) = match e {

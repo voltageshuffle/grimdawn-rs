@@ -1532,13 +1532,6 @@ impl MaterialAssets<'_> {
             base: textures
                 .get(data, texture, false, images)
                 .unwrap_or_else(|| d.white.clone()),
-            bump: d.flat_normal.clone(),
-            glow: d.black.clone(),
-            detail: d.white.clone(),
-            snow_base: d.white.clone(),
-            snow_normal: d.flat_normal.clone(),
-            env: d.env.clone(),
-            grass: d.grass.clone(),
             states: PassStates {
                 cull: 0,
                 // grass.ssh `deferred`: SrcBlend 6, DstBlend 8, DepthFunc Less.
@@ -1547,6 +1540,7 @@ impl MaterialAssets<'_> {
                 depth_strict: fringe,
                 ..PassStates::default()
             },
+            ..blank(d)
         };
         let h = self.gd.add(material);
         self.cache.grass.insert(key, h.clone());

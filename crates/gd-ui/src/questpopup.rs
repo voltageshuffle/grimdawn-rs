@@ -263,12 +263,8 @@ fn icon_field(data: &GameData, icon: &RewardIcon) -> &'static str {
         RewardIcon::AttributePoints(_) => "attributePointIcon",
         RewardIcon::Devotion(_) => "devotionIcon",
         RewardIcon::Item { item } => {
-            let class = data
-                .db
-                .get(&item.base_name)
-                .and_then(|r| r.str("Class").map(str::to_owned))
-                .unwrap_or_default();
-            item_icon(&class)
+            let class = data.db.get(&item.base_name).and_then(|r| r.str("Class"));
+            item_icon(class.unwrap_or(""))
         }
     }
 }
@@ -345,8 +341,11 @@ fn draw(
                 .find(|(_, r)| super::contains(r, c))
                 .map(|(i, _)| (*i, c))
         });
-    let key = (size, p.shown.clone(), hovered, p.hover.map(|(i, _)| i));
-    if drawn.as_ref() == Some(&key) {
+    let hover_icon = p.hover.map(|(i, _)| i);
+    // Compared in place: the reward is cloned only when the window rebuilds.
+    if drawn.as_ref().is_some_and(|(s, r, h, i)| {
+        *s == size && *r == p.shown && *h == hovered && *i == hover_icon
+    }) {
         let alpha = p.alpha.clamp(0.0, 1.0);
         if let Some(g) = *group {
             fader.set(g, alpha);
@@ -364,11 +363,14 @@ fn draw(
         }
         return;
     }
-    *drawn = Some(key);
+    *drawn = Some((size, p.shown.clone(), hovered, hover_icon));
     *group = None;
     *tip = None;
     super::window::despawn_all(&mut commands, &roots);
-    let (Some(shown), Some(rec)) = (p.shown.clone(), data.db.get(WINDOW)) else {
+    let (Some(shown), Some(rec)) = (
+        drawn.as_ref().and_then(|d| d.1.as_ref()),
+        data.db.get(WINDOW),
+    ) else {
         return;
     };
     let s = assets.scale(size);

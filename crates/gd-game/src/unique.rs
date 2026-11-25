@@ -36,25 +36,15 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::map::Uid;
-use gd_formats::map::sector::InstanceGroup;
 use std::sync::Arc;
 
 pub const UNIQUE: &str = "Unique Entities";
 pub const INVERSE: &str = "Inverse Unique Entities";
-pub const UNIFIED: &str = "Unified Entities";
 
-/// The open map's instance groups (the map's own list, shared: set by the renderer when it opens a map,
-/// with `save::MapLayout`).
+/// The open map's instance groups (the map's own list, shared: set by `gd_world` when it opens a map, with
+/// `save::MapLayout`).
 #[derive(Resource, Clone, Default)]
 pub struct InstanceGroups(pub Arc<gd_formats::map::sector::InstanceGroups>);
-
-impl InstanceGroups {
-    pub fn from_groups(groups: Vec<InstanceGroup>) -> Self {
-        Self(Arc::new(gd_formats::map::sector::InstanceGroups::new(
-            groups,
-        )))
-    }
-}
 
 /// Session state of the choice (module doc): the uid chosen per group name and the rift arrival points.
 #[derive(Resource, Default)]
@@ -121,7 +111,7 @@ impl UniqueSelection {
             Loader::Proxy => {
                 let first = groups
                     .containing(uid)
-                    .find(|g| g.kind == UNIFIED || g.kind == UNIQUE);
+                    .find(|g| g.kind == gd_sim::patrol::UNIFIED_ENTITIES || g.kind == UNIQUE);
                 !first.is_some_and(|g| g.kind == UNIQUE) || self.is_selected(groups, uid, false)
             }
             Loader::ScriptEntity => {
@@ -152,14 +142,13 @@ impl UniqueEntities<'_> {
     /// [`UniqueSelection::loads`]; an entity without a uid loads.
     pub fn loads(&mut self, uid: Option<Uid>, loader: Loader) -> bool {
         let Some(uid) = uid else { return true };
-        let groups = self.groups.0.clone();
-        self.selection.loads(&groups, &uid, loader)
+        self.selection.loads(&self.groups.0, &uid, loader)
     }
 
     /// [`UniqueSelection::is_selected`].
     pub fn is_selected(&mut self, uid: &Uid, exclude_arrivals: bool) -> bool {
-        let groups = self.groups.0.clone();
-        self.selection.is_selected(&groups, uid, exclude_arrivals)
+        self.selection
+            .is_selected(&self.groups.0, uid, exclude_arrivals)
     }
 }
 

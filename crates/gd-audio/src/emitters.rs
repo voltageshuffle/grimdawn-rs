@@ -196,8 +196,10 @@ pub(super) fn emitters(
     let Some(listener) = sounds.listener.ears else {
         return;
     };
-    let stop = |commands: &mut Commands, e: Entity| {
+    let stop = |commands: &mut Commands, e: Entity, em: &mut Emitter| {
         commands.entity(e).try_remove::<(Voice, VoiceStart)>();
+        em.state = LoopState::Off;
+        em.ears = None;
     };
     for (e, gt, tf, mut em, lof, voice) in &mut q {
         if em.fresh {
@@ -218,8 +220,7 @@ pub(super) fn emitters(
                 let left = left - time.delta_secs().min(0.1);
                 if left <= 0.0 {
                     debug!("loop {} faded out", em.pak);
-                    stop(&mut commands, e);
-                    em.state = LoopState::Off;
+                    stop(&mut commands, e, &mut em);
                 } else {
                     em.state = LoopState::Fading(left, total);
                     if let Some(voice) = voice {
@@ -280,8 +281,7 @@ pub(super) fn emitters(
             LoopState::Playing => match loop_rule(true, em.ears.is_some(), em.falloff, d) {
                 LoopStep::Stop => {
                     debug!("loop {} stopped {d:.1} m away", em.pak);
-                    stop(&mut commands, e);
-                    em.state = LoopState::Off;
+                    stop(&mut commands, e, &mut em);
                 }
                 LoopStep::Fade => em.state = LoopState::Fading(LOOP_FADE, LOOP_FADE),
                 _ => {

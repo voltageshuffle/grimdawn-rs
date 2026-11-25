@@ -223,7 +223,7 @@ pub fn kind_of(rec: &Record) -> Kind {
     let c = rec.class.as_str();
     match c {
         "Skill_WPAttack_BasicAttack" => Kind::Weapon,
-        // The kick (`crate::hotbar::kicks_breakable`): a melee attack with the
+        // The kick (`gd_game::hotbar::kicks_breakable`): a melee attack with the
         // record's own `weaponDamagePct` and flat offense, no weapon pool
         // (`Skill_Kick::TargetResult`).
         "Skill_Kick" => Kind::Weapon,
@@ -298,7 +298,7 @@ pub fn kind_of(rec: &Record) -> Kind {
         // `Skill_BuffSelfSick` is a `Skill_BuffSelfDuration` (its stuns:
         // `crate::afflictions` module docs).
         "Skill_BuffSelfDuration" | "Skill_BuffSelfSick" | "Skill_BuffRadius" => Kind::Buff,
-        // A self buff that also grows the caster (`crate::colossus`).
+        // A self buff that also grows the caster (`gd_game::colossus`).
         "Skill_BuffSelfColossus" => Kind::Buff,
         _ => Kind::Unsupported,
     }
@@ -761,7 +761,7 @@ pub struct CastOnAlly {
 
 /// The wrapper skill a hot slot cast ran as its `buffSkillName` record
 /// (`Casting::skill` is `buff`): what `SkillActivated::ApplyBuffOnTarget`'s
-/// `CastBuff` / `CastDebuf` triggers classify (`crate::autocast`). The last
+/// `CastBuff` / `CastDebuf` triggers classify (`gd_game::autocast`). The last
 /// use's, instant ones included; the pending animated cast's cooldown key is
 /// [`CastCooldownKey`].
 #[derive(Component, Clone, Debug)]
@@ -1433,12 +1433,11 @@ pub fn qualifying_types(rec: &Record) -> Vec<gd_sim::attributes::CombatType> {
         ("chaosDamageQualifier", &[T::Chaos]),
     ] {
         if rec.bool(f) {
-            v.extend(
-                tys.iter()
-                    .filter(|t| !v.contains(*t))
-                    .copied()
-                    .collect::<Vec<_>>(),
-            );
+            for t in tys {
+                if !v.contains(t) {
+                    v.push(*t);
+                }
+            }
         }
     }
     v

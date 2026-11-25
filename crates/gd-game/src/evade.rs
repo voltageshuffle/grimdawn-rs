@@ -242,7 +242,7 @@ pub fn start_evade(
     // (`advance_animations` clears it); the evade supersedes the pending slot.
     ch.evade_warmup = true;
     ch.queued = None;
-    commands.entity(e).insert((
+    commands.entity(e).try_insert((
         Evading,
         gd_game_core::casting::Leap::new(vec![to], (to - tf.translation).with_y(0.0).length()),
     ));
@@ -267,7 +267,7 @@ fn evading(
         debug!("evade ended");
         commands
             .entity(e)
-            .remove::<(Evading, gd_game_core::casting::Leap)>();
+            .try_remove::<(Evading, gd_game_core::casting::Leap)>();
     }
     // Knocked out of the evade (stun, death, no evade animation): drop it.
     for (e, ch) in &q {

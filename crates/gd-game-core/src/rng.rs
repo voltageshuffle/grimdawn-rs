@@ -1,5 +1,7 @@
-//! The gameplay's random draws: one wyrand generator (`fastrand::Rng`) per
-//! thread, owned by gd-game and touched by nothing else.
+//! The game's random draws: one wyrand generator (`fastrand::Rng`) per
+//! thread. gd-game's gameplay draws from it, and so does presentation
+//! randomness (gd-render's water, chaos beams, lightning and FX meshes;
+//! grimdawn's breakables, cast decals, gibs and the menu's arena pick).
 //!
 //! Not `fastrand`'s own thread-local generator: Bevy's task pool draws from
 //! that one (`async_executor::Executor::run` and `futures_lite::future::race`
@@ -9,8 +11,9 @@
 //!
 //! The functions mirror `fastrand`'s free functions, so draws are the same
 //! wyrand sequence for a seed. Unseeded, each thread starts from a random seed.
-//! Seeded runs are deterministic only while the drawing systems run on one
-//! thread (the headless `TestGame` uses a single-threaded executor).
+//! Seeded determinism is promised only for the headless `TestGame`: no render,
+//! and a single-threaded executor, so the drawing systems run on one thread and
+//! none of the presentation draws above happen there.
 use std::cell::Cell;
 use std::ops::RangeBounds;
 
@@ -30,11 +33,6 @@ fn with<T>(f: impl FnOnce(&mut fastrand::Rng) -> T) -> T {
 /// Restarts this thread's generator from `seed` (`TestGame`'s seed).
 pub fn seed(seed: u64) {
     with(|r| r.seed(seed));
-}
-
-/// This thread's generator state.
-pub fn get_seed() -> u64 {
-    with(|r| r.get_seed())
 }
 
 pub fn f32() -> f32 {

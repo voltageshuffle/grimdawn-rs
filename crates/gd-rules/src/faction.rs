@@ -11,7 +11,7 @@
 //! (= ranks 5..8) per market tier (`FactionMerchant::CheckMarketTier`).
 //! The faction's name is the tag `tag` + key (`tagFactionSurvivors`).
 //!
-//! The factions window's maths (`grimdawn` `ui/factions.rs`): the engine's level table ([`Levels`]: level lookup,
+//! The factions window's maths (`gd_ui::factions`): the engine's level table ([`Levels`]: level lookup,
 //! bounds, names, discounts), the packs' window data ([`Pack`], [`enemies`]) and the bars / rollover targets
 //! ([`row_bar`], [`large_bar`], [`tier_target`], [`remaining`], [`standing_colour`]). The engine's level lookup
 //! rounds a negative value towards 0 ([`Levels::level_of`]); the market discount ([`Levels::discount`]) takes

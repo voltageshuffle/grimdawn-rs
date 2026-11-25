@@ -44,7 +44,7 @@ impl Default for Hooks {
 #[derive(Clone, Debug, Default)]
 pub struct SessionHooks {
     /// The menu is skipped: a character or a test session is given (`GD_SAVE`, `GD_NAME`, `GD_TESTWORLD`,
-    /// `GD_SHOT`, `GD_NO_MENU`, `GD_CHARS`) and `GD_MENU` is not set.
+    /// `GD_SHOT`, `GD_NO_MENU`, `GD_CHARS`, `GD_MOD`) and `GD_MENU` is not set.
     pub skip_menu: bool,
     /// `GD_SAVE`: the `player.gdc` to load (none: a new character).
     pub save: Option<String>,
@@ -479,10 +479,7 @@ impl Hooks {
             video: s("GD_VIDEO"),
             save_dir: s("GD_SAVE_DIR"),
             autosave_secs: f("GD_AUTOSAVE_SECS"),
-            map: s("GD_MAP").or_else(|| {
-                s("GD_SURVIVAL")
-                    .map(|l| format!("maps/survivalworld_{}.map", l.to_ascii_lowercase()))
-            }),
+            map: s("GD_MAP").or_else(|| s("GD_SURVIVAL").map(|l| crate::session::arena_map(&l))),
             survival: s("GD_SURVIVAL"),
             module: s("GD_MOD"),
             mod_map: s("GD_MOD_MAP"),

@@ -188,9 +188,11 @@ fn player_light_shadow(
                     .try_insert(super::point_shadow::ShadowPriority(4));
             }
             (false, Some(_)) => {
-                commands
-                    .entity(e)
-                    .try_remove::<super::point_shadow::ShadowPriority>();
+                // The map it last got goes with the priority: no stale `shadowBluriness` in the env buffer.
+                commands.entity(e).try_remove::<(
+                    super::point_shadow::ShadowPriority,
+                    super::point_shadow::PointShadowMap,
+                )>();
             }
             _ => {}
         }
@@ -509,7 +511,7 @@ impl EnvGpu {
         v
     }
 
-    /// [`Self::to_vec4s`] into a reused scratch buffer (PERF-16: no per-frame allocation).
+    /// [`Self::to_vec4s`] into a reused scratch buffer (no per-frame allocation).
     fn write_vec4s(&self, v: &mut Vec<[f32; 4]>) {
         v.clear();
         v.extend([
@@ -886,7 +888,11 @@ fn update_env(
         Some(m) => m.map.as_ref().map(|m| &m.sector_data),
         None => world.as_ref().map(|w| &w.0.sector_data),
     };
-    if cache.menu != menu.is_some() {
+    // The tables are the map's: rebuilt when the menu comes or goes, or the world's map is replaced (a Crucible
+    // or custom map installed over the campaign world, `gd_world::open_session_map`).
+    if cache.menu != menu.is_some()
+        || (menu.is_none() && world.as_ref().is_some_and(|w| w.is_changed()))
+    {
         cache.menu = menu.is_some();
         cache.tables = None;
     }

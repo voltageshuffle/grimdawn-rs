@@ -6,12 +6,15 @@ use super::*;
 /// How a changed value is tested in `SkillProfile_Modifiers::CreateUINextText` (the "next level" text:
 /// only what differs from the current level is listed).
 #[derive(Clone, Copy, PartialEq)]
-pub(super) enum Cmp {
+enum Cmp {
     /// `next != current`
     Ne,
     /// `next - current > 0`
     Gt,
 }
+
+/// The [`PARAMS`] index the energy reservation line ([`reserve_line`]) goes before: after the costs.
+const COSTS: usize = 4;
 
 /// The `SkillProfile_Modifiers` values the tooltip lists, in the order of
 /// `SkillProfile_Modifiers::CreateUINextText` / `CreateUIText` (struct order from
@@ -20,8 +23,7 @@ pub(super) enum Cmp {
 /// The energy reservation lines come after the costs ([`COSTS`]); the
 /// chance / life monitor lines before and the spark lines after them are
 /// [`param_lines`]'s own.
-const COSTS: usize = 4;
-pub(super) const PARAMS: &[(&str, Cmp, &str, &str)] = &[
+const PARAMS: &[(&str, Cmp, &str, &str)] = &[
     ("skillManaCost", Cmp::Ne, "SkillCostFormat", "ManaCost"),
     (
         "skillActiveManaCost",

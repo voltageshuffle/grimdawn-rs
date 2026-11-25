@@ -92,8 +92,7 @@ fn new_character_round_trips() {
 }
 
 /// A new character's stash sack is written 0×0 (as the engine writes it) and loads back as a full-size
-/// first personal page, not the 1×1 the bug persisted (BUG-2); an already-corrupted 1×1 personal page is
-/// healed to the fixed personal size on load.
+/// first personal page; a 1×1 personal page is healed to the fixed personal size on load.
 #[test]
 fn new_character_stash_page_is_full_size() {
     use gd_game::testing::TempDir;
@@ -118,7 +117,7 @@ fn new_character_stash_page_is_full_size() {
     g.spawn_player();
     g.steps(2);
     assert_eq!(page(&g), (STASH_W, STASH_H));
-    // An already-corrupted 1×1 personal page (what the bug persisted) is healed on load.
+    // A 1×1 personal page is healed on load.
     gdc.stash.sacks[0].width = 1;
     gdc.stash.sacks[0].height = 1;
     let bad = tmp.path().join("bad.gdc");

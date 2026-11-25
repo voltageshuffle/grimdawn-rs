@@ -49,7 +49,7 @@
 //! `spell_beams`, `warmup`, `fire`, `projectiles`, `projectile_classes`, `attack_line`, `effects`,
 //! `class_fx`, `chaos`.
 use crate::combat::MonsterAi;
-use crate::movement::MovePath;
+use crate::movement::{MovePath, MoveToUseSkill};
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -291,7 +291,7 @@ pub use self::requests::*;
 mod warmup;
 pub use self::warmup::*;
 mod fire;
-pub use self::fire::*;
+use self::fire::*;
 mod projectiles;
 pub(crate) use self::projectiles::*;
 mod projectile_classes;

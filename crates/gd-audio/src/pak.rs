@@ -243,12 +243,17 @@ fn start_named(
 }
 
 /// Starts the one-shots that waited for their file ([`start_named`]) once `cache::collect_preload` has it: a few
-/// frames late (PORT: the engine streams a sound it did not preload rather than stall the frame on the read).
+/// frames late (PORT: the engine streams a sound it did not preload rather than stall the frame on the read). A new
+/// session drops the placed ones still waiting: their spot and entity belong to the world that ended.
 pub(super) fn replay_pending(
     mut commands: Commands,
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    if fresh.begun() {
+        sounds.pending.retain(|p| p.at.is_none() && p.on.is_none());
+    }
     if sounds.pending.is_empty() {
         return;
     }

@@ -54,7 +54,6 @@
 use bevy::prelude::*;
 pub use gd_game::loot::*;
 use gd_game_core::player::Player;
-pub use gd_game_core::progress::PlayerProgress;
 use gd_render::character::CharAssets;
 use gd_render::hover::LabelGlow;
 use gd_render::model::Ready;

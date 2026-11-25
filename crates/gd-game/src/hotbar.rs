@@ -1,6 +1,6 @@
 //! Binding hotbar slots: the HUD's slot pick list (`hudSlotSelectWindow`,
 //! `records/ui/hud/hud_hotslotselectmenu.dbr`, a `SlotSelectWindow`). The UI
-//! (`grimdawn` `ui/hotbar_pick.rs`) shows [`choices`] and sends [`BindSlot`].
+//! (`gd_ui` `hotbar_pick.rs`) shows [`choices`] and sends [`BindSlot`].
 //!
 //! `Grim Dawn.exe`:
 //! - a right press on a hot slot button (`HotSlotButton::HandleMouseEvent`, event 2) runs
@@ -61,8 +61,8 @@
 //!   (`HotSlotButton::HandleMouseEvent`, before the pick list opens), Esc (the HUD's Esc handler
 //!   `UIPlayerHud::HandleEscape` asks every slot button; the primary slot's, `HotSlotButton::HandleEscape`, runs
 //!   `DeactivateActiveSlot` and takes the key only when a slot was armed) and a
-//!   HUD window being shown (`UIPlayerHud::OnWindowEvent` → `UIPlayerHud::DeactivateHotSlot`; the list: grimdawn
-//!   `ui/hotbar_pick.rs` `DisarmingWindows`) — the only callers of
+//!   HUD window being shown (`UIPlayerHud::OnWindowEvent` → `UIPlayerHud::DeactivateHotSlot`; the list: gd_ui
+//!   `hotbar_pick.rs` `DisarmingWindows`) — the only callers of
 //!   `DeactivateActiveSlot` besides a press of another slot;
 //! - the controller's cursor record ([`WorldCursor`], `ControllerPlayer.cursorObjectId`
 //!   object id, `ControllerPlayer.cursorCoords` coordinates: `SetMouseRepeatData` /
@@ -187,7 +187,7 @@ pub struct HotbarCursorSet;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HotbarSet;
 
-/// Another hotbar page shown, the HUD's request (`grimdawn` `ui::hud`: Show Alternate Hot Slot Set, Quickbar Switch
+/// Another hotbar page shown, the HUD's request (`gd_ui` `hud`: Show Alternate Hot Slot Set, Quickbar Switch
 /// and the row button): [`Caster::next_displayed_set`] / [`Caster::reset_displayed_set`] on the player's hotbar.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShowSkillSet {
@@ -673,8 +673,9 @@ pub fn choices(
             .bags
             .iter()
             .flat_map(|b| &b.items)
-            .map(|p| p.item.base_name.clone())
+            .map(|p| &p.item.base_name)
             .filter(|n| db.get(n).is_some_and(|r| r.class == "OneShot_Scroll"))
+            .cloned()
             .collect();
         scrolls.sort();
         scrolls.dedup();
@@ -726,12 +727,11 @@ fn use_options(
     data: Res<GameData>,
     mut players: Query<&mut Caster, With<Player>>,
     // Option: binds and potion / evade options work without an inventory; only the scroll option needs it.
-    inv: Option<ResMut<Inventory>>,
+    mut inv: Option<ResMut<Inventory>>,
     mut potions: MessageWriter<UsePotion>,
     mut evades: MessageWriter<EvadeRequest>,
 ) {
     bind_slots(&data.db, &mut binds, &mut players);
-    let mut inv = inv;
     for req in requests.read() {
         let Ok(caster) = players.single() else {
             continue;

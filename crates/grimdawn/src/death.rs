@@ -14,7 +14,7 @@ use bevy::window::PrimaryWindow;
 pub use gd_game::death::*;
 use gd_game_core::combat::Dead;
 use gd_game_core::player::Player;
-pub use gd_game_core::session::is_hardcore;
+use gd_game_core::session::is_hardcore;
 use gd_render::character::CharAssets;
 use gd_ui::state::death::GameOverBox;
 use gd_ui::state::inventory::UiCapture;
@@ -142,7 +142,7 @@ fn build_game_over(
     state.rects = gd_ui_kit::confirm::ok_box(&mut ui, "tagGameOver", (None, false));
 }
 
-/// The box's hover / press look in place ([`crate::ui::confirm::apply_look`]).
+/// The box's hover / press look in place ([`gd_ui_kit::confirm::apply_look`]).
 fn game_over_live(
     window: Query<&Window, With<PrimaryWindow>>,
     hooks: Res<gd_game_core::hooks::Hooks>,

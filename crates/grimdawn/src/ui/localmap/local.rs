@@ -154,7 +154,7 @@ pub(super) fn local_map(
         .map(|t| (t.translation, t.rotation * Vec3::Z));
     // The view turns with the camera: the pane's half-diagonal covers it at any angle.
     let radius = 0.5 * pane.w.hypot(pane.h) * mpp + GATHER_MARGIN;
-    let icons: Vec<MapIcon> = gather(
+    let mut icons = gather(
         &data,
         &assets.fonts,
         story.as_deref(),
@@ -162,10 +162,8 @@ pub(super) fn local_map(
         &mut src,
         centre,
         radius,
-    )
-    .into_iter()
-    .filter(|i| i.kind == 0 || fog.as_ref().is_none_or(|f| !f.is_in_fog(&world.map, i.at)))
-    .collect();
+    );
+    icons.retain(|i| i.kind == 0 || fog.as_ref().is_none_or(|f| !f.is_in_fog(&world.map, i.at)));
     let dungeon = story
         .as_ref()
         .and_then(|s| s.endless.dungeon.as_ref().map(|d| d.id));

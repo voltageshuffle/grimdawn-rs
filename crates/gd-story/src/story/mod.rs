@@ -218,7 +218,7 @@ impl Story {
             match t.hook().filter(|_| !spare.is_empty()) {
                 Some(f) => hooked.push(trigger::Hooked {
                     trigger: t.id,
-                    function: f.into(),
+                    function: f.clone(),
                     inside: std::mem::take(&mut spare),
                 }),
                 None => spare = t.fire(spare, calls),

@@ -173,10 +173,7 @@ fn talk_input(
     };
     // The interact order's NPC target: talk when in range or the walk ended; else the walk goes on
     // (`apply_orders` set the path). A target that is not a talkable NPC is another use system's (leave it).
-    let Some((_, a, gt)) = interact
-        .0
-        .and_then(|e| actors.iter().find(|(ee, _, _)| *ee == e))
-    else {
+    let Some((_, a, gt)) = interact.0.and_then(|e| actors.get(e).ok()) else {
         return;
     };
     let story = rt.story.borrow();

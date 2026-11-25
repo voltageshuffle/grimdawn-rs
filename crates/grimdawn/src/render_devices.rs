@@ -17,9 +17,9 @@ pub struct RenderAdapter {
 }
 
 /// The adapter list for the options Video tab (index i = entries[i], 0-based). `main` enumerates it once
-/// before the plugins build (the launch adapter choice reads it) and inserts it; [`init_adapters`] reuses
-/// that list at startup, and the options window refreshes it when it opens.
-#[derive(Resource, Default)]
+/// before the plugins build (the launch adapter choice reads it) and inserts it; the options window refreshes
+/// it when it opens.
+#[derive(Resource)]
 pub struct RenderAdapters {
     pub entries: Vec<RenderAdapter>,
 }
@@ -28,24 +28,6 @@ impl RenderAdapters {
     /// Re-enumerates the list.
     pub fn refresh(&mut self) {
         self.entries = enumerate();
-    }
-}
-
-pub struct RenderDevicesPlugin;
-
-impl Plugin for RenderDevicesPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<RenderAdapters>()
-            .add_systems(Startup, init_adapters);
-    }
-}
-
-/// The adapter list at startup: `main` already enumerated it to pick the launch adapter, so reuse that
-/// list; enumerate only when it is empty (a headless machine has no adapters). The options window
-/// refreshes the list when it opens.
-fn init_adapters(mut adapters: ResMut<RenderAdapters>) {
-    if adapters.entries.is_empty() {
-        adapters.refresh();
     }
 }
 

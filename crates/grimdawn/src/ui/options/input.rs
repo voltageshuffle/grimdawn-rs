@@ -151,7 +151,13 @@ pub fn input(
     let screen = window.single().map_or(Vec2::ZERO, |w| {
         Vec2::new(w.physical_width() as f32, w.physical_height() as f32)
     });
-    let languages = data.available_languages();
+    // Only a wheel step or a left press reads the dropdown rows below (`ctx`): the language list walks the
+    // mounted paths, so other frames skip it.
+    let languages = if lines != 0.0 || mouse.just_pressed(MouseButton::Left) {
+        data.available_languages()
+    } else {
+        Vec::new()
+    };
     let ctx = ChoiceCtx::new(
         &devices,
         crate::settings::primary_monitor(&monitors),

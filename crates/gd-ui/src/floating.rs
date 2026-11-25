@@ -188,7 +188,7 @@ fn add_texts(
     mut events: MessageReader<FloatingText>,
     mut list: ResMut<FloatingTexts>,
     data: Res<GameData>,
-    fonts: ResMut<FontCache>,
+    mut fonts: ResMut<FontCache>,
     mut images: ResMut<Assets<Image>>,
     mut font_assets: ResMut<Assets<Font>>,
     cams: Query<&GlobalTransform, With<gd_render::camera::GameCamera>>,
@@ -198,7 +198,6 @@ fn add_texts(
         *root = Default::default();
         list.scatter = gd_rules::Rng(SCATTER_SEED);
     }
-    let mut fonts = fonts;
     let Ok(cam) = cams.single() else { return };
     for ev in events.read() {
         if list.entries.len() >= MAX_TEXTS {
@@ -414,11 +413,11 @@ fn update_texts(
                 img.color = Color::srgba(1.0, 1.0, 1.0, e.alpha);
                 true
             });
-        *vis = if shown {
+        vis.set_if_neq(if shown {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        };
+        });
         true
     });
 }

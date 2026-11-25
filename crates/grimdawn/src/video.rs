@@ -450,7 +450,7 @@ fn pump(
     if want.len() > SUB_LINES {
         want.drain(..want.len() - SUB_LINES);
     }
-    if want != p.shown.iter().map(|s| s.0).collect::<Vec<_>>() {
+    if !want.iter().copied().eq(p.shown.iter().map(|s| s.0)) {
         for (_, e) in p.shown.drain(..) {
             commands.entity(e).despawn();
         }

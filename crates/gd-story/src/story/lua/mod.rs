@@ -13,8 +13,7 @@
 //!   `LuaTime::BindClass`, UI `LuaUi::BindClass`, Shared `LuaShared::BindClass`, Game +
 //!   `Script.Event` `LuaGame::BindClass`, MpScript `LuaMpScript::BindClass`).
 //!   `Script.Load/RegisterForUpdate/UnregisterForUpdate` are bound in Engine.dll
-//!   `LuaScript::BindClass`. There is no
-//!   `Debug` table in either binary (the port binds one that errors).
+//!   `LuaScript::BindClass`; the exe also binds `Debug.AddStatisticText` (see below).
 //! * Each class table is the metatable of its objects (`__index` = itself,
 //!   `__base` = parent class), so methods are also reachable as
 //!   `Character.IsAlive(obj)` / `Player.HasMastery(player, id)`, which the
@@ -59,14 +58,12 @@
 //! A script that reassigns the named global after registering keeps the old function (no stock
 //! script does).
 //!
-//! Layout: `api` (the API table), `obj` (object methods), `game` (global and class tables), `host` (the host's
-//! entry points: frame update, world objects, hooks, conversations).
+//! Layout: `api` (the object methods the class tables forward), `obj` (object methods), `game` (global and
+//! class tables), `host` (the host's entry points: frame update, world objects, hooks, conversations).
 mod api;
 mod game;
 mod host;
 mod obj;
-
-pub use api::API;
 
 use super::Story;
 use super::quest::{LuaCall, LuaCond, LuaRet, LuaValue};
@@ -287,10 +284,15 @@ fn arg_num(args: &MultiValue, i: usize) -> f64 {
 }
 
 fn arg_id(args: &MultiValue, i: usize) -> Option<u32> {
-    match args.get(i) {
-        Some(Value::Integer(n)) => Some(*n as u32),
-        Some(Value::Number(n)) => Some(*n as u32),
-        Some(Value::UserData(u)) => u.borrow::<Obj>().ok().map(|o| o.id),
+    args.get(i).and_then(value_id)
+}
+
+/// An object id argument: a number, or an object.
+fn value_id(v: &Value) -> Option<u32> {
+    match v {
+        Value::Integer(n) => Some(*n as u32),
+        Value::Number(n) => Some(*n as u32),
+        Value::UserData(u) => u.borrow::<Obj>().ok().map(|o| o.id),
         _ => None,
     }
 }

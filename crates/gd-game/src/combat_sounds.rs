@@ -1056,16 +1056,16 @@ fn hit_sounds(
     data: Res<GameData>,
     mut made: MessageReader<AttackMade>,
     mut skill_hits: MessageReader<gd_game_core::casting::SkillHit>,
-    chars: Query<(&Character, &Transform, Option<&Combatant>)>,
+    chars: Query<(&Character, &Transform)>,
     holdings: Holdings,
     mut out: MessageWriter<PlaySound>,
 ) {
     // The pool parents of the frame's skill hits (attacker, skill, parent).
-    let parents: Vec<(Entity, String, String)> = skill_hits
+    let parents: Vec<(Entity, &str, &str)> = skill_hits
         .read()
         .filter_map(|h| {
             let p = h.parent.as_ref().filter(|p| !p.0.is_empty())?;
-            Some((h.attacker, h.skill.to_ascii_lowercase(), p.0.clone()))
+            Some((h.attacker, h.skill.as_str(), p.0.as_str()))
         })
         .collect();
     // Attacker → (skill, landed yet).
@@ -1078,7 +1078,7 @@ fn hit_sounds(
                 None => strikes.push((m.attacker, m.skill.clone(), landed)),
             }
         }
-        let Ok((c, tf, _)) = chars.get(m.target) else {
+        let Ok((c, tf)) = chars.get(m.target) else {
             continue;
         };
         let s = Struck {
@@ -1099,7 +1099,7 @@ fn hit_sounds(
         }
     }
     for (attacker, skill, landed) in strikes {
-        let Ok((c, tf, _)) = chars.get(attacker) else {
+        let Ok((c, tf)) = chars.get(attacker) else {
             continue;
         };
         let skill = skill
@@ -1109,8 +1109,8 @@ fn hit_sounds(
         // The pool attack's parent's `skillHitSound` follows its own (`parent_sound`).
         if let Some(p) = parents
             .iter()
-            .find(|p| p.0 == attacker && p.1 == skill.to_ascii_lowercase())
-            && let Some(pak) = parent_sound(&data, &p.2, "skillHitSound")
+            .find(|p| p.0 == attacker && p.1.eq_ignore_ascii_case(skill))
+            && let Some(pak) = parent_sound(&data, p.2, "skillHitSound")
         {
             let own =
                 profile_record(&data, skill).is_some_and(|r| field(&r, "skillHitSound").is_some());

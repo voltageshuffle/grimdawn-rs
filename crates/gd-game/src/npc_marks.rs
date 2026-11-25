@@ -8,7 +8,7 @@
 //!   ([`gd_story::story::Story::conversation_punctuation`]) at most every 500 ms
 //!   (its own timer, `Character::UpdateSelf` adds the frame time; it resets
 //!   only when a conversation exists) and attaches the FX record
-//!   [`Punctuation::record`]: 1 `npcexclaimationpoint01`, 2
+//!   [`punctuation_record`]: 1 `npcexclaimationpoint01`, 2
 //!   `npcquestionmark02` (grey texture), 4 `npcquestionmark01` (gold), 6
 //!   `npcconversationmark02`. For 0 / 5 (nothing / a heard speech) the record's `punctuation`
 //!   string (`Character::Load` field) wins when it is not empty; else a heard
@@ -63,14 +63,14 @@ pub fn punctuation_record(p: Punctuation) -> Option<&'static str> {
 /// The mark record `UpdatePunctuation` picks: `p` is the conversation's
 /// punctuation (`None` when the character has no conversation), `own` the
 /// NPC record's `punctuation` field.
-pub fn mark_record(p: Option<Punctuation>, own: &str) -> Option<String> {
+pub fn mark_record(p: Option<Punctuation>, own: &str) -> Option<&str> {
     if let Some(r) = p.and_then(punctuation_record) {
-        return Some(r.to_owned());
+        return Some(r);
     }
     if !own.is_empty() {
-        return Some(own.to_owned());
+        return Some(own);
     }
-    (p == Some(Punctuation::Speech)).then(|| "records/fx/ui/npcconversationmark01.dbr".to_owned())
+    (p == Some(Punctuation::Speech)).then_some("records/fx/ui/npcconversationmark01.dbr")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -99,15 +99,15 @@ pub fn update_npc_marks(
         let own = data
             .db
             .get(record)
-            .and_then(|r| r.str("punctuation").map(str::to_owned))
-            .unwrap_or_default();
+            .and_then(|r| r.str("punctuation"))
+            .unwrap_or("");
         let p = object
             .and_then(|o| o.conversation.as_deref())
             .map(|c| story.conversation_punctuation(c));
-        let want = mark_record(p, &own).map(NpcMark);
-        if want.as_ref() != current {
+        let want = mark_record(p, own);
+        if want != current.map(|m| m.0.as_str()) {
             match want {
-                Some(m) => commands.entity(e).try_insert(m),
+                Some(m) => commands.entity(e).try_insert(NpcMark(m.to_owned())),
                 None => commands.entity(e).try_remove::<NpcMark>(),
             };
         }

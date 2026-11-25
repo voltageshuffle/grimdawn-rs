@@ -311,12 +311,13 @@ pub(super) fn codex_pages(
             ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), c);
         }
     };
-    let hover_node = |ui: &mut Ui, key: String, y: f32, h: f32| {
+    // A tree row's hit rect and hover key for `clicks`, and its hover shade.
+    let hover_node = |ui: &mut Ui, layout: &mut JournalLayout, key: String, y: f32, h: f32| {
         if let Some((img, _)) = node.clone() {
             let e = ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), hover_color);
             let shown = journal.hover.as_deref() == Some(key.as_str());
             ui.commands.entity(e).insert((
-                RowHover(key),
+                RowHover(key.clone()),
                 if shown {
                     Visibility::Inherited
                 } else {
@@ -324,21 +325,19 @@ pub(super) fn codex_pages(
                 },
             ));
         }
+        layout.hovers.push((URect::new(tx, y, tree_w, h), key));
     };
     for g in groups {
         let key = format!("lore:{g}");
         let open = !journal.collapsed.contains(&key);
-        hover_node(ui, format!("g{key}"), y, gmajor);
-        layout
-            .group_rows
-            .push((URect::new(tx, y, tree_w, gmajor), key.clone()));
+        hover_node(ui, &mut *layout, format!("g{key}"), y, gmajor);
         let mut x = tx;
         if let Some((img, s)) = expand.get(open as usize).cloned().flatten() {
             let (w, h) = (ui.sc(s.x as f32), ui.sc(s.y as f32));
             let r = URect::new(x, y + (gmajor * 0.5 - h * 0.5).round(), w, h);
             ui.quad(img, r, None, Color::WHITE);
             x += (w * 1.5).round();
-            layout.groups.push((r, key.clone()));
+            layout.groups.push((r, key));
         }
         let glh = ui.line_height(&group_style);
         ui.text_line(
@@ -354,7 +353,7 @@ pub(super) fn codex_pages(
         for n in list.iter().filter(|n| n.group == g) {
             let sel = selected.as_ref() == Some(&n.rec);
             shade(ui, sel, sel_color, y, minor);
-            hover_node(ui, format!("n{}", n.rec), y, minor);
+            hover_node(ui, &mut *layout, format!("n{}", n.rec), y, minor);
             let style = if sel { &selected_style } else { &note_style };
             let lh = ui.line_height(style);
             ui.text_line(
@@ -601,8 +600,8 @@ pub(super) fn help_pages(
                 sel_color,
             );
         }
+        let key = format!("n{rec}");
         if let Some((img, _)) = node.clone() {
-            let key = format!("n{rec}");
             let e = ui.quad_stretch(
                 img,
                 URect::new(tx + lpad, y, tree_w - rpad, minor),
@@ -610,7 +609,7 @@ pub(super) fn help_pages(
             );
             let shown = journal.hover.as_deref() == Some(key.as_str());
             ui.commands.entity(e).insert((
-                RowHover(key),
+                RowHover(key.clone()),
                 if shown {
                     Visibility::Inherited
                 } else {
@@ -618,6 +617,7 @@ pub(super) fn help_pages(
                 },
             ));
         }
+        layout.hovers.push((URect::new(tx, y, tree_w, minor), key));
         let style = if on { &selected_style } else { &entry_style };
         let lh = ui.line_height(style);
         ui.text_line(

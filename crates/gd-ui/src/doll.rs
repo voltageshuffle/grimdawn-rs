@@ -159,17 +159,6 @@ fn target_image(w: u32, h: u32) -> Image {
 /// Draws `view`'s doll over `rect` (screen px) and records the view's
 /// `UISceneView` record for the doll's camera.
 pub fn panel(ui: &mut gd_ui_kit::Ui, view: DollView, record: &str, rect: URect) {
-    panel_with(ui, view, record, rect, None);
-}
-
-/// [`panel`] for a character that is not the player: (female, item looks).
-pub fn panel_with(
-    ui: &mut gd_ui_kit::Ui,
-    view: DollView,
-    record: &str,
-    rect: URect,
-    preset: Option<(bool, Vec<String>)>,
-) {
     let e = ui.commands.spawn(ui.node(rect)).id();
     ui.commands.entity(ui.root).add_child(e);
     let record = record.to_owned();
@@ -209,7 +198,6 @@ pub fn panel_with(
         d.shown = true;
         d.rect = Some(rect);
         d.record = record;
-        d.preset = preset;
         if fresh.is_some() {
             d.target = fresh;
         }

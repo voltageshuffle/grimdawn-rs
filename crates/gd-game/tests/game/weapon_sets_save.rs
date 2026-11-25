@@ -3,7 +3,6 @@
 //! order.
 use gd_formats::save::gdc::{Gdc, HotSlot};
 use gd_formats::save::item::Item;
-use gd_game::save::SaveRequest;
 use gd_game::testing::{TempDir, TestGame};
 use gd_game::weapon_sets::SwapWeapons;
 use gd_game_core::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT};
@@ -52,21 +51,14 @@ fn both_sets_save_and_load() {
     let left = slot_skill(&src, SLOT_LEFT);
 
     let mut g = TestGame::with_save(&path).expect("the game is installed");
-    let out = g.save_dir();
-    let p = g.spawn_player();
+    g.spawn_player();
     g.steps(2);
     g.app
         .world_mut()
         .write_message(SwapWeapons { from_window: true });
     g.steps(3);
     assert!(g.app.world().resource::<Inventory>().alternate);
-    g.app.world_mut().write_message(SaveRequest);
-    g.step();
-    let _ = p;
-    let written = out
-        .join("main")
-        .join(format!("_{}", src.header.name))
-        .join("player.gdc");
+    let written = g.save_now();
     let saved = Gdc::parse(&std::fs::read(&written).expect("player.gdc written")).unwrap();
     let d = saved.inventory.data.as_ref().unwrap();
     assert_eq!(d.use_alternate, 1);

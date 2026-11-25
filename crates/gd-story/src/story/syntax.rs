@@ -22,6 +22,11 @@ pub fn to_lua51(src: &str) -> String {
                 while i < b.len() && b[i] != c && b[i] != b'\n' {
                     if b[i] == b'\\' {
                         i += 1;
+                        // An escaped line break (`\` at the end of a line) continues the
+                        // string; a CRLF counts as one break, as in the Lua lexer.
+                        if b.get(i) == Some(&b'\r') && b.get(i + 1) == Some(&b'\n') {
+                            i += 1;
+                        }
                     }
                     i += 1;
                 }

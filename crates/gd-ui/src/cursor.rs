@@ -72,7 +72,14 @@ impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameCursor>().add_systems(
             PostUpdate,
-            (choose, (os_pointer, draw))
+            (
+                choose,
+                (
+                    os_pointer,
+                    // The sprite stands in only for the `GD_HOVER` hook (module doc).
+                    draw.run_if(|hooks: Res<gd_game_core::hooks::Hooks>| hooks.ui.hover.is_some()),
+                ),
+            )
                 .chain()
                 .before(bevy::window::CursorSystems::Update)
                 .before(bevy::ui::UiSystems::Prepare),
@@ -180,6 +187,7 @@ fn choose(
     pets: Res<crate::state::pets::PetSelection>,
     trade: Res<crate::state::trade::Trade>,
     trade_layout: Res<crate::state::trade::TradeLayout>,
+    // Option: none outside a session (the cursor is chosen in the main menu too).
     inv: Option<Res<gd_game_core::inventory::Inventory>>,
     hud: Res<super::HudValues>,
     options: Res<gd_game_core::options::GameOptions>,
@@ -187,7 +195,12 @@ fn choose(
     pause: Res<gd_game_core::pause::GamePause>,
     mut refused: Local<Option<(Item, bool)>>,
     mut cursor: ResMut<GameCursor>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    // A new session may mount a mod that answers the same item otherwise.
+    if fresh.begun() {
+        *refused = None;
+    }
     let gold = hud.gold;
     let cannot_afford = trade
         .hover
@@ -196,19 +209,17 @@ fn choose(
         .is_some_and(|price| price > gold);
     // The ascension slot under a held item (`Trade::accepts`, cached per item).
     let scale = window.single().map_or(1.0, |w| w.scale_factor());
-    let over_slot = Some(&*trade)
-        .filter(|t| matches!(t.open, Some(gd_game::trade::TradeOpen::Ascension { .. })))
-        .and(trade_layout.slot)
+    let over_slot = matches!(
+        trade.open,
+        Some(gd_game::trade::TradeOpen::Ascension { .. })
+    ) && trade_layout
+        .slot
         .zip(point.0)
         .is_some_and(|(r, p)| gd_ui_kit::contains(&r, p * scale));
-    let no_placement = match (
-        over_slot,
-        inv.as_ref().and_then(|i| i.held.as_ref()),
-        Some(&*trade),
-    ) {
-        (true, Some(h), Some(t)) => {
+    let no_placement = match inv.as_ref().and_then(|i| i.held.as_ref()) {
+        Some(h) if over_slot => {
             if refused.as_ref().is_none_or(|(i, _)| i != h) {
-                *refused = Some((h.clone(), t.accepts(h, &data).is_err()));
+                *refused = Some((h.clone(), trade.accepts(h, &data).is_err()));
             }
             refused.as_ref().is_some_and(|r| r.1)
         }
@@ -312,9 +323,10 @@ fn cursor_image(data: &gd_game_core::data::GameData, path: &str) -> Option<Image
     ))
 }
 
-/// One sprite: its image follows [`GameCursor`], its node the pointer. `shown` is the cursor the sprite's image
-/// was set for, so it is forgotten whenever a new sprite is spawned (after an Exit to Main Menu that despawned a
-/// sprite spawned inside the session, i.e. after `exit::capture_baseline`).
+/// The `GD_HOVER` stand-in (only with that hook): one sprite, its image follows [`GameCursor`], its node the
+/// pointer. `shown` is the cursor the sprite's image was set for, so it is forgotten whenever a new sprite is
+/// spawned (after an Exit to Main Menu that despawned a sprite spawned inside the session, i.e. after
+/// `exit::capture_baseline`).
 #[allow(clippy::too_many_arguments)]
 fn draw(
     mut commands: Commands,

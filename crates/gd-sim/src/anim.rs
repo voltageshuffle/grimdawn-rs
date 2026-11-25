@@ -36,7 +36,7 @@ use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
 use gd_formats::msh::{BoneSet, Coords, Mesh};
 use parking_lot::Mutex;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 /// `GAME::AnimationSet_Type`, in engine order (one name per [`AnimType::ALL`]
 /// entry; the length is checked by the type).
@@ -252,8 +252,14 @@ pub struct KeySpec {
 /// The 241 key specs of one animation set, exactly as the engine loaders
 /// list them (including their spelling quirks: `IdleTranAnimSpeed`,
 /// `BuffSelfSpeed1`, `SpellAttackAnimWeight` without "1", and the
-/// `TrabsformAnimSpeed` typo in the sHanded loaders).
-pub fn set_keys(hand: HandState) -> Vec<KeySpec> {
+/// `TrabsformAnimSpeed` typo in the sHanded loaders). Built once per hand state.
+pub fn set_keys(hand: HandState) -> &'static [KeySpec] {
+    static KEYS: [OnceLock<Vec<KeySpec>>; HandState::COUNT] =
+        [const { OnceLock::new() }; HandState::COUNT];
+    KEYS[hand as usize].get_or_init(|| build_keys(hand))
+}
+
+fn build_keys(hand: HandState) -> Vec<KeySpec> {
     use AnimType as T;
     let p = hand.prefix();
     let mut v = Vec::with_capacity(241);
@@ -585,13 +591,13 @@ impl AnimSet {
     /// Loads the set for `hand` from an animation-table record (or a
     /// character record with inline keys). `exists` filters out missing
     /// `.anm` files (the engine's AddAnimation fails for those).
-    pub fn load(rec: &RecordIndex, hand: HandState, exists: impl Fn(&str) -> bool) -> Self {
+    pub fn load(rec: &Record, hand: HandState, exists: impl Fn(&str) -> bool) -> Self {
         let mut slots = vec![
             AnimSlot {
                 blend_ms: 200.0,
                 ..Default::default()
             };
-            52
+            AnimType::COUNT
         ];
         let mut specials: HashMap<String, AnimSlot> = HashMap::default();
         for k in set_keys(hand) {
@@ -658,35 +664,6 @@ impl AnimSet {
         } else {
             s.entries.first()
         }
-    }
-}
-
-/// Case-insensitive key lookup over a decoded record.
-pub struct RecordIndex<'a> {
-    map: HashMap<String, &'a [gd_formats::arz::RawValue]>,
-}
-
-impl<'a> RecordIndex<'a> {
-    pub fn new(rec: &'a Record) -> Self {
-        Self {
-            map: rec
-                .fields
-                .iter()
-                .map(|(k, v)| (k.to_ascii_lowercase(), v.as_slice()))
-                .collect(),
-        }
-    }
-    fn first(&self, key: &str) -> Option<&gd_formats::arz::RawValue> {
-        self.map.get(&key.to_ascii_lowercase())?.first()
-    }
-    pub fn str(&self, key: &str) -> Option<&'a str> {
-        match self.map.get(&key.to_ascii_lowercase())?.first()? {
-            gd_formats::arz::RawValue::Str(s) if !s.is_empty() => Some(s),
-            _ => None,
-        }
-    }
-    pub fn f32(&self, key: &str) -> Option<f32> {
-        self.first(key)?.as_f32()
     }
 }
 

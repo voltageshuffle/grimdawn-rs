@@ -187,15 +187,20 @@ fn warm_fade_pipelines(
             let Ok((mesh, mat, skinned)) = parts.get(part.entity) else {
                 continue;
             };
-            let Some(m) = materials.get(&mat.0).cloned() else {
+            let Some(m) = materials.get(&mat.0) else {
                 continue;
             };
             let wind = m.params.wind.y != 0.0;
-            for pass in [FadePass::Depth, FadePass::Colour] {
+            // The variants not queued yet; the material is cloned only for those.
+            let new = [FadePass::Depth, FadePass::Colour].map(|pass| {
                 let states = fade_states(m.states, pass);
-                if !warm.keys.insert((states, wind)) {
-                    continue;
-                }
+                warm.keys.insert((states, wind)).then_some(states)
+            });
+            if new.iter().all(Option::is_none) {
+                continue;
+            }
+            let m = m.clone();
+            for states in new.into_iter().flatten() {
                 let mut dummy = commands.spawn((
                     Mesh3d(mesh.0.clone()),
                     MeshMaterial3d(materials.add(GdMaterial {

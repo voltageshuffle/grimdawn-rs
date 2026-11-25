@@ -110,7 +110,7 @@
 //! completion grants opens others), its art flashes white once (`constellationFlashPulse`, 350 ms
 //! in + 350 ms out, the [`ConstFlash`] overlays); completing a constellation plays
 //! `constellationCompleteSound`. [`devotion_fx`] detects both transitions against the previous
-//! taken state (only while the window is open; opening initialise the snapshot without flashing).
+//! taken state (only while the window is open; opening initialises the snapshot without flashing).
 //!
 //! First-run star pulse phase (window loader `DevotionWindow::Load`, update `DevotionWindow::Update`,
 //! Engine.dll `ColorPulse::ColorPulse`): the 15 glow slots are built pulsing with no star,
@@ -238,7 +238,8 @@ pub struct DevotionLayout {
     pub focus_art: Vec<((usize, usize), Handle<Image>, URect)>,
     pub focus_inv: f32,
     /// `DevotionView::version` of the build that made this layout: the pulse sprites of an older build (still shown for a
-    /// frame or two until the new window root replaces the old one) are hidden instead of placed by this layout.
+    /// frame or two until the new window root replaces the old one) keep their last place instead of being placed by
+    /// this layout.
     pub build: u64,
 }
 
@@ -270,16 +271,15 @@ fn is_power(
     })
 }
 
-/// Fills [`DevotionView::powers`] for every star skill (static game data; the rebuild reads it).
+/// Fills [`DevotionView::powers`] for every star skill (static game data; the rebuild reads it). The
+/// session's end resets the view (`ui::reset_session`), a mod change clears the map
+/// ([`clear_is_power_on_mod_change`]).
 fn classify_powers(
     mut view: ResMut<DevotionView>,
+    // Option: created with the player (`gd_game::devotion::init_devotion`).
     state: Option<Res<DevotionState>>,
     data: Res<gd_game_core::data::GameData>,
-    mut fresh: gd_game_core::session::NewSession,
 ) {
-    if fresh.begun() {
-        view.powers.clear();
-    }
     if view.powers.is_empty()
         && let Some(state) = state
     {
@@ -304,8 +304,7 @@ fn clear_is_power_on_mod_change(
 }
 
 /// The hovered star's `InFocus` bitmap (`DevotionStar::Render`: on top of the star, additive), moved
-/// with the pointer instead of rebuilding the window (a rebuild of the whole map per hover change was
-/// the cost of moving the cursor over the stars).
+/// with the pointer instead of rebuilding the window.
 fn focus(
     mut commands: Commands,
     view: Res<DevotionView>,
@@ -382,8 +381,7 @@ struct SidebarPanel {
 #[derive(Component)]
 struct SidebarHandle(bool);
 
-/// Moves the sidebar container with the slide progress and shows the matching tab handle
-/// (the visibility rule of the old per-frame rebuild's `tab_key`).
+/// Moves the sidebar container with the slide progress and shows the matching tab handle.
 fn sidebar_live(
     view: Res<DevotionView>,
     mut panels: Query<(&SidebarPanel, &mut Node)>,
@@ -605,8 +603,8 @@ fn start_view(hooks: Res<gd_game_core::hooks::Hooks>, mut view: ResMut<DevotionV
 }
 
 /// What the tooltip shows: (constellation, star, devotion version, points, screen, the reclaim mode's
-/// (aether held, money, refunds made)), and the skill book it was drawn from (compared by reference, copied only
-/// when the tooltip is redrawn).
+/// (aether held, money, refunds made)), and the skill book it was drawn from (compared by value, copied only when
+/// the tooltip is redrawn).
 type TipKey = (
     usize,
     Option<usize>,
@@ -625,6 +623,7 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     panels: Res<super::UiPanels>,
     values: Res<HudValues>,
+    // Option: created with the player (`gd_game::devotion::init_devotion`).
     state: Option<Res<DevotionState>>,
     view: Res<DevotionView>,
     mut canvas: super::tip::TipCanvas,
@@ -642,10 +641,10 @@ fn tooltip(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     // `GD_DEVOTION_HOVER` (hooks.rs) fakes a hover.
-    let faked = hooks.ui.devotion_hover.clone().and_then(|n| {
+    let faked = hooks.ui.devotion_hover.as_deref().and_then(|n| {
         state
             .as_ref()
-            .and_then(|s| s.data.locate(&n))
+            .and_then(|s| s.data.locate(n))
             .map(|(c, st)| {
                 (
                     c,
@@ -836,9 +835,10 @@ fn pulse_stars(
     mut cache: ResMut<AdditiveCache>,
     mut mats: ResMut<Assets<AdditiveMaterial>>,
 ) {
-    let Some((image, off, size, inv)) = layout.pulse_art.clone() else {
+    let Some((image, off, size, inv)) = &layout.pulse_art else {
         return;
     };
+    let (off, size, inv) = (*off, *size, *inv);
     let dt = time.delta_secs() * 1000.0;
     // The first-run empty pulse (module doc): the slots run one pulse with no star before any
     // attaches; the sprites stay hidden meanwhile. Only advances while the window is open (the
@@ -847,13 +847,13 @@ fn pulse_stars(
         pulses.warmup -= dt;
         for (sp, _node, mut vis, _e) in &mut sprites {
             if sp.1 == layout.build {
-                *vis = Visibility::Hidden;
+                vis.set_if_neq(Visibility::Hidden);
             }
         }
         return;
     }
     let n = ((layout.pulse_stars.len() as f32 * 0.2) as usize).clamp(1, PULSE_SLOTS);
-    for i in 0..n.min(PULSE_SLOTS) {
+    for i in 0..n {
         let mut slot = pulses.slots[i];
         let gone = slot.star.is_some_and(|s| !layout.pulse_stars.contains(&s));
         if slot.star.is_none() || gone || slot.played >= 2.0 * PULSE_TIME {
@@ -900,22 +900,24 @@ fn pulse_stars(
             rect,
             sp.0 < n && slot.delay <= 0.0 && slot.played < 2.0 * PULSE_TIME,
         ) else {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         };
         let t = slot.played / PULSE_TIME;
         let k = if t < 1.0 { t } else { 2.0 - t };
-        let col: Vec<f32> = (0..4)
-            .map(|j| PULSE_A[j] + (PULSE_B[j] - PULSE_A[j]) * k)
-            .collect();
-        node.left = Val::Px((r.x + off.x) * inv);
-        node.top = Val::Px((r.y + off.y) * inv);
-        node.width = Val::Px(size.x * inv);
-        node.height = Val::Px(size.y * inv);
-        *vis = Visibility::Inherited;
+        let col: [f32; 4] = std::array::from_fn(|j| PULSE_A[j] + (PULSE_B[j] - PULSE_A[j]) * k);
+        let (left, top) = (Val::Px((r.x + off.x) * inv), Val::Px((r.y + off.y) * inv));
+        let (width, height) = (Val::Px(size.x * inv), Val::Px(size.y * inv));
+        if node.left != left || node.top != top || node.width != width || node.height != height {
+            node.left = left;
+            node.top = top;
+            node.width = width;
+            node.height = height;
+        }
+        vis.set_if_neq(Visibility::Inherited);
         let h = cache.get(
             &mut mats,
-            &image,
+            image,
             Color::srgba(col[0], col[1], col[2], col[3]),
         );
         commands.entity(e).try_insert(MaterialNode(h));
@@ -932,9 +934,11 @@ fn devotion_fx(
     panels: Res<super::UiPanels>,
     layout: Res<DevotionLayout>,
     mut view: ResMut<DevotionView>,
+    // Option: created with the player (`gd_game::devotion::init_devotion`).
     state: Option<Res<DevotionState>>,
+    // Option: created with the player (`gd_game::reclamation::init_reclamation`).
     reclaim: Option<Res<gd_game::reclamation::SkillReclamation>>,
-    loadouts: Query<&gd_game_core::player::Loadout, With<Player>>,
+    loadouts: Query<Ref<gd_game_core::player::Loadout>, With<Player>>,
     data: Res<gd_game_core::data::GameData>,
     mut highlights: Query<(&ConstHighlight, Entity)>,
     mut flashes: Query<(&ConstFlash, &mut Visibility, Entity)>,
@@ -968,13 +972,11 @@ fn devotion_fx(
             (view.sidebar - step).max(target)
         };
     }
-    let (Some(state), Ok(loadout)) = (state.as_deref(), loadouts.single()) else {
+    let (Some(state), Ok(loadout)) = (state.as_ref(), loadouts.single()) else {
         return;
     };
     let d = &state.data;
     let n = d.list.len();
-    let taken = |s: &str| loadout.skills.level(s) > 0;
-    let aff = d.affinity(&taken);
     let Some(m) = data.db.get(MASTER) else {
         return;
     };
@@ -984,50 +986,52 @@ fn devotion_fx(
             .and_then(|p| data.db.get(p))
             .map(ColorPulse::from_record);
     }
-    let flash_rec = m
-        .str("constellationFlashPulse")
-        .and_then(|p| data.db.get(p));
     if view.fx.prev_avail.len() != n {
         view.fx.prev_avail = vec![false; n];
         view.fx.prev_complete = vec![false; n];
         view.fx.flash_on = vec![false; n];
-        view.fx.flash = match &flash_rec {
+        view.fx.flash = match m
+            .str("constellationFlashPulse")
+            .and_then(|p| data.db.get(p))
+        {
             Some(r) => (0..n).map(|_| ColorPulse::from_record(r)).collect(),
             None => Vec::new(),
         };
         view.fx.ready = false;
     }
     // The transitions a star click causes (`DevotionWindow::HandleStarClick` / `DevotionConstellation::OnCompleted`):
-    // newly available -> flash; newly complete -> the completion sound.
-    let avail_now: Vec<bool> = (0..n).map(|ci| d.available(ci, &aff)).collect();
-    let complete_now: Vec<bool> = (0..n).map(|ci| d.complete(ci, &taken)).collect();
-    if !view.fx.ready {
+    // newly available -> flash; newly complete -> the completion sound. The taken state is the loadout's skills
+    // over the devotion data: unchanged since the last snapshot, nothing can have moved.
+    if !view.fx.ready || state.is_changed() || loadout.is_changed() {
+        let taken = |s: &str| loadout.skills.level(s) > 0;
+        let aff = d.affinity(&taken);
+        let avail_now: Vec<bool> = (0..n).map(|ci| d.available(ci, &aff)).collect();
+        let complete_now: Vec<bool> = (0..n).map(|ci| d.complete(ci, &taken)).collect();
+        if view.fx.ready {
+            let (flash, done) = transitions(
+                &view.fx.prev_avail,
+                &view.fx.prev_complete,
+                &avail_now,
+                &complete_now,
+            );
+            for ci in flash {
+                if view.fx.flash.len() == n {
+                    view.fx.flash[ci].reset();
+                    view.fx.flash_on[ci] = true;
+                }
+            }
+            for _ in done {
+                if let Some(pak) = m.str("constellationCompleteSound") {
+                    sound.write(gd_game_core::visuals::PlaySound {
+                        pak: pak.to_owned(),
+                        at: None,
+                    });
+                }
+            }
+        }
         view.fx.prev_avail = avail_now;
         view.fx.prev_complete = complete_now;
         view.fx.ready = true;
-    } else {
-        let (flash, done) = transitions(
-            &view.fx.prev_avail,
-            &view.fx.prev_complete,
-            &avail_now,
-            &complete_now,
-        );
-        for ci in flash {
-            if view.fx.flash.len() == n {
-                view.fx.flash[ci].reset();
-                view.fx.flash_on[ci] = true;
-            }
-        }
-        for _ in done {
-            if let Some(pak) = m.str("constellationCompleteSound") {
-                sound.write(gd_game_core::visuals::PlaySound {
-                    pak: pak.to_owned(),
-                    at: None,
-                });
-            }
-        }
-        view.fx.prev_avail = avail_now;
-        view.fx.prev_complete = complete_now;
     }
     // The shared highlight pulse tints every partly-taken overlay (`DevotionWindow::Update`).
     let hl = view.fx.const_pulse.as_mut().map(|p| {
@@ -1057,9 +1061,9 @@ fn devotion_fx(
         if active {
             let mh = cache.get(&mut mats, &f.image, view.fx.flash[f.ci].color());
             commands.entity(e).try_insert(MaterialNode(mh));
-            *vis = Visibility::Inherited;
+            vis.set_if_neq(Visibility::Inherited);
         } else {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
         }
     }
 }
@@ -1378,6 +1382,7 @@ pub fn build(
     // Celestial powers get the `effectBgBitmap` glow first (alpha 0.8 when the affinities are met,
     // else 0.5; `DevotionWindow::RenderMap`).
     let glow = mf("effectBgBitmap");
+    let bound_off_bmp = mf("disabledBitmap");
     // The search query as the engine builds it (`DevotionWindow::Update`): trimmed of spaces and braces, lowercased.
     let query = view
         .search
@@ -1428,17 +1433,18 @@ pub fn build(
             ) {
                 layout.hits.push((DevHit::Star(ci, si), r));
             }
+            // The skill a celestial power is bound to.
+            let bound = state
+                .bindings
+                .iter()
+                .find(|b| power && b.power.eq_ignore_ascii_case(&s.skill))
+                .map(|b| b.skill.as_str());
             // A taken celestial power shows the icon of the skill it is bound to, 0.75 x its size, centred on the star
             // (`DevotionStar::Render`).
-            if power
-                && is_taken
-                && let Some(skill) = state
-                    .bindings
-                    .iter()
-                    .find(|b| b.power.eq_ignore_ascii_case(&s.skill))
-                    .map(|b| b.skill.clone())
+            if is_taken
+                && let Some(skill) = bound
                 && let Some(path) =
-                    super::potions::skill_icon(ui.data, &skill, values.skills.level(&skill))
+                    super::potions::skill_icon(ui.data, skill, values.skills.level(skill))
                 && let Some((h, isz)) = ui.image(&path)
             {
                 let (cx, cy) = (origin.x + s.pos[0] + 32.0, origin.y + s.pos[1] + 32.0);
@@ -1458,14 +1464,9 @@ pub fn build(
             // `DevotionWindow::RenderMap` (op 3 stars): when the bound skill exists and its level is 0, the
             // `disabledBitmap` (32 x 32, default blend) is drawn at the star's top-left + its bitmapPosition x zoom
             // (not size-scaled).
-            if power
-                && let Some(skill) = state
-                    .bindings
-                    .iter()
-                    .find(|b| b.power.eq_ignore_ascii_case(&s.skill))
-                    .map(|b| b.skill.clone())
-                && values.skills.level(&skill) == 0
-                && let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&mf("disabledBitmap"))
+            if let Some(skill) = bound
+                && values.skills.level(skill) == 0
+                && let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&bound_off_bmp)
                 && let Some((h, isz)) = ui.image(&bitmap)
             {
                 ui.quad(
@@ -2092,6 +2093,7 @@ pub fn clicks(
     mut panels: ResMut<super::UiPanels>,
     layout: Res<DevotionLayout>,
     mut capture: ResMut<UiCapture>,
+    // Option: created with the player (`gd_game::devotion::init_devotion`).
     state: Option<Res<DevotionState>>,
     mut view: ResMut<DevotionView>,
     (casters, loadouts, data, pause, journal_layout): (
@@ -2102,10 +2104,19 @@ pub fn clicks(
         Res<super::quests::JournalLayout>,
     ),
     mut requests: DevotionRequests,
-    (mut drag, mut pressed): (Local<Option<Vec2>>, Local<Option<(usize, usize)>>),
+    (mut drag, mut pressed, mut fresh): (
+        Local<Option<Vec2>>,
+        Local<Option<(usize, usize)>>,
+        gd_game_core::session::NewSession,
+    ),
     mut was_open: Local<bool>,
     mut hooked: Local<bool>,
 ) {
+    if fresh.begun() {
+        *drag = None;
+        *pressed = None;
+        *was_open = false;
+    }
     // The window hid: its changes are final (`DevotionWindow::SetVisible` / `DevotionWindow::ClearPendingChanges`).
     if *was_open && !panels.devotion {
         requests.commit.write(gd_game::devotion::CommitDevotionUndo);
@@ -2121,6 +2132,7 @@ pub fn clicks(
     };
     if !panels.devotion {
         *drag = None;
+        *pressed = None;
         return;
     }
     let (Ok(win), Some(_)) = (window.single(), layout.window) else {
@@ -2493,8 +2505,15 @@ fn search_typing(
     mut clipboard: ResMut<crate::state::trade::Clipboard>,
     mut mods: Local<(bool, bool)>,
 ) {
-    use bevy::input::keyboard::{Key, KeyCode as K};
+    use bevy::input::keyboard::{Key, KeyCode as K, KeyboardInput};
     use gd_sim::edit::EditKey;
+    // The held modifiers follow every key message, read or not by the box (a release while the box is inactive
+    // must not leave Shift / Ctrl stuck).
+    let track = |mods: &mut (bool, bool), e: &KeyboardInput| match e.key_code {
+        K::ShiftLeft | K::ShiftRight => mods.0 = e.state.is_pressed(),
+        K::ControlLeft | K::ControlRight => mods.1 = e.state.is_pressed(),
+        _ => {}
+    };
     if !panels.devotion {
         if !view.search.is_empty() || view.typing {
             view.search.clear();
@@ -2502,23 +2521,26 @@ fn search_typing(
             view.edit = Default::default();
             view.version += 1;
         }
-        typed.clear();
+        for e in typed.read() {
+            track(&mut mods, e);
+        }
         return;
     }
-    if !view.typing {
-        typed.clear();
-        return;
-    }
-    let Some(rec) = data
-        .db
-        .get(MASTER)
-        .and_then(|m| m.str("searchBox").map(str::to_owned))
-        .and_then(|p| data.db.get(&p))
-    else {
-        typed.clear();
+    let rec = if view.typing {
+        data.db
+            .get(MASTER)
+            .and_then(|m| m.str("searchBox"))
+            .and_then(|p| data.db.get(p))
+    } else {
+        None
+    };
+    let Some(rec) = rec else {
+        for e in typed.read() {
+            track(&mut mods, e);
+        }
         return;
     };
-    let style = rec.str("Style").unwrap_or_default().to_owned();
+    let style = rec.str("Style").unwrap_or_default();
     let max = rec.f32("Width").unwrap_or(0.0) - 10.0;
     let mut text = view.search.clone();
     let mut edit = view.edit.clone();
@@ -2527,24 +2549,14 @@ fn search_typing(
     let fits = |t: &str| {
         let mut m = measure.borrow_mut();
         let (f, a) = &mut *m;
-        f.text_width(&data, a, &style, 1.0, t) <= max
+        f.text_width(&data, a, style, 1.0, t) <= max
     };
     edit.tick(&mut text, time.delta_secs() * 1000.0, &fits);
     for e in typed.read() {
+        track(&mut mods, e);
         if !e.state.is_pressed() {
-            if matches!(e.key_code, K::ShiftLeft | K::ShiftRight) {
-                mods.0 = false;
-            }
-            if matches!(e.key_code, K::ControlLeft | K::ControlRight) {
-                mods.1 = false;
-            }
             edit.release();
             continue;
-        }
-        match e.key_code {
-            K::ShiftLeft | K::ShiftRight => mods.0 = true,
-            K::ControlLeft | K::ControlRight => mods.1 = true,
-            _ => {}
         }
         if e.repeat {
             continue;

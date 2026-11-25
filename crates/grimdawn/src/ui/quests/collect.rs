@@ -19,7 +19,15 @@ pub fn collect(
     ),
     mut order: Local<Vec<usize>>,
     mut seen: Local<Option<u64>>,
-    mut inputs: Local<Option<(u64, u64, Option<bevy::ecs::change_detection::Tick>, usize)>>,
+    mut inputs: Local<
+        Option<(
+            u64,
+            u64,
+            Option<bevy::ecs::change_detection::Tick>,
+            usize,
+            u64,
+        )>,
+    >,
     mut view: ResMut<QuestView>,
 ) {
     if fresh.begun() {
@@ -34,24 +42,26 @@ pub fn collect(
         let Some(world) = world else { return };
         *order = log.defs.repository_order(&world.map.quests);
     }
-    // The log's revision (`QuestLog::revision`) and the item counts' sources: nothing the view shows can change
-    // without one of them, so the hash below (a walk of every task and objective) runs only when one moves.
+    // The log's revision (`QuestLog::revision`), the item counts' sources and the tags generation (a language swap
+    // re-localises the texts): nothing the view shows can change without one of them, so the hash below (a walk of
+    // every task and objective) runs only when one moves.
     let key = (
         log.revision,
         inv.as_ref().map_or(0, |i| i.version),
         stash.as_ref().map(|s| s.last_changed()),
         story.difficulty(),
+        fonts.generation,
     );
     if *inputs == Some(key) {
         return;
     }
     *inputs = Some(key);
     let d = story.difficulty();
-    // The view is rebuilt (many strings) only when what it shows changed: a hash of the log's task / objective states and
-    // counters, the only inputs besides the fixed texts. The counts (`objective_progress`, an inventory and stash scan
-    // per item objective) only of the quests the view lists: a task in progress or done.
+    // The view is rebuilt (many strings) only when what it shows changed: a hash of the tags generation and the log's
+    // task / objective states and counters, the only inputs besides the fixed texts. The counts (`objective_progress`,
+    // an inventory and stash scan per item objective) only of the quests the view lists: a task in progress or done.
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    d.hash(&mut h);
+    (d, fonts.generation).hash(&mut h);
     for &qi in order.iter() {
         let tasks = &log.rt[qi].tasks;
         let shown = tasks

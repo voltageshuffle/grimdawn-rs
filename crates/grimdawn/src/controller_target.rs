@@ -278,18 +278,11 @@ fn targeting(
         a.and_then(|a| story.as_ref()?.entities.get(a.0))
             .is_none_or(|o| o.in_world && o.available_for_conversation)
     };
-    let mut list: Vec<(Candidate, MarkerFacts)> = Vec::new();
-    let mut add = |entity: Entity, pos: Vec3, kind: Kind, record: &str, lift: f32| {
+    // The candidates with their record and marker lift (the marker's facts are built for the pick only).
+    let mut list: Vec<(Candidate, &str, f32)> = Vec::new();
+    let mut add = |entity: Entity, pos: Vec3, kind: Kind, record, lift: f32| {
         if near(pos) {
-            let enemy = matches!(kind, Kind::Foe { .. } | Kind::Breakable);
-            list.push((
-                Candidate { entity, pos, kind },
-                MarkerFacts {
-                    record: record.to_owned(),
-                    lift,
-                    enemy,
-                },
-            ));
+            list.push((Candidate { entity, pos, kind }, record, lift));
         }
     };
     let r = pcb.radius;
@@ -350,7 +343,11 @@ fn targeting(
     out.write(record);
     let marker = found
         .filter(|_| !matches!(p, Pick::Item(_)))
-        .map(|c| c.1.clone());
+        .map(|&(c, record, lift)| MarkerFacts {
+            record: record.to_owned(),
+            lift,
+            enemy: matches!(c.kind, Kind::Foe { .. } | Kind::Breakable),
+        });
     current.set_if_neq(ControllerPick(p, marker));
 }
 
@@ -563,7 +560,7 @@ fn marker(
     objects: Query<&GlobalTransform>,
     mut roots: Query<(Entity, &mut Node, &mut UiTransform), With<MarkerRoot>>,
     mut tops: Local<HashMap<String, (f32, f32, f32)>>,
-    mut shown: Local<Option<(bool, UVec2)>>,
+    mut shown: Local<Option<(bool, UVec2, u32)>>,
     real: Res<Time<Real>>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -623,8 +620,10 @@ fn marker(
     );
     let inv = 1.0 / win.scale_factor();
     // The zoom eases every frame: the root's `UiTransform` scales the unit-size bitmap (the root
-    // has no size, so the scale is about the anchor), it is not part of the rebuild key.
-    let key = (facts.enemy, UVec2::new(0, size.x));
+    // has no size, so the scale is about the anchor), it is not part of the rebuild key. The window size and
+    // the UI scale (window size and UI-scale option) are.
+    let s = assets.scale(size);
+    let key = (facts.enemy, size, s.to_bits());
     if *shown == Some(key)
         && let Ok((_, mut node, mut tf)) = roots.single_mut()
     {
@@ -652,7 +651,7 @@ fn marker(
         &mut commands,
         &data,
         root,
-        assets.scale(size),
+        s,
         inv,
         Vec2::new(size.x as f32, size.y as f32),
     );

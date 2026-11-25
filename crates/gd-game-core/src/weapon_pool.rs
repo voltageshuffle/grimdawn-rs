@@ -8,6 +8,8 @@ use gd_formats::collections::HashMap;
 use gd_rules::Rng;
 use gd_sim::equip::WeaponType;
 
+use crate::casting::level_f;
+
 /// Learned modifiers and usable pool skills of a character.
 #[derive(Component, Default, Debug, Clone)]
 pub struct SkillLinks {
@@ -165,16 +167,11 @@ pub enum PoolStep {
     Attack { parent_damage: bool },
 }
 
-/// A skill field's value at a level index (0 without one).
-pub fn lv(rec: &Record, k: &str, i: usize) -> f32 {
-    gd_sim::stats::level_value(rec, k, i).unwrap_or(0.0)
-}
-
 impl PoolCharges {
     /// Whether Cadence's next attack is the finale: full charges and the
     /// lockout over (`Skill_WeaponPool_ChargedFinale::StartAction`).
     pub fn finale_ready(&self, rec: &Record, skill: &str, li: usize) -> bool {
-        let level = lv(rec, "skillChargeLevel", li).max(1.0) as u32;
+        let level = level_f(rec, "skillChargeLevel", li).max(1.0) as u32;
         rec.class == "Skill_WeaponPool_ChargedFinale"
             && self
                 .0
@@ -202,7 +199,7 @@ impl PoolCharges {
                 parent_damage: true,
             };
         }
-        let level = lv(rec, "skillChargeLevel", li).max(1.0) as u32;
+        let level = level_f(rec, "skillChargeLevel", li).max(1.0) as u32;
         let c = self.0.entry(skill.to_ascii_lowercase()).or_default();
         if finale && finale_start {
             if rec.bool("spendChargesOnMiss") {
@@ -213,12 +210,12 @@ impl PoolCharges {
         if has_target && c.lockout <= 0.0 && (c.count < level || !finale) {
             c.count = (c.count + 1).min(level);
             let t = if finale && ranged {
-                lv(rec, "skillChargeTimeRanged", li)
+                level_f(rec, "skillChargeTimeRanged", li)
             } else {
-                lv(rec, "skillChargeTime", li)
+                level_f(rec, "skillChargeTime", li)
             };
             c.lockout = t / attack_speed.max(0.1);
-            c.decay = lv(rec, "skillChargeDuration", c.count as usize - 1);
+            c.decay = level_f(rec, "skillChargeDuration", c.count as usize - 1);
         }
         PoolStep::Attack {
             parent_damage: !finale,

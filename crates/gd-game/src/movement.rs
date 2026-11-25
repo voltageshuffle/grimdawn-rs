@@ -480,22 +480,23 @@ pub fn follow_path(
         } else {
             // Spinning, the player's mask is 8: only the group-8 (`forceCollision`, boss) monsters.
             let spinning = agent.as_ref().is_some_and(|a| a.spinning);
-            let all = monsters
-                .iter()
-                .filter(|(.., a)| !a.is_some_and(|a| a.ghost))
-                .filter(|(.., a)| !spinning || a.is_some_and(|a| a.forced))
+            let candidates = || {
+                monsters
+                    .iter()
+                    .filter(|(.., a)| !a.is_some_and(|a| a.ghost))
+                    .filter(move |(.., a)| !spinning || a.is_some_and(|a| a.forced))
+            };
+            let max_r = candidates().map(|(_, _, b, _)| b.radius).fold(r, f32::max);
+            let range = gd_sim::crowd::plan_range(r, max_r);
+            candidates()
+                .filter(|(t, ..)| {
+                    (t.translation.y - start.y).abs() <= gd_sim::crowd::HEIGHT * 0.5
+                        && t.translation.distance_squared(start) < range * range
+                })
                 .map(|(t, _, b, a)| Neighbour {
                     pos: t.translation,
                     radius: b.radius,
                     vel: a.map_or(Vec3::ZERO, |a| a.vel),
-                });
-            let all: Vec<_> = all.collect();
-            let max_r = all.iter().map(|n| n.radius).fold(r, f32::max);
-            let range = gd_sim::crowd::plan_range(r, max_r);
-            all.into_iter()
-                .filter(|n| {
-                    (n.pos.y - start.y).abs() <= gd_sim::crowd::HEIGHT * 0.5
-                        && n.pos.distance_squared(start) < range * range
                 })
                 .collect()
         };
@@ -855,10 +856,12 @@ pub fn crowd_begin(
         ),
         With<Character>,
     >,
+    mut scratch: Local<SeparationScratch>,
 ) {
     use gd_sim::crowd;
+    let sc = &mut *scratch;
     // The agents with a separation weight (monsters and pets) as the crowd sees them.
-    let mut seps: Vec<(Entity, crowd::Body)> = Vec::new();
+    sc.seps.clear();
     let mut max_r = 0.0f32;
     for (
         (e, tf, ch, agent, monster, channel),
@@ -886,7 +889,7 @@ pub fn crowd_begin(
                 let dash =
                     pc || leap || charge || evade || mts.is_some_and(MoveToUseSkill::charging);
                 let (group, mask) = crowd_group(player, true, allied || pet, &a);
-                seps.push((
+                sc.seps.push((
                     e,
                     crowd::Body {
                         pos: xz(tf.translation),
@@ -926,33 +929,44 @@ pub fn crowd_begin(
             ..default()
         });
     }
-    if !seps.iter().any(|s| s.1.moving && s.1.collides) {
+    if !sc.seps.iter().any(|s| s.1.moving && s.1.collides) {
         return;
     }
-    let grid = gd_sim::grid::Grid::new(crowd::grid_cell(max_r), seps.iter().map(|s| s.1.pos));
-    let mut near: Vec<usize> = Vec::new();
-    let mut out: Vec<(Entity, Vec3)> = Vec::new();
-    for (i, (e, me)) in seps.iter().enumerate() {
+    sc.grid
+        .rebuild(crowd::grid_cell(max_r), sc.seps.iter().map(|s| s.1.pos));
+    sc.out.clear();
+    for (i, (e, me)) in sc.seps.iter().enumerate() {
         if !me.moving || !me.collides {
             continue;
         }
         let range = crowd::plan_range(me.radius, max_r);
-        grid.near(me.pos, range, &mut near);
-        let others = near
+        sc.grid.near(me.pos, range, &mut sc.near);
+        let others = sc
+            .near
             .iter()
-            .filter(|&&j| j != i && me.meets(&seps[j].1, range))
-            .map(|&j| (seps[j].1.pos, seps[j].1.radius));
+            .filter(|&&j| j != i && me.meets(&sc.seps[j].1, range))
+            .map(|&j| (sc.seps[j].1.pos, sc.seps[j].1.radius));
         if let Some(s) =
             crowd::separation(me.pos, me.radius, range, crowd::MONSTER_SEPARATION, others)
         {
-            out.push((*e, Vec3::new(s[0], 0.0, s[1])));
+            sc.out.push((*e, Vec3::new(s[0], 0.0, s[1])));
         }
     }
-    for (e, s) in out {
+    for &(e, s) in &sc.out {
         if let Ok(((_, _, _, Some(mut a), _, _), ..)) = agents.get_mut(e) {
             a.separation = s;
         }
     }
+}
+
+/// [`crowd_begin`]'s per-frame scratch: the allocations are reused, the contents rebuilt every frame.
+#[derive(Default)]
+pub struct SeparationScratch {
+    /// The agents with a separation weight (monsters and pets) and their crowd bodies.
+    seps: Vec<(Entity, gd_sim::crowd::Body)>,
+    near: Vec<usize>,
+    out: Vec<(Entity, Vec3)>,
+    grid: gd_sim::grid::Grid,
 }
 
 /// A character's crowd group and mask (module docs, `gd_sim::crowd::group`).
@@ -989,6 +1003,8 @@ pub struct CrowdScratch {
     blocked: Vec<usize>,
     bodies: Vec<gd_sim::crowd::Body>,
     grid: gd_sim::grid::Grid,
+    /// The collision pass's pushes, one per body.
+    pushes: Vec<gd_sim::crowd::V2>,
 }
 
 /// One crowd agent's snapshot for [`crowd_update`].
@@ -1156,7 +1172,8 @@ pub fn crowd_update(
     // The collision pass.
     s.bodies.clear();
     s.bodies.extend(s.infos.iter().map(|i| i.body));
-    for (info, push) in s.infos.iter().zip(crowd::depenetration(&s.bodies)) {
+    crowd::depenetration(&s.bodies, &mut s.grid, &mut s.near, &mut s.pushes);
+    for (info, &push) in s.infos.iter().zip(&s.pushes) {
         if push == [0.0; 2] {
             continue;
         }

@@ -508,7 +508,7 @@ fn build(
         } else {
             "bitmapNameUp"
         };
-        if let Some((h, sz)) = b.str(state).map(str::to_owned).and_then(|p| ui.image(&p)) {
+        if let Some((h, sz)) = b.str(state).and_then(|p| ui.image(p)) {
             let r = URect::new(
                 o.x + ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)),
                 o.y + ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0)),
@@ -517,10 +517,7 @@ fn build(
             );
             ui.quad(h, r, None, Color::WHITE);
             if menu.tab != tab
-                && let Some((fh, _)) = b
-                    .str("bitmapNameInFocus")
-                    .map(str::to_owned)
-                    .and_then(|p| ui.image(&p))
+                && let Some((fh, _)) = b.str("bitmapNameInFocus").and_then(|p| ui.image(p))
             {
                 let e = ui.quad(fh, r, None, Color::WHITE);
                 ui.commands
@@ -548,8 +545,7 @@ fn build(
             ui.record(&field("reagentListIcon")),
             ui.record(&field("reagentListNameText")),
         )
-        && let Some(bg_path) = bg.str("bitmapName").map(str::to_owned)
-        && let Some((bg_img, bg_sz)) = ui.image(&bg_path)
+        && let Some((bg_img, bg_sz)) = bg.str("bitmapName").and_then(|p| ui.image(p))
     {
         let icon_w = icon
             .str("bitmapName")
@@ -621,19 +617,14 @@ fn build(
         ui.root = outer;
     }
     // Box glows (filled boxes), then the boxes and their quantities.
-    let boxes = BOXES;
-    for (i, (_, glow, _)) in boxes.iter().enumerate() {
+    for (i, (_, glow, _)) in BOXES.iter().enumerate() {
         if slot(&menu.offering, i).is_none() {
             continue;
         }
         let Some(g) = ui.record(&field(glow)) else {
             continue;
         };
-        let Some((h, sz)) = g
-            .str("bitmapName")
-            .map(str::to_owned)
-            .and_then(|p| ui.image(&p))
-        else {
+        let Some((h, sz)) = g.str("bitmapName").and_then(|p| ui.image(p)) else {
             continue;
         };
         let f = |k: &str| g.f32(k).unwrap_or(0.0);
@@ -675,8 +666,8 @@ fn build(
         rec.f32("insufficientMaterialColor.g").unwrap_or(0.0),
         rec.f32("insufficientMaterialColor.b").unwrap_or(0.0),
     );
-    for (i, (bx, _, qty)) in boxes.iter().enumerate() {
-        let Some(r) = slot(&menu.offering, i).map(str::to_owned) else {
+    for (i, (bx, _, qty)) in BOXES.iter().enumerate() {
+        let Some(r) = slot(&menu.offering, i) else {
             continue;
         };
         let Some(b) = ui.record(&field(bx)) else {
@@ -689,16 +680,16 @@ fn build(
             ui.sc(f("itemXSize")),
             ui.sc(f("itemYSize")),
         );
-        let it = reagent_item(&r);
+        let it = reagent_item(r);
         if !b.bool("disableItemBackground") {
             super::shrine::rarity_plate(&mut ui, &inv, &it, br);
         }
         super::character::item_icon(&mut ui, &inv, &it, br);
-        let need = reagent_quantity(db, &r);
+        let need = reagent_quantity(db, r);
         if need > 1
             && let Some(q) = ui.record(&field(qty))
         {
-            let have = held_of(&r);
+            let have = held_of(r);
             let text = if have <= 99 {
                 gd_sim::skill_tooltip::format(
                     tags.get("tagCraftingQuantity").unwrap_or("{%d0}/{%d1}"),
@@ -887,7 +878,11 @@ pub fn clicks(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     pause: Res<gd_game_core::pause::GamePause>,
     mut scripted: Local<bool>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    if fresh.begun() {
+        *scripted = false;
+    }
     let db = &data.db;
     for a in answers.read() {
         match &a.0 {
@@ -1139,8 +1134,8 @@ fn tooltip(
         Hit::Box(i) => slot(&menu.offering, i).map_or(Vec::new(), |r| {
             let remove = db
                 .get(RECORD)
-                .and_then(|m| m.str(BOXES[i].0).map(str::to_owned))
-                .and_then(|p| db.get(&p))
+                .and_then(|m| m.str(BOXES[i].0))
+                .and_then(|p| db.get(p))
                 .and_then(|b| b.str("rolloverTag").map(|t| tag(tags, t)))
                 .unwrap_or_default();
             vec![

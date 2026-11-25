@@ -63,25 +63,22 @@ use gd_game_core::character::{CharState, Character};
 use gd_game_core::combat::Dead;
 use gd_game_core::inventory::{Inventory, InventorySet, Requirements, detach_rule};
 use gd_game_core::player::Player;
-use gd_game_core::session::MessageDrain;
 
 pub struct WeaponSetsPlugin;
 
 impl Plugin for WeaponSetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<SwapWeapons>()
-            .drain_messages_unless::<SwapWeapons, _>(resource_exists::<Inventory>)
-            .add_systems(
-                Update,
-                (
-                    swap_requests.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
-                    apply_swap.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
-                )
-                    .chain()
-                    .in_set(InventorySet)
-                    .after(gd_game_core::inventory::InventoryStage::Init)
-                    .before(gd_game_core::inventory::InventoryStage::Equipment),
-            );
+        app.add_message::<SwapWeapons>().add_systems(
+            Update,
+            (
+                swap_requests.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
+                apply_swap.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
+            )
+                .chain()
+                .in_set(InventorySet)
+                .after(gd_game_core::inventory::InventoryStage::Init)
+                .before(gd_game_core::inventory::InventoryStage::Equipment),
+        );
     }
 }
 

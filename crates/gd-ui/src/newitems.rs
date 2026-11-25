@@ -48,12 +48,12 @@ fn highlight_color(
         .iter()
         .flat_map(|b| &b.items)
         .find(|p| p.item.base_name == key.0 && p.item.seed == key.1)
-        .map(|p| p.item.clone())
+        .map(|p| &p.item)
     else {
         return none;
     };
     let Some(class) = inv
-        .info(&item)
+        .info(item)
         .and_then(|i| super::character::rarity_key(i.resolved.display_color_index()))
     else {
         return none;

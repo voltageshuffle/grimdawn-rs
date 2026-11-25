@@ -151,10 +151,12 @@ fn build(
         // The rollover: the name text's box (`ChallengeAreaWindow::UpdateRollover`), lines from the `RolloverLine2`
         // record's styles.
         let rollover = field("challengeAreaRollover");
+        let roll = ui.record(&rollover);
         let style = |k: &str, or: &str| {
-            ui.record(&rollover)
-                .and_then(|r| r.str(k).map(str::to_owned))
-                .unwrap_or_else(|| or.to_owned())
+            roll.as_ref()
+                .and_then(|r| r.str(k))
+                .unwrap_or(or)
+                .to_owned()
         };
         let mut lines = vec![(
             style(

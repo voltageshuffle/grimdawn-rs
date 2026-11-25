@@ -435,7 +435,7 @@ pub fn next_page_cost(
 
 /// The caravan window's clicks, resolved by the UI from its layout;
 /// `gd_game::stash::apply_stash_requests` applies them and answers with a
-/// [`gd_game::trade::TradeDone`] (the window rebuilds). `page` is
+/// `gd_game::trade::TradeDone` (the window rebuilds). `page` is
 /// the shown page (clamped to the pages there are).
 #[derive(Message, Clone, Debug)]
 pub enum StashRequest {
@@ -459,7 +459,7 @@ pub enum StashRequest {
     /// the Yes / No box `tagTransferPurchase01`, both with the cost; Yes → `CaravanWindow::OnBuyPageYes` /
     /// `CaravanWindow::BuyPage`): pays
     /// the cost and appends a page, the answer names it; still short of gold, it refuses with
-    /// `tagTransferError01` ([`gd_game::trade::TradeRefused`]), as the Yes handlers do.
+    /// `tagTransferError01` (`gd_game::trade::TradeRefused`), as the Yes handlers do.
     BuyPage { transfer: bool },
     /// Left click on the material box of `record` (transfer view): stores
     /// the held stack of it, or takes one (`shift`: a stack, straight into

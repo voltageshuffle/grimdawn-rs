@@ -354,11 +354,7 @@ pub fn stat_unlocks<'a>(groups: &'a [Group], ctx: &StatContext<'_>) -> Vec<&'a s
                         && !a.skill_names.is_empty()
                         && a.skill_names
                             .iter()
-                            .filter(|n| {
-                                ctx.active_buffs
-                                    .iter()
-                                    .any(|b| *b == n.to_ascii_lowercase())
-                            })
+                            .filter(|n| ctx.active_buffs.iter().any(|b| b.eq_ignore_ascii_case(n)))
                             .count() as u32
                             >= a.stat_count
                 }
@@ -426,12 +422,7 @@ impl Plugin for AchievementsPlugin {
             .add_systems(
                 Update,
                 (
-                    (
-                        script_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
-                        token_events,
-                        kill_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
-                        periodic_events.run_if(resource_exists::<gd_game_core::session::GameMode>),
-                    )
+                    (script_events, token_events, kill_events, periodic_events)
                         .after(gd_game_core::story::StoryStage::Tick),
                     unlock,
                 )
@@ -530,6 +521,7 @@ fn kill_events(
     data: Res<gd_game_core::data::GameData>,
     mut list: GroupList,
     mode: Res<gd_game_core::session::GameMode>,
+    // Option: a new character has no loaded save.
     (loaded, choice): (
         Option<Res<gd_game_core::session::LoadedCharacter>>,
         Res<gd_game_core::session::Choice>,
@@ -593,12 +585,14 @@ fn periodic_events(
     mut fresh: gd_game_core::session::NewSession,
     mut list: GroupList,
     mode: Res<gd_game_core::session::GameMode>,
+    // Option: a new character has no loaded save; the progress exists once the player does.
     (loaded, choice, progress): (
         Option<Res<gd_game_core::session::LoadedCharacter>>,
         Res<gd_game_core::session::Choice>,
         Option<Res<gd_game_core::progress::PlayerProgress>>,
     ),
     counts: Res<crate::play_stats::PlayCounts>,
+    // Option: created with the player; the session's sync waits for it.
     factions: Option<Res<crate::factions::PlayerFactions>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     players: Query<Entity, With<gd_game_core::player::Player>>,

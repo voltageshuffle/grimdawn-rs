@@ -82,11 +82,8 @@ pub fn delay(
     ch: &Character,
 ) -> f32 {
     let slot = ch.anims.slot(gd_sim::anim::AnimType::Attack);
-    let cache = std::cell::RefCell::new(cache);
     let dur = slot.mean_duration(|p| {
-        cache
-            .borrow_mut()
-            .anim(data, p)
+        gd_game_core::character::shared_anim(&cache.anims, data, p)
             .map(|a| (a.num_frames, a.frame_rate))
     });
     dur / ch.attack_speed.max(0.01) * 0.3

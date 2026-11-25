@@ -600,17 +600,17 @@ pub(crate) fn try_cast(
         .unwrap_or(skill)
         .to_owned();
     // The animation follows the skill the player cast (its class).
-    let anim_class = rec.class.clone();
+    let anim_class = rec.class.as_str();
     let Some(rec) = data.db.get(&data_name) else {
         return false;
     };
     // Cost and cooldown include the learned modifiers' (summed into the
     // skill's data: `Skill::GetSkillModifierData`).
-    let mods: Vec<(Record, usize)> = links
+    let mods: Vec<(&Record, usize)> = links
         .map(|l| {
             l.mods_of(skill)
                 .iter()
-                .filter_map(|(m, ml)| data.db.get_owned(m).map(|r| (r, *ml)))
+                .filter_map(|(m, ml)| data.db.get(m).map(|r| (r, *ml)))
                 .collect()
         })
         .unwrap_or_default();
@@ -631,11 +631,10 @@ pub(crate) fn try_cast(
     // `skillManaCost`, chance-gated reduction; item skills / charge potions
     // exempt). Its reduction rolls before the cooldown's, as the engine calls
     // `GetTotalSkillAttribute` for the cost first.
-    let mod_refs: Vec<(&Record, usize)> = mods.iter().map(|(r, l)| (r, *l)).collect();
     let cost = gd_sim::actor::skill_energy_cost(
         rec,
         li,
-        &mod_refs,
+        &mods,
         loadout.is_item_skill(&data.db, skill),
         gd_sim::actor::skill_attribute(totals, "skillManaCostReduction"),
         |c| gd_game_core::rng::f32() * 100.0 <= c,
@@ -658,7 +657,7 @@ pub(crate) fn try_cast(
     let cd = cooldown_for(
         rec,
         li,
-        &mod_refs,
+        &mods,
         gd_sim::actor::skill_attribute(totals, "skillCooldownReduction"),
     );
     let charges = lf("cooldownCharges").max(1.0) as u32;
@@ -796,7 +795,7 @@ pub(crate) fn try_cast(
     let special = loadout
         .skills
         .special_animation(&data.db, &data.skill_trees(), skill);
-    if !ch.start_cast(&anim_class, special) {
+    if !ch.start_cast(anim_class, special) {
         ch.start_cast("Skill_AttackSpell", None);
     }
     // `AttackAction::Execute`: the player turns to the target as the skill starts (`crate::turning`; a self buff's

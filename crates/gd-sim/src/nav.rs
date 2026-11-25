@@ -425,6 +425,7 @@ impl NavWorld {
 
     /// Unloads `owner`'s layers; their slots are reused by later [`Self::add`]s.
     pub fn remove(&mut self, owner: u64) {
+        let mut removed = false;
         for slot in self.owners.remove(&owner).unwrap_or_default() {
             if let Some(l) = self.layers[slot as usize].take() {
                 if let Some(v) = self.by_tile.get_mut(&l.tile) {
@@ -436,7 +437,17 @@ impl NavWorld {
                 s.0 = s.0.wrapping_add(1);
                 s.1 = None;
                 self.conn.roots = None;
+                removed = true;
             }
+        }
+        // Stale exits into tiles no layer is labelled in again would pile up over a session's loads and unloads;
+        // every reader skips them, so they go now.
+        if removed {
+            let slots = &self.conn.slots;
+            self.conn.into.retain(|_, v| {
+                v.retain(|&(s, g, _)| slots[s as usize].0 == g);
+                !v.is_empty()
+            });
         }
     }
 
@@ -1377,7 +1388,7 @@ impl NavWorld {
 
     /// Walks the straight line between two cells in quarter-cell steps,
     /// following connections; true if it reaches `b` without leaving the mesh.
-    pub fn line_walkable<'w>(&'w self, a: Cell<'w>, b: Cell<'w>) -> bool {
+    fn line_walkable<'w>(&'w self, a: Cell<'w>, b: Cell<'w>) -> bool {
         let (pa, pb) = (self.pos(a), self.pos(b));
         let len = ((pb[0] - pa[0]).powi(2) + (pb[2] - pa[2]).powi(2)).sqrt();
         let n = (len / 0.0625).ceil().max(1.0) as usize;

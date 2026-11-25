@@ -34,7 +34,6 @@ use gd_formats::collections::HashMap;
 use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::item::Item;
 use gd_game_core::inventory::Inventory;
-use gd_game_core::session::MessageDrain;
 use gd_sim::items::market::{
     BUYBACK_TAB, VENDOR_TABS, prices, refresh_minutes, stock_price, vendor_tab,
 };
@@ -311,7 +310,7 @@ pub struct BuyRequest {
     pub cell: (u32, u32),
 }
 
-/// A refused trade's message box (the dialog manager's Ok box, `ui/confirm.rs`): its text tag and the
+/// A refused trade's message box (the dialog manager's Ok box, grimdawn `trade`): its text tag and the
 /// `{%d0}` argument.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TradeRefused {
@@ -542,7 +541,6 @@ impl Plugin for TradePlugin {
                     .run_if(resource_exists::<gd_game_core::data::GameData>)
                     .after(run_services),
             )
-            .drain_messages_unless::<ServiceRequest, _>(services_ready)
             .add_plugins((
                 crate::illusion::IllusionPlugin,
                 crate::loot_filter::LootFilterPlugin,
@@ -753,9 +751,12 @@ pub fn run_services(
     mut says: MessageWriter<NpcSay>,
     hooks: Res<gd_game_core::hooks::Hooks>,
     nav: Res<crate::nav::Nav>,
-    // `GD_TRADE`: (opened, seconds the player has been in the world).
-    mut hook: Local<(bool, f32)>,
+    // `GD_TRADE`: (opened, seconds the player has been in the world), per session.
+    (mut hook, mut fresh): (Local<(bool, f32)>, gd_game_core::session::NewSession),
 ) {
+    if fresh.begun() {
+        *hook = Default::default();
+    }
     let now = time.elapsed_secs_f64();
     for r in requests.read() {
         match r {
@@ -828,10 +829,8 @@ pub fn run_services(
     // NPC use range (`DefaultRequestNpcAction`, `conversation::in_talk_range`): open at once within player
     // radius + NPC radius + 3 m (3D), else at the walk's end (`ControllerPlayerStateMoveToNpc::EndOfPathReached`).
     let d = gt.translation().distance(ptf.translation);
-    let npc_radius = gd_game_core::combat::get_radius(
-        data.db.get(&ch.record),
-        gd_game_core::combat::ACTOR_RADIUS,
-    );
+    let npc_radius =
+        gd_game_core::combat::get_radius(Some(rec), gd_game_core::combat::ACTOR_RADIUS);
     if !crate::conversation::in_talk_range(d, pcb.radius, npc_radius) && !path.points.is_empty() {
         return;
     }

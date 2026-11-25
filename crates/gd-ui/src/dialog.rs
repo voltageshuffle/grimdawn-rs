@@ -157,7 +157,6 @@ pub struct DialogLayout {
     pub window: Option<URect>,
     pub rows: Vec<(URect, Row)>,
     pub close: Option<URect>,
-    pub hover: Option<usize>,
     /// The name line's faction / locked-quests icon (its hover shows the faction tooltip).
     pub icon: Option<URect>,
 }
@@ -223,7 +222,7 @@ fn build(
     mut fade: Local<Fade>,
     roots: Query<Entity, With<DialogRoot>>,
     mut layout: ResMut<DialogLayout>,
-    mut built: Local<Rebuild<(u64, UVec2)>>,
+    mut built: Local<Rebuild<(u64, UVec2, u32)>>,
     // The built fade group and its rows' hover rects.
     mut live: Local<Option<(Entity, Vec<Entity>)>>,
     (mut portrait, mut mats): (ResMut<Portrait>, ResMut<Assets<DollMaterial>>),
@@ -252,7 +251,9 @@ fn build(
             if fade.view.is_none() {
                 fade.alpha = 0.0;
             }
-            fade.view = Some(v.clone());
+            if fade.view.as_ref() != Some(v) {
+                fade.view = Some(v.clone());
+            }
             fade.alpha = (fade.alpha + step).min(1.0);
         }
         None if fade.view.is_some() => {
@@ -277,8 +278,9 @@ fn build(
         return;
     }
     // The fade and the hover are not in the signature: they move in place (the fade group's alpha, the
-    // hover rects' visibility), no rebuild per fade step or hover change.
-    let sig = (conv.version, size);
+    // hover rects' visibility), no rebuild per fade step or hover change. The UI scale is: an applied UI
+    // Scale rebuilds.
+    let sig = (conv.version, size, assets.scale(size).to_bits());
     if !built.changed(sig) {
         if let Some((group, hovers)) = live.as_ref() {
             fader.set(*group, a);
@@ -292,7 +294,6 @@ fn build(
                 }
             }
         }
-        layout.hover = hover;
         return;
     }
     super::window::despawn_all(&mut commands, &roots);
@@ -507,25 +508,23 @@ fn build(
         ui.commands.entity(ui.root).add_child(e);
     }
     // Close button: `bitmapPosition` in from the top-right corner.
-    if let Some(b) = ui.record(&field("closeButton")) {
-        let up = b.str("bitmapNameUp").map(str::to_owned);
-        if let Some((img, sz)) = up.and_then(|p| ui.image(&p)) {
-            let (bw, bh) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
-            let br = URect::new(
-                r.x + r.w - bw - ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)),
-                r.y + ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0)),
-                bw,
-                bh,
-            );
-            ui.quad(img, br, None, Color::WHITE);
-            if !closing {
-                ui.record_button_sound(br, &b);
-            }
-            layout.close = (!closing).then_some(br);
+    if let Some(b) = ui.record(&field("closeButton"))
+        && let Some((img, sz)) = b.str("bitmapNameUp").and_then(|p| ui.image(p))
+    {
+        let (bw, bh) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+        let br = URect::new(
+            r.x + r.w - bw - ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0)),
+            r.y + ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0)),
+            bw,
+            bh,
+        );
+        ui.quad(img, br, None, Color::WHITE);
+        if !closing {
+            ui.record_button_sound(br, &b);
         }
+        layout.close = (!closing).then_some(br);
     }
     layout.window = Some(r);
-    layout.hover = hover;
     layout.icon = icon_rect.filter(|_| !closing);
 }
 
@@ -590,7 +589,14 @@ pub fn clicks(
         Res<gd_game_core::pause::GamePause>,
         Res<super::questpopup::QuestPopup>,
     ),
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    // The hook's conversation count and click state describe the last session's conversations.
+    if fresh.begun() {
+        *opened = None;
+        *seen = Default::default();
+        *idle = 0.0;
+    }
     // Idle close: no input for 150 s closes it (`Engine::IsUserIdle(150000)`,
     // `ConversationWindow::Update`).
     if keys.get_pressed().next().is_some()
@@ -712,7 +718,7 @@ pub struct Portrait {
     glow: Option<PortraitGlow>,
 }
 
-/// The target point of a `UISceneView` on a character, taken when the window opens (module doc).
+/// The target point of a `UISceneView` on a character, in its current pose, world space (module doc).
 fn portrait_target(
     sv: &SceneView,
     rec: &gd_formats::arz::Record,
@@ -728,7 +734,7 @@ fn portrait_target(
     gt.transform_point(point)
 }
 
-/// The camera frame of a `UISceneView` on a character, each frame from its fixed target and the NPC's current
+/// The camera frame of a `UISceneView` on a character, each frame from its target and the NPC's current
 /// facing (module doc).
 fn portrait_frame(sv: &SceneView, target: Vec3, angle: f32, gt: &GlobalTransform) -> Transform {
     let f = gt.affine().transform_vector3(Vec3::Z);
@@ -737,8 +743,25 @@ fn portrait_frame(sv: &SceneView, target: Vec3, angle: f32, gt: &GlobalTransform
         .looking_at(target, Vec3::Y)
 }
 
+/// Takes [`PORTRAIT_LAYER`] and [`PORTRAIT_GLOW_LAYER`] off the `tagged` meshes still alive.
+fn untag(
+    commands: &mut Commands,
+    layers: &Query<Option<&RenderLayers>, With<Mesh3d>>,
+    tagged: Vec<Entity>,
+) {
+    for t in tagged {
+        if let Ok(Some(l)) = layers.get(t) {
+            commands.entity(t).try_insert(
+                l.clone()
+                    .without(PORTRAIT_LAYER)
+                    .without(PORTRAIT_GLOW_LAYER),
+            );
+        }
+    }
+}
+
 /// Keeps the portrait camera on the conversation's NPC while the window is
-/// open; turns it off and untags the NPC once it closes.
+/// open; turns it off and untags the NPC once it closes or the conversation moves to another NPC.
 #[allow(clippy::too_many_arguments)]
 fn portrait(
     mut commands: Commands,
@@ -777,15 +800,7 @@ fn portrait(
                 cam.is_active = false;
             }
         }
-        for t in std::mem::take(&mut p.tagged) {
-            if let Ok(Some(l)) = layers.get(t) {
-                commands.entity(t).try_insert(
-                    l.clone()
-                        .without(PORTRAIT_LAYER)
-                        .without(PORTRAIT_GLOW_LAYER),
-                );
-            }
-        }
+        untag(&mut commands, &layers, std::mem::take(&mut p.tagged));
         if let Some((bg, ..)) = p.background.take() {
             commands.entity(bg).try_despawn();
         }
@@ -802,50 +817,48 @@ fn portrait(
     let sv = SceneView::from_record(rec);
     let fresh = p.shot.as_ref().is_none_or(|s| s.0 != e || s.1 != actor.0);
     if fresh {
+        // Another NPC: the previous one's meshes leave the portrait.
+        let old = std::mem::take(&mut p.tagged);
+        untag(&mut commands, &layers, old);
         p.shot = Some((e, actor.0));
+        p.warm = 0;
     }
     // Tag the NPC's meshes (parts spawned later included) and the emitter meshes of the effects
     // attached to it (`fx::items`: its gear's; they are top-level entities of their own).
+    let tagged = &mut p.tagged;
+    let mut tag = |m: Entity| {
+        let Ok(l) = layers.get(m) else { return };
+        let l = l.cloned().unwrap_or_default();
+        // The hover outline's copies (glow view only) stay out.
+        if l == RenderLayers::layer(gd_render::render::post::GLOW_LAYER)
+            || l.intersects(&RenderLayers::layer(PORTRAIT_LAYER))
+        {
+            return;
+        }
+        // A mesh the main glow view draws is in the portrait's glow view too.
+        let glows = l.intersects(&RenderLayers::layer(gd_render::render::post::GLOW_LAYER));
+        let l = l.with(PORTRAIT_LAYER);
+        let l = if glows {
+            l.with(PORTRAIT_GLOW_LAYER)
+        } else {
+            l
+        };
+        commands.entity(m).try_insert(l);
+        tagged.push(m);
+    };
     let roots = std::iter::once(e).chain(
         body.into_iter()
             .flat_map(|b| b.weapons.iter().map(|w| w.root)),
     );
-    let mut meshes_of = Vec::new();
     for r in roots {
         for m in std::iter::once(r).chain(children.iter_descendants(r)) {
-            meshes_of.push(m);
+            tag(m);
             if let Ok(fx) = effects.get(m) {
-                meshes_of.extend(
-                    fx.emitters
-                        .iter()
-                        .filter_map(|em| em.draw.as_ref().map(|d| d.entity)),
-                );
+                for d in fx.emitters.iter().filter_map(|em| em.draw.as_ref()) {
+                    tag(d.entity);
+                }
             }
         }
-    }
-    for m in meshes_of {
-        if let Ok(l) = layers.get(m) {
-            let l = l.cloned().unwrap_or_default();
-            // The hover outline's copies (glow view only) stay out.
-            if l == RenderLayers::layer(gd_render::render::post::GLOW_LAYER) {
-                continue;
-            }
-            if !l.intersects(&RenderLayers::layer(PORTRAIT_LAYER)) {
-                // A mesh the main glow view draws is in the portrait's glow view too.
-                let glows = l.intersects(&RenderLayers::layer(gd_render::render::post::GLOW_LAYER));
-                let l = l.with(PORTRAIT_LAYER);
-                let l = if glows {
-                    l.with(PORTRAIT_GLOW_LAYER)
-                } else {
-                    l
-                };
-                commands.entity(m).try_insert(l);
-                p.tagged.push(m);
-            }
-        }
-    }
-    if fresh {
-        p.warm = 0;
     }
     let angle = win.f32("portraitAngle").unwrap_or(0.0).to_radians();
     let tf = portrait_frame(&sv, portrait_target(&sv, rec, gt, ch), angle, gt);

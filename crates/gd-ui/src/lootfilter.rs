@@ -48,10 +48,9 @@
 //!
 //! Both directions go through the shared window policy
 //! (`super::window::WindowPolicy` / `Windows`): the press opens with
-//! `Windows::open(Window::LootFilter)` — its row closes the play field (the
-//! old private `Closes::close_all` set) — and `closed_by_others` watches
-//! `WindowPolicy::opened_closer`: a window whose row closes the loot filter,
-//! opening, hides it.
+//! `Windows::open(Window::LootFilter)` — its row closes the play field — and
+//! `closed_by_others` watches `WindowPolicy::opened_closer`: a window whose row
+//! closes the loot filter, opening, hides it.
 //!
 //! PORT: a checkbox row advances
 //! `lootFilterRowSpacing` (36), a spacer `lootFilterRowSpacing2` (30)
@@ -110,10 +109,17 @@ impl Plugin for LootFilterWindowPlugin {
                     .before(build)
                     .in_set(gd_ui_kit::UiPlaySet),
             );
-        // Live: open, or still built (the closing frame despawns the root). Its hover tips are `rollover.rs`'s.
-        super::window::add_window(app, build, clicks, |v: Res<LootFilterView>| {
-            v.open || v.window.is_some()
-        });
+        // Live: open, or still built (the closing frame despawns the root), with the character's
+        // filter loaded. Its hover tips are `rollover.rs`'s.
+        super::window::add_window(
+            app,
+            build,
+            clicks,
+            // Option: a run condition's params are validated before any state gate.
+            |v: Res<LootFilterView>, f: Option<Res<LootFilter>>| {
+                f.is_some() && (v.open || v.window.is_some())
+            },
+        );
         // The Defaults box's hover / press look moves in place (no rebuild on a hover).
         app.add_systems(
             Update,
@@ -333,11 +339,11 @@ fn build(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
-    filter: Option<Res<LootFilter>>,
+    filter: Res<LootFilter>,
     mut view: ResMut<LootFilterView>,
     roots: Query<Entity, With<LootFilterRoot>>,
     mut fresh: gd_game_core::session::NewSession,
-    mut built: Local<Rebuild<(bool, UVec2, Option<[bool; 42]>, bool, u32)>>,
+    mut built: Local<Rebuild<(bool, UVec2, [bool; 42], bool, u32)>>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
@@ -348,7 +354,7 @@ fn build(
     let sig = (
         view.open,
         size,
-        filter.as_ref().map(|f| f.options),
+        filter.options,
         view.confirm,
         assets.scale(size).to_bits(),
     );
@@ -361,7 +367,7 @@ fn build(
     view.defaults = None;
     view.close = None;
     view.yes_no = None;
-    let (true, Some(filter), Some(rec)) = (view.open, filter, data.db.get(RECORD)) else {
+    let (true, Some(rec)) = (view.open, data.db.get(RECORD)) else {
         return;
     };
     let s = assets.scale(size);
@@ -615,13 +621,13 @@ fn clicks(
     window: Query<&Window, With<PrimaryWindow>>,
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut view: ResMut<LootFilterView>,
-    filter: Option<Res<LootFilter>>,
+    filter: Res<LootFilter>,
     mut capture: ResMut<UiCapture>,
     mut requests: MessageWriter<LootFilterRequest>,
     data: Res<GameData>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
-    let (Ok(win), Some(filter)) = (window.single(), filter) else {
+    let Ok(win) = window.single() else {
         return;
     };
     let Some(p) = super::cursor_px(&hooks, win) else {

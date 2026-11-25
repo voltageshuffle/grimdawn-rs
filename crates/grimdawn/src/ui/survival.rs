@@ -307,10 +307,14 @@ fn animate_warning(
         Color::WHITE
     };
     for (img, col) in &mut texts {
-        if let Some(mut i) = img {
+        if let Some(mut i) = img
+            && i.color != tint
+        {
             i.color = tint;
         }
-        if let Some(mut c) = col {
+        if let Some(mut c) = col
+            && c.0 != tint
+        {
             c.0 = tint;
         }
     }

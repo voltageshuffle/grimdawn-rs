@@ -73,11 +73,6 @@ impl Turn {
         self.snap = Some(dir);
     }
 
-    /// Whether the character is turning to its attack target.
-    pub fn toward_target(&self) -> bool {
-        self.toward_target
-    }
-
     /// `AttackAction::Finish`.
     pub fn finish(&mut self) {
         self.toward_target = false;

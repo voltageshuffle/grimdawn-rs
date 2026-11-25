@@ -169,7 +169,8 @@ impl Levels {
     ) -> Option<[i32; 4]> {
         let fx = ((pos.x - origin.x) / extent.x * grid.width as f32) as u32;
         let fz = ((pos.z - origin.z) / extent.z * grid.height as f32) as u32;
-        let id = grid.get(layer, fx.min(grid.width - 1), fz.min(grid.height - 1));
+        // `SectorLayers::get` clamps to the grid (and reads 0 from an empty one).
+        let id = grid.get(layer, fx, fz);
         if id == 0 {
             return None;
         }

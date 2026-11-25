@@ -195,31 +195,32 @@ impl PlayCounts {
 
     /// The character window's last foes of `difficulty`: this session's, else the loaded stats' (as
     /// [`PlayCounts::apply`] leaves them; the value is kept once for all difficulties).
-    pub fn last_foes(
-        &self,
-        loaded: Option<&PlayStats>,
+    pub fn last_foes<'a>(
+        &'a self,
+        loaded: Option<&'a PlayStats>,
         difficulty: usize,
-    ) -> gd_sim::sheet::LastFoes {
+    ) -> LastFoesRef<'a> {
         let saved = |name: fn(&gd_formats::save::gdc::PerDifficultyStats) -> &String,
-                     v: fn(&PlayStats) -> f32| {
-            loaded
-                .map(|ps| {
-                    (
-                        ps.per_difficulty
-                            .get(difficulty)
-                            .map(|d| name(d).clone())
-                            .unwrap_or_default(),
-                        v(ps),
-                    )
-                })
-                .unwrap_or_default()
+                     v: fn(&PlayStats) -> f32|
+         -> (&'a str, f32) {
+            loaded.map_or(("", 0.0), |ps| {
+                (
+                    ps.per_difficulty
+                        .get(difficulty)
+                        .map_or("", |d| name(d).as_str()),
+                    v(ps),
+                )
+            })
         };
-        let pick = |own: &Option<(usize, String, f32)>, saved: (String, f32)| match own {
-            Some((d, n, v)) if *d == difficulty => (n.clone(), *v),
-            Some((_, _, v)) => (saved.0, *v),
-            None => saved,
-        };
-        gd_sim::sheet::LastFoes {
+        let pick =
+            |own: &'a Option<(usize, String, f32)>, saved: (&'a str, f32)| -> (&'a str, f32) {
+                match own {
+                    Some((d, n, v)) if *d == difficulty => (n.as_str(), *v),
+                    Some((_, _, v)) => (saved.0, *v),
+                    None => saved,
+                }
+            };
+        LastFoesRef {
             hit: pick(
                 &self.last_hit,
                 saved(|d| &d.last_monster_hit, |p| p.last_hit),
@@ -229,6 +230,30 @@ impl PlayCounts {
                 saved(|d| &d.last_monster_hit_by, |p| p.last_hit_by),
             ),
         }
+    }
+}
+
+/// [`PlayCounts::last_foes`]: the last foes' names and values borrowed from the counts / the loaded stats (the
+/// character window reads it every frame; [`gd_sim::sheet::LastFoes`] is its owned form).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LastFoesRef<'a> {
+    pub hit: (&'a str, f32),
+    pub hit_by: (&'a str, f32),
+}
+
+impl LastFoesRef<'_> {
+    /// The owned copy (the sheet cache keeps it).
+    pub fn owned(self) -> gd_sim::sheet::LastFoes {
+        gd_sim::sheet::LastFoes {
+            hit: (self.hit.0.to_owned(), self.hit.1),
+            hit_by: (self.hit_by.0.to_owned(), self.hit_by.1),
+        }
+    }
+
+    /// Whether `foes` holds these names and values.
+    pub fn is(self, foes: &gd_sim::sheet::LastFoes) -> bool {
+        (foes.hit.0.as_str(), foes.hit.1) == self.hit
+            && (foes.hit_by.0.as_str(), foes.hit_by.1) == self.hit_by
     }
 }
 

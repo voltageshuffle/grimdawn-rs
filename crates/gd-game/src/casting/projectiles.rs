@@ -26,14 +26,14 @@ pub(super) struct ProjectileDebuf {
 /// The `Skill_AttackProjectileDebuf` record of a cast: the record itself, or
 /// for the player's cast (which runs as the wrapper's `buffSkillName`
 /// record, `try_cast`) the learned wrapper of that buff.
-pub(super) fn projectile_debuf_wrapper(
-    db: &gd_formats::vfs::Database,
-    rec: &Record,
+pub(super) fn projectile_debuf_wrapper<'a>(
+    db: &'a gd_formats::vfs::Database,
+    rec: &'a Record,
     loadout: Option<&Loadout>,
-) -> Option<Record> {
+) -> Option<&'a Record> {
     const CLASS: &str = "Skill_AttackProjectileDebuf";
     if rec.class == CLASS {
-        return Some(rec.clone());
+        return Some(rec);
     }
     if !gd_game_core::skill_buffs::is_debuff(rec) {
         return None;
@@ -42,7 +42,7 @@ pub(super) fn projectile_debuf_wrapper(
         .skills
         .skills
         .iter()
-        .filter_map(|(w, _)| db.get_owned(w))
+        .filter_map(|(w, _)| db.get(w))
         .find(|w| {
             w.class == CLASS
                 && gd_sim::skills::profile_name(w)
@@ -140,9 +140,9 @@ pub(crate) fn launch_coords(
 }
 
 /// The ballistic launch velocity of a grenade from `start` toward `flat_dir` over `dist` metres (`dy`: the target's height
-/// less the start's): `v = sqrt(d² g / (2 cos²a (d tan a - dy)))`, g = 14, capped by the record's velocity, at least 5.
+/// less the start's): `v = sqrt(d² g / (2 cos²a (d tan a - dy)))`, g = [`GRENADE_GRAVITY`], capped by the record's
+/// velocity, at least 5.
 pub(crate) fn grenade_velocity(prec: &Record, flat_dir: Vec3, dist: f32, dy: f32) -> Vec3 {
-    const G: f32 = 14.0;
     let a = prec
         .f32("launchAngle")
         .unwrap_or(30.0)
@@ -151,7 +151,7 @@ pub(crate) fn grenade_velocity(prec: &Record, flat_dir: Vec3, dist: f32, dy: f32
     let d = dist.max(0.1);
     let denom = 2.0 * a.cos().powi(2) * (d * a.tan() - dy);
     let v = if denom > 0.0 {
-        (d * d * G / denom).sqrt()
+        (d * d * GRENADE_GRAVITY / denom).sqrt()
     } else {
         5.0
     };

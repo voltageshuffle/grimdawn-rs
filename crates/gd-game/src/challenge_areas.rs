@@ -126,10 +126,10 @@ impl ChallengeAreas {
         let area = self.areas.get(&id)?;
         let adjustment = db
             .get(&area.record)
-            .and_then(|r| r.str("difficultyAdjustment").map(str::to_owned));
+            .and_then(|r| r.str("difficultyAdjustment"));
         let r = Arc::new(base.with_challenge_area(
             db,
-            adjustment.as_deref(),
+            adjustment,
             (!keep).then_some(&area.mutators[..]),
         ));
         self.rules.insert((id, keep), r.clone());
@@ -386,7 +386,7 @@ fn buff_active(
             || data
                 .db
                 .get(s)
-                .and_then(|r| gd_sim::skills::profile_name(r).map(str::to_owned))
+                .and_then(gd_sim::skills::profile_name)
                 .is_some_and(|p| p.eq_ignore_ascii_case(buff))
     };
     received.is_some_and(|r| r.has(buff))

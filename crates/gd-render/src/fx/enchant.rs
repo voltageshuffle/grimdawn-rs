@@ -209,10 +209,7 @@ fn dress_weapons(
                     }
                     want.zip(anchors).map(|(r, a)| {
                         let e = commands
-                            .spawn((
-                                Trail::new(w.root, &r, 0.0).with_anchors(a).stopped(),
-                                Visibility::default(),
-                            ))
+                            .spawn(Trail::new(w.root, &r, 0.0).with_anchors(a).stopped())
                             .id();
                         (r, e)
                     })
@@ -222,7 +219,7 @@ fn dress_weapons(
             if let Some(f) = old_finishing.filter(|f| Some(*f) != finishing) {
                 commands.entity(f).try_insert(StopEmitting);
             }
-            if pak != dress.as_ref().and_then(|d| d.pak.clone()) {
+            if pak.as_deref() != dress.as_ref().and_then(|d| d.pak.as_deref()) {
                 debug!(
                     "{owner}: weapon {} enchantment {:?}",
                     w.item.rsplit('/').next().unwrap_or(""),
@@ -435,12 +432,11 @@ fn form_trails(
         let mut make = |a: &str, b: &str| {
             has(a).then(|| {
                 commands
-                    .spawn((
+                    .spawn(
                         Trail::new(e, record, 0.0)
                             .with_points(&c.body, a, b)
                             .stopped(),
-                        Visibility::default(),
-                    ))
+                    )
                     .id()
             })
         };

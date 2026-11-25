@@ -2,8 +2,6 @@ use super::*;
 use bevy::ecs::system::SystemParam;
 use std::cell::RefCell;
 
-pub use crate::movement::MoveToUseSkill;
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn move_to_use_skill(
     mut commands: Commands,
@@ -255,27 +253,23 @@ pub(super) fn spell_attack_target(
     // Weapon skills need weapon reach (a ranged weapon's for shooters); the kick is
     // melee whatever the weapon (`Skill_Kick::GetValidTarget` →
     // `Skill::GetValidMeleeTarget`).
+    let rec = data.db.get(&skill);
+    let kind = rec.map(kind_of);
     let reach = if kick {
         cb.reach(tcb)
     } else {
-        match data.db.get(&skill).map(kind_of) {
+        match kind {
             Some(Kind::Weapon) => ranged.map_or(cb.reach(tcb), |r| r.reach),
             _ => {
-                data.db
-                    .get(&skill)
-                    .map_or(gd_game_core::combat::MELEE_RANGE, |r| skill_range(&data, r))
+                rec.map_or(gd_game_core::combat::MELEE_RANGE, |r| skill_range(&data, r))
                     + cb.radius
                     + tcb.radius
                     + 0.5
             }
         }
     };
-    let kind = data.db.get(&skill).map(kind_of);
     // A weapon charge charges from afar (ChargeToUseSkill, `try_cast`).
-    let charge = data
-        .db
-        .get(&skill)
-        .is_some_and(|r| gd_sim::skills::is_weapon_charge(&r.class));
+    let charge = rec.is_some_and(|r| gd_sim::skills::is_weapon_charge(&r.class));
     // Line of sight (`ControllerAIStateT<ControllerPlayer, Player>::UseSkill`):
     // a skill that requires LOS (`Skill::GetRequiresLOS`)
     // is used only when `Skill::IsTargetInLOS` (both overloads) is clear,
@@ -295,9 +289,7 @@ pub(super) fn spell_attack_target(
         && (d <= reach
             || charge
             || (kind != Some(Kind::Weapon)
-                && !data
-                    .db
-                    .get(&skill)
+                && !rec
                     .is_some_and(|r| walks_into_range(r, kind_of(r), Walk::new(classic, 0, true)))))
     {
         primary.0 = !try_cast(
@@ -853,12 +845,12 @@ impl<'w, 's> FireCtx<'w, 's> {
             // GetSkillModifierData` sums the modifiers' `SkillProfile_Modifiers`,
             // whose loader holds these fields); no % part
             // (`GetTotalSkillAttribute` only covers the 5 skill-wide stats).
-            let mod_recs: Vec<(Record, usize)> = links
+            let mod_recs: Vec<(&Record, usize)> = links
                 .get(entity)
                 .map(|l| {
                     l.0.mods_of(&cast.skill)
                         .iter()
-                        .filter_map(|(m, ml)| data.db.get_owned(m).map(|r| (r, *ml)))
+                        .filter_map(|(m, ml)| data.db.get(m).map(|r| (r, *ml)))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -890,8 +882,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                 if warm_paid.is_some_and(|w| w.0 == cast.skill) {
                     commands.entity(entity).try_remove::<WarmPaid>();
                 } else {
-                    let mod_refs: Vec<(&Record, usize)> =
-                        mod_recs.iter().map(|(r, l)| (r, *l)).collect();
                     let item = loadout
                         .as_ref()
                         .is_some_and(|l| l.is_item_skill(&data.db, &cast.skill))
@@ -904,7 +894,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     let cost = gd_sim::actor::skill_energy_cost(
                         rec,
                         li,
-                        &mod_refs,
+                        &mod_recs,
                         item,
                         gd_sim::actor::skill_attribute(
                             &cb.profile.totals,
@@ -924,7 +914,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     let cd = cooldown_for(
                         rec,
                         li,
-                        &mod_refs,
+                        &mod_recs,
                         gd_sim::actor::skill_attribute(
                             &cb.profile.totals,
                             "skillCooldownReduction",
@@ -951,8 +941,7 @@ impl<'w, 's> FireCtx<'w, 's> {
             // The Primary pair runs at the cast of the buff / radius / wave
             // parents (`ActivateNow` → `PrimaryActivateSecondarySkills`); a
             // `Skill_BuffSelfDuration` runs nothing else (`secondary.rs`).
-            let parent_class = data.db.get(&cast.skill).map(|r| r.class.clone());
-            let parent_class = parent_class.as_deref().unwrap_or("");
+            let parent_class = data.db.get(&cast.skill).map_or("", |r| r.class.as_str());
             if cast.parent.is_none() && crate::secondary::primary_activates(parent_class) {
                 activations.write(crate::secondary::Activate::primary(
                     entity,
@@ -1263,20 +1252,17 @@ impl<'w, 's> FireCtx<'w, 's> {
                         let cur = *chain.last().unwrap();
                         if fresh {
                             hit(&mut *hits, &mut struck, cur.0);
+                            let to = cur.1.transform_point(chars.get(cur.0).map_or(Vec3::Y, |c| {
+                                crate::monster_skills::character_center(data, c)
+                            }));
                             if let Some(l) = &bolt {
                                 commands.spawn(gd_game_core::visuals::PendingBolt {
                                     record: l.clone(),
                                     from,
-                                    to: cur.1.transform_point(
-                                        chars.get(cur.0).map_or(Vec3::Y, |c| {
-                                            crate::monster_skills::character_center(data, c)
-                                        }),
-                                    ),
+                                    to,
                                 });
                             }
-                            from = cur.1.transform_point(chars.get(cur.0).map_or(Vec3::Y, |c| {
-                                crate::monster_skills::character_center(data, c)
-                            }));
+                            from = to;
                         }
                         if tries >= jumps {
                             break;

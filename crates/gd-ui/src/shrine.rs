@@ -92,12 +92,11 @@ pub enum Part {
 }
 
 /// The built window (physical px). Empty while no shrine window is open.
-#[derive(Resource, Default, Clone, PartialEq)]
+#[derive(Resource, Default)]
 pub struct ShrineLayout {
     pub window: Option<URect>,
     /// Buttons (enabled ones only).
     pub buttons: Vec<(URect, Part)>,
-    pub hover: Option<Part>,
     /// The offering boxes and their items.
     pub boxes: Vec<(URect, String)>,
     /// The offering under the cursor (its tooltip, `tooltip.rs`).
@@ -119,6 +118,7 @@ fn build(
     open: Res<ShrineWindow>,
     shrines: Query<&Shrine>,
     inv: Res<Inventory>,
+    // Option: created with the player (`gd_game::stash::init_stash`).
     stash: Option<Res<gd_game_core::stash::Stash>>,
     roots: Query<Entity, With<ShrineRoot>>,
     mut layout: ResMut<ShrineLayout>,
@@ -336,7 +336,7 @@ fn live_button(
     enabled.then_some(br)
 }
 
-/// Hover in place (no rebuild): the button bitmaps, [`ShrineLayout::hover`] and the hovered offering's item.
+/// Hover in place (no rebuild): the button bitmaps and the hovered offering's item.
 fn live(
     hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -358,9 +358,6 @@ fn live(
     for (b, l, mut img) in &mut buttons {
         super::window::set_button_look(l, &mut img, b.1, hover == Some(b.0));
     }
-    if layout.hover != hover {
-        layout.hover = hover;
-    }
     let rec = hover_box
         .and_then(|i| layout.boxes.get(i))
         .map(|b| b.1.as_str());
@@ -379,7 +376,7 @@ fn live(
 /// dispatcher, `ui::esc_dispatcher`); the window takes the click (no walking). `GD_SHRINE_ACCEPT` (hooks.rs)
 /// presses the shrine button once a window has been open that long.
 #[allow(clippy::too_many_arguments)]
-pub fn clicks(
+fn clicks(
     hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -407,15 +404,12 @@ pub fn clicks(
             *since = (open.version, time.elapsed_secs());
         } else if since.1 >= 0.0 && time.elapsed_secs() - since.1 >= secs {
             since.1 = -1.0;
+            let enabled = layout.buttons.iter().any(|b| b.1 == Part::Accept);
             info!(
                 "shrine test: pressing the shrine button ({})",
-                if layout.buttons.iter().any(|b| b.1 == Part::Accept) {
-                    "enabled"
-                } else {
-                    "disabled"
-                }
+                if enabled { "enabled" } else { "disabled" }
             );
-            if layout.buttons.iter().any(|b| b.1 == Part::Accept) {
+            if enabled {
                 out.write(ShrineRequest::Accept);
             }
         }

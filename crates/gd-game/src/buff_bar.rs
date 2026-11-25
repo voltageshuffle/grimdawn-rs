@@ -66,7 +66,7 @@
 use crate::combo::Combo;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
-use gd_game_core::casting::{Caster, ShieldKind, Shields};
+use gd_game_core::casting::{ShieldKind, Shields};
 use gd_game_core::player::Loadout;
 use gd_game_core::skill_buffs::ReceivedBuffs;
 use gd_game_core::weapon_pool::PoolCharges;
@@ -107,7 +107,6 @@ pub const POTION_ABSORB_ICON: &str =
 #[derive(Clone, Copy)]
 pub struct PlayerState<'a> {
     pub loadout: &'a Loadout,
-    pub caster: &'a Caster,
     pub links: Option<&'a gd_game_core::weapon_pool::SkillLinks>,
     pub pool: Option<&'a PoolCharges>,
     /// The summon skill of each living pet.
@@ -366,7 +365,6 @@ impl PlayerIcons {
     ) {
         let PlayerState {
             loadout,
-            caster: _,
             links,
             pool,
             pets,
@@ -535,14 +533,6 @@ impl PlayerIcons {
         }
         w.out.truncate(w.n);
     }
-}
-
-/// The player's status list in the engine's order (module docs), built from scratch (the HUD keeps a
-/// [`PlayerIcons`] across frames).
-pub fn player_icons(db: &Database, st: &PlayerState) -> Vec<Tracked> {
-    let mut out = Vec::new();
-    PlayerIcons::default().list(db, st, true, &mut out);
-    out
 }
 
 /// The icons under a pet's portrait (module docs): its trackable skills

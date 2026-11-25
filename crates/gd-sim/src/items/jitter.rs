@@ -105,20 +105,12 @@ impl Roll<'_> {
         }
     }
 
-    /// [`jitter_skill`], or the bound with the "at least 1" rule (
-    /// `SkillAttribute::LoadPrefixTableMin`: no percentage check).
+    /// [`jitter_skill`], or the bound with the "at least 1" rule, kept when the
+    /// result drops under 1 (no percentage check): an affix value
+    /// (`SkillAttribute::Jitter` / `SkillAttribute::LoadPrefixTableMin`) and a base value under the
+    /// store's `AddJitter` (`SkillAttribute::AddJitter` / `AddMinJitter` / `AddMaxJitter`; the caller
+    /// clamps `pct`).
     pub fn skill(&mut self, v: f32, pct: f32) -> f32 {
-        match self {
-            Roll::Seeded(rng) => jitter_skill(v, pct, rng),
-            Roll::Bound { max } => jitter_bound(v, pct, *max, false),
-        }
-    }
-
-    /// A skill attribute's base value under the store's `AddJitter` (seeded:
-    /// [`jitter_skill`] `SkillAttribute::AddJitter`) or
-    /// `AddMinJitter` / `AddMaxJitter` (the bound `SkillAttribute::AddMinJitter`:
-    /// at least 1, kept when the result drops under 1). The caller clamps `pct`.
-    pub fn skill_base(&mut self, v: f32, pct: f32) -> f32 {
         match self {
             Roll::Seeded(rng) => jitter_skill(v, pct, rng),
             Roll::Bound { max } => jitter_bound(v, pct, *max, false),

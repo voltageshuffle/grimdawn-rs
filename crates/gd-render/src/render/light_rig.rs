@@ -173,8 +173,6 @@ pub struct CharacterLighting {
     lq_highlight: f32,
     /// The scene light group (1..=65535).
     group: u32,
-    /// The rig's light entities (while the rig is on).
-    lights: Vec<Entity>,
     /// The tag its meshes carry ([`mesh_tag`]).
     tag: u32,
 }
@@ -184,7 +182,7 @@ pub struct CharacterLighting {
 #[relationship(relationship_target = RigLights)]
 pub struct RigLight(pub Entity);
 
-/// A character's rig lights ([`RigLight`]).
+/// A character's rig lights ([`RigLight`]), in the rig's light order.
 #[derive(Component)]
 #[relationship_target(relationship = RigLight, linked_spawn)]
 pub struct RigLights(Vec<Entity>);
@@ -230,7 +228,6 @@ fn load_rigs(
             rig,
             lq_highlight,
             group: *next,
-            lights: Vec::new(),
             tag: u32::MAX,
         });
     }
@@ -247,6 +244,7 @@ fn place_rig_lights(
             &GlobalTransform,
             &InheritedVisibility,
             &mut CharacterLighting,
+            Option<&RigLights>,
         ),
         Without<RigLight>,
     >,
@@ -273,38 +271,37 @@ fn place_rig_lights(
         .iter()
         .next()
         .map_or(Vec3::NEG_Z, |g| g.forward().as_vec3());
-    for (owner, gt, vis, mut cl) in &mut chars {
-        let rig = cl.rig.clone().filter(|r| q >= 1 && !r.lights.is_empty());
+    for (owner, gt, vis, mut cl, held) in &mut chars {
+        let has_rig = q >= 1 && cl.rig.as_ref().is_some_and(|r| !r.lights.is_empty());
         let hl = hovered == Some(owner);
-        let tag = match &rig {
-            Some(_) => mesh_tag(cl.group, 0.0, hl),
-            None => mesh_tag(0, cl.lq_highlight, hl),
+        let tag = if has_rig {
+            mesh_tag(cl.group, 0.0, hl)
+        } else {
+            mesh_tag(0, cl.lq_highlight, hl)
         };
         if cl.tag != tag {
             cl.tag = tag;
         }
-        let n = rig.as_ref().map_or(0, |r| r.lights.len());
-        if cl.lights.len() != n {
-            for l in cl.lights.drain(..) {
+        let rig = cl.rig.as_deref().filter(|_| has_rig);
+        let n = rig.map_or(0, |r| r.lights.len());
+        let held = held.map_or(&[][..], |h| h.0.as_slice());
+        if held.len() != n {
+            for &l in held {
                 commands.entity(l).try_despawn();
             }
-            cl.lights = (0..n)
-                .map(|_| {
-                    commands
-                        .spawn((
-                            PointLight {
-                                shadow_maps_enabled: false,
-                                intensity: 0.0,
-                                ..default()
-                            },
-                            Transform::IDENTITY,
-                            Visibility::Hidden,
-                            RigLight(owner),
-                            Name::new("light rig"),
-                        ))
-                        .id()
-                })
-                .collect();
+            for _ in 0..n {
+                commands.spawn((
+                    PointLight {
+                        shadow_maps_enabled: false,
+                        intensity: 0.0,
+                        ..default()
+                    },
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                    RigLight(owner),
+                    Name::new("light rig"),
+                ));
+            }
             // Placed from the next frame on.
             continue;
         }
@@ -312,7 +309,7 @@ fn place_rig_lights(
         let (_, rot, origin) = gt.to_scale_rotation_translation();
         let spec = rig.use_specular && q >= 2;
         let shown = vis.get();
-        for (rl, e) in rig.lights.iter().zip(&cl.lights) {
+        for (rl, e) in rig.lights.iter().zip(held) {
             let Ok((_, mut pl, mut tf, mut lgt, mut lvis)) = lights.get_mut(*e) else {
                 continue;
             };
@@ -405,12 +402,13 @@ fn highlight_objects(
     chars: Query<(), With<CharacterLighting>>,
     meshes: Query<Option<&MeshTag>, With<Mesh3d>>,
     children: Query<&Children>,
-    mut last: Local<Vec<Entity>>,
+    // Last frame's highlighted objects, then this frame's (kept to reuse their buffers).
+    mut lists: Local<[Vec<Entity>; 2]>,
 ) {
-    let mut now: Vec<Entity> = glow.iter().collect();
-    now.retain(|e| !chars.contains(*e));
+    let [last, now] = &mut *lists;
+    now.clear();
+    now.extend(glow.iter().filter(|e| !chars.contains(*e)));
     now.sort_unstable();
-    now.dedup();
     let on = mesh_tag(0, 0.0, true);
     let mut set = |root: Entity, from: u32, to: u32| {
         for e in std::iter::once(root).chain(children.iter_descendants(root)) {
@@ -425,8 +423,8 @@ fn highlight_objects(
     for old in last.iter().filter(|e| now.binary_search(e).is_err()) {
         set(*old, on, 0);
     }
-    for new in &now {
+    for new in now.iter() {
         set(*new, 0, on);
     }
-    *last = now;
+    std::mem::swap(last, now);
 }

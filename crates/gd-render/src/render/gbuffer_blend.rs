@@ -22,12 +22,9 @@
 //! and blends the lit colour (linear, equivalent to blending the albedo for the same light; a patch's own normals
 //! are lit before the blend instead of blended).
 //!
-//! PERF-27: the hold/restore reuses its scratch (the taken item map, the picked `Vec` and each held
-//! phase's map) across frames instead of reallocating, but keeps the extract/reinsert structure: a
-//! dedicated `SortedRenderPhase` queued by a custom queue system would have to re-implement Bevy's
-//! transparent mesh queue and suppress it for these entities, which cannot be verified without a
-//! runtime screenshot check of the transparency order (water 0 / ripple 500 / particles 1000+
-//! `depth_bias`). Deferred pending that gate; the draw order here is unchanged.
+//! The hold / restore reuses its scratch (the taken item map, the picked `Vec` and each held phase's map) across
+//! frames. It moves Bevy's queued items rather than queueing a phase of its own, which would re-implement Bevy's
+//! transparent mesh queue and have to keep these entities out of it.
 use super::post::{GammaOut, SsaoSet};
 use bevy::camera::{MainPassResolutionOverride, Viewport};
 use bevy::core_pipeline::core_3d::{Transparent3d, main_opaque_pass_3d};
@@ -96,7 +93,7 @@ fn extract_gbuffer_blend(
     map.0.extend(parts.iter().map(|(e, k)| (e, *k)));
 }
 
-/// Per main view, the held items: decals, then the fringe.
+/// Per main view, the held items: patches, decals, then the fringe.
 #[derive(Resource, Default)]
 struct HeldGBufferBlend(HashMap<RetainedViewEntity, SortedRenderPhase<Transparent3d>>);
 
@@ -121,8 +118,8 @@ fn hold_gbuffer_blend(
             continue;
         }
         // One pass: the rest goes back in its order, the held ones leave in theirs.
-        // PERF-27: the taken map, the picked scratch and the held phase's map are reused
-        // across frames — swap the phase's items out, then drain them back in place.
+        // The taken map, the picked scratch and the held phase's map are reused across frames: swap the
+        // phase's items out, then drain them back in place.
         let out = held.0.entry(view.retained_view_entity).or_default();
         out.items.clear();
         std::mem::swap(&mut phase.items, &mut take.items);

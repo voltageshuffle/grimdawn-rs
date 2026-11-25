@@ -936,24 +936,30 @@ fn post_chain(
         &bh.default_view,
         &dof_blur.default_view,
     );
-    let mut passes: Vec<Pass> = Vec::new();
+    // At most the 3 bloom, 2 depth of field and the FXAA passes (no per-frame allocation).
+    let mut passes = [(finish, source, bh, hot, last_dst); 6];
+    let mut n = 0;
+    let mut push = |p| {
+        passes[n] = p;
+        n += 1;
+    };
     if settings.bloom.w > 0.5 {
-        passes.push((extract, source, bv, bv, hot));
-        passes.push((blur_v, hot, bh, bh, bv));
-        passes.push((blur_h, bv, hot, hot, bh));
+        push((extract, source, bv, bv, hot));
+        push((blur_v, hot, bh, bh, bv));
+        push((blur_h, bv, hot, hot, bh));
     }
     if settings.dof.w > 0.5 {
         // PORT: no graded full-size frame copy; the downsample and the depth of field grade the
         // scene themselves (the base colour is not quantised to 8 bits first).
-        passes.push((downsample, source, bh, hot, blur));
-        passes.push((dof, source, bh, blur, last_dst));
+        push((downsample, source, bh, hot, blur));
+        push((dof, source, bh, blur, last_dst));
     } else {
-        passes.push((finish, source, bh, hot, last_dst));
+        push((finish, source, bh, hot, last_dst));
     }
     if fxaa_on {
-        passes.push((fxaa, &fxaa_frame.default_view, bh, bh, destination));
+        push((fxaa, &fxaa_frame.default_view, bh, bh, destination));
     }
-    run(&mut ctx, &passes);
+    run(&mut ctx, &passes[..n]);
 }
 
 /// The glow composites ([`GlowComposite`]: the scene's, a conversation portrait's), refilled at every extract:
@@ -1359,7 +1365,8 @@ fn patch_ui_shaders(handles: Res<UiShaders>, mut shaders: ResMut<Assets<Shader>>
         }) else {
             continue;
         };
-        if src.contains(UI_GAMMA_MARK) {
+        // `gamma_ui_source` puts the mark first: no scan of the whole source each frame.
+        if src.starts_with(UI_GAMMA_MARK) {
             continue;
         }
         let Some(new) = gamma_ui_source(src) else {
@@ -1572,8 +1579,7 @@ pub struct GlowCamera {
 /// The glow composite's and the blur's uniform (gd_glow.wesl, gd_glow_blur.wesl).
 #[derive(ShaderType, Clone, Copy, Debug, Default)]
 pub struct GlowParams {
-    /// x: scene glow gain (0.75²), y: its tap spacing in texels (4), z: outline gain (1.25²), w: 0 (reserved:
-    /// 1 selects the composite's debug view, the unblurred glow and the outline mask in magenta).
+    /// x: scene glow gain (0.75²), y: its tap spacing in texels (4), z: outline gain (1.25²), w unused.
     pub gains: Vec4,
     /// Outline palette ([`OutlineGlow`]): class 1's colour (rgb; w 1 = something is outlined), classes 2 and 3.
     pub outline: Vec4,

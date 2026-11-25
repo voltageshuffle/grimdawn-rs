@@ -60,6 +60,9 @@ impl Plugin for GameAudioPlugin {
             .add_systems(Startup, (devices::init_devices, mixer::start_bus).chain())
             .add_systems(
                 Update,
+                // One sequence, in two halves (a tuple holds at most 20 systems); each half is chained itself, as a
+                // nested tuple is unordered inside: the listener is refreshed and the landed files collected before
+                // any sound starts, a skill loop is moved to its source before its emitter is heard.
                 (
                     (
                         mixer::focus_pause,
@@ -72,7 +75,8 @@ impl Plugin for GameAudioPlugin {
                         sessions::cache_monster_music,
                         mixer::fade_sounds,
                         sessions::boss_and_event_music,
-                    ),
+                    )
+                        .chain_ignore_deferred(),
                     (
                         sessions::drive_sessions,
                         sessions::ambient_oneshots,
@@ -87,7 +91,8 @@ impl Plugin for GameAudioPlugin {
                         emitters::skill_loops,
                         emitters::emitters,
                         cache::preload_sounds,
-                    ),
+                    )
+                        .chain_ignore_deferred(),
                 )
                     .chain(),
             )
@@ -129,8 +134,6 @@ pub struct Sounds {
     pending: Vec<pak::PendingPlay>,
     /// New voices to the mixer; set at startup (`mixer::start_bus`).
     bus: Option<mpsc::SyncSender<mixer::BusVoice>>,
-    /// The mixer's rate (the opened sink's; `mixer::open_bus`).
-    bus_hz: u32,
     /// The bus's mixing state, shared with its rodio source (`mixer::BusState`); survives a device switch.
     bus_state: Option<Arc<Mutex<mixer::BusState>>>,
     /// The port-owned rodio sink playing the bus (`mixer::start_bus`), reopened on a `soundDevice` change

@@ -26,7 +26,7 @@
 //!
 //! Removing a star (exe star lock refresh `DevotionWindow::UpdateLocks` in reclaim mode and its
 //! affinity check `DevotionWindow::CheckAffinityLoss`; the aether / gold refund cost is
-//! `ui/devotion.rs`): a star is locked while any taken star of its
+//! `gd_game::devotion::reclaim_cost`): a star is locked while any taken star of its
 //! constellation lists it in its links, even when that star has another
 //! taken link; and, when its constellation is complete, while the player's
 //! affinity less that constellation's bonus no longer covers the
@@ -178,18 +178,6 @@ impl Devotions {
         taken: &dyn Fn(&str) -> bool,
         points: u32,
     ) -> Option<&'static str> {
-        self.cannot_take_with(c, s, taken, points, &self.affinity(taken))
-    }
-
-    /// [`Self::cannot_take`] with the player's [`Self::affinity`] computed once by the caller.
-    pub fn cannot_take_with(
-        &self,
-        c: usize,
-        s: usize,
-        taken: &dyn Fn(&str) -> bool,
-        points: u32,
-        affinity: &[u32; 5],
-    ) -> Option<&'static str> {
         let k = &self.list[c];
         let star = &k.stars[s];
         if taken(&star.skill) {
@@ -198,7 +186,7 @@ impl Devotions {
         if points == 0 {
             return Some("no devotion points");
         }
-        if !self.available(c, affinity) {
+        if !self.available(c, &self.affinity(taken)) {
             return Some("not enough affinity");
         }
         if !star.links.is_empty()
@@ -232,7 +220,10 @@ impl Devotions {
         {
             return Some("another star depends on it");
         }
-        if !self.affinity_dependents(c, taken).is_empty() {
+        if !self
+            .affinity_dependents_with(c, taken, &self.affinity(taken))
+            .is_empty()
+        {
             return Some("another constellation needs its affinity");
         }
         None
@@ -240,14 +231,9 @@ impl Devotions {
 
     /// The constellations that would lose their affinity requirement if constellation `c` lost its
     /// completion bonus (GrimDawn.exe `DevotionWindow::CheckAffinityLoss`): only a complete constellation gives
-    /// affinity; its bonus is taken off the player's affinity and every constellation with a taken
-    /// star is checked, `c` itself included (then it is "self locked",
+    /// affinity; its bonus is taken off the player's `affinity` ([`Self::affinity`]) and every constellation
+    /// with a taken star is checked, `c` itself included (then it is "self locked",
     /// `FailedConstellationSelfLocked`).
-    pub fn affinity_dependents(&self, c: usize, taken: &dyn Fn(&str) -> bool) -> Vec<usize> {
-        self.affinity_dependents_with(c, taken, &self.affinity(taken))
-    }
-
-    /// [`Self::affinity_dependents`] with the player's [`Self::affinity`] computed once by the caller.
     pub fn affinity_dependents_with(
         &self,
         c: usize,

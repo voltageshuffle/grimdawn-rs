@@ -181,18 +181,15 @@ impl FloatingText {
         let class = db
             .get(monster)?
             .str("monsterClassification")
-            .unwrap_or("Common")
-            .to_owned();
-        (xp > 0 && matches!(class.as_str(), "Hero" | "Boss" | "Quest" | "SuperBoss")).then(|| {
-            Self {
-                entity: Some(player),
-                position,
-                tag: "tagXPAwarded".into(),
-                args: vec![TextArg::Num(xp as f32)],
-                style: EXPERIENCE_STYLE.into(),
-                flags: EXPERIENCE_FLAGS,
-                scale: 1.0,
-            }
+            .unwrap_or("Common");
+        (xp > 0 && matches!(class, "Hero" | "Boss" | "Quest" | "SuperBoss")).then(|| Self {
+            entity: Some(player),
+            position,
+            tag: "tagXPAwarded".into(),
+            args: vec![TextArg::Num(xp as f32)],
+            style: EXPERIENCE_STYLE.into(),
+            flags: EXPERIENCE_FLAGS,
+            scale: 1.0,
         })
     }
 }
@@ -400,26 +397,10 @@ fn combat_texts(
     };
     let mult = options.flag("critMultipliers");
     let mut fresh = None;
-    let counter_made = counters.read().map(|c| crate::combat::AttackMade {
-        attacker: c.attacker,
-        target: c.target,
-        skill: None,
-        critical: c.hit.critical,
-        weapon: false,
-        melee: false,
-        miss: c.hit.miss,
-        blocked: c.hit.blocked,
-        multiplier: c.hit.multiplier,
-        tier: c.hit.tier,
-        total: c.hit.total,
-        offensive_ability: 0.0,
-        defensive_ability: 0.0,
-    });
-    let all: Vec<crate::combat::AttackMade> = made.read().cloned().chain(counter_made).collect();
-    for m in &all {
+    let mut show = |m: &crate::combat::AttackMade| {
         let pet = pets.get(m.attacker).is_ok_and(|p| p.owner == player);
         if m.attacker != player && !pet {
-            continue;
+            return;
         }
         let mut own = means.get_mut(player).ok();
         let mine = match own.as_deref_mut() {
@@ -427,17 +408,37 @@ fn combat_texts(
             None => fresh.get_or_insert_with(CombatTextMeans::default),
         };
         let Some((mut t, at)) = combat_text(&data.db, m, pet, mine, mult) else {
-            continue;
+            return;
         };
         let Ok((tf, ch)) = chars.get(if at == At::Attacker {
             m.attacker
         } else {
             m.target
         }) else {
-            continue;
+            return;
         };
         t.position = head_point(tf, ch);
         texts.write(t);
+    };
+    for m in made.read() {
+        show(m);
+    }
+    for c in counters.read() {
+        show(&crate::combat::AttackMade {
+            attacker: c.attacker,
+            target: c.target,
+            skill: None,
+            critical: c.hit.critical,
+            weapon: false,
+            melee: false,
+            miss: c.hit.miss,
+            blocked: c.hit.blocked,
+            multiplier: c.hit.multiplier,
+            tier: c.hit.tier,
+            total: c.hit.total,
+            offensive_ability: 0.0,
+            defensive_ability: 0.0,
+        });
     }
     for d in dots.read() {
         let Ok((tf, ch)) = chars.get(d.target) else {

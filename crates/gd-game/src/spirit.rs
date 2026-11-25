@@ -157,7 +157,7 @@ fn init_hosts(
         // `SetCausesAnger(false)`, invincible.
         ch.play_scripted(AnimType::Special);
         ai.as_target.causes_anger = false;
-        commands.entity(e).insert((
+        commands.entity(e).try_insert((
             SpiritHost {
                 spirit: ctl.str("spiritThatCanAnimateMe").unwrap_or("").to_owned(),
                 needed: ctl.i32("numSpiritsToAnimateMe").unwrap_or(1).max(0) as usize,
@@ -186,7 +186,7 @@ fn init_spirits(
         let target_record = ctl
             .and_then(|c| c.str("spiritTarget").map(str::to_owned))
             .unwrap_or_default();
-        commands.entity(e).insert(Spirit {
+        commands.entity(e).try_insert(Spirit {
             target_record,
             host: None,
             stage: Stage::Startup,
@@ -301,7 +301,7 @@ fn spirits(
                         warn!(
                             "Spirit error - suicide because StatePursueToAnimate could not find a valid animate target."
                         );
-                        commands.entity(e).insert(Suicide);
+                        commands.entity(e).try_insert(Suicide);
                         continue;
                     }
                 }
@@ -392,9 +392,9 @@ fn spirits(
                     if let Ok(mut hai) = host_ai.get_mut(h) {
                         hai.as_target.causes_anger = true;
                     }
-                    commands.entity(h).remove::<(Dormant, Invincible)>();
+                    commands.entity(h).try_remove::<(Dormant, Invincible)>();
                 }
-                commands.entity(e).insert(Suicide);
+                commands.entity(e).try_insert(Suicide);
             }
             Stage::Idle => {}
         }

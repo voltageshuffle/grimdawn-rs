@@ -11,7 +11,7 @@
 //! refund of `n` points charges the cost at each count before raising it and
 //! fails (count unchanged) when the money is short; a negative `n` (the
 //! window's undo) lowers the count first and pays the cost at the lowered
-//! count back, the money capped at 2,000,000,000. The devotion refunds are
+//! count back, the money capped at 2,000,000,000 (`gd_game::loot::add_gold`). The devotion refunds are
 //! the same with the `devotion*` fields (`gd_game::devotion::reclaim_cost`).
 //!
 //! Which buttons refund (GrimDawn.exe `UISkillPane::GetRequirementFlags` flags, used by
@@ -39,9 +39,6 @@ use gd_formats::vfs::Database;
 
 /// The player record holding the price fields.
 pub const PLAYER_RECORD: &str = "records/creatures/pc/malepc01.dbr";
-
-/// The money cap of a refund paid back (`UseReclamationPoints`).
-pub const MONEY_CAP: u64 = 2_000_000_000;
 
 /// The cost of a refund at refund count `count` (`GetCurrentSkillReclamationCost`).
 pub fn cost(tiers: &[u32], costs: &[u32], count: u32) -> u64 {

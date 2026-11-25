@@ -241,8 +241,6 @@ pub struct ResolvedItem {
     pub bitmap: String,
     /// [`max_stack`]: the record's `maxStackSize` else the engine default; 1 for the non-stacking classes.
     pub max_stack: u32,
-    /// RNG state after all stores (for tests / debugging).
-    pub rng_end: u32,
 }
 
 /// Item classes that use `ItemEquipment::InitializeItem`.
@@ -799,7 +797,6 @@ pub fn resolve_records(
         [prefix, suffix, modifier]
     };
     let t = Tables { base, affixes };
-    let mut rng = item_stream(item.seed);
     let mut attrs = Vec::new();
     // Relics (`ItemArtifact`) roll their own attributes like equipment
     // (`InitializeItem` seeds an `AttributePak` from the item
@@ -810,16 +807,15 @@ pub fn resolve_records(
             &t,
             is_weapon,
             relic,
-            &mut Roll::Seeded(&mut rng),
+            &mut Roll::Seeded(&mut item_stream(item.seed)),
             &mut attrs,
         );
     } else {
-        // Relics, components, augments, potions...: plain record values
+        // Components (`ItemRelic`), augments, potions...: plain record values
         // (their InitializeItem never touches the seed, as in
         // ItemRelic/ItemEnchantment).
         attrs.extend(record_attrs(base, Source::Base));
     }
-    let rng_end = rng.0;
     // Component, relic completion bonus, augment. The completion bonus
     // belongs to relics only and rolls its own `lootRandomizerJitter` on a
     // fresh stream from the relic's seed (`ItemArtifact::
@@ -967,7 +963,6 @@ pub fn resolve_records(
             }
         },
         max_stack: max_stack(base, item, engine_max_stack(db.get(GAME_ITEM_INFO))),
-        rng_end,
     };
     out.requirements = requirements(db, item, &out, base, prefix, suffix);
     out
@@ -1043,7 +1038,7 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
                     continue;
                 }
                 if *jitter && store_pct > 0.0 {
-                    let pct = store_pct.clamp(0.0, 50.0);
+                    let pct = store_pct.clamp(0.0, JITTER_CAP);
                     base.iter_mut().for_each(|b| *b = rng.int(*b, pct, true));
                 }
                 let v = base.first().copied().unwrap_or(0.0) + parts[0] + parts[1] + parts[2];
@@ -1082,7 +1077,7 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
                 // the damage store.
                 let pct = STORE_JITTER.clamp(0.0, JITTER_CAP);
                 if relic || !rng.seeded() {
-                    base.iter_mut().for_each(|b| *b = rng.skill_base(*b, pct));
+                    base.iter_mut().for_each(|b| *b = rng.skill(*b, pct));
                 } else {
                     skill_pending.push((attrs.len(), base.clone(), parts));
                 }
@@ -1180,8 +1175,7 @@ fn build_attrs(t: &Tables, is_weapon: bool, relic: bool, rng: &mut Roll, attrs: 
     // The equipment skill store's `AddJitter(20)`, last (see the skill arm).
     let skill_pct = STORE_JITTER.clamp(0.0, JITTER_CAP);
     for (i, mut base, parts) in skill_pending {
-        base.iter_mut()
-            .for_each(|b| *b = rng.skill_base(*b, skill_pct));
+        base.iter_mut().for_each(|b| *b = rng.skill(*b, skill_pct));
         attrs[i].values[0].1 =
             base.first().copied().unwrap_or(0.0) + parts[0] + parts[1] + parts[2];
     }
@@ -1211,7 +1205,7 @@ fn armor(t: &Tables, store_pct: f32, rng: &mut Roll) -> Attr {
             ap[i + 3] = a.float("defensiveBonusProtection");
         }
     }
-    let pct = store_pct.clamp(0.0, 50.0);
+    let pct = store_pct.clamp(0.0, JITTER_CAP);
     for v in &mut ap {
         if *v > 0.0 {
             *v = rng.int(*v, pct, false);
@@ -1507,22 +1501,7 @@ impl ResolvedItem {
     /// Adds the item's character attributes (value / modifier / multiplier)
     /// to an accumulator — the equipment pass of `CharacterBio::UpdateResources`.
     pub fn add_char_attributes(&self, acc: &mut CharAttrAccumulator) {
-        for a in &self.attrs {
-            for (k, v) in &a.values {
-                let Some(def) = crate::attributes::lookup(k) else {
-                    continue;
-                };
-                let Some(attr) = def.char_attr() else {
-                    continue;
-                };
-                match def.family {
-                    AttrFamily::CharacterValue => acc.add_value(attr, *v),
-                    AttrFamily::CharacterModifier => acc.add_modifier(attr, *v),
-                    AttrFamily::CharacterMultiplier => acc.add_multiplier(attr, *v),
-                    _ => {}
-                }
-            }
-        }
+        crate::actor::add_char_attrs(&self.attrs, acc);
     }
 
     pub fn display_color_index(&self) -> u32 {

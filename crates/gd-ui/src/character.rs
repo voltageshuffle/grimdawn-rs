@@ -275,10 +275,10 @@ pub fn build(
                     .iter()
                     .position(|s| *s == slot)
                     .unwrap()]
-                .clone()
+                .as_ref()
             });
             match (worn, inv) {
-                (Some(item), Some(inv)) => item_cell(ui, inv, &item, r),
+                (Some(item), Some(inv)) => item_cell(ui, inv, item, r),
                 _ => item_box(ui, rect, silhouette.as_deref(), o),
             }
         }
@@ -345,7 +345,7 @@ pub fn build(
         let Some(inv) = inv else {
             continue;
         };
-        let Some(bag) = inv.bags.get(b).cloned() else {
+        let Some(bag) = inv.bags.get(b) else {
             continue;
         };
         let cell = r.w / bag.width as f32;

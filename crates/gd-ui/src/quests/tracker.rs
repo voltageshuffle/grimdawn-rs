@@ -112,7 +112,7 @@ pub(super) fn build_tracker(
     roots: Query<Entity, With<TrackerRoot>>,
     mut root_nodes: Query<&mut Node, With<TrackerRoot>>,
     (options, mut fade): (Res<gd_game_core::options::GameOptions>, ResMut<TrackerFade>),
-    mut built: Local<Option<(UVec2, Vec<u32>, bool, u64)>>,
+    mut built: Local<Option<(UVec3, Vec<u32>, bool, u64)>>,
     // Where the built tracker sits and its title / button rects there (physical px): a drag (`fade.pos`)
     // moves the root and the rects in place.
     mut placed: Local<Option<(Vec2, Option<URect>, Option<URect>)>>,
@@ -124,34 +124,31 @@ pub(super) fn build_tracker(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
+    if size.x == 0 {
+        // Minimised: the view's change detection below would miss a change meanwhile, so rebuild once it is back.
+        *built = None;
+        return;
+    }
     // Hidden while the devotion window is open (as in the real game;
     // PORT: the engine's rule is not decompiled).
     // The Crucible hides the tracker for the whole session (`UIPlayerHud::Load`: mode 1 clears
     // its visible byte; its objective window shows instead, `survival.rs`).
-    // The tracked quests, borrowed: only a rebuild clones them. The ids say which are shown; the view's
-    // change detection covers their content (`collect` writes it only when its hash changed).
-    let shown: Vec<&QuestEntry> = if panels.devotion || survival.objective_window {
-        Vec::new()
-    } else {
-        tracked(&view)
-            .into_iter()
-            .filter(|q| !journal.untracked.contains(&q.id))
-            .collect()
-    };
+    // The ids say which quests are shown; the view's change detection covers their content (`collect` writes it
+    // only when its hash changed).
+    let hidden = panels.devotion || survival.objective_window;
+    let (quest_view, untracked) = (&*view, &journal.untracked);
+    let shown = move || tracked(quest_view).filter(move |q| !hidden && !untracked.contains(&q.id));
     let open = tracker_open(&options);
     let pos = fade.pos;
     let generation = assets.fonts.generation;
+    let sk = size.extend(assets.scale(size).to_bits());
     let same = built.as_ref().is_some_and(|(s, ids, o, g)| {
-        *s == size
+        *s == sk
             && *o == open
             && !view.is_changed()
-            && ids.len() == shown.len()
-            && ids.iter().zip(&shown).all(|(id, q)| *id == q.id)
+            && ids.iter().copied().eq(shown().map(|q| q.id))
             && *g == generation
     });
-    if size.x == 0 {
-        return;
-    }
     if same {
         // In place: the drag's offset from where the tracker was built.
         if let Some((at, title, button)) = *placed {
@@ -175,13 +172,8 @@ pub(super) fn build_tracker(
         }
         return;
     }
-    let quests: Vec<QuestEntry> = shown.into_iter().cloned().collect();
-    *built = Some((
-        size,
-        quests.iter().map(|q| q.id).collect(),
-        open,
-        generation,
-    ));
+    let quests: Vec<&QuestEntry> = shown().collect();
+    *built = Some((sk, quests.iter().map(|q| q.id).collect(), open, generation));
     for e in &roots {
         commands.entity(e).try_despawn();
     }

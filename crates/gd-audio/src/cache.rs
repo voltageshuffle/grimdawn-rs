@@ -214,8 +214,10 @@ impl Sounds {
             }
             Some(None) => Err(false),
             None => {
-                if self.in_flight.insert(key.to_string()) {
+                // Callers ask again every frame while the read is on its way: no key is allocated then.
+                if !self.in_flight.contains(key.as_ref()) {
                     let (key, data) = (key.into_owned(), data.clone());
+                    self.in_flight.insert(key.clone());
                     self.preload
                         .push(bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
                             let loaded = data
@@ -397,7 +399,7 @@ pub(super) fn reset_sounds(
     if fresh.begun() {
         sounds.recent.clear();
     }
-    if mod_changed.read().next().is_some() {
+    if mod_changed.read().last().is_some() {
         sounds.clear();
     }
 }

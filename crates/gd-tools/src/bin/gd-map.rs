@@ -60,11 +60,11 @@ enum Cmd {
         #[arg(long, default_value_t = 2.0)]
         scale: f32,
     },
-    /// Overview of the whole world: every level's heightfield + outlines
     /// Find level entities by uid (16 bytes as in a save dump, comma-separated)
     Uid { map: PathBuf, uid: Vec<String> },
     /// Find level entities whose record path contains a substring (world positions)
     Find { map: PathBuf, record: String },
+    /// Overview of the whole world: every level's heightfield + outlines
     World {
         map: PathBuf,
         out: PathBuf,
@@ -656,12 +656,6 @@ impl Canvas {
         let Some(t) = &l.terrain else { return };
         let (ax, ay) = self.to_px(ox, oz);
         let (bx, by) = self.to_px(ox + (t.width - 1) as f32, oz + (t.height - 1) as f32);
-        let water: Vec<f32> = l
-            .water
-            .iter()
-            .flat_map(|w| w.layers.iter().map(|ly| ly.height))
-            .collect();
-        let _ = water;
         for py in ay.max(0)..by.min(self.h as i64) {
             for px in ax.max(0)..bx.min(self.w as i64) {
                 let x = self.x0 + (px as f32 + 0.5) / self.s - ox;
@@ -904,15 +898,16 @@ fn find_record(path: &Path, needle: &str) -> Result<()> {
 
 fn find_uid(path: &Path, uids: &[String]) -> Result<()> {
     let m = open_map(path)?;
-    let want: Vec<[u32; 4]> = uids
+    let want = uids
         .iter()
         .map(|s| {
             let b: Vec<u8> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            let w =
-                |i: usize| u32::from_le_bytes([b[i * 4], b[i * 4 + 1], b[i * 4 + 2], b[i * 4 + 3]]);
-            [w(0), w(1), w(2), w(3)]
+            let b: [u8; 16] = b
+                .try_into()
+                .map_err(|b: Vec<u8>| anyhow::anyhow!("uid {s:?}: {} bytes, want 16", b.len()))?;
+            Ok(gd_formats::map::uid_words(&b))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     for (i, r) in m.regions.iter().enumerate() {
         let Ok(l) = m.level(i) else { continue };
         for e in &l.entities {

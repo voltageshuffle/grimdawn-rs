@@ -56,16 +56,13 @@ impl PatrolGroups {
     }
 
     /// `InstanceGroupManager::GetGroupsThatContain`.
-    fn containing(&self, uid: Uid) -> Vec<usize> {
-        (0..self.groups.len())
-            .filter(|&i| self.groups[i].entities.contains(&uid))
-            .collect()
+    fn containing(&self, uid: Uid) -> impl Iterator<Item = usize> + '_ {
+        (0..self.groups.len()).filter(move |&i| self.groups[i].entities.contains(&uid))
     }
 
     /// The name of the "Unified Entities" group that holds `uid` (the key of the shared pool choice).
     pub fn unified_group(&self, uid: Uid) -> Option<&str> {
         self.containing(uid)
-            .into_iter()
             .map(|i| &self.groups[i])
             .find(|g| g.kind == UNIFIED_ENTITIES)
             .map(|g| g.name.as_str())
@@ -78,7 +75,6 @@ impl PatrolGroups {
         let mut out = Vec::new();
         for gi in self
             .containing(proxy)
-            .into_iter()
             .filter(|&i| self.groups[i].kind == PROXY_PATROLLERS)
         {
             for c in self.groups[gi]
@@ -120,7 +116,6 @@ impl PatrolGroups {
         let pid = self.groups[pg].id;
         let mut holders: Vec<usize> = self
             .containing(proxy)
-            .into_iter()
             .filter(|&i| self.groups[i].kind == PROXY_PATROLLERS)
             .collect();
         if holders.is_empty() {

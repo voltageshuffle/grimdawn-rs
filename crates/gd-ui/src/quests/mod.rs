@@ -236,15 +236,18 @@ impl QuestJournal {
 #[derive(Resource, Default)]
 pub struct JournalLayout {
     window: Option<URect>,
+    /// The UI scale it was built at.
+    s: f32,
     close: Option<URect>,
     /// Help, active, completed, lore and devotion tabs.
     tabs: [Option<URect>; 5],
     rows: Vec<(URect, u32)>,
-    /// Lore note rows (record path).
+    /// Lore note and help page rows (record path).
     notes: Vec<(URect, String)>,
-    /// Group expand / contract bitmaps, and the group rows.
+    /// Group expand / contract bitmaps.
     groups: Vec<(URect, String)>,
-    group_rows: Vec<(URect, String)>,
+    /// Every tree row and its hover key (`RowHover`: `q<id>`, `n<record>`, `g<group>`).
+    hovers: Vec<(URect, String)>,
     /// Quest track bitmaps.
     tracks: Vec<(URect, u32)>,
     /// The panes (journal, log) and how far each can scroll.
@@ -454,11 +457,11 @@ struct TrackerRoot;
 #[derive(Component)]
 struct JournalRoot;
 
-/// The tracker's quests: in progress (and tracked), main quests first.
-pub fn tracked(view: &QuestView) -> Vec<&QuestEntry> {
-    let mut q: Vec<&QuestEntry> = view.quests.iter().filter(|q| q.in_progress()).collect();
-    q.sort_by_key(|q| !q.main);
-    q
+/// The tracker's quests: in progress, main quests first, else in the view's order (`QuestTracker::CompareQuests`'s
+/// stable sort). The caller drops the untracked ones.
+fn tracked(view: &QuestView) -> impl Iterator<Item = &QuestEntry> {
+    let main = view.quests.iter().filter(|q| q.main && q.in_progress());
+    main.chain(view.quests.iter().filter(|q| !q.main && q.in_progress()))
 }
 
 /// Journal clicks: tabs, group expand bitmaps, track bitmaps, quest rows,
@@ -471,7 +474,6 @@ fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     window: Query<&Window, With<PrimaryWindow>>,
-    scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
     layout: Res<JournalLayout>,
     mut journal: ResMut<QuestJournal>,
     mut capture: ResMut<UiCapture>,
@@ -505,7 +507,7 @@ fn clicks(
         return;
     };
     let inside = |r: &URect| super::contains(r, p);
-    let s = scale.factor(win.physical_width(), win.physical_height());
+    let s = layout.s;
     // A held arrow repeats; a held thumb follows the mouse.
     if !buttons.pressed(MouseButton::Left) {
         *held = None;
@@ -534,34 +536,19 @@ fn clicks(
         return;
     }
     capture.0 = true;
-    // The hovered tree row.
-    let q = Vec2::new(p.x, p.y + journal.scroll[1]);
-    let hit = |r: &URect| super::contains(r, q);
+    // The hovered tree row's key, copied only when it changes.
     let hover = if inside(&layout.panes[1].0) {
+        let q = Vec2::new(p.x, p.y + journal.scroll[1]);
         layout
-            .rows
+            .hovers
             .iter()
-            .find(|(r, _)| hit(r))
-            .map(|(_, id)| format!("q{id}"))
-            .or_else(|| {
-                layout
-                    .notes
-                    .iter()
-                    .find(|(r, _)| hit(r))
-                    .map(|(_, n)| format!("n{n}"))
-            })
-            .or_else(|| {
-                layout
-                    .group_rows
-                    .iter()
-                    .find(|(r, _)| hit(r))
-                    .map(|(_, g)| format!("g{g}"))
-            })
+            .find(|(r, _)| super::contains(r, q))
+            .map(|(_, k)| k.as_str())
     } else {
         None
     };
-    if journal.hover != hover {
-        journal.hover = hover;
+    if journal.hover.as_deref() != hover {
+        journal.hover = hover.map(str::to_owned);
     }
     if buttons.just_pressed(MouseButton::Left) {
         for (i, bar) in layout.bars.iter().enumerate() {

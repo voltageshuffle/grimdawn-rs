@@ -306,9 +306,13 @@ impl LevelCollision {
         Some(Vec3::new(h(-1.0, 0.0) - h(1.0, 0.0), 2.0, h(0.0, -1.0) - h(0.0, 1.0)).normalize())
     }
 
+    /// None off the heightfield, and for a level without terrain (no vertices).
     fn ground(&self, p: Vec3) -> Option<f32> {
         let (x, z) = (p.x - self.origin.x, p.z - self.origin.z);
-        let (mx, mz) = ((self.width - 1) as f32, (self.height - 1) as f32);
+        let (Some(mx), Some(mz)) = (self.width.checked_sub(1), self.height.checked_sub(1)) else {
+            return None;
+        };
+        let (mx, mz) = (mx as f32, mz as f32);
         if x < 0.0 || z < 0.0 || x > mx || z > mz {
             return None;
         }
@@ -420,16 +424,7 @@ impl WorldCollision {
                 let boxes = crate::obstacles::placed_hit_boxes(msh, &Mat4::from(tf), &bind, |h| {
                     is_solid_box(&h.name)
                 });
-                for b in &boxes {
-                    if let Obstacle::Box { center, axes, half } = b {
-                        let c = Vec3::from(*center);
-                        let e = (0..3)
-                            .map(|i| Vec3::from(axes[i]).abs() * half[i])
-                            .sum::<Vec3>();
-                        min = min.min(c - e);
-                        max = max.max(c + e);
-                    }
-                }
+                (min, max) = boxes_bounds(&boxes);
                 Shape::Boxes(boxes)
             }
         };
@@ -458,50 +453,13 @@ impl WorldCollision {
             let boxes = crate::obstacles::placed_hit_boxes(&msh, &Mat4::from(tf), &bind, |h| {
                 h.name.eq_ignore_ascii_case("BlockLOS")
             });
-            let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-            for b in &boxes {
-                if let Obstacle::Box { center, axes, half } = b {
-                    let c = Vec3::from(*center);
-                    let e = (0..3)
-                        .map(|i| Vec3::from(axes[i]).abs() * half[i])
-                        .sum::<Vec3>();
-                    min = min.min(c - e);
-                    max = max.max(c + e);
-                }
-            }
+            let (min, max) = boxes_bounds(&boxes);
             lv.los.push(Instance {
                 shape: Shape::Boxes(boxes),
                 min,
                 max,
             });
         }
-    }
-
-    /// Adds one sight blocker to level `index` (created empty when missing):
-    /// a placed `BlockLOS` box, for arenas and tests.
-    pub fn add_los_obstacle(&mut self, index: usize, o: Obstacle) {
-        let Obstacle::Box { center, axes, half } = &o else {
-            return;
-        };
-        let c = Vec3::from(*center);
-        let e = (0..3)
-            .map(|i| Vec3::from(axes[i]).abs() * half[i])
-            .sum::<Vec3>();
-        let lv = self.levels.entry(index).or_insert_with(|| LevelCollision {
-            origin: Vec3::ZERO,
-            width: 0,
-            height: 0,
-            heights: Vec::new(),
-            instances: Bins::default(),
-            floors: Bins::default(),
-            los: Bins::default(),
-            ground: None,
-        });
-        lv.los.push(Instance {
-            shape: Shape::Boxes(vec![o]),
-            min: c - e,
-            max: c + e,
-        });
     }
 
     /// `World::CheckLOS` (Engine.dll): the segment
@@ -775,6 +733,22 @@ impl WorldCollision {
             });
         }
     }
+}
+
+/// The world box around placed hit boxes (an empty, inverted box for none).
+fn boxes_bounds(boxes: &[Obstacle]) -> (Vec3, Vec3) {
+    let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for b in boxes {
+        if let Obstacle::Box { center, axes, half } = b {
+            let c = Vec3::from(*center);
+            let e = (0..3)
+                .map(|i| Vec3::from(axes[i]).abs() * half[i])
+                .sum::<Vec3>();
+            min = min.min(c - e);
+            max = max.max(c + e);
+        }
+    }
+    (min, max)
 }
 
 /// `Actor::PhysicsSetup`: every hit box but `Visibility` and

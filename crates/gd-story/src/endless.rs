@@ -65,7 +65,6 @@ pub struct Ruleset {
     pub blacklisted_heroes: Vec<String>,
     pub allowed_items: Vec<String>,
     pub disable_monster_drops: bool,
-    pub treasure_floors: Vec<String>,
     /// The `GameAdjustment` record replacing the balance tables in the dungeon (by difficulty).
     pub difficulty_adjustment: Option<String>,
 }
@@ -145,7 +144,6 @@ impl Ruleset {
             blacklisted_heroes: lower_list(r.strs("blacklistedHeroes")),
             allowed_items: lower_list(r.strs("allowedItems")),
             disable_monster_drops: r.bool("disableMonsterDrops"),
-            treasure_floors: lower_list(r.strs("treasureFloors")),
             difficulty_adjustment: pick("difficultyAdjustment").map(str::to_owned),
         })
     }
@@ -750,7 +748,6 @@ mod tests {
             blacklisted_heroes: vec![],
             allowed_items: vec![],
             disable_monster_drops: false,
-            treasure_floors: vec![],
             difficulty_adjustment: None,
         };
         pick_proxies(&mut floors, &rs, &map, &mut rng, 1);

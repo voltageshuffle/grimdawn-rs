@@ -279,7 +279,7 @@ fn packs(data: &GameData, gf: &gd_formats::arz::Record) -> Vec<Pack> {
 }
 
 /// A tag formatted with its arguments, keeping colour codes and `^n` (split by the callers).
-fn fmt(ui: &Ui, tag: &str, args: &[gd_sim::items::tooltip::Arg]) -> String {
+pub(super) fn fmt(ui: &Ui, tag: &str, args: &[gd_sim::items::tooltip::Arg]) -> String {
     gd_sim::items::tooltip::format_rich(ui.fonts.tag(tag), args)
 }
 
@@ -297,12 +297,12 @@ fn paragraphs(text: &str) -> String {
         .replace("^N", "\n")
 }
 
-fn num(r: &gd_formats::arz::Record, k: &str) -> f32 {
+pub(super) fn num(r: &gd_formats::arz::Record, k: &str) -> f32 {
     r.f32(k).unwrap_or(0.0)
 }
 
 /// A scroll window record's rect and its clip (inside the guard bands), screen px.
-fn pane_rects(ui: &Ui, sw: &gd_formats::arz::Record, o: Vec2) -> (URect, URect) {
+pub(super) fn pane_rects(ui: &Ui, sw: &gd_formats::arz::Record, o: Vec2) -> (URect, URect) {
     let (top, bottom) = (num(sw, "topGuardBand"), num(sw, "bottomGuardBand"));
     let window = URect::new(
         o.x + ui.sc(num(sw, "positionX")),
@@ -512,7 +512,7 @@ fn build(
     mut layout: ResMut<FactionsLayout>,
     mut fresh: gd_game_core::session::NewSession,
     // The built signature, compared with the live values by reference (the faction list is copied on a rebuild only).
-    mut built: Local<Option<(UVec2, bool, Option<usize>, Vec<Faction>, u64)>>,
+    mut built: Local<Option<(UVec3, bool, Option<usize>, Vec<Faction>, u64)>>,
     mut built_bars: Local<Rebuild<u64>>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -522,12 +522,14 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
+    // The UI scale too: an applied UI Scale rebuilds the window at the new size.
+    let sk = size.extend(assets.scale(size).to_bits());
     if size.x == 0 {
         return;
     }
     let generation = assets.fonts.generation;
     let same = built.as_ref().is_some_and(|b| {
-        b.0 == size
+        b.0 == sk
             && b.1 == view.open
             && b.2 == view.selected
             && b.3 == values.factions
@@ -535,7 +537,7 @@ fn build(
     });
     if !same {
         *built = Some((
-            size,
+            sk,
             view.open,
             view.selected,
             values.factions.clone(),

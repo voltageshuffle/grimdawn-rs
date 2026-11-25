@@ -250,14 +250,16 @@ fn retaliation_parts(
                     secs: min + (max - min) * rng.unit(),
                 }),
                 _ => {
-                    let rolled: Vec<combat::HitDamage> = if ty == T::Elemental {
-                        combat::HitDamage::roll_elemental(min, max, 1.0, rng).into()
-                    } else {
-                        vec![combat::HitDamage::roll(ty, min, max, 1.0, rng)]
-                    };
-                    for mut h in rolled {
+                    let mut push = |mut h: combat::HitDamage| {
                         h.scale_by_attributes = false;
                         damage.push(combat::Damage::Hit(h));
+                    };
+                    if ty == T::Elemental {
+                        combat::HitDamage::roll_elemental(min, max, 1.0, rng)
+                            .into_iter()
+                            .for_each(push);
+                    } else {
+                        push(combat::HitDamage::roll(ty, min, max, 1.0, rng));
                     }
                 }
             }

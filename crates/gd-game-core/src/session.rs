@@ -51,34 +51,6 @@ pub fn frame_ms(carry: &mut f32, time: &Time) -> i32 {
     whole as i32
 }
 
-/// Request messages of a system that is gated with `run_if(cond)` on the resources it needs: while
-/// `cond` is false nobody reads them, and Bevy keeps a message for two frames, so a request made
-/// before the resource existed would be applied when it appears. This system reads (drops) them
-/// instead. Register it with [`MessageDrain::drain_messages_unless`], next to the gated consumer.
-/// PORT: the engine's requests are method calls that do nothing without the object; the message
-/// queue is the stand-in, and "no object, no effect" is this drain.
-pub fn clear_messages<M: Message>(mut messages: MessageReader<M>) {
-    messages.clear();
-}
-
-/// `App::drain_messages_unless::<M>(cond)`: [`clear_messages`] for `M` while `cond` (the run condition
-/// of the consumer) is false.
-pub trait MessageDrain {
-    fn drain_messages_unless<M: Message, Marker>(
-        &mut self,
-        cond: impl SystemCondition<Marker> + Clone,
-    ) -> &mut Self;
-}
-
-impl MessageDrain for App {
-    fn drain_messages_unless<M: Message, Marker>(
-        &mut self,
-        cond: impl SystemCondition<Marker> + Clone,
-    ) -> &mut Self {
-        self.add_systems(Update, clear_messages::<M>.run_if(not(cond)))
-    }
-}
-
 /// The character and difficulty are chosen; the world may start.
 #[derive(Resource)]
 pub struct SessionReady;

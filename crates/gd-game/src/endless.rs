@@ -185,10 +185,10 @@ pub fn activate_proxies(
 }
 
 /// A monster's classification (`monsterClassification`).
-fn class_of(data: &gd_game_core::data::GameData, record: &str) -> String {
+fn class_of<'a>(data: &'a gd_game_core::data::GameData, record: &str) -> &'a str {
     data.db
         .get(record)
-        .and_then(|r| r.str("monsterClassification").map(str::to_owned))
+        .and_then(|r| r.str("monsterClassification"))
         .unwrap_or_default()
 }
 
@@ -267,7 +267,7 @@ pub fn progress(
             continue;
         }
         if !e.boss_dead {
-            let bonus = rs.bonus_for_class(&class_of(&data, &m.record));
+            let bonus = rs.bonus_for_class(class_of(&data, &m.record));
             if bonus > 0 && st.game.survival.timer_ms > 0 {
                 st.game.survival.timer_add(bonus);
                 info!("endless: +{bonus} ms bonus time ({})", m.record);
@@ -286,7 +286,7 @@ pub fn progress(
             // blacklist, in the active non-boss floor, rolls its classification's chance (percent,
             // `rand(0, 100) <= chance`). The item is picked up and used at once (auto-pickup 4 m,
             // `OneShotFilter`), so it is applied here without an item entity.
-            let idx = gd_story::endless::Ruleset::essence_index(&class_of(&data, &m.record));
+            let idx = gd_story::endless::Ruleset::essence_index(class_of(&data, &m.record));
             if !rs.essence_item[idx].is_empty()
                 && gd_game_core::rng::f32() * 100.0 <= rs.essence_chance[idx]
             {
@@ -395,8 +395,7 @@ pub fn progress(
             .filter(|m| {
                 m.alive
                     && !m.pending
-                    && (!bosses_only
-                        || matches!(class_of(&data, &m.record).as_str(), "Boss" | "Quest"))
+                    && (!bosses_only || matches!(class_of(&data, &m.record), "Boss" | "Quest"))
             })
             .count()
     };
@@ -1213,7 +1212,7 @@ pub fn sync_endless(
             gd_story::endless::EndlessMap::from_world(&map)
         }));
     }
-    // PERF-13: the ~500-level scan of `EndlessMap::from_world` runs at session load, not inside
+    // The ~500-level scan of `EndlessMap::from_world` runs at session load, not inside
     // the first `GenerateEndlessDungeon` Lua call (a one-time Shattered Realm hitch).
     if story.endless.map.is_none() {
         story.endless.map = Some(std::sync::Arc::new(
@@ -1264,6 +1263,9 @@ impl Plugin for EndlessPlugin {
             .add_systems(
                 Update,
                 (
+                    // First: a new dungeon's stamp retires the old one's activated proxies before the
+                    // activation and the progress read `Endless::activated`.
+                    shrine_memory,
                     activate_proxies.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     progress,
                     show_texts,
@@ -1272,7 +1274,6 @@ impl Plugin for EndlessPlugin {
                     dispel_endless_buffs,
                     soul_expiry,
                     exit_gates,
-                    shrine_memory,
                     drop_stale_proxies,
                     spawn_activated_shrines,
                     shrine_shield,

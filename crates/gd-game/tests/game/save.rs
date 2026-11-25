@@ -3,8 +3,8 @@
 //! every character gets (`gd_sim::potions::ensure_skills`), and two saves
 //! are byte-identical.
 use gd_formats::save::gdc::Gdc;
-use gd_game::save::SaveRequest;
 use gd_game::testing::{TempDir, TestGame};
+use gd_game_core::save::DIFFICULTY_DIRS;
 
 /// A port-written save of a new character with some money and experience, in `tmp`.
 fn saved_character(tmp: &TempDir) -> Option<std::path::PathBuf> {
@@ -71,19 +71,16 @@ fn crucible_tokens_go_to_the_character() {
     let Some(mut g) = TestGame::with_save(&path) else {
         return;
     };
-    let dir = g.save_dir();
     g.spawn_player();
     g.steps(3);
-    let (name, d, before) = {
+    let (d, before) = {
         let c = &g.app.world().resource::<LoadedCharacter>().0;
-        (c.header.name.clone(), c.info.difficulty(), c.tokens.clone())
+        (c.info.difficulty(), c.tokens.clone())
     };
-    let tokens = |g: &mut TestGame| {
-        g.app.world_mut().write_message(SaveRequest);
-        g.step();
-        let b =
-            std::fs::read(dir.join("main").join(format!("_{name}")).join("player.gdc")).unwrap();
-        gd_formats::save::gdc::Gdc::parse(&b).unwrap().tokens
+    let save = |g: &mut TestGame| {
+        let player = g.save_now();
+        let tokens = Gdc::parse(&std::fs::read(&player).unwrap()).unwrap().tokens;
+        (player, tokens)
     };
     let grant = |g: &mut TestGame| {
         let rt = g.app.world().non_send::<StoryRuntime>();
@@ -94,18 +91,16 @@ fn crucible_tokens_go_to_the_character() {
             .insert("CRUCIBLE_TEST".into());
     };
     grant(&mut g);
-    assert_eq!(tokens(&mut g), before, "campaign tokens stay in quests.gdd");
+    assert_eq!(save(&mut g).1, before, "campaign tokens stay in quests.gdd");
     g.app.world_mut().resource_mut::<Choice>().survival = Some("maps/survivalworld_c.map".into());
-    let t = tokens(&mut g);
+    let (player, t) = save(&mut g);
     assert!(t.lists[d].contains(&"CRUCIBLE_TEST".to_owned()));
     for other in (0..3).filter(|i| *i != d) {
         assert_eq!(t.lists[other], before.lists[other]);
     }
-    let q = dir
-        .join("main")
-        .join(format!("_{name}"))
-        .join("maps_survivalworld_c.map")
-        .join(["Normal", "Elite", "Ultimate"][d])
+    let q = player
+        .with_file_name("maps_survivalworld_c.map")
+        .join(DIFFICULTY_DIRS[d])
         .join("quests.gdd");
     let q = gd_formats::save::gdd::Quests::parse(&std::fs::read(q).unwrap()).unwrap();
     assert!(q.tokens.is_empty());
@@ -123,25 +118,20 @@ fn saves_write_map_dat() {
     let Some(mut g) = TestGame::with_save(&path) else {
         return;
     };
-    let dir = g.save_dir();
     g.spawn_player();
     g.steps(3);
-    let (name, d) = {
-        let c = &g
-            .app
-            .world()
-            .resource::<gd_game_core::session::LoadedCharacter>()
-            .0;
-        (c.header.name.clone(), c.info.difficulty())
-    };
+    let d = g
+        .app
+        .world()
+        .resource::<gd_game_core::session::LoadedCharacter>()
+        .0
+        .info
+        .difficulty();
     let read = |g: &mut TestGame, folder: &str| {
-        g.app.world_mut().write_message(SaveRequest);
-        g.step();
-        let p = dir
-            .join("main")
-            .join(format!("_{name}"))
-            .join(folder)
-            .join(gd_game_core::save::DIFFICULTY_DIRS[d])
+        let p = g
+            .save_now()
+            .with_file_name(folder)
+            .join(DIFFICULTY_DIRS[d])
             .join("map.dat");
         MapDat::parse(&std::fs::read(p).expect("map.dat written")).unwrap()
     };
@@ -162,7 +152,7 @@ fn saves_write_map_dat() {
 }
 
 /// A `quests.gdd` / `map.fow` the load cannot read is set aside to `.bak` and never rewritten from the
-/// empty runtime (BUG-1). The session's save folder IS the loaded character's here, so an unguarded save
+/// empty runtime. The session's save folder IS the loaded character's here, so an unguarded save
 /// would overwrite the corrupt files in place; the guard keeps their bytes in `.bak` and writes fresh,
 /// parseable files beside them.
 #[test]

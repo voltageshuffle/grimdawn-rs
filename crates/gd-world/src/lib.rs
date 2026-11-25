@@ -47,8 +47,6 @@ use std::time::{Duration, Instant};
 /// Terrain material: the game's layer compositing + deferred lighting (render/terrain.rs).
 pub type TerrainMaterial = gd_render::render::terrain::GdTerrainMaterial;
 
-pub use gd_render::decal::DecalMaterial;
-
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -96,8 +94,8 @@ pub struct StreamedMap {
     spawning: HashMap<usize, SpawnJob>,
 }
 
-pub use gd_game::nav::Nav;
-pub use gd_game_core::levels::{Levels, StreamFocus};
+use gd_game::nav::Nav;
+use gd_game_core::levels::{Levels, StreamFocus};
 
 /// A teleport's destination, loaded while the player is still at the start (the teleport activity's
 /// `RegionLoader`, `gd_game::teleport::TeleportActivity`): levels stream around it as around [`StreamFocus`] and none
@@ -1039,6 +1037,9 @@ fn finish_levels(
     mut cache: ResMut<ModelCache>,
     bodies: Res<gd_game_core::creature::BodyCache>,
 ) {
+    if world.pending.is_empty() {
+        return;
+    }
     let done: Vec<(usize, anyhow::Result<LevelCpu>)> = world
         .pending
         .iter_mut()
@@ -1824,13 +1825,10 @@ fn spawn_levels(
 }
 
 /// The map's patrol and proxy-patroller instance groups (`gd_game::patrol`).
-fn build_patrol_groups(
-    world: Option<Res<StreamedMap>>,
-    mut groups: ResMut<gd_game::patrol::PatrolGroups>,
-) {
-    let (Some(world), false) = (world, groups.built) else {
+fn build_patrol_groups(world: Res<StreamedMap>, mut groups: ResMut<gd_game::patrol::PatrolGroups>) {
+    if groups.built {
         return;
-    };
+    }
     groups.built = true;
     let list: Vec<gd_sim::patrol::Group> = world
         .map

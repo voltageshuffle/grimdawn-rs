@@ -80,11 +80,11 @@ pub fn potions(
     let Some(rec) = data.db.get(skill) else {
         return;
     };
-    let mods: Vec<(Record, usize)> = links
+    let mods: Vec<(&Record, usize)> = links
         .map(|l| {
             l.mods_of(skill)
                 .iter()
-                .filter_map(|(m, li)| data.db.get_owned(m).map(|r| (r, *li)))
+                .filter_map(|(m, li)| data.db.get(m).map(|r| (r, *li)))
                 .collect()
         })
         .unwrap_or_default();

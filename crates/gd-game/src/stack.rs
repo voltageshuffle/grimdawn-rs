@@ -1,4 +1,4 @@
-//! The stack split of the stack quantity window (`grimdawn` `ui/stack.rs`
+//! The stack split of the stack quantity window (`gd_ui` `stack.rs`
 //! draws it); the stack-size and merging rules are `gd_game_core::stack`.
 //!
 //! The split ([`SplitRequest`], GrimDawn.exe `StackWindow` OK

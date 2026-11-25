@@ -81,6 +81,7 @@ struct Segment {
 
 /// A trail following `owner`; its end: [`ended`].
 #[derive(Component)]
+#[require(Visibility)]
 pub struct Trail {
     pub owner: Entity,
     pub record: String,
@@ -112,9 +113,9 @@ struct ResolvedPoints {
 }
 
 struct TrailState {
-    /// Present only while the ribbon has 2+ segments: an empty `Mesh` asset
-    /// is never added (the allocator warns about it every frame). A persistent
-    /// grow-only mesh rewritten in place (no per-frame replacement / re-upload).
+    /// Made once the ribbon first has 2+ segments (an empty `Mesh` asset is never added: the allocator warns about
+    /// it every frame), then kept: a persistent grow-only mesh rewritten in place (no per-frame replacement), the
+    /// entity hidden while fewer than 2 segments are left (a weapon's trail between swings).
     mesh: Option<Handle<Mesh>>,
     /// The mesh's capacity in segments (grow-only, power of two).
     cap: usize,
@@ -212,6 +213,7 @@ fn update_trails(
     mut trails: Query<(
         Entity,
         &mut Trail,
+        &mut Visibility,
         Has<gd_game_core::visuals::StopEmitting>,
         Has<gd_game_core::visuals::StartPulse>,
     )>,
@@ -223,7 +225,7 @@ fn update_trails(
 ) {
     let dt = time.delta_secs();
     let cam = cams.iter().next().map(|c| c.translation());
-    for (e, mut t, stopped, pulse) in &mut trails {
+    for (e, mut t, mut vis, stopped, pulse) in &mut trails {
         let t = &mut *t;
         if t.state.is_none() {
             let Some(rec) = assets.data.db.get(&t.record) else {
@@ -407,14 +409,10 @@ fn update_trails(
             Err(_) => {}
         }
         if t.segments.len() < 2 {
-            if t.state.as_mut().is_some_and(|s| {
-                s.cap = 0;
-                s.mesh.take().is_some()
-            }) {
-                commands.entity(e).try_remove::<Mesh3d>();
-            }
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
+        vis.set_if_neq(Visibility::Inherited);
         let n = t.segments.len();
         // Grow the persistent mesh only when the ribbon outgrows it; otherwise
         // rewrite its attributes in place (no asset replacement / re-upload).
@@ -529,7 +527,7 @@ fn dress_trails(
         }
         commands
             .entity(e)
-            .insert((t, Visibility::default()))
+            .insert(t)
             .remove::<gd_game_core::visuals::TrailRequest>();
     }
 }

@@ -262,7 +262,7 @@ impl Plane {
 /// The inside planes of a frustum from its corners (near: bottom-right,
 /// top-right, top-left, bottom-left, then the same for the far plane, as
 /// `Projection::get_frustum_corners` returns them).
-pub fn frustum_planes(c: [Vec3; 8]) -> Vec<Plane> {
+pub fn frustum_planes(c: [Vec3; 8]) -> [Plane; 6] {
     let centre = c.iter().copied().sum::<Vec3>() / 8.0;
     let face = |a: Vec3, b: Vec3, d: Vec3| {
         let n = (b - a).cross(d - a).normalize_or_zero();
@@ -273,7 +273,7 @@ pub fn frustum_planes(c: [Vec3; 8]) -> Vec<Plane> {
             p
         }
     };
-    vec![
+    [
         face(c[0], c[1], c[2]), // near
         face(c[4], c[5], c[6]), // far
         face(c[0], c[1], c[4]), // right
@@ -284,8 +284,8 @@ pub fn frustum_planes(c: [Vec3; 8]) -> Vec<Plane> {
 }
 
 /// The inside planes of an AABB.
-pub fn box_planes(min: Vec3, max: Vec3) -> Vec<Plane> {
-    vec![
+pub fn box_planes(min: Vec3, max: Vec3) -> [Plane; 6] {
+    [
         Plane {
             n: Vec3::X,
             d: -min.x,
@@ -489,7 +489,8 @@ pub fn caster_cap(s: &ShadowScene, volume: &[Plane]) -> (f32, Option<usize>) {
 
 /// The receiver body and its volume extruded toward the sun.
 pub fn shadow_volume(s: &ShadowScene) -> Option<(Vec<Vec3>, Vec<Plane>)> {
-    let mut planes = frustum_planes(s.frustum);
+    let mut planes = Vec::with_capacity(12);
+    planes.extend(frustum_planes(s.frustum));
     if let Some((min, max)) = s.scene {
         planes.extend(box_planes(min, max));
     }

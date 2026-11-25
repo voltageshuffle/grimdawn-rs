@@ -460,6 +460,10 @@ impl CharAssets<'_> {
         let bumps = texture_list(rec, "bumpTextures");
         let mut mats: HashMap<u32, PartMaterial> = HashMap::default();
         for (mi, (_, def)) in model.part_materials.iter().zip(&model.parts) {
+            // Parts of one material (split by fading section) share its default and so its override.
+            if mats.contains_key(mi) {
+                continue;
+            }
             let i = *mi as usize;
             let base = tex
                 .base
@@ -1057,9 +1061,10 @@ fn dress(
     let weapon_scale = rec.f32("weaponScale").filter(|s| *s > 0.0).unwrap_or(1.0);
     let mut weapons = Vec::new();
     let mut slots: Vec<_> = items.iter().collect();
-    slots.sort_by_key(|(s, _)| format!("{s:?}"));
+    slots.sort_by_cached_key(|(s, _)| format!("{s:?}"));
+    // The database by its own handle: a record stays borrowed while `a` spawns.
+    let db = a.data.db.clone();
     for (slot, item) in slots {
-        let db = a.data.db.clone();
         let Some(r) = db.get(item) else {
             continue;
         };

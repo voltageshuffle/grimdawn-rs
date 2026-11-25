@@ -287,7 +287,9 @@ fn collect_texture_loads(mut textures: ResMut<Textures>, mut images: ResMut<Asse
             continue;
         };
         drop(textures.loading.swap_remove(i));
-        textures.in_flight.remove(&(key.clone(), srgb));
+        let in_flight = (key, srgb);
+        textures.in_flight.remove(&in_flight);
+        let (key, srgb) = in_flight;
         done += 1;
         textures.put(&key, srgb, img, &mut images);
         let kind = if srgb { Kind::Color } else { Kind::Data };

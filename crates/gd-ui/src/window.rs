@@ -329,26 +329,6 @@ pub fn scrollbar_live(
     owner: ScrollOwner,
     pane: usize,
 ) -> Option<Bar> {
-    draw_scrollbar(
-        ui,
-        rec,
-        right,
-        y,
-        len,
-        (visible, content, scroll),
-        (owner, pane),
-    )
-}
-
-fn draw_scrollbar(
-    ui: &mut super::Ui,
-    rec: &str,
-    right: f32,
-    y: f32,
-    len: f32,
-    (visible, content, scroll): (f32, f32, f32),
-    live: (ScrollOwner, usize),
-) -> Option<Bar> {
     use gd_formats::ui::Rect as URect;
     let r = ui.record(rec)?;
     let field = |k: &str| r.str(k).unwrap_or("").to_owned();
@@ -366,7 +346,8 @@ fn draw_scrollbar(
     let uh = up.as_ref().map_or(0.0, |(_, s)| ui.sc(s.y as f32));
     let dh = down.as_ref().map_or(0.0, |(_, s)| ui.sc(s.y as f32));
     let (t0, t1) = (y + uh, y + len - dh);
-    let piece = |ui: &mut super::Ui, rec: &str, from: f32, to: f32| -> Option<[Entity; 3]> {
+    // A three-piece strip from `from` to `to`: its entities and its end pieces' heights.
+    let piece = |ui: &mut super::Ui, rec: &str, from: f32, to: f32| {
         let (Some(first), Some(mid), Some(last)) = (
             img(ui, rec, "firstEndTexture"),
             img(ui, rec, "middleTexture"),
@@ -377,29 +358,30 @@ fn draw_scrollbar(
         let (fh, lh) = (ui.sc(first.1.y as f32), ui.sc(last.1.y as f32));
         let pw = ui.sc(first.1.x as f32);
         let px = x + ((w - pw) * 0.5).round();
-        Some([
-            ui.quad_stretch(first.0, URect::new(px, from, pw, fh), Color::WHITE),
-            ui.quad_stretch(
-                mid.0,
-                URect::new(px, from + fh, pw, (to - from - fh - lh).max(0.0)),
-                Color::WHITE,
-            ),
-            ui.quad_stretch(last.0, URect::new(px, to - lh, pw, lh), Color::WHITE),
-        ])
+        Some((
+            [
+                ui.quad_stretch(first.0, URect::new(px, from, pw, fh), Color::WHITE),
+                ui.quad_stretch(
+                    mid.0,
+                    URect::new(px, from + fh, pw, (to - from - fh - lh).max(0.0)),
+                    Color::WHITE,
+                ),
+                ui.quad_stretch(last.0, URect::new(px, to - lh, pw, lh), Color::WHITE),
+            ],
+            fh,
+            lh,
+        ))
     };
     piece(ui, &field("scrollTrack"), t0, t1);
     let track = (t1 - t0).max(1.0);
     let thumb = (track * visible / content.max(1.0)).clamp(ui.sc(16.0), track);
     let max = (content - visible).max(1.0);
     let top = t0 + (track - thumb) * (scroll / max).clamp(0.0, 1.0);
-    let pieces = piece(ui, &field("scrollBar"), top.round(), (top + thumb).round());
-    if let Some([first, mid, last]) = pieces {
-        let (owner, pane) = live;
+    if let Some(([first, mid, last], fh, lh)) =
+        piece(ui, &field("scrollBar"), top.round(), (top + thumb).round())
+    {
         // Each piece's top at scroll 0 (`base_y`) plus the rounding the draw applies: the first and
         // middle round the thumb's top, the last rounds its bottom.
-        let sb = field("scrollBar");
-        let fh = img(ui, &sb, "firstEndTexture").map_or(0.0, |(_, s)| ui.sc(s.y as f32));
-        let lh = img(ui, &sb, "lastEndTexture").map_or(0.0, |(_, s)| ui.sc(s.y as f32));
         let travel = track - thumb;
         for (e, base_y, round_add) in [(first, t0, 0.0), (mid, t0, fh), (last, t0 + thumb, -lh)] {
             ui.commands.entity(e).insert(ScrollThumb {
@@ -432,8 +414,8 @@ fn draw_scrollbar(
     })
 }
 
-/// The windows the one open/close policy ([`WindowPolicy`]) manages. The first eight are the UI's own
-/// (their open flags live in the UI resources); the rest are gameplay windows the policy only reads
+/// The windows the one open/close policy ([`WindowPolicy`]) manages. The first nine and the game menu are
+/// the UI's own (their open flags live in the UI resources); the rest are gameplay windows the policy only reads
 /// (their openers are gd-game's; closing them goes through their requests).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Window {
@@ -472,7 +454,8 @@ impl Window {
         Window::GameMenu,
     ];
     pub fn index(self) -> usize {
-        Self::ALL.iter().position(|w| *w == self).unwrap_or(0)
+        // `ALL` lists the variants in declaration order.
+        self as usize
     }
 }
 

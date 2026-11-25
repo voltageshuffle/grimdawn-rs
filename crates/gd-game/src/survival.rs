@@ -239,7 +239,7 @@ pub fn score_kills(
     mut killed: MessageReader<MonsterKilled>,
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<GameData>,
-    mode: Option<Res<gd_game_core::session::GameMode>>,
+    mode: Res<gd_game_core::session::GameMode>,
     credit: crate::combat::KillCredit,
     by_script: Query<(), With<ScriptKilled>>,
 ) {
@@ -248,14 +248,20 @@ pub fn score_kills(
     // monster: a defense turret or guard killing a wave monster, a wave monster killing an `Allied` guard, nor for
     // a death without a killer (`Game.KillAllMonsters`: [`ScriptKilled`]; the tier's end kills the leftovers and
     // the spawn beacons).
-    let kills: Vec<String> = killed
+    let Some(rt) = rt else {
+        killed.clear();
+        return;
+    };
+    let mut story = rt.story.borrow_mut();
+    if !story.game.survival_mode {
+        killed.clear();
+        return;
+    }
+    let kills: Vec<&MonsterKilled> = killed
         .read()
         .filter(|k| !by_script.contains(k.entity) && credit.of(k))
-        .map(|k| k.record.clone())
         .collect();
-    let Some(rt) = rt else { return };
-    let mut story = rt.story.borrow_mut();
-    if !story.game.survival_mode || kills.is_empty() {
+    if kills.is_empty() {
         return;
     }
     let Some(table) = data.db.get("records/game/playerscore.dbr") else {
@@ -267,15 +273,15 @@ pub fn score_kills(
     else {
         return;
     };
-    let difficulty = mode.map_or(0, |m| m.0.difficulty);
-    for rec in kills {
+    let difficulty = mode.0.difficulty;
+    for k in kills {
         let class = data
             .db
-            .get(&rec)
-            .and_then(|r| r.str("monsterClassification").map(str::to_owned))
+            .get(&k.record)
+            .and_then(|r| r.str("monsterClassification"))
             .unwrap_or_default();
         // The engine's six-entry table by classification (see the module docs): a SuperBoss reads `bossBonus`.
-        let key = match class.as_str() {
+        let key = match class {
             "Champion" => "championBonus",
             "Hero" => "heroBonus",
             "Boss" | "SuperBoss" => "bossBonus",
@@ -427,9 +433,10 @@ pub fn record_score(dir: &std::path::Path, name: &str, difficulty: u32, score: u
 pub fn save_score(
     mut events: MessageReader<StoryEffect>,
     rt: Option<NonSend<StoryRuntime>>,
+    // Option: absent for a new character (its name is the choice's).
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     choice: Res<gd_game_core::session::Choice>,
-    mode: Option<Res<gd_game_core::session::GameMode>>,
+    mode: Res<gd_game_core::session::GameMode>,
     dir: Res<gd_game_core::session::SaveDir>,
 ) {
     if !events
@@ -440,15 +447,8 @@ pub fn save_score(
     }
     let Some(rt) = rt else { return };
     let score = rt.story.borrow().game.survival.score;
-    let name = loaded
-        .as_ref()
-        .map_or_else(|| choice.name.clone(), |l| l.0.header.name.clone());
-    record_score(
-        &dir.0,
-        &name,
-        mode.map_or(0, |m| m.0.difficulty as u32),
-        score,
-    );
+    let name = loaded.as_ref().map_or(&choice.name, |l| &l.0.header.name);
+    record_score(&dir.0, name, mode.0.difficulty as u32, score);
 }
 
 /// A monster `Game.KillAllMonsters` killed: a death without a killer, which scores nothing ([`score_kills`]).

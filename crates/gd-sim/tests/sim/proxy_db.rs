@@ -221,12 +221,6 @@ fn market_stock_and_prices() {
             .collect();
         assert_eq!(names.len(), roll.len(), "{roll:?}");
     }
-    // Affixed (magic / rare) stock is common once Broken is out.
-    let affixed = high
-        .iter()
-        .filter(|r| !r.prefix.is_empty() || !r.suffix.is_empty())
-        .count();
-    eprintln!("level 54: {affixed} of {} affixed", high.len());
     let zero: Vec<_> = high
         .iter()
         .filter(|r| !broken(r) && gd_sim::items::resolve::item_cost(&idb, &r.to_item()) == 0)

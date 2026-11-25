@@ -189,7 +189,7 @@ struct PetBarFill {
 
 /// A pet portrait's damage flash: the life last seen and the red icon's time left (s).
 #[derive(Component)]
-pub struct PortraitFlash {
+struct PortraitFlash {
     life: f32,
     left: f32,
 }
@@ -208,7 +208,8 @@ fn build(
     roots: Query<Entity, With<PortraitRoot>>,
     mut layout: ResMut<PortraitLayout>,
     mut flashes: Query<&mut PortraitFlash>,
-    // The pet records' (StatusIcon, StatusIconRed), cached (no DB lookup per pet per frame).
+    // The pet records' (StatusIcon, StatusIconRed), cached (no DB lookup per pet per frame); cleared with a
+    // new session (the mounted mod may have changed the records).
     mut icons: Local<HashMap<String, (String, String)>>,
     mut built: Local<Option<(UVec3, Vec<Shown>, PetMenu, Option<usize>)>>,
     values: Res<super::HudValues>,
@@ -216,6 +217,7 @@ fn build(
 ) {
     if fresh.begun() {
         *built = None;
+        icons.clear();
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());

@@ -65,6 +65,7 @@ use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
 use gd_game::cauldron::{PotionRequest, PotionWindow};
 use gd_game_core::data::GameData;
 use gd_sim::potions::PotionTree;
+use std::borrow::Cow;
 
 pub const RECORD: &str = "records/ui/cauldron/potions_table.dbr";
 
@@ -154,22 +155,28 @@ struct DescScrolled {
     inv: f32,
 }
 
-/// The hovered part: the `GD_POTION_HOVER` hook, else the topmost part under the cursor.
-fn hovered(
+/// The hovered part: the `GD_POTION_HOVER` hook, else the topmost part under the cursor (borrowed from the
+/// layout: no copy per frame).
+fn hovered<'a>(
     hooks: &gd_game_core::hooks::Hooks,
     win: &Window,
-    layout: &PotionsLayout,
-) -> Option<Part> {
-    hooks.ui.potion_hover.clone().map(Part::Pick).or_else(|| {
-        super::cursor_px(hooks, win).and_then(|p| {
-            layout
-                .parts
-                .iter()
-                .rev()
-                .find(|(r, _)| contains(r, p))
-                .map(|(_, h)| h.clone())
+    layout: &'a PotionsLayout,
+) -> Option<Cow<'a, Part>> {
+    hooks
+        .ui
+        .potion_hover
+        .clone()
+        .map(|s| Cow::Owned(Part::Pick(s)))
+        .or_else(|| {
+            super::cursor_px(hooks, win).and_then(|p| {
+                layout
+                    .parts
+                    .iter()
+                    .rev()
+                    .find(|(r, _)| contains(r, p))
+                    .map(|(_, h)| Cow::Borrowed(h))
+            })
         })
-    })
 }
 
 /// The potions window's rect (see the module docs).
@@ -332,7 +339,7 @@ fn build(
     mut layout: ResMut<PotionsLayout>,
     mut trees: Local<Option<Vec<PotionTree>>>,
     mut fresh: gd_game_core::session::NewSession,
-    mut built: Local<Rebuild<(u64, UVec2, Option<usize>, gd_sim::skills::SkillBook)>>,
+    mut built: Local<Rebuild<(u64, u64, UVec2, Option<usize>, gd_sim::skills::SkillBook)>>,
     // The tab icons set when the window opened (module doc).
     mut tab_icons: Local<Option<Vec<Option<String>>>>,
     mut assets: gd_ui_kit::UiAssets,
@@ -340,6 +347,8 @@ fn build(
     if fresh.begun() {
         built.reset();
         *tab_icons = None;
+        // The ended session's data (a session may mount another mod).
+        *trees = None;
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
@@ -349,12 +358,19 @@ fn build(
         *tab_icons = None;
     }
     // Hover and scroll are not in the signature: `live` moves the frames, the pane and the thumb,
-    // `tooltip` shows the hovered skill's rollover.
+    // `tooltip` shows the hovered skill's rollover. The font generation is: a language swap redraws the texts.
     let list = view.list;
+    let generation = assets.fonts.generation;
     if size.x == 0
         || !built.changed_by(
-            |b| b.0 == open.version && b.1 == size && b.2 == list && b.3 == values.skills,
-            || (open.version, size, list, values.skills.clone()),
+            |b| {
+                b.0 == open.version
+                    && b.1 == generation
+                    && b.2 == size
+                    && b.3 == list
+                    && b.4 == values.skills
+            },
+            || (open.version, generation, size, list, values.skills.clone()),
         )
     {
         return;
@@ -688,7 +704,7 @@ fn live(
         if f.down {
             continue;
         }
-        let want = if f.enabled && hover.as_ref() == Some(&f.part) {
+        let want = if f.enabled && hover.as_deref() == Some(&f.part) {
             &f.over
         } else {
             &f.up
@@ -697,12 +713,12 @@ fn live(
             img.image = want.clone();
         }
     }
-    let pick = match &hover {
+    let pick = match hover.as_deref() {
         Some(Part::Pick(_)) => layout
             .parts
             .iter()
             .filter(|(_, p)| matches!(p, Part::Pick(_)))
-            .position(|(_, p)| Some(p) == hover.as_ref()),
+            .position(|(_, p)| Some(p) == hover.as_deref()),
         _ => None,
     };
     for (h, parent, mut vis) in &mut hovers {
@@ -750,6 +766,8 @@ fn tooltip(
 ) {
     if fresh.begun() {
         *shown = None;
+        // The ended session's data (a session may mount another mod).
+        *trees = None;
     }
     let Ok(win) = window.single() else { return };
     if !open.open {
@@ -760,15 +778,19 @@ fn tooltip(
         return;
     }
     let hover = hovered(&hooks, win, &layout);
-    let same = shown
-        .as_ref()
-        .is_some_and(|(h, v, book)| *h == hover && *v == open.version && *book == values.skills);
+    let same = shown.as_ref().is_some_and(|(h, v, book)| {
+        h.as_ref() == hover.as_deref() && *v == open.version && *book == values.skills
+    });
     if same {
         return;
     }
-    *shown = Some((hover.clone(), open.version, values.skills.clone()));
+    *shown = Some((
+        hover.as_deref().cloned(),
+        open.version,
+        values.skills.clone(),
+    ));
     canvas.clear(super::tip::TipOwner::Potions);
-    let skill = match &hover {
+    let skill = match hover.as_deref() {
         Some(Part::Container(sk) | Part::Pick(sk)) => Some(sk.clone()),
         Some(Part::Slot(i)) => {
             let trees = trees.get_or_insert_with(|| gd_sim::potions::trees(&canvas.data.db));
@@ -794,7 +816,7 @@ fn tooltip(
     }
     let Some(wr) = layout.window else { return };
     let anchor = hover
-        .as_ref()
+        .as_deref()
         .and_then(|h| layout.parts.iter().find(|(_, p)| p == h))
         .map_or(wr, |(a, _)| *a);
     let right = layout

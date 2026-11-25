@@ -600,11 +600,9 @@ pub fn wear_form(
             continue;
         };
         let set = data.db.get(&s.anims).map(|t| {
-            gd_sim::anim::AnimSet::load(
-                &gd_sim::anim::RecordIndex::new(t),
-                gd_sim::equip::HandState::Unarmed,
-                |p| data.vfs.exists(p),
-            )
+            gd_sim::anim::AnimSet::load(t, gd_sim::equip::HandState::Unarmed, |p| {
+                data.vfs.exists(p)
+            })
         });
         c.set_form(mesh, body, set, s.records.clone());
         if s.is_added() && c.state != gd_game_core::character::CharState::Death {

@@ -1,12 +1,12 @@
 //! Shared fade machinery: a full-screen container whose children fade together ([`FadeGroup`],
-//! [`fade_group`], [`seal_fade_group`], [`Fader`]). Used by the quick tips, conversation, notifications,
-//! quest popups, cinematics and credits.
+//! [`fade_group`], [`seal_fade_group`], [`Fader`]). Used by the quick tips, conversation, speech bubbles,
+//! notifications, quest popups, cinematics and credits.
 use bevy::prelude::*;
 use gd_ui_kit::Ui;
 
 /// A full-screen container node whose children (image, solid and text nodes) fade together: the alpha applied to
 /// them, on top of the alpha each was built with ([`BaseAlpha`]). Built with [`fade_group`], then
-/// [`seal_fade_group`]; changed with [`Fader::set`]. Used by the quick tips and the conversation window.
+/// [`seal_fade_group`]; changed with [`Fader::set`].
 #[derive(Component)]
 pub struct FadeGroup(f32);
 
@@ -14,8 +14,9 @@ pub struct FadeGroup(f32);
 #[derive(Component)]
 struct BaseAlpha(f32);
 
-/// A full-screen container under `parent`; `ui` builds into it from here on.
-pub fn container(ui: &mut Ui, parent: Entity, marker: impl Bundle) -> Entity {
+/// A [`FadeGroup`] at `alpha`, a full-screen container under `parent`; `ui` builds into it from here on (build
+/// the children with their own alpha, as if the group's were 1), then call [`seal_fade_group`].
+pub fn fade_group(ui: &mut Ui, parent: Entity, alpha: f32) -> Entity {
     let e = ui
         .commands
         .spawn((
@@ -25,18 +26,12 @@ pub fn container(ui: &mut Ui, parent: Entity, marker: impl Bundle) -> Entity {
                 height: Val::Percent(100.0),
                 ..default()
             },
-            marker,
+            FadeGroup(alpha),
         ))
         .id();
     ui.commands.entity(parent).add_child(e);
     ui.root = e;
     e
-}
-
-/// A [`FadeGroup`] at `alpha` under `parent`; `ui` builds into it from here on (build the children with their
-/// own alpha, as if the group's were 1), then call [`seal_fade_group`].
-pub fn fade_group(ui: &mut Ui, parent: Entity, alpha: f32) -> Entity {
-    container(ui, parent, FadeGroup(alpha))
 }
 
 /// After a [`fade_group`]'s children are spawned: remembers each child's own alpha and applies the group's, in

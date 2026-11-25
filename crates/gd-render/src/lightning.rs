@@ -305,8 +305,14 @@ fn fade_bolts(
         };
         let bottom = if rest < 0.25 { 1.0 - rest * 4.0 } else { 0.0 };
         let k = top - bottom;
-        if let Some(mut mat) = materials.get_mut(&m.0) {
-            mat.base_color = Color::linear_rgb(b.color.x * k, b.color.y * k, b.color.z * k);
+        // Write only on change: `get_mut` marks the material changed, and the middle half of the life holds k = 1.
+        let color = Color::linear_rgb(b.color.x * k, b.color.y * k, b.color.z * k);
+        if materials
+            .get(&m.0)
+            .is_some_and(|mat| mat.base_color != color)
+            && let Some(mut mat) = materials.get_mut(&m.0)
+        {
+            mat.base_color = color;
         }
         // Points drawn: count × bottom ..= count × top, when at least 2 apart.
         let (lo, hi) = (

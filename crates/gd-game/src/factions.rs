@@ -20,7 +20,6 @@ use crate::combat::MonsterKilled;
 use bevy::prelude::*;
 use gd_formats::save::gdc::Faction;
 use gd_game_core::factions::index_of_name;
-use gd_game_core::session::MessageDrain;
 use gd_game_core::story::StoryEffect;
 use gd_story::story::state::Effect;
 
@@ -29,8 +28,6 @@ pub struct FactionsPlugin;
 impl Plugin for FactionsPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BoosterUsed>()
-            .drain_messages_unless::<MonsterKilled, _>(resource_exists::<PlayerFactions>)
-            .drain_messages_unless::<BoosterUsed, _>(resource_exists::<PlayerFactions>)
             .add_systems(
                 Update,
                 (

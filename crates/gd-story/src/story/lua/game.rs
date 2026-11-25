@@ -598,7 +598,7 @@ impl ScriptHost {
                 "GenerateEndlessDungeon",
                 lua.create_function(move |lua, args: MultiValue| {
                     let ruleset = match args.front() {
-                        Some(Value::String(s)) => s.to_string_lossy().to_string(),
+                        Some(Value::String(s)) => s.to_string_lossy(),
                         _ => String::new(),
                     };
                     let start = match args.get(2) {
@@ -606,12 +606,7 @@ impl ScriptHost {
                         Some(Value::Number(n)) => Some(*n as u32),
                         _ => None,
                     };
-                    let door = match args.get(1) {
-                        Some(Value::Integer(n)) => Some(*n as u32),
-                        Some(Value::Number(n)) => Some(*n as u32),
-                        Some(Value::UserData(u)) => u.borrow::<Obj>().ok().map(|o| o.id),
-                        _ => None,
-                    };
+                    let door = arg_id(&args, 1);
                     // The story borrow must not span a Lua call (`coords_value`
                     // runs the script's `Vec` global) or the host's map provider:
                     // compute the entrance position, drop it, build the value.
@@ -755,28 +750,6 @@ impl ScriptHost {
                 })?,
             )?;
         }
-        // Unsupported `Game` functions (`LuaGame::BindClass`): a loud Lua
-        // error, not a silent neutral value — no stock script calls them
-        // (every `Scripts.arc` checked), so a mod author sees the failure.
-        for (cls, fns) in API {
-            if *cls != "Game" {
-                continue;
-            }
-            for (name, implemented) in fns.iter() {
-                if *implemented {
-                    continue;
-                }
-                let name = *name;
-                game.set(
-                    name,
-                    lua.create_function(move |_, _: MultiValue| -> mlua::Result<()> {
-                        Err(mlua::Error::runtime(format!(
-                            "Game.{name} is not supported by the port's Lua host"
-                        )))
-                    })?,
-                )?;
-            }
-        }
         lua.globals().set("Game", game)
     }
 
@@ -784,23 +757,11 @@ impl ScriptHost {
         let lua = &self.lua;
         let ctx = &self.ctx;
         let g = lua.globals();
-        // Methods reachable through a class table (`Character.IsAlive(obj)`):
-        // every object method the API lists.
+        // Methods reachable through a class table (`Character.IsAlive(obj)`).
         let names = lua.create_table()?;
-        for (cls, fns) in API {
-            if matches!(
-                *cls,
-                "Script" | "MpScript" | "Shared" | "Time" | "UI" | "Debug" | "Game"
-            ) {
-                continue;
-            }
-            for (n, _) in fns.iter() {
-                if !matches!(
-                    *n,
-                    "Get" | "Create" | "CreateNearPlayer" | "Cache" | "Release"
-                ) {
-                    names.set(*n, true)?;
-                }
+        for (_, fns) in super::api::CLASS_METHODS {
+            for n in fns.iter() {
+                names.set(*n, true)?;
             }
         }
         let forward: Function = lua
@@ -838,7 +799,7 @@ impl ScriptHost {
             t.set(
                 "Get",
                 lua.create_function(move |lua, id: Value| {
-                    let Some(id) = arg_id(&MultiValue::from_vec(vec![id]), 0) else {
+                    let Some(id) = value_id(&id) else {
                         return Ok(Value::Nil);
                     };
                     let ok = has_class(&c.story.borrow(), cls, id);
@@ -855,7 +816,7 @@ impl ScriptHost {
             t.set(
                 "IsType",
                 lua.create_function(move |_, id: Value| {
-                    let id = arg_id(&MultiValue::from_vec(vec![id]), 0);
+                    let id = value_id(&id);
                     Ok(id.is_some_and(|id| has_class(&c.story.borrow(), cls, id)))
                 })?,
             )?;

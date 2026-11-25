@@ -77,6 +77,10 @@ pub enum HandState {
 }
 
 impl HandState {
+    /// The number of hand states: the last variant's discriminant + 1 (an appended variant must become
+    /// the anchor here).
+    pub const COUNT: usize = HandState::Ranged1hOffhand as usize + 1;
+
     /// The engine's rules: the left hand is checked first (1h melee → dual
     /// wield, staff, 1h ranged → dual ranged), then the right weapon combined
     /// with a shield/off-hand in the left.

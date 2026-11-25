@@ -164,9 +164,9 @@ impl AreaTrigger {
 
     /// The `shouldTrigger` function the collected entities must pass (module doc): asked only by a
     /// trigger that names `detectableNames`.
-    pub fn hook(&self) -> Option<&str> {
+    pub fn hook(&self) -> Option<&Rc<str>> {
         self.should_trigger
-            .as_deref()
+            .as_ref()
             .filter(|_| !self.detectable.is_empty())
     }
 

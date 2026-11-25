@@ -216,32 +216,3 @@ fn the_devotion_purchase() {
     assert_eq!(devotion(&g), (points + 1, total + 1), "one point");
     assert_eq!(tribute(&g), t - price, "{price} tributes spent");
 }
-
-/// A kill by the player scores (`PlayStats::IncrementKills`: `survivalScoreEquation` of the class bonus).
-#[test]
-fn a_kill_scores() {
-    let Some((mut g, p, _)) = setup() else {
-        return;
-    };
-    g.app
-        .world_mut()
-        .write_message(gd_game::combat::MonsterKilled {
-            record: ZOMBIE.into(),
-            level: 30,
-            position: Vec3::ZERO,
-            entity: Entity::PLACEHOLDER,
-            killer: Some((p, None)),
-        });
-    g.steps(2);
-    let score = g
-        .app
-        .world()
-        .non_send::<StoryRuntime>()
-        .story
-        .borrow()
-        .game
-        .survival
-        .score;
-    // Normal: `commonBonus` 1 × (1 + tier 0 / 10) × multiplier 1.
-    assert_eq!(score, 1);
-}

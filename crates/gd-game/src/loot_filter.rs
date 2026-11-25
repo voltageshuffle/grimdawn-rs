@@ -36,7 +36,6 @@ use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game_core::inventory::Inventory;
 use gd_game_core::player::{Loadout, Player};
-use gd_game_core::session::MessageDrain;
 use gd_sim::items::loot_filter::{COUNT, ItemFacts, Masteries, Mode, defaults, passes};
 
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -75,15 +74,23 @@ impl LootFilter {
         let pet_bonus = [&item.base_name, &item.prefix_name, &item.suffix_name]
             .iter()
             .any(|n| rec(n).is_some_and(|r| r.str("petBonusName").is_some_and(|p| !p.is_empty())));
-        let skills = gd_sim::skills::item_skill_bonuses(
-            db,
-            &Item {
-                relic_name: String::new(),
-                relic_bonus: String::new(),
-                augment_name: String::new(),
-                ..item.clone()
-            },
-        );
+        // The skill bonuses leave out the inserted relic and augment: an item without either is read as is.
+        let skills = if item.relic_name.is_empty()
+            && item.relic_bonus.is_empty()
+            && item.augment_name.is_empty()
+        {
+            gd_sim::skills::item_skill_bonuses(db, item)
+        } else {
+            gd_sim::skills::item_skill_bonuses(
+                db,
+                &Item {
+                    relic_name: String::new(),
+                    relic_bonus: String::new(),
+                    augment_name: String::new(),
+                    ..item.clone()
+                },
+            )
+        };
         let masteries: Vec<(String, bool)> = loadout
             .map(|l| {
                 l.skills
@@ -270,8 +277,6 @@ impl Plugin for LootFilterPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<LootFilterRequest>()
             .add_message::<PickUpNearest>()
-            .drain_messages_unless::<LootFilterRequest, _>(resource_exists::<LootFilter>)
-            .drain_messages_unless::<PickUpNearest, _>(resource_exists::<LootFilter>)
             .add_systems(
                 Update,
                 (

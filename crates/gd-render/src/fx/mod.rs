@@ -208,6 +208,9 @@ pub struct Draw {
     pub mesh: Handle<Mesh>,
     pub buffer: Handle<ShaderBuffer>,
     pub cap: usize,
+    /// The buffer's size in bytes: at least [`render::buffer_bytes`]`(cap)`, more for a pooled buffer that grew for
+    /// an earlier emitter (uploads keep the size, so they rewrite the GPU buffer in place instead of reallocating).
+    buffer_size: u64,
     /// This frame's simulation output, from [`update_effects`]' parallel pass to its serial one.
     drawn: Option<Drawn>,
 }
@@ -246,8 +249,8 @@ pub struct FxAssets {
     in_flight: gd_formats::collections::HashSet<String>,
     /// Static quad meshes by particle capacity.
     quads: HashMap<usize, Handle<Mesh>>,
-    /// Finished emitters' (material, buffer) pairs, ready for the next emitter ([`cleanup_effect`]).
-    pool: Vec<(Handle<ParticleMaterial>, Handle<ShaderBuffer>)>,
+    /// Finished emitters' (material, buffer, buffer size) triples, ready for the next emitter ([`cleanup_effect`]).
+    pool: Vec<(Handle<ParticleMaterial>, Handle<ShaderBuffer>, u64)>,
 }
 
 /// A background read of [`FxAssets`] (`None`: the file failed to load).
@@ -724,30 +727,32 @@ fn init_effects(
                     d.shader.to_ascii_lowercase().contains("distortadditive") as u32 as f32,
                     0.0,
                 );
-                let (mat, buffer) = if let Some((mat, buffer)) = assets.pool.pop() {
-                    if let Some(mut m) = mats.get_mut(&mat) {
-                        m.params = params;
-                        m.texture = img;
-                        m.blend = d.blend();
-                        m.sort = d.sort_order();
-                        m.order = order as u32;
-                    }
-                    (mat, buffer)
-                } else {
-                    let mut buf =
-                        ShaderBuffer::new(vec![[0.0f32; 4]], RenderAssetUsages::RENDER_WORLD);
-                    buf.resize_buffer(render::buffer_bytes(cap));
-                    let buffer = buffers.add(buf);
-                    let mat = mats.add(ParticleMaterial {
-                        params,
-                        texture: img,
-                        particles: buffer.clone(),
-                        blend: d.blend(),
-                        sort: d.sort_order(),
-                        order: order as u32,
-                    });
-                    (mat, buffer)
-                };
+                let (mat, buffer, buffer_size) =
+                    if let Some((mat, buffer, size)) = assets.pool.pop() {
+                        if let Some(mut m) = mats.get_mut(&mat) {
+                            m.params = params;
+                            m.texture = img;
+                            m.blend = d.blend();
+                            m.sort = d.sort_order();
+                            m.order = order as u32;
+                        }
+                        (mat, buffer, size)
+                    } else {
+                        let size = render::buffer_bytes(cap);
+                        let mut buf =
+                            ShaderBuffer::new(vec![[0.0f32; 4]], RenderAssetUsages::RENDER_WORLD);
+                        buf.resize_buffer(size);
+                        let buffer = buffers.add(buf);
+                        let mat = mats.add(ParticleMaterial {
+                            params,
+                            texture: img,
+                            particles: buffer.clone(),
+                            blend: d.blend(),
+                            sort: d.sort_order(),
+                            order: order as u32,
+                        });
+                        (mat, buffer, size)
+                    };
                 let mesh = assets.quads(cap, &mut meshes);
                 let me = commands
                     .spawn((
@@ -770,6 +775,7 @@ fn init_effects(
                     mesh,
                     buffer,
                     cap,
+                    buffer_size,
                     drawn: None,
                 })
             } else {
@@ -842,7 +848,9 @@ fn cleanup_effect(
                 if let Ok(mat) = mats.get(dr.entity)
                     && assets.pool.len() < PARTICLE_POOL_CAP
                 {
-                    assets.pool.push((mat.0.clone(), dr.buffer.clone()));
+                    assets
+                        .pool
+                        .push((mat.0.clone(), dr.buffer.clone(), dr.buffer_size));
                 }
                 commands.entity(dr.entity).try_despawn();
             }
@@ -1041,6 +1049,7 @@ fn update_effects(
                         let n = em.state.particles.len();
                         if n > dr.cap {
                             dr.cap = n.next_power_of_two();
+                            dr.buffer_size = dr.buffer_size.max(render::buffer_bytes(dr.cap));
                             dr.mesh = assets.quads(dr.cap, &mut meshes);
                             commands.entity(dr.entity).insert(Mesh3d(dr.mesh.clone()));
                         }
@@ -1051,7 +1060,7 @@ fn update_effects(
                             // The filled vec becomes the upload as it is (no copy).
                             b.data = ShaderBufferData::Initialized {
                                 data: AlignedVec::from(fill),
-                                buffer_size: render::buffer_bytes(dr.cap),
+                                buffer_size: dr.buffer_size,
                             };
                         }
                         // The draw entity sits at the effect origin (the sort centre of the
@@ -1083,8 +1092,9 @@ fn update_effects(
                 if hooks.render.no_fx_lights {
                     pl.intensity = 0.0;
                 }
-                *t = Transform::from_translation(ls.position);
-                *gt = GlobalTransform::from(*t);
+                let tf = Transform::from_translation(ls.position);
+                t.set_if_neq(tf);
+                gt.set_if_neq(GlobalTransform::from(tf));
             }
         }
         if complete && effect.despawn_when_complete {

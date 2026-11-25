@@ -176,15 +176,15 @@ pub fn name_class(c: Classification) -> u8 {
 /// `GameEngine::GetItemClassificationName`: the prefix word of
 /// a classification (`tagMagic` ... `tagLegend`; empty for Common and the
 /// others).
-fn classification_word(ctx: &TipCtx, c: Classification) -> String {
+fn classification_word<'a>(ctx: &'a TipCtx, c: Classification) -> &'a str {
     let key = match c {
         Classification::Magical => "tagMagic",
         Classification::Rare => "tagRare",
         Classification::Epic => "tagEpic",
         Classification::Legendary => "tagLegend",
-        _ => return String::new(),
+        _ => return "",
     };
-    tag(ctx, key).to_string()
+    tag(ctx, key)
 }
 
 /// The name text: `tagItemNameOrder` pieces for equipment (markup kept), the
@@ -341,9 +341,9 @@ pub(crate) fn racial_text(tags: &TagTable, rec: &Record, li: usize) -> Vec<Strin
             // stock tags are `tagRace004P` for `Race004`.
             let digits: String = race.chars().filter(|c| c.is_ascii_digit()).collect();
             let plural_key = format!("tagRace{digits}P");
-            let plural = tags.get(&plural_key).unwrap_or(&plural_key).to_string();
+            let plural = tags.get(&plural_key).unwrap_or(&plural_key);
             if let Some(f) = tags.get(key) {
-                out.push(format_rich(f, &[Arg::Num(v), Arg::Str(&plural)]));
+                out.push(format_rich(f, &[Arg::Num(v), Arg::Str(plural)]));
             }
         }
     }
@@ -757,7 +757,7 @@ fn quality_line(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Option<Line> {
     let double_rare = r.prefix_classification == Some(Classification::Rare)
         && r.suffix_classification == Some(Classification::Rare);
     let class_word = if double_rare {
-        tag(ctx, "tagDoubleRare").to_string()
+        tag(ctx, "tagDoubleRare")
     } else {
         classification_word(ctx, super::loot::rarity(r))
     };
@@ -1087,11 +1087,9 @@ fn equipment(ctx: &TipCtx, r: &ResolvedItem, base: &Record, search: bool) -> Vec
     // The details flag prints each attribute's `_Min` / `_Max` range numbers
     // (`Create*RangeText`, [`super::tooltip::range_numbers`]); not in the
     // search text (`ItemEquipment::GetSearchText` passes 0).
-    let bounds = ctx
-        .details
+    let bounds = (ctx.details && !search)
         .then(|| super::resolve::attr_bounds(ctx.db, item))
-        .flatten()
-        .filter(|_| !search);
+        .flatten();
     // The base attack speed line's player context: the uncapped attack speed
     // (`GetPlayerBaseAttackSpeed`) and the weapon animation's rate.
     let speed = ctx
@@ -1147,26 +1145,21 @@ fn equipment(ctx: &TipCtx, r: &ResolvedItem, base: &Record, search: bool) -> Vec
             .dps_delta
             .filter(|_| r.class.starts_with("Weapon") && !search)
         {
-            let sign = if d > 0.0 {
-                "^g+"
-            } else if d < 0.0 {
-                "^r"
-            } else {
-                "+"
-            };
-            let text = format_rich(tag(ctx, "DamagePerSecond"), &[Arg::Num(d)]);
-            out.push(line(format!("{sign}{text}"), tc::BASE_STATS));
-            // The off-hand line follows (`GetUIDisplayText_OffhandDPS`), never for a two-hander.
-            if let Some(o) = ctx.dps_offhand {
-                let sign = if o > 0.0 {
+            let dps_line = |key: &str, v: f32| {
+                let sign = if v > 0.0 {
                     "^g+"
-                } else if o < 0.0 {
+                } else if v < 0.0 {
                     "^r"
                 } else {
                     "+"
                 };
-                let text = format_rich(tag(ctx, "DamagePerSecondOffHand"), &[Arg::Num(o)]);
-                out.push(line(format!("{sign}{text}"), tc::BASE_STATS));
+                let text = format_rich(tag(ctx, key), &[Arg::Num(v)]);
+                line(format!("{sign}{text}"), tc::BASE_STATS)
+            };
+            out.push(dps_line("DamagePerSecond", d));
+            // The off-hand line follows (`GetUIDisplayText_OffhandDPS`), never for a two-hander.
+            if let Some(o) = ctx.dps_offhand {
+                out.push(dps_line("DamagePerSecondOffHand", o));
             }
             out.push(blank());
         }
@@ -1284,7 +1277,7 @@ fn relic_class_line(ctx: &TipCtx, rec: &Record, var1: u32, class: u8) -> Line {
         format_rich(
             tag(ctx, "tagComponentNumberRare"),
             &[
-                Arg::Str(&word),
+                Arg::Str(word),
                 Arg::Str(tag(ctx, "tagComponentIncomplete")),
                 Arg::Num(level as f32),
                 Arg::Num(need as f32),
@@ -1595,7 +1588,7 @@ fn formula(ctx: &TipCtx, r: &ResolvedItem, base: &Record) -> Vec<Line> {
 /// count's shows nothing. Tiers run to [`super::sets::set_size`] (`setSize`,
 /// else the member count); every `setMembers` entry is listed, variants of one
 /// piece included, owned by record path.
-pub fn set_lines(ctx: &TipCtx, set: &str) -> Vec<Line> {
+fn set_lines(ctx: &TipCtx, set: &str) -> Vec<Line> {
     let Some(rec) = ctx.db.get(set) else {
         return Vec::new();
     };
@@ -1643,12 +1636,9 @@ pub fn set_lines(ctx: &TipCtx, set: &str) -> Vec<Line> {
         // Only what this count adds: an attribute whose value equals the
         // previous count's is not shown again (`ItemSet::
         // GetUIDisplayText`: per-array `v[level] != v[level - 1]`).
-        let fresh: Vec<_> = attrs.iter().filter(|a| !prev.contains(a)).collect();
-        if !fresh.is_empty() {
-            for a in fresh {
-                if let Some(t) = attribute_line_rich(ctx.tags, a) {
-                    push_text(&mut body, &t, class);
-                }
+        for a in attrs.iter().filter(|a| !prev.contains(a)) {
+            if let Some(t) = attribute_line_rich(ctx.tags, a) {
+                push_text(&mut body, &t, class);
             }
         }
         prev = attrs;

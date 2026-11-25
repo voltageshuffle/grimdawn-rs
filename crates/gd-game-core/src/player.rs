@@ -29,16 +29,16 @@
 //!   from another worn item (`Skill_BuffRadiusToggled`'s test of
 //!   `SkillManager::IsItemSkillActive`; the port lists each
 //!   record once, [`Loadout::item_toggles`]). No hot slot holds an auto
-//!   toggle (`crate::hotbar` docs), so the user never switches one off.
+//!   toggle (`gd_game::hotbar` docs), so the user never switches one off.
 //! - while on it counts like a learned toggle: `SkillManager::GetCharAttributes`
 //!   runs `CollectPassiveCharAttributes` over the item list too (stats and energy
 //!   reserve, [`Loadout::profile_with`]); radius auras pulse
-//!   (`crate::auras`), damage auras tick (`casting::DamageAuras`), the buff
+//!   (`gd_game::auras`), damage auras tick (`casting::DamageAuras`), the buff
 //!   bar, the toggle effects and `Skill_OnHitAttackRadius`'s proc see it.
 //! - unequipped (`gd_game::player::unequipped_toggles`): `RemoveItemSkills`
 //!   starts the cooldown of an active one, `StopSkill`s and uninstalls it;
 //!   it stops every other item skill it removes too, so an item-granted
-//!   summon's pets die (`crate::pets::StopSummonSkill`).
+//!   summon's pets die (`gd_game::pets::StopSummonSkill`).
 //! - the save keeps no item toggle state (the skills block's item entries are
 //!   name, auto-cast skill / controller, slot and item, `SkillManager::
 //!   WriteProperties`), so a loaded one comes on again.
@@ -108,7 +108,7 @@ pub fn player_record(female: bool) -> &'static str {
 /// points, and those points: per attribute `(saved − initial) / increment` rounded down (at most 10 000, the
 /// bad-data bound of `BioStore::allocate`), the initial values being the pc record's `characterStrength` /
 /// `characterDexterity` / `characterIntelligence` (what `CharacterBio::ResetAttributePoints` goes back to,
-/// `crate::points` module doc). Each point's increment and its life / energy share
+/// `gd_game::points` module doc). Each point's increment and its life / energy share
 /// ([`gd_sim::stats::BioStore::allocate`]) come off the base, so adding the points back (the profile, the save's
 /// fold) gives the saved values again.
 pub fn split_bio(
@@ -414,7 +414,7 @@ pub struct Loadout {
     /// values less [`Self::allocated`]'s share, [`Self::from_save`]); None for a new character (the pc record's).
     pub bio: Option<[f32; 5]>,
     /// Every attribute point spent, the save's and this session's, on top of `bio`: the one count the profile,
-    /// the save (`crate::save`, folded back into the bio) and the attribute reset (`crate::points`) read.
+    /// the save (`gd_game::save`, folded back into the bio) and the attribute reset (`gd_game::points`) read.
     pub allocated: gd_sim::stats::AllocatedPoints,
     /// The learned skills (points spent; no equipment bonuses: those are
     /// [`EffectiveSkills`]).

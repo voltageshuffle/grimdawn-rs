@@ -388,13 +388,6 @@ fn list_values(
     // `defensiveCrowdControl` expands to stun, freeze, petrify and
     // trap only (not sleep, not slow).
     let cc = tot("defensiveCrowdControl");
-    let sum = |t: T| {
-        p.resistances
-            .iter()
-            .filter(|(ty, _)| *ty == t)
-            .map(|x| x.1)
-            .sum::<f32>()
-    };
     let cap = rules.caps.player_defense_cap[(rules.balance / 4).min(2)];
     for (k, t, with_cc) in [
         ("StunResist", T::Stun, true),
@@ -407,7 +400,7 @@ fn list_values(
         ("SlowResist", T::TotalSpeed, false),
         ("ReflectResist", T::ReflectionResist, false),
     ] {
-        let v = sum(t) + if with_cc { cc } else { 0.0 };
+        let v = resistance_total(p, t) + if with_cc { cc } else { 0.0 };
         // `Defense::process`: the type's `defensive<X>Modifier` % of |v| on top.
         let v = v + v.abs() * resistance_modifier(p, t) * crate::stats::PCT;
         let max = cap + resistance_cap_bonus(p, t);
@@ -440,6 +433,15 @@ const RESISTANCE_ROWS: [(&str, T); 10] = [
     ("StunResistanceNumber", T::Physical),
     ("DisruptionResistanceNumber", T::Chaos),
 ];
+
+/// A profile's summed `defensive<X>` value of one type ([`Profile::resistances`]).
+fn resistance_total(p: &Profile, t: T) -> f32 {
+    p.resistances
+        .iter()
+        .filter(|(ty, _)| *ty == t)
+        .map(|x| x.1)
+        .sum()
+}
 
 /// The resistance reduction on a character (`Character::Contribute{Total,
 /// Physical,Elemental}ResistanceReduction{Absolute,Percent}`: its debuffs of
@@ -541,12 +543,7 @@ pub struct ResistanceRow {
 /// % is > 0, plus the elemental ones for fire / cold / lightning and the
 /// physical ones for Stun (physical).
 pub fn resistance(p: &Profile, rules: &Rules, reduction: &ReductionInfo, t: T) -> ResistanceRow {
-    let raw: f32 = p
-        .resistances
-        .iter()
-        .filter(|(ty, _)| *ty == t)
-        .map(|x| x.1)
-        .sum();
+    let raw = resistance_total(p, t);
     // `Character::GetDefenseAttributeCap`, as `TakeAttack` takes it.
     let cap = rules.caps.player_defense_cap[(rules.balance / 4).min(2)];
     // One attribute per type: `CombatAttributeAccumulator::AddDefense`
@@ -735,15 +732,7 @@ pub fn pet_rows(
     put("PetRunSpeed", acc.modifier[C::RunSpeed as usize]);
     put("PetOA", acc.get(C::OffensiveAbilityModifier));
     put("PetDA", acc.get(C::DefensiveAbilityModifier));
-    let res = |t: T| {
-        pet.map_or(0.0, |p| {
-            p.resistances
-                .iter()
-                .filter(|r| r.0 == t)
-                .map(|r| r.1)
-                .sum::<f32>()
-        })
-    };
+    let res = |t: T| pet.map_or(0.0, |p| resistance_total(p, t));
     for (k, t) in [
         ("PetPhysicalResist", T::Physical),
         ("PetFireResist", T::Fire),

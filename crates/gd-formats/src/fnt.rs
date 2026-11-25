@@ -202,13 +202,20 @@ impl Font {
         }
     }
 
+    /// The bytes a BC atlas of `w` × `h` needs (saturating: a crafted size cannot overflow the
+    /// check); `None` for a raw atlas.
     fn dxt_size(f: AtlasFormat, w: u32, h: u32) -> Option<usize> {
-        let blocks = (w as usize).div_ceil(4) * (h as usize).div_ceil(4);
-        match f {
-            AtlasFormat::Dxt1 => Some(blocks * 8),
-            AtlasFormat::Dxt3 | AtlasFormat::Dxt5 => Some(blocks * 16),
-            AtlasFormat::Raw(_) => None,
-        }
+        let block_bytes = match f {
+            AtlasFormat::Dxt1 => 8,
+            AtlasFormat::Dxt3 | AtlasFormat::Dxt5 => 16,
+            AtlasFormat::Raw(_) => return None,
+        };
+        Some(
+            (w as usize)
+                .div_ceil(4)
+                .saturating_mul((h as usize).div_ceil(4))
+                .saturating_mul(block_bytes),
+        )
     }
 }
 

@@ -333,13 +333,6 @@ impl CombatType {
         )
     }
 
-    /// Damage scaled by Cunning via `physicalDamageEquation`/`pierceDamageEquation`
-    /// (hits) — `CombatAttributeAbsDamage::Process` (Pierce) and
-    /// `CombatAttributeDamage_BasePhysical::Process`.
-    pub fn scales_with_cunning(self) -> bool {
-        matches!(self, CombatType::Physical | CombatType::Pierce)
-    }
-
     /// Damage types that use `CombatAttributeAbsDamageElemental` /
     /// `CombatAttributeDurDamageElemental` (scaled by Spirit via the
     /// `magical*Equation`s): each class's AddDamageToAccumulator.

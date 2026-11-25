@@ -156,6 +156,16 @@ pub struct GameMenuLayout {
     pub hud_button: Option<URect>,
 }
 
+impl GameMenuLayout {
+    /// The menu / confirmation part at `p`.
+    fn part_at(&self, p: Vec2) -> Option<Part> {
+        self.buttons
+            .iter()
+            .find(|(r, _)| contains(r, p))
+            .map(|b| b.1)
+    }
+}
+
 /// The screen dim (alpha) and the banner flag (module docs).
 #[derive(Resource)]
 pub(crate) struct Dim {
@@ -248,7 +258,7 @@ pub fn input(
     if !hooks.0 && hk.ui.game_menu.is_some_and(|s| t >= s) {
         hooks.0 = true;
         menu.open = true;
-        menu.confirm = match hk.ui.game_menu_confirm.clone().as_deref() {
+        menu.confirm = match hk.ui.game_menu_confirm.as_deref() {
             Some("exit") => Some(Confirm::Exit),
             Some("quit") => Some(Confirm::Quit),
             _ => None,
@@ -268,18 +278,17 @@ pub fn input(
     }
     let cursor = window.single().ok().and_then(|w| super::cursor_px(&hk, w));
     let clicked = super::widgets::button_pressed(&mouse);
+    let part = cursor.filter(|_| clicked).and_then(|p| layout.part_at(p));
+    // The HUD's options button is still live under the menu and opens / closes it (module doc).
+    let hud = cursor
+        .filter(|_| mouse.just_pressed(MouseButton::Left))
+        .zip(layout.hud_button)
+        .is_some_and(|(p, r)| contains(&r, p));
     // Esc is the shared dispatcher's (`ui::esc_dispatcher`), which runs after this in `Update`.
     let mut took_press = false;
     if options.open {
         // The options window handles its own keys and clicks (`options.rs`).
     } else if let Some(c) = menu.confirm {
-        let part = cursor.filter(|_| clicked).and_then(|p| {
-            layout
-                .buttons
-                .iter()
-                .find(|(r, _)| contains(r, p))
-                .map(|b| b.1)
-        });
         // PORT: Y / N (beside Enter / Esc) are the port's keys for the box.
         if matches!(part, Some(Part::No | Part::Close)) || keys.just_pressed(KeyCode::KeyN) {
             menu.confirm = None;
@@ -297,18 +306,6 @@ pub fn input(
             menu.leaving = Some(c);
         }
     } else if menu.open {
-        let part = cursor.filter(|_| clicked).and_then(|p| {
-            layout
-                .buttons
-                .iter()
-                .find(|(r, _)| contains(r, p))
-                .map(|b| b.1)
-        });
-        // The HUD's options button is still live under the menu and closes it (module doc).
-        let hud = cursor
-            .filter(|_| mouse.just_pressed(MouseButton::Left))
-            .zip(layout.hud_button)
-            .is_some_and(|(p, r)| contains(&r, p));
         if bindings.just_pressed(super::keys::GAME_MENU, &keys) || part == Some(Part::Resume) || hud
         {
             menu.open = false;
@@ -323,20 +320,14 @@ pub fn input(
         } else if part == Some(Part::Quit) {
             menu.confirm = Some(Confirm::Quit);
         }
-    } else {
-        let hud = cursor
-            .filter(|_| mouse.just_pressed(MouseButton::Left))
-            .zip(layout.hud_button)
-            .is_some_and(|(p, r)| contains(&r, p));
-        if bindings.just_pressed(super::keys::GAME_MENU, &keys) || hud {
-            menu.open = true;
-            // The menu replaces the pause key's pause (and its banner).
-            key = false;
-            pause_key.write(PauseKey(Some(false)));
-        } else if bindings.just_pressed(super::keys::PAUSE, &keys) {
-            key = !key;
-            pause_key.write(PauseKey(None));
-        }
+    } else if bindings.just_pressed(super::keys::GAME_MENU, &keys) || hud {
+        menu.open = true;
+        // The menu replaces the pause key's pause (and its banner).
+        key = false;
+        pause_key.write(PauseKey(Some(false)));
+    } else if bindings.just_pressed(super::keys::PAUSE, &keys) {
+        key = !key;
+        pause_key.write(PauseKey(None));
     }
     let held = menu.open || menu.confirm.is_some() || options.open;
     if pause.menu != held {
@@ -715,13 +706,7 @@ fn live(
         .single()
         .ok()
         .and_then(|w| super::cursor_px(&hooks, w))
-        .and_then(|p| {
-            layout
-                .buttons
-                .iter()
-                .find(|(r, _)| contains(r, p))
-                .map(|b| b.1)
-        });
+        .and_then(|p| layout.part_at(p));
     let hit = match hover {
         Some(Part::Yes) => Some(Hit::Yes),
         Some(Part::No) => Some(Hit::No),

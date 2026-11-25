@@ -31,12 +31,10 @@
 //! old; a begin/complete nested inside another event's actions reads that entry point's results.
 use super::Story;
 use super::state::{DIFFICULTIES, Effect, MAX_TRIBUTE};
-use anyhow::{Context, Result};
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::qst::{Action, Comparator, Condition, ConditionEntry, Conditions, LuaArg, Quest};
 use std::sync::Arc;
 
-pub const STATE_UNAVAILABLE: u32 = 0;
 pub const STATE_AVAILABLE: u32 = 1;
 pub const STATE_IN_PROGRESS: u32 = 2;
 pub const STATE_COMPLETE: u32 = 3;
@@ -68,18 +66,6 @@ pub fn normalize_path(p: &str) -> String {
 }
 
 impl QuestDefs {
-    /// From `(resource path, file bytes)` pairs.
-    pub fn from_files<I: IntoIterator<Item = (String, Vec<u8>)>>(files: I) -> Result<Self> {
-        let mut defs = Self::default();
-        for (path, data) in files {
-            let quest = Quest::parse(&data).with_context(|| path.clone())?;
-            defs.add(QuestDef {
-                path: normalize_path(&path),
-                quest,
-            });
-        }
-        Ok(defs)
-    }
     pub fn add(&mut self, def: QuestDef) {
         let i = self.list.len();
         self.by_path.insert(def.path.clone(), i);
@@ -637,7 +623,6 @@ impl Story {
             let rt = &mut self.quests.rt[qi].tasks[ti];
             rt.state = STATE_AVAILABLE;
             rt.per_difficulty[d] = STATE_AVAILABLE;
-            self.quests.revision += 1;
         }
     }
 
@@ -1157,7 +1142,7 @@ impl Story {
                 count: *count,
             }),
             Action::GiveLevel { amount } => {
-                self.player.level += amount;
+                self.player.level = self.player.level.saturating_add(*amount);
                 self.effects.push(Effect::GiveLevels(*amount));
             }
             Action::GiveExperience { amount } => {
@@ -1174,7 +1159,7 @@ impl Story {
             }
             Action::GiveSkillPoint { .. } | Action::GiveAttribPoint { .. } => {}
             Action::GiveDevotion { amount } => {
-                self.player.total_devotion += amount;
+                self.player.total_devotion = self.player.total_devotion.saturating_add(*amount);
                 self.effects.push(Effect::GiveDevotion(*amount));
             }
             Action::GiveTribute { amount } => {

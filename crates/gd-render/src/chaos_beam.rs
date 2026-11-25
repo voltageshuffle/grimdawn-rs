@@ -355,6 +355,10 @@ fn update_beam(
     let d = b - a;
     let len = d.length();
     if len < 0.1 {
+        // The ends together: nothing drawn, rather than last frame's tendrils left where they were.
+        for tendril in &beam.tendrils {
+            hide(assets, tendril);
+        }
         return;
     }
     let shape = &beam.shape;
@@ -371,13 +375,7 @@ fn update_beam(
     let tp = t * shape.wave_speed;
     for tendril in &mut beam.tendrils {
         if hi - lo < 2 {
-            // Hidden: every index degenerate, the mesh kept for when it shows again.
-            if let Some(h) = &tendril.mesh
-                && let Some(mut m) = assets.meshes.get_mut(h)
-                && let Some(bevy::mesh::Indices::U32(idx)) = m.indices_mut()
-            {
-                idx.fill(0);
-            }
+            hide(assets, tendril);
             continue;
         }
         let period = tendril.period;
@@ -398,6 +396,22 @@ fn update_beam(
         }));
         strip(scratch, lo, hi, side, shape);
         write_strip(commands, assets, tendril, scratch, hi - lo);
+    }
+}
+
+/// Hides a tendril: every index degenerate, the mesh kept for when it shows again. Written only when not hidden
+/// yet: `get_mut` marks the mesh changed and re-uploads it.
+fn hide(assets: &mut crate::character::CharAssets, tendril: &Tendril) {
+    if let Some(h) = &tendril.mesh
+        && assets
+            .meshes
+            .get(h)
+            .and_then(Mesh::indices)
+            .is_some_and(|i| i.iter().any(|i| i != 0))
+        && let Some(mut m) = assets.meshes.get_mut(h)
+        && let Some(bevy::mesh::Indices::U32(idx)) = m.indices_mut()
+    {
+        idx.fill(0);
     }
 }
 

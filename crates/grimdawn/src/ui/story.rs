@@ -282,6 +282,9 @@ fn screen_shake(
             own: true,
         });
     }
-    shake.secs_left = (shake.secs_left - time.delta_secs()).max(0.0);
+    // Settled at 0: nothing to decay (no change mark).
+    if shake.secs_left != 0.0 {
+        shake.secs_left = (shake.secs_left - time.delta_secs()).max(0.0);
+    }
     *last = shake.secs_left;
 }

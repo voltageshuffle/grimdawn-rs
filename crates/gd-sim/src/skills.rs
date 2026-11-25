@@ -48,14 +48,17 @@ pub fn class_trees(db: &Database) -> Vec<(u32, String)> {
         .collect()
 }
 
+/// `skillName1..=64` keys (a static table, no per-call `format!`).
+static SKILL_NAME_KEYS: LazyLock<[String; 64]> =
+    LazyLock::new(|| std::array::from_fn(|i| format!("skillName{}", i + 1)));
+
 /// Skill records of a class tree, in tree order (mastery bar first).
 pub fn tree_skills(db: &Database, tree: &str) -> Vec<String> {
-    static KEYS: LazyLock<Vec<String>> =
-        LazyLock::new(|| (1..=64).map(|n| format!("skillName{n}")).collect());
     let Some(r) = db.get(tree) else {
         return Vec::new();
     };
-    KEYS.iter()
+    SKILL_NAME_KEYS
+        .iter()
         .filter_map(|k| r.str(k).map(str::to_owned))
         .collect()
 }
@@ -125,7 +128,6 @@ pub fn profile_name(rec: &Record) -> Option<&str> {
         .contains(&rec.class.as_str())
         .then(|| rec.str("buffSkillName"))
         .flatten()
-        .filter(|b| !b.is_empty())
 }
 
 /// The record [`profile_name`] names for skill `skill` (its own when it is no
@@ -140,7 +142,6 @@ pub fn profile_record(db: &Database, skill: &str) -> Option<Record> {
     {
         return Some(
             pet.str("buffSkillName")
-                .filter(|b| !b.is_empty())
                 .and_then(|b| db.get_owned(b))
                 .unwrap_or(pet),
         );
@@ -268,7 +269,6 @@ pub fn spawn_object(
             .strs_iter(k)
             .nth(level_index)
             .or_else(|| skill.strs_iter(k).last())
-            .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
     };
     let mut pick = None;
@@ -321,12 +321,15 @@ pub fn spawn_object(
 /// skills overriding it.
 pub fn pet_skill_levels(pet: &Record, level: i32, mods: &[(String, u32)]) -> Vec<(String, u32)> {
     let lvl = level as f32;
-    (1..=40)
-        .filter_map(|i| {
-            let name = pet
-                .str(&format!("skillName{i}"))
-                .filter(|n| !n.is_empty())?;
-            Some((name.to_string(), pet_skill_level(pet, i, name, lvl, mods)))
+    SKILL_NAME_KEYS[..40]
+        .iter()
+        .enumerate()
+        .filter_map(|(i, k)| {
+            let name = pet.str(k)?;
+            Some((
+                name.to_string(),
+                pet_skill_level(pet, i + 1, name, lvl, mods),
+            ))
         })
         .collect()
 }
@@ -464,11 +467,8 @@ pub fn tree_bases(db: &Database, skills: &[String]) -> Vec<Option<String>> {
             } else if is_modifier_class(class) {
                 let sub = (!is_secondary_class(class))
                     .then(|| {
-                        rec.as_ref().and_then(|r| {
-                            r.str("subSkillName")
-                                .filter(|n| !n.is_empty())
-                                .map(str::to_owned)
-                        })
+                        rec.as_ref()
+                            .and_then(|r| r.str("subSkillName").map(str::to_owned))
                     })
                     .flatten();
                 sub.or_else(|| last.clone())
@@ -1540,6 +1540,20 @@ pub fn gear_pet_modifiers(
 /// Skill bonuses (record, levels), mastery bonuses, the all-skills bonus.
 pub type SkillBonuses = (Vec<(String, u32)>, Vec<(String, u32)>, u32);
 
+/// `augmentSkillName{n}`, `augmentSkillLevel{n}`, `augmentMasteryName{n}`, `augmentMasteryLevel{n}`
+/// for n = 1..=5 (a static table, no per-call `format!`).
+static AUGMENT_KEYS: LazyLock<[[String; 4]; 5]> = LazyLock::new(|| {
+    std::array::from_fn(|i| {
+        let n = i + 1;
+        [
+            format!("augmentSkillName{n}"),
+            format!("augmentSkillLevel{n}"),
+            format!("augmentMasteryName{n}"),
+            format!("augmentMasteryLevel{n}"),
+        ]
+    })
+});
+
 /// Skill bonuses of one item ([`item_records`]):
 /// `augmentSkillName/Level{n}`, `augmentMasteryName/Level{n}` and
 /// `augmentAllLevel` → (skill bonuses, mastery bonuses, all-skills bonus).
@@ -1550,17 +1564,11 @@ pub fn item_skill_bonuses(db: &Database, item: &gd_formats::save::item::Item) ->
             continue;
         }
         let Some(r) = db.get(rec) else { continue };
-        for n in 1..=5 {
-            if let (Some(s), Some(l)) = (
-                r.str(&format!("augmentSkillName{n}")),
-                r.i32(&format!("augmentSkillLevel{n}")),
-            ) {
+        for [skill_name, skill_level, mastery_name, mastery_level] in AUGMENT_KEYS.iter() {
+            if let (Some(s), Some(l)) = (r.str(skill_name), r.i32(skill_level)) {
                 skills.push((s.to_ascii_lowercase(), l.max(0) as u32));
             }
-            if let (Some(m), Some(l)) = (
-                r.str(&format!("augmentMasteryName{n}")),
-                r.i32(&format!("augmentMasteryLevel{n}")),
-            ) {
+            if let (Some(m), Some(l)) = (r.str(mastery_name), r.i32(mastery_level)) {
                 masteries.push((m.to_ascii_lowercase(), l.max(0) as u32));
             }
         }
@@ -1637,7 +1645,7 @@ pub fn item_skill_grants(
                 continue;
             }
             let Some(r) = db.get(name) else { continue };
-            let Some(skill) = r.str("itemSkillName").filter(|s| !s.is_empty()) else {
+            let Some(skill) = r.str("itemSkillName") else {
                 continue;
             };
             let item_level = *item_level.get_or_insert_with(|| {
@@ -1652,10 +1660,7 @@ pub fn item_skill_grants(
                 .unwrap_or(1.0);
             out.push(ItemSkillGrant {
                 skill: skill.to_owned(),
-                controller: r
-                    .str("itemSkillAutoController")
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned),
+                controller: r.str("itemSkillAutoController").map(str::to_owned),
                 level: lv.max(1.0) as u32,
                 item: Some(i),
             });
@@ -1706,7 +1711,15 @@ impl SkillBook {
             *bonus.entry(s).or_insert(0) += l;
         }
         for (m, l) in ms {
-            for s in trees.mastery_tree(&m).into_iter().flat_map(|t| &t.skills) {
+            let Some(t) = trees.mastery_tree(&m) else {
+                continue;
+            };
+            // `SetMasteryAugment` raises each skill object of the mastery once; a skill listed
+            // twice in the tree (`CreateAndLoadSkill` reuses its object) counts once.
+            for (i, s) in t.skills.iter().enumerate() {
+                if t.skills[..i].iter().any(|p| p.eq_ignore_ascii_case(s)) {
+                    continue;
+                }
                 *bonus.entry(s.to_ascii_lowercase()).or_insert(0) += l;
             }
         }
@@ -2108,11 +2121,7 @@ impl SkillBook {
         trees: &SkillTrees,
         skill: &str,
     ) -> Option<String> {
-        let name = |r: &Record| {
-            r.str("skillSpecialAnimationName")
-                .filter(|n| !n.is_empty())
-                .map(str::to_owned)
-        };
+        let name = |r: &Record| r.str("skillSpecialAnimationName").map(str::to_owned);
         self.skills
             .iter()
             .filter(|(s, l)| {

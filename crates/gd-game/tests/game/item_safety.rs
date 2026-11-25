@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::gdc::{Gdc, SackItem};
 use gd_formats::save::item::Item;
-use gd_game::save::{BoxedItems, SaveRequest};
+use gd_game::save::BoxedItems;
 use gd_game::testing::TestGame;
 use gd_game_core::inventory::Inventory;
 use gd_game_core::stash::{STASH_H, STASH_W, Stash};
@@ -22,27 +22,24 @@ fn item(seed: u32) -> Item {
     }
 }
 
-/// A new character in play, and where its `player.gdc` is saved.
-fn game(name: &str) -> Option<(TestGame, PathBuf)> {
+/// A new character in play.
+fn game(name: &str) -> Option<TestGame> {
     let mut g = TestGame::new_character(name, false, false)?;
     g.spawn_player();
     g.steps(3);
-    let path = g
-        .save_dir()
-        .join("main")
-        .join(format!("_{name}"))
-        .join("player.gdc");
-    Some((g, path))
+    Some(g)
 }
 
 fn inv(g: &mut TestGame) -> Mut<'_, Inventory> {
     g.app.world_mut().resource_mut::<Inventory>()
 }
 
-fn save(g: &mut TestGame, path: &std::path::Path) -> Gdc {
-    g.app.world_mut().write_message(SaveRequest);
-    g.step();
-    Gdc::parse(&std::fs::read(path).expect("player.gdc written")).expect("the save parses")
+/// Saves the character: where its `player.gdc` is, and what it holds.
+fn save(g: &mut TestGame) -> (PathBuf, Gdc) {
+    let path = g.save_now();
+    let saved =
+        Gdc::parse(&std::fs::read(&path).expect("player.gdc written")).expect("the save parses");
+    (path, saved)
 }
 
 /// The seeds in each inventory sack of a saved character.
@@ -56,7 +53,7 @@ fn sack_seeds(saved: &Gdc) -> Vec<Vec<u32>> {
 
 #[test]
 fn every_save_writes_the_items_outside_the_grids() {
-    let Some((mut g, path)) = game("Loose Test") else {
+    let Some(mut g) = game("Loose Test") else {
         return;
     };
     // The cursor item, a window box's item and a new empty extra bag.
@@ -66,7 +63,7 @@ fn every_save_writes_the_items_outside_the_grids() {
         inv.held = Some(item(7));
     }
     g.app.world_mut().insert_resource(BoxedItems(vec![item(8)]));
-    let saved = save(&mut g, &path);
+    let (_, saved) = save(&mut g);
     assert_eq!(sack_seeds(&saved), [vec![7, 8], vec![]]);
     // The save takes nothing off the cursor and puts nothing into the session's bags.
     assert_eq!(inv(&mut g).held, Some(item(7)));
@@ -77,7 +74,7 @@ fn every_save_writes_the_items_outside_the_grids() {
         assert!(inv.bags[0].add_at(item(1), 0, 0, Footprint { w: 12, h: 8 }));
         assert!(inv.bags[1].add_at(item(2), 0, 0, Footprint { w: 8, h: 8 }));
     }
-    let saved = save(&mut g, &path);
+    let (_, saved) = save(&mut g);
     assert_eq!(sack_seeds(&saved), [vec![1], vec![2]]);
     let stashed = |saved: &Gdc| -> Vec<u32> {
         saved
@@ -100,7 +97,7 @@ fn every_save_writes_the_items_outside_the_grids() {
             assert!(page.add_at(item(100 + i as u32), 0, 0, whole));
         }
     }
-    let saved = save(&mut g, &path);
+    let (path, saved) = save(&mut g);
     assert_eq!(sack_seeds(&saved), [vec![1, 7, 8], vec![2]]);
     assert!(stashed(&saved).iter().all(|s| *s >= 100));
     let Some(mut again) = TestGame::with_save(&path) else {
@@ -122,7 +119,7 @@ fn every_save_writes_the_items_outside_the_grids() {
 
 #[test]
 fn load_keeps_items_whose_saved_cell_is_unusable() {
-    let Some((mut g, path)) = game("Collide Test") else {
+    let Some(mut g) = game("Collide Test") else {
         return;
     };
     let size = inv(&mut g).info(&item(1)).expect("the sword resolves").size;
@@ -135,7 +132,7 @@ fn load_keeps_items_whose_saved_cell_is_unusable() {
     let tiled = full.items.len();
     inv(&mut g).bags = vec![Sack::new(12, 8, true)];
     inv(&mut g).bags[0].add_at(item(1), 0, 0, size);
-    let mut saved = save(&mut g, &path);
+    let (path, mut saved) = save(&mut g);
     // A second item on the first one's cell and one far outside the grid (an edited or damaged save).
     let sack = &mut saved.inventory.data.as_mut().unwrap().sacks[0];
     sack.items.push(SackItem {
@@ -192,12 +189,7 @@ fn load_keeps_items_whose_saved_cell_is_unusable() {
         let kept: Vec<u32> = loaded.unplaced.iter().map(|u| u.item.seed).collect();
         assert_eq!(kept, [9000]);
     }
-    let out = again
-        .save_dir()
-        .join("main")
-        .join("_Collide Test")
-        .join("player.gdc");
-    let resaved = save(&mut again, &out);
+    let (_, resaved) = save(&mut again);
     let seeds = &sack_seeds(&resaved)[0];
     assert_eq!(seeds.len(), tiled + 1);
     assert!(seeds.contains(&9000));
@@ -212,13 +204,13 @@ fn unreadable_shared_file_is_not_replaced() {
         "transmutes.gst",
     ];
     const DAMAGED: &[u8] = b"damaged shared file";
-    let Some((mut g, path)) = game("Shared Test") else {
+    let Some(mut g) = game("Shared Test") else {
         return;
     };
     let dir = g.save_dir();
     let bak = |f: &str| dir.join(format!("{f}.bak"));
     // No file yet: new empty ones are written, nothing is set aside.
-    save(&mut g, &path);
+    save(&mut g);
     for f in FILES {
         assert!(dir.join(f).exists(), "{f} written");
         assert!(!bak(f).exists(), "{f}: nothing to keep");
@@ -232,7 +224,7 @@ fn unreadable_shared_file_is_not_replaced() {
         .world_mut()
         .remove_resource::<gd_game::illusion::Illusions>();
     g.steps(2);
-    save(&mut g, &path);
+    save(&mut g);
     for f in FILES {
         assert_eq!(
             std::fs::read(bak(f)).ok().as_deref(),

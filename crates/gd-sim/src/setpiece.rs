@@ -20,7 +20,7 @@
 //!   collection 4, interior 8. Rotations (`StringToRotation`): None 0, Y 1,
 //!   XYZ 2, Aligned 3, FaceOut 4, FaceIn 5.
 //!
-//! Parts (`SetPiecePart`) are added after the objects (see `run_set_piece`).
+//! Parts (`SetPiecePart`) are added after the objects (see [`run_set_piece_shared`]).
 //!
 //! Entity groups (`SetPiece::Load`): the host spends a set piece its `Unique Entities` /
 //! `Inverse Unique Entities` group leaves out before the placement-chance roll
@@ -85,8 +85,8 @@ pub struct SetPieceRun {
     pub stream: Rng,
 }
 
-struct Entry {
-    objects: Vec<String>,
+struct Entry<'a> {
+    objects: Vec<&'a str>,
     left: i32,
     limit: i32,
     weight: i32,
@@ -144,20 +144,10 @@ fn count(r: u32, lo: i32, hi: i32) -> i64 {
 /// Runs a set piece record. `rng` is the engine's shared stream (placement
 /// chance, pool choice); `own` the set piece's stream (seeded from it).
 /// `totem_chance`: [`crate::ascendant::totem_chance`].
-pub fn run_set_piece(
-    db: &Database,
-    record: &str,
-    totem_chance: f32,
-    rng: &mut Rng,
-) -> Option<SetPieceRun> {
-    run_set_piece_shared(db, record, totem_chance, &mut None, rng)
-}
-
-/// [`run_set_piece`] for a set piece of a "Unified Entities" group (
-/// `SetPiece::Generate`'s use of `GameEngine::
-/// GetEntityUnificationIndex` / `SetEntityUnificationIndex`): `pick` is the
-/// group's stored
-/// index into this set piece's pools (the non-zero `weight1..5` columns, in
+///
+/// A set piece of a "Unified Entities" group (`SetPiece::Generate`'s use of
+/// `GameEngine::GetEntityUnificationIndex` / `SetEntityUnificationIndex`): `pick` is the
+/// group's stored index into this set piece's pools (the non-zero `weight1..5` columns, in
 /// order); with `None` the pool is chosen by weight. An index past the pool
 /// list falls back to the weighted choice. Either way the chosen index goes
 /// back to `pick` (the engine stores it after every choice, overwriting).
@@ -174,10 +164,10 @@ pub fn run_set_piece_shared(
     }
     let mut own = Rng(rng.next().max(1));
     own.next();
-    let pools: Vec<(String, i32)> = (1..=5)
+    let pools: Vec<(&str, i32)> = (1..=5)
         .filter_map(|i| {
             Some((
-                r.str(&format!("pool{i}"))?.to_string(),
+                r.str(&format!("pool{i}"))?,
                 r.i32(&format!("weight{i}")).unwrap_or(0),
             ))
         })
@@ -201,27 +191,16 @@ pub fn run_set_piece_shared(
         }
     };
     *pick = Some(chosen);
-    let pool = &pools[chosen];
     // Monster totems: the set piece's `ascendantPool` on the totem roll
     // (`SetPiece::Generate`; `crate::ascendant`).
-    let ascendant = r
+    let pool = r
         .str("ascendantPool")
-        .filter(|p| !p.is_empty())
-        .map(str::to_owned)
-        .filter(|_| crate::ascendant::roll(rng, totem_chance));
-    let pool = match &ascendant {
-        Some(a) => (a.clone(), pool.1),
-        None => pool.clone(),
-    };
-    let pool = &pool;
-    let p = db.get(&pool.0)?;
+        .filter(|_| crate::ascendant::roll(rng, totem_chance))
+        .unwrap_or(pools[chosen].0);
+    let p = db.get(pool)?;
     let mut entries: Vec<Entry> = (1..=10)
         .filter_map(|i| {
-            let objects: Vec<String> = p
-                .strs(&format!("object{i}"))
-                .into_iter()
-                .map(str::to_string)
-                .collect();
+            let objects = p.strs(&format!("object{i}"));
             if objects.is_empty() {
                 return None;
             }
@@ -237,9 +216,8 @@ pub fn run_set_piece_shared(
                     record: String::new(),
                     entry: i,
                     tags: p
-                        .strs(&format!("tags{i}"))
-                        .iter()
-                        .map(|t| tag(t))
+                        .strs_iter(&format!("tags{i}"))
+                        .map(tag)
                         .fold(0, |a, b| a | b),
                     rotation: rotation(p.str(&format!("rotation{i}")).unwrap_or("None")),
                     scale: (lo, hi),
@@ -274,7 +252,7 @@ pub fn run_set_piece_shared(
         };
         let which = modulo(own.next(), e.objects.len() as i64) as usize;
         let mut obj = e.template.clone();
-        obj.record = e.objects[which].clone();
+        obj.record = e.objects[which].to_owned();
         obj.radius = db
             .get(&obj.record)
             .and_then(|r| r.f32("actorRadius"))
@@ -295,10 +273,9 @@ pub fn run_set_piece_shared(
     // no tags, rotation or force; the part's `buffer` and
     // `blockPathing`); positioning puts it at the part's `positionX/Y/Z`
     // (`SetPiecePart::Load`) from the set piece.
-    let parts: Vec<(gd_formats::arz::Record, i32)> = p
-        .strs("parts")
-        .iter()
-        .filter_map(|n| db.get_owned(n))
+    let parts: Vec<(&gd_formats::arz::Record, i32)> = p
+        .strs_iter("parts")
+        .filter_map(|n| db.get(n))
         .map(|r| {
             let w = r.i32("weight").unwrap_or(0);
             (r, w)
@@ -319,7 +296,7 @@ pub fn run_set_piece_shared(
                 continue;
             };
             budget -= i64::from(*w);
-            for name in part.strs("names") {
+            for name in part.strs_iter("names") {
                 objects.push(Placement {
                     record: name.to_string(),
                     entry: 0,
@@ -346,7 +323,7 @@ pub fn run_set_piece_shared(
         }
     }
     Some(SetPieceRun {
-        pool: pool.0.clone(),
+        pool: pool.to_owned(),
         scheme: scheme(p.str("placementScheme").unwrap_or("")),
         radius: p.f32("placementRadius").unwrap_or(0.0),
         objects,

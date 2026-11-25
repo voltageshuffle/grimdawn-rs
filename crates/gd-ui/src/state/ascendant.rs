@@ -7,7 +7,7 @@ pub struct AltarMenu {
     pub open: bool,
     /// The altar it was opened at (`AltarWindow.altarId`): the reagent list and the boxes take clicks and the
     /// activate button can be pressed. `None` (opened by the Altar Window key): a view of the boxes as activated
-    /// ([`altar_key`]).
+    /// (the binary's `ascendant::altar_key`).
     pub altar: Option<Entity>,
     /// The boxes (the offering in progress, or the activated one in the view).
     pub offering: gd_game_core::ascendant::Offering,

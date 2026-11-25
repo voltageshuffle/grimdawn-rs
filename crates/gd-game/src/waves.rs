@@ -256,13 +256,13 @@ fn trail_frame(at: Vec3, dir: Vec3, width: f32) -> Transform {
 /// else the skill's `key`.
 fn effect_name<'a>(
     rec: &'a Record,
-    mods: &'a [(Record, usize)],
+    mods: &[(&'a Record, usize)],
     key: &str,
     over: &str,
 ) -> Option<&'a str> {
     mods.iter()
         .rev()
-        .find_map(|(m, _)| m.str(over).filter(|s| !s.is_empty()))
+        .find_map(|&(m, _)| m.str(over).filter(|s| !s.is_empty()))
         .or(rec.str(key))
         .filter(|s| !s.is_empty())
 }
@@ -288,7 +288,7 @@ pub fn start(
     caster: Entity,
     caster_tf: &Transform,
     target: Option<Vec3>,
-    mods: &[(Record, usize)],
+    mods: &[(&Record, usize)],
     body: Option<&gd_formats::msh::Mesh>,
 ) -> Option<Wave> {
     let facing = gd_game_core::character::facing_flat(caster_tf);

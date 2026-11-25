@@ -203,8 +203,7 @@ pub fn dismantle_item(
         .unwrap_or_default();
     let idb = data.item_db();
     let resolved = gd_sim::items::resolve(&idb, &item);
-    let item_level = resolved.as_ref().map_or(1, |r| r.item_level) as f32;
-    let cost = dismantle_cost(table, item_level as u32);
+    let cost = dismantle_cost(table, resolved.as_ref().map_or(1, |r| r.item_level));
     let names = vec![dynamite.clone()];
     let why = if !unlocked {
         Some(Refusal::Locked)
@@ -729,6 +728,7 @@ fn apply_inventor(
     mut inv: ResMut<Inventory>,
     mut stash: ResMut<Stash>,
     mut progress: ResMut<gd_game_core::progress::PlayerProgress>,
+    // Option: without a story the dismantle and convert tabs are unlocked (`dismantle_unlocked`).
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     session: crate::session::Session,
     players: Query<&gd_game_core::inventory::Requirements, With<gd_game_core::player::Player>>,

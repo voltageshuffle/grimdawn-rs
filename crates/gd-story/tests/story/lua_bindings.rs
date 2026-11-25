@@ -11,37 +11,14 @@ use std::sync::Arc;
 
 struct Env {
     files: HashMap<&'static str, &'static str>,
-    classes: HashMap<&'static str, &'static str>,
 }
 
 impl ScriptEnv for Env {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
         self.files.get(path).map(|s| s.as_bytes().to_vec())
     }
-    fn record_field(&self, record: &str, field: &str) -> Option<String> {
-        if field == "delayedRun" && record == "rec/delayed.dbr" {
-            return Some("1".into());
-        }
-        if record == "rec/hooktrigger.dbr" && field != "Class" {
-            return match field {
-                "enabled" => Some("1".into()),
-                "extentsX" | "extentsY" | "extentsZ" => Some("10".into()),
-                "detectableNames" => Some("records/creatures/pc/malepc01.dbr".into()),
-                "shouldTrigger" => Some("allow".into()),
-                "onEnter" => Some("entered".into()),
-                "resetPeriod" => Some("1".into()),
-                _ => None,
-            };
-        }
-        if field == "onAddToWorld" && record == "rec/hooked.dbr" {
-            return Some("onHooked".into());
-        }
-        if field == "onInitialUpdate" && record == "rec/hooked.dbr" {
-            return Some("onHookedInit".into());
-        }
-        (field == "Class")
-            .then(|| self.classes.get(record).map(|s| s.to_string()))
-            .flatten()
+    fn record_field(&self, _record: &str, _field: &str) -> Option<String> {
+        None
     }
 }
 
@@ -59,27 +36,11 @@ fn host() -> (Rc<RefCell<Story>>, ScriptHost) {
             ("scripts/main.lua", MAIN),
             ("scripts/b.lua", "bloads = (bloads or 0) + 1"),
         ]),
-        classes: HashMap::from_iter([
-            ("rec/monster.dbr", "Monster"),
-            ("rec/door.dbr", "FixedDoor"),
-            ("rec/proxy.dbr", "Proxy"),
-            ("rec/delayed.dbr", "Proxy"),
-            ("rec/hooked.dbr", "Npc"),
-            ("rec/ambush.dbr", "ProxyAmbush"),
-            ("rec/shrine.dbr", "StaticShrine"),
-            ("rec/trigger.dbr", "BoxTrigger"),
-            ("rec/hooktrigger.dbr", "BoxTrigger"),
-        ]),
     };
-    let mut player = Player::new_character(1, "Bot");
-    player.factions.insert("USER0".into(), 2.75);
-    player
-        .toggled_skills
-        .insert("records/skills/toggle.dbr".into());
     let story = Rc::new(RefCell::new(Story::new(
         Arc::new(QuestDefs::default()),
         Dialogs::default(),
-        player,
+        Player::new_character(1, "Bot"),
     )));
     let host = ScriptHost::new(story.clone(), Rc::new(env)).unwrap();
     (story, host)

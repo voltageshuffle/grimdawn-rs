@@ -281,23 +281,23 @@ pub struct MapSources<'w, 's> {
     pub(super) values: Res<'w, gd_ui::HudValues>,
 }
 
-/// The quest marker of an entity (`QuestMarkerArea::Test`: its area quad, then the
+/// Appends the quest marker of an entity (`QuestMarkerArea::Test`: its area quad, then the
 /// star), else its own icon.
 pub(super) fn marker_or(
+    out: &mut Vec<MapIcon>,
     rec: &gd_formats::arz::Record,
     story: Option<&gd_story::story::Story>,
     at: Vec3,
     facing: Vec3,
     player: Vec3,
     own: impl FnOnce() -> Option<MapIcon>,
-) -> Vec<MapIcon> {
+) {
     if let Some(quests) = story.and_then(|st| quest_marker(rec, st, at, player)) {
-        return area_icon(rec, at, facing)
-            .into_iter()
-            .chain([MapIcon::new(at, 8, quests)])
-            .collect();
+        out.extend(area_icon(rec, at, facing));
+        out.push(MapIcon::new(at, 8, quests));
+    } else {
+        out.extend(own());
     }
-    own().into_iter().collect()
 }
 
 /// Gathers the icons around `centre` within `radius` metres.
@@ -337,12 +337,12 @@ pub(super) fn gather(
             continue;
         };
         if rec.class == "AreaOfInterest" {
-            let name = fonts
-                .tag(rec.str("AreaDescription").unwrap_or(""))
-                .to_owned();
-            out.extend(marker_or(rec, story, p, forward(t), ppos, || {
-                (!rec.bool("questOnly")).then(|| MapIcon::new(p, 6, name))
-            }));
+            marker_or(&mut out, rec, story, p, forward(t), ppos, || {
+                (!rec.bool("questOnly")).then(|| {
+                    let name = fonts.tag(rec.str("AreaDescription").unwrap_or(""));
+                    MapIcon::new(p, 6, name.to_owned())
+                })
+            });
         } else {
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         }
@@ -370,9 +370,9 @@ pub(super) fn gather(
                 .any(|(_, key)| *key == (m.slot.0, m.slot.1))
         });
         if !in_dungeon {
-            out.extend(marker_or(rec, story, p, forward(t), ppos, || {
+            marker_or(&mut out, rec, story, p, forward(t), ppos, || {
                 actor_icon(rec, p, forward(t), described(rec, fonts))
-            }));
+            });
         } else if !reveal {
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         } else if !allied {
@@ -392,9 +392,9 @@ pub(super) fn gather(
         let Some(rec) = data.db.get(&b.record).filter(|_| near(p)) else {
             continue;
         };
-        out.extend(marker_or(rec, story, p, forward(t), ppos, || {
+        marker_or(&mut out, rec, story, p, forward(t), ppos, || {
             actor_icon(rec, p, forward(t), described(rec, fonts))
-        }));
+        });
     }
     // Closed chests (`FixedItemContainer`, state 1).
     for (t, c) in &src.chests {
@@ -402,9 +402,9 @@ pub(super) fn gather(
         let Some(rec) = data.db.get(&c.record).filter(|_| near(p) && !c.opened) else {
             continue;
         };
-        out.extend(marker_or(rec, story, p, forward(t), ppos, || {
+        marker_or(&mut out, rec, story, p, forward(t), ppos, || {
             actor_icon(rec, p, forward(t), described(rec, fonts))
-        }));
+        });
     }
     // The Shattered Realm's buff shrines: the record's own Custom nugget (`mapsymbol_shrine<colour>_up`) through
     // `Actor::AppendDetailMapData`. PORT: always drawn, used or not (whether `StaticShrine`'s type 16 or a
@@ -443,30 +443,34 @@ pub(super) fn gather(
             continue;
         };
         let Some(info) = inv.info(item) else { continue };
-        let name = gd_sim::items::naming::item_name(&fonts.tags, &info.resolved);
-        let bitmap =
-            gd_ui::character::rarity_key(info.resolved.display_color_index()).and_then(|k| {
-                info_rec
-                    .as_ref()?
-                    .str(&format!("{k}ItemMapNugget"))
-                    .filter(|b| !b.is_empty())
-                    .map(str::to_owned)
+        // The own icon's name, bitmap and filter test only when no quest marker replaces it.
+        marker_or(&mut out, rec, story, p, forward(t), ppos, || {
+            let bitmap = gd_ui::character::rarity_key(info.resolved.display_color_index())
+                .and_then(|k| {
+                    info_rec
+                        .as_ref()?
+                        .str(&format!("{k}ItemMapNugget"))
+                        .filter(|b| !b.is_empty())
+                        .map(str::to_owned)
+                })?;
+            let passes = src.filter.as_ref().is_none_or(|f| {
+                f.passes(
+                    inv,
+                    &data.db,
+                    item,
+                    gd_sim::items::loot_filter::Mode::Filter,
+                    loadout,
+                )
             });
-        let passes = src.filter.as_ref().is_none_or(|f| {
-            f.passes(
-                inv,
-                &data.db,
-                item,
-                gd_sim::items::loot_filter::Mode::Filter,
-                loadout,
-            )
-        });
-        out.extend(marker_or(rec, story, p, forward(t), ppos, || {
-            bitmap.filter(|_| passes).map(|b| MapIcon {
-                bitmap: Some(b),
-                ..MapIcon::new(p, 19, name)
+            passes.then(|| MapIcon {
+                bitmap: Some(bitmap),
+                ..MapIcon::new(
+                    p,
+                    19,
+                    gd_sim::items::naming::item_name(&fonts.tags, &info.resolved),
+                )
             })
-        }));
+        });
     }
     for (t, w) in &src.gates {
         let p = t.translation();

@@ -5,8 +5,8 @@ use bevy::prelude::*;
 /// The app's phase. PORT: the engine switches modes in `GameEngine::EnableGameEngine`;
 /// here the state mirrors the session resources:
 /// `Menu` until the session is chosen (`SessionReady`), `Loading` while its player
-/// is spawned and the save applied, `InGame` once [`in_game`] holds. Every HUD /
-/// window / tooltip system is in `ui::UiPlaySet`, which runs under `in_state(AppState::InGame)`.
+/// is spawned and the save applied, `InGame` once `gd_game_core::session::in_game` holds. Every HUD /
+/// window / tooltip system is in `gd_ui_kit::UiPlaySet`, which runs under `in_state(AppState::InGame)`.
 #[derive(States, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
     #[default]

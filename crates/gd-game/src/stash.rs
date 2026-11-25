@@ -5,7 +5,6 @@ use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::Shared;
 use gd_formats::save::item::Item;
 use gd_game_core::inventory::Inventory;
-use gd_game_core::session::MessageDrain;
 use gd_game_core::stash::{
     DepositReagents, LOADED_EXPANSIONS, QuickActionError, QuickMove, STASH_H, STASH_W, SharedFiles,
     Stash, StashRequest, deposit_reagents_now, error_sound, next_page_cost, quick_move,
@@ -111,7 +110,6 @@ impl Plugin for StashPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SharedFiles>()
             .add_message::<DepositReagents>()
-            .drain_messages_unless::<DepositReagents, _>(has_bags_and_stash)
             .add_message::<StashRequest>()
             .add_message::<QuickActionError>()
             .add_systems(

@@ -1150,11 +1150,11 @@ fn hud_rollover(
         && let Some(p) = hooks
             .ui
             .sheet_hover
-            .clone()
+            .as_deref()
             .and_then(|f| {
                 layout
                     .sheet_rows(&panels.sheet_scroll)
-                    .find(|(_, _, k)| k.ends_with(f.as_str()))
+                    .find(|(_, _, k)| k.ends_with(f))
                     .map(|(r, _, _)| Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5))
             })
             .or(super::cursor_px(&hooks, win))

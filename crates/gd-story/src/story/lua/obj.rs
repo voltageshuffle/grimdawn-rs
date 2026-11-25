@@ -101,16 +101,14 @@ impl UserData for Obj {
             // script's `Run()` (`Proxy::Load` sets state 1 for
             // `delayedRun`; `RunProxy` only runs in state 0): the host spawns
             // no pool for it meanwhile (`Story::is_present`).
-            let delayed = {
-                let s = o.ctx.story.borrow();
-                s.entities
-                    .get(o.id)
-                    .is_some_and(|e| e.class == ObjClass::Proxy && !e.in_world)
+            let delayed = o.ctx.story.borrow().entities.get(o.id).is_some_and(|e| {
+                e.class == ObjClass::Proxy
+                    && !e.in_world
                     && o.ctx
                         .env
-                        .record_field(&s.entities.get(o.id).unwrap().record, "delayedRun")
+                        .record_field(&e.record, "delayedRun")
                         .is_some_and(|v| v != "0" && !v.is_empty())
-            };
+            });
             let mut s = o.ctx.story.borrow_mut();
             let Some(e) = s.entities.get_mut(o.id) else {
                 return Ok(());

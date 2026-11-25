@@ -33,10 +33,6 @@ fn fragment(in: VOut) -> @location(0) vec4<f32> {
     let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
     let at = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
     let centre = textureLoad(glow_tex, at, 0);
-    if glow.gains.w > 0.5 {
-        // Debug view: the unblurred glow target, mask in magenta.
-        return vec4<f32>(centre.rgb + vec3<f32>(centre.a, 0.0, centre.a), 0.0);
-    }
     // Stencil 255 (the outlined object's visible pixels): nothing added.
     if centre.a > 0.5 {
         return vec4<f32>(0.0);

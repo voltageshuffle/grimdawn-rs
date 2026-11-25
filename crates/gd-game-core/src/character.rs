@@ -1,15 +1,15 @@
 //! Character animation state (players and creatures), following the
 //! engine: `gd_sim::anim` sets by hand
 //! state, one channel with 200 ms cross-fades, root motion and callback
-//! points. The per-frame pipeline is the engine's one-tick action loop
+//! points. The per-frame pipeline (`gd_game::character`'s systems) is the engine's one-tick action loop
 //! (`CharacterHandlerUpdate`: finish ended actions → run pending →
-//! animate): [`advance_animations`] advances every clip and sends its callback
+//! animate): `advance_animations` advances every clip and sends its callback
 //! points ([`AnimCallback`]: where hits land, casts fire, evades jump) and the
 //! root-motion velocity in `Update` before the gameplay readers (the engine
 //! emits and dispatches them inline, `AnimChannel::Update` →
-//! `SkillManager::HandleSkillAnimationCallback`); [`finish_actions`]
+//! `SkillManager::HandleSkillAnimationCallback`); `finish_actions`
 //! drains the "End"s so the frame's requesters see the finished actions;
-//! [`drive_characters`] then plays the matching animation for every [`CharState`]
+//! `drive_characters` then plays the matching animation for every [`CharState`]
 //! the requesters set this frame. A request arriving mid-action is remembered in
 //! the one pending slot ([`Character::queued`], last wins) and runs at the clip's
 //! `AllowInterrupt` point or its "End" (`casting::requests`' busy gate); a move's
@@ -36,7 +36,7 @@
 //! [`CharState::Pickup`] and a flinch [`CharState::TakeHit`] (the slots 40–46 of the engine's
 //! 52-slot table, `GetAnimTypeAsText`), a monster's alert before its pursuit
 //! [`CharState::Alert`] (slot 33), and a knockdown [`CharState::KnockedDown`] → [`CharState::GettingUp`]
-//! (the get-up slots 38 / 39, `crate::ragdoll`).
+//! (the get-up slots 38 / 39, `gd_game::ragdoll`).
 //! The Run / Walk / Charge slots' own root-motion speed ([`Character::move_motion`], derived per animation set) is
 //! what a mover runs at before its clip has produced root motion (`combat::run_speed`). A move clip plays at the
 //! caller speed its mover passes ([`Character::move_rate`]: the run speed, 1.0 for unit pace and a charge, a walk's
@@ -53,14 +53,14 @@
 //! - Long (`LongIdleAction` / `AnimationCallback`): `IdleTransition` once, then `LongIdle`
 //!   looped; at a `LongIdle` "End" once the transition timer is up (a random 3000..20000 ms, `ResetTransitionTimer`,
 //!   re-rolled when the long idle starts) one `Fidget`, then `LongIdle` with a new timer. No transition
-//!   clip: `LongIdle` at once. The player's controller asks for it ([`player_long_idle`]):
+//!   clip: `LongIdle` at once. The player's controller asks for it (`player_long_idle`):
 //!   `ControllerPlayerStateIdle::OnUpdate` moves to "LongIdle" after 2000 ms of idling out of combat
-//!   (the timer restarts while `Character::IsUnderAttack`, the flag the constitution reads: [`Constitution::out_of_combat`]);
+//!   (the timer restarts while `Character::IsUnderAttack`, the flag the constitution reads: `Constitution::out_of_combat`);
 //!   `ControllerPlayerStateLongIdle::Attacked` goes back to "Idle", and so does any other state.
 //! - Chat (`ChatAction::Execute` / `AnimationCallback`): an NPC whose conversation is open
 //!   (`ControllerNpcStateIdle::OnUpdate` → "Chat" while the NPC has a partner; `ControllerNpcStateChat::
 //!   OnUpdate` → "Idle" when it ends) plays `Chat` once (no `Chat` clip: `Fidget`; neither: `LongIdle`),
-//!   then `LongIdle` and `Fidget` in turn (no timer check). It first turns to the player ([`npc_chat`]).
+//!   then `LongIdle` and `Fidget` in turn (no timer check). It first turns to the player (`npc_chat`).
 //! - PORT: a long or chat idle without any of its clips plays `AttackIdle` (the engine's action ends and the last
 //!   animation stays); `LongIdle` loops in the channel (the engine's End handler replays nothing until a fidget is due,
 //!   so the slot must loop).
@@ -70,13 +70,13 @@
 //!   `MenuIdle` "End" once the timer is up one `MenuFidget` (none: the timer restarts), at its "End" `MenuIdle` with
 //!   a new timer. Every switch happens at an "End", so the clip never restarts mid-loop and no other idle shows in
 //!   between.
-//! - An NPC's controller (`ControllerNpc2`) alternates Combat and Long out of conversation: `crate::npc_controller`.
+//! - An NPC's controller (`ControllerNpc2`) alternates Combat and Long out of conversation: `gd_game::npc_controller`.
 use crate::data::GameData;
 use bevy::prelude::*;
 use gd_formats::anm::Animation;
 use gd_formats::arz::Record;
 use gd_formats::msh::{Coords, Mesh as Msh};
-use gd_sim::anim::{self, AnimChannel, AnimSet, AnimType, Pose, RecordIndex, SpeedKind};
+use gd_sim::anim::{self, AnimChannel, AnimSet, AnimType, Pose, SpeedKind};
 use gd_sim::equip::{HandState, WeaponType};
 use std::sync::Arc;
 
@@ -105,14 +105,14 @@ pub type SharedAnims = Arc<parking_lot::Mutex<crate::weak_cache::WeakCache<Anima
 #[derive(Resource)]
 pub struct AnimCache {
     pub anims: SharedAnims,
-    /// The clip sets of new characters being parsed in the background ([`preload_anims`]): the character, the clips
+    /// The clip sets of new characters being parsed in the background (`preload_anims`): the character, the clips
     /// already parsed, and the task parsing the rest.
     pub preloads: Vec<(
         Entity,
         Vec<Arc<Animation>>,
         bevy::tasks::Task<Vec<(String, Option<Animation>)>>,
     )>,
-    /// Clips parsed in the background ahead of a spawn ([`AnimCache::ready`], [`collect_anim_loads`]).
+    /// Clips parsed in the background ahead of a spawn ([`AnimCache::ready`], `collect_anim_loads`).
     pub loading: Vec<bevy::tasks::Task<(String, Option<Animation>)>>,
     /// The paths of `loading`, so a clip is parsed once.
     pub in_flight: gd_formats::collections::HashSet<String>,
@@ -150,7 +150,7 @@ impl AnimCache {
     }
 
     /// Whether the clip at `path` is parsed (or failed). Otherwise its parse starts in the background
-    /// ([`collect_anim_loads`]) and this is false: a spawn that waits for it never parses a clip on the game thread
+    /// (`collect_anim_loads`) and this is false: a spawn that waits for it never parses a clip on the game thread
     /// when its creature first plays it.
     pub fn ready(&mut self, data: &GameData, path: &str) -> bool {
         let key = gd_formats::vfs::normalized(path);
@@ -196,7 +196,7 @@ pub fn creature_clips(data: &GameData, record: &str, variant: u32) -> Vec<String
     paths
 }
 
-/// On a character: every clip of its animation set ([`preload_anims`]), held while it lives.
+/// On a character: every clip of its animation set (`preload_anims`), held while it lives.
 #[derive(Component)]
 pub struct HeldAnims {
     pub _clips: Vec<Arc<Animation>>,
@@ -204,7 +204,7 @@ pub struct HeldAnims {
 
 /// [`AnimCache::anim`] on a [`SharedAnims`] store: the one loader both caches
 /// use, so a file is parsed once while it is held. The store is not locked while the file is read and parsed: the
-/// systems sharing it (gd-render's `ModelCache`, [`preload_anims`], [`collect_anim_loads`]) run on other threads and
+/// systems sharing it (gd-render's `ModelCache`, `preload_anims`, `collect_anim_loads`) run on other threads and
 /// would otherwise wait out the whole parse; the second look shares a clip another caller parsed meanwhile.
 pub fn shared_anim(anims: &SharedAnims, data: &GameData, path: &str) -> Option<Arc<Animation>> {
     let key = gd_formats::vfs::normalized(path);
@@ -278,7 +278,7 @@ pub enum CharState {
     Cast,
     /// A channelled skill (`SkillChanneled` subclasses: beams, cones, drains,
     /// grows): the `ChannelStart` slot once, then the `Channel` loop, until the
-    /// skill stops ([`Character::begin_channel`]; [`drive_characters`] ends it with its `crate::casting::Channel`).
+    /// skill stops ([`Character::begin_channel`]; `drive_characters` ends it with its `crate::casting::Channel`).
     Channel,
     /// The second channel pair (`Channel2Start` / `Channel2`), for the skills
     /// whose table names it ([`Character::begin_channel`]'s `second`).
@@ -306,7 +306,7 @@ pub enum CharState {
     /// `PlayAnimation(33 Alert, speed 1)`): the Alert slot once; the state ends with its "End".
     Alert,
     /// Knocked down (`Character::ExecuteKnockdown`: `StopAnimations`, action state 9;
-    /// `crate::ragdoll`): the body lies in the first frame of its get-up clip, held (speed 0) while down.
+    /// `gd_game::ragdoll`): the body lies in the first frame of its get-up clip, held (speed 0) while down.
     KnockedDown,
     /// Getting up (`ControllerMonsterStateGettingUp::OnUpdate`: `PlayAnimation(38 GetUpFaceDown
     /// when it fell face down, else 39 GetUpFaceUp, 1.0)`), once; the state ends with its "End" (`HandleEvent`
@@ -412,7 +412,7 @@ pub struct Character {
     pub slow: [f32; 3],
     /// Frozen or petrified: the pose stops.
     pub frozen: bool,
-    /// The pose computed this frame ([`advance_animations`]); the game
+    /// The pose computed this frame (`advance_animations`); the game
     /// poses the body's joints and weapons from it.
     pub pose: Pose,
     /// [`Self::body`]'s bone frames in [`Self::pose`] (mesh space, `gd_sim::anim::pose_abs`), refreshed whenever
@@ -442,12 +442,12 @@ pub struct Character {
     /// pass 1.0, a walk `walkSpeed` × the run speed, a warmed-up charge the warm-up run
     /// speed (`MoveToAction::Execute` → `ForceSpeedUpdate` at `GetRunSpeed` with the
     /// warm-up cap). A Charge without one plays at 1.0. Reset each frame by
-    /// [`finish_actions`]: the mover sets it with its move state.
+    /// `finish_actions`: the mover sets it with its move state.
     pub move_rate: Option<f32>,
     pub pending: Vec<(AnimType, String)>,
-    /// The callback points [`advance_animations`] crossed this frame, until it sends them.
+    /// The callback points `advance_animations` crossed this frame, until it sends them.
     pub crossed: Vec<String>,
-    /// The entity events [`advance_animations`] crossed this frame
+    /// The entity events `advance_animations` crossed this frame
     /// (`gd_sim::anim::ChannelEvents::entities`), until gd-render's
     /// `character_anim_entities` drains them (replaced each advance, so a
     /// headless game without the render reader does not accumulate them).
@@ -480,14 +480,14 @@ pub struct Character {
     pub plays: u32,
     /// [`Self::plays`] when the current cast started ([`Self::start_cast`]): its own clip is a later one.
     pub cast_after: u32,
-    /// The number of the clip whose callbacks [`advance_animations`] sent this frame.
+    /// The number of the clip whose callbacks `advance_animations` sent this frame.
     pub sent_play: u32,
 }
 
 /// The ground speed (m/s at caller speed 1, the world scale included) the root motion of the Run, Walk and Charge
 /// slots carries a character: the mean over the slot's variants of each clip's root displacement over its length ×
 /// its record speed (the `GetAnimSpeed` mean, `gd_sim::anim::AnimSlot::mean_duration`, over the motion).
-/// Derived once per animation set ([`finish_actions`], keyed by the set's address) so a mover has the clip's own
+/// Derived once per animation set (`finish_actions`, keyed by the set's address) so a mover has the clip's own
 /// speed before the clip has played a frame (`combat::run_speed`, `combat::charge_move`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MoveMotion {
@@ -713,16 +713,14 @@ pub fn anim_set_for(data: &GameData, rec: &Record, hand: HandState) -> AnimSet {
     let table = rec
         .str("charAnimationTableName")
         .and_then(|t| data.db.get(t));
-    AnimSet::load(&RecordIndex::new(table.unwrap_or(rec)), hand, |p| {
-        data.vfs.exists(p)
-    })
+    AnimSet::load(table.unwrap_or(rec), hand, |p| data.vfs.exists(p))
 }
 
 /// The animation state of a character of `record` (`rec`) with body mesh
 /// `body`, its animation set (`charAnimationTableName`, else the record)
 /// for the hand state of its weapons (`EquipManager::GetHandState`), at the
 /// root's `scale` (`creature` module doc).
-/// It starts idle; `GD_CHAR_STATE` / `GD_CHAR_HOLD` (hooks.rs) are applied by [`start_hooks`].
+/// It starts idle; `GD_CHAR_STATE` / `GD_CHAR_HOLD` (hooks.rs) are applied by `start_hooks`.
 #[allow(clippy::too_many_arguments)]
 pub fn character_for(
     data: &GameData,
@@ -855,10 +853,10 @@ impl Character {
         true
     }
 
-    /// Whether the callbacks [`advance_animations`] sent this frame come from a clip started after the current
+    /// Whether the callbacks `advance_animations` sent this frame come from a clip started after the current
     /// cast began ([`Self::start_cast`]): only those fire its pending `crate::casting::Casting`. The ended
     /// action's "End" belongs to the old clip even when a requester started a new cast on it the same frame
-    /// ([`finish_actions`] left the character idle before the requesters ran).
+    /// (`finish_actions` left the character idle before the requesters ran).
     pub fn callbacks_after_cast(&self) -> bool {
         self.sent_play > self.cast_after
     }
@@ -901,7 +899,7 @@ impl Character {
 
     /// The channel / whirlwind is over: back to the idle the requester's
     /// state machine picks (the loop's "End" only wraps, it does not leave).
-    /// [`drive_characters`] calls it once the skill's `crate::casting::Channel` is gone.
+    /// `drive_characters` calls it once the skill's `crate::casting::Channel` is gone.
     pub fn end_channel(&mut self) {
         if matches!(
             self.state,
@@ -942,7 +940,7 @@ impl Character {
             .any(|t| self.play(data, cache, *t, speed, kind, false))
     }
 
-    /// Knocked down (`crate::ragdoll`): `face_down` is how the body fell ([`Character::fell_face_down`]).
+    /// Knocked down (`gd_game::ragdoll`): `face_down` is how the body fell ([`Character::fell_face_down`]).
     pub fn knock_down(&mut self, face_down: bool) {
         self.fell_face_down = face_down;
         self.state = CharState::KnockedDown;
@@ -957,7 +955,7 @@ impl Character {
     }
 
     /// The ground speed (m/s, world) the root motion of the move `state`'s slot (Run, Walk or Charge) carries the
-    /// character at caller speed 1 ([`MoveMotion`]); 0 before [`finish_actions`] derived it, for a set without the
+    /// character at caller speed 1 ([`MoveMotion`]); 0 before `finish_actions` derived it, for a set without the
     /// slot, or for another state.
     pub fn move_motion(&self, state: CharState) -> f32 {
         let m = &self.motion;
@@ -1006,7 +1004,7 @@ impl Character {
             || self.move_fallback == Some((self.state, self.playing))
     }
 
-    /// Derives [`MoveMotion`] for the current animation set and body when they changed ([`finish_actions`]).
+    /// Derives [`MoveMotion`] for the current animation set and body when they changed (`finish_actions`).
     pub fn derive_motion(&mut self, data: &GameData, cache: &mut AnimCache, scale: f32) {
         let set = Arc::as_ptr(&self.anims) as usize;
         let body = Arc::as_ptr(&self.body) as usize;
@@ -1276,7 +1274,7 @@ impl Character {
                     || self.play(data, cache, AnimType::Attack, s, kind, false)
             }
             // The channel pairs and the whirlwind (module doc): the `*Start`
-            // clip once, its "End" starts the loop ([`finish_actions`]); no
+            // clip once, its "End" starts the loop (`finish_actions`); no
             // start clip: the loop at once. Channels are spells (cast speed),
             // the whirlwind a weapon skill (attack speed).
             CharState::Channel => {
@@ -1515,11 +1513,9 @@ fn wanted_type(s: CharState, anims: &AnimSet) -> &'static [AnimType] {
 /// Where other modules order against the character systems: `Animate` advances the animations and
 /// dispatches their callbacks (`Update`, before the gameplay readers — hit point → damage is one
 /// tick, as the engine's inline dispatch); `Drive` runs the state machines after the frame's
-/// requesters (a state set this frame animates this frame); `Turn` turns the characters
-/// (`crate::turning`, `PostUpdate` before transform propagation, reading the same frame's callbacks).
+/// requesters (a state set this frame animates this frame).
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CharacterStage {
     Drive,
-    Turn,
     Animate,
 }

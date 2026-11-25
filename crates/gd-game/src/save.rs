@@ -82,7 +82,12 @@ impl Plugin for SavePlugin {
             .add_systems(Update, save_game.in_set(SaveStage::Save))
             // After the frame's gameplay, so it sees the frame's changes together (its request is saved the
             // next frame).
-            .add_systems(PostUpdate, autosave.run_if(gd_game_core::session::in_game));
+            .add_systems(
+                PostUpdate,
+                autosave
+                    .run_if(gd_game_core::session::in_game)
+                    .run_if(resource_exists::<AutoSave>),
+            );
     }
 }
 
@@ -725,8 +730,7 @@ fn contents_hash(inv: &Inventory) -> u64 {
 #[allow(clippy::too_many_arguments)]
 pub fn autosave(
     time: Res<Time>,
-    // Option: inserted by `session::begin`; absent in an app that starts no session.
-    auto: Option<ResMut<AutoSave>>,
+    mut auto: ResMut<AutoSave>,
     inv: Res<Inventory>,
     // Option: created by their `init_*` systems once the session has a character.
     travel: Option<Res<crate::riftgates::TravelState>>,
@@ -738,7 +742,6 @@ pub fn autosave(
     // Option: a session without a story (an arena still loading) has no tokens yet.
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
 ) {
-    let Some(mut auto) = auto else { return };
     let quest_updated = quests
         .read()
         .filter(|e| {

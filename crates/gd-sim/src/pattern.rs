@@ -315,19 +315,6 @@ impl NavBlock {
         true
     }
 
-    /// `ClearRequestPointData`.
-    pub fn clear(&mut self) {
-        self.circles.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.circles.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.circles.is_empty()
-    }
-
     /// `RequestAndBlockNearPoint(center, max_dist, out, r)`: rings at
     /// d = 0, step, 2 step ... while d < `max_dist` (step = 2r + 0.1),
     /// `int(2 pi d / step)` samples per ring (1 at d = 0) evenly spaced from

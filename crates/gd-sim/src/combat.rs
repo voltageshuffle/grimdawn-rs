@@ -1232,7 +1232,7 @@ pub fn take_attack(
     if def.block_cooldown_ms <= 0
         && let Some(sh) = def.shield
     {
-        let mut v = CombatVars {
+        let v = CombatVars {
             block_chance: sh.chance,
             block_chance_modifier: def.block_modifier,
             probability_to_hit: res.pth,
@@ -1244,7 +1244,6 @@ pub fn take_attack(
                 (rng.unit() * 99.0) + 1.0 <= chance
             }
             AttackKind::Ranged if !atk.unblockable => {
-                v.block_chance = sh.chance;
                 let chance = f.projectile_block.as_ref().map_or(0.0, |e| v.eval(e));
                 (rng.unit() * 99.0) + 1.0 <= chance
             }

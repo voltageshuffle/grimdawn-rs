@@ -249,10 +249,7 @@ fn npc_sources(
     for (s, li, _) in buffs {
         out.extend(buff_source(db, s, *li));
     }
-    for b in auras
-        .map(|a| a.list.iter().rev().collect::<Vec<_>>())
-        .unwrap_or_default()
-    {
+    for b in auras.into_iter().flat_map(|a| a.list.iter().rev()) {
         let Some(rec) = db.get(&b.buff) else { continue };
         let own = toggled
             .iter()

@@ -82,12 +82,11 @@ pub fn begin(
     // not mount aborts the start: the menu stays as it was; a headless start (`skip_menu`) ends the
     // process instead of running a mod-labelled session on install data.
     let mod_name = (!choice.mod_name().is_empty()).then(|| choice.mod_name().to_owned());
-    let guard = (choice.clone(), difficulty);
     commands.queue(move |world: &mut World| {
         // Same save/mod refusal as the menu (`Choice::mod_mismatch`), for starts that bypass it
         // (`GD_MOD` / `GD_SAVE` hooks): never run a mod-labelled session over another mod's save.
-        if let Some(msg) = guard.0.mod_mismatch(guard.1) {
-            error!("session: {} does not start: {msg}", guard.0.name);
+        if let Some(msg) = choice.mod_mismatch(difficulty) {
+            error!("session: {} does not start: {msg}", choice.name);
             if world
                 .resource::<gd_game_core::hooks::Hooks>()
                 .session

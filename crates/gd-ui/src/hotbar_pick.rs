@@ -109,7 +109,8 @@ fn slots(row: usize) -> impl Iterator<Item = (usize, &'static str)> {
 /// A hotbar option's icon (`GetBitmapNameUp`, module docs); `book` for the
 /// potions' combo bitmaps.
 pub fn option_icon(data: &GameData, rec: &str, book: &gd_sim::skills::SkillBook) -> Option<String> {
-    match option_kind(&data.db, rec) {
+    let kind = option_kind(&data.db, rec);
+    match kind {
         OptionKind::Scroll => data.db.get(rec).and_then(|r| {
             r.str("bitmapButtonUp")
                 .or(r.str("bitmap"))
@@ -123,7 +124,7 @@ pub fn option_icon(data: &GameData, rec: &str, book: &gd_sim::skills::SkillBook)
                 .and_then(|t| gd_sim::potions::potion_bitmap(&data.db, book, &t))
                 .map(|b| b.texture)
                 .filter(|b| !b.is_empty());
-            let key = if option_kind(&data.db, rec) == OptionKind::HealthPotion {
+            let key = if kind == OptionKind::HealthPotion {
                 "defaultHealthBitmap"
             } else {
                 "defaultManaBitmap"
@@ -233,14 +234,12 @@ fn clicks(
     }
     // A pick binds the option, plays `skillSelectSound` and closes the list;
     // a page arrow plays it too (`HotSlotPickList::HandleMouseEvent`).
-    let select_sound = select_cache
-        .get_or_insert_with(|| {
-            data.db
-                .get(gd_ui_kit::MASTER)
-                .and_then(|m| m.str(RECORD_FIELD).and_then(|r| data.db.get(r)))
-                .and_then(|w| w.str("skillSelectSound").map(str::to_owned))
-        })
-        .clone();
+    let select_sound = select_cache.get_or_insert_with(|| {
+        data.db
+            .get(gd_ui_kit::MASTER)
+            .and_then(|m| m.str(RECORD_FIELD).and_then(|r| data.db.get(r)))
+            .and_then(|w| w.str("skillSelectSound").map(str::to_owned))
+    });
     let mut choose = |view: &mut PickView, n: usize| {
         if let (Some(slot), Some(option)) = (view.slot, view.options.get(n).cloned()) {
             out.write(BindSlot { slot, option });
@@ -277,7 +276,7 @@ fn clicks(
             .find(|(r, _)| r.is_some_and(|r| contains(&r, p)));
         if let Some((_, next)) = arrow {
             view.first = layout.paged.step(next);
-            if let Some(pak) = select_sound {
+            if let Some(pak) = select_sound.clone() {
                 sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
             }
             return;
@@ -412,8 +411,13 @@ fn disarm(
     armed: Res<ArmedSlot>,
     windows: DisarmingWindows,
     mut was: Local<[bool; 16]>,
+    mut fresh: gd_game_core::session::NewSession,
     mut out: MessageWriter<DisarmHotSlot>,
 ) {
+    // A new session starts from nothing shown, not the last session's windows.
+    if fresh.begun() {
+        *was = Default::default();
+    }
     let now = windows.shown();
     let shown = now.iter().zip(was.iter()).any(|(n, w)| *n && !*w);
     *was = now;
@@ -602,15 +606,19 @@ fn tooltip(
         .ui
         .hotbar_hover
         .or_else(|| p.and_then(|p| layout.picks.iter().position(|r| contains(r, p))));
-    let hovered = hover.and_then(|i| view.options.get(i).cloned().flatten());
-    layout.scroll = hovered
-        .clone()
-        .filter(|o| option_kind(&data.db, o) == OptionKind::Scroll);
-    let skill = hovered.filter(|o| option_kind(&data.db, o) != OptionKind::Scroll);
-    if *shown == skill {
+    let hovered = hover
+        .and_then(|i| view.options.get(i))
+        .and_then(Option::as_deref);
+    let scroll = hovered.is_some_and(|o| option_kind(&data.db, o) == OptionKind::Scroll);
+    let item = hovered.filter(|_| scroll);
+    if layout.scroll.as_deref() != item {
+        layout.scroll = item.map(str::to_owned);
+    }
+    let skill = hovered.filter(|_| !scroll);
+    if shown.as_deref() == skill {
         return;
     }
-    *shown = skill.clone();
+    *shown = skill.map(str::to_owned);
     let Some(sk) = skill else {
         canvas.clear(super::tip::TipOwner::HotbarPick);
         return;
@@ -625,7 +633,7 @@ fn tooltip(
     };
     // The pick list's options use the simple text (`SkillPickList::BuildLines` sets
     // `HotSlotOptionSkill::SetSimpleText`).
-    let lines = gd_sim::skill_tooltip::pick_list_lines(&ctx, &sk);
+    let lines = gd_sim::skill_tooltip::pick_list_lines(&ctx, sk);
     if lines.is_empty() {
         canvas.clear(super::tip::TipOwner::HotbarPick);
         return;

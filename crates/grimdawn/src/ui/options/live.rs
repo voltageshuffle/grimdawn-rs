@@ -41,18 +41,6 @@ pub(super) fn live(
     let Ok(w) = window.single() else { return };
     let size = UVec2::new(w.physical_width(), w.physical_height());
     let screen = Vec2::new(size.x as f32, size.y as f32);
-    let languages = data.available_languages();
-    // The dropdown values' tag table ([`ChoiceCtx`]): an Arc clone, so the mutable asset borrows below
-    // (`assets.ui`, `LiveText::set`) do not conflict with the context's borrow.
-    let tags = assets.fonts.tags.clone();
-    let ctx = ChoiceCtx::new(
-        &devices,
-        crate::settings::primary_monitor(&monitors),
-        screen,
-        &adapters,
-        &languages,
-        &tags,
-    );
     let draft = win.draft.as_ref().unwrap_or(&*options);
     let hover = gd_ui_kit::cursor_px(&assets.hooks, w)
         .and_then(|p| hit_at(&layout, draft, win.scroll, win.drop_top, p));
@@ -146,6 +134,19 @@ pub(super) fn live(
             row
         }
         _ => {
+            // Built only here: `available_languages` walks the mounted paths. The dropdown values' tag table
+            // ([`ChoiceCtx`]) is an Arc clone, so the mutable asset borrows below (`assets.ui`,
+            // `LiveText::set`) do not conflict with the context's borrow.
+            let languages = data.available_languages();
+            let tags = assets.fonts.tags.clone();
+            let ctx = ChoiceCtx::new(
+                &devices,
+                crate::settings::primary_monitor(&monitors),
+                screen,
+                &adapters,
+                &languages,
+                &tags,
+            );
             let s = assets.scale(size);
             for (e, t, mut text) in &mut texts {
                 let full = shown_text(t.shown, draft, &ctx);

@@ -178,6 +178,32 @@ pub(super) fn spawn_pets(
         };
         let learned = names(links.map(|l| &l.secondaries));
         let gear = names(links.map(|l| &l.item_secondaries));
+        // What every summon of this cast shares: the level, the owner's pet bonuses, the time to live and the
+        // owner's pet modifier levels.
+        let level = progress.as_ref().map_or(1, |p| p.progress.level).max(1);
+        let owner_bonuses = pet_bonuses_with(&assets.data, loadout, owner_buffs);
+        // `Skill_SpawnPet::SpawnPet` → `Monster::SetLifetime` (module docs).
+        let ttl_mods: Vec<(String, usize, bool)> = links
+            .map(|l| {
+                l.mods_of(&ev.skill)
+                    .iter()
+                    .map(|(m, li)| {
+                        (
+                            m.clone(),
+                            *li,
+                            loadout
+                                .skills
+                                .skills
+                                .iter()
+                                .any(|(s, lv)| *lv > 0 && s.eq_ignore_ascii_case(m)),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let time_to_live = spawn_time_to_live(&assets.data.db, rec, ev.level_index, &ttl_mods);
+        // Skills: record levels, modifier levels for unlocked ones.
+        let mods = modifier_levels(&assets.data, loadout);
         for at in spots {
             // Each summon picks its record (`SpawnPet` per point).
             let pet_rec = gd_sim::skills::spawn_object(
@@ -227,16 +253,16 @@ pub(super) fn spawn_pets(
                     }
                 }
             }
-            let level = progress.as_ref().map_or(1, |p| p.progress.level).max(1);
             let types: Vec<String> = assets
                 .data
                 .db
                 .get(&pet_rec)
                 .map(|r| r.strs_iter("petTypeNames").map(|s| s.to_string()).collect())
                 .unwrap_or_default();
-            let bonuses: Vec<_> = pet_bonuses_with(&assets.data, loadout, owner_buffs)
-                .into_iter()
+            let bonuses: Vec<_> = owner_bonuses
+                .iter()
                 .filter(|(b, _)| bonus_applies(b, &types))
+                .cloned()
                 .collect();
             let Some(profile) = gd_sim::actor::monster_with(
                 &assets.data.db,
@@ -251,26 +277,6 @@ pub(super) fn spawn_pets(
             let Some(prec) = db.get(&pet_rec) else {
                 continue;
             };
-            // `Skill_SpawnPet::SpawnPet` → `Monster::SetLifetime` (module docs).
-            let mods: Vec<(String, usize, bool)> = links
-                .map(|l| {
-                    l.mods_of(&ev.skill)
-                        .iter()
-                        .map(|(m, li)| {
-                            (
-                                m.clone(),
-                                *li,
-                                loadout
-                                    .skills
-                                    .skills
-                                    .iter()
-                                    .any(|(s, lv)| *lv > 0 && s.eq_ignore_ascii_case(m)),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let time_to_live = spawn_time_to_live(&assets.data.db, rec, ev.level_index, &mods);
             let tf = Transform::from_translation(at).with_rotation(otf.rotation);
             let Some(e) = crate::creature::spawn(
                 &mut commands,
@@ -281,8 +287,6 @@ pub(super) fn spawn_pets(
             ) else {
                 continue;
             };
-            // Skills: record levels, modifier levels for unlocked ones.
-            let mods = modifier_levels(&assets.data, loadout);
             let lvl = level as f32;
             let skill_level =
                 |i: usize, name: &str| gd_sim::skills::pet_skill_level(prec, i, name, lvl, &mods);

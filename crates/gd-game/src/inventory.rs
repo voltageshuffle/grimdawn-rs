@@ -596,7 +596,7 @@ pub fn init_inventory(
         return;
     };
     let mut inv = Inventory::new(data.item_db(), data.vfs.clone(), epoch.version_base() + 1);
-    match loaded.as_ref().and_then(|c| c.0.inventory.data.clone()) {
+    match loaded.as_ref().and_then(|c| c.0.inventory.data.as_ref()) {
         Some(d) => {
             for (i, s) in d.equipment.iter().enumerate().take(12) {
                 if !s.item.is_empty() {
@@ -658,7 +658,7 @@ pub fn init_inventory(
         }
     }
     // `GD_EQUIP` (hooks.rs).
-    if let Some(list) = hooks.items.equip.clone() {
+    if let Some(list) = hooks.items.equip.as_deref() {
         for r in list.split(';').filter(|r| !r.is_empty()) {
             let (r, left) = r.strip_suffix("@left").map_or((r, false), |r| (r, true));
             let item = Item {
@@ -685,7 +685,7 @@ pub fn init_inventory(
     for g in hooks
         .items
         .give
-        .clone()
+        .as_deref()
         .unwrap_or_default()
         .split(';')
         .filter(|s| !s.is_empty())

@@ -182,7 +182,8 @@ impl GameCamera {
 
 pub fn apply_camera(mut cams: Query<(&GameCamera, &mut Transform)>) {
     for (cam, mut t) in &mut cams {
-        *t = Transform::from_translation(cam.eye()).looking_at(cam.look_at(), Vec3::Y);
+        // A still camera leaves its transform unmarked (no propagation or frustum update downstream).
+        t.set_if_neq(Transform::from_translation(cam.eye()).looking_at(cam.look_at(), Vec3::Y));
     }
 }
 

@@ -1,6 +1,6 @@
 //! Key bindings: the engine's key actions (`keybindings.txt`, parsed and written by `gd_formats::options`) with
 //! the defaults of `KeyMap::SetDefaultBindings` ([`DEFAULT_KEYS`]), edited in the options window's Key Bindings
-//! page and stored in the port's own `keybindings.txt` (`crate::settings`; never the game's file).
+//! page and stored in the port's own `keybindings.txt` (`crate::state::settings`; never the game's file).
 //!
 //! Key codes are DirectInput scan codes (1 Escape … 88 F12, 107 / 118 right Ctrl / Alt), 145 to 152 the mouse
 //! ([`mouse_codes`]) and 153+ the gamepad (PORT: not honoured). Each action the port reads has a constant
@@ -28,15 +28,15 @@ pub const DROP_ITEM: u32 = 32;
 pub const WEAPON_SWAP: u32 = 34;
 pub const TARGET_PET: u32 = 38;
 pub const PAUSE: u32 = 40;
-/// "Stationary Attack" (`tagKeybind36`, default Shift): held, `crate::casting::ClickKeys`.
+/// "Stationary Attack" (`tagKeybind36`, default Shift): held, `gd_ui::state::casting::ClickKeys`.
 pub const STATIONARY_ATTACK: u32 = 39;
-/// "Force Move" (`tagForceMove`, default F): held, `crate::casting::ClickKeys`.
+/// "Force Move" (`tagForceMove`, default F): held, `gd_ui::state::casting::ClickKeys`.
 pub const FORCE_MOVE: u32 = 50;
-/// "Altar Window" (`tagAltarWindow`, no default key; `crate::ascendant`).
+/// "Altar Window" (`tagAltarWindow`, no default key; `grimdawn::ascendant`).
 pub const ALTAR_WINDOW: u32 = 61;
 /// "Toggle UI" (`tagToggleUI`, default `]`; `hud::toggle_ui`).
 pub const TOGGLE_UI: u32 = 60;
-/// Move (`tagMove`): held, walks to the cursor (`crate::casting::MoveKeyHeld`).
+/// Move (`tagMove`): held, walks to the cursor (`grimdawn::casting::MoveKeyHeld`).
 pub const MOVE: u32 = 51;
 /// Hot slot `i` (0..10, keys 1 to 0) is action `HOT_SLOT_FIRST + i`.
 pub const HOT_SLOT_FIRST: u32 = 9;
@@ -192,7 +192,7 @@ const MOUSE_BUTTONS: [MouseButton; 6] = [
 
 /// Resets every key's state except Escape's: the menu / options / edit-box input systems swallow the
 /// keyboard while they hold it (PreUpdate), but Escape belongs to the one dispatcher
-/// (`ui::esc_dispatcher`, Update), which closes the frontmost window or opens the game menu.
+/// (`gd_ui::esc_dispatcher`, Update), which closes the frontmost window or opens the game menu.
 pub fn reset_but_escape(keys: &mut ButtonInput<KeyCode>) {
     let ks: Vec<KeyCode> = keys
         .get_pressed()

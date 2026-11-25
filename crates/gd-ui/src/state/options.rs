@@ -29,7 +29,7 @@ pub struct OptionsWindow {
     pub key_grab: Option<f32>,
     /// The open dropdown (its control's index in the page).
     pub dropdown: Option<usize>,
-    /// The open list's first row shown ([`DROP_ROWS`] at a time).
+    /// The open list's first row shown (the binary's `options::DROP_ROWS` at a time).
     pub drop_top: usize,
     /// The edited key bindings, and the cell waiting for a key (action, 0
     /// primary / 1 secondary).

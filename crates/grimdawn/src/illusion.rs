@@ -85,12 +85,9 @@ pub fn illusion_clicks(
     }
     // The list for the selected item.
     let unlocked: usize = ill.file.entries.iter().map(|e| e.records.len()).sum();
-    let key = trade
-        .illusion
-        .slot
-        .and_then(|s| inv.equipped[s].clone())
-        .map(|it| (it, unlocked));
-    if key != trade.illusion.built {
+    let current = trade.illusion.slot.and_then(|s| inv.equipped[s].as_ref());
+    if current.map(|it| (it, unlocked)) != trade.illusion.built.as_ref().map(|(it, n)| (it, *n)) {
+        let key = current.map(|it| (it.clone(), unlocked));
         let name = |r: &str| {
             data.db
                 .get(r)
@@ -148,10 +145,9 @@ pub fn illusion_clicks(
         return;
     };
     trade.hover = None;
-    let Some(wr) = layout.window.filter(|w| contains(w, p)) else {
+    if !layout.window.is_some_and(|w| contains(&w, p)) {
         return;
-    };
-    let _ = wr;
+    }
     capture.0 = true;
     trade.hover = layout
         .boxes

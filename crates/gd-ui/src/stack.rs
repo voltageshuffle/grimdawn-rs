@@ -138,9 +138,7 @@ impl StackWindow {
     }
 
     pub fn hide(&mut self) {
-        if self.open.is_some() {
-            self.open = None;
-        }
+        self.open = None;
     }
 
     /// Whether the shown window covers `p` (its clicks are its own).

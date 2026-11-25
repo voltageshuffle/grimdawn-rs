@@ -616,7 +616,7 @@ impl SkillsSig {
 struct DevotionSig {
     size: (UVec2, u32),
     generation: u64,
-    open: (bool, bool, u8),
+    open: bool,
     version: (u64, u64),
     undo: bool,
     skills: gd_sim::skills::SkillBook,
@@ -628,8 +628,8 @@ impl DevotionSig {
     fn reclaim(v: &HudValues) -> Option<(&reclamation::DevotionReclaimView, u64)> {
         v.devotion_reclaim.as_ref().map(|r| (r, v.gold))
     }
-    fn open(l: &Live) -> (bool, bool, u8) {
-        (l.panels.devotion, l.panels.skills, l.panels.skill_tab)
+    fn open(l: &Live) -> bool {
+        l.panels.devotion
     }
     fn of(l: &Live) -> Self {
         Self {
@@ -643,7 +643,7 @@ impl DevotionSig {
         }
     }
     fn same(&self, l: &Live) -> bool {
-        if !self.open.0 && !l.panels.devotion && self.size == l.size {
+        if !self.open && !l.panels.devotion && self.size == l.size {
             return true;
         }
         self.size == l.size
@@ -893,7 +893,7 @@ fn esc_dispatcher(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut windows: window::Windows,
     mut options: ResMut<crate::state::options::OptionsWindow>,
-    inv: Option<Res<gd_game_core::inventory::Inventory>>,
+    inv: Res<gd_game_core::inventory::Inventory>,
     mut confirm: ResMut<apply::InvConfirm>,
     mut reclaim: ResMut<reclamation::NoPointsBox>,
     mut pick: ResMut<hotbar_pick::PickView>,
@@ -977,19 +977,17 @@ fn esc_dispatcher(
             *confirm = apply::InvConfirm::None;
             break 'close true;
         }
-        if let Some(inv) = inv.as_deref() {
-            if inv.destroying.is_some() {
-                destroy_out.write(gd_game::item_drop::DestroyAnswer(false));
-                break 'close true;
-            }
-            if gd_game::consumables::use_question(inv).is_some() {
-                use_out.write(gd_game::consumables::UseAnswer(false));
-                break 'close true;
-            }
-            if inv.applying.as_ref().is_some_and(|a| a.confirm.is_some()) {
-                apply_out.write(gd_game_core::inventory::ApplyRequest::Answer(false));
-                break 'close true;
-            }
+        if inv.destroying.is_some() {
+            destroy_out.write(gd_game::item_drop::DestroyAnswer(false));
+            break 'close true;
+        }
+        if gd_game::consumables::use_question(&inv).is_some() {
+            use_out.write(gd_game::consumables::UseAnswer(false));
+            break 'close true;
+        }
+        if inv.applying.as_ref().is_some_and(|a| a.confirm.is_some()) {
+            apply_out.write(gd_game_core::inventory::ApplyRequest::Answer(false));
+            break 'close true;
         }
         if reclaim.escape() {
             break 'close true;
@@ -1020,7 +1018,7 @@ fn esc_dispatcher(
             break 'close true;
         }
         // The apply mode itself (no confirmation up): Esc ends it, the window stays.
-        if inv.as_deref().is_some_and(|i| i.applying.is_some()) {
+        if inv.applying.is_some() {
             apply_out.write(gd_game_core::inventory::ApplyRequest::Cancel);
             break 'close true;
         }

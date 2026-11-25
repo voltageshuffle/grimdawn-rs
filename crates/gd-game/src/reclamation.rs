@@ -4,8 +4,8 @@
 //! `gd_sim::reclamation`; this module holds the session state
 //! ([`SkillReclamation`]), opens the mode when the interact order reaches a
 //! spirit guide ([`reach_spirit_guide`]) and applies the [`ReclaimRequest`]s;
-//! the game draws the window (`grimdawn::ui::skills`) and sends the interact
-//! order (`grimdawn::ui::reclamation`).
+//! the game draws the window (`gd_ui::skills`) and sends the interact
+//! order (`gd_ui::reclamation`).
 //!
 //! * Reach: the NPC service rule (`crate::trade::run_services`, `conversation::in_talk_range`): open at once
 //!   within player radius + NPC radius + 3 m, else at the walk's end.
@@ -47,14 +47,14 @@
 //!
 //! Hello / goodbye: the interaction's `SayHello` and each hide's `SayGoodbye` send `crate::trade::NpcSay` (the
 //! NPC's `dialogPak`, `crate::trade` module doc). With no points the answer is the `tagReclaimNoPoints`
-//! message box (grimdawn `ui/reclamation.rs`, `NoPointsBox`).
+//! message box (`gd_ui` `reclamation.rs`, `NoPointsBox`).
 use crate::points::{PlayerRequests, SkillUndo};
 use bevy::prelude::*;
 use gd_game_core::character::Character;
 use gd_game_core::data::GameData;
 use gd_game_core::player::{Loadout, Player, ProfileDirty};
 use gd_game_core::progress::PlayerProgress;
-use gd_game_core::session::{LoadedCharacter, MessageDrain};
+use gd_game_core::session::LoadedCharacter;
 
 pub struct ReclamationPlugin;
 
@@ -69,8 +69,7 @@ impl Plugin for ReclamationPlugin {
                     .chain()
                     .in_set(PlayerRequests)
                     .run_if(ready),
-            )
-            .drain_messages_unless::<ReclaimRequest, _>(ready);
+            );
     }
 }
 

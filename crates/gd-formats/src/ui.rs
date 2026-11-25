@@ -624,7 +624,7 @@ pub fn layout_text(
             if g.width != 0 {
                 let w = wpx(g);
                 let top = (g.y_offset as f32 * scale) as i32;
-                let bottom = ((g.y_offset + g.height) as f32 * scale) as i32;
+                let bottom = ((g.y_offset as i32 + g.height as i32) as f32 * scale) as i32;
                 out.quads.push(GlyphQuad {
                     x0: pen as f32,
                     y0: y + top as f32,

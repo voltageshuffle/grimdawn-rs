@@ -176,7 +176,7 @@ fn look_mesh(
 /// Parsed meshes (skeleton, attach points, hit boxes) by path: the one loader, the game's render models are
 /// built from these too, so a character's body and its drawn mesh share one `Arc`. A mesh lives while a holder
 /// does ([`crate::weak_cache`]). A spawn that can wait asks [`BodyCache::ready`] first: the mesh is then parsed in
-/// the background ([`collect_body_loads`]) instead of on the game thread.
+/// the background (`gd_game::creature::collect_body_loads`) instead of on the game thread.
 #[derive(Resource, Default)]
 pub struct BodyCache {
     pub cache: crate::weak_cache::WeakCache<Msh>,

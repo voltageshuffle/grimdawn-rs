@@ -1,6 +1,6 @@
 //! The Yes / No confirmation box of the dialog manager (`prompt_manager.dbr`), centred on the screen: the loot filter's Defaults
 //! question, the inventory's reagent / sort questions (`apply.rs`), the game menu's Exit / Quit question (`gamemenu.rs`), the
-//! Inventor's dismantle warning and the vendor / caravan windows' boxes (`ui/trade.rs`, `crate::trade::Prompt`) are this one box (or
+//! Inventor's dismantle warning and the vendor / caravan windows' boxes (`gd_ui::trade`, `gd_ui::state::trade::Prompt`) are this one box (or
 //! its Ok variant); each window only chooses the question, tracks which part is
 //! hovered, and reads the returned rects.
 //!

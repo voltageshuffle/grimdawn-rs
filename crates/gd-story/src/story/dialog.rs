@@ -32,7 +32,6 @@
 //! the list of step indices in the order they were shown.
 use super::Story;
 use super::quest::{LuaCond, collect_lua_conds};
-use anyhow::{Context, Result};
 use gd_formats::cnv::{Conversation, Step, StepType};
 use gd_formats::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -84,14 +83,6 @@ impl Dialogs {
             lua,
             ..Self::default()
         }
-    }
-    pub fn from_files<I: IntoIterator<Item = (String, Vec<u8>)>>(files: I) -> Result<Self> {
-        let mut defs = HashMap::default();
-        for (path, data) in files {
-            let c = Conversation::parse(&data).with_context(|| path.clone())?;
-            defs.insert(super::quest::normalize_path(&path), Arc::new(c));
-        }
-        Ok(Self::new(defs))
     }
     /// The conversation with id `id` (see `by_id`).
     pub fn by_id(&self, id: u32) -> Option<&Arc<Conversation>> {
@@ -337,12 +328,8 @@ impl Story {
     /// condition list. `None`: nothing locked (the window's -1000).
     pub fn locked_quest_faction(&self, npc: u32, npc_faction: &str) -> Option<(String, i32)> {
         use gd_formats::qst::{Action, Condition};
-        let path = self.entities.get(npc)?.conversation.clone()?;
-        let conv = self
-            .dialogs
-            .defs
-            .get(&super::quest::normalize_path(&path))?
-            .clone();
+        let path = self.entities.get(npc)?.conversation.as_deref()?;
+        let conv = self.dialogs.defs.get(&super::quest::normalize_path(path))?;
         let mut best: Option<(String, i32)> = None;
         let mut deficit = 0;
         // Depth-first over the begin-quest steps, with each one's ancestor chain.
@@ -369,7 +356,7 @@ impl Story {
             chain.pop();
         }
         let mut found = Vec::new();
-        walk(&conv, &conv.root, &mut Vec::new(), &mut found);
+        walk(conv, &conv.root, &mut Vec::new(), &mut found);
         for chain in found {
             for step in chain.iter().rev() {
                 for e in step.conditions.iter().flat_map(|c| c.list.iter()) {
@@ -393,7 +380,7 @@ impl Story {
         best
     }
 
-    /// Whether talking to `npc` would show something (`HasAvailableSpeech`).
+    /// Whether talking to an NPC with this conversation would show something (`HasAvailableSpeech`).
     pub fn has_speech(&self, conversation: &str) -> bool {
         let Some(conv) = self
             .dialogs
@@ -564,7 +551,7 @@ impl Story {
 
 /// The mark floating over an NPC (`Conversation::Punctuation`, the values
 /// `Conversation::GetPunctuation` returns; the FX record each one attaches is
-/// `gd_game::npc_marks::Mark::record`).
+/// `gd_game::npc_marks::punctuation_record`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Punctuation {
     None = 0,
@@ -625,10 +612,7 @@ impl Story {
                 return Punctuation::QuestionGray;
             }
         }
-        match steps_of(conv, &conv.root)
-            .iter()
-            .find(|c| c.kind == StepType::Speech && self.step_available(conv, c))
-        {
+        match self.first_speech(conv, &conv.root) {
             None => Punctuation::None,
             Some(s) if s.flags & 4 == 0 && !self.dialogs.is_used(conv.id, s.index) => {
                 Punctuation::NewSpeech

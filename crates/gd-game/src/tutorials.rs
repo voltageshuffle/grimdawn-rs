@@ -67,10 +67,8 @@ pub struct TutorialsPlugin;
 
 impl Plugin for TutorialsPlugin {
     fn build(&self, app: &mut App) {
-        use gd_game_core::session::MessageDrain;
         app.add_message::<UnlockTutorial>()
             .add_message::<TutorialTip>()
-            .drain_messages_unless::<UnlockTutorial, _>(resource_exists::<TutorialPages>)
             .add_systems(
                 Update,
                 (

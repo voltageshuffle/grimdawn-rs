@@ -1,12 +1,12 @@
 //! The combat rules ([`gd_sim::actor::Rules`]) at the session's difficulty, and the
-//! `gameengine.dbr` values gameplay reads ([`GameEngineRules`], held by [`GameData::engine`]).
+//! `gameengine.dbr` values gameplay reads ([`GameEngineRules`], held by [`GameData::engine`](crate::data::GameData::engine)).
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_sim::actor::Rules;
 use std::sync::Arc;
 
 /// `records/game/gameengine.dbr` (`GameEngine::LoadFromDatabase`), parsed once per mounted
-/// database ([`GameData::engine`]) instead of looked up per hit or cast. Defaults are the stock values.
+/// database ([`GameData::engine`](crate::data::GameData::engine)) instead of looked up per hit or cast. Defaults are the stock values.
 pub struct GameEngineRules {
     /// The record itself, for the readers of a whole record (`ComboTable::from_engine`) and of a field
     /// chosen per use (the per-type damage fx paks).
@@ -84,7 +84,7 @@ impl GameEngineRules {
 #[derive(Resource, Clone)]
 pub struct CombatRules(pub Arc<Rules>);
 
-/// The session's rules failed to load; stops [`load_rules`] retrying (and logging) every frame.
+/// The session's rules failed to load; stops `gd_game::rules::load_rules` retrying (and logging) every frame.
 /// Removed with the session.
 #[derive(Resource)]
 pub struct RulesFailed;

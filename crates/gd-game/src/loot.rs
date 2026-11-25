@@ -1,11 +1,10 @@
 //! Rewards for kills: item drops and gold on the ground, picking them up
 //! (rules in `gd_sim::items::loot`; experience is [`crate::progress`]).
 //!
-//! Gold is picked up automatically within 4 m
-//! ([`GOLD_PICKUP_RADIUS`]); the label colour is the drop classification's
-//! `gameiteminfo.dbr` colour (grimdawn `loot::item_color`). Drops are thrown (`gd_sim::loot_toss`,
-//! `ItemDropper::Update`): a [`Dropper`] releases them 250 ms after the kill or
-//! the opening (monsters and destructibles all at once, chests one every
+//! Gold is picked up automatically within 4 m (`gd_sim::items::loot::auto_pickup_radius`); the label colour
+//! is the drop classification's `gameiteminfo.dbr` colour (`gd_ui::character::name_color`, grimdawn `loot`).
+//! Drops are thrown (`gd_sim::loot_toss`, `ItemDropper::Update`): a [`Dropper`] releases them 250 ms after the
+//! kill or the opening (monsters and destructibles all at once, chests one every
 //! 200 ms), each one leaves the drop point with the engine's toss speed
 //! ([`Tossed`]: not pickable until released) and flies as a rigid body
 //! (`gd_sim::drop_body`, [`toss_flight`]) until it touches the terrain or the
@@ -44,7 +43,7 @@ use gd_sim::items::loot::{auto_pickup_radius, drop_sound, gold_with_bonus, rarit
 use gd_sim::items::{Classification, ItemDb};
 
 /// Epic / Legendary items containers dropped this play session
-/// ([`gd_sim::items::loot::DroppedEpics`]; [`crate::session::begin`] resets it).
+/// ([`gd_sim::items::loot::DroppedEpics`]; [`crate::session::end_session_state`] resets it).
 #[derive(Resource, Default)]
 pub struct DroppedEpics(pub gd_sim::items::loot::DroppedEpics);
 
@@ -221,6 +220,7 @@ pub fn restore_ground_items(
     mut commands: Commands,
     levels: Res<gd_game_core::levels::Levels>,
     mut saved: ResMut<LevelItems>,
+    // Option: the codex is made at the session start (`lore::init_lore`); without it no note is known yet.
     codex: Option<Res<crate::lore::LoreCodex>>,
 ) {
     if !levels.is_changed() || saved.0.is_empty() {
@@ -270,6 +270,7 @@ pub fn on_kill(
     session: crate::session::Session,
     codex: Res<crate::lore::LoreCodex>,
     (rt, monsters, challenged, bodies): (
+        // Option: without a story runtime no monster is in a Shattered Realm dungeon.
         Option<NonSend<gd_game_core::story::StoryRuntime>>,
         Query<&gd_game_core::monsters::Monster>,
         Query<&crate::challenge_areas::InChallengeArea>,
@@ -327,7 +328,7 @@ pub fn on_kill(
                     .filter(|it| !codex.knows(&it.base_name)),
             );
         }
-        let drops = items;
+        let mut drops = items;
         // A monster of the Shattered Realm's dungeon (`ControllerMonster::DropLoot`): with the
         // ruleset's `disableMonsterDrops` only the `allowedItems` drop and no gold;
         // essence items are not dropped but used at once; no ascended drops and no Ascension reagents.
@@ -349,7 +350,6 @@ pub fn on_kill(
                 gd_story::endless::Ruleset::slot(&session.mode()),
             )
         });
-        let mut drops = drops;
         if let (Some(rs), Some(rt)) = (&dungeon, &rt) {
             if rs.disable_monster_drops {
                 drops.retain(|i| rs.allowed_items.contains(&i.base_name.to_ascii_lowercase()));
@@ -370,9 +370,9 @@ pub fn on_kill(
             .as_ref()
             .and_then(|r| {
                 r.str("goldGenerator")
-                    .map(|g| (g.to_owned(), r.f32("goldGeneratorChance").unwrap_or(100.0)))
+                    .map(|g| (g, r.f32("goldGeneratorChance").unwrap_or(100.0)))
             })
-            .map(|(g, chance)| gd_sim::progress::gold_drop(&data.db, &g, chance, ev.level, rng))
+            .map(|(g, chance)| gd_sim::progress::gold_drop(&data.db, g, chance, ev.level, rng))
             .unwrap_or_default()
             .into_iter()
             .map(|g| gd_sim::ascendant::apply_bonus(g as u64, asc.gold) as u32)
@@ -415,12 +415,11 @@ pub fn on_kill(
         // Ascension reagents (souls) by classification (`ascendant`).
         let class = rec
             .as_ref()
-            .and_then(|r| r.str("monsterClassification").map(str::to_owned))
-            .unwrap_or_default();
-        for (item, chance) in
-            gd_sim::ascendant::reagent_drops(&data.db, asc, session.mode(), &class)
-                .into_iter()
-                .filter(|_| dungeon.is_none())
+            .and_then(|r| r.str("monsterClassification"))
+            .unwrap_or("");
+        for (item, chance) in gd_sim::ascendant::reagent_drops(&data.db, asc, session.mode(), class)
+            .into_iter()
+            .filter(|_| dungeon.is_none())
         {
             if gd_sim::ascendant::roll_float(rng, chance) {
                 debug!(
@@ -449,8 +448,8 @@ pub fn on_kill(
                 .as_ref()
                 .and_then(|r| r.str("controller"))
                 .and_then(|c| data.db.get(c))
-                .and_then(|c| c.str("lootDropAttachPointName").map(str::to_owned));
-            monster_drop_point(tf, ch, attach.as_deref())
+                .and_then(|c| c.str("lootDropAttachPointName"));
+            monster_drop_point(tf, ch, attach)
         });
         drop_loot_by(&mut commands, idb, drop, drops, &gold, Dropper::MONSTER);
     }
@@ -604,8 +603,8 @@ pub fn item_box(
         .unwrap_or(1.0);
     let bbox = rec
         .as_ref()
-        .and_then(|r| r.str("mesh").map(str::to_owned))
-        .and_then(|m| bodies.get(data, &m))
+        .and_then(|r| r.str("mesh"))
+        .and_then(|m| bodies.get(data, m))
         .and_then(|m| m.bounding_box);
     let (com, half) = bbox.map_or((Vec3::ZERO, Vec3::ZERO), |(lo, hi)| {
         let (lo, hi) = (Vec3::from(lo), Vec3::from(hi));
@@ -865,7 +864,7 @@ pub fn pickup_delay(
     mut delays: Query<(Entity, &mut PickupDelay, Option<&Tossed>)>,
 ) {
     for e in &new {
-        commands.entity(e).insert(PickupDelay(PICKUP_DELAY));
+        commands.entity(e).try_insert(PickupDelay(PICKUP_DELAY));
     }
     for (e, mut d, toss) in &mut delays {
         if toss.is_some_and(|t| t.wait > 0.0) {
@@ -873,7 +872,7 @@ pub fn pickup_delay(
         }
         d.0 -= time.delta_secs();
         if d.0 <= 0.0 {
-            commands.entity(e).remove::<PickupDelay>();
+            commands.entity(e).try_remove::<PickupDelay>();
         }
     }
 }
@@ -886,10 +885,6 @@ pub const MAX_GOLD: u64 = 2_000_000_000;
 pub fn add_gold(gold: &mut u64, amount: i64) {
     *gold = (*gold as i64 + amount).clamp(0, MAX_GOLD as i64) as u64;
 }
-
-/// `OneShot_Gold::GetAutoPickupRadius` (4 m, see
-/// `gd_sim::items::loot::auto_pickup_radius`).
-pub const GOLD_PICKUP_RADIUS: f32 = 4.0;
 
 /// `Player::kAutoPickupPeriod` (50 ms).
 pub const AUTO_PICKUP_PERIOD: f32 = 0.05;
@@ -1411,14 +1406,13 @@ pub fn pick_up(
     }
     // The clicked pickup.
     let Some(e) = interact.0 else { return };
-    // Already taken by the auto pass this frame (its despawn is only queued): taking it again duplicated it.
+    // Already taken by the auto pass this frame (its despawn is only queued): not taken twice.
     if auto_taken == Some(e) {
         interact.0 = None;
         path.points.clear();
         return;
     }
-    // Not a ground item: another use system's target (an NPC, a chest, a door, …), not ours to drop. Clearing it
-    // here wiped every non-item target the frame it was set (no NPC could be talked to).
+    // Not a ground item: another use system's target (an NPC, a chest, a door, …), not ours to drop.
     let Ok((_, gt, gi, placed, ..)) = items.get(e) else {
         return;
     };

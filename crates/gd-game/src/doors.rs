@@ -26,7 +26,7 @@
 //! there only (`GetDungeonExitForEntranceUID`), and a door without one never draws a member
 //! another door already took (`HasDungeonEntranceUID`). The memory is the `Player` object's
 //! map (`Player.dungeonExits`): nothing saves or loads it, only the constructor / destructor touch it, so it lasts the
-//! session (`grimdawn/src/exit.rs` resets it). The use sets [`crate::teleport::PendingTravel`];
+//! session (`grimdawn/src/exit/mod.rs` resets it). The use sets [`crate::teleport::PendingTravel`];
 //! [`run_teleport`] runs the teleport activity of every pending travel and
 //! puts the player there once the destination has streamed in (the game's
 //! streaming reports it with [`DestinationReady`]).
@@ -519,6 +519,14 @@ pub fn advance_doors(
 ) {
     let dt = time.delta_secs();
     for (e, tf, mut door) in &mut doors {
+        // At rest with no callback due: left untouched, so the dressing's `Changed<Door>` skips it.
+        if door.watch.is_none()
+            && door.anim.as_ref().is_none_or(|a| {
+                a.time >= a.anim.num_frames as f32 / a.anim.frame_rate.max(1) as f32
+            })
+        {
+            continue;
+        }
         let door = &mut *door;
         let Some(a) = door.anim.as_mut() else {
             continue;

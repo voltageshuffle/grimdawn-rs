@@ -59,13 +59,19 @@ impl Listener {
         ear_gains(self.front, to.to_array()).map(|g| g * d)
     }
 
-    /// Reads `masterVolume` and the class volumes from the options.
-    pub(super) fn read_volumes(&mut self, options: &GameOptions) {
+    /// Reads `masterVolume` and the class volumes from the options when they changed or were never read since a reset
+    /// (the session's end resets the listener); true when read. [`listen`] and `mixer::mix` both call it, so a voice
+    /// started in a frame whose listener was reset after `listen` still gets the option volumes.
+    pub(super) fn sync_volumes(&mut self, options: &Res<GameOptions>) -> bool {
+        if self.volumes_read && !options.is_changed() {
+            return false;
+        }
         self.master = options.float("masterVolume");
         for c in SoundClass::ALL {
             self.class[c as usize] = options.float(c.option());
         }
         self.volumes_read = true;
+        true
     }
 }
 
@@ -93,8 +99,8 @@ pub fn listener_front(eye: Vec3, target: Vec3) -> [f32; 2] {
     [f.x, f.y]
 }
 
-/// Refreshes [`Listener`]: the options' volumes (when they changed), the camera's frustum, the ears and the sounds
-/// taking a voice slot (every sound entity, streams included, [`VOICES`]).
+/// Refreshes [`Listener`]: the options' volumes ([`Listener::sync_volumes`]), the camera's frustum, the ears and the
+/// sounds taking a voice slot (every sound entity, streams included, [`VOICES`]).
 pub(super) fn listen(
     mut sounds: ResMut<Sounds>,
     options: Res<GameOptions>,
@@ -106,9 +112,7 @@ pub(super) fn listen(
     playing: Query<&SoundClass, With<Voice>>,
 ) {
     let l = &mut sounds.listener;
-    if options.is_changed() || !l.volumes_read {
-        l.read_volumes(&options);
-    }
+    l.sync_volumes(&options);
     let cam = cams.iter().next();
     l.view = cam.map(|c| *c.0);
     // The ears sit at the followed point, the same propagated snapshot this frame's sound positions read: the

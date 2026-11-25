@@ -18,7 +18,7 @@
 //!   load; the port loads every file up front).
 use super::dialog::Dialogs;
 use super::quest::{QuestDef, QuestDefs, normalize_path};
-use anyhow::{Context, Result};
+use anyhow::Context;
 use gd_formats::cnv::Conversation;
 use gd_formats::collections::HashMap;
 use gd_formats::qst::{Quest, Texts};
@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// Every `quests/*.qst` of the VFS (later layers already override); a
 /// non-English session's text overrides replace the embedded text blocks
 /// (module doc).
-pub fn quest_defs(vfs: &Vfs, language: &str) -> Result<QuestDefs> {
+pub fn quest_defs(vfs: &Vfs, language: &str) -> QuestDefs {
     let mut paths: Vec<&str> = vfs
         .paths()
         .filter(|p| p.starts_with("quests/") && p.ends_with(".qst"))
@@ -56,12 +56,12 @@ pub fn quest_defs(vfs: &Vfs, language: &str) -> Result<QuestDefs> {
             }
         }
     }
-    Ok(defs)
+    defs
 }
 
 /// Every `conversations/*.cnv` of the VFS, localized before wrapping in
 /// `Arc` (module doc).
-pub fn dialogs(vfs: &Vfs, language: &str) -> Result<Dialogs> {
+pub fn dialogs(vfs: &Vfs, language: &str) -> Dialogs {
     let mut paths: Vec<&str> = vfs
         .paths()
         .filter(|p| p.starts_with("conversations/") && p.ends_with(".cnv"))
@@ -87,5 +87,5 @@ pub fn dialogs(vfs: &Vfs, language: &str) -> Result<Dialogs> {
         }
         defs.insert(normalize_path(path), Arc::new(conv));
     }
-    Ok(Dialogs::new(defs))
+    Dialogs::new(defs)
 }

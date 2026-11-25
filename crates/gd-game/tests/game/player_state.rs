@@ -11,10 +11,16 @@ fn game() -> Option<(TestGame, bevy::prelude::Entity)> {
     Some((g, p))
 }
 
-/// An item whose base record raises a class skill (`augmentSkillName1`), and that skill.
+/// The first item (by record name: the name index is unordered) whose base record raises a class skill
+/// (`augmentSkillName1`), and that skill.
 fn skill_bonus_item(db: &gd_formats::vfs::Database) -> (Item, String) {
-    db.names()
+    let mut names: Vec<&str> = db
+        .names()
         .filter(|n| n.starts_with("records/items/"))
+        .collect();
+    names.sort_unstable();
+    names
+        .into_iter()
         .find_map(|n| {
             let r = db.get(n)?;
             let skill = r.str("augmentSkillName1")?;
@@ -35,8 +41,7 @@ fn skill_bonus_item(db: &gd_formats::vfs::Database) -> (Item, String) {
         .expect("some item raises a class skill")
 }
 
-/// The skills every reader sees carry the equipment's `+N` bonuses (the
-/// mastery window once showed the save's bare levels).
+/// The skills every reader sees carry the equipment's `+N` bonuses.
 #[test]
 fn effective_skills_include_item_bonuses() {
     let Some((mut g, p)) = game() else { return };

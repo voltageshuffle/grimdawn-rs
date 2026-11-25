@@ -114,19 +114,6 @@ impl SlotManager {
         }
     }
 
-    /// The spot `id` holds, if any (what the game reads back from the rings).
-    pub fn held(&self, id: u64) -> Option<[f32; 3]> {
-        self.rings
-            .iter()
-            .flat_map(|r| &r.slots)
-            .find(|s| s.id == id)
-            .map(|s| s.pos)
-    }
-
-    pub fn rings(&self) -> usize {
-        self.rings.len()
-    }
-
     /// `CalculateSlotPosition`.
     fn slot_position(&self, owner: [f32; 3], ring: usize, k: usize, spacing: f32) -> [f32; 3] {
         let n = self.rings[ring].slots.len() as f32;

@@ -21,7 +21,6 @@ mod panel;
 mod search;
 mod vendor;
 
-use crate::loot::PlayerProgress;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::save::item::Item;
@@ -30,6 +29,7 @@ pub use gd_game::trade::{Markets, TradeOpen};
 use gd_game::trade::{ServiceAnswer, ServiceRequest};
 use gd_game_core::inventory::Inventory;
 use gd_game_core::player::Player;
+use gd_game_core::progress::PlayerProgress;
 pub use gd_game_core::stash::Stash;
 use gd_ui::state::inventory::UiCapture;
 use gd_ui::state::trade::{

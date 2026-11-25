@@ -379,6 +379,10 @@ fn anim_entities(
     made: Query<(Entity, &AnimFx)>,
 ) {
     for (e, gt, skel, mut st, detach) in &mut roots {
+        // Read first: draining an empty list would still flag every animated object changed.
+        if st.events.is_empty() {
+            continue;
+        }
         for ev in st.events.drain(..) {
             if ev.create {
                 let Some(point) = skel.msh.attach_point(&ev.attach) else {

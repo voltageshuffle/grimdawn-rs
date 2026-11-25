@@ -1,15 +1,15 @@
 //! Item tooltip text from the game's format tags.
 //!
 //! Each attribute class has a display tag (`display_tags.rs`, from Game.dll);
-//! ranges use the tag + `R` with (min, max), duration damage is followed by
-//! `DamageSingleFormatTime` / `DamageRangeFormatTime`, requirements use
-//! classes build their text in code (`DamageBasePhysical[R]` +
+//! ranges use the tag + `R` with (min, max); requirements use
+//! `MeetsRequirement` / `FailsRequirement[WithReduction]` ([`requirement_lines_reduced`]).
+//! The base classes build their text in code (`DamageBasePhysical[R]` +
 //! `DamageBasePierceRatio`, `DefenseAbsorptionProtection`); the weapon's
 //! base attack speed (base + the modifier table's affix) is the
 //! attacks-per-second line ([`attack_speed_line`], the player's speed and
 //! the weapon animation's rate passed in).
-//! (`DamageAttributeDur::GetText`, `DamageAttributeAbs::
-//! GetText`): duration damage shows the total (per-second value
+//! Duration damage (`DamageAttributeDur::GetText`, `DamageAttributeAbs::
+//! GetText`) shows the total (per-second value
 //! × duration, `DamageSingleFormat` / `DamageRangeFormat`), then the type tag,
 //! then `tagPerSecond` for a 1 s duration, else `DamageSingleFormatTime` /
 //! `DamageRangeFormatTime`; nothing without both damage and duration. Fixed
@@ -27,7 +27,7 @@
 //! defense, retaliation, skill and requirement-reduction attributes. A
 //! store's second and third lists are kept in creation order here.
 //! The details (Ctrl) view appends each attribute's `_Min` / `_Max` range
-//! numbers to its line ([`range_numbers`], [`stat_lines_ranged`]).
+//! numbers to its line ([`range_numbers`], [`stat_lines_ranged_speed`]).
 use super::display_tags::DISPLAY_TAGS;
 use super::resolve::{Attr, ResolvedItem, StoreKind};
 use crate::attributes::AttrFamily;
@@ -886,15 +886,12 @@ pub mod tc {
     pub const SET_DESCRIPTION: u8 = 22;
     pub const SET_COMPONENT_MISSING: u8 = 23;
     pub const SET_COMPONENT_HAVE: u8 = 24;
-    pub const SET_COMPONENT_TITLE: u8 = 25;
     pub const SET_BONUSES: u8 = 26;
-    pub const SET_BONUSES_SKILL: u8 = 27;
     pub const SET_BONUSES_OFF: u8 = 28;
     pub const RELIC_NAME: u8 = 29;
     pub const RELIC_NUMBER: u8 = 31;
     pub const RELIC_DESCRIPTION: u8 = 32;
     pub const RELIC_BONUS: u8 = 33;
-    pub const RELIC_COMPLETE_TITLE: u8 = 34;
     pub const DIRECTIONS: u8 = 35;
     pub const SKILL_HEADING: u8 = 36;
     pub const SKILL_NAME: u8 = 37;
@@ -902,11 +899,9 @@ pub mod tc {
     pub const ENCHANTMENT_NAME: u8 = 43;
     /// `ItemNameEnchantment`.
     pub const ENCHANTMENT_NAME_LINE: u8 = 11;
-    pub const FORMULA_TITLE: u8 = 57;
     pub const FORMULA_DESCRIPTION: u8 = 58;
     pub const FORMULA_REAGENTS: u8 = 59;
     pub const FORMULA_REAGENT_HAVE: u8 = 60;
-    pub const FORMULA_REAGENT_MISSING: u8 = 61;
     pub const ARTIFACT_CLASS: u8 = 66;
     pub const ARTIFACT_BONUS_TITLE: u8 = 67;
     pub const ARTIFACT_CRAFT: u8 = 69;
@@ -1032,37 +1027,17 @@ pub fn store_rank(a: &Attr) -> u8 {
 }
 
 /// The attribute lines of an item (base lines class 18, the rest class 19)
-/// in the game's order, for the attributes `keep` accepts.
+/// in the game's order, for the attributes `keep` accepts, colour codes kept.
 pub fn stat_lines(tags: &TagTable, item: &ResolvedItem, keep: impl Fn(&Attr) -> bool) -> Vec<Line> {
-    stat_lines_with(tags, item, keep, true)
+    stat_lines_ranged_speed(tags, item, keep, true, None, None)
 }
 
-/// [`stat_lines`] with or without the `^X` colour codes.
-pub fn stat_lines_with(
-    tags: &TagTable,
-    item: &ResolvedItem,
-    keep: impl Fn(&Attr) -> bool,
-    colors: bool,
-) -> Vec<Line> {
-    stat_lines_ranged(tags, item, keep, colors, None)
-}
-
-/// [`stat_lines_with`]; with `bounds` (the details view) each rolled
-/// attribute of the item's own stores gets its [`range_numbers`] appended.
-/// A global-chance damage attribute gets none (the range loop walks
-/// the store's non-global list; the global ones print in `CreateGlobalText`).
-pub fn stat_lines_ranged(
-    tags: &TagTable,
-    item: &ResolvedItem,
-    keep: impl Fn(&Attr) -> bool,
-    colors: bool,
-    bounds: Option<&super::resolve::AttrBounds>,
-) -> Vec<Line> {
-    stat_lines_ranged_speed(tags, item, keep, colors, bounds, None)
-}
-
-/// [`stat_lines_ranged`] with the weapon base attack speed line's player
-/// context: `speed` = (the player's base attack speed, the weapon
+/// [`stat_lines`] with or without the `^X` colour codes (`colors`); with
+/// `bounds` (the details view) each rolled attribute of the item's own stores
+/// gets its [`range_numbers`] appended. A global-chance damage attribute gets
+/// none (the range loop walks the store's non-global list; the global ones
+/// print in `CreateGlobalText`). `speed` is the weapon base attack speed
+/// line's player context: (the player's base attack speed, the weapon
 /// animation's frame rate / length), [`attack_speed_line`]; `None` leaves
 /// the line out (a read-only text without a player).
 pub fn stat_lines_ranged_speed(
@@ -1130,19 +1105,5 @@ pub fn stat_lines_ranged_speed(
             });
         }
     }
-    out
-}
-
-/// Name, every attribute and the requirements of an item (the compact form;
-/// [`super::tooltip_item::item_tooltip`] builds the whole game tooltip).
-pub fn lines(tags: &TagTable, item: &ResolvedItem, name: &str, have: Have) -> Vec<Line> {
-    let mut out = vec![Line {
-        text: name.to_string(),
-        kind: LineKind::Name,
-        class: tc::DEFAULT,
-        icon: None,
-    }];
-    out.extend(stat_lines_with(tags, item, |_| true, false));
-    out.extend(requirement_lines(tags, &item.requirements, have));
     out
 }

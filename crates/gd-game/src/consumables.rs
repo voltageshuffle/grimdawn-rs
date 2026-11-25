@@ -179,32 +179,40 @@ fn ask_use(
     );
     let allowed = |a: &UseAsk| allow_use(&data, a, devotion, factions, loadout);
     let mut decided = Vec::new();
-    let mut at_once = None;
-    if let Some(a) = inv.use_ask.as_mut().filter(|a| a.question.is_none()) {
-        let ok = allowed(a);
-        a.question = match a.class.as_str() {
-            "ItemDevotionReset" => ok.then_some(DEVOTION_RESET_TAG),
-            "ItemAttributeReset" => ok.then_some(ATTRIBUTE_RESET_TAG),
-            // `CursorHandlerFactionBooster::SecondaryInitialize`: a bounty allowed while the
-            // faction is positive boosted asks `tagFactionWarrantConfirmation`; else any allowed while it is
-            // negative boosted asks `tagFactionMandateConfirmation`; else `UseItem` at once.
-            _ => booster(&data, &a.record).and_then(|b| {
-                let f = factions?;
-                if b.negative && ok && f.boosted(b.faction, false) {
-                    Some(FACTION_WARRANT_TAG)
-                } else if ok && f.boosted(b.faction, true) {
-                    Some(FACTION_MANDATE_TAG)
-                } else {
-                    None
-                }
-            }),
-        };
-        if a.question.is_none() {
-            at_once = Some(ok);
+    // Read first: the inventory is written (and marked changed) only when the pending use moves on.
+    let pending = inv
+        .use_ask
+        .as_ref()
+        .filter(|a| a.question.is_none())
+        .map(|a| {
+            let ok = allowed(a);
+            let question = match a.class.as_str() {
+                "ItemDevotionReset" => ok.then_some(DEVOTION_RESET_TAG),
+                "ItemAttributeReset" => ok.then_some(ATTRIBUTE_RESET_TAG),
+                // `CursorHandlerFactionBooster::SecondaryInitialize`: a bounty allowed while the
+                // faction is positive boosted asks `tagFactionWarrantConfirmation`; else any allowed while it is
+                // negative boosted asks `tagFactionMandateConfirmation`; else `UseItem` at once.
+                _ => booster(&data, &a.record).and_then(|b| {
+                    let f = factions?;
+                    if b.negative && ok && f.boosted(b.faction, false) {
+                        Some(FACTION_WARRANT_TAG)
+                    } else if ok && f.boosted(b.faction, true) {
+                        Some(FACTION_MANDATE_TAG)
+                    } else {
+                        None
+                    }
+                }),
+            };
+            (ok, question)
+        });
+    match pending {
+        Some((ok, None)) => decided.extend(inv.use_ask.take().map(|a| (a, ok))),
+        Some((_, question)) => {
+            if let Some(a) = inv.use_ask.as_mut() {
+                a.question = question;
+            }
         }
-    }
-    if let Some(ok) = at_once {
-        decided.extend(inv.use_ask.take().map(|a| (a, ok)));
+        None => {}
     }
     for &UseAnswer(yes) in answers.read() {
         let Some(a) = inv.use_ask.take_if(|a| a.question.is_some()) else {
@@ -258,15 +266,16 @@ const UNLOCK_BAG: &str = "records/items/misc/inventorybag.dbr";
 #[allow(clippy::too_many_arguments)]
 pub fn apply_difficulty_unlocks(
     mut used: MessageReader<DifficultyUnlockUsed>,
-    unlock: Option<ResMut<gd_game_core::session::DifficultyUnlock>>,
+    // Option: session state made after the start (`story::game_won`, the story, the travel state, the map's
+    // riftgates); each part of the unlock that needs one is skipped without it.
+    mut unlock: Option<ResMut<gd_game_core::session::DifficultyUnlock>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
-    travel: Option<ResMut<crate::riftgates::TravelState>>,
+    mut travel: Option<ResMut<crate::riftgates::TravelState>>,
     group: Option<Res<crate::riftgates::RiftgateGroup>>,
     mut effects: MessageWriter<gd_game_core::story::StoryEffect>,
     mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
     mut gained: MessageWriter<gd_game_core::progress::PointsGained>,
 ) {
-    let (mut unlock, mut travel) = (unlock, travel);
     for u in used.read() {
         if let Some(cur) = unlock.as_mut()
             && u.unlocked > cur.0
@@ -489,8 +498,13 @@ fn test_use(
     time: Res<Time>,
     mut inv: ResMut<Inventory>,
     players: Query<(), With<Player>>,
+    // `GD_USE_ITEM`: seconds to the uses (negative: done), per session.
     mut done: Local<Option<f32>>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    if fresh.begun() {
+        *done = None;
+    }
     if players.is_empty() || done.is_some_and(|t| t < 0.0) {
         return;
     }
@@ -519,7 +533,7 @@ pub(crate) fn use_items(
     data: Res<GameData>,
     mut inv: ResMut<Inventory>,
     // Option: devotion is optional input (its effects are skipped without it).
-    devotion: Option<ResMut<crate::devotion::DevotionState>>,
+    mut devotion: Option<ResMut<crate::devotion::DevotionState>>,
     mut players: Query<
         (
             Entity,
@@ -550,7 +564,9 @@ pub(crate) fn use_items(
     ),
     (choice, rt, unlock, mut unlocks, mut devotion_undo): (
         Res<gd_game_core::session::Choice>,
+        // Option: without a story a Survival unlock item is refused.
         Option<NonSend<gd_game_core::story::StoryRuntime>>,
+        // Option: before `story::game_won` makes it, a campaign unlock item is refused.
         Option<Res<gd_game_core::session::DifficultyUnlock>>,
         MessageWriter<DifficultyUnlockUsed>,
         // Option: present with the devotion plugin; the tonic's reset drops its pending steps.
@@ -579,7 +595,6 @@ pub(crate) fn use_items(
         center: tf.translation,
         req,
     };
-    let mut devotion = devotion;
     for (item, from) in used {
         let Some(rec) = data.db.get(&item.base_name) else {
             give_back(&mut commands, &mut inv, &data, at, item, from);
@@ -901,24 +916,18 @@ fn reset_devotion(
     if let Some(u) = undo {
         u.0.clear();
     }
-    let stars: Vec<String> = loadout
-        .skills
-        .skills
-        .iter()
-        .filter(|(s, _)| d.data.locate(s).is_some())
-        .map(|(s, _)| s.clone())
-        .collect();
+    let before = loadout.skills.skills.len();
     loadout
         .skills
         .skills
         .retain(|(s, _)| d.data.locate(s).is_none());
+    let removed = before - loadout.skills.skills.len();
     d.points = d.total;
     d.powers.clear();
     d.bindings.clear();
     d.version += 1;
     info!(
-        "devotion reset: {} stars removed, {} points",
-        stars.len(),
+        "devotion reset: {removed} stars removed, {} points",
         d.points
     );
 }

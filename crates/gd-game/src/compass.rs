@@ -13,7 +13,6 @@
 //! by `save.rs`.
 use bevy::prelude::*;
 use gd_game_core::player::Player;
-use gd_game_core::session::MessageDrain;
 
 /// The minimap mode (module doc).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,17 +58,15 @@ pub struct CompassPlugin;
 
 impl Plugin for CompassPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<ToggleCompass>()
-            .drain_messages_unless::<ToggleCompass, _>(resource_exists::<CompassMode>)
-            .add_systems(
-                Update,
-                (
-                    init_compass.run_if(not(resource_exists::<CompassMode>)),
-                    apply_toggles.run_if(resource_exists::<CompassMode>),
-                )
-                    .chain()
-                    .after(gd_game_core::inventory::InventorySet)
-                    .before(gd_game_core::player::PlayerSet),
-            );
+        app.add_message::<ToggleCompass>().add_systems(
+            Update,
+            (
+                init_compass.run_if(not(resource_exists::<CompassMode>)),
+                apply_toggles.run_if(resource_exists::<CompassMode>),
+            )
+                .chain()
+                .after(gd_game_core::inventory::InventorySet)
+                .before(gd_game_core::player::PlayerSet),
+        );
     }
 }

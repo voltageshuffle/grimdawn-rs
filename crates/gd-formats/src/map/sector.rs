@@ -73,7 +73,7 @@ impl SectorEntry {
 /// `GetGroundAmbientColor`), `depthFogDensity` / `heightFogDensity`,
 /// then the depth fog start / end and height fog start / end (ints,
 /// metres; the constructor defaults 10, 50, 10, 0). Fog: `AmbianceManager::UpdateModifierSlot` and
-/// `GraphicsDeferredRenderer::RenderFog` (grimdawn `render/post.rs`).
+/// `GraphicsDeferredRenderer::RenderFog` (gd-render `render/post.rs`).
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentFields {
     pub fog_color: [f32; 4],
@@ -576,7 +576,7 @@ pub fn read_later_layers(r: &mut Reader, layer_count: i32) -> Result<LaterLayers
 /// Engine.dll): "DNC" + version (2 or 3), sunset, sunrise,
 /// v3: night start / end, sun azimuth, sun min angle, moon azimuth, moon min
 /// angle, then the keys (time + light, sky, ground rgb). Zero azimuths and the
-/// v2 night times keep the engine defaults (`render::env` in grimdawn).
+/// v2 night times keep the engine defaults (gd-render `render::env`).
 #[derive(Debug, Clone)]
 pub struct DayNightData {
     pub version: u8,

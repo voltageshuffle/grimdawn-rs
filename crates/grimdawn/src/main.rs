@@ -48,7 +48,6 @@ mod reroll;
 mod riftgates;
 mod session;
 mod settings;
-mod sheet_dps;
 mod story;
 mod trade;
 mod ui;
@@ -203,7 +202,6 @@ fn main() {
             pets::PetInputPlugin,
             ascendant::AscendantPlugin,
             settings::SettingsPlugin,
-            render_devices::RenderDevicesPlugin,
             fps_limit::FpsLimitPlugin,
         ))
         .add_systems(Startup, setup_lighting)

@@ -37,13 +37,15 @@ pub fn craft_clicks(
     list: Option<Res<CraftList>>,
     stash: Option<Res<Stash>>,
     inv: Option<Res<Inventory>>,
-    progress: Option<Res<crate::loot::PlayerProgress>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     mut capture: ResMut<gd_ui::state::inventory::UiCapture>,
     mut requests: MessageWriter<gd_game::crafting::CraftRequest>,
-    (mut tested, mut rows, mut last_query): (
+    // The row count is cached by `Trade::version`, which restarts with each session (`NewSession`).
+    (mut tested, mut rows, mut last_query, mut fresh): (
         Local<bool>,
         Local<Option<(u64, bool, usize)>>,
         Local<String>,
+        gd_game_core::session::NewSession,
     ),
     (pause, confirm, stack): (
         Res<gd_game_core::pause::GamePause>,
@@ -52,6 +54,10 @@ pub fn craft_clicks(
     ),
 ) {
     use gd_ui_kit::contains;
+    if fresh.begun() {
+        *rows = None;
+        last_query.clear();
+    }
     if !matches!(trade.open, Some(crate::trade::TradeOpen::Crafter { .. })) {
         return;
     }
@@ -60,14 +66,11 @@ pub fn craft_clicks(
     };
     let level = progress.progress.level.max(1) as u32;
     let mut do_craft = false;
-    if let Some(want) = hooks.items.craft.clone()
+    if let Some(want) = hooks.items.craft.as_deref()
         && !*tested
     {
         *tested = true;
-        trade.recipe = list
-            .recipes
-            .iter()
-            .position(|r| r.bp.record.contains(&want));
+        trade.recipe = list.recipes.iter().position(|r| r.bp.record.contains(want));
         if let Some(i) = trade.recipe {
             trade.tab = list.recipes[i].tab;
             let have: Vec<String> = list.recipes[i]
@@ -236,8 +239,15 @@ pub fn craft_scroll(
     ),
     mut held: Local<Option<BarHold>>,
     mut px: Local<f32>,
-    mut rows: Local<Option<(u64, bool, usize)>>,
+    // As `craft_clicks`' (`Trade::version` restarts with each session).
+    (mut rows, mut fresh): (
+        Local<Option<(u64, bool, usize)>>,
+        gd_game_core::session::NewSession,
+    ),
 ) {
+    if fresh.begun() {
+        *rows = None;
+    }
     if !matches!(trade.open, Some(crate::trade::TradeOpen::Crafter { .. })) {
         *held = None;
         return;

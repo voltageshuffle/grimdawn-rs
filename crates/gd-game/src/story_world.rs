@@ -450,11 +450,14 @@ pub fn sync_actors(
     mut chests_opened: MessageReader<crate::chests::ChestOpened>,
     (session, factions): (
         crate::session::Session,
+        // Option: factions are optional input (the friendly check, `monsters::is_friendly`).
         Option<Res<crate::factions::PlayerFactions>>,
     ),
     levels: Res<Levels>,
+    // Option: only proxies and destructibles need the rules (they wait for them); the rest spawn without.
     rules: Option<Res<gd_game_core::rules::CombatRules>>,
     (progress, patrol_groups): (
+        // Option: the player's level is optional input (level 1).
         Option<Res<gd_game_core::progress::PlayerProgress>>,
         Res<crate::patrol::PatrolGroups>,
     ),
@@ -938,6 +941,7 @@ pub fn record_hooks(
             Without<crate::loot::Restored>,
         ),
     >,
+    // Option: no devotion state, no shrine to restore.
     devotion: Option<Res<crate::devotion::DevotionState>>,
     (mut restored_seen, mut fresh): (Local<Option<usize>>, gd_game_core::session::NewSession),
 ) {
@@ -1060,7 +1064,11 @@ pub fn world_effects(
     mut states: ResMut<crate::monsters::ProxyStates>,
     mut killed: MessageWriter<crate::combat::MonsterKilled>,
     chars: Query<(), With<gd_game_core::character::Character>>,
-    (data, factions): (Res<GameData>, Option<Res<crate::factions::PlayerFactions>>),
+    (data, factions): (
+        Res<GameData>,
+        // Option: factions are optional input (the player's pack, `monsters::player_pack`).
+        Option<Res<crate::factions::PlayerFactions>>,
+    ),
     (mut broken, mut broke, mut spawned_actors): (
         ResMut<gd_game_core::world::Broken>,
         MessageWriter<crate::breakables::Broke>,

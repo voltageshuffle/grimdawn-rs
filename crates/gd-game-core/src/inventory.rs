@@ -1,10 +1,10 @@
-//! The player's inventory and equipment for this session.
+//! The player's inventory and equipment for this session (the systems named here are `gd_game::inventory`'s).
 //!
 //! Loaded from the save (or the starting gear), changed by pickups and the character window, written back by
-//! `crate::save` (equipment, both weapon sets, the bags, [`Inventory::held`], [`Inventory::unplaced`]). Grid
+//! `gd_game::save` (equipment, both weapon sets, the bags, [`Inventory::held`], [`Inventory::unplaced`]). Grid
 //! rules: `gd_formats::inventory` (32-px cells, footprint = bitmap size, column-major auto placement). Two
-//! weapon sets: the active one in `equipped`, the other in `other_weapons` (`crate::weapon_sets`). The worn
-//! equipment is the player's [`Loadout::items`]: [`sync_equipment`] copies every change there; the game rebuilds
+//! weapon sets: the active one in `equipped`, the other in `other_weapons` (`gd_game::weapon_sets`). The worn
+//! equipment is the player's `Loadout::items`: `sync_equipment` copies every change there; the game rebuilds
 //! the body on [`EquipmentChanged`].
 //!
 //! Components, augments and single-piece transmuters (`CreateSecondaryCursorHandler`): a right click
@@ -12,15 +12,15 @@
 //! uses it there ([`Inventory::apply_click`], rules [`Inventory::apply_check`]); dragging one onto an item only
 //! swaps them. PORT: while the transfer stash is blocked (`crate::stash` module doc) a component / augment
 //! from elsewhere is not used on a transfer-stash item (it would be lost with the unsaved store):
-//! [`apply_requests`] refuses that click like a refused transfer, and the mode stays.
+//! `apply_requests` refuses that click like a refused transfer, and the mode stays.
 //!
 //! Detached items (`EquipmentCtrl::AttributesHaveChanged` / `Sift`, every 250 ms): a worn item whose
 //! requirements fail (level and attributes with the gear's reductions, `gd_sim::items::req_reduction`) or an
 //! off-hand one-hander whose dual-wield bit is gone stays in its slot (drawn) but gives no stats, skills, set
-//! count or components ([`sift_equipment`]; the save's `attached` flag).
+//! count or components (`sift_equipment`; the save's `attached` flag).
 //!
 //! Giving an item ([`Inventory::give`], `ControllerPlayer::GiveItemToPlayer`; nothing takes it:
-//! `crate::loot::give_item`):
+//! `gd_game::loot::give_item`):
 //! 1. [`Inventory::auto_insert`]: an EMPTY slot of its class with requirements met, in [`AUTO_INSERT_ORDER`],
 //!    then the ACTIVE set's main hand, else off hand (strict hand rule). Nothing is swapped.
 //! 2. [`Inventory::add_to_bags`]: OneShot use, (ground pickups) an incomplete component joins a partial, the
@@ -37,11 +37,11 @@
 //! single slot replaces its item; a ring goes to ring 1 only when both are empty, else ring 2; a weapon to the
 //! main hand unless an empty off hand may take it while the main hand is full. Displaced items go to the bags,
 //! else the cursor; a two-hander over a pair: both to the bags, else the one that fits, else nothing changes.
-//! With an item held, a right press on a bag is the merchant quick sale ([`crate::trade::SellHeld`]) else
+//! With an item held, a right press on a bag is the merchant quick sale (`gd_game::trade::SellHeld`) else
 //! [`Inventory::cancel_held`]. Right press on a worn item with a merchant open sells it
-//! ([`crate::trade::SellEquipped`]).
+//! (`gd_game::trade::SellEquipped`).
 //!
-//! Item-slot windows give items back through [`InvRequest::Stow`] = [`crate::loot::give_item`]; never lost.
+//! Item-slot windows give items back through [`InvRequest::Stow`] = `gd_game::loot::give_item`; never lost.
 //! Stacks: `crate::stack`.
 use crate::stash::Stash;
 use bevy::prelude::*;
@@ -55,12 +55,12 @@ use gd_sim::items::{ItemDb, ResolvedItem, resolve};
 use std::sync::Arc;
 
 /// The inventory's systems: the game's inventory input runs between
-/// [`init_inventory`] and [`sync_equipment`] (`trade.rs` runs after the set).
+/// `init_inventory` and `sync_equipment` (`trade.rs` runs after the set).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InventorySet;
 
 /// The UI's answer in the apply mode (enchant / component use, `Inventory::applying`): the window
-/// sends it, [`apply_requests`] applies it.
+/// sends it, `apply_requests` applies it.
 #[derive(Message, Clone, Copy, Debug)]
 pub enum ApplyRequest {
     /// Ends the mode (`Inventory::cancel_apply`): Escape without a question
@@ -99,7 +99,7 @@ pub fn sort_key(inv: &Inventory, tags: &gd_formats::text::TagTable, item: &Item)
 pub struct SortBag(pub usize);
 
 /// A click in the character window, resolved by the UI from its layout to
-/// the bag cell / equipment slot under the cursor; [`apply_inv_requests`]
+/// the bag cell / equipment slot under the cursor; `apply_inv_requests`
 /// applies the rule. The cursor item stays state ([`Inventory::held`]), the
 /// UI only asks for the transitions and reads the state next frame.
 #[derive(Message, Clone, Debug)]
@@ -130,7 +130,7 @@ pub enum InvRequest {
     /// Answered with a `crafting::SlotReturn` holding the item.
     ToWindowSlot { bag: usize, cell: (u32, u32) },
     /// The window's slot gives `item` back to the player (window closed, tab switched, Shift + left on the
-    /// slot): `ItemBox_ReturnItemToPlayer` = [`crate::loot::give_item`] (module doc).
+    /// slot): `ItemBox_ReturnItemToPlayer` = `gd_game::loot::give_item` (module doc).
     Stow(Item),
     /// A click on the window's slot: the cursor item is exchanged with
     /// `give` (the slot's item, None for an empty slot); the old cursor item
@@ -266,7 +266,7 @@ pub struct Applying {
 pub struct Inventory {
     /// Worn items by [`SLOTS`]; the weapons are the active weapon set's.
     pub equipped: [Option<Item>; 14],
-    /// The inactive weapon set's main / off hand (`crate::weapon_sets`).
+    /// The inactive weapon set's main / off hand (`gd_game::weapon_sets`).
     pub other_weapons: [Option<Item>; 2],
     /// Weapon set II is the active one (`EquipmentCtrl.alternate`, the save's
     /// `use_alternate`).
@@ -288,18 +288,18 @@ pub struct Inventory {
     /// held one ([`Inventory::cancel_held`]).
     pub held_from: Option<(HeldFrom, Item)>,
     /// Bag items of the save that found no cell on load (their cell taken or outside the grid, and no bag has
-    /// room): kept, and written back at their saved sack and cell (`crate::save`), so a later load tries again.
+    /// room): kept, and written back at their saved sack and cell (`gd_game::save`), so a later load tries again.
     pub unplaced: Vec<Unplaced>,
-    /// The held item's destroy question is up (`crate::item_drop`: a soulbound or untradeable item clicked on
+    /// The held item's destroy question is up (`gd_game::item_drop`: a soulbound or untradeable item clicked on
     /// the world), its text tag; answered with `item_drop::DestroyAnswer`.
     pub destroying: Option<&'static str>,
-    /// The tonic / writ / bounty a right click chose (`crate::consumables::ask_use`): its yes / no question is up
+    /// The tonic / writ / bounty a right click chose (`gd_game::consumables::ask_use`): its yes / no question is up
     /// once [`crate::consumables::UseAsk::question`] is set.
     pub use_ask: Option<crate::consumables::UseAsk>,
     /// The apply mode: a component / augment chosen by right click, used on
     /// the next item clicked (module docs).
     pub applying: Option<Applying>,
-    /// UI sounds of inventory actions, played by [`play_sounds`].
+    /// UI sounds of inventory actions, played by `play_sounds`.
     pub sounds: Vec<String>,
     /// Bumped on every change (UI rebuild signature).
     pub version: u64,
@@ -484,7 +484,7 @@ impl Inventory {
     /// item not `CanBePlacedInTransferStash` from the transfer stash goes to the bags (`AddItem`), staying on the
     /// cursor when they are full; a material taken from the reagent storage goes back into it
     /// (`AddItemToReagents`). Otherwise (an equipment slot, a window, a refused add) it is returned as `Err` for
-    /// `ControllerPlayer::GiveItemToPlayer(id, false)` ([`crate::loot::give_item`]: equip-empty, bags, else
+    /// `ControllerPlayer::GiveItemToPlayer(id, false)` (`gd_game::loot::give_item`: equip-empty, bags, else
     /// thrown down). `stash`: None before the stash is loaded.
     // `Err` hands the item back to the caller (as `Inventory::give`).
     #[allow(clippy::result_large_err)]
@@ -619,7 +619,7 @@ impl Inventory {
     /// Puts a refused consumable back where it was taken from ([`Self::used`]): onto the remaining stack of its
     /// record at that cell, else into the empty cell; no source or the cell taken meanwhile: first fit
     /// ([`Self::add_to_bags`]), else onto an empty cursor. `Err`: nowhere to go (the caller throws it down,
-    /// [`crate::loot::give_item`]); a held item is never overwritten.
+    /// `gd_game::loot::give_item`); a held item is never overwritten.
     // `Err` hands the item back to the caller.
     #[allow(clippy::result_large_err)]
     pub fn return_used(&mut self, item: Item, from: Option<(usize, u32, u32)>) -> Result<(), Item> {
@@ -659,7 +659,7 @@ impl Inventory {
     /// `ControllerPlayer::GiveItemToPlayer` (module doc): [`Self::auto_insert`], else the bags
     /// (`PlayerInventoryCtrl::AddItem`; `combine` = an incomplete component first joins a partial,
     /// [`shard_target`], which only `CharPickUpConfigCmd` asks for, `PlayerInventoryCtrl::AddItem` callers).
-    /// `Err` hands the item back (nothing took it: `crate::loot::give_item`).
+    /// `Err` hands the item back (nothing took it: `gd_game::loot::give_item`).
     // `Err` hands the item back to the caller.
     #[allow(clippy::result_large_err)]
     pub fn give(&mut self, item: Item, combine: bool, req: &Requirements) -> Result<(), Item> {
@@ -934,13 +934,13 @@ impl Inventory {
         req: &Requirements,
         transfer_open: bool,
     ) -> Vec<ItemLoc> {
-        let Some(a) = self.applying.clone() else {
+        let Some(src) = self.applying.as_ref().map(|a| a.src) else {
             return Vec::new();
         };
-        let Some(comp) = self.applying_item(stash).cloned() else {
+        let Some(comp) = self.applying_item(stash) else {
             return Vec::new();
         };
-        let mut locs: Vec<(ItemLoc, Item)> = Vec::new();
+        let mut locs: Vec<(ItemLoc, &Item)> = Vec::new();
         for (b, bag) in self.bags.iter().enumerate() {
             locs.extend(bag.items.iter().map(|q| {
                 (
@@ -949,7 +949,7 @@ impl Inventory {
                         x: q.x,
                         y: q.y,
                     },
-                    q.item.clone(),
+                    &q.item,
                 )
             }));
         }
@@ -966,7 +966,7 @@ impl Inventory {
                             x: q.x,
                             y: q.y,
                         },
-                        q.item.clone(),
+                        &q.item,
                     )
                 }));
             }
@@ -975,14 +975,14 @@ impl Inventory {
             self.equipped
                 .iter()
                 .enumerate()
-                .filter_map(|(i, e)| e.clone().map(|it| (ItemLoc::Equip(i), it))),
+                .filter_map(|(i, e)| e.as_ref().map(|it| (ItemLoc::Equip(i), it))),
         );
         locs.into_iter()
             .filter(|(l, it)| {
-                *l != a.src
-                    && !self.refused_at(&comp, *l)
+                *l != src
+                    && !self.refused_at(comp, *l)
                     && !self.apply_blocked(Some(*l), transfer_open)
-                    && self.apply_check(&comp, it, req).is_some()
+                    && self.apply_check(comp, it, req).is_some()
             })
             .map(|(l, _)| l)
             .collect()
@@ -1526,8 +1526,8 @@ impl Inventory {
         // An off-hand item replaces a two-hander, which goes back to a bag.
         if slot == EquipSlot::OffHand
             && self.equipped[main]
-                .clone()
-                .is_some_and(|m| self.is_two_handed(&m))
+                .as_ref()
+                .is_some_and(|m| self.is_two_handed(m))
             && let Some(m) = self.equipped[main].take()
             && !self.add_to_bags(m.clone())
         {
@@ -1595,7 +1595,7 @@ pub const AUTO_INSERT_ORDER: [EquipSlot; 14] = [
     EquipSlot::OffHand,
 ];
 
-/// Whether the item worn in equipment slot `i` is detached ([`sift_equipment`],
+/// Whether the item worn in equipment slot `i` is detached (`sift_equipment`,
 /// and `weapon_sets::apply_swap` for the swapped-in weapons): an off-hand
 /// weapon the skills don't allow to dual wield, or requirements not met. Also
 /// whether it was the dual-wield rule.
@@ -1611,8 +1611,8 @@ pub fn detach_rule(inv: &Inventory, i: usize, item: &Item, req: &Requirements) -
 
 /// What the player's equip checks read: level, physique / cunning / spirit,
 /// the worn gear's requirement reductions (`Profile::req_reduction`) and the
-/// skills' dual-wield mask ([`Loadout::dual_mask`]). Derived each frame by
-/// [`sync_requirements`] (required by [`Player`]; it runs before any reader).
+/// skills' dual-wield mask (`Loadout::dual_mask`). Derived each frame by
+/// `sync_requirements` (required by `Player`; it runs before any reader).
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Requirements {
     pub level: i32,

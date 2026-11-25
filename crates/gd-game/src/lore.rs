@@ -63,7 +63,6 @@
 //! taken.
 
 use bevy::prelude::*;
-use gd_game_core::session::MessageDrain;
 
 /// The collected lore notes (record paths, collection order).
 #[derive(Resource, Default, Debug, Clone, PartialEq)]
@@ -164,7 +163,7 @@ pub fn read_notes(
         let Some(rec) = data.db.get(record).filter(|r| r.class == "ItemNote") else {
             continue;
         };
-        if codex.notes.iter().any(|n| n.eq_ignore_ascii_case(record)) {
+        if codex.knows(record) {
             out.write(LoreNoteRead {
                 record: record.clone(),
                 new: false,
@@ -243,7 +242,6 @@ impl Plugin for LorePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<LoreNoteRead>()
             .add_message::<UseNote>()
-            .drain_messages_unless::<UseNote, _>(has_lore_inputs)
             .add_systems(
                 Update,
                 (

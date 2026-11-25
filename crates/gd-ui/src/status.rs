@@ -4,7 +4,7 @@
 //! `PlayerStatusIcons::RefreshIcon`, icon tick `PlayerStatusIcons::TickIcons`, draw `PlayerStatusIcons::Draw` →
 //! `PlayerStatusIcons::DrawArea`, sweep `PlayerStatusIcons::DrawSweep`, hit test `PlayerStatusIcons::HitTest`).
 //!
-//! Which skills: `gd_game::buff_bar::player_icons` (area 1, or area 2 for
+//! Which skills: `gd_game::buff_bar::PlayerIcons` (area 1, or area 2 for
 //! debuff buffs) and the duration-damage / debuff / crowd-control types (area
 //! 2, one icon per type, `ui/hud/hud_dur…icon_….tex` by type, `PlayerStatusIcons::AddDotIcon`).
 //! The bar keeps its icons ([`BuffBar`]): a newly listed skill is appended
@@ -217,13 +217,20 @@ impl BuffBar {
                     e.left = left;
                     // `PlayerStatusIcons::RefreshIcon` type 0: under 3000 ms, ms / 1000 + 1.
                     let ms = (left * 1000.0) as i32;
-                    e.text =
-                        (ms < 3000 && e.total > 0.0).then(|| ((ms / 1000 + 1).to_string(), false));
+                    if ms < 3000 && e.total > 0.0 {
+                        set_count(&mut e.text, ms / 1000 + 1, false);
+                    } else {
+                        e.text = None;
+                    }
                 }
                 // `PlayerStatusIcons::RefreshIcon` type 1: count = TrackableRemainingTime, total = TrackableTotalTime.
                 Track::Charges(n, max) => {
                     (e.left, e.total) = (n as f32, max as f32);
-                    e.text = (n > 0).then(|| (n.to_string(), true));
+                    if n > 0 {
+                        set_count(&mut e.text, n, true);
+                    } else {
+                        e.text = None;
+                    }
                 }
                 Track::Plain => {
                     (e.left, e.total, e.text) = (0.0, 0.0, None);
@@ -246,7 +253,7 @@ impl BuffBar {
                         e.total = if left <= 0.25 { 0.0 } else { left };
                     }
                     e.left = left;
-                    e.text = Some((count.to_string(), true));
+                    set_count(&mut e.text, count, true);
                 }
             }
         }
@@ -370,6 +377,15 @@ impl BuffBar {
         e.left = left;
         left > 0.0 && left <= e.total
     }
+}
+
+/// Writes `n` as an icon's text, reusing its buffer (the counts change every frame: no allocation per frame).
+fn set_count(text: &mut Option<(String, bool)>, n: impl std::fmt::Display, charge: bool) {
+    use std::fmt::Write;
+    let (s, c) = text.get_or_insert_with(Default::default);
+    s.clear();
+    write!(s, "{n}").unwrap();
+    *c = charge;
 }
 
 /// The tooltip of a duration-damage / debuff / crowd-control icon (`PlayerStatusIcons::GetRolloverText` kind 1, its
@@ -626,13 +642,12 @@ fn sweep_image(w: u32, h: u32, step: u8, round: bool, color: [u8; 4]) -> Image {
 /// Sweep colours (the loader's defaults under the record's fields).
 fn sweep_colors(rec: &gd_formats::arz::Record) -> [[u8; 4]; 2] {
     let c = |p: &str, d: [f32; 4]| -> [u8; 4] {
-        ["r", "g", "b", "a"]
-            .iter()
-            .zip(d)
-            .map(|(k, d)| rec.f32(&format!("{p}.{k}")).unwrap_or(d).clamp(0.0, 255.0) as u8)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap_or([0; 4])
+        let k = ["r", "g", "b", "a"];
+        std::array::from_fn(|i| {
+            rec.f32(&format!("{p}.{}", k[i]))
+                .unwrap_or(d[i])
+                .clamp(0.0, 255.0) as u8
+        })
     };
     [
         c("durationColor", [0.0, 0.0, 0.0, 153.0]),

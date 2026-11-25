@@ -184,7 +184,6 @@ pub struct LevelTable {
     /// Skill points granted on reaching level `i + 2` (`skillModifierPoints[i]`). PORT: the
     /// indexing is inferred from the data, not read off the engine's level-up code.
     pub skill_points: Vec<i32>,
-    pub initial_skill_points: i32,
     pub max_devotion_points: i32,
     pub max_level: i32,
     pub experience_equation: Expr,
@@ -222,7 +221,6 @@ impl LevelTable {
                 .into_iter()
                 .map(|f| f as i32)
                 .collect(),
-            initial_skill_points: i("initialSkillPoints"),
             max_devotion_points: i("maxDevotionPoints"),
             max_level: i("maxPlayerLevel"),
             experience_equation: Expr::parse(
@@ -689,13 +687,13 @@ impl BioStore {
     /// the base values like `EvaluateEquations` does.
     pub fn apply_equations(&mut self, bio: &Record, char_level: i32) -> Result<()> {
         for (attr, field) in BIO_EQUATION_SLOTS {
-            let Some(src) = bio.get(field).and_then(|v| v.first()).cloned() else {
+            let Some(src) = bio.get(field).and_then(|v| v.first()) else {
                 continue;
             };
             let e = match src {
-                RawValue::Str(s) if !s.is_empty() => match record_expr(bio, field, &s) {
+                RawValue::Str(s) if !s.is_empty() => match record_expr(bio, field, s) {
                     Some(e) => (*e).clone(),
-                    None => Expr::parse(&s).with_context(|| field.to_owned())?,
+                    None => Expr::parse(s).with_context(|| field.to_owned())?,
                 },
                 RawValue::Str(_) => continue,
                 other => Expr::Num(other.as_f32().unwrap_or(0.0)),

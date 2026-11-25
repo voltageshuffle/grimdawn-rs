@@ -111,25 +111,22 @@ pub struct ComboCharges {
 }
 
 impl ComboCharges {
-    /// `SkillManager::Update`: true when the charges just expired.
-    pub fn update(&mut self, ms: i32) -> bool {
-        let mut expired = false;
+    /// `SkillManager::Update`.
+    pub fn update(&mut self, ms: i32) {
         if self.remaining_ms > 0 {
             self.remaining_ms -= ms;
             if self.count != 0 && self.remaining_ms <= 0 {
                 self.count = 0;
-                expired = true;
             }
         }
         if self.lockout_ms > 0 {
             self.lockout_ms -= ms;
         }
-        expired
     }
 
     /// `SkillManager::IncrementComboCharge` for a skill result with targets:
     /// the gaining skill's `level` / `duration_ms` ([`skill_combo`]); `melee`:
-    /// the attack's `AttackInfo.isMelee` flag. True when the count was set.
+    /// the attack's `AttackInfo.isMelee` flag.
     pub fn increment(
         &mut self,
         table: &ComboTable,
@@ -137,9 +134,9 @@ impl ComboCharges {
         duration_ms: f32,
         melee: bool,
         attack_speed: f32,
-    ) -> bool {
+    ) {
         if self.lockout_ms > 0 || level == 0 {
-            return false;
+            return;
         }
         let time = if melee {
             table.time_ms
@@ -150,17 +147,15 @@ impl ComboCharges {
         let cap = self.count.max(level);
         self.count = (self.count + 1).min(cap);
         self.remaining_ms = duration_ms as i32;
-        true
     }
 
-    /// `Character::SpendComboCharges`: true when the charges stay.
-    pub fn spend(&mut self, reduction: f32, rng: &mut Rng) -> bool {
+    /// `Character::SpendComboCharges`.
+    pub fn spend(&mut self, reduction: f32, rng: &mut Rng) {
         rng.next();
         if rng.unit() * 100.0 > 100.0 - reduction {
-            return true;
+            return;
         }
         self.clear();
-        false
     }
 
     /// `Character::ClearComboCharges`.

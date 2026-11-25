@@ -81,7 +81,7 @@ fn clicks(
     inv: Option<Res<Inventory>>,
     mut capture: ResMut<UiCapture>,
     players: Query<(), With<Player>>,
-    progress: Option<Res<crate::loot::PlayerProgress>>,
+    progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     time: Res<Time>,
     data: Res<gd_game_core::data::GameData>,
     mut script: Local<Option<Vec<gd_game_core::hooks::Click>>>,
@@ -635,12 +635,12 @@ fn held_overlay(
     if let Some(inv) = inv
         && !pause.menu
         && !question_up(&inv, &trade, &confirm)
-        && let Some(h) = inv.held.clone()
+        && let Some(h) = inv.held.as_ref()
         && let Ok(win) = window.single()
         && let Some(p) = gd_ui_kit::cursor_px(&hooks, win)
     {
         let size = inv
-            .info(&h)
+            .info(h)
             .map(|i| i.size)
             .unwrap_or(Footprint { w: 1, h: 1 });
         let mut grids: Vec<(URect, f32, &Sack<Item>)> = Vec::new();
@@ -651,12 +651,12 @@ fn held_overlay(
                 }
             }
         }
-        if let (Some(t), Some(tl), Some(st)) = (Some(&*trade), Some(&*trade_layout), stash.as_ref())
-            && matches!(t.open, Some(crate::trade::TradeOpen::Stash { .. }))
-            && let Some((r, cell)) = tl.grid
+        if let Some(st) = stash.as_ref()
+            && matches!(trade.open, Some(crate::trade::TradeOpen::Stash { .. }))
+            && let Some((r, cell)) = trade_layout.grid
         {
-            let pages = st.view(t.transfer);
-            if let Some(page) = pages.get(t.tab.min(pages.len().saturating_sub(1))) {
+            let pages = st.view(trade.transfer);
+            if let Some(page) = pages.get(trade.tab.min(pages.len().saturating_sub(1))) {
                 grids.push((r, cell, page));
             }
         }
@@ -768,9 +768,9 @@ fn held_icon(
 ) {
     let Some(inv) = inv else { return };
     let Ok(win) = window.single() else { return };
-    let held = inv.held.clone();
+    let held = inv.held.as_ref();
     for (e, icon, mut node) in &mut icons {
-        if held.as_ref() != Some(&icon.0) {
+        if held != Some(&icon.0) {
             commands.entity(e).try_despawn();
             continue;
         }
@@ -785,8 +785,8 @@ fn held_icon(
         }
     }
     if let Some(h) = held
-        && !icons.iter().any(|(_, i, _)| i.0 == h)
-        && let Some(info) = inv.info(&h)
+        && !icons.iter().any(|(_, i, _)| i.0 == *h)
+        && let Some(info) = inv.info(h)
         && let Some(img) = tex.get(&data, &info.resolved.bitmap, true, &mut images)
     {
         let s = scale.factor(win.physical_width(), win.physical_height()) / win.scale_factor();
@@ -796,7 +796,7 @@ fn held_icon(
             .unwrap_or(Vec2::splat(32.0))
             * s;
         commands.spawn((
-            HeldIcon(h),
+            HeldIcon(h.clone()),
             ImageNode::new(img),
             Node {
                 position_type: PositionType::Absolute,

@@ -41,6 +41,19 @@ pub enum Op {
     Pow,
 }
 
+impl Op {
+    /// `a <op> b` in f32 (`powf` for `^`).
+    fn apply(self, a: f32, b: f32) -> f32 {
+        match self {
+            Op::Add => a + b,
+            Op::Sub => a - b,
+            Op::Mul => a * b,
+            Op::Div => a / b,
+            Op::Pow => a.powf(b),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum StackOp {
     Bin(Op),
@@ -200,16 +213,7 @@ impl Expr {
             Expr::Num(n) => *n,
             Expr::Var(v) | Expr::Slot(_, v) => vars(v).unwrap_or(0.0),
             Expr::Neg(a) => -a.eval(vars),
-            Expr::Bin(op, a, b) => {
-                let (a, b) = (a.eval(vars), b.eval(vars));
-                match op {
-                    Op::Add => a + b,
-                    Op::Sub => a - b,
-                    Op::Mul => a * b,
-                    Op::Div => a / b,
-                    Op::Pow => a.powf(b),
-                }
-            }
+            Expr::Bin(op, a, b) => op.apply(a.eval(vars), b.eval(vars)),
         }
     }
 
@@ -222,16 +226,7 @@ impl Expr {
             Expr::Slot(k, _) => get(*k),
             Expr::Var(v) => slot(v).map_or(0.0, get),
             Expr::Neg(a) => -a.eval_slots(values, slot),
-            Expr::Bin(op, a, b) => {
-                let (a, b) = (a.eval_slots(values, slot), b.eval_slots(values, slot));
-                match op {
-                    Op::Add => a + b,
-                    Op::Sub => a - b,
-                    Op::Mul => a * b,
-                    Op::Div => a / b,
-                    Op::Pow => a.powf(b),
-                }
-            }
+            Expr::Bin(op, a, b) => op.apply(a.eval_slots(values, slot), b.eval_slots(values, slot)),
         }
     }
 }

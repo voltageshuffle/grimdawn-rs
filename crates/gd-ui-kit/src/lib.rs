@@ -32,9 +32,9 @@ use gd_render::textures::Textures;
 use std::sync::Arc;
 use text::{FontCache, LoadedFont};
 
-/// The HUD master table of the classic layout (`standardHUD`).
-pub const MASTER: &str = "records/ui/hud/hud_orbmastertable.dbr";
 /// The HUD master table of the orb layout (the default).
+pub const MASTER: &str = "records/ui/hud/hud_orbmastertable.dbr";
+/// The HUD master table of the classic layout (`standardHUD`).
 pub const CLASSIC_MASTER: &str = "records/ui/hud/hud_mastertable.dbr";
 
 /// The table of the chosen layout (`standardHUD`).
@@ -614,8 +614,7 @@ impl Ui<'_, '_, '_> {
                         text::dynamic_width(f, size as f32, t)
                     }))
                 }
-                Some(LoadedFont::Dynamic(_, None)) => out.push(part_c),
-                _ => out.push(part_c),
+                Some(LoadedFont::Dynamic(_, None)) | None => out.push(part_c),
             }
         }
         out

@@ -160,7 +160,7 @@ pub fn devotion_lines(ctx: &SkillTipCtx, skill: &str, tip: &DevotionTip) -> Vec<
                 class::SKILL_REQUIREMENTS,
                 ctx.fmt("MaxSkillLevelReached", &[]),
             ));
-            return out;
+            return collapse_blanks(out);
         }
         // `GetRequiredExperience(min(max(level + 1, 2), max))`: entry `level - 1`.
         let want = tip.level.saturating_add(1).max(2).min(max);

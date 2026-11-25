@@ -104,36 +104,41 @@ pub fn spell_beams(
             } else {
                 0.0
             };
-            // `ActivateNow` pays the energy.
+            // `ActivateNow` pays the energy; short of it the channel ends (the retracting nodes still run below).
             let cost = level_f(rec, "skillManaCost", ch.level_index);
-            if let Some(c) = caster.as_deref_mut() {
-                if c.energy < cost {
-                    commands.entity(e).try_remove::<Channel>();
-                    continue;
+            let paid = match caster.as_deref_mut() {
+                Some(c) if c.energy < cost => false,
+                Some(c) => {
+                    c.energy -= cost;
+                    true
                 }
-                c.energy -= cost;
-            }
-            *ids += 1;
-            beams.0.push(BeamNode {
-                id: *ids,
-                skill: ch.skill.clone(),
-                level_index: ch.level_index,
-                beam: SpellBeam::new(delay, n, attack_period(rec, character)),
-                angles: fan_angles(n, spread),
-                heading: gd_game_core::character::facing_flat(tf),
-                emit: tf.translation,
-                dirs: vec![gd_game_core::character::facing_flat(tf); n],
-                surface: vec![false; n],
-                effects: gd_game_core::skill_fx::beam_effects(
-                    rec,
-                    &gd_game_core::skill_fx::override_mods(
-                        &data.db,
-                        links,
-                        loadout.map(|l| &l.skills),
-                        &ch.skill,
+                None => true,
+            };
+            if paid {
+                *ids += 1;
+                beams.0.push(BeamNode {
+                    id: *ids,
+                    skill: ch.skill.clone(),
+                    level_index: ch.level_index,
+                    beam: SpellBeam::new(delay, n, strike_period(rec, Some(character))),
+                    angles: fan_angles(n, spread),
+                    heading: gd_game_core::character::facing_flat(tf),
+                    emit: tf.translation,
+                    dirs: vec![gd_game_core::character::facing_flat(tf); n],
+                    surface: vec![false; n],
+                    effects: gd_game_core::skill_fx::beam_effects(
+                        rec,
+                        &gd_game_core::skill_fx::override_mods(
+                            &data.db,
+                            links,
+                            loadout.map(|l| &l.skills),
+                            &ch.skill,
+                        ),
                     ),
-                ),
-            });
+                });
+            } else {
+                commands.entity(e).try_remove::<Channel>();
+            }
         }
         for node in beams.0.iter_mut() {
             let Some(rec) = data.db.get(&node.skill) else {
@@ -170,7 +175,10 @@ pub fn spell_beams(
             }
             let speed = rec.f32("travelSpeed").unwrap_or(200.0);
             node.beam.update(dt, speed, &max_lens);
-            if !node.beam.attack_due(dt, attack_period(rec, character)) {
+            if !node
+                .beam
+                .attack_due(dt, strike_period(rec, Some(character)))
+            {
                 continue;
             }
             let thick = rec.f32("beamThickness").unwrap_or(0.0);
@@ -218,9 +226,12 @@ pub fn spell_beams(
     }
 }
 
-/// The strike period (s): `timeBetweenAttacks` (default 100 ms) / the spell-cast speed.
-fn attack_period(rec: &Record, character: &Character) -> f32 {
-    rec.f32("timeBetweenAttacks").unwrap_or(100.0) / 1000.0 / character.spell_speed.max(0.2)
+/// The strike period (s) of a beam or cone (`class_fx`): `timeBetweenAttacks` (default 100 ms) / the spell-cast
+/// speed (`character`: the caster; none, a gone caster's cone: 1).
+pub(super) fn strike_period(rec: &Record, character: Option<&Character>) -> f32 {
+    rec.f32("timeBetweenAttacks").unwrap_or(100.0)
+        / 1000.0
+        / character.map_or(1.0, |c| c.spell_speed.max(0.2))
 }
 
 /// `GetTargetsAroundRay` (`Combatant::around_ray`): the foes (`candidates`, already filtered by

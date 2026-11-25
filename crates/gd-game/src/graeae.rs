@@ -316,12 +316,14 @@ fn update(
         }
     }
     let order: Vec<Entity> = sisters.iter().filter(|s| s.1).map(|s| s.0).collect();
+    // Only the take below changes who holds the eye during this loop.
+    let mut anyone = q.iter().any(|g| g.1.eye);
     for e in order {
-        let anyone = q.iter().any(|g| g.1.eye);
         let Ok((_, mut g, mut ai, mut ms, cb, mut tf, mut ch, _)) = q.get_mut(e) else {
             continue;
         };
         if !anyone {
+            anyone = true;
             set_eye(
                 &mut commands,
                 &data,

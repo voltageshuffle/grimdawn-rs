@@ -46,6 +46,8 @@ pub fn cull_level_members(
 pub fn place_loose(
     mut commands: Commands,
     levels: Res<Levels>,
+    // Option: no map is open (headless tests, the menu): nothing is placed, and what appeared meanwhile stays
+    // unplaced (a run condition would place it late, once a map opens).
     layout: Option<Res<gd_game_core::save::MapLayout>>,
     new: Query<
         (Entity, &Transform),

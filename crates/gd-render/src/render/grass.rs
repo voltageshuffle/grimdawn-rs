@@ -117,7 +117,6 @@ use bevy::render::Extract;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
-use gd_formats::collections::HashMap;
 use gd_formats::map::terrain::Terrain;
 use gd_game_core::data::GameData;
 
@@ -400,15 +399,11 @@ pub fn spawn(
 ) {
     let mut field = grass.field;
     field.origin = origin;
-    // One material pair per layer texture, shared by its chunks (and by every level: `MaterialAssets::grass`).
-    let mut materials: HashMap<(String, u32, bool), Handle<super::GdMaterial>> = HashMap::default();
+    // One material pair per layer texture, shared by its chunks and by every level (`MaterialAssets::grass`).
     for g in grass.batches {
         let mesh = meshes.add(g.mesh);
         for fringe in [false, true] {
-            let mat = materials
-                .entry((g.texture.clone(), g.height.to_bits(), fringe))
-                .or_insert_with(|| mats.grass(data, &g.texture, fringe, g.height, textures, images))
-                .clone();
+            let mat = mats.grass(data, &g.texture, fringe, g.height, textures, images);
             let e = commands
                 .spawn((
                     Mesh3d(mesh.clone()),
@@ -483,7 +478,7 @@ use gd_game_core::visuals::PointDisturbance;
 /// Game.dll `CharacterMovementManager::Update`'s strength (`Game::MoveDisturbanceStrength`).
 const MOVE_STRENGTH: f32 = 3.0;
 
-/// A character's grass-disturbance facts (PERF-26), derived once by [`character_disturbances`]
+/// A character's grass-disturbance facts, derived once by [`character_disturbances`]
 /// instead of a database lookup per mover per frame: the `GetExtents` radius (the record is fixed
 /// for the character's life) and a memo of the last cast skill's leap-class verdict, re-derived
 /// only when the cast skill changes.
@@ -635,11 +630,11 @@ pub struct GrassField {
     base: Option<u32>,
     /// The meshes whose `UV_1` gets the points' indices once placed.
     meshes: Vec<FieldMesh>,
-    /// Blocks per row / column of the layout grid (PERF-26: the push's block-index walk).
+    /// Blocks per row / column of the layout grid (the push's block-index walk).
     blocks_x: u32,
     blocks_z: u32,
     /// The terrain's max xz corner and the ground height range over all blocks, for
-    /// rejecting a push that meets no block (PERF-26). Derived once in [`Self::layout`].
+    /// rejecting a push that meets no block. Derived once in [`Self::layout`].
     extent: Vec2,
     heights: (f32, f32),
 }
@@ -709,7 +704,7 @@ impl GrassField {
     fn push_points(&mut self, p: Vec3, r: f32, mut push: impl FnMut(&mut FieldPoint, Vec2, f32)) {
         let s = self.spacing;
         let inv = 1.0 / s;
-        // PERF-26: walk only the grid cells that can meet the push cube, not every block.
+        // Walk only the grid cells that can meet the push cube, not every block.
         // Block (i, j) spans x [9i, min(9i+9, w−1)] (z likewise); the −1 slackens the lower
         // bound for the clipped edge block — the exact box test below still gates each one.
         let bx = self.blocks_x as i32;
@@ -763,7 +758,7 @@ impl GrassField {
     }
 
     /// Whether a push at terrain-local `p` with radius `r` can meet any block: the cube
-    /// against the field's whole box (PERF-26: skip a far field without walking its blocks).
+    /// against the field's whole box (skip a far field without walking its blocks).
     /// A superset of the per-block tests, so it never rejects a push that moves a point.
     fn touches(&self, p: Vec3, r: f32) -> bool {
         let centre_y = (self.heights.0 + self.heights.1) * 0.5;
@@ -995,6 +990,8 @@ pub fn grass_offsets(
         offsets.write(base, &f.points);
     }
     if grown {
+        // Every placed field is written whole below, this frame's new ones included.
+        offsets.writes.clear();
         for f in &fields {
             if let Some(base) = f.base {
                 offsets.write(base, &f.points);

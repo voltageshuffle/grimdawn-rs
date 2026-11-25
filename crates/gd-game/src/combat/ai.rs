@@ -228,13 +228,6 @@ impl VictimSideItem<'_, '_> {
     }
 }
 
-/// The skill target queries' filter for the player's own foe queries that take no [`VictimSide`]
-/// (`FilterInvalidTargets` drops hiding characters, [`Side::hits`]).
-pub type NotHiding = (
-    Without<HiddenFromCombat>,
-    Without<gd_game_core::visuals::Hidden>,
-);
-
 impl Side {
     /// A cast's side when its caster is gone (`hostile`: a monster's).
     pub fn from_hostile(hostile: bool) -> Self {

@@ -27,8 +27,9 @@
 //! (with `GD_INV_CLICKS`, which also clicks the stash window).
 //!
 //! The confirmation (`DialogManager::AddDialog` with the tag from
-//! `apply_check`) is the generic Yes / No box (`lootfilter.rs`
-//! `confirm_box`); it takes every click while up; Esc and the close button answer No (PORT).
+//! `apply_check`) is the generic Yes / No box (`gd_ui_kit::confirm::confirm_box`), built in its base look
+//! with its hover / press look moved in place ([`box_live`]); it takes every click while up; Esc and the
+//! close button answer No (PORT).
 //!
 //! The drop key (action 32: D, B with keyboard movement) does what a world click does, with no
 //! mouse-over-world test and whatever window is open ([`drop_key`]; rules `gd_game::item_drop`).
@@ -105,6 +106,14 @@ impl Plugin for ApplyUiPlugin {
                     || view.yes_no.is_some()
             },
         );
+        // The box's hover / press look moves in place (no rebuild on a hover).
+        app.add_systems(
+            Update,
+            box_live
+                .run_if(|view: Res<ApplyView>| view.yes_no.is_some())
+                .after(build)
+                .in_set(gd_ui_kit::UiPlaySet),
+        );
     }
 }
 
@@ -179,6 +188,7 @@ fn pending(inv: &Inventory) -> Option<&'static str> {
     inv.applying.as_ref()?.confirm.map(|c| c.1)
 }
 
+/// Builds the box in its base look when the question or the layout changes; [`box_live`] shows the hover.
 #[allow(clippy::too_many_arguments)]
 fn build(
     mut commands: Commands,
@@ -188,8 +198,7 @@ fn build(
     mut view: ResMut<ApplyView>,
     roots: Query<Entity, With<ApplyRoot>>,
     mut fresh: gd_game_core::session::NewSession,
-    mut built: Local<Rebuild<(Option<&'static str>, UVec2, super::confirm::Look)>>,
-    mouse: Res<ButtonInput<MouseButton>>,
+    mut built: Local<Rebuild<(Option<&'static str>, UVec3)>>,
     reagents: Res<InvConfirm>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -198,16 +207,13 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let cursor = super::cursor_px(&assets.hooks, win);
     let sig = (
         pending(&inv)
             .or(reagents.tag())
             .or(inv.destroying)
             .or(gd_game::consumables::use_question(&inv)),
-        size,
-        view.yes_no.map_or((None, false), |b| {
-            b.look(cursor, mouse.pressed(MouseButton::Left))
-        }),
+        // The UI scale too (an applied UI Scale rebuilds).
+        size.extend(assets.scale(size).to_bits()),
     );
     if size.x == 0 || !built.changed(sig) {
         return;
@@ -229,7 +235,26 @@ fn build(
         1.0 / win.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
     );
-    view.yes_no = super::confirm::confirm_box(&mut ui, tag, sig.2);
+    view.yes_no = super::confirm::confirm_box(&mut ui, tag, (None, false));
+}
+
+/// The box's hover / press look in place ([`super::confirm::apply_look`]).
+fn box_live(
+    window: Query<&Window, With<PrimaryWindow>>,
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    view: Res<ApplyView>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    roots: Query<Entity, With<ApplyRoot>>,
+    mut looks: Query<(&super::confirm::ConfirmLook, &mut ImageNode)>,
+) {
+    let (Ok(win), Some(rects), Ok(root)) = (window.single(), view.yes_no, roots.single()) else {
+        return;
+    };
+    let look = rects.look(
+        super::cursor_px(&hooks, win),
+        mouse.pressed(MouseButton::Left),
+    );
+    super::confirm::apply_look(root, look, &mut looks);
 }
 
 /// The stash window hiding ends the mode (the caravan window's
@@ -453,6 +478,7 @@ fn highlights(
     (trade, trade_layout, stash): (
         Res<crate::state::trade::Trade>,
         Res<crate::state::trade::TradeLayout>,
+        // Option: created with the player (`gd_game::stash::init_stash`).
         Option<Res<gd_game_core::stash::Stash>>,
     ),
     (shared, choice, save_dir): (
@@ -530,12 +556,10 @@ fn mark(
         Option<&gd_game_core::stash::Stash>,
     ),
 ) {
-    let Some(a) = inv.applying.clone().filter(|a| a.confirm.is_none()) else {
+    let Some(a) = inv.applying.as_ref().filter(|a| a.confirm.is_none()) else {
         return;
     };
     let valid = inv.apply_targets(stash, req, transfer_open);
-    let mut fill = |r: URect, m: Mark| marks.push((r, m));
-    let (green, red) = (Mark::Valid, Mark::Invalid);
     // The shown grids: the bags (character window) and the stash / transfer page.
     let mut grids: Vec<(
         URect,
@@ -556,14 +580,14 @@ fn mark(
             }
         }
     }
-    if let (Some(t), Some(tl), Some(st)) = (Some(trade), Some(trade_layout), stash)
-        && matches!(t.open, Some(gd_game::trade::TradeOpen::Stash { .. }))
-        && let Some((r, cell)) = tl.grid
+    if let Some(st) = stash
+        && matches!(trade.open, Some(gd_game::trade::TradeOpen::Stash { .. }))
+        && let Some((r, cell)) = trade_layout.grid
     {
-        let pages = st.view(t.transfer);
-        let tab = t.tab.min(pages.len().saturating_sub(1));
+        let pages = st.view(trade.transfer);
+        let tab = trade.tab.min(pages.len().saturating_sub(1));
         if let Some(page) = pages.get(tab) {
-            let transfer = t.transfer;
+            let transfer = trade.transfer;
             grids.push((
                 r,
                 cell,
@@ -589,9 +613,9 @@ fn mark(
         for q in &sack.items {
             let l = loc(q.x, q.y);
             if l == a.src {
-                fill(rect(q), Mark::Source);
+                marks.push((rect(q), Mark::Source));
             } else if valid.contains(&l) {
-                fill(rect(q), green);
+                marks.push((rect(q), Mark::Valid));
             }
         }
         let Some(p) = cursor.filter(|p| contains(r, *p)) else {
@@ -602,18 +626,18 @@ fn mark(
         };
         let l = loc(q.x, q.y);
         if l != a.src && !valid.contains(&l) {
-            fill(rect(q), red);
+            marks.push((rect(q), Mark::Invalid));
         }
     }
     if panels.character {
-        for (slot, r) in layout.slots.clone() {
+        for &(slot, r) in &layout.slots {
             let i = gd_game_core::inventory::slot_index(slot);
             if valid.contains(&ItemLoc::Equip(i)) {
-                fill(r, green);
+                marks.push((r, Mark::Valid));
             } else if inv.equipped.get(i).is_some_and(|e| e.is_some())
                 && cursor.is_some_and(|p| contains(&r, p))
             {
-                fill(r, red);
+                marks.push((r, Mark::Invalid));
             }
         }
     }
@@ -626,10 +650,10 @@ fn mark(
 pub fn question_up(
     inv: &Inventory,
     trade: &crate::state::trade::Trade,
-    confirm: &crate::apply::InvConfirm,
+    confirm: &InvConfirm,
 ) -> bool {
-    inv.applying.as_ref().is_some_and(|a| a.confirm.is_some())
-        || *confirm != crate::apply::InvConfirm::None
+    pending(inv).is_some()
+        || *confirm != InvConfirm::None
         || inv.destroying.is_some()
         || gd_game::consumables::use_question(inv).is_some()
         || trade.prompt.is_some()

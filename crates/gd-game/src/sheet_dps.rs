@@ -13,7 +13,6 @@
 // converted damage scaled by its share (`gd_sim::combat::convert_damage`).
 use bevy::ecs::change_detection::DetectChanges;
 use gd_formats::arz::Record;
-use gd_formats::collections::HashMap;
 use gd_game_core::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT, SLOT_RIGHT};
 use gd_game_core::character::{Character, anim_set_for};
 use gd_game_core::data::GameData;
@@ -52,8 +51,6 @@ pub struct SheetDps {
 }
 
 impl SheetDps {
-    /// The sheet number: the left-mouse skill's DPS (the weapon attack's when
-    /// the slot is empty), rounded like the engine (`floor(x + 0.5)`).
     /// The Damage Per Hit text of a (min, max) pair (`CharacterWindow::UpdatePage2`
     /// @ the skill rows: both rounded `(int)(x + 0.5)` (the max pulled down
     /// by one when the rounding overshoots a negative), `tagFormatDash`,
@@ -67,6 +64,8 @@ impl SheetDps {
         }
     }
 
+    /// The sheet number: the left-mouse skill's DPS (the weapon attack's when
+    /// the slot is empty), rounded like the engine (`floor(x + 0.5)`).
     pub fn number(&self) -> String {
         format!(
             "{:.0}",
@@ -74,8 +73,6 @@ impl SheetDps {
         )
     }
 
-    /// Rollover lines (tag, value): the weapon attack, then each mouse skill
-    /// (the tag is its `skillDisplayName`).
     /// The DPS rollover window's numbers (`charinfo_statsdpsrolloverstyle.dbr`, a `rolloverline5.tpl`): line 2 the weapon
     /// attack's DPS, 3 / 4 the left / right mouse skill's with their names, each rounded like the engine's `IntFormat`
     /// (`floor(x + 0.5)`); line 1 (title) and 5 (description) carry no number.
@@ -90,13 +87,6 @@ impl SheetDps {
             }
         }
         r
-    }
-
-    pub fn lines(&self) -> Vec<(String, f32)> {
-        let mut v = vec![("tagCharStatsDPSWeapon".to_string(), self.weapon)];
-        v.extend(self.left.iter().cloned());
-        v.extend(self.right.iter().cloned());
-        v
     }
 }
 
@@ -147,14 +137,8 @@ fn attack_anim_duration(
     set: &gd_sim::anim::AnimSet,
     cache: &gd_game_core::character::SharedAnims,
 ) -> f32 {
-    let known: HashMap<String, Option<(u32, u32)>> = set
-        .slot(AnimType::Attack)
-        .entries
-        .iter()
-        .map(|e| (e.path.clone(), frames(data, cache, &e.path)))
-        .collect();
     set.slot(AnimType::Attack)
-        .mean_duration(|p| known.get(p).copied().flatten())
+        .mean_duration(|p| frames(data, cache, p))
 }
 
 /// The weapon animation's rate for the item tooltip's base attack speed line
@@ -182,8 +166,8 @@ pub fn attacks_per_second(i: &Inputs, cache: &gd_game_core::character::SharedAni
     r + r * -0.05
 }
 
-/// `Player::CalculateSkillDps` for one hotbar skill (the default attack when
-/// it cannot be used with the worn weapons or is unknown).
+/// [`skill_dps`]'s values: the skill's display-name tag, its DPS, its damage per hit (min, max), the two hands' damage
+/// per hit and its damage lines.
 type SkillValues = (
     String,
     f32,
@@ -192,6 +176,8 @@ type SkillValues = (
     Vec<(bool, gd_sim::attributes::CombatType, f32, f32)>,
 );
 
+/// `Player::CalculateSkillDps` for one hotbar skill (the default attack when
+/// it cannot be used with the worn weapons or is unknown).
 fn skill_dps(
     i: &Inputs,
     cache: &gd_game_core::character::SharedAnims,
@@ -360,16 +346,12 @@ pub fn calculate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> Sh
         w.map_or((0.0, (0.0, 0.0), [(0.0, 0.0); 2]), |w| (w.1, w.2, w.3));
     let slot = |n: usize| i.caster.slots[n].as_deref().filter(|s| !s.is_empty());
     let one = |n: usize| slot(n).and_then(|s| skill_dps(i, cache, s));
-    let (left, right) = (one(SLOT_LEFT), one(SLOT_RIGHT));
-    let hits = [
-        left.as_ref().map_or((0.0, 0.0), |l| l.2),
-        right.as_ref().map_or((0.0, 0.0), |r| r.2),
-    ];
-    let breakdown = [
-        left.as_ref().map(|l| l.4.clone()).unwrap_or_default(),
-        right.as_ref().map(|r| r.4.clone()).unwrap_or_default(),
-    ];
-    let (left, right) = (left.map(|l| (l.0, l.1)), right.map(|r| (r.0, r.1)));
+    let split = |v: Option<SkillValues>| match v {
+        Some((tag, dps, hit, _, lines)) => (Some((tag, dps)), hit, lines),
+        None => (None, (0.0, 0.0), Vec::new()),
+    };
+    let ((left, left_hit, left_lines), (right, right_hit, right_lines)) =
+        (split(one(SLOT_LEFT)), split(one(SLOT_RIGHT)));
     SheetDps {
         weapon,
         weapon_hit,
@@ -377,8 +359,8 @@ pub fn calculate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> Sh
         attacks_per_second: attacks_per_second(i, cache),
         left,
         right,
-        hits,
-        breakdown,
+        hits: [left_hit, right_hit],
+        breakdown: [left_lines, right_lines],
     }
 }
 
@@ -480,7 +462,6 @@ impl bevy::prelude::Plugin for SheetDpsPlugin {
         app.init_resource::<SheetDpsValues>().add_systems(
             bevy::prelude::Update,
             update
-                .in_set(SheetDpsStage::Update)
                 .run_if(resource_exists::<GameData>)
                 .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                 .after(gd_game_core::player::PlayerSet),
@@ -491,8 +472,12 @@ impl bevy::prelude::Plugin for SheetDpsPlugin {
 /// The primary (left-mouse) skill's DPS, or the weapon attack's without one:
 /// `Player::CalculateDps(skill)` of the primary hot slot.
 pub fn primary_dps(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> f32 {
-    let v = calculate(i, cache);
-    v.left.map_or(v.weapon, |l| l.1)
+    i.caster.slots[SLOT_LEFT]
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| skill_dps(i, cache, s))
+        .or_else(|| skill_dps(i, cache, DEFAULT_ATTACK))
+        .map_or(0.0, |v| v.1)
 }
 
 /// The DPS change shown by `GetUIDisplayText_DPS`
@@ -546,10 +531,4 @@ pub fn compare_dps(
         Some((v + 0.5).floor())
     };
     Some(dps(with)? - dps(now)?)
-}
-
-/// The sheet DPS values: what shows them orders after `Update`.
-#[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SheetDpsStage {
-    Update,
 }

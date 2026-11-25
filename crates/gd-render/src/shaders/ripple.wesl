@@ -1,4 +1,4 @@
-// Port of WaterRipple.ssh (DirectX11 profile; see grimdawn/src/water.rs). The engine builds one quad per
+// Port of WaterRipple.ssh (DirectX11 profile; see water.rs). The engine builds one quad per
 // live ripple on the CPU: corners c + r + q (uv 1,1), c - r + q (0,1), c - r - q (0,0), c + r - q (1,0),
 // r = (cos a, 0, sin a) size, q = (-sin a, 0, cos a) size; vertex colour alpha only.
 // VS: o2 = (0.5, 0.5 + 0.5 k, 0.5), k = dot(lightDirection, (-1, -1, -1)).

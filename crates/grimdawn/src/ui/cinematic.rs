@@ -293,7 +293,8 @@ fn show(
         state.shaken = false;
         state.queue.pop_front();
     }
-    let Some(head) = state.queue.front().cloned() else {
+    let state = &mut *state;
+    let Some(head) = state.queue.front() else {
         if drawn.take().is_some() {
             clear(&mut commands);
         }
@@ -332,22 +333,27 @@ fn show(
         2
     };
     let base = assets.scale(size);
-    // The subline is in the key: two Level Up banners in a row differ only there.
-    let key = (
-        size,
-        head.kind,
-        head.head.clone(),
-        head.sub.clone(),
-        head.sub_args.clone(),
-        base.to_bits(),
-    );
+    // The subline is in the key: two Level Up banners in a row differ only there. Compared before it is cloned.
+    let stale = drawn.as_ref().is_none_or(|(sz, kind, hh, sub, args, b)| {
+        (*sz, *kind, *b) != (size, head.kind, base.to_bits())
+            || *hh != head.head
+            || *sub != head.sub
+            || *args != head.sub_args
+    });
     let (w, h) = (size.x as f32, size.y as f32);
     let max_w = (0.45 * w).floor();
     let inv = 1.0 / win.scale_factor();
     let screen = Vec2::new(w, h);
     let centre = Vec2::new(w * 0.5, 0.15 * h);
-    if drawn.as_ref() != Some(&key) {
-        *drawn = Some(key);
+    if stale {
+        *drawn = Some((
+            size,
+            head.kind,
+            head.head.clone(),
+            head.sub.clone(),
+            head.sub_args.clone(),
+            base.to_bits(),
+        ));
         clear(&mut commands);
         *group = None;
         let root = gd_ui_kit::spawn_root(&mut commands, CinematicRoot, 206);

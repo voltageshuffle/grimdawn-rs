@@ -252,8 +252,10 @@ fn main() -> Result<()> {
             } else {
                 let t = Tex::parse(&b)?;
                 let d = t.frames.get(frame).context("no such frame")?;
+                // Decode first: it rejects a mip the frame lacks before `level_dims` shifts by it.
+                let rgba = d.decode_rgba8(mip)?;
                 let (w, h) = d.level_dims(mip);
-                write_png(&out, w, h, &d.decode_rgba8(mip)?)?;
+                write_png(&out, w, h, &rgba)?;
             }
             println!("wrote {}", out.display());
         }

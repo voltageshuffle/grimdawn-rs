@@ -76,12 +76,6 @@ fn main() -> anyhow::Result<()> {
         let mut names: Vec<&str> = db.names().filter(under).collect();
         names.extend(old.names().filter(under).filter(|n| db.get(n).is_none()));
         names.sort_unstable_by_key(|n| n.to_ascii_lowercase());
-        let field = |rec: &gd_formats::arz::Record, k: &str| {
-            rec.fields
-                .iter()
-                .find(|(f, _)| f.eq_ignore_ascii_case(k))
-                .map(|(_, v)| v.clone())
-        };
         for n in names {
             match (old.get(n), db.get(n)) {
                 (None, Some(r)) => println!("+ {n} ({})", r.class),
@@ -92,13 +86,13 @@ fn main() -> anyhow::Result<()> {
                         changes.push(format!("  class: {} -> {}", o.class, r.class));
                     }
                     for (k, v) in r.fields.iter() {
-                        match field(o, k) {
-                            Some(ov) if ov == *v => {}
+                        match o.get(k) {
+                            Some(ov) if ov == v.as_slice() => {}
                             ov => changes.push(format!("  {k}: {ov:?} -> {v:?}")),
                         }
                     }
                     for (k, v) in o.fields.iter() {
-                        if field(r, k).is_none() {
+                        if r.get(k).is_none() {
                             changes.push(format!("  {k}: {v:?} -> None"));
                         }
                     }
@@ -125,10 +119,7 @@ fn main() -> anyhow::Result<()> {
             .filter(|n| n.to_ascii_lowercase().starts_with(&prefix))
         {
             if let Some(r) = db.get(n)
-                && let Some((_, v)) = r
-                    .fields
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case(&field))
+                && let Some(v) = r.get(&field)
                 && !v
                     .iter()
                     .any(|x| matches!(x, RawValue::Str(s) if s.is_empty()))

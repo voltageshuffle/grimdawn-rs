@@ -61,17 +61,6 @@ impl Comparator {
             o => Self::Other(o),
         }
     }
-    pub fn to_u32(self) -> u32 {
-        match self {
-            Self::Less => 0,
-            Self::LessEqual => 1,
-            Self::Equal => 2,
-            Self::GreaterEqual => 3,
-            Self::Greater => 4,
-            Self::NotEqual => 5,
-            Self::Other(o) => o,
-        }
-    }
     /// `a <op> b`; unknown comparators are false (engine `default: false`).
     pub fn compare<T: PartialOrd>(self, a: T, b: T) -> bool {
         match self {
@@ -473,26 +462,6 @@ pub enum Action {
     UnlockTutorial { page: u32 },
     /// 28 `ScriptableAction_PlayVideo`.
     PlayVideo { video: String, flag: bool },
-}
-
-impl Action {
-    /// Types the engine counts as rewards: `ScriptableAction::IsReward`
-    /// (types 4, 5, 6, 7, 8, 15, 18, 20, 25, 26).
-    pub fn is_reward(&self) -> bool {
-        matches!(
-            self,
-            Action::GiveMoney { .. }
-                | Action::GiveItem { .. }
-                | Action::GiveLevel { .. }
-                | Action::GiveExperience { .. }
-                | Action::GiveSkillPoint { .. }
-                | Action::GiveAttribPoint { .. }
-                | Action::GiveRandomItem { .. }
-                | Action::GiveDevotion { .. }
-                | Action::GiveTribute { .. }
-                | Action::GiveFaction { .. }
-        )
-    }
 }
 
 fn read_action(r: &mut Reader) -> Result<Action> {

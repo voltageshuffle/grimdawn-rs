@@ -145,7 +145,6 @@ pub struct Waypoint {
     pub radius: f32,
     /// The record's `bindRadius` (`StaticTeleporter::Load`'s default 5 when absent).
     pub bind_radius: f32,
-    pub level: usize,
     /// `StaticTeleporter.locked`: the record's `locked`, then the scripts'
     /// `SetLocked` ([`RiftgateLock`]).
     pub locked: bool,
@@ -622,7 +621,15 @@ pub fn travel_requests(
     if map.open && map.at_gate != at {
         map.at_gate = at;
     }
-    let Some(mut state) = state else { return };
+    let Some(mut state) = state else {
+        // Nothing travels without travel state; the map still closes.
+        for r in reqs.read() {
+            if *r == RiftgateRequest::Close {
+                map.open = false;
+            }
+        }
+        return;
+    };
     for r in reqs.read() {
         let RiftgateRequest::Travel(dest) = *r else {
             map.open = false;

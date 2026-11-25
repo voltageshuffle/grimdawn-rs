@@ -172,10 +172,19 @@ impl FontCache {
     }
 
     pub fn style(&mut self, data: &GameData, path: &str) -> Option<FontStyle> {
-        self.styles
-            .entry(path.to_ascii_lowercase())
-            .or_insert_with(|| data.db.get(path).map(FontStyle::from_record))
-            .clone()
+        // Keyed by the lowercased path; an already-lowercase path (the usual record path) looks up without
+        // allocating.
+        let key = if path.bytes().any(|b| b.is_ascii_uppercase()) {
+            std::borrow::Cow::Owned(path.to_ascii_lowercase())
+        } else {
+            std::borrow::Cow::Borrowed(path)
+        };
+        if let Some(s) = self.styles.get(key.as_ref()) {
+            return s.clone();
+        }
+        let s = data.db.get(path).map(FontStyle::from_record);
+        self.styles.insert(key.into_owned(), s.clone());
+        s
     }
 
     /// The width of `text` in the style at UI scale `s` (the bitmap font's layout; a rough estimate while the font is not loaded).
@@ -216,8 +225,8 @@ impl FontCache {
         path: &str,
         fonts: &mut Assets<Font>,
     ) -> Option<Arc<LoadedFont>> {
-        let key = gd_formats::vfs::normalize(path);
-        if let Some(f) = self.fonts.get(&key) {
+        let key = gd_formats::vfs::normalized(path);
+        if let Some(f) = self.fonts.get(key.as_ref()) {
             return f.clone();
         }
         // The language's own font file first (`fonts/<code>/<basename>`), the root (English)
@@ -253,7 +262,7 @@ impl FontCache {
                 None
             }
         };
-        self.fonts.insert(key, v.clone());
+        self.fonts.insert(key.into_owned(), v.clone());
         v
     }
 }

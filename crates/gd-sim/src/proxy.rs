@@ -64,7 +64,6 @@ pub struct Spawn {
 /// What a proxy record says about placement.
 #[derive(Debug, Clone, Default)]
 pub struct ProxyInfo {
-    pub chance_to_run: f32,
     /// Half-size of the square the monsters are scattered in.
     pub placement_extents: f32,
 }
@@ -72,7 +71,6 @@ pub struct ProxyInfo {
 pub fn proxy_info(db: &Database, proxy: &str) -> Option<ProxyInfo> {
     let r = db.get(proxy)?;
     Some(ProxyInfo {
-        chance_to_run: r.f32("chanceToRun").unwrap_or(0.0),
         placement_extents: r.f32("placementExtents").unwrap_or(5.0),
     })
 }
@@ -341,16 +339,15 @@ pub fn run_pool(
         }
     }
     let mut out: Vec<Spawn> = Vec::new();
-    let emit =
-        |list: &mut Vec<Entry>, i: usize, champion: bool, out: &mut Vec<Spawn>, rng: &mut Rng| {
-            let e = &list[i];
-            out.push(Spawn {
-                record: e.name.clone(),
-                level: monster_level(db, e, area, rng),
-                champion,
-                boss: e.boss,
-            });
-        };
+    let emit = |list: &[Entry], i: usize, champion: bool, out: &mut Vec<Spawn>, rng: &mut Rng| {
+        let e = &list[i];
+        out.push(Spawn {
+            record: e.name.clone(),
+            level: monster_level(db, e, area, rng),
+            champion,
+            boss: e.boss,
+        });
+    };
 
     let chance = r.f32("championChance").unwrap_or(0.0);
     if chance <= 0.0 || rng.unit() * 100.0 <= chance {
@@ -359,20 +356,20 @@ pub fn run_pool(
             .position(|e| e.always && eligible(e, player_level))
         {
             champs[i].limit -= 1;
-            emit(&mut champs, i, true, &mut out, rng);
+            emit(&champs, i, true, &mut out, rng);
         }
         let n = irange(rng, champ_min, champ_max);
         for _ in 0..n {
             let Some(i) = pick(&mut champs, player_level, rng) else {
                 break;
             };
-            emit(&mut champs, i, true, &mut out, rng);
+            emit(&champs, i, true, &mut out, rng);
         }
         while (out.len() as i32) < champ_min {
             let Some(i) = pick(&mut champs, player_level, rng) else {
                 break;
             };
-            emit(&mut champs, i, true, &mut out, rng);
+            emit(&champs, i, true, &mut out, rng);
         }
     }
 
@@ -381,7 +378,7 @@ pub fn run_pool(
         .position(|e| e.always && eligible(e, player_level))
     {
         normal[i].limit -= 1;
-        emit(&mut normal, i, false, &mut out, rng);
+        emit(&normal, i, false, &mut out, rng);
     }
     let lo = spawn_min.max(0).min(spawn_max);
     let n = irange(rng, lo, spawn_max) - out.len() as i32;
@@ -389,13 +386,13 @@ pub fn run_pool(
         let Some(i) = pick(&mut normal, player_level, rng) else {
             break;
         };
-        emit(&mut normal, i, false, &mut out, rng);
+        emit(&normal, i, false, &mut out, rng);
     }
     while (out.len() as i32) < lo {
         let Some(i) = pick(&mut normal, player_level, rng) else {
             break;
         };
-        emit(&mut normal, i, false, &mut out, rng);
+        emit(&normal, i, false, &mut out, rng);
     }
     out
 }
@@ -467,7 +464,7 @@ pub fn run_proxy_shared(
         return out;
     }
     let want = if is_day { 1 } else { 2 };
-    let pools: Vec<(String, i32)> = (1..=6)
+    let pools: Vec<(&str, i32)> = (1..=6)
         .filter_map(|i| {
             let pool = r.str(&format!("pool{i}"))?;
             let time = match r.str(&format!("time{i}")).unwrap_or("Always") {
@@ -475,8 +472,7 @@ pub fn run_proxy_shared(
                 t if t.eq_ignore_ascii_case("day") => 1,
                 _ => 2,
             };
-            (time == 0 || time == want)
-                .then(|| (pool.to_string(), r.i32(&format!("weight{i}")).unwrap_or(0)))
+            (time == 0 || time == want).then(|| (pool, r.i32(&format!("weight{i}")).unwrap_or(0)))
         })
         .collect();
     let total = weight_sum(pools.iter().map(|p| p.1));
@@ -495,7 +491,7 @@ pub fn run_proxy_shared(
         }
     };
     if let Some(i) = chosen {
-        out.monsters = run_pool(db, &pools[i].0, player_level, area, mode, bosses, rng);
+        out.monsters = run_pool(db, pools[i].0, player_level, area, mode, bosses, rng);
     }
     out.accessories
         .extend(run_accessory(db, r, mode.difficulty, trove_chance, rng));
@@ -550,13 +546,13 @@ pub fn run_endless_proxy(
             ("pool", "weight"),
         ],
     };
-    let pools: Vec<(String, i32)> = columns
+    let pools: Vec<(&str, i32)> = columns
         .iter()
         .map(|(p, w)| {
             (1..=50)
                 .filter_map(|i| {
                     let pool = r.str(&format!("{p}{i}"))?;
-                    Some((pool.to_owned(), r.i32(&format!("{w}{i}")).unwrap_or(0)))
+                    Some((pool, r.i32(&format!("{w}{i}")).unwrap_or(0)))
                 })
                 .collect::<Vec<_>>()
         })
@@ -623,34 +619,39 @@ pub fn pick_endless_accessory(
             ("accessory", "accessoryWeight"),
         ],
     };
-    let pools: Vec<(String, i32)> = columns
+    let pools: Vec<(&str, i32)> = columns
         .iter()
         .map(|(p, w)| {
             (1..=5)
                 .filter_map(|i| {
                     let pool = r.str(&format!("{p}{i}"))?;
-                    Some((pool.to_owned(), r.i32(&format!("{w}{i}")).unwrap_or(0)))
+                    Some((pool, r.i32(&format!("{w}{i}")).unwrap_or(0)))
                 })
                 .collect::<Vec<_>>()
         })
         .find(|v| !v.is_empty())?;
-    let pools: Vec<(String, i32)> = pools
+    let pools: Vec<(&str, i32)> = pools
         .into_iter()
         .filter(|(p, _)| !used.iter().any(|u| u.eq_ignore_ascii_case(p)))
         .collect();
     let roll = irange(rng, 0, weight_sum(pools.iter().map(|p| p.1)));
     let mut acc = 0;
-    let (pool_name, _) = pools.iter().find(|(_, w)| {
+    let &(pool_name, _) = pools.iter().find(|(_, w)| {
         acc = i32::saturating_add(acc, *w);
         roll <= acc
     })?;
-    let pool_name = pool_name.clone();
-    let Some(pool) = db.get(&pool_name) else {
-        return Some((pool_name, None));
+    let Some(pool) = db.get(pool_name) else {
+        return Some((pool_name.to_owned(), None));
     };
     if irange(rng, 0, 100) > pool.i32("fixedItemChance").unwrap_or(0) {
-        return Some((pool_name, None));
+        return Some((pool_name.to_owned(), None));
     }
+    Some((pool_name.to_owned(), fixed_item(pool, rng)))
+}
+
+/// An accessory pool's `fixedItemName/Weight1..10` pick (`IGenerate(0, Σw)`, first cumulative weight ≥ the
+/// roll).
+fn fixed_item(pool: &Record, rng: &mut Rng) -> Option<String> {
     let items: Vec<(&str, i32)> = (1..=10)
         .filter_map(|i| {
             Some((
@@ -661,14 +662,13 @@ pub fn pick_endless_accessory(
         .collect();
     let roll = irange(rng, 0, weight_sum(items.iter().map(|i| i.1)));
     let mut acc = 0;
-    let item = items
+    items
         .iter()
         .find(|(_, w)| {
             acc = i32::saturating_add(acc, *w);
             acc >= roll
         })
-        .map(|(n, _)| n.to_string());
-    Some((pool_name, item))
+        .map(|(n, _)| n.to_string())
 }
 
 /// The accessory pool (`Proxy::InitializePools`,
@@ -697,10 +697,7 @@ fn run_accessory(
     // A treasure trove: the pool's `ascendantFixedItem` instead
     // (`Proxy::RunProxy` picks the ascendant list on the trove roll;
     // `crate::ascendant`).
-    let trove = pool
-        .str("ascendantFixedItem")
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned);
+    let trove = pool.str("ascendantFixedItem").map(str::to_owned);
     let trove = trove.filter(|_| crate::ascendant::roll(rng, trove_chance));
     if irange(rng, 0, 100) > pool.i32("fixedItemChance").unwrap_or(0) {
         return None;
@@ -708,21 +705,5 @@ fn run_accessory(
     if trove.is_some() {
         return trove;
     }
-    let items: Vec<(&str, i32)> = (1..=10)
-        .filter_map(|i| {
-            Some((
-                pool.str(&format!("fixedItemName{i}"))?,
-                pool.i32(&format!("fixedItemWeight{i}")).unwrap_or(0),
-            ))
-        })
-        .collect();
-    let roll = irange(rng, 0, weight_sum(items.iter().map(|i| i.1)));
-    let mut acc = 0;
-    items
-        .iter()
-        .find(|(_, w)| {
-            acc = i32::saturating_add(acc, *w);
-            acc >= roll
-        })
-        .map(|(n, _)| n.to_string())
+    fixed_item(pool, rng)
 }

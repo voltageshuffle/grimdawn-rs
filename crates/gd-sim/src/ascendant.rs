@@ -234,7 +234,7 @@ impl Ascendant {
             return;
         }
         let Some(r) = db.get(formula) else { return };
-        if let Some(t) = r.str("luaToken").filter(|t| !t.is_empty()) {
+        if let Some(t) = r.str("luaToken") {
             self.tokens.retain(|(k, _)| k != t);
             self.tokens.push((t.to_owned(), level));
         }
@@ -244,7 +244,7 @@ impl Ascendant {
             ("nonBossMonsterAttributePak", Scope::NonBoss),
             ("bossMonsterAttributePak", Scope::Boss),
         ] {
-            if let Some(p) = r.str(field).filter(|p| !p.is_empty()) {
+            if let Some(p) = r.str(field) {
                 self.monster_paks
                     .push((p.to_owned(), level as usize - 1 + 5 * diff, scope));
             }
@@ -258,12 +258,8 @@ impl Ascendant {
         let sb = level_pct(r, "superBossChanceModifier", level);
         if !r.f32s("superBossChanceModifier").is_empty() {
             self.super_boss_chance += sb;
-            self.super_boss_list.extend(
-                r.strs("superBossSpawn")
-                    .iter()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string()),
-            );
+            self.super_boss_list
+                .extend(r.strs_iter("superBossSpawn").map(str::to_owned));
         }
         self.super_boss_spawn += level_pct(r, "superBossSpawnModifier", level);
         self.equipped_drop += level_pct(r, "equippedItemDropModifier", level);
@@ -460,9 +456,9 @@ pub fn reroll_ascended(
     let group = item_group(item_class)?;
     let key = rarity_key(classification)?;
     let panel = db.get(REROLL_PANEL)?;
-    let recipe = panel.string(&format!("ascended{key}Recipe")).to_owned();
+    let recipe = panel.string(&format!("ascended{key}Recipe"));
     for _ in 0..100 {
-        let a = ascended_affix(db, &recipe, group, masteries, char_level, rng)?;
+        let a = ascended_affix(db, recipe, group, masteries, char_level, rng)?;
         if !a.eq_ignore_ascii_case(current) {
             return Some(a);
         }
@@ -471,7 +467,7 @@ pub fn reroll_ascended(
 }
 
 /// The Inventor's reroll panel (`records/ui/inventor/rerollpanel`).
-pub const REROLL_PANEL: &str = "records/ui/inventor/rerollpanel/reroll_table.dbr";
+const REROLL_PANEL: &str = "records/ui/inventor/rerollpanel/reroll_table.dbr";
 
 /// The reroll recipe for an item of `classification` (`kind`: "seed" or
 /// "ascended").
@@ -537,7 +533,7 @@ pub fn reroll_affix(
 ) -> Option<String> {
     use crate::items::db::Fields;
     let panel = db.get(REROLL_PANEL)?;
-    let table = panel.string(reroll_table_field(item_class)?).to_owned();
+    let table = panel.string(reroll_table_field(item_class)?);
     // exe `InventorWindow::RollAffix` / resolver `InventorWindow::ResolveLevelEquation`: `itemLevel` is
     // the item's level (the stock equation is just that); the game also
     // offers parentLevel = character level, averagePlayerLevel,
@@ -557,7 +553,7 @@ pub fn reroll_affix(
             .is_some_and(|r| r.string("itemClassification") == "Rare");
     for _ in 0..100 {
         let rare = (rng.next() as f32) * 4.656_613e-8 <= rare_chance || current_rare;
-        let a = crate::items::loot::affix_from_table(db, &table, level, prefix, rare, rng);
+        let a = crate::items::loot::affix_from_table(db, table, level, prefix, rare, rng);
         if !a.is_empty() && !a.eq_ignore_ascii_case(current) {
             return Some(a);
         }
@@ -584,7 +580,7 @@ pub fn ascension_recipe(db: &crate::items::ItemDb, classification: &str) -> Opti
     .filter(|s| !s.is_empty())
 }
 
-pub const ASCENSION_WINDOW: &str = "records/ui/itemascension/itemascension_table.dbr";
+const ASCENSION_WINDOW: &str = "records/ui/itemascension/itemascension_table.dbr";
 
 /// An ascendant affix from the item ascension window (
 /// GrimDawn.exe `UIItemAscensionWindow::AscendItem`: `GetAscendedName` with the character's

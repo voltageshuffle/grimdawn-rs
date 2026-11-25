@@ -183,18 +183,18 @@ pub fn scissor_area(c: Vec3, r: f32, fov: f32, w: f32, h: f32) -> f32 {
 }
 
 /// The engine's map assignment: `(area, key)` of the flagged lights in the
-/// frame → (key, map width) of the lights that get a map, largest area first.
-pub fn assign(areas: &[(i64, usize)], quality: u32) -> Vec<(usize, u32)> {
+/// frame (keys in the frame's order) → (key, map width) of the lights that get a map, largest area first.
+/// Sorts `areas` in place.
+pub fn assign(areas: &mut [(i64, usize)], quality: u32) -> impl Iterator<Item = (usize, u32)> + '_ {
     let (size, full, half) = pools(quality);
-    let mut order: Vec<_> = areas.iter().filter(|(a, _)| *a > 0).copied().collect();
-    // Stable, largest area first (the engine's insertion sort for ≤ 32).
-    order.sort_by_key(|a| std::cmp::Reverse(a.0));
-    order
-        .into_iter()
+    // Largest area first, ties in key order: stable like the engine's insertion sort for ≤ 32.
+    areas.sort_unstable_by_key(|&(a, k)| (std::cmp::Reverse(a), k));
+    areas
+        .iter()
+        .take_while(|(a, _)| *a > 0)
         .take(full + half)
         .enumerate()
-        .map(|(i, (_, k))| (k, if i < full { size } else { size / 2 }))
-        .collect()
+        .map(move |(i, &(_, k))| (k, if i < full { size } else { size / 2 }))
 }
 
 /// The shadow-only spot light that renders a point light's paraboloid map.
@@ -308,11 +308,7 @@ fn assign_point_shadows(
         }
     }
     let size = layer.size as u32;
-    want.extend(
-        assign(areas, s.quality)
-            .into_iter()
-            .map(|(k, w)| (ids[k], w.min(size))),
-    );
+    want.extend(assign(areas, s.quality).map(|(k, w)| (ids[k], w.min(size))));
     for (e, gt, mut l, pr, cur) in &mut lights {
         // The cube maps of Bevy's point lights are not used.
         if l.shadow_maps_enabled {

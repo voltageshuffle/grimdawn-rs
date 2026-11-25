@@ -130,14 +130,15 @@ pub fn number_text(fonts: &FontCache, v: i32, percent: bool) -> (String, bool) {
     (t, v == 0)
 }
 
-/// A text widget record's box (its style and alignment).
+/// A text widget record's box (its style and alignment). Read in place, not cloned
+/// ([`Ui::record`]): the window is redrawn whenever the cursor moves over the armour row.
 fn text_box(ui: &Ui, path: &str) -> Option<TextBox> {
-    ui.record(path).map(|r| TextBox::from_record(&r))
+    ui.data.db.get(path).map(TextBox::from_record)
 }
 
 /// Draws the window for the cursor `cursor` (px) under `ui.root`.
 pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, cursor: Vec2) {
-    let field = |k: &str| rec.str(k).unwrap_or("").to_owned();
+    let field = |k: &str| rec.str(k).unwrap_or("");
     let int = |k: &str| rec.i32(k).unwrap_or(0) as f32;
     let unprotected = [
         rec.f32("unprotectedColorRed").unwrap_or(0.0),
@@ -146,10 +147,9 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
     ];
     let s = ui.s;
     // The widgets' boxes and texts.
-    let titles = ["titleText", "hitTitleText", "absorptionTitle"].map(|k| text_box(ui, &field(k)));
-    let title_text = |ui: &Ui, tb: &Option<TextBox>| {
-        tb.as_ref()
-            .and_then(|t| t.tag.as_deref())
+    let titles = ["titleText", "hitTitleText", "absorptionTitle"].map(|k| text_box(ui, field(k)));
+    let title_text = |ui: &Ui, tb: Option<&TextBox>| {
+        tb.and_then(|t| t.tag.as_deref())
             .map(|t| ui.fonts.tag(t).to_owned())
             .unwrap_or_default()
     };
@@ -170,18 +170,18 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
     };
     let width = |ui: &mut Ui, tb: &Option<TextBox>, t: &str| {
         tb.as_ref()
-            .and_then(|b| b.style.clone())
-            .map_or(0.0, |st| (ui.text_width(&st, t) / s).ceil())
+            .and_then(|b| b.style.as_deref())
+            .map_or(0.0, |st| (ui.text_width(st, t) / s).ceil())
     };
     for (i, (stem, v)) in ROWS.iter().enumerate() {
         let row = armor.rows[*v];
-        let name_tb = text_box(ui, &field(&format!("{stem}Text")));
-        let name = title_text(ui, &name_tb);
-        let (a, a0) = (row.armor.to_string(), row.armor == 0);
+        let name_tb = text_box(ui, field(&format!("{stem}Text")));
+        let name = title_text(ui, name_tb.as_ref());
+        let (a, a0) = number_text(ui.fonts, row.armor, false);
         let (c, c0) = number_text(ui.fonts, row.chance, true);
         let (b, b0) = number_text(ui.fonts, row.absorption, true);
         let tbs = ["Number", "HitNumber", "AbsorptionNumber"]
-            .map(|k| text_box(ui, &field(&format!("{stem}{k}"))));
+            .map(|k| text_box(ui, field(&format!("{stem}{k}"))));
         m.names[i] = width(ui, &name_tb, &name);
         m.armor = m.armor.max(width(ui, &tbs[0], &a));
         m.hit = m.hit.max(width(ui, &tbs[1], &c));
@@ -206,7 +206,7 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
             .fold(0.0, f32::max);
         cells.push(cell);
     }
-    let info_tb = text_box(ui, &field("infoText"));
+    let info_tb = text_box(ui, field("infoText"));
     m.info_h = info_tb.as_ref().map_or(0.0, |t| t.rect.h);
     let l = layout(&m);
     let size = l.size * s;
@@ -228,7 +228,7 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
     }
     for (tb, pos) in titles.iter().zip(l.titles) {
         if let Some(tb) = tb {
-            let t = title_text(ui, &Some(tb.clone()));
+            let t = title_text(ui, Some(tb));
             let tb = TextBox {
                 rect: URect::new(pos.x, pos.y, tb.rect.w, tb.rect.h),
                 ..tb.clone()
@@ -246,17 +246,19 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
         ];
         for ((tb, text, zero), (x, w)) in cell.iter().zip(xs) {
             let Some(tb) = tb else { continue };
-            let Some(st) = tb.style.clone() else { continue };
-            let tb = TextBox {
+            let Some(st) = tb.style.as_deref() else {
+                continue;
+            };
+            let placed = TextBox {
                 rect: URect::new(x, y, w, h),
                 ..tb.clone()
             };
-            ui.text_colored(&tb, &st, origin, text, zero.then_some(unprotected));
+            ui.text_colored(&placed, st, origin, text, zero.then_some(unprotected));
         }
     }
     // The info text, wrapped at its width (`TextWidget::WrapToWidth`).
     if let Some(tb) = &info_tb
-        && let Some(st) = tb.style.clone()
+        && let Some(st) = tb.style.as_deref()
     {
         let text = tb
             .tag
@@ -266,13 +268,13 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
             .replace("{^n}", "\n")
             .replace("^n", "\n");
         let mut y = origin.y + l.info.0.y * s;
-        for line in ui.wrap_lines(&st, l.info.1 * s, &text) {
+        for line in ui.wrap_lines(st, l.info.1 * s, &text) {
             let x = match tb.align_x {
                 TextAlign::Start => origin.x + l.info.0.x * s,
                 _ => {
                     origin.x
                         + l.info.0.x * s
-                        + ((l.info.1 * s - ui.text_width(&st, &line))
+                        + ((l.info.1 * s - ui.text_width(st, &line))
                             * if tb.align_x == TextAlign::End {
                                 1.0
                             } else {
@@ -281,8 +283,8 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
                         .trunc()
                 }
             };
-            ui.text_line(&st, Vec2::new(x, y), &line, 1.0);
-            y += ui.line_height(&st);
+            ui.text_line(st, Vec2::new(x, y), &line, 1.0);
+            y += ui.line_height(st);
         }
     }
 }

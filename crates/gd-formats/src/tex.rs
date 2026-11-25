@@ -190,11 +190,13 @@ impl Dds {
         let payload = &b[128..];
         let size = |l: u32| format.file_level_size(width >> l, height >> l);
 
-        // Gather (face, level) slices in file order.
+        // Gather (face, level) slices in file order. A `DDSR` mip chain is stored smallest-first;
+        // a cubemap or a chain without mips is gathered largest-first whatever its magic.
+        let small_first = reversed && !cube && mip_count != 0;
         let mut levels: Vec<Vec<&[u8]>> = vec![Vec::new(); faces as usize];
         let mut off = 0usize;
         let mut truncated = false;
-        if reversed && !cube && mip_count != 0 {
+        if small_first {
             // Smallest level first; a short file simply lacks the big levels.
             let mut rev = Vec::new();
             for l in (0..want).rev() {
@@ -223,13 +225,9 @@ impl Dds {
         }
         let have = levels.iter().map(|f| f.len()).min().unwrap_or(0) as u32;
         ensure!(have > 0, "DDS has no complete mip level");
-        // With a reversed, truncated chain the surviving levels are the small
+        // With a smallest-first, truncated chain the surviving levels are the small
         // ones: the top level is then smaller than the header size.
-        let skip = if reversed && truncated {
-            want - have
-        } else {
-            0
-        };
+        let skip = if small_first { want - have } else { 0 };
         let (width, height) = ((width >> skip).max(1), (height >> skip).max(1));
         for face in &mut levels {
             face.truncate(have as usize);
@@ -311,7 +309,15 @@ impl Dds {
         self.decode_level_rgba8(face, 0)
     }
 
+    /// Decode (`face`, `level`) to straight RGBA8, rows top to bottom; an error for a face or
+    /// level the frame does not have.
     pub fn decode_level_rgba8(&self, face: u32, level: u32) -> Result<Vec<u8>> {
+        ensure!(
+            face < self.faces && level < self.mip_levels,
+            "no face {face} / level {level} ({} faces, {} levels)",
+            self.faces,
+            self.mip_levels
+        );
         let (w, h) = self.level_dims(level);
         let src = self.level(face, level);
         let n = (w * h) as usize;

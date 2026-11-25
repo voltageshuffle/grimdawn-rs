@@ -449,7 +449,7 @@ fn collect_autocasts(
             a.skills_seen = skills_seen;
         }
         None => {
-            commands.entity(e).insert(Autocasts {
+            commands.entity(e).try_insert(Autocasts {
                 list,
                 inv_version: inv.version,
                 dev_version,

@@ -27,10 +27,6 @@ use std::time::Duration;
 /// take (no audio device: its queue is never drained) ends at once.
 pub(super) fn attach_voice(commands: &mut Commands, e: Entity, voice: Voice3d) {
     commands.queue(move |w: &mut World| {
-        let (tx, hz) = {
-            let s = w.resource::<Sounds>();
-            (s.bus.clone(), s.bus_hz)
-        };
         let Ok(mut entity) = w.get_entity_mut(e) else {
             return;
         };
@@ -38,13 +34,18 @@ pub(super) fn attach_voice(commands: &mut Commands, e: Entity, voice: Voice3d) {
             return;
         };
         let ctl = Arc::new(VoiceCtl::default());
-        let (bus_voice, spare) = voice.start(ctl.clone(), start.speed, hz);
+        let (bus_voice, spare) = voice.start(ctl.clone(), start.speed);
         entity.insert(Voice {
             ctl: ctl.clone(),
             end: start.end,
             spare,
         });
-        if !tx.is_some_and(|tx| tx.try_send(bus_voice).is_ok()) {
+        let sent = w
+            .resource::<Sounds>()
+            .bus
+            .as_ref()
+            .is_some_and(|tx| tx.try_send(bus_voice).is_ok());
+        if !sent {
             ctl.done.store(true, Ordering::Relaxed);
         }
     });
@@ -157,16 +158,17 @@ impl Voice3d {
         }
     }
 
-    /// The mixer's side of the voice, played at `speed` (the file's rate × `speed`) on a bus at `hz`; a looped stream
-    /// also gets the decoder of its next pass ([`Spare`]).
-    fn start(self, ctl: Arc<VoiceCtl>, speed: f32, hz: u32) -> (BusVoice, Option<Arc<Spare>>) {
+    /// The mixer's side of the voice, played at `speed` (the file's rate × `speed`; the mixer divides by its own rate
+    /// when it takes the voice, `BusState::mix_block`); a looped stream also gets the decoder of its next pass
+    /// ([`Spare`]).
+    fn start(self, ctl: Arc<VoiceCtl>, speed: f32) -> (BusVoice, Option<Arc<Spare>>) {
         if let Some(live) = self.live {
             let rate = live.0.rate;
             let voice = BusVoice {
                 ctl,
                 src: Src::Live(LiveSrc::new(live.0)),
                 channels: 2,
-                step: rate as f64 * speed as f64 / hz as f64,
+                step: rate as f64 * speed as f64,
                 looped: false,
                 ears: None,
                 gain: None,
@@ -212,7 +214,7 @@ impl Voice3d {
             ctl,
             src,
             channels: channels.max(1) as usize,
-            step: rate as f64 * speed as f64 / hz as f64,
+            step: rate as f64 * speed as f64,
             looped: self.looped,
             ears: self.ears,
             gain: None,
@@ -334,9 +336,15 @@ pub(super) struct BusState {
 impl BusState {
     fn mix_block(&mut self) {
         let BusState {
-            rx, voices, out, ..
+            rx,
+            hz,
+            voices,
+            out,
         } = self;
-        voices.extend(rx.try_iter());
+        for mut v in rx.try_iter() {
+            v.step /= *hz as f64;
+            voices.push(v);
+        }
         out.fill(0.0);
         voices.retain_mut(|v| {
             let playing = v.mix(out);
@@ -408,7 +416,8 @@ pub struct BusVoice {
     src: Src,
     /// The file's channels; a mono file feeds both sides, a wider one its first two.
     channels: usize,
-    /// File frames per output frame: the file's rate × speed / the mixer's.
+    /// File frames per output frame: the file's rate × speed / the mixer's (file frames per second while the voice
+    /// waits in the queue: [`BusState::mix_block`] divides by its rate when it takes the voice).
     step: f64,
     looped: bool,
     ears: Option<EarGains>,
@@ -504,11 +513,6 @@ impl LiveAudio {
     /// The seconds of sound mixed so far.
     pub fn played(&self) -> f32 {
         self.0.pulled.load(Ordering::Relaxed) as f32 / self.0.rate as f32
-    }
-
-    /// Seconds queued and not yet mixed.
-    pub fn queued(&self) -> f32 {
-        self.0.queue.lock().len() as f32 / 2.0 / self.0.rate as f32
     }
 }
 
@@ -865,7 +869,6 @@ fn open_bus(sounds: &mut Sounds, devices: &AudioDevices, index: i32) {
     }
     let player = rodio::Player::connect_new(sink.mixer());
     player.append(Bus::new(state));
-    sounds.bus_hz = hz;
     sounds.bus_out = Some(BusSink {
         _sink: sink,
         _player: player,
@@ -878,13 +881,13 @@ fn open_bus(sounds: &mut Sounds, devices: &AudioDevices, index: i32) {
 /// queue and the playing voices ([`open_bus`]). PORT: the engine stores a device index too; hotplug shifts the
 /// enumeration under a saved index — the same weakness (a stale index falls back to the default).
 pub(super) fn switch_device(
-    options: Option<Res<GameOptions>>,
+    options: Res<GameOptions>,
     devices: Res<AudioDevices>,
     mut sounds: ResMut<Sounds>,
 ) {
-    let Some(options) = options.filter(|o| o.is_changed()) else {
+    if !options.is_changed() {
         return;
-    };
+    }
     let index = options.int("soundDevice");
     if sounds.bus_out.as_ref().is_some_and(|o| o.device == index) {
         return;
@@ -938,7 +941,8 @@ pub(super) fn focus_pause(
 
 /// Volumes from the options, the game pause and the window focus (module docs). In `Last`, after every system that
 /// starts a sound, so a sound started this frame plays from this frame's mix on. A voice's volume is written when it
-/// starts, its [`BaseVolume`] changes or the options change; its pause when it starts or the pause / focus changes.
+/// starts, its [`BaseVolume`] changes or the option volumes are read again (`Listener::sync_volumes`); its pause when
+/// it starts or the pause / focus changes.
 /// While the game is held every voice is paused (it resumes where it stopped) except those marked
 /// [`PlaysWhilePaused`]; an unfocused window pauses them all.
 pub(super) fn mix(
@@ -953,10 +957,7 @@ pub(super) fn mix(
     )>,
     mut held: Local<Option<(bool, bool)>>,
 ) {
-    let reread = options.is_changed();
-    if reread {
-        sounds.listener.read_volumes(&options);
-    }
+    let reread = sounds.listener.sync_volumes(&options);
     let l = &sounds.listener;
     let state = (pause.unfocused, pause.paused());
     let repause = *held != Some(state);

@@ -387,7 +387,7 @@ fn hover(
     // What is under the cursor.
     let mut hovered: Hovered = None;
     // `GD_HOVER_ITEM` (hooks.rs; with `GD_HOVER`, optionally `GD_HOVER_PRICE`): shows that item's tooltip.
-    if let Some(v) = hooks.items.hover_item.clone() {
+    if let Some(v) = hooks.items.hover_item.as_deref() {
         let mut it = v.split(',').map(str::to_string);
         let mut n = || it.next().unwrap_or_default();
         let (base_name, relic_name, prefix_name, suffix_name) = (n(), n(), n(), n());
@@ -404,7 +404,7 @@ fn hover(
         let price = hooks.items.hover_price;
 
         // `GD_HOVER_SPOT` (default: a bag item).
-        let spot = match hooks.items.hover_spot.clone().as_deref() {
+        let spot = match hooks.items.hover_spot.as_deref() {
             Some("ground") => Spot::Ground,
             Some("equipped") => Spot::Equipped,
             _ => Spot::Inventory,
@@ -893,11 +893,10 @@ fn spawn_box(
         };
         ui.border_over(&paths, gd_formats::ui::Rect::new(0.0, 0.0, w, h), 1.0, corr);
     }
-    let (ox, oy) = (0.0, 0.0);
     for p in placed {
         let e = commands
             .spawn((
-                node(ox + p.pos.x, oy + p.pos.y, p.size.x, p.size.y),
+                node(p.pos.x, p.pos.y, p.size.x, p.size.y),
                 ImageNode::new(p.image).with_mode(bevy::ui::widget::NodeImageMode::Stretch),
             ))
             .id();

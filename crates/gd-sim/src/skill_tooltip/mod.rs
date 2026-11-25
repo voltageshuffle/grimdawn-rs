@@ -114,7 +114,7 @@ use crate::skills::{
 use gd_formats::arz::Record;
 use gd_formats::text::TagTable;
 use gd_formats::vfs::Database;
-use params::{PARAMS, param_lines};
+use params::param_lines;
 use pets::pet_lines;
 
 mod devotion_tip;
@@ -122,6 +122,7 @@ mod hot_slot;
 mod params;
 mod pets;
 
+pub use crate::items::tooltip::Arg;
 pub use devotion_tip::{DevReclaim, DevStatus, DevotionTip, devotion_lines};
 pub use hot_slot::{
     HotState, default_hot_slot_lines, energy_cost, hot_slot_lines, hot_state, ignores_energy,
@@ -302,11 +303,6 @@ pub fn format(fmt: &str, args: &[Arg]) -> String {
     out
 }
 
-pub enum Arg<'a> {
-    Num(f32),
-    Str(&'a str),
-}
-
 /// What the builder reads.
 pub struct SkillTipCtx<'a> {
     pub db: &'a Database,
@@ -335,7 +331,7 @@ impl SkillTipCtx<'_> {
     }
 
     fn fmt(&self, tag: &str, args: &[Arg]) -> String {
-        format(&self.tag(tag), args)
+        format(self.tags.get(tag).unwrap_or(tag), args)
     }
 
     fn name_tag(&self, skill: &str) -> Option<String> {
@@ -680,9 +676,6 @@ fn weapon_numbers(
     }
 }
 
-/// `Skill::CreateUISpecializedText2` / `CreateUINextSpecializedText2`
-/// (its order, tags and tests).
-#[allow(clippy::too_many_arguments)]
 /// The potency a modifier's restores are shown with. `Skill::CreateUISpecializedText2`
 /// / `CreateUINextSpecializedText2`: when the skill object is a `Skill_Modifier`
 /// kin (`Skill_PotionModifier`, `Skill_PotionContainer` included), each parent in its `Skill.parents` list
@@ -824,6 +817,8 @@ fn charge_potion_restores(
     out
 }
 
+/// `Skill::CreateUISpecializedText2` / `CreateUINextSpecializedText2` (their
+/// order and tags).
 #[allow(clippy::too_many_arguments)]
 fn special_lines(
     ctx: &SkillTipCtx,
@@ -1655,83 +1650,6 @@ fn pet_bonus_profile(ctx: &SkillTipCtx, player: &crate::actor::Profile) -> crate
     }
 }
 
-/// Fields of a profile record some line reads, for the data audit
-/// (`skill_tooltip_db::every_mastery_skill_shows_its_stats`): the catalog's
-/// attribute fields with a line, then everything [`section_of`] reads by name.
-pub fn audit_fields(tags: &TagTable, rec: &Record) -> Vec<String> {
-    let mut out: Vec<String> = PARAMS.iter().map(|p| p.0.to_string()).collect();
-    out.extend(READ_FIELDS.iter().map(|f| f.to_string()));
-    out.extend(QUALIFIERS.iter().map(|q| q.0.to_string()));
-    out.extend(PENALTY_FIELDS.iter().map(|f| f.to_string()));
-    for li in [0usize, usize::MAX >> 1] {
-        out.extend(
-            record_attrs_at(rec, Source::Base, li)
-                .into_iter()
-                .filter(|a| attribute_line(tags, a).is_some())
-                .flat_map(|a| a.values.into_iter().map(|(k, _)| k)),
-        );
-    }
-    out
-}
-
-/// The numbers [`first_lines`], [`special_lines`] and [`pet_lines`] read.
-const READ_FIELDS: &[&str] = &[
-    "skillChanceWeight",
-    "lifeMonitorPercent",
-    "lifeMonitorCooldown",
-    "sparkMaxNumber",
-    "sparkChance",
-    "projectileExplosionRadius",
-    "projectileFragmentsLaunchNumberMin",
-    "projectileFragmentsLaunchNumberMax",
-    "onHitActivationChance",
-    "filterCaster",
-    "skillChargeLevel",
-    "skillChargeMultipliers",
-    "skillProjectileNumber",
-    "weaponDamagePct",
-    "retaliationDamagePct",
-    "skillLifeBonus",
-    "skillLifePercent",
-    "skillLifePercentSlow",
-    "skillLifeBonusBuffDuration",
-    "skillLifePercentBuffDuration",
-    "skillManaBonus",
-    "skillManaPercent",
-    "skillManaPercentSlow",
-    "damageAbsorption",
-    "damageAbsorptionPercent",
-    "absorbShieldPercentHealth",
-    "damageAbsorptionReflectPercent",
-    "allSkillEnhancement",
-    "petBurstSpawn",
-    "petLimit",
-    "spawnObjectsTimeToLive",
-    "modSpawnObjectsTimeToLive",
-    "refreshDurationChance",
-    "refreshDurationAmount",
-    "refreshDurationMax",
-    "refreshCooldownChance",
-    "refreshCooldownAmount",
-    "refreshTime",
-    "timeBetweenAttacks",
-    "skillComboChargeLevel",
-    "offensiveGlobalChance",
-    "projectilePiercingChance",
-    "racialBonusPercentDamage",
-    "racialBonusPercentDefense",
-    "racialBonusAbsoluteDamage",
-    "racialBonusAbsoluteDefense",
-    "racialBonusRace",
-    "conversionInType",
-    "conversionOutType",
-    "conversionPercentage",
-    "conversionInType2",
-    "conversionOutType2",
-    "conversionPercentage2",
-    "skillTargetInterval",
-];
-
 /// Attribute lines of `records` at level index `li`.
 fn stat_lines_of(
     ctx: &SkillTipCtx,
@@ -2056,16 +1974,7 @@ fn skill_lines_with(
         return Vec::new();
     };
     let disp = display_record(ctx.db, skill).unwrap_or_else(|| rec.clone());
-    let mut out = Vec::new();
-    // Heading: name, description.
-    let name = ctx.text(disp.str("skillDisplayName"));
-    if !name.is_empty() {
-        out.push(line(class::SKILL_NAME, name));
-    }
-    let desc = ctx.text(disp.str("skillBaseDescription"));
-    if !desc.is_empty() {
-        out.push(line(class::SKILL_DESCRIPTION, desc));
-    }
+    let mut out = heading_lines(ctx, &disp);
     if rec.i32("exclusiveSkill").unwrap_or(0) != 0 || disp.i32("exclusiveSkill").unwrap_or(0) != 0 {
         out.push(line(
             class::SKILL_DESCRIPTION,

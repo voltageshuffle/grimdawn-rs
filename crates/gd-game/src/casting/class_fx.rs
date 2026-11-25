@@ -97,13 +97,6 @@ fn cone_frame(
     (emit, aim, rotation, max)
 }
 
-/// The strike period (s): `timeBetweenAttacks` (default 100 ms) / the spell-cast speed.
-fn cone_period(rec: &Record, character: Option<&Character>) -> f32 {
-    rec.f32("timeBetweenAttacks").unwrap_or(100.0)
-        / 1000.0
-        / character.map_or(1.0, |c| c.spell_speed.max(0.2))
-}
-
 /// The cone / spin / grow visual of the player's channel and the cone entries' strikes (module doc).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn channel_fx(
@@ -221,7 +214,7 @@ pub(super) fn channel_fx(
                                 record,
                                 effect: None,
                                 delay: rec.f32("coneDelay").unwrap_or(0.0),
-                                tick: cone_period(rec, Some(character)),
+                                tick: super::spell_beams::strike_period(rec, Some(character)),
                                 len: 0.0,
                                 retract: None,
                                 speed: rec.f32("travelSpeed").unwrap_or(0.0),
@@ -345,11 +338,11 @@ pub(super) fn channel_fx(
         let (_, otf, character, .., caster) = match owner {
             Some(o) => o,
             None => {
-                c.tick = cone_period(rec, None);
+                c.tick = super::spell_beams::strike_period(rec, None);
                 continue;
             }
         };
-        c.tick = cone_period(rec, Some(character));
+        c.tick = super::spell_beams::strike_period(rec, Some(character));
         c.caster_rot = otf.rotation;
         let side = crate::combat::Side::lookup(&sides, c.owner, false);
         for (m, gt, mcb, v) in &foes {

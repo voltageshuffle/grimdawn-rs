@@ -234,14 +234,14 @@ impl CraftList {
 /// items) is listed under Materials here.
 fn group_of(data: &gd_game_core::data::GameData, display: &str) -> usize {
     let rec = data.db.get(display);
-    let class = rec.as_ref().map(|r| r.class.clone()).unwrap_or_default();
+    let class = rec.map_or("", |r| r.class.as_str());
     let group = |tag: &str| {
         GROUPS
             .iter()
             .position(|(_, t)| *t == tag)
             .unwrap_or(GROUPS.len() - 1)
     };
-    match class.as_str() {
+    match class {
         "WeaponMelee_Axe" => return group("tagCraftingAxes"),
         "WeaponMelee_Mace" => return group("tagCraftingBlunt"),
         "WeaponMelee_Sword" => return group("tagCraftingSwords"),
@@ -258,12 +258,8 @@ fn group_of(data: &gd_game_core::data::GameData, display: &str) -> usize {
         "WeaponArmor_Shield" => return group("tagCraftingShields"),
         _ => {}
     }
-    match gd_formats::inventory::sort_rank(&class) {
-        11 => match rec
-            .as_ref()
-            .and_then(|r| r.str("artifactClassification").map(str::to_owned))
-            .as_deref()
-        {
+    match gd_formats::inventory::sort_rank(class) {
+        11 => match rec.and_then(|r| r.str("artifactClassification")) {
             Some("Greater") => group("tagCraftingRelicsTier02"),
             Some("Divine") => group("tagCraftingRelicsTier03"),
             _ => group("tagCraftingRelicsTier01"),

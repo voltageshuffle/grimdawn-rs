@@ -33,6 +33,7 @@
 //! (UX over parity). Hooks (hooks.rs): `GD_UI_OPEN=achievements`, `GD_UI_TAB=<group>`.
 use super::Ui;
 use super::contains;
+use super::factions::{Pane, fmt, num, pane_rects};
 use super::window::Rebuild;
 use crate::state::inventory::UiCapture;
 use bevy::prelude::*;
@@ -82,20 +83,13 @@ pub struct AchievementsView {
     pub scroll: [f32; 2],
 }
 
-/// A scroll window of the built window (screen px).
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-struct Pane {
-    clip: URect,
-    max: f32,
-}
-
 /// The built window (physical px). Empty while it is closed.
 #[derive(Resource, Default)]
 pub struct AchievementsLayout {
     pub window: Option<URect>,
     close: Option<URect>,
-    /// Group buttons at scroll 0.
-    groups: Vec<URect>,
+    /// Group buttons at scroll 0 and their group indices (a group without a drawable button has none).
+    groups: Vec<(URect, usize)>,
     panes: [Option<Pane>; 2],
     bars: [Option<super::window::Bar>; 2],
     version: u64,
@@ -109,7 +103,10 @@ impl AchievementsLayout {
             return None;
         }
         let q = Vec2::new(p.x, p.y + scroll);
-        self.groups.iter().position(|r| contains(r, q))
+        self.groups
+            .iter()
+            .find(|(r, _)| contains(r, q))
+            .map(|(_, g)| *g)
     }
 }
 
@@ -134,32 +131,6 @@ struct GroupFocus(usize);
 /// The close button's `bitmapNameInFocus`.
 #[derive(Component)]
 struct CloseFocus;
-
-fn num(r: &gd_formats::arz::Record, k: &str) -> f32 {
-    r.f32(k).unwrap_or(0.0)
-}
-
-fn fmt(ui: &Ui, tag: &str, args: &[gd_sim::items::tooltip::Arg]) -> String {
-    gd_sim::items::tooltip::format_rich(ui.fonts.tag(tag), args)
-}
-
-/// A scroll window record's rect and its clip (inside the guard bands), screen px.
-fn pane_rects(ui: &Ui, sw: &gd_formats::arz::Record, o: Vec2) -> (URect, URect) {
-    let (top, bottom) = (num(sw, "topGuardBand"), num(sw, "bottomGuardBand"));
-    let window = URect::new(
-        o.x + ui.sc(num(sw, "positionX")),
-        o.y + ui.sc(num(sw, "positionY")),
-        ui.sc(num(sw, "width")),
-        ui.sc(num(sw, "height")),
-    );
-    let clip = URect::new(
-        window.x,
-        window.y + ui.sc(top),
-        window.w,
-        ui.sc(num(sw, "height") - top - bottom),
-    );
-    (window, clip)
-}
 
 /// The achievements a group lists (locked hidden ones are not) and how many of them are unlocked.
 fn shown<'a>(
@@ -497,7 +468,7 @@ fn draw(
                 bw,
             ) {
                 y += r.h;
-                layout.groups.push(r);
+                layout.groups.push((r, *i));
             }
         }
         layout.panes[0] = Some(Pane {

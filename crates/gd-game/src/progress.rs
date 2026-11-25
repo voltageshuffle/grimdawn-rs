@@ -3,7 +3,7 @@
 //! ([`kill_experience`]) and story rewards ([`story_progress`]).
 //!
 //! [`PointsGained`] mirrors the engine's game events 49 (skill points) and 50 (attribute points), which start the
-//! HUD's level-up pulses (`grimdawn` `ui::hud::pulse_hud`). Senders (Game.dll `EventManager::Send` callers):
+//! HUD's level-up pulses (`gd_ui::hud::pulse_hud`). Senders (Game.dll `EventManager::Send` callers):
 //! - 49: each level gained whose `skillModifierPoints` entry is > 0 (`ExperienceLevelControl::AddExperience`, the
 //!   level-up loop);
 //!   `ItemDifficultyUnlock::Use` when the skipped quests' skill points are > 0; `Character::TakeBonus`

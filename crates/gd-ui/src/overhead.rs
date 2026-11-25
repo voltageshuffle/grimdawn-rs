@@ -59,7 +59,7 @@
 //! PORT: "hit received" is life below its maximum; the anchor uses the
 //! record's mesh top × the creature's `scale`; bars sit under the windows
 //! (the engine draws the world widgets before the UI). A widget is built per
-//! layout (classification, bar or icon, large bar, window size; the player's:
+//! layout (classification, bar or icon, large bar, window size, UI scale, font generation; the player's:
 //! the options) around its anchor; its root follows the anchor and its fill
 //! and text change in place (a performance choice).
 use super::Ui;
@@ -186,10 +186,10 @@ struct PlayerMetrics {
     icon_offset: f32,
 }
 
-/// The player's widget as built: its layout (window size, text / bar shown, large bar), root, fill and text, and
-/// the (life, max) the text shows.
+/// The player's widget as built: its layout (window size, UI scale, font generation, text / bar shown, large
+/// bar), root, fill and text, and the (life, max) the text shows.
 struct PlayerWidget {
-    key: (UVec2, u32, (bool, bool), bool),
+    key: (UVec2, u32, u64, (bool, bool), bool),
     root: Entity,
     fill: Option<Entity>,
     text: Option<Entity>,
@@ -209,8 +209,8 @@ fn player_text(fonts: &super::text::FontCache, (cur, max): (i64, i64)) -> String
     }
 }
 
-/// The player's overhead text and bar: built when the window size or the options change, moved to the anchor and
-/// filled / numbered in place every frame.
+/// The player's overhead text and bar: built when the window size, the UI scale, the font generation or the
+/// options change, moved to the anchor and filled / numbered in place every frame.
 #[allow(clippy::too_many_arguments)]
 fn player_health(
     mut fresh: gd_game_core::session::NewSession,
@@ -280,8 +280,15 @@ fn player_health(
         local && options.flag("playerBars"),
     );
     let large = options.flag("playerBarsLarge");
-    // The UI scale too (`f32` bits): the bar is built at it.
-    let key = (size, assets.scale(size).to_bits(), show, large);
+    // The UI scale too (`f32` bits): the bar is built at it; the font generation: a language swap redraws the
+    // text in the new tags and fonts.
+    let key = (
+        size,
+        assets.scale(size).to_bits(),
+        assets.fonts.generation,
+        show,
+        large,
+    );
     let inv = 1.0 / win.scale_factor();
     let same = shown.as_ref().is_some_and(|w| w.key == key);
     super::retire_roots(
@@ -349,9 +356,9 @@ fn player_health(
 }
 
 /// A creature record's anchor metrics, classification and foe flag. PORT (a performance choice): cached
-/// per record path in [`monster_bars`]; the mesh top comes from the shared [`gd_game_core::creature::BodyCache`]
-/// (the body's own loader, parsed once), not a second `.msh` parse. Only the foe flag depends on the
-/// session, recomputed when the factions' version changes.
+/// per record path in [`monster_bars`] for the session (a session may mount another mod); the mesh top comes
+/// from the shared [`gd_game_core::creature::BodyCache`] (the body's own loader, parsed once), not a second
+/// `.msh` parse. The foe flag is recomputed when the factions' version changes.
 #[derive(Clone)]
 struct RecordFacts {
     /// The mesh box's top; `top_known` false while the mesh still loads ([`mesh_top`]; the bar uses 2 m meanwhile).
@@ -448,14 +455,15 @@ type BarSubjects<'w, 's> = Query<
 >;
 
 /// What a monster's widget is built for (its layout): the classification, the bar mode's large bar (`None`: the
-/// icon only), the window size and the UI scale (`f32` bits: the widget is built at it). The fill and the text
-/// change in place.
+/// icon only), the window size, the UI scale (`f32` bits: the widget is built at it) and the font generation (a
+/// language swap redraws the text in the new fonts). The fill and the text change in place.
 #[derive(Clone, Copy, PartialEq)]
 struct Look {
     classification: u8,
     bar: Option<bool>,
     size: UVec2,
     scale: u32,
+    generation: u64,
 }
 
 /// What a widget's text shows: the truncated life and max life, `monsterHealth` and `healthBarsPercent`.
@@ -520,10 +528,8 @@ fn monster_bars(
 ) {
     if fresh.begun() {
         shown.clear();
-        // The foe flags are the ended session's; the records' own facts are static.
-        for f in facts.values_mut() {
-            f.foe_version = u64::MAX;
-        }
+        // The facts are the ended session's data (its mod's records, its factions).
+        facts.clear();
     }
     let (Ok(win), Ok((cam, cam_tf, gc))) = (window.single(), cams.single()) else {
         return;
@@ -550,7 +556,7 @@ fn monster_bars(
     // no record clone, DB lookup or mesh parse per monster per frame.
     let faction_version = factions.as_deref().map_or(0, |f| f.version);
     live.clear();
-    let scale = assets.scale(size).to_bits();
+    let (scale, generation) = (assets.scale(size).to_bits(), assets.fonts.generation);
     for (e, gt, c, monster, pet, ai, vis) in &subjects {
         if vis.is_some_and(|v| !v.get()) || c.life <= 0.0 {
             continue;
@@ -619,6 +625,7 @@ fn monster_bars(
                 }),
                 size,
                 scale,
+                generation,
             }
         } else if icons && f.classification >= 2 {
             Look {
@@ -626,6 +633,7 @@ fn monster_bars(
                 bar: None,
                 size,
                 scale,
+                generation,
             }
         } else {
             continue;

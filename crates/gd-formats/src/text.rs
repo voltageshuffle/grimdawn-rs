@@ -19,7 +19,7 @@
 //! options dropdown from it): the `language` option's stored string, the archive code
 //! (`Text_<CODE>.arc`, mounted as `text_<code>/`) and the display name. Which languages
 //! an install offers follows its mounted `Text_*.arc`, not this static list
-//! (`gd_game::data::GameData::available_languages`).
+//! (`gd_game_core::data::GameData::available_languages`).
 //!
 //! Quest / conversation text and the language's paging settings live here too:
 //! non-English quest / dialog text is a line-ordered override file
@@ -43,7 +43,7 @@ pub struct Language {
 
 /// The engine's 13 languages in table order (`tagLanguage01`…`tagLanguage14`, 02 absent).
 /// Availability follows the install's mounted `Text_*.arc`
-/// (`gd_game::data::GameData::available_languages`), not this list.
+/// (`gd_game_core::data::GameData::available_languages`), not this list.
 pub const LANGUAGES: &[Language] = &[
     Language {
         option: "English",

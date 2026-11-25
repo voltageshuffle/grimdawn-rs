@@ -64,7 +64,7 @@ fn show_error(
     state.left_ms = (state.left_ms - clock.delta_secs() * 1000.0).max(0.0);
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    if *shown == Some((size, on)) && !pressed {
+    if *shown == Some((size, on)) {
         return;
     }
     *shown = Some((size, on));
@@ -81,9 +81,8 @@ fn show_error(
         1.0 / win.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
     );
-    let text = ui.fonts.tag("tagSkillNotReady").to_owned();
     // `{^r}` colour codes are the style's: the text is red whole.
-    let text = gd_formats::text::strip_markup(&text);
+    let text = gd_formats::text::strip_markup(ui.fonts.tag("tagSkillNotReady"));
     let (w, h) = (ui.text_width(STYLE, &text), ui.line_height(STYLE));
     let at = Vec2::new(
         size.x as f32 * 0.5 - w * 0.5,

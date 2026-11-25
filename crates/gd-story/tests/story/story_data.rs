@@ -39,11 +39,11 @@ impl Env {
         r
     }
 
-    fn quest_defs(&self) -> anyhow::Result<gd_story::story::quest::QuestDefs> {
+    fn quest_defs(&self) -> gd_story::story::quest::QuestDefs {
         gd_story::story::load::quest_defs(&self.vfs, "en")
     }
 
-    fn dialogs(&self) -> anyhow::Result<gd_story::story::dialog::Dialogs> {
+    fn dialogs(&self) -> gd_story::story::dialog::Dialogs {
         gd_story::story::load::dialogs(&self.vfs, "en")
     }
 }
@@ -125,8 +125,8 @@ fn converse(host: &ScriptHost, npc: u32) -> Vec<String> {
 fn opening_of_the_main_quest() {
     let Some(env) = env() else { return };
     let env = Rc::new(env);
-    let defs = env.quest_defs().unwrap();
-    let dialogs = env.dialogs().unwrap();
+    let defs = env.quest_defs();
+    let dialogs = env.dialogs();
     println!(
         "{} quests, {} conversations",
         defs.list.len(),
@@ -252,10 +252,10 @@ fn opening_of_the_main_quest() {
 #[test]
 fn quest_save_round_trip() {
     let Some(env) = env() else { return };
-    let defs = Arc::new(env.quest_defs().unwrap());
+    let defs = Arc::new(env.quest_defs());
     let mut a = Story::new(
         defs.clone(),
-        env.dialogs().unwrap(),
+        env.dialogs(),
         Player::new_character(1, "RefBot"),
     );
     let qi = defs.by_path(WAKING).unwrap();
@@ -272,7 +272,7 @@ fn quest_save_round_trip() {
     assert_eq!(parsed, saved);
     let mut b = Story::new(
         defs.clone(),
-        env.dialogs().unwrap(),
+        env.dialogs(),
         Player::new_character(1, "RefBot"),
     );
     b.load_quests(&parsed, 0);

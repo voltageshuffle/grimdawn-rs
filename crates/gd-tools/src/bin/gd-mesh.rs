@@ -148,7 +148,7 @@ fn info(file: &Path) -> Result<()> {
             a.tracks.len()
         );
         for t in &a.tracks {
-            let k = t.keys[0];
+            let k = t.keys.first().copied().unwrap_or(anm::IDENTITY_KEY);
             println!(
                 "  {:24} t{:?} r{:?} s{:?}",
                 t.bone, k.translation, k.rotation, k.scale
@@ -447,11 +447,10 @@ fn glb(msh: &Path, out: &Path, anm: Option<&Path>, bake: Option<f32>) -> Result<
             .bones
             .iter()
             .map(|b| {
-                let k = anim
-                    .as_ref()
+                anim.as_ref()
                     .and_then(|a| a.track(&b.name))
-                    .map(|t| t.keys[0].to_coords());
-                k.map(|k| b.local.mul(&k)).unwrap_or(b.local)
+                    .and_then(|t| t.keys.first())
+                    .map_or(b.local, |k| b.local.mul(&k.to_coords()))
             })
             .collect();
         for (i, b) in m.bones.iter().enumerate() {
