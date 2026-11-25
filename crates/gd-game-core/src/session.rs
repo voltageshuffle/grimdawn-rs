@@ -229,13 +229,11 @@ pub struct LoadedCharacter(pub Arc<Gdc>);
 #[derive(Resource, Clone, Copy)]
 pub struct PlayerStart(pub Vec3);
 
-/// The (difficulty, veteran) a session of `gdc` starts on: the save's, unless `GD_DIFFICULTY` / `GD_VETERAN` override it.
-pub fn mode_for(hooks: &crate::hooks::SessionHooks, gdc: &Gdc) -> (usize, bool) {
+/// The (difficulty, veteran) a session of `gdc` starts on: the save's.
+pub fn mode_for(gdc: &Gdc) -> (usize, bool) {
     (
-        hooks.difficulty.unwrap_or(gdc.info.difficulty()),
-        hooks
-            .veteran
-            .unwrap_or(is_veteran(gdc) || is_ultimate_veteran(gdc)),
+        gdc.info.difficulty(),
+        is_veteran(gdc) || is_ultimate_veteran(gdc),
     )
 }
 
@@ -283,20 +281,13 @@ pub fn data_dir() -> PathBuf {
 
 /// The port's save folder (`main/_<name>/player.gdc`, `transfer.gst`, ...):
 /// a resource, so every save system reads the same value and a test gives
-/// each game its own folder. The default (`GD_SAVE_DIR`, else
-/// `<`[`data_dir`]`>/save`) is the only place the environment is read.
+/// each game its own folder. The default is `<`[`data_dir`]`>/save`; a dev game inserts `GD_SAVE_DIR`'s before
+/// its plugins (grimdawn `main`).
 #[derive(Resource, Clone, Debug)]
 pub struct SaveDir(pub PathBuf);
 
-impl FromWorld for SaveDir {
-    fn from_world(world: &mut World) -> Self {
-        // Runs at plugin build (`init_resource`): the game inserts its `Hooks` before the plugins.
-        if let Some(d) = world
-            .get_resource::<crate::hooks::Hooks>()
-            .and_then(|h| h.session.save_dir.clone())
-        {
-            return SaveDir(PathBuf::from(d));
-        }
+impl Default for SaveDir {
+    fn default() -> Self {
         SaveDir(data_dir().join("save"))
     }
 }

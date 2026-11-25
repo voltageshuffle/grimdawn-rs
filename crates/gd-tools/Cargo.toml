@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gd-tools"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Command-line tools to list, extract and inspect Grim Dawn archives, records, maps, meshes and saves"
 license = "MIT"
@@ -57,6 +57,6 @@ test = false
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-gd-formats = { path = "../gd-formats", version = "0.1.0", features = ["testdata"] }
-gd-sim = { path = "../gd-sim", version = "0.1.0" }
+gd-formats = { path = "../gd-formats", features = ["testdata"] }
+gd-sim = { path = "../gd-sim" }
 png = "0.18.1"

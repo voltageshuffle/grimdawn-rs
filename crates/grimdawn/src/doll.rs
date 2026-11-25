@@ -110,14 +110,10 @@ fn rotate_input(
     mut dolls: ResMut<Dolls>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     time: Res<Time<Real>>,
 ) {
-    let cursor = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
     let notches: f32 = wheel.read().map(|e| e.y.signum()).sum();
     let dt = time.delta_secs() * 1000.0;
     // The menu's character turns by `menu_drag` (the menu swallows `ButtonInput`).
@@ -182,17 +178,13 @@ fn menu_drag(
     mut dolls: ResMut<Dolls>,
     mut clicks: MessageReader<bevy::input::mouse::MouseButtonInput>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     menu: Option<Res<crate::menu::MainMenu>>,
     layout: Option<Res<crate::menu::MenuLayout>>,
     options: Res<gd_ui::state::options::OptionsWindow>,
     credits: Res<crate::ui::credits::Credits>,
 ) {
     use bevy::input::ButtonState;
-    let cursor = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
     let d = dolls.0.entry(DollView::Menu).or_default();
     let free = menu
         .as_ref()
@@ -225,16 +217,19 @@ fn menu_drag(
 /// down bitmap while held, the in-focus bitmap while hovered, else the up
 /// bitmap the window drew; drawn over the window as an overlay node.
 fn rotate_looks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut dolls: ResMut<Dolls>,
     window: Query<&Window, With<PrimaryWindow>>,
 ) {
     let Ok(win) = window.single() else { return };
-    // Test hooks: `GD_HOVER=x,y` (logical px) for the cursor, `GD_DOLL_HOLD=0|1`
-    // shows the left / right button held.
-    let cursor = gd_ui_kit::cursor_px(&hooks, win);
+    // Cursor `GD_HOVER=x,y` (logical px) and test hook `GD_DOLL_HOLD=0|1`, which shows the left / right
+    // button held.
+    let cursor = gd_ui_kit::cursor_px(win);
+    #[cfg(feature = "dev")]
     let held = hooks.render.doll_hold;
+    #[cfg(not(feature = "dev"))]
+    let held = None;
 
     let inv = 1.0 / win.scale_factor();
     for d in dolls.0.values_mut() {

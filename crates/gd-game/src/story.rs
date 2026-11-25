@@ -418,6 +418,7 @@ pub fn setup_story(world: &mut World) {
         );
     });
     // `GD_TOKENS` (hooks.rs).
+    #[cfg(feature = "dev")]
     for t in &world
         .resource::<gd_game_core::hooks::Hooks>()
         .gameplay
@@ -633,8 +634,9 @@ pub fn tick_story(
     rt: Option<NonSendMut<StoryRuntime>>,
     time: Res<Time>,
     mut carry: Local<f32>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    (mut fresh, mut lua_ran): (gd_game_core::session::NewSession, Local<bool>),
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] mut fresh: gd_game_core::session::NewSession,
+    #[cfg(feature = "dev")] mut lua_ran: Local<bool>,
     players: Query<
         (&Transform, Has<gd_game_core::combat::Dead>),
         With<gd_game_core::player::Player>,
@@ -646,6 +648,7 @@ pub fn tick_story(
     mut cinematic: MessageWriter<CinematicText>,
 ) {
     // The `GD_LUA` hook runs once per session.
+    #[cfg(feature = "dev")]
     if fresh.begun() {
         *lua_ran = false;
     }
@@ -672,6 +675,7 @@ pub fn tick_story(
         return; // Wait for the player before triggers can fire.
     }
     // `GD_LUA` (hooks.rs): `[@secs:]code`, parsed until it ran.
+    #[cfg(feature = "dev")]
     if !*lua_ran && let Some(hook) = hooks.gameplay.lua.as_deref() {
         let (after, code) = hook
             .strip_prefix('@')

@@ -72,7 +72,6 @@ use gd_render::fx::{FxAssets, render};
 use gd_render::render::weather::WeatherState;
 use gd_sim::weather::{ClimateSet, Kind, Particle, Weather};
 use gd_ui::state::session::AppState;
-use std::borrow::Cow;
 
 /// The fade-out of a destroyed system's sound (ms).
 const FADE_MS: f32 = 3000.0;
@@ -415,7 +414,7 @@ fn simulate_weather(
     levels: Res<gd_game_core::levels::Levels>,
     data: Res<gd_game_core::data::GameData>,
     options: Res<GameOptions>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time<Virtual>>,
     (tod, ambiance, menu, backdrop, coll): (
         Res<gd_render::render::env::TimeOfDay>,
@@ -511,43 +510,50 @@ fn simulate_weather(
 
     // The climate set of the sector under the camera focus (`GetTargetId` type 6 + `GetSectorData`). A set is
     // loaded only when the name changes (`ChangeClimate` is a no-op for the same name).
-    let forced: Cow<str>;
+    let table = rt.table.as_ref();
+    let sector_climate = || {
+        let focus = backdrop
+            .as_ref()
+            .map_or(cam.target, |b| b.view.player.translation);
+        // In the game the sector of the player's own region (`Player::UpdateSelf`; the Shattered Realm's
+        // regions overlap main-world ground). PORT: the engine's climate sector source is not traced; the
+        // menu scene has one map, so the position alone.
+        let region =
+            gd_game_core::riftgates::player_region(story.as_deref()).filter(|_| menu.is_none());
+        let guid = match region {
+            Some(r) => levels.sector_guid_in(r, focus, 6),
+            None => levels.sector_guid(focus, 6),
+        };
+        let name = guid
+            .and_then(|g| table?.iter().find(|(id, _)| *id == g))
+            .map_or("", |(_, r)| r.as_str());
+        let set = if name != weather.set_name && !name.is_empty() {
+            ClimateSet::load(&data.db, name)
+        } else {
+            None
+        };
+        (name, set)
+    };
+    #[cfg(feature = "dev")]
+    let forced: std::borrow::Cow<str>;
+    // `GD_WEATHER` (hooks.rs): a forced climate set.
+    #[cfg(feature = "dev")]
     let (name, set) = match hooks.render.weather.as_deref() {
         Some(f) => {
             forced = if f.contains('/') {
-                Cow::Borrowed(f)
+                f.into()
             } else {
-                Cow::Owned(format!("records/fx/climate_weather/{f}.dbr"))
+                format!("records/fx/climate_weather/{f}.dbr").into()
             };
             let set = (*forced != weather.set_name)
                 .then(|| ClimateSet::single(&data.db, &forced))
                 .flatten();
             (&*forced, set)
         }
-        None => {
-            let focus = backdrop
-                .as_ref()
-                .map_or(cam.target, |b| b.view.player.translation);
-            // In the game the sector of the player's own region (`Player::UpdateSelf`; the Shattered Realm's
-            // regions overlap main-world ground). PORT: the engine's climate sector source is not traced; the
-            // menu scene has one map, so the position alone.
-            let region =
-                gd_game_core::riftgates::player_region(story.as_deref()).filter(|_| menu.is_none());
-            let guid = match region {
-                Some(r) => levels.sector_guid_in(r, focus, 6),
-                None => levels.sector_guid(focus, 6),
-            };
-            let name = guid
-                .and_then(|g| rt.table.as_ref()?.iter().find(|(id, _)| *id == g))
-                .map_or("", |(_, r)| r.as_str());
-            let set = if name != weather.set_name && !name.is_empty() {
-                ClimateSet::load(&data.db, name)
-            } else {
-                None
-            };
-            (name, set)
-        }
+        None => sector_climate(),
     };
+    #[cfg(not(feature = "dev"))]
+    let (name, set) = sector_climate();
     weather.change_climate(name, set, day, quality);
     let dt_ms = time.delta_secs() * 1000.0;
     // The floor for quality 3 rain and the gusts (the world only; the menu scene has no collision world).

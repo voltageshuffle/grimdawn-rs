@@ -5,7 +5,9 @@
 //! per character: `Player::GetLootFilter`) or a new character's defaults,
 //! and written back with it (`save.rs`, the port's own save folder). The
 //! loot filter window sends [`LootFilterRequest`]s; the game reads
-//! [`LootFilter::passes`] for each ground item's label and pick.
+//! [`LootFilter::passes`] for each ground item's label and pick. That also applies the item styles' "hide
+//! label" (`crate::item_style`, a port addition): only after the stock filter passed an item, and not in
+//! `Mode::ShowAll` (key 35 held), so a style can hide more but never show what the 42 options hide.
 //!
 //! The `ItemIgnore` mode each reader passes (`Item::PassLootFilter`, modes
 //! [`Mode`]) comes from the held keys 35 "Show Items (No Filter)" / 37 "Show Items (Filter Common)"
@@ -57,11 +59,13 @@ impl LootFilter {
         self.options.iter().map(|b| *b as u8).collect()
     }
 
-    /// Whether `item` gets a label in `mode` for a player with `loadout`.
+    /// Whether `item` gets a label in `mode` for a player with `loadout`: the stock filter, then the item
+    /// styles' hide (module doc).
     pub fn passes(
         &self,
+        styles: &crate::item_style::ItemStyles,
         inv: &Inventory,
-        db: &gd_formats::vfs::Database,
+        data: &gd_game_core::data::GameData,
         item: &Item,
         mode: Mode,
         loadout: Option<&Loadout>,
@@ -70,6 +74,7 @@ impl LootFilter {
             return true;
         };
         let r = &info.resolved;
+        let db = &*data.db;
         let rec = |n: &str| (!n.is_empty()).then(|| db.get(n)).flatten();
         let pet_bonus = [&item.base_name, &item.prefix_name, &item.suffix_name]
             .iter()
@@ -101,7 +106,7 @@ impl LootFilter {
                     .collect()
             })
             .unwrap_or_default();
-        passes(
+        let stock = passes(
             &self.options,
             mode,
             &ItemFacts {
@@ -110,7 +115,9 @@ impl LootFilter {
                 skills: &skills,
             },
             &Masteries(&masteries),
-        )
+        );
+        // The item styles' hide can only hide more, never under "Show Items (No Filter)" (module doc).
+        stock && (mode == Mode::ShowAll || !styles.hides(inv, data, item))
     }
 }
 
@@ -163,6 +170,7 @@ pub fn pick_up_nearest(
     mut requests: MessageReader<PickUpNearest>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     filter: Res<LootFilter>,
+    styles: Res<crate::item_style::ItemStyles>,
     inv: Option<Res<Inventory>>,
     data: Res<gd_game_core::data::GameData>,
     nav: Res<crate::nav::Nav>,
@@ -211,7 +219,7 @@ pub fn pick_up_nearest(
             continue;
         }
         let pass = match (&gi.item, inv.as_deref()) {
-            (Some(it), Some(inv)) => filter.passes(inv, &data.db, it, mode, loadout),
+            (Some(it), Some(inv)) => filter.passes(&styles, inv, &data, it, mode, loadout),
             _ => true,
         };
         if pass {
@@ -277,6 +285,9 @@ impl Plugin for LootFilterPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<LootFilterRequest>()
             .add_message::<PickUpNearest>()
+            .add_message::<crate::item_style::ItemStyleRequest>()
+            // Empty until the binary loads the file (`ItemStyles::load`); tests keep it so.
+            .init_resource::<crate::item_style::ItemStyles>()
             .add_systems(
                 Update,
                 (
@@ -286,6 +297,12 @@ impl Plugin for LootFilterPlugin {
                         .run_if(resource_exists::<LootFilter>),
                 )
                     .chain()
+                    .after(gd_game_core::inventory::InventorySet),
+            )
+            .add_systems(
+                Update,
+                crate::item_style::apply_requests
+                    .in_set(LootFilterStage::Apply)
                     .after(gd_game_core::inventory::InventorySet),
             )
             .add_systems(

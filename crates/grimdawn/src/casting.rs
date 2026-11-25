@@ -501,7 +501,7 @@ fn hot_slot_keys(
 /// buttons are its ([`armed_click`]).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn cast_input(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     keys: ClickKeys,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -522,7 +522,7 @@ pub fn cast_input(
     dialog: Res<gd_game::conversation::Conversation>,
     armed: Res<ArmedSlot>,
     mut out: MessageWriter<CastRequest>,
-    mut script: Local<Option<(std::time::Instant, Vec<(f32, usize)>)>>,
+    #[cfg(feature = "dev")] mut script: Local<Option<(std::time::Instant, Vec<(f32, usize)>)>>,
     (options, record, move_held, gate, hovered): (
         Res<gd_game_core::options::GameOptions>,
         Res<gd_game::hotbar::WorldCursor>,
@@ -565,8 +565,10 @@ pub fn cast_input(
     };
     // Test hook: `GD_CAST=slot@secs` casts a hotbar slot at the cursor
     // (only consulted once the player exists, so no entry is lost).
-    let tested = slot.is_none();
-    let Some(slot) = slot.or_else(|| test_cast(&mut script, &hooks)) else {
+    let tested = cfg!(feature = "dev") && slot.is_none();
+    #[cfg(feature = "dev")]
+    let slot = slot.or_else(|| test_cast(&mut script, &hooks));
+    let Some(slot) = slot else {
         return;
     };
     // The Move skill on the right button only walks (`crate::player`'s `click_to_move`;
@@ -637,6 +639,7 @@ pub fn cast_input(
         point = record.point.unwrap_or(tf.translation);
     }
     // Test hook `GD_CAST_AT=x,z`: hook casts aim at that ground point.
+    #[cfg(feature = "dev")]
     if tested && let Some(Vec2 { x, y: z }) = hooks.gameplay.cast_at {
         target = None;
         point = Vec3::new(
@@ -1023,7 +1026,7 @@ pub(crate) struct DropDecals(
 /// patchy decals, engine behavior.
 #[allow(clippy::too_many_arguments)]
 fn drop_decals(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     nav: Res<gd_game::nav::Nav>,
     coll: Res<crate::collision::WorldCollision>,
@@ -1059,7 +1062,11 @@ fn drop_decals(
     }
     for (e, d, tf, grow, tilt) in &new {
         commands.entity(e).try_despawn();
-        if !options.flag("detailObjects") || hooks.render.no_decals {
+        if !options.flag("detailObjects") {
+            continue;
+        }
+        #[cfg(feature = "dev")]
+        if hooks.render.no_decals {
             continue;
         }
         if !records.contains_key(&*d.0) {

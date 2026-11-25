@@ -94,7 +94,9 @@ pub fn sort_key(inv: &Inventory, tags: &gd_formats::text::TagTable, item: &Item)
     })
 }
 
-/// Sort bag `b` (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack` → `InventorySack::Sort`).
+/// Auto-sort of bag `b` (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack` → `InventorySack::Sort`,
+/// layouts and retry: `gd_formats::inventory` module doc). Each press starts one layout further than the last
+/// one of its button ([`Inventory::sort_presses`]), so successive presses cycle the four layouts.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct SortBag(pub usize);
 
@@ -281,8 +283,13 @@ pub struct Inventory {
     /// sack; a new character has only the main bag, the game adds bags by
     /// quest).
     pub bags: Vec<Sack<Item>>,
-    /// The extra bag shown beside the main one (index into `bags`, ≥ 1).
+    /// The extra bag shown beside the main one (index into `bags`, ≥ 1; with no extra bag there is none and the
+    /// window shows the main bag alone, `CharacterWindow::RenderInventory`).
     pub bag_tab: usize,
+    /// Sorts done by the main bag's / the extra bags' auto-sort button this session ([`SortBag`]): the layout
+    /// the next one starts with (`CharacterWindow.sortCountPrimary` / `sortCountSecondary`, zeroed when the
+    /// in-game UI is built, never saved; one count for every extra bag).
+    pub sort_presses: [u32; 2],
     pub held: Option<Item>,
     /// Where the held item was picked up from, with the item itself: used only while that item is still the
     /// held one ([`Inventory::cancel_held`]).
@@ -409,6 +416,7 @@ impl Inventory {
             // Main bag 12×8, extra bags 8×8 (`UICharWindowInventorySack*Dims` / 32).
             bags: vec![Sack::new(12, 8, true)],
             bag_tab: 1,
+            sort_presses: [0; 2],
             held: None,
             held_from: None,
             destroying: None,

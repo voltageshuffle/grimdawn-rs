@@ -17,7 +17,7 @@ pub fn plugin(app: &mut App) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scripted_mouse(
+pub(super) fn scripted_mouse(
     hooks: Res<Hooks>,
     time: Res<Time<Real>>,
     mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,

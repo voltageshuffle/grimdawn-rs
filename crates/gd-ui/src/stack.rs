@@ -217,7 +217,7 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let hovered = super::cursor_px(&assets.hooks, win)
+    let hovered = super::cursor_px(win)
         .zip(stack.rects)
         .and_then(|(p, r)| part_at(&r, p));
     if size.x == 0
@@ -372,7 +372,6 @@ fn press_ok(stack: &mut StackWindow, split: &mut MessageWriter<gd_game::stack::S
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut stack: ResMut<StackWindow>,
     inv: Option<Res<Inventory>>,
     stash: Option<Res<gd_game_core::stash::Stash>>,
@@ -410,7 +409,7 @@ fn clicks(
     let (Ok(win), Some(rects)) = (window.single(), stack.rects) else {
         return;
     };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     if !contains(&rects.window, p) {

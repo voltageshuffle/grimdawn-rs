@@ -63,16 +63,18 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CameraShake>()
             .init_resource::<ShakeState>()
-            .add_systems(Startup, spawn_camera)
-            .add_systems(
-                PostUpdate,
-                (
-                    apply_camera.in_set(CameraSet),
-                    apply_shake.in_set(CameraSet),
-                )
-                    .chain()
-                    .before(TransformSystems::Propagate),
-            );
+            .add_systems(Startup, spawn_camera);
+        #[cfg(feature = "dev")]
+        app.add_systems(Startup, camera_hooks.after(spawn_camera));
+        app.add_systems(
+            PostUpdate,
+            (
+                apply_camera.in_set(CameraSet),
+                apply_shake.in_set(CameraSet),
+            )
+                .chain()
+                .before(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -88,11 +90,7 @@ pub fn world_projection() -> PerspectiveProjection {
     }
 }
 
-fn spawn_camera(
-    mut commands: Commands,
-    data: Res<GameData>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
-) {
+fn spawn_camera(mut commands: Commands, data: Res<GameData>) {
     let eng = data.db.get("records/game/gameengine.dbr");
     let get = |k: &str, d: f32| eng.as_ref().and_then(|r| r.f32(k)).unwrap_or(d);
     let mut cam = GameCamera {
@@ -112,19 +110,25 @@ fn spawn_camera(
         rotation: 0,
     };
     cam.reset_to_defaults();
-    // Test hooks: GD_CAM_YAW=<degrees> overrides the starting yaw, GD_CAM_DIST the starting distance (unclamped).
-    if let Some(y) = hooks.render.cam_yaw {
-        cam.yaw = y.to_radians();
-        cam.wanted_yaw = cam.yaw;
-    }
-    if let Some(d) = hooks.render.cam_dist {
-        cam.distance = d;
-    }
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(world_projection()),
         cam,
     ));
+}
+
+/// Test hooks: GD_CAM_YAW=<degrees> overrides the starting yaw, GD_CAM_DIST the starting distance (unclamped).
+#[cfg(feature = "dev")]
+fn camera_hooks(hooks: Res<gd_game_core::hooks::Hooks>, mut cams: Query<&mut GameCamera>) {
+    for mut cam in &mut cams {
+        if let Some(y) = hooks.render.cam_yaw {
+            cam.yaw = y.to_radians();
+            cam.wanted_yaw = cam.yaw;
+        }
+        if let Some(d) = hooks.render.cam_dist {
+            cam.distance = d;
+        }
+    }
 }
 
 /// `GameEngine::ExitPlayingMode` → `GameCamera::ResetToDefaults`: a session's end puts the camera back to its start

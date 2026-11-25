@@ -39,7 +39,7 @@ use gd_ui_kit::contains;
 
 #[allow(clippy::too_many_arguments)]
 pub fn illusion_clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<TradeLayout>,
@@ -52,7 +52,8 @@ pub fn illusion_clicks(
     mut capture: ResMut<UiCapture>,
     mut apply: MessageWriter<ApplyIllusions>,
     mut swap: MessageWriter<gd_game::weapon_sets::SwapWeapons>,
-    (mut tested, mut alternate): (Local<bool>, Local<Option<bool>>),
+    mut alternate: Local<Option<bool>>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     if !matches!(trade.open, Some(TradeOpen::Illusionist { .. })) {
         *alternate = None;
@@ -122,6 +123,7 @@ pub fn illusion_clicks(
     }
     // `GD_ILLUSION` (hooks.rs): once, pick the n-th look for the selected slot (`GD_ILLUSION_APPLY` also
     // applies it and closes the window).
+    #[cfg(feature = "dev")]
     if let Some(n) = hooks.items.illusion
         && let Some(s) = trade.illusion.slot
         && !trade.illusion.list.is_empty()
@@ -141,7 +143,7 @@ pub fn illusion_clicks(
         trade.version += 1;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(win) else {
         return;
     };
     trade.hover = None;

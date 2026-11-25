@@ -28,6 +28,13 @@ impl Plugin for ReclamationUiPlugin {
                 .in_set(super::UiInputSet)
                 .after(crate::skills::clicks),
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            use_spirit_guide
+                .in_set(super::UiInputSet)
+                .before(click_spirit_guide),
+        );
         super::window::add_window(app, build_box, box_clicks, |b: Res<NoPointsBox>| {
             b.open || b.rects.is_some()
         });
@@ -105,12 +112,37 @@ impl DevotionReclaimView {
 /// order (`apply_orders`).
 #[allow(clippy::too_many_arguments)]
 fn click_spirit_guide(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: crate::state::casting::ClickKeys,
     capture: Res<UiCapture>,
     data: Res<gd_game_core::data::GameData>,
     hovered: Res<crate::state::hover::Hovered>,
+    npcs: Query<&gd_render::character::Character, Without<gd_game_core::player::Player>>,
+    players: Query<(), With<gd_game_core::player::Player>>,
+    mut orders: MessageWriter<gd_game::player_orders::PlayerOrder>,
+) {
+    if players.single().is_err()
+        || capture.0
+        || keys.skips_objects()
+        || !buttons.just_pressed(MouseButton::Left)
+    {
+        return;
+    }
+    // The hover pick (one pick feeds the hover and the world clicks): a spirit guide under the cursor.
+    let Some(e) = hovered.entity else { return };
+    if npcs
+        .get(e)
+        .is_ok_and(|c| data.db.get(&c.record).is_some_and(is_spirit_guide))
+    {
+        orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
+    }
+}
+
+/// `GD_USE_SPIRIT_GUIDE` (hooks.rs): once, walks to the nearest spirit guide within 40 m as if it were clicked.
+#[cfg(feature = "dev")]
+fn use_spirit_guide(
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    data: Res<gd_game_core::data::GameData>,
     npcs: Query<
         (Entity, &GlobalTransform, &gd_render::character::Character),
         Without<gd_game_core::player::Player>,
@@ -119,39 +151,29 @@ fn click_spirit_guide(
     mut orders: MessageWriter<gd_game::player_orders::PlayerOrder>,
     mut tested: Local<bool>,
 ) {
+    if *tested || !hooks.gameplay.use_spirit_guide {
+        return;
+    }
     let Ok(tf) = players.single() else {
         return;
     };
-    let guide =
-        |c: &gd_render::character::Character| data.db.get(&c.record).is_some_and(is_spirit_guide);
-    // `GD_USE_SPIRIT_GUIDE`: the nearest within 40 m, as if clicked.
-    if !*tested && hooks.gameplay.use_spirit_guide {
-        let near = npcs
-            .iter()
-            .filter(|(_, gt, c)| gt.translation().distance(tf.translation) < 40.0 && guide(c))
-            .min_by(|a, b| {
-                a.1.translation()
-                    .distance(tf.translation)
-                    .total_cmp(&b.1.translation().distance(tf.translation))
-            });
-        if let Some((e, gt, _)) = near {
-            *tested = true;
-            info!(
-                "GD_USE_SPIRIT_GUIDE: walking to the spirit guide at {}",
-                gt.translation()
-            );
-            orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
-            return;
-        }
-    }
-    if capture.0 || keys.skips_objects() || !buttons.just_pressed(MouseButton::Left) {
-        return;
-    }
-    // The hover pick (one pick feeds the hover and the world clicks): a spirit guide under the cursor.
-    let Some(e) = hovered.entity else { return };
-    if let Ok((_, _, c)) = npcs.get(e)
-        && guide(c)
-    {
+    let near = npcs
+        .iter()
+        .filter(|(_, gt, c)| {
+            gt.translation().distance(tf.translation) < 40.0
+                && data.db.get(&c.record).is_some_and(is_spirit_guide)
+        })
+        .min_by(|a, b| {
+            a.1.translation()
+                .distance(tf.translation)
+                .total_cmp(&b.1.translation().distance(tf.translation))
+        });
+    if let Some((e, gt, _)) = near {
+        *tested = true;
+        info!(
+            "GD_USE_SPIRIT_GUIDE: walking to the spirit guide at {}",
+            gt.translation()
+        );
         orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
     }
 }
@@ -266,7 +288,6 @@ fn build_box(
 /// its base look, so a hover never rebuilds it.
 fn box_live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     pause: Res<gd_game_core::pause::GamePause>,
     state: Res<NoPointsBox>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -278,17 +299,15 @@ fn box_live(
         return;
     };
     // The game menu / Options over the box takes the pointer.
-    let hit = super::cursor_px(&hooks, win)
-        .filter(|_| !pause.menu)
-        .and_then(|p| {
-            if super::contains(&ok, p) {
-                Some(super::confirm::Hit::Yes)
-            } else if close.is_some_and(|r| super::contains(&r, p)) {
-                Some(super::confirm::Hit::Close)
-            } else {
-                None
-            }
-        });
+    let hit = super::cursor_px(win).filter(|_| !pause.menu).and_then(|p| {
+        if super::contains(&ok, p) {
+            Some(super::confirm::Hit::Yes)
+        } else if close.is_some_and(|r| super::contains(&r, p)) {
+            Some(super::confirm::Hit::Close)
+        } else {
+            None
+        }
+    });
     let look = (hit, hit.is_some() && mouse.pressed(MouseButton::Left));
     super::confirm::apply_look(root, look, &mut looks);
 }
@@ -299,7 +318,6 @@ struct BoxRoot;
 fn box_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut state: ResMut<NoPointsBox>,
     mut capture: ResMut<UiCapture>,
     data: Res<gd_game_core::data::GameData>,
@@ -313,7 +331,7 @@ fn box_clicks(
     let (Ok(win), Some((ok, close))) = (window.single(), state.rects) else {
         return;
     };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     if !super::widgets::button_pressed(&buttons) {

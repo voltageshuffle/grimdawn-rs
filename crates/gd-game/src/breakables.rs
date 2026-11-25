@@ -46,9 +46,10 @@ impl Plugin for BreakablesPlugin {
                 (
                     break_objects.in_set(BreakableStage::Break),
                     crate::levels::cull_level_members,
-                    test_break,
                 ),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(Update, test_break);
     }
 }
 
@@ -268,6 +269,7 @@ pub fn break_objects(
 }
 
 /// `GD_BREAK` (hooks.rs).
+#[cfg(feature = "dev")]
 pub fn test_break(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,

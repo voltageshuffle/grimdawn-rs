@@ -2,8 +2,10 @@
 //! and the requirement sift (the inventory data and pure moves are
 //! [`gd_game_core::inventory`]).
 use bevy::prelude::*;
-use gd_formats::inventory::{EquipSlot, Sack, slots_for_class};
+#[cfg(feature = "dev")]
+use gd_formats::inventory::EquipSlot;
 use gd_formats::inventory::{Footprint, sort_sack};
+use gd_formats::inventory::{Sack, slots_for_class};
 use gd_formats::save::item::Item;
 use gd_game_core::combat::{Combatant, Dead};
 use gd_game_core::data::GameData;
@@ -116,6 +118,8 @@ fn apply_requests(
     }
 }
 
+/// [`SortBag`]: the press's count (`CharacterWindow::OnButtonEvent` / `CharacterWindow::Update` post-increment
+/// it whatever the sort does) is the first layout tried.
 fn sort_bags(
     mut msgs: MessageReader<SortBag>,
     mut inv: ResMut<Inventory>,
@@ -125,11 +129,14 @@ fn sort_bags(
         if *b >= inv.bags.len() {
             continue;
         }
+        let button = (*b != 0) as usize;
+        let first = inv.sort_presses[button];
+        inv.sort_presses[button] = first.wrapping_add(1);
         let mut bag = std::mem::replace(&mut inv.bags[*b], Sack::new(0, 0, true));
         let tags = data.tags();
-        let sorted = sort_sack(&mut bag, |it| sort_key(&inv, &tags, it));
+        let sorted = sort_sack(&mut bag, first, |it| sort_key(&inv, &tags, it));
         inv.bags[*b] = bag;
-        if sorted {
+        if sorted.is_some() {
             inv.changed();
         }
     }
@@ -579,7 +586,7 @@ pub fn clear_fresh(mut seen: MessageReader<NewItemSeen>, mut inv: ResMut<Invento
 }
 
 pub fn init_inventory(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     epoch: Res<gd_game_core::session::SessionEpoch>,
     mut commands: Commands,
     // Option: `inv` is the existence check (this system creates it); `loaded` is absent for a new character.
@@ -658,6 +665,7 @@ pub fn init_inventory(
         }
     }
     // `GD_EQUIP` (hooks.rs).
+    #[cfg(feature = "dev")]
     if let Some(list) = hooks.items.equip.as_deref() {
         for r in list.split(';').filter(|r| !r.is_empty()) {
             let (r, left) = r.strip_suffix("@left").map_or((r, false), |r| (r, true));
@@ -682,6 +690,7 @@ pub fn init_inventory(
         }
     }
     // `GD_GIVE` (hooks.rs).
+    #[cfg(feature = "dev")]
     for g in hooks
         .items
         .give

@@ -228,7 +228,6 @@ impl OpenWindows<'_> {
 /// dispatcher's, `ui::esc_dispatcher`, which runs after this in `Update`).
 #[allow(clippy::too_many_arguments)]
 pub fn input(
-    hk: Res<gd_game_core::hooks::Hooks>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -240,43 +239,50 @@ pub fn input(
     mut save: MessageWriter<gd_game::save::SaveRequest>,
     data: Res<GameData>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
-    (time, mut hooks, mut clicks, bindings): (
-        Res<Time<Real>>,
-        Local<(bool, bool)>,
+    (mut clicks, bindings): (
         MessageReader<bevy::input::mouse::MouseButtonInput>,
         Res<super::keys::KeyBindings>,
+    ),
+    #[cfg(feature = "dev")] (hk, time, mut hooks): (
+        Res<gd_game_core::hooks::Hooks>,
+        Res<Time<Real>>,
+        Local<(bool, bool)>,
     ),
 ) {
     // The held game resets `ButtonInput` below; drain the raw messages so they do not pile up
     // (`live` reads its own copy for the pressed look). Buttons act on press, from `ButtonInput`
     // like the HUD button path.
     clicks.clear();
-    let t = time.elapsed_secs();
     // This frame's pause-key intent (the request is applied by gd-game after the UI input): the
     // input reset below reads it, the resource still holds last frame's applied value.
     let mut key = pause.key;
-    if !hooks.0 && hk.ui.game_menu.is_some_and(|s| t >= s) {
-        hooks.0 = true;
-        menu.open = true;
-        menu.confirm = match hk.ui.game_menu_confirm.as_deref() {
-            Some("exit") => Some(Confirm::Exit),
-            Some("quit") => Some(Confirm::Quit),
-            _ => None,
-        };
-        // `GD_GAME_MENU_YES`: answers Yes at once (the save is requested as for a click).
-        if hk.ui.game_menu_yes
-            && let Some(c) = menu.confirm.take()
-        {
-            save.write(gd_game::save::SaveRequest);
-            menu.leaving = Some(c);
+    // `GD_GAME_MENU` / `GD_PAUSE` (hooks.rs).
+    #[cfg(feature = "dev")]
+    {
+        let t = time.elapsed_secs();
+        if !hooks.0 && hk.ui.game_menu.is_some_and(|s| t >= s) {
+            hooks.0 = true;
+            menu.open = true;
+            menu.confirm = match hk.ui.game_menu_confirm.as_deref() {
+                Some("exit") => Some(Confirm::Exit),
+                Some("quit") => Some(Confirm::Quit),
+                _ => None,
+            };
+            // `GD_GAME_MENU_YES`: answers Yes at once (the save is requested as for a click).
+            if hk.ui.game_menu_yes
+                && let Some(c) = menu.confirm.take()
+            {
+                save.write(gd_game::save::SaveRequest);
+                menu.leaving = Some(c);
+            }
+        }
+        if !hooks.1 && hk.ui.pause.is_some_and(|s| t >= s) {
+            hooks.1 = true;
+            key = true;
+            pause_key.write(PauseKey(Some(true)));
         }
     }
-    if !hooks.1 && hk.ui.pause.is_some_and(|s| t >= s) {
-        hooks.1 = true;
-        key = true;
-        pause_key.write(PauseKey(Some(true)));
-    }
-    let cursor = window.single().ok().and_then(|w| super::cursor_px(&hk, w));
+    let cursor = window.single().ok().and_then(super::cursor_px);
     let clicked = super::widgets::button_pressed(&mouse);
     let part = cursor.filter(|_| clicked).and_then(|p| layout.part_at(p));
     // The HUD's options button is still live under the menu and opens / closes it (module doc).
@@ -687,7 +693,6 @@ fn confirm_box(ui: &mut Ui, c: Confirm, layout: &mut GameMenuLayout) {
 /// read from the raw messages ([`input`] resets `ButtonInput` while the menu holds the game).
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<GameMenuLayout>,
     mut clicks: MessageReader<bevy::input::mouse::MouseButtonInput>,
     mut pressed: Local<bool>,
@@ -705,7 +710,7 @@ fn live(
     let hover = window
         .single()
         .ok()
-        .and_then(|w| super::cursor_px(&hooks, w))
+        .and_then(super::cursor_px)
         .and_then(|p| layout.part_at(p));
     let hit = match hover {
         Some(Part::Yes) => Some(Hit::Yes),

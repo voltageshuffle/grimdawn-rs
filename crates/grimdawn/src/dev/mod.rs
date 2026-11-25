@@ -1,11 +1,11 @@
-//! Dev tools, compiled only with the `dev` feature (`cargo dev`, docs/running.md): the `GD_*` hooks are read
-//! from the environment ([`gd_game_core::hooks`]) and these exist: screenshots ([`autoshot`]), the session census
-//! ([`audit`]), exit cycles ([`exit_cycles`]), the memory audit ([`memory`]), the test arena ([`testworld`]), the character scene
-//! ([`chars`]), the effect checks ([`fx`], registered here unless `GD_NO_FX`), the model viewer (`GD_MODELS`), the
-//! frame-time log (`GD_FPS`), the per-pass GPU times (`GD_GPU_TIMES`), the path test (`GD_PATH_TEST`) and the
-//! scripted mouse ([`mouse`], `GD_MOUSE`). A build without `dev` inserts `Hooks::default()`:
-//! the hook reads left in the game's systems are inert, and the scripted test systems next to the systems they
-//! drive are gated the same way.
+//! Dev tools, compiled only with the `dev` feature (`cargo dev`, docs/running.md): the `GD_*` hooks
+//! ([`gd_game_core::hooks`], which exists only with `dev`) are read from the environment and these exist:
+//! screenshots ([`autoshot`]), the session census ([`audit`]), exit cycles ([`exit_cycles`]), the memory audit
+//! ([`memory`]), the test arena ([`testworld`]), the character scene ([`chars`]), the effect checks ([`fx`],
+//! registered here unless `GD_NO_FX`), the model viewer (`GD_MODELS`), the frame-time log (`GD_FPS`), the per-pass
+//! GPU times (`GD_GPU_TIMES`), the path test (`GD_PATH_TEST`), the scripted mouse ([`mouse`], `GD_MOUSE`) and the
+//! fixed pointer (`GD_HOVER`, [`hover_pointer`]). A build without `dev` has none of them, no hooks and no hook
+//! read: the scripted test systems next to the systems they drive are gated the same way.
 pub mod audit;
 pub mod autoshot;
 pub mod chars;
@@ -50,6 +50,26 @@ impl Plugin for DevPlugin {
         if app.world().resource::<Hooks>().render.gpu_times {
             app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
                 .add_systems(Last, gpu_times_log);
+        }
+        // After the `GD_MOUSE` script, so a set `GD_HOVER` always wins the pointer.
+        if app.world().resource::<Hooks>().ui.hover_px.is_some() {
+            app.add_systems(First, hover_pointer.after(mouse::scripted_mouse));
+        }
+    }
+}
+
+/// `GD_HOVER=x,y` (logical px): the window's cursor stands there every frame, set before the input systems
+/// (`First`, as [`mouse`]), so every pointer read (`gd_ui_kit::cursor_px`, the world hover) sees it as the OS
+/// pointer. Only a change is written: bevy_winit then tries to warp the OS pointer once (Wayland refuses and it logs
+/// one `could not set cursor position` error; the window's position stands either way).
+fn hover_pointer(
+    hooks: Res<Hooks>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let Some(p) = hooks.ui.hover_px else { return };
+    for mut win in &mut windows {
+        if win.cursor_position() != Some(p) {
+            win.set_cursor_position(Some(p));
         }
     }
 }

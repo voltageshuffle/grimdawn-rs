@@ -82,7 +82,12 @@ impl Plugin for PotionsUiPlugin {
         #[cfg(feature = "dev")]
         app.add_systems(
             Update,
-            test_hooks.before(build).in_set(gd_ui_kit::UiPlaySet),
+            (
+                test_hooks.before(build).in_set(gd_ui_kit::UiPlaySet),
+                use_cauldron
+                    .in_set(gd_ui_kit::UiInputSet)
+                    .before(click_cauldron),
+            ),
         );
         // Live: open, or still built (the closing frame despawns the root).
         super::window::add_window(
@@ -155,28 +160,26 @@ struct DescScrolled {
     inv: f32,
 }
 
-/// The hovered part: the `GD_POTION_HOVER` hook, else the topmost part under the cursor (borrowed from the
-/// layout: no copy per frame).
-fn hovered<'a>(
-    hooks: &gd_game_core::hooks::Hooks,
-    win: &Window,
-    layout: &'a PotionsLayout,
-) -> Option<Cow<'a, Part>> {
+/// The topmost part under the cursor (borrowed from the layout: no copy per frame).
+fn hovered<'a>(win: &Window, layout: &'a PotionsLayout) -> Option<Cow<'a, Part>> {
+    super::cursor_px(win).and_then(|p| {
+        layout
+            .parts
+            .iter()
+            .rev()
+            .find(|(r, _)| contains(r, p))
+            .map(|(_, h)| Cow::Borrowed(h))
+    })
+}
+
+/// The `GD_POTION_HOVER` hook's part, which wins over [`hovered`].
+#[cfg(feature = "dev")]
+fn forced(hooks: &gd_game_core::hooks::Hooks) -> Option<Cow<'static, Part>> {
     hooks
         .ui
         .potion_hover
         .clone()
         .map(|s| Cow::Owned(Part::Pick(s)))
-        .or_else(|| {
-            super::cursor_px(hooks, win).and_then(|p| {
-                layout
-                    .parts
-                    .iter()
-                    .rev()
-                    .find(|(r, _)| contains(r, p))
-                    .map(|(_, h)| Cow::Borrowed(h))
-            })
-        })
 }
 
 /// The potions window's rect (see the module docs).
@@ -682,7 +685,7 @@ fn build(
 /// list's hovered row tint, the description pane and its scroll bar thumb.
 #[allow(clippy::too_many_arguments)]
 fn live(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     open: Res<PotionWindow>,
     view: Res<PotionsView>,
@@ -699,7 +702,10 @@ fn live(
     }
     let Ok(win) = window.single() else { return };
     // The game menu / Options holds the mouse: no hover looks under it.
-    let hover = hovered(&hooks, win, &layout).filter(|_| !pause.menu);
+    let hover = hovered(win, &layout);
+    #[cfg(feature = "dev")]
+    let hover = forced(&hooks).or(hover);
+    let hover = hover.filter(|_| !pause.menu);
     for (f, mut img) in &mut frames {
         if f.down {
             continue;
@@ -754,7 +760,7 @@ fn live(
 /// `TipCanvas` with the style's delay — not drawn into the window build.
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     open: Res<PotionWindow>,
     values: Res<super::HudValues>,
@@ -777,7 +783,9 @@ fn tooltip(
         }
         return;
     }
-    let hover = hovered(&hooks, win, &layout);
+    let hover = hovered(win, &layout);
+    #[cfg(feature = "dev")]
+    let hover = forced(&hooks).or(hover);
     let same = shown.as_ref().is_some_and(|(h, v, book)| {
         h.as_ref() == hover.as_deref() && *v == open.version && *book == values.skills
     });
@@ -842,7 +850,6 @@ fn tooltip(
 pub fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
     layout: Res<PotionsLayout>,
     open: Res<PotionWindow>,
@@ -870,7 +877,7 @@ pub fn clicks(
     }
     // Esc closes the list, else the window, through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let max = layout.desc.map_or(0.0, |(_, m)| m);
@@ -1017,57 +1024,72 @@ fn press_sound(
 /// `UseObject` routes through the same order (`apply_orders`), so it opens the window too.
 #[allow(clippy::too_many_arguments)]
 fn click_cauldron(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: crate::state::casting::ClickKeys,
     capture: Res<UiCapture>,
     data: Res<GameData>,
     hovered: Res<crate::state::hover::Hovered>,
+    npcs: Query<&gd_render::character::Character, Without<gd_game_core::player::Player>>,
+    players: Query<(), With<gd_game_core::player::Player>>,
+    open: Res<PotionWindow>,
+    mut orders: MessageWriter<gd_game::player_orders::PlayerOrder>,
+) {
+    if players.single().is_err()
+        || capture.0
+        || open.open
+        || keys.skips_objects()
+        || !buttons.just_pressed(MouseButton::Left)
+    {
+        return;
+    }
+    // The hover pick (one pick feeds the hover and the world clicks): a cauldron under the cursor.
+    let Some(e) = hovered.entity else { return };
+    if npcs.get(e).is_ok_and(|c| is_cauldron(&data, c)) {
+        orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
+    }
+}
+
+fn is_cauldron(data: &GameData, c: &gd_render::character::Character) -> bool {
+    data.db
+        .get(&c.record)
+        .is_some_and(gd_game::cauldron::is_cauldron)
+}
+
+/// `GD_USE_CAULDRON` (hooks.rs): once, walks to the nearest cauldron within 40 m as if it were clicked.
+#[cfg(feature = "dev")]
+fn use_cauldron(
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    data: Res<GameData>,
     npcs: Query<
         (Entity, &GlobalTransform, &gd_render::character::Character),
         Without<gd_game_core::player::Player>,
     >,
     players: Query<&Transform, With<gd_game_core::player::Player>>,
-    open: Res<PotionWindow>,
     mut orders: MessageWriter<gd_game::player_orders::PlayerOrder>,
     mut tested: Local<bool>,
 ) {
+    if *tested || !hooks.gameplay.use_cauldron {
+        return;
+    }
     let Ok(tf) = players.single() else {
         return;
     };
-    let is_cauldron = |c: &gd_render::character::Character| {
-        data.db
-            .get(&c.record)
-            .is_some_and(gd_game::cauldron::is_cauldron)
-    };
-    // `GD_USE_CAULDRON`: the nearest within 40 m, as if clicked.
-    if !*tested && hooks.gameplay.use_cauldron {
-        let near = npcs
-            .iter()
-            .filter(|(_, gt, c)| gt.translation().distance(tf.translation) < 40.0 && is_cauldron(c))
-            .min_by(|a, b| {
-                a.1.translation()
-                    .distance(tf.translation)
-                    .total_cmp(&b.1.translation().distance(tf.translation))
-            });
-        if let Some((e, gt, _)) = near {
-            *tested = true;
-            info!(
-                "GD_USE_CAULDRON: walking to the cauldron at {}",
-                gt.translation()
-            );
-            orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
-            return;
-        }
-    }
-    if capture.0 || open.open || keys.skips_objects() || !buttons.just_pressed(MouseButton::Left) {
-        return;
-    }
-    // The hover pick (one pick feeds the hover and the world clicks): a cauldron under the cursor.
-    let Some(e) = hovered.entity else { return };
-    if let Ok((_, _, c)) = npcs.get(e)
-        && is_cauldron(c)
-    {
+    let near = npcs
+        .iter()
+        .filter(|(_, gt, c)| {
+            gt.translation().distance(tf.translation) < 40.0 && is_cauldron(&data, c)
+        })
+        .min_by(|a, b| {
+            a.1.translation()
+                .distance(tf.translation)
+                .total_cmp(&b.1.translation().distance(tf.translation))
+        });
+    if let Some((e, gt, _)) = near {
+        *tested = true;
+        info!(
+            "GD_USE_CAULDRON: walking to the cauldron at {}",
+            gt.translation()
+        );
         orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
     }
 }

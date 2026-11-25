@@ -13,15 +13,21 @@ use gd_ui::state::trade::{Panel, Trade};
 /// `gd_game::reroll::apply_reroll` runs it and the item comes back as a
 /// `gd_game::crafting::SlotReturn`.
 pub fn reroll(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<Trade>,
     mut requests: MessageWriter<gd_game::reroll::RerollRequest>,
-    mut stage: MessageWriter<gd_game::crafting::StageItem>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] (hooks, mut stage, mut tested): (
+        Res<gd_game_core::hooks::Hooks>,
+        MessageWriter<gd_game::crafting::StageItem>,
+        Local<bool>,
+    ),
 ) {
-    let test = hooks.items.reroll.clone();
+    #[cfg(feature = "dev")]
+    let test = hooks.items.reroll.is_some();
+    #[cfg(not(feature = "dev"))]
+    let test = false;
     // `GD_REROLL`: put the first bag item into the slot and press the button.
-    if let Some(k) = &test
+    #[cfg(feature = "dev")]
+    if let Some(k) = &hooks.items.reroll
         && !*tested
         && matches!(
             trade.open,
@@ -57,9 +63,5 @@ pub fn reroll(
     let (Some(kind), Some(item)) = (kind, trade.slot.take()) else {
         return;
     };
-    requests.write(gd_game::reroll::RerollRequest {
-        item,
-        kind,
-        test: test.is_some(),
-    });
+    requests.write(gd_game::reroll::RerollRequest { item, kind, test });
 }

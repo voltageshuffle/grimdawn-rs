@@ -84,14 +84,10 @@ pub fn contains(r: &gd_formats::ui::Rect, p: Vec2) -> bool {
     p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h
 }
 
-/// The pointer in physical px, `None` while it is outside the window: `GD_HOVER` (hooks.rs) stands in for the mouse.
-/// The one pointer read of every window; do not read `Window::cursor_position` beside it.
-pub fn cursor_px(hooks: &gd_game_core::hooks::Hooks, win: &Window) -> Option<Vec2> {
-    hooks
-        .ui
-        .hover_px
-        .or(win.cursor_position())
-        .map(|c| c * win.scale_factor())
+/// The pointer in physical px, `None` while it is outside the window. The one pointer read of every window; do not
+/// read `Window::cursor_position` beside it. (`GD_HOVER` sets the window's cursor in dev builds, grimdawn `dev`.)
+pub fn cursor_px(win: &Window) -> Option<Vec2> {
+    win.cursor_position().map(|c| c * win.scale_factor())
 }
 
 /// [`spawn_root`] for an overlay rebuilt every frame: stamped with the frame it was spawned ([`RootFrame`], [`retire_roots`]).
@@ -283,7 +279,6 @@ pub struct UiAssets<'w> {
     pub images: ResMut<'w, Assets<Image>>,
     pub fonts: ResMut<'w, FontCache>,
     pub font_assets: ResMut<'w, Assets<Font>>,
-    pub hooks: Res<'w, gd_game_core::hooks::Hooks>,
     options: Option<Res<'w, gd_game_core::options::GameOptions>>,
     scale: Res<'w, state::settings::UiScaleOption>,
 }
@@ -317,7 +312,6 @@ impl UiAssets<'_> {
             images: &mut self.images,
             fonts: &mut self.fonts,
             font_assets: &mut self.font_assets,
-            hooks: &self.hooks,
             classic_hud: classic(self.options.as_deref()),
             s,
             inv,
@@ -374,8 +368,6 @@ pub struct Ui<'a, 'w, 's> {
     pub images: &'a mut Assets<Image>,
     pub fonts: &'a mut FontCache,
     pub font_assets: &'a mut Assets<Font>,
-    /// Hooks (`GD_REROLL` is read while building the reroll panel).
-    pub hooks: &'a gd_game_core::hooks::Hooks,
     /// `standardHUD`: the HUD's layout comes from the classic master table ([`master`]).
     pub classic_hud: bool,
     /// UI scale factor.

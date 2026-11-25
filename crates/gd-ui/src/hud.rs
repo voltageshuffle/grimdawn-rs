@@ -1259,12 +1259,11 @@ pub fn teleport_rect(ui: &mut Ui, t: gd_game::riftgates::PortalButton) -> Option
 /// button systems ([`buttons`]); [`HudLayout::covers`] is the one hit test.
 pub fn capture(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<HudLayout>,
     mut capture: ResMut<crate::state::inventory::UiCapture>,
 ) {
     let Ok(win) = window.single() else { return };
-    if let Some(p) = super::cursor_px(&hooks, win)
+    if let Some(p) = super::cursor_px(win)
         && layout.covers(p)
     {
         capture.0 = true;
@@ -1293,7 +1292,7 @@ pub fn buttons(
     mut windows: super::window::Windows,
     indicator: Res<LevelUpIndicator>,
     mut folder: ResMut<super::menufolder::MenuFolder>,
-    (hooks, time, mut fired, mut swap_hook): (
+    #[cfg(feature = "dev")] (hooks, time, mut fired, mut swap_hook): (
         Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
         Local<usize>,
@@ -1314,11 +1313,14 @@ pub fn buttons(
     use gd_game::weapon_sets::SwapWeapons;
     let keys_free = dialog.view.is_none() && !rift_map.open;
     // `GD_WEAPON_SWAP` (hooks.rs): the character window's swap button pressed at those times.
-    let swap_hook = swap_hook.get_or_insert_with(|| hooks.ui.weapon_swap.clone());
-    if let Some(i) = swap_hook.iter().position(|t| time.elapsed_secs() >= *t) {
-        swap_hook.remove(i);
-        info!("hook: weapon swap");
-        swap.write(SwapWeapons { from_window: true });
+    #[cfg(feature = "dev")]
+    {
+        let swap_hook = swap_hook.get_or_insert_with(|| hooks.ui.weapon_swap.clone());
+        if let Some(i) = swap_hook.iter().position(|t| time.elapsed_secs() >= *t) {
+            swap_hook.remove(i);
+            info!("hook: weapon swap");
+            swap.write(SwapWeapons { from_window: true });
+        }
     }
     if bindings.just_pressed(super::keys::WEAPON_SWAP, &keys) && keys_free {
         swap.write(SwapWeapons { from_window: false });
@@ -1395,6 +1397,7 @@ pub fn buttons(
         _ => {}
     };
     // `GD_HUD_CLICK` (hooks.rs): those clicks, in order.
+    #[cfg(feature = "dev")]
     while let Some((at, field)) = hooks.ui.hud_click.get(*fired)
         && time.elapsed_secs() >= *at
     {
@@ -1403,7 +1406,7 @@ pub fn buttons(
         *fired += 1;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     // The level-up indicator (a hidden button, no registered sound) acts on its release (event 1).
@@ -1694,7 +1697,6 @@ fn state_button(
 /// / options window no button hovers but the options button ([`super::gamemenu::GameMenu::blocks_hud`]).
 pub fn button_states(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     (pause, menu): (
         Res<gd_game_core::pause::GamePause>,
@@ -1702,10 +1704,7 @@ pub fn button_states(
     ),
     mut q: Query<(&HudButton, &mut ImageNode)>,
 ) {
-    let p = window
-        .single()
-        .ok()
-        .and_then(|w| super::cursor_px(&hooks, w));
+    let p = window.single().ok().and_then(super::cursor_px);
     let pressed = buttons.pressed(MouseButton::Left);
     for (b, mut img) in &mut q {
         let hover =
@@ -1864,7 +1863,7 @@ pub fn hot_slot_states(
         !same,
         false,
     );
-    let cursor = super::cursor_px(&assets.hooks, win);
+    let cursor = super::cursor_px(win);
     let state = |field: &str| vitals.hot_slots.iter().find(|s| s.field == field);
     if same {
         for (h, mut img, mut vis) in &mut highlights {

@@ -296,6 +296,7 @@ pub fn score_kills(
 
 /// `GD_KILL_ALL` (hooks.rs): the waves of the Crucible and the floors of the Shattered Realm complete without a
 /// bot that walks to every monster.
+#[cfg(feature = "dev")]
 pub fn test_kill_all(
     hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
@@ -345,7 +346,7 @@ pub fn kill_all_monsters(
     >,
     mut states: ResMut<ProxyStates>,
     mut killed: MessageWriter<MonsterKilled>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if !events
         .read()
@@ -360,6 +361,7 @@ pub fn kill_all_monsters(
         cb.life = 0.0;
         commands.entity(e).try_insert(ScriptKilled);
         // `GD_OVERKILL` (hooks.rs).
+        #[cfg(feature = "dev")]
         if hooks.gameplay.overkill {
             commands.entity(e).try_insert(crate::combat::Overkill);
         }
@@ -472,7 +474,6 @@ impl Plugin for SurvivalPlugin {
                     .before(crate::story_world::sync_actors),
                 save_score.run_if(resource_exists::<gd_game_core::session::SaveDir>),
                 autosave.run_if(resource_exists::<gd_game_core::session::SaveDir>),
-                test_kill_all,
                 score_kills.run_if(resource_exists::<GameData>),
                 // Before the scoring, so its `ScriptKilled` marks are in.
                 kill_all_monsters
@@ -480,6 +481,8 @@ impl Plugin for SurvivalPlugin {
                     .before(score_kills),
             ),
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(Update, test_kill_all);
     }
 }
 

@@ -585,10 +585,7 @@ fn draw(
 /// Moves the scrolled content and shows the hovered button's in-focus bitmap.
 #[allow(clippy::type_complexity)]
 fn live(
-    (hooks, window): (
-        Res<gd_game_core::hooks::Hooks>,
-        Query<&Window, With<PrimaryWindow>>,
-    ),
+    window: Query<&Window, With<PrimaryWindow>>,
     view: Res<AchievementsView>,
     layout: Res<AchievementsLayout>,
     mut panes: Query<(&Scrolled, &mut Node), Without<super::window::ScrollThumb>>,
@@ -618,7 +615,7 @@ fn live(
     }
     let Ok(win) = window.single() else { return };
     // The game menu / Options holds the cursor: no hover under it.
-    let p = super::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let p = super::cursor_px(win).filter(|_| !pause.menu);
     let group = p.and_then(|p| layout.group_at(p, view.scroll[0]));
     let close = p.is_some_and(|p| layout.close.is_some_and(|r| contains(&r, p)));
     for (mut vis, g) in &mut focus {
@@ -639,7 +636,6 @@ fn live(
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
     layout: Res<AchievementsLayout>,
     mut view: ResMut<AchievementsView>,
@@ -664,7 +660,7 @@ fn clicks(
     }
     // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let max = |i: usize| layout.panes[i].map_or(0.0, |p| p.max);

@@ -48,10 +48,11 @@ impl Plugin for PlayerPlugin {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(feature = "dev"), allow(unused_variables, unused_mut))]
 fn spawn_player(
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    mut scratch: Local<gd_sim::nav::PathScratch>,
+    #[cfg(feature = "dev")] (hooks, mut scratch): (
+        Res<gd_game_core::hooks::Hooks>,
+        Local<gd_sim::nav::PathScratch>,
+    ),
     mut commands: Commands,
     existing: Query<(), With<Player>>,
     start: Option<Res<PlayerStart>>,
@@ -78,13 +79,10 @@ fn spawn_player(
     let gdc = loaded.as_ref().map(|ch| &*ch.0);
     let Some(spawn) =
         gd_game::player::spawn_data(&assets.data, &rules.0, gdc, choice.female, |skills| {
-            crate::consumables::apply_account_unlocks(
-                &choice,
-                &save_dir,
-                &assets.data.db,
-                skills,
-                &hooks,
-            );
+            crate::consumables::apply_account_unlocks(&choice, &save_dir, &assets.data.db, skills);
+            // `GD_POTION_SELECT` (hooks.rs).
+            #[cfg(feature = "dev")]
+            crate::consumables::potion_select_hook(&assets.data.db, skills, &hooks);
             // `GD_LEARN` (hooks.rs): extra learned skills.
             #[cfg(feature = "dev")]
             for (rec, lv) in &hooks.gameplay.learn {
@@ -103,16 +101,20 @@ fn spawn_player(
     } = spawn;
     let profile = player.1.profile.clone();
     // `GD_WALK_TO` (hooks.rs) walks to its first point right after spawning.
-    #[allow(unused_mut)]
-    let mut path = MovePath::default();
     #[cfg(feature = "dev")]
-    if let Some(&Vec2 { x, y: z }) = hooks.gameplay.walk_to.first()
-        && let Some(p) = nav
-            .0
-            .find_path(&mut scratch, [sp.x, y, sp.z], [x, y, z], 500_000)
-    {
-        path.points = p.into_iter().skip(1).map(Vec3::from).collect();
-    }
+    let path = {
+        let mut path = MovePath::default();
+        if let Some(&Vec2 { x, y: z }) = hooks.gameplay.walk_to.first()
+            && let Some(p) = nav
+                .0
+                .find_path(&mut scratch, [sp.x, y, sp.z], [x, y, z], 500_000)
+        {
+            path.points = p.into_iter().skip(1).map(Vec3::from).collect();
+        }
+        path
+    };
+    #[cfg(not(feature = "dev"))]
+    let path = MovePath::default();
     let tf = Transform::from_xyz(sp.x, y, sp.z);
     let Some(root) = character::spawn_player(&mut commands, &mut assets, tf, female, &equipment)
     else {
@@ -237,7 +239,6 @@ pub fn pick_ground(ray: Ray3d, nav: &gd_sim::nav::NavWorld) -> Option<Vec3> {
 #[allow(clippy::too_many_arguments)]
 fn click_to_move(
     buttons: Res<ButtonInput<MouseButton>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     // The main camera only (the glow pass has a second one).
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
@@ -372,10 +373,7 @@ fn click_to_move(
     let (Ok(win), Ok((cam, cam_tf))) = (window.single(), cams.single()) else {
         return;
     };
-    // The held Move key walks to the pointer; `GD_HOVER` stands in for the OS cursor so the
-    // `GD_MOVE_KEY` hook aims the walk without a mouse.
-    let Some(cursor) = (if move_key { hooks.ui.hover_px } else { None }).or(win.cursor_position())
-    else {
+    let Some(cursor) = win.cursor_position() else {
         return;
     };
     let Ok(ray) = cam.viewport_to_world(cam_tf, cursor) else {

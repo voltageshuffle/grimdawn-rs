@@ -89,7 +89,6 @@ impl Plugin for ConsumablesPlugin {
             .add_systems(
                 Update,
                 (
-                    test_use,
                     ask_use,
                     use_items.in_set(ConsumableStage::Use),
                     apply_difficulty_unlocks,
@@ -99,6 +98,15 @@ impl Plugin for ConsumablesPlugin {
                     .before(gd_game_core::player::PlayerSet)
                     .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            test_use
+                .before(ask_use)
+                .after(gd_game_core::inventory::InventorySet)
+                .before(gd_game_core::player::PlayerSet)
+                .run_if(resource_exists::<gd_game_core::inventory::Inventory>),
+        );
     }
 }
 
@@ -448,20 +456,27 @@ pub fn account_unlocks(
         .collect()
 }
 
-/// Applies the account's unlocks to a new / loaded character, then the
-/// `GD_POTION_SELECT` choices.
+/// Applies the account's unlocks to a new / loaded character.
 pub fn apply_account_unlocks(
     choice: &gd_game_core::session::Choice,
     dir: &gd_game_core::session::SaveDir,
     db: &gd_formats::vfs::Database,
     book: &mut gd_sim::skills::SkillBook,
-    hooks: &gd_game_core::hooks::Hooks,
 ) {
     for u in account_unlocks(choice, dir) {
         if let Some(r) = db.get(&u) {
             gd_sim::potions::apply_unlock(db, book, r);
         }
     }
+}
+
+/// The `GD_POTION_SELECT` choices (hooks.rs), made right after [`apply_account_unlocks`].
+#[cfg(feature = "dev")]
+pub fn potion_select_hook(
+    db: &gd_formats::vfs::Database,
+    book: &mut gd_sim::skills::SkillBook,
+    hooks: &gd_game_core::hooks::Hooks,
+) {
     for s in &hooks.gameplay.potion_select {
         match gd_sim::potions::select(db, book, s) {
             Ok(()) => info!("potion: chose {}", s.rsplit('/').next().unwrap_or(s)),
@@ -493,6 +508,7 @@ fn add_account_unlock(
     }
 }
 
+#[cfg(feature = "dev")]
 fn test_use(
     hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,

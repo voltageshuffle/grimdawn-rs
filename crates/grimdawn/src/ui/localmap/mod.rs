@@ -185,13 +185,15 @@ impl Plugin for LocalMapPlugin {
                 )
                     .chain(),
             )
-            .add_systems(PreStartup, start_window)
             .add_systems(Update, persist_zoom);
+        #[cfg(feature = "dev")]
+        app.add_systems(PreStartup, start_window);
     }
 }
 
 /// `GD_UI_OPEN=localmap` / `worldmap` (hooks.rs): the map window at start; `GD_MAP_ZOOM` is the local map's
-/// zoom (the option `mapZoom`).
+/// zoom (the option `mapZoom`). Without them the window starts as `MapWindow::default()`.
+#[cfg(feature = "dev")]
 fn start_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let zoom = hooks.ui.map_zoom.map_or(65.0, |z| z.clamp(40.0, 135.0));
 
@@ -216,18 +218,23 @@ fn start_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) 
 fn persist_zoom(
     mut win: ResMut<MapWindow>,
     mut options: ResMut<gd_game_core::options::GameOptions>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time<Real>>,
     mut fresh: gd_game_core::session::NewSession,
     // (the stored zoom is loaded into this session's window, seconds the zoom has differed from the stored one)
     mut state: Local<(bool, f32)>,
 ) {
+    // `GD_MAP_ZOOM` pins the zoom: the stored one is neither loaded nor written.
+    #[cfg(feature = "dev")]
+    let pinned = hooks.ui.map_zoom.is_some();
+    #[cfg(not(feature = "dev"))]
+    let pinned = false;
     if fresh.begun() {
         *state = default();
     }
     if !state.0 {
         state.0 = true;
-        if hooks.ui.map_zoom.is_none() {
+        if !pinned {
             let z = options.float("mapZoom").clamp(40.0, 135.0);
             win.zoom = z;
             win.zoom_to = z;
@@ -239,7 +246,7 @@ fn persist_zoom(
         return;
     }
     state.1 += time.delta_secs();
-    if state.1 >= 1.0 && hooks.ui.map_zoom.is_none() {
+    if state.1 >= 1.0 && !pinned {
         state.1 = 0.0;
         options.set("mapZoom", gd_formats::options::Value::Float(win.zoom_to));
         gd_ui_kit::state::settings::store(&options);

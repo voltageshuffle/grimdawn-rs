@@ -42,8 +42,8 @@ pub(super) fn live(
     let size = UVec2::new(w.physical_width(), w.physical_height());
     let screen = Vec2::new(size.x as f32, size.y as f32);
     let draft = win.draft.as_ref().unwrap_or(&*options);
-    let hover = gd_ui_kit::cursor_px(&assets.hooks, w)
-        .and_then(|p| hit_at(&layout, draft, win.scroll, win.drop_top, p));
+    let hover =
+        gd_ui_kit::cursor_px(w).and_then(|p| hit_at(&layout, draft, win.scroll, win.drop_top, p));
     let apply_enabled =
         !draft.same_values(&options) || win.keys.as_ref().is_some_and(|k| k != &*bindings);
     for (look, mut img, mut vis, mut node) in &mut looks {

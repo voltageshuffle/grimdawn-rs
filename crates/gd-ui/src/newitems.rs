@@ -77,7 +77,6 @@ fn animate_new_items(
     options: Res<gd_game_core::options::GameOptions>,
     data: Res<gd_game_core::data::GameData>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     inv: Option<Res<gd_game_core::inventory::Inventory>>,
     glows: Query<(
         Entity,
@@ -129,7 +128,7 @@ fn animate_new_items(
     let cursor = window
         .single()
         .ok()
-        .and_then(|w| super::cursor_px(&hooks, w))
+        .and_then(super::cursor_px)
         .filter(|p| !blocked && !stack.covers(*p));
     let white = Handle::<Image>::default();
     for (e, g, color, mat) in &glows {

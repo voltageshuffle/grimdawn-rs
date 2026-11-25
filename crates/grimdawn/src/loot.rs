@@ -13,7 +13,9 @@
 //!
 //! The loot filter (`gd_game::loot_filter`, rules
 //! `gd_sim::items::loot_filter`) hides the labels of the items it rejects
-//! ([`FilteredOut`]: no label). The label mode ([`LabelMode`],
+//! ([`FilteredOut`]: no label); its check also applies the item styles' "hide label" (a port addition,
+//! `gd_game::item_style`). An item style recolours and tags a label ([`styled_label`]; an edit rebuilds the labels,
+//! [`restyle_labels`]). The label mode ([`LabelMode`],
 //! `gd_game::loot_filter::label_mode`, GrimDawn.exe `UIWorldDescManager::ApplyLootFilter`
 //! and the key actions 35 / 37, held flags set by `UIWorldDescManager::HandleHeldKeys`): "Show
 //! Items (No Filter)" (Left Alt) shows every label while held, "Show Items
@@ -76,6 +78,7 @@ impl Plugin for LootPlugin {
                     #[cfg(feature = "dev")]
                     test_drops,
                     dress_ground_items,
+                    restyle_labels,
                     drop_orphan_labels,
                     label_mode,
                     filter_labels,
@@ -117,7 +120,7 @@ pub struct PickMode(pub gd_sim::items::loot_filter::Mode);
 
 #[allow(clippy::too_many_arguments)]
 fn label_mode(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
     options: Res<gd_game_core::options::GameOptions>,
@@ -143,7 +146,10 @@ fn label_mode(
         });
     }
     // Test hook `GD_LABEL_MODE=all|common` holds the key.
+    #[cfg(feature = "dev")]
     let hook = hooks.items.label_mode.as_deref();
+    #[cfg(not(feature = "dev"))]
+    let hook: Option<&str> = None;
     let show_all = bindings.pressed(gd_ui_kit::keys::SHOW_ALL_ITEMS, &keys) || hook == Some("all");
     let hide_common =
         bindings.pressed(gd_ui_kit::keys::HIDE_COMMON_ITEMS, &keys) || hook == Some("common");
@@ -175,6 +181,7 @@ const FILTER_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 fn filter_labels(
     mut commands: Commands,
     filter: Option<Res<gd_game::loot_filter::LootFilter>>,
+    styles: Res<gd_game::item_style::ItemStyles>,
     (mode, pick): (Res<LabelMode>, Res<PickMode>),
     inv: Option<Res<gd_game_core::inventory::Inventory>>,
     data: Res<gd_game_core::data::GameData>,
@@ -189,7 +196,7 @@ fn filter_labels(
     for e in &new {
         commands.entity(e).try_insert((FilteredOut, Unfiltered));
     }
-    let all = filter.is_changed() || mode.is_changed() || pick.is_changed();
+    let all = filter.is_changed() || styles.is_changed() || mode.is_changed() || pick.is_changed();
     if !all && pending.is_empty() {
         return;
     }
@@ -198,7 +205,7 @@ fn filter_labels(
         let passes = |m| {
             gi.item
                 .as_ref()
-                .is_none_or(|it| filter.passes(&inv, &data.db, it, m, loadout))
+                .is_none_or(|it| filter.passes(&styles, &inv, &data, it, m, loadout))
         };
         let show = passes(mode.0);
         let can_pick = if pick.0 == mode.0 {
@@ -415,7 +422,8 @@ const LABEL_PAD: f32 = 3.0;
 const LABEL_GAP: f32 = 4.0;
 
 /// New ground items get their model and their label: the item's name in its
-/// display class's colour (`ui::character::name_color`), or the gold amount. The model is the record's `mesh`
+/// display class's colour (`ui::character::name_color`) or its item style ([`styled_label`]), or the gold amount.
+/// The model is the record's `mesh`
 /// scaled by the record's `scale` at the item's coordinates, turned as they
 /// are (`GameEngineInboundInterface::CreateItem`, no lay-flat turn:
 /// a thrown item rests in the pose its rigid body touched down in,
@@ -429,6 +437,7 @@ fn dress_ground_items(
     mut font_assets: ResMut<Assets<Font>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     ui_scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
+    styles: Res<gd_game::item_style::ItemStyles>,
     mut a: CharAssets,
 ) {
     let Ok(win) = windows.single() else { return };
@@ -456,11 +465,7 @@ fn dress_ground_items(
                     continue;
                 };
                 beam = beam_record(&a.data.db, &r, "Loop");
-                let name = gd_sim::items::naming::item_name(&fonts.tags, &r);
-                (
-                    name,
-                    gd_ui::character::name_color(&a.data.db, r.display_color_index()),
-                )
+                styled_label(&styles, &fonts.tags, idb, &a.data.db, &r)
             }
             None => {
                 // The gold pile's name (`money_label`). PORT: the name tag is the one stock `OneShot_Gold`
@@ -549,6 +554,79 @@ fn dress_ground_items(
         commands.entity(root).insert(ItemLabel {
             owner: e,
             offsets: None,
+            backgrounds,
+            lit: false,
+        });
+    }
+}
+
+/// An item's label text and colour: its name in its display class's colour (`ui::character::name_color`), restyled
+/// by the first matching item style (`gd_game::item_style`: colour, tag; a port addition).
+fn styled_label(
+    styles: &gd_game::item_style::ItemStyles,
+    tags: &gd_formats::text::TagTable,
+    idb: &gd_sim::items::ItemDb,
+    db: &gd_formats::vfs::Database,
+    r: &gd_sim::items::ResolvedItem,
+) -> (String, [f32; 3]) {
+    use gd_sim::items::item_style::{Name, StyledItem};
+    let mut name = gd_sim::items::naming::item_name(tags, r);
+    let stock = || gd_ui::character::name_color(db, r.display_color_index());
+    let styled = StyledItem::new(r, idb.get(&r.item.base_name), Name::Shown(&name));
+    let Some(style) = styles.style(&styled) else {
+        return (name, stock());
+    };
+    let color = style.rgb().unwrap_or_else(stock);
+    style.apply_tag(&mut name);
+    (name, color)
+}
+
+/// An item-styles edit (`gd_game::item_style::ItemStyles` changed) builds the items' labels again in their new
+/// style, keeping their stacking offsets (gold piles keep theirs). Runs on the edit only, never per frame.
+#[allow(clippy::too_many_arguments)]
+fn restyle_labels(
+    mut commands: Commands,
+    styles: Res<gd_game::item_style::ItemStyles>,
+    labels: Query<(Entity, &ItemLabel)>,
+    items: Query<&GroundItem>,
+    mut fonts: ResMut<gd_ui_kit::text::FontCache>,
+    mut font_assets: ResMut<Assets<Font>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    ui_scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
+    mut a: CharAssets,
+) {
+    if !styles.is_changed() || labels.is_empty() {
+        return;
+    }
+    let Ok(win) = windows.single() else { return };
+    let idb = &a.data.item_db();
+    let db = a.data.db.clone();
+    for (le, l) in &labels {
+        let Some(r) = items
+            .get(l.owner)
+            .ok()
+            .and_then(|g| g.item.as_ref())
+            .and_then(|it| gd_sim::items::resolve(idb, it))
+        else {
+            continue;
+        };
+        let (label, color) = styled_label(&styles, &fonts.tags, idb, &db, &r);
+        commands.entity(le).try_despawn();
+        let (root, backgrounds) = label_box(
+            &mut commands,
+            &mut a,
+            &mut fonts,
+            &mut font_assets,
+            (
+                ui_scale.factor(win.physical_width(), win.physical_height()),
+                1.0 / win.scale_factor(),
+            ),
+            &label,
+            Color::srgb(color[0], color[1], color[2]),
+        );
+        commands.entity(root).insert(ItemLabel {
+            owner: l.owner,
+            offsets: l.offsets,
             backgrounds,
             lit: false,
         });
@@ -858,7 +936,6 @@ fn animate_offset(prev: Option<(f32, f32)>, stacked: f32, dt: f32) -> (f32, f32)
 /// cursor, [`model_under`]).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn place_labels(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     (mut hovered, mut listed): (ResMut<HoveredLabel>, ResMut<ListedLabels>),
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
@@ -958,7 +1035,7 @@ fn place_labels(
     let cursor = windows
         .single()
         .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w).map(|p| p / w.scale_factor()));
+        .and_then(|w| gd_ui_kit::cursor_px(w).map(|p| p / w.scale_factor()));
     // No label under the cursor: the world-hovered item (`UIWorldDescManager.worldHoveredItem`) when its label is
     // drawn: in Keyboard Only the controller targeting's item (`InGameUI::Update`, after the mouse events), else
     // the item model under the cursor

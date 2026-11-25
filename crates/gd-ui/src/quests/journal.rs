@@ -177,7 +177,7 @@ pub fn pack_items(sizes: &[Vec2], width: f32, spacing: f32) -> (Vec<Vec2>, f32) 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_journal(
     mut fresh: gd_game_core::session::NewSession,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -196,20 +196,18 @@ pub(super) fn build_journal(
         Option<Res<gd_game_core::rules::CombatRules>>,
     ),
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
-    (mut built, mut picked): (
-        Local<
-            Option<(
-                UVec3,
-                QuestView,
-                QuestJournal,
-                usize,
-                u64,
-                gd_ui_kit::keys::KeyBindings,
-                u64,
-            )>,
-        >,
-        Local<bool>,
-    ),
+    mut built: Local<
+        Option<(
+            UVec3,
+            QuestView,
+            QuestJournal,
+            usize,
+            u64,
+            gd_ui_kit::keys::KeyBindings,
+            u64,
+        )>,
+    >,
+    #[cfg(feature = "dev")] mut picked: Local<bool>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
@@ -227,6 +225,7 @@ pub(super) fn build_journal(
         }
     };
     // `GD_QUEST_SELECT`: selected once it is listed.
+    #[cfg(feature = "dev")]
     if !*picked
         && let Some(name) = hooks.ui.quest_select.as_deref()
         && let Some(q) = view.quests.iter().filter(listed).find(|q| q.name == name)

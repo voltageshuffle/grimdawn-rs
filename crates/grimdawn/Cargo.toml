@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "grimdawn"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Grim Dawn reimplementation on Bevy: UI, input, audio and world streaming over gd-game and gd-render"
 license = "MIT"
@@ -10,10 +10,10 @@ license = "MIT"
 [features]
 # `cargo dev --features audit`: component / resource names for the session audit (`GD_CENSUS`, src/dev/audit.rs).
 audit = ["bevy/debug", "dev"]
-# Dev builds (`cargo dev` / `cargo dev-build`): the `GD_*` hooks are read from the environment and the dev tools
-# (`src/dev/`: screenshots, test scenes, census, exit cycles, frame-time log) and scripted test systems exist.
-# A build without it reads no hook and has none of them.
-dev = ["gd-audio/dev", "gd-game/dev", "gd-render/dev", "gd-ui/dev"]
+# Dev builds (`cargo dev` / `cargo dev-build`): the `GD_*` hooks (gd-game-core `hooks`) are read from the environment
+# and the dev tools (`src/dev/`: screenshots, test scenes, census, exit cycles, frame-time log) and scripted test
+# systems exist. A build without it has no hook type, no hook read and none of them.
+dev = ["gd-audio/dev", "gd-game/dev", "gd-render/dev", "gd-ui/dev", "gd-world/dev"]
 # `cargo dev --features profile`: Chrome-trace system spans; `GD_FPS` for frame times (docs/running.md).
 profile = ["bevy/trace_chrome", "dev"]
 
@@ -21,17 +21,17 @@ profile = ["bevy/trace_chrome", "dev"]
 anyhow = "1.0.104"
 # The render feature set is gd-render's, the audio one gd-audio's.
 bevy = { version = "0.20", default-features = false, features = ["custom_cursor"] }
-gd-audio = { path = "../gd-audio", version = "0.1.0" }
-gd-formats = { path = "../gd-formats", version = "0.1.0" }
-gd-game = { path = "../gd-game", version = "0.1.0" }
-gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
-gd-render = { path = "../gd-render", version = "0.1.0" }
-gd-rules = { path = "../gd-rules", version = "0.1.0" }
-gd-sim = { path = "../gd-sim", version = "0.1.0" }
-gd-story = { path = "../gd-story", version = "0.1.0" }
-gd-ui = { path = "../gd-ui", version = "0.1.0" }
-gd-ui-kit = { path = "../gd-ui-kit", version = "0.1.0" }
-gd-world = { path = "../gd-world", version = "0.1.0" }
+gd-audio = { path = "../gd-audio" }
+gd-formats = { path = "../gd-formats" }
+gd-game = { path = "../gd-game" }
+gd-game-core = { path = "../gd-game-core" }
+gd-render = { path = "../gd-render" }
+gd-rules = { path = "../gd-rules" }
+gd-sim = { path = "../gd-sim" }
+gd-story = { path = "../gd-story" }
+gd-ui = { path = "../gd-ui" }
+gd-ui-kit = { path = "../gd-ui-kit" }
+gd-world = { path = "../gd-world" }
 libc = "0.2"
 parking_lot = "0.12"
 # The render adapters the options Video tab lists (`render_devices`) and the launch adapter choice in `main`;

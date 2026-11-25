@@ -1061,14 +1061,14 @@ impl Above<'_> {
 /// Clicks on the skills window (runs after the inventory's, before movement).
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut panels: ResMut<super::UiPanels>,
     (layout, above): (Res<SkillLayout>, Above),
     mut capture: ResMut<UiCapture>,
-    time: Res<Time>,
-    mut script: Local<Option<Vec<gd_game_core::hooks::Click>>>,
+    #[cfg(feature = "dev")] time: Res<Time>,
+    #[cfg(feature = "dev")] mut script: Local<Option<Vec<gd_game_core::hooks::Click>>>,
     (mut raise, mut undo, mut commit, mut refund, reclaim): (
         MessageWriter<gd_game::points::RaiseSkill>,
         MessageWriter<gd_game::points::UndoSkillPoints>,
@@ -1094,21 +1094,20 @@ pub fn clicks(
         return;
     }
     let Ok(win) = window.single() else { return };
+    let cursor = super::cursor_px(win);
+    // `GD_SKILL_HOVER` (hooks.rs) fakes the cursor, as for the tooltip.
+    #[cfg(feature = "dev")]
+    let cursor = hooks.ui.skill_hover.or(cursor);
+    let hit = cursor.map(|c| (c, super::widgets::button_pressed(&buttons)));
     // `GD_SKILL_CLICKS` (hooks.rs): physical px.
-    let script = script.get_or_insert_with(|| hooks.ui.skill_clicks.clone());
-    let scripted = gd_game_core::hooks::take_due(script, time.elapsed_secs()).map(|c| c.at);
-    let (p, clicked) = match scripted {
-        Some(p) => (p, true),
-        // `GD_SKILL_HOVER` (hooks.rs) fakes the cursor, as for the tooltip.
-        None => match hooks
-            .ui
-            .skill_hover
-            .or_else(|| super::cursor_px(&hooks, win))
-        {
-            Some(c) => (c, super::widgets::button_pressed(&buttons)),
-            None => return,
-        },
-    };
+    #[cfg(feature = "dev")]
+    let hit = gd_game_core::hooks::take_due(
+        script.get_or_insert_with(|| hooks.ui.skill_clicks.clone()),
+        time.elapsed_secs(),
+    )
+    .map(|c| (c.at, true))
+    .or(hit);
+    let Some((p, clicked)) = hit else { return };
     let Some(wr) = layout.window else { return };
     if !contains(&wr, p) || above.covers(p) {
         return;
@@ -1179,10 +1178,11 @@ type TipKey = (
 );
 
 /// Hover tooltip of a skill button (`GenerateUISkillText`, see `gd_sim::skill_tooltip`), shown through the shared
-/// [`super::tip::TipCanvas`] so hovering does not rebuild the window. `GD_SKILL_HOVER` (hooks.rs, physical px) fakes the cursor.
+/// [`super::tip::TipCanvas`] so hovering does not rebuild the window. `GD_SKILL_HOVER` (hooks.rs, physical px) fakes
+/// the cursor.
 #[allow(clippy::too_many_arguments)]
 pub fn tooltip(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     panels: Res<super::UiPanels>,
     (layout, above): (Res<SkillLayout>, Above),
@@ -1204,11 +1204,10 @@ pub fn tooltip(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let cursor = hooks
-        .ui
-        .skill_hover
-        .or_else(|| super::cursor_px(&hooks, win))
-        .filter(|p| !above.covers(*p));
+    let cursor = super::cursor_px(win);
+    #[cfg(feature = "dev")]
+    let cursor = hooks.ui.skill_hover.or(cursor);
+    let cursor = cursor.filter(|p| !above.covers(*p));
 
     let hover = match (&layout, cursor) {
         (l, Some(p)) if panels.skills => l.hits.iter().find_map(|(h, r)| match h {

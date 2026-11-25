@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gd-formats"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Readers for Grim Dawn data formats"
 license = "MIT"

@@ -2,8 +2,12 @@
 resolver = "3"
 members = ["crates/*"]
 
-# The Grim Dawn version the port targets: release titles and notes read it (scripts/release-notes); the README
-# names the same version. Bump both when porting to a new game version (docs/updating.md).
+# One version for every crate of the port: the release tag is `v<version>` (docs/running.md, Releases).
+[workspace.package]
+version = "0.1.2"
+
+# The Grim Dawn version the port targets: release titles and notes (scripts/release-notes) read it; the README names
+# the same version. Bump both when porting to a new game version (docs/updating.md).
 [workspace.metadata.grimdawn]
 game-version = "1.3.1.2"
 

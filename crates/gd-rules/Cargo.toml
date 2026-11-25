@@ -2,11 +2,11 @@ lints.workspace = true
 
 [package]
 name = "gd-rules"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Grim Dawn's pure rules leaf: equations, game mode, factions and the engine RNG, shared by gd-sim and gd-story"
 license = "MIT"
 
 [dependencies]
 anyhow = "1.0.104"
-gd-formats = { path = "../gd-formats", version = "0.1.0" }
+gd-formats = { path = "../gd-formats" }

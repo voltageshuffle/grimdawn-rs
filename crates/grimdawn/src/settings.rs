@@ -14,7 +14,6 @@
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use gd_ui_kit::state::settings::{UiScaleOption, path};
-use std::path::PathBuf;
 
 pub struct SettingsPlugin;
 
@@ -28,16 +27,19 @@ impl Plugin for SettingsPlugin {
 
 fn load(
     mut commands: Commands,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut grass: ResMut<gd_render::render::grass::GrassQuality>,
     mut data: ResMut<gd_game_core::data::GameData>,
 ) {
+    // `GD_OPTIONS` (hooks.rs): another options file.
+    #[cfg(feature = "dev")]
     let file = hooks
         .session
         .options_file
         .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(path);
+        .map_or_else(path, std::path::PathBuf::from);
+    #[cfg(not(feature = "dev"))]
+    let file = path();
 
     match std::fs::read_to_string(&file) {
         Ok(text) => {
@@ -86,7 +88,7 @@ fn apply_language(
 /// deferred renderer (`GraphicsEngine::BuildDeviceSettings` zeroes the sample count, `render/post.rs`); the options this port does not use keep their file lines (`gd_game_core::options`). Elsewhere: `lightingQuality` (`render/light_rig.rs`, `render/point_shadow.rs`, `render/env.rs`), `detailObjects` (decals: `decal.rs`, `casting.rs`), `ambientocclusion` (`render/post.rs`), `hdrLighting` / `advancedEffects` (`render/env.rs`), `reflectionQuality` (the water's planar reflection, `render/reflection.rs`), `uiScale` ([`apply_ui_scale`]). PORT: with no options file the engine defaults apply on frame 1 (`GameOptions` is default-initialized), so the first run is fullscreen at `screenMode` 0 with the resolution auto-detected from the effective primary monitor ([`primary_monitor`], engine parity), not a windowed placeholder; screenshot runs and `GD_RES` keep their window.
 fn apply_video(
     options: Option<Res<GameOptions>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
     monitors: Query<(
         Entity,
@@ -100,6 +102,8 @@ fn apply_video(
         return;
     };
     apply_quality(&options, &mut grass);
+    // `GD_SHOT` (hooks.rs): a screenshot run keeps the window as `main` made it.
+    #[cfg(feature = "dev")]
     if hooks.shot.path.is_some() {
         return;
     }
@@ -132,11 +136,16 @@ fn apply_video(
             continue;
         }
         let mode = window_mode(screen_mode);
+        // `GD_RES` (hooks.rs) keeps its size.
+        #[cfg(feature = "dev")]
+        let keep_size = hooks.render.res.is_some();
+        #[cfg(not(feature = "dev"))]
+        let keep_size = false;
         if w.mode != mode {
             w.mode = mode;
         }
         if mode == bevy::window::WindowMode::Windowed
-            && hooks.render.res.is_none()
+            && !keep_size
             && let Some((width, height)) = size
             && w.resolution.physical_size() != UVec2::new(width, height)
         {

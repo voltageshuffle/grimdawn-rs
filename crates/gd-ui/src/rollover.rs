@@ -220,7 +220,7 @@ fn button_tip(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    let cursor = super::cursor_px(&assets.hooks, win);
+    let cursor = super::cursor_px(win);
     let hovered = if map.world_shown(&rift) {
         cursor.and_then(|p| view.button_at(p))
     } else if map.local_shown(&rift) {
@@ -796,7 +796,7 @@ fn push_wrapped(
 
 #[allow(clippy::too_many_arguments)]
 fn hud_rollover(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -873,11 +873,18 @@ fn hud_rollover(
     );
     // The teleport button shown (none: no button to hover).
     let shown_teleport = values.teleport.map(super::hud::teleport_field);
-    let test = hooks.ui.hud_hover.as_deref();
+    // `GD_HUD_HOVER` / `GD_SHEET_HOVER` (hooks.rs): the HUD field / sheet row or button to hover.
+    #[cfg(feature = "dev")]
+    let (test, sheet_hover) = (
+        hooks.ui.hud_hover.as_deref(),
+        hooks.ui.sheet_hover.as_deref(),
+    );
+    #[cfg(not(feature = "dev"))]
+    let (test, sheet_hover): (Option<&str>, Option<&str>) = (None, None);
     let mut hit = None;
     // A HUD rect hovers only while no registered window blocker / button is in front of it (the press's
     // own test, `widgets::frontmost`, as `hud::buttons`).
-    let cursor_p = super::cursor_px(&hooks, win);
+    let cursor_p = super::cursor_px(win);
     let front = cursor_p.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
     for (field, roll, key, key2) in BUTTONS {
@@ -1080,7 +1087,7 @@ fn hud_rollover(
             && let Some(p) = (if test == Some("equipSwap1LeftButton") {
                 Some(Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5))
             } else {
-                super::cursor_px(&hooks, win)
+                super::cursor_px(win)
             })
             .filter(|p| super::contains(&r, *p))
         {
@@ -1103,7 +1110,7 @@ fn hud_rollover(
     // (`reagentDepositRollover`), `CharacterWindow::HandleMouseEvent` (mode 2 at the cursor).
     // `GD_SHEET_HOVER` also takes `invSortButton1|invSortButton2|reagentDepositButton`.
     let centre = |r: &URect| Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5);
-    let test_button = match hooks.ui.sheet_hover.as_deref() {
+    let test_button = match sheet_hover {
         Some("invSortButton1") => layout.sort_buttons.first().map(|b| centre(&b.1)),
         Some("invSortButton2") => layout.sort_buttons.get(1).map(|b| centre(&b.1)),
         Some("reagentDepositButton") => layout.reagent_button.as_ref().map(centre),
@@ -1111,7 +1118,7 @@ fn hud_rollover(
     };
     if hit.is_none()
         && panels.character
-        && let Some(p) = test_button.or(super::cursor_px(&hooks, win))
+        && let Some(p) = test_button.or(super::cursor_px(win))
     {
         let over = |r: &URect| super::contains(r, p);
         // The hovered button's `bitmapNameInFocus` (`ButtonStatic::Render`); the
@@ -1147,17 +1154,14 @@ fn hud_rollover(
     // [`sheet_lines`]; mode 2 at the cursor like the window's other rollovers).
     if hit.is_none()
         && panels.character
-        && let Some(p) = hooks
-            .ui
-            .sheet_hover
-            .as_deref()
+        && let Some(p) = sheet_hover
             .and_then(|f| {
                 layout
                     .sheet_rows(&panels.sheet_scroll)
                     .find(|(_, _, k)| k.ends_with(f))
                     .map(|(r, _, _)| Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5))
             })
-            .or(super::cursor_px(&hooks, win))
+            .or(super::cursor_px(win))
         && let Some((_, roll, key)) = layout
             .sheet_rows(&panels.sheet_scroll)
             .find(|(r, _, _)| super::contains(r, p))
@@ -1195,8 +1199,7 @@ fn hud_rollover(
     if hit.is_none()
         && let Some((r, path)) = map.legend_rollover(&rift)
     {
-        let p =
-            super::cursor_px(&hooks, win).unwrap_or(Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5));
+        let p = super::cursor_px(win).unwrap_or(Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5));
         hit = Some((
             Some(path),
             Line1::Key(String::new(), String::new()),
@@ -1209,7 +1212,7 @@ fn hud_rollover(
     if hit.is_none()
         && let (Some(tip), Some(ir)) = (&conv.faction_tip, dialog.icon)
         && conv.view.is_some()
-        && let Some(p) = super::cursor_px(&hooks, win)
+        && let Some(p) = super::cursor_px(win)
         && super::contains(&ir, p)
         && let Some(rec) = ui.record(super::dialog::RECORD)
     {
@@ -1228,7 +1231,7 @@ fn hud_rollover(
     // window widgets' rollovers (mode 2).
     if hit.is_none()
         && let Some(r) = trade_layout.search
-        && let Some(p) = super::cursor_px(&hooks, win)
+        && let Some(p) = super::cursor_px(win)
         && super::contains(&r, p)
     {
         let (master, field) = match &trade.open {
@@ -1266,7 +1269,7 @@ fn hud_rollover(
         && let Some(p) = (if test == Some("buyTabButton") {
             Some(Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5))
         } else {
-            super::cursor_px(&hooks, win)
+            super::cursor_px(win)
         })
         .filter(|p| super::contains(&r, *p))
         && let Some(cost) = stash
@@ -1298,7 +1301,7 @@ fn hud_rollover(
     // The factions window's booster marks and large bar (`factions.rs`: lines built with the window; mode 3 at the
     // pointer, `FactionsWindow::PlaceRollover`).
     if hit.is_none()
-        && let Some((part, p)) = super::factions::hovered(&factions, &faction_view, &hooks, win)
+        && let Some((part, p)) = super::factions::hovered(&factions, &faction_view, win)
         && let Some(lines) = factions.tip(part).filter(|l| !l.is_empty())
         && let Some(roll) = ui
             .record(super::factions::RECORD)
@@ -1309,7 +1312,7 @@ fn hud_rollover(
     // The loot filter window's checkboxes and Defaults button: their `...Info` text in the default rollover style
     // (`lootfilter.rs` only finds the tag; the window is this one).
     if hit.is_none()
-        && let Some(p) = super::cursor_px(&hooks, win)
+        && let Some(p) = super::cursor_px(win)
         && let Some(tag) = loot.tip_tag(p)
         && ui.fonts.tags.get(&tag).is_some()
     {

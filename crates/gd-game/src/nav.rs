@@ -107,7 +107,7 @@ pub fn straight_move_point(nav: &gd_sim::nav::NavWorld, from: Vec3, to: Vec3) ->
 pub struct NavObstacle(pub Vec<Obstacle>);
 
 pub fn sync_obstacles(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut nav: ResMut<Nav>,
     added: Query<(Entity, &NavObstacle), Changed<NavObstacle>>,
     mut removed: RemovedComponents<NavObstacle>,
@@ -116,6 +116,7 @@ pub fn sync_obstacles(
         nav.0.set_obstacles(e.to_bits(), Vec::new());
     }
     // `GD_NO_OBSTACLES=1` (debug): ignore them.
+    #[cfg(feature = "dev")]
     if hooks.gameplay.no_obstacles {
         return;
     }

@@ -48,8 +48,6 @@ impl Plugin for DeathPlugin {
         app.add_systems(
             Update,
             (
-                test_die,
-                test_god,
                 on_death
                     .run_if(resource_exists::<PlayerProgress>)
                     .run_if(resource_exists::<CombatRules>)
@@ -61,6 +59,14 @@ impl Plugin for DeathPlugin {
                     .before(crate::player::rebuild_profile),
             )
                 .chain()
+                .after(gd_game_core::player::PlayerSet),
+        );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            (test_die, test_god)
+                .chain()
+                .before(on_death)
                 .after(gd_game_core::player::PlayerSet),
         );
     }
@@ -231,6 +237,7 @@ pub fn use_grave(
 }
 
 /// `GD_DIE` / `GD_GOD` (hooks.rs).
+#[cfg(feature = "dev")]
 pub fn test_god(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut players: Query<&mut gd_game_core::combat::Combatant, (With<Player>, Without<Dead>)>,
@@ -255,6 +262,7 @@ pub fn test_god(
 
 /// `GD_DIE=<secs>` (hooks.rs): the player dies once per session, that long into play, through the one death path
 /// (`combat::kill_me`).
+#[cfg(feature = "dev")]
 pub fn test_die(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,

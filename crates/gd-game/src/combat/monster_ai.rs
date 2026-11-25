@@ -828,6 +828,7 @@ pub(super) fn monster_ai(
 /// `GD_AUTO_FIGHT` (hooks.rs): a character [`Side::Player`] calls a foe (an [`super::Allied`] monster, a Crucible
 /// defense turret or a friendly guard, is none), attacked as with the button held (every frame re-arms the
 /// [`crate::player_orders::PrimaryUse`]).
+#[cfg(feature = "dev")]
 pub(super) fn auto_fight(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut players: Query<

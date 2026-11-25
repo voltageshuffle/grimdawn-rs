@@ -378,14 +378,8 @@ pub const SSAO_SCALE: f32 = 0.015;
 
 impl GammaOut {
     /// `cam_distance`: eye to camera target (the depth of field's focus). `video`: the `fog`,
-    /// `depthOfField` and `hdrLighting` options (`GD_FOG=1` forces the fog on, `GD_DOF=0` the depth
-    /// of field off).
-    pub fn from_ambiance(
-        a: &super::env::Ambiance,
-        cam_distance: f32,
-        hooks: &gd_game_core::hooks::RenderHooks,
-        video: VideoOptions,
-    ) -> Self {
+    /// `depthOfField` and `hdrLighting` options.
+    pub fn from_ambiance(a: &super::env::Ambiance, cam_distance: f32, video: VideoOptions) -> Self {
         let (b, adj) = (a.bloom, a.adjust);
         let bloom_on = b.x > 0.0 && b.y > 0.25;
         let k = b.x.clamp(0.0, 1.0);
@@ -393,7 +387,7 @@ impl GammaOut {
             adj.x != 0.0 || adj.y != 0.0 || adj.z != 0.0 || a.tint.cmplt(Vec3::ONE).any();
         // RenderFinalScene: the fog pass needs the option (`GraphicsMTRenderer.fogEnabled`)
         // and a depth or height density > 0.
-        let fog_on = (video.fog || hooks.fog) && (a.depth_fog.z > 0.0 || a.height_fog.z > 0.0);
+        let fog_on = video.fog && (a.depth_fog.z > 0.0 || a.height_fog.z > 0.0);
         // SetDepthFogParams / SetHeightFogParams store 1 / (end − start).
         let inv = |f: Vec3| if f.y != f.x { 1.0 / (f.y - f.x) } else { 0.0 };
         Self {
@@ -413,11 +407,7 @@ impl GammaOut {
                 cam_distance + DOF_DISTANCE,
                 DOF_RANGE,
                 0.0,
-                if hooks.no_dof || !video.depth_of_field {
-                    0.0
-                } else {
-                    1.0
-                },
+                if !video.depth_of_field { 0.0 } else { 1.0 },
             ),
             hdr: Vec4::new(if video.hdr { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
             // zFar: the scene camera's far plane (`ApplySSAO`'s a4 = `GraphicsScene.farPlane`).
@@ -1809,8 +1799,9 @@ fn setup_glow(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<GlowComposite>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
+    #[cfg(feature = "dev")]
     if hooks.render.no_glow {
         return;
     }

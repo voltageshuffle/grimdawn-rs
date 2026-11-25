@@ -717,7 +717,7 @@ fn close_service(
 #[allow(clippy::too_many_arguments)]
 pub fn run_services(
     mut requests: MessageReader<ServiceRequest>,
-    mut scratch: Local<gd_sim::nav::PathScratch>,
+    #[cfg(feature = "dev")] mut scratch: Local<gd_sim::nav::PathScratch>,
     mut answers: MessageWriter<ServiceAnswer>,
     mut visit: ResMut<ServiceVisit>,
     (mut markets, mut timers, time, session): (
@@ -749,11 +749,15 @@ pub fn run_services(
         With<gd_game_core::player::Player>,
     >,
     mut says: MessageWriter<NpcSay>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    nav: Res<crate::nav::Nav>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] nav: Res<crate::nav::Nav>,
     // `GD_TRADE`: (opened, seconds the player has been in the world), per session.
-    (mut hook, mut fresh): (Local<(bool, f32)>, gd_game_core::session::NewSession),
+    #[cfg(feature = "dev")] (mut hook, mut fresh): (
+        Local<(bool, f32)>,
+        gd_game_core::session::NewSession,
+    ),
 ) {
+    #[cfg(feature = "dev")]
     if fresh.begun() {
         *hook = Default::default();
     }
@@ -771,9 +775,11 @@ pub fn run_services(
     // `GD_TRADE` (hooks.rs): open the nearest service NPC of the kind (or whose record contains the text) within
     // 40 m once, 3 s after the player is in the world: the UI that takes the answer is built after the loading
     // screen, and an answer sent before it is lost.
+    #[cfg(feature = "dev")]
     if hooks.items.trade.is_some() {
         hook.1 += time.delta_secs();
     }
+    #[cfg(feature = "dev")]
     if let Some(kind) = &hooks.items.trade
         && !hook.0
         && hook.1 >= 3.0

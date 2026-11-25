@@ -43,13 +43,16 @@ Highlights; the module doc comments are the reference:
 
 ### Added beyond the engine
 - `showFPS` overlay and `maxFPS` frame limiter — the engine has neither.
-- Dev-only verification: `GD_*` hooks, the headless `TestGame` harness
+- Dev-only verification: `GD_*` hooks (only in `dev` builds), the headless `TestGame` harness
 - `gd-tools`: mod-aware record/story inspection (`--mod`, `--diff`) and `<arc>:<entry>` map reading,
   without extracting archives.
+- Item styles: user rules (Grim Raynbow-like) that recolour and tag item names on ground labels and tooltips, or
+  hide labels; edited on the loot filter window's Item Styles page, stored in `Settings/itemstyles.txt`.
 
 ## Playing
 You need Grim Dawn **1.3.1.2** installed (Steam or GOG, with whichever expansions you own) and a GPU with
-Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the game's folder.
+Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the game's folder; it warns (log and
+main menu) when the install is another version.
 
 ### From a GitHub release
 1. Download `grimdawn-rs-windows-x86_64.zip` or `grimdawn-rs-linux-x86_64.tar.gz` from the
@@ -64,7 +67,7 @@ Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the 
    If neither holds the game it exits with "no Grim Dawn install found", naming the folders it tried.
 
 Windows: the build is unsigned, so SmartScreen may warn ("More info" → "Run anyway"). Linux: the build needs
-glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, any current Arch) and runs on Wayland or X11; if the file lost its
+glibc 2.39 or newer (Ubuntu 24.04, Fedora 40, any current Arch) and runs on Wayland or X11; if the file lost its
 execute bit, `chmod +x grimdawn`.
 
 ### Where the game usually is
@@ -85,6 +88,25 @@ The port keeps its own folder, separate from the real game's: `%APPDATA%\grimdaw
 `~/.local/share/grimdawn-rs` on Linux (`$XDG_DATA_HOME/grimdawn-rs` if set). Characters are in `save/`, options
 and key bindings in `Settings/`. The save files use the game's formats, so a character folder can be copied
 between the port and the real game.
+
+### Item styles
+The loot filter window (O) has an **Item Styles** page: rules that recolour item names and add a short tag
+(for example `[BP]` on blueprints), on ground labels and in tooltips, so valuable drops stand out; a rule can also
+hide a label. The first rule that matches an item wins; **Load Preset** gives a ready-made colour scheme. The rules
+are global (all characters) and live in `Settings/itemstyles.txt` in the port's folder, one rule per line, which
+you can also edit by hand (a bad line is skipped with a warning in the log; no file means the stock look; saving
+from the window keeps your `#` comment lines, moved to the top, and turns a skipped line into a `# skipped:` comment):
+```
+# conditions: rarity= type= set= mi= doublerare= ascended= level=MIN-MAX name="..."
+# style: color=#RRGGBB prefix="..." | suffix="..." hide
+type=blueprint color=#3fc8ff prefix="[BP]"
+rarity=epic,legendary set=yes color=#33ff99 suffix="[Set]"
+rarity=common type=weapon,armor level=-40 hide
+name="aether" color=#00ffff
+```
+Types: `weapon offhand armor accessory component relic blueprint augment consumable material quest lore other`;
+rarities: `common magic rare epic legendary`. A hide rule only hides more than the loot filter's checkboxes, and
+holding "Show Items (No Filter)" still shows everything.
 
 ### Building it yourself
 1. Install Rust with [rustup](https://rustup.rs) (stable, 1.97.1 or newer: `rustup update stable`).

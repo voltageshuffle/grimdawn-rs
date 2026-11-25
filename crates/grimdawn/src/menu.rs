@@ -105,11 +105,10 @@ impl Plugin for MenuPlugin {
         // (`swallow_input`), so typing a name moves nothing and opens no
         // window. The options window opened from the menu reads its own
         // input in between.
+        #[cfg(feature = "dev")]
+        let setup = setup.run_if(|h: Res<gd_game_core::hooks::Hooks>| !h.session.skip_menu);
         app.init_resource::<MenuLayout>()
-            .add_systems(
-                Startup,
-                setup.run_if(|h: Res<gd_game_core::hooks::Hooks>| !h.session.skip_menu),
-            )
+            .add_systems(Startup, setup)
             .add_systems(
                 PreUpdate,
                 (
@@ -499,42 +498,28 @@ fn write_playmenu(m: &MainMenu, root: &std::path::Path, save_dir: &gd_game_core:
 }
 
 pub(crate) fn setup(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     save_dir: Res<gd_game_core::session::SaveDir>,
     data: Res<gd_game_core::data::GameData>,
 ) {
     let (entries, selected) = scan_characters(&save_dir);
     // A hook that sets the menu leaves the remembered one alone.
-    let hooked = hooks.ui.menu_crucible.is_some() || hooks.ui.menu_pick.is_some();
-    let window = match hooks.ui.menu_open.clone().as_deref() {
-        Some("difficulty") => MenuWindow::Difficulty(DifficultyOption::Normal),
-        Some("create") => MenuWindow::Create(NewCharacter {
-            name: hooks.ui.menu_name.clone().unwrap_or_default(),
-            ..default()
-        }),
-        Some("newdifficulty") => MenuWindow::NewDifficulty(
-            NewCharacter {
-                name: hooks.ui.menu_name.clone().unwrap_or_default(),
-                ..default()
-            },
-            DifficultyOption::Normal,
-        ),
-        Some("delete") => MenuWindow::Delete(String::new()),
-        Some("gametype") => MenuWindow::GameType(GameType {
-            crucible: hooks.ui.menu_crucible.is_some(),
-            arena: hooks.ui.menu_crucible.unwrap_or(0),
-            ..default()
-        }),
-        _ => MenuWindow::None,
-    };
+    #[cfg(feature = "dev")]
+    let (hooked, window, crucible) = (
+        hooked(&hooks.ui),
+        hook_window(&hooks.ui),
+        hooks.ui.menu_crucible,
+    );
+    #[cfg(not(feature = "dev"))]
+    let (hooked, window, crucible) = (false, MenuWindow::None, None);
     let mut m = MainMenu {
         entries,
         selected: 0,
         first: 0,
         option: DifficultyOption::Normal,
-        crucible: hooks.ui.menu_crucible.is_some(),
-        arena: hooks.ui.menu_crucible.unwrap_or(0),
+        crucible: crucible.is_some(),
+        arena: crucible.unwrap_or(0),
         custom: None,
         window,
         error: None,
@@ -546,6 +531,7 @@ pub(crate) fn setup(
         m.restore(&pm, &offered, &custom_maps(data.root()), 12);
     }
     // `GD_MENU_CUSTOM` (hooks.rs).
+    #[cfg(feature = "dev")]
     if hooks.ui.menu_custom
         && let MenuWindow::GameType(g) = &mut m.window
     {
@@ -562,9 +548,42 @@ pub(crate) fn setup(
     commands.insert_resource(m);
 }
 
+/// Whether a hook sets the menu (`GD_MENU_CRUCIBLE`, `GD_MENU_PICK`): the remembered one is then neither read nor
+/// written.
+#[cfg(feature = "dev")]
+fn hooked(ui: &gd_game_core::hooks::UiHooks) -> bool {
+    ui.menu_crucible.is_some() || ui.menu_pick.is_some()
+}
+
+/// The window `GD_MENU_OPEN` (hooks.rs) opens the menu on.
+#[cfg(feature = "dev")]
+fn hook_window(ui: &gd_game_core::hooks::UiHooks) -> MenuWindow {
+    match ui.menu_open.as_deref() {
+        Some("difficulty") => MenuWindow::Difficulty(DifficultyOption::Normal),
+        Some("create") => MenuWindow::Create(NewCharacter {
+            name: ui.menu_name.clone().unwrap_or_default(),
+            ..default()
+        }),
+        Some("newdifficulty") => MenuWindow::NewDifficulty(
+            NewCharacter {
+                name: ui.menu_name.clone().unwrap_or_default(),
+                ..default()
+            },
+            DifficultyOption::Normal,
+        ),
+        Some("delete") => MenuWindow::Delete(String::new()),
+        Some("gametype") => MenuWindow::GameType(GameType {
+            crucible: ui.menu_crucible.is_some(),
+            arena: ui.menu_crucible.unwrap_or(0),
+            ..default()
+        }),
+        _ => MenuWindow::None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_menu(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -580,8 +599,11 @@ fn run_menu(
         ResMut<crate::ui::credits::Credits>,
     ),
     save_dir: Res<gd_game_core::session::SaveDir>,
-    (mut accepted, mut picked): (Local<bool>, Local<bool>),
-    time: Res<Time<Real>>,
+    #[cfg(feature = "dev")] (mut accepted, mut picked, time): (
+        Local<bool>,
+        Local<bool>,
+        Res<Time<Real>>,
+    ),
 ) {
     // The press (the shared rule): read before `swallow_input` resets this frame's `ButtonInput`.
     let pressed = gd_ui_kit::widgets::button_pressed(&buttons);
@@ -596,10 +618,7 @@ fn run_menu(
         menu.window.clone(),
         (menu.crucible, menu.arena, menu.custom.clone()),
     );
-    let cursor = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
     let hit = cursor.filter(|_| pressed).and_then(|p| layout.at(p));
     // A press on a menu control is the menu's: the Options window, whose input runs next in this frame, must not
     // take it too (the press that opens it would land on whatever control lies under the cursor).
@@ -614,8 +633,14 @@ fn run_menu(
         .map_or(20, |v| v as usize);
     let m = &mut *menu;
     // `GD_MENU_ACCEPT` (hooks.rs).
-    let hook = !*accepted && m.window != MenuWindow::None && hooks.ui.menu_accept;
-    *accepted |= hook;
+    #[cfg(feature = "dev")]
+    let hook = {
+        let hook = !*accepted && m.window != MenuWindow::None && hooks.ui.menu_accept;
+        *accepted |= hook;
+        hook
+    };
+    #[cfg(not(feature = "dev"))]
+    let hook = false;
     let enter =
         keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) || hook;
     let esc = keys.just_pressed(KeyCode::Escape);
@@ -828,24 +853,30 @@ fn run_menu(
                 m.select((m.selected + n - 1) % n, rows);
             }
             // `GD_MENU_PICK` / `GD_MENU_PICK_AFTER` (hooks.rs): once per process, so an Exit to Main Menu stays in the menu.
-            let pick = hooks.ui.menu_pick.filter(|_| {
-                !*picked
-                    && hooks
-                        .ui
-                        .menu_pick_after
-                        .is_none_or(|s| time.elapsed_secs() >= s)
-            });
-            *picked |= pick.is_some();
+            #[cfg(feature = "dev")]
+            let pick = {
+                let pick = hooks.ui.menu_pick.filter(|_| {
+                    !*picked
+                        && hooks
+                            .ui
+                            .menu_pick_after
+                            .is_none_or(|s| time.elapsed_secs() >= s)
+                });
+                *picked |= pick.is_some();
 
-            if let Some((i, d)) = pick
-                && i < n
-            {
-                m.select(i, rows);
-                if let Some(d) = d.and_then(|d| DifficultyOption::ALL.get(d)) {
-                    m.option = d.clamp(Some(&m.entries[i].gdc), false);
+                if let Some((i, d)) = pick
+                    && i < n
+                {
+                    m.select(i, rows);
+                    if let Some(d) = d.and_then(|d| DifficultyOption::ALL.get(d)) {
+                        m.option = d.clamp(Some(&m.entries[i].gdc), false);
+                    }
                 }
-            }
-            if (enter || hit == Some(Hit::Start) || pick.is_some())
+                pick.is_some()
+            };
+            #[cfg(not(feature = "dev"))]
+            let pick = false;
+            if (enter || hit == Some(Hit::Start) || pick)
                 && m.can_start()
                 && let Some(e) = m.current()
                 && (m.crucible || m.custom.is_some() || e.gdc.info.is_in_main_quest != 0)
@@ -877,7 +908,10 @@ fn run_menu(
         m.error = None;
         m.revision += 1;
         // A change of what the menu remembers is written at once (the engine writes on menu state changes).
-        let hooked = hooks.ui.menu_crucible.is_some() || hooks.ui.menu_pick.is_some();
+        #[cfg(feature = "dev")]
+        let hooked = hooked(&hooks.ui);
+        #[cfg(not(feature = "dev"))]
+        let hooked = false;
         if (now.0, now.2, &now.4) != (before.0, before.2, &before.4) && !hooked {
             write_playmenu(m, data.root(), &save_dir);
         }

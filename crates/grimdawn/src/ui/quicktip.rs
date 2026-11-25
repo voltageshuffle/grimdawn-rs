@@ -166,7 +166,6 @@ fn clicks(
     mut state: ResMut<QuickTip>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut capture: ResMut<gd_ui::state::inventory::UiCapture>,
     mut journal: ResMut<gd_ui::quests::QuestJournal>,
     data: Res<GameData>,
@@ -174,7 +173,7 @@ fn clicks(
     let Ok(win) = window.single() else { return };
     click_tips(
         &mut state,
-        super::cursor_px(&hooks, win),
+        super::cursor_px(win),
         &buttons,
         &mut capture,
         &mut journal,
@@ -329,9 +328,12 @@ fn tip(
     mut commands: Commands,
     mut state: ResMut<QuickTip>,
     mut events: MessageReader<gd_game::tutorials::TutorialTip>,
-    mut unlock: MessageWriter<gd_game::tutorials::UnlockTutorial>,
     options: Res<gd_game_core::options::GameOptions>,
-    (hooks, mut fired): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
+    #[cfg(feature = "dev")] (hooks, mut fired, mut unlock): (
+        Res<gd_game_core::hooks::Hooks>,
+        Local<bool>,
+        MessageWriter<gd_game::tutorials::UnlockTutorial>,
+    ),
     clock: Res<Time<Real>>,
     buttons: Res<ButtonInput<MouseButton>>,
     (mut journal, mut capture): (
@@ -346,7 +348,10 @@ fn tip(
 ) {
     if fresh.begun() {
         state.end_session();
-        *fired = false;
+        #[cfg(feature = "dev")]
+        {
+            *fired = false;
+        }
         *built = Built::default();
     }
     // The main menu's tip (`MainMenu::SetState` case 3): `tagQuickTipMainMenu` at
@@ -368,6 +373,7 @@ fn tip(
             });
         }
     }
+    #[cfg(feature = "dev")]
     if let Some((page, t)) = hooks.ui.tutorial_tip
         && !*fired
         && clock.elapsed_secs() >= t
@@ -428,7 +434,7 @@ fn tip(
     if menu.is_some() {
         click_tips(
             &mut state,
-            super::cursor_px(&hooks, win),
+            super::cursor_px(win),
             &buttons,
             &mut capture,
             &mut journal,

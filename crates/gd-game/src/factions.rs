@@ -334,7 +334,7 @@ fn reduce(delta: f32, value: f32, start: f32, reduction: f32) -> f32 {
 }
 
 pub fn init_factions(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     epoch: Res<gd_game_core::session::SessionEpoch>,
     mut commands: Commands,
     // Option: `have` is the existence check (this system creates it); `loaded` is absent for a new character.
@@ -372,6 +372,7 @@ pub fn init_factions(
         });
     }
     // `GD_FACTION` (hooks.rs).
+    #[cfg(feature = "dev")]
     for (name, v) in &hooks.gameplay.faction {
         if let Some(i) = index_of_name(name)
             && let Some(f) = list.get_mut(i)

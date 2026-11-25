@@ -15,7 +15,7 @@ use gd_ui_kit::contains;
 /// show(false)). The slot state stays here (UI); the give rules are gd-game's (`InvRequest::Stow`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn panel_clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -36,8 +36,10 @@ pub(super) fn panel_clicks(
     let Some(inv) = inv else { return };
     // Which tabs the story tokens unlock (a changed answer rebuilds the UI).
     if matches!(trade.open, Some(TradeOpen::Inventor { .. })) {
-        let reroll = hooks.items.reroll.is_some()
-            || gd_game::crafting::reroll_unlocked(&data, rt.as_deref());
+        let reroll = gd_game::crafting::reroll_unlocked(&data, rt.as_deref());
+        // `GD_REROLL` (hooks.rs) unlocks the reroll tab.
+        #[cfg(feature = "dev")]
+        let reroll = reroll || hooks.items.reroll.is_some();
         let unlocked = [
             crate::crafting::dismantle_unlocked(&data, rt.as_deref()),
             crate::crafting::convert_unlocked(&data, rt.as_deref()),
@@ -62,7 +64,7 @@ pub(super) fn panel_clicks(
         trade.hover = None;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(win) else {
         return;
     };
     // The dismantle warning (the dialog manager's Yes / No box) takes every click while up.

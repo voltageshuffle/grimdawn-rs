@@ -21,7 +21,8 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
   `PlayerProgress`.
 - **Session state is resources** (`GameMode`, `AltarState`, `Choice`, `DroppedEpics`, ...), never process
   globals. A session ends in process (`grimdawn/src/exit/mod.rs`): new session state needs its reset there. A
-  `Local` that caches session data takes `NewSession`. Test hooks come from `Res<Hooks>`, never `std::env`.
+  `Local` that caches session data takes `NewSession`. Test hooks come from `Res<Hooks>`, never `std::env`, and
+  exist only with the `dev` feature: gate every hook read with `#[cfg(feature = "dev")]`.
 - **Build and run** with `cargo dev-build` / `cargo dev` (they enable the `dev` feature), never plain
   `cargo build -p grimdawn`.
 - **`cargo clippy --workspace --all-targets` stays clean.**

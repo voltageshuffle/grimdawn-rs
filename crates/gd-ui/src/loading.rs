@@ -38,12 +38,13 @@ pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            OnEnter(AppState::Loading),
-            show.run_if(|hooks: Res<gd_game_core::hooks::Hooks>| hooks.session.chars.is_none()),
-        )
-        .add_systems(Update, (dress, spin, follow_alpha).chain())
-        .add_systems(OnExit(AppState::InGame), teardown_hud);
+        let show = show.into_configs();
+        #[cfg(feature = "dev")]
+        let show =
+            show.run_if(|hooks: Res<gd_game_core::hooks::Hooks>| hooks.session.chars.is_none());
+        app.add_systems(OnEnter(AppState::Loading), show)
+            .add_systems(Update, (dress, spin, follow_alpha).chain())
+            .add_systems(OnExit(AppState::InGame), teardown_hud);
     }
 }
 

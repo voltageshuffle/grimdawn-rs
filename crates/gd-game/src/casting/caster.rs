@@ -128,7 +128,7 @@ impl Projectile {
 }
 
 pub(super) fn init_caster(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     players: Query<Entity, (With<Player>, Without<Caster>)>,
     // Option: a new character has no `LoadedCharacter` (empty hotbar).
@@ -178,6 +178,7 @@ pub(super) fn init_caster(
             });
         }
         // `GD_SLOT` (hooks.rs).
+        #[cfg(feature = "dev")]
         for (n, rec) in &hooks.gameplay.slot {
             if *n < SLOTS {
                 slots[*n] = Some(rec.clone());

@@ -642,7 +642,6 @@ impl Plugin for CraftingPlugin {
             .add_message::<DismantleResult>()
             .add_message::<SalvageRequest>()
             .add_message::<ConvertRequest>()
-            .add_message::<StageItem>()
             .add_message::<SlotReturn>()
             .add_systems(
                 Update,
@@ -654,6 +653,8 @@ impl Plugin for CraftingPlugin {
                     .after(gd_game_core::inventory::InventorySet)
                     .before(gd_game_core::player::PlayerSet),
             );
+        #[cfg(feature = "dev")]
+        app.add_message::<StageItem>();
     }
 }
 
@@ -681,10 +682,12 @@ pub struct SalvageRequest {
 pub struct ConvertRequest {
     pub item: Item,
     pub random: bool,
+    #[cfg(feature = "dev")]
     pub test: bool,
 }
 
 /// Which bag item a test hook wants in the window's slot.
+#[cfg(feature = "dev")]
 #[derive(Clone, Debug)]
 pub enum Stage {
     /// The first bag item whose record name contains this (empty: the first).
@@ -697,6 +700,7 @@ pub enum Stage {
 /// Test hooks (`GD_DISMANTLE`, `GD_SALVAGE`, `GD_CONVERT`, `GD_REROLL`): takes
 /// a bag item out for the window's slot; the answer is a [`SlotReturn`] with
 /// `go` as given (the hook then presses the button).
+#[cfg(feature = "dev")]
 #[derive(Message, Clone, Debug)]
 pub struct StageItem {
     pub which: Stage,
@@ -718,7 +722,7 @@ fn apply_inventor(
     mut dismantle_msgs: MessageReader<DismantleRequest>,
     mut salvage_msgs: MessageReader<SalvageRequest>,
     mut convert_msgs: MessageReader<ConvertRequest>,
-    mut stage_msgs: MessageReader<StageItem>,
+    #[cfg(feature = "dev")] mut stage_msgs: MessageReader<StageItem>,
     (mut back, mut results, mut stats): (
         MessageWriter<SlotReturn>,
         MessageWriter<DismantleResult>,
@@ -737,6 +741,7 @@ fn apply_inventor(
         return;
     };
     let level = progress.progress.level.max(1) as u32;
+    #[cfg(feature = "dev")]
     for m in stage_msgs.read() {
         let idb = data.item_db();
         let found = inv.bags.iter_mut().find_map(|b| {
@@ -847,7 +852,10 @@ fn apply_inventor(
         back.write(ret);
     }
     for m in convert_msgs.read() {
-        let unlocked = m.test || convert_unlocked(&data, rt.as_deref());
+        let unlocked = convert_unlocked(&data, rt.as_deref());
+        // `GD_CONVERT` (hooks.rs): the token is not needed.
+        #[cfg(feature = "dev")]
+        let unlocked = m.test || unlocked;
         let mut ret = SlotReturn::default();
         match convert_item(
             &data,

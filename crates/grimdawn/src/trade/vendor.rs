@@ -6,7 +6,13 @@ use gd_ui_kit::contains;
 /// The vendor / caravan window's clicks: the dialog box ([`Prompt`]), buying, selling, the stash pages.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn trade_clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] (hooks, mut tested, mut script, time, mut sell_req): (
+        Res<gd_game_core::hooks::Hooks>,
+        Local<bool>,
+        Local<Option<Vec<gd_game_core::hooks::Click>>>,
+        Res<Time>,
+        MessageWriter<gd_game::trade::SellRequest>,
+    ),
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -19,17 +25,13 @@ pub(super) fn trade_clicks(
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     mut capture: ResMut<UiCapture>,
     data: Res<gd_game_core::data::GameData>,
-    (mut tested, mut script, time, mut sound, mut dismiss, mut close): (
-        Local<bool>,
-        Local<Option<Vec<gd_game_core::hooks::Click>>>,
-        Res<Time>,
+    (mut sound, mut dismiss, mut close): (
         MessageWriter<gd_game_core::visuals::PlaySound>,
         MessageReader<DismissPrompt>,
         MessageWriter<ServiceRequest>,
     ),
-    (mut buy_req, mut sell_req, mut stash_req, mut apply, mut sell_held, mut stack): (
+    (mut buy_req, mut stash_req, mut apply, mut sell_held, mut stack): (
         MessageWriter<gd_game::trade::BuyRequest>,
-        MessageWriter<gd_game::trade::SellRequest>,
         MessageWriter<gd_game_core::stash::StashRequest>,
         MessageWriter<gd_game_core::inventory::ApplyRequest>,
         MessageWriter<gd_game::trade::SellHeld>,
@@ -75,7 +77,7 @@ pub(super) fn trade_clicks(
         capture.0 = true;
         trade.hover = None;
         let Ok(win) = window.single() else { return };
-        let p = gd_ui_kit::cursor_px(&hooks, win);
+        let p = gd_ui_kit::cursor_px(win);
         let hit = match (prompt, layout.confirm, layout.ok) {
             (Prompt::BuyPage { .. }, Some(r), _) => p.and_then(|p| r.hit(p)),
             (Prompt::Message(_), _, Some((ok, close))) => p.and_then(|p| {
@@ -113,6 +115,7 @@ pub(super) fn trade_clicks(
         return;
     }
     // `GD_TRANSFER` (hooks.rs): once, show the transfer stash and move the first personal stash item into it.
+    #[cfg(feature = "dev")]
     if hooks.items.transfer
         && matches!(open, TradeOpen::Stash { .. })
         && stash.is_some()
@@ -129,6 +132,7 @@ pub(super) fn trade_clicks(
     }
     // `GD_TRADE_BUY` (hooks.rs): once, buy the first item of the open merchant's first tab and sell the
     // first bag item.
+    #[cfg(feature = "dev")]
     if hooks.items.trade_buy
         && let TradeOpen::Vendor { key, market, .. } = &open
         && let Some(first) = markets.0.get(key).and_then(|m| m[0].items.first())
@@ -156,16 +160,19 @@ pub(super) fn trade_clicks(
         return;
     }
     // `GD_INV_CLICKS` (hooks.rs): a scripted click inside this window clicks it (the stash's apply mode in a run).
-    let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
-    let scripted = matches!(open, TradeOpen::Stash { .. })
-        .then(|| gd_game_core::hooks::take_due(script, time.elapsed_secs()))
-        .flatten()
-        .filter(|c| layout.window.is_some_and(|r| contains(&r, c.at)));
+    #[cfg(feature = "dev")]
+    let scripted = {
+        let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
+        matches!(open, TradeOpen::Stash { .. })
+            .then(|| gd_game_core::hooks::take_due(script, time.elapsed_secs()))
+            .flatten()
+            .filter(|c| layout.window.is_some_and(|r| contains(&r, c.at)))
+    };
     let Ok(win) = window.single() else { return };
-    let Some(p) = scripted
-        .map(|c| c.at)
-        .or_else(|| gd_ui_kit::cursor_px(&hooks, win))
-    else {
+    let p = gd_ui_kit::cursor_px(win);
+    #[cfg(feature = "dev")]
+    let p = scripted.map(|c| c.at).or(p);
+    let Some(p) = p else {
         return;
     };
     // The vendor / caravan / crafter / Runekeeper close button (`ui/trade.rs` `close_field`; the Illusionist's
@@ -203,6 +210,11 @@ pub(super) fn trade_clicks(
     if gd_ui::apply::question_up(&inv, &trade, &confirm) {
         return;
     }
+    let (left, right) = (
+        buttons.just_pressed(MouseButton::Left),
+        buttons.just_pressed(MouseButton::Right),
+    );
+    #[cfg(feature = "dev")]
     let (left, right) = match scripted {
         Some(c) => {
             info!(
@@ -212,10 +224,7 @@ pub(super) fn trade_clicks(
             );
             (!c.right, c.right)
         }
-        None => (
-            buttons.just_pressed(MouseButton::Left),
-            buttons.just_pressed(MouseButton::Right),
-        ),
+        None => (left, right),
     };
     // The search box (module doc): a click on it clears a non-empty text and
     // focuses it; the clear button empties it; any other click unfocuses it.

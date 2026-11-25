@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gd-sim"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Grim Dawn game rules, independent of rendering and Bevy: stats, combat, skills, items, nav"
 license = "MIT"
@@ -13,8 +13,8 @@ testdata = ["gd-formats/testdata"]
 
 [dependencies]
 anyhow = "1.0.104"
-gd-formats = { path = "../gd-formats", version = "0.1.0" }
-gd-rules = { path = "../gd-rules", version = "0.1.0" }
+gd-formats = { path = "../gd-formats" }
+gd-rules = { path = "../gd-rules" }
 parking_lot = "0.12"
 
 [dev-dependencies]

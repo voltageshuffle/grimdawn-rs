@@ -477,21 +477,25 @@ pub fn spawn_position(map: &gd_formats::map::MapFile, dat: &MapDat) -> Option<Ve
     Some(region_origin(r) + Vec3::from(s.position))
 }
 
+/// `GD_START` (`hooks.rs`), taken before [`player_start`]: with x,z the y is taken from the ground once loaded;
+/// with x,y,z the ground below y + 2 (undergrounds). Other lengths: no start.
+#[cfg(feature = "dev")]
+pub fn start_hook(hook: &[f32]) -> Option<Vec3> {
+    match *hook {
+        [x, z] => Some(Vec3::new(x, 100.0, z)),
+        [x, y, z] => Some(Vec3::new(x, y + 2.0, z)),
+        _ => None,
+    }
+}
+
 /// Where the player starts a session (None: a new character on a map without a spawn point, so no start yet).
-/// `hook` is `GD_START` (`hooks.rs`): with x,z the y is taken from the ground once loaded; with x,y,z the ground
-/// below y + 2 (undergrounds). `map_spawn` is the map's spawn point.
+/// `map_spawn` is the map's spawn point.
 pub fn player_start(
     map: &gd_formats::map::MapFile,
     map_spawn: Option<Vec3>,
-    hook: Option<&[f32]>,
     loaded: Option<&Gdc>,
     choice: &gd_game_core::session::Choice,
 ) -> Option<Vec3> {
-    match hook {
-        Some(&[x, z]) => return Some(Vec3::new(x, 100.0, z)),
-        Some(&[x, y, z]) => return Some(Vec3::new(x, y + 2.0, z)),
-        _ => {}
-    }
     // New character: the map's spawn point.
     let Some(ch) = loaded else { return map_spawn };
     // `Game::LoadModMap`: the start is `map.dat`'s spawn when its region is in the map,
@@ -799,10 +803,15 @@ pub fn autosave(
 
 #[allow(clippy::too_many_arguments)]
 pub fn save_game(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut requests: MessageReader<SaveRequest>,
-    time: Res<Time>,
-    mut since: Local<f32>,
+    // `GD_AUTOSAVE_SECS`: the timer and the windows that hold it.
+    #[cfg(feature = "dev")] (hooks, time, mut since, shrine, potions): (
+        Res<gd_game_core::hooks::Hooks>,
+        Res<Time>,
+        Local<f32>,
+        Res<crate::devotion::ShrineWindow>,
+        Res<crate::cauldron::PotionWindow>,
+    ),
     // Option: the save runs on a timer / request and writes whatever exists; the player-state ones are
     // checked together ("no player yet"), the others (stash, factions, fog, ...) are written only when present.
     loaded: Option<Res<LoadedCharacter>>,
@@ -836,7 +845,7 @@ pub fn save_game(
         tutorials,
         waypoints,
         layout,
-        (shrine, potions, new_character),
+        new_character,
         reclaim,
         boxed,
         shared,
@@ -859,21 +868,22 @@ pub fn save_game(
         Option<Res<crate::tutorials::TutorialPages>>,
         Option<Res<crate::riftgates::WaypointIndex>>,
         Option<Res<MapLayout>>,
-        (
-            Res<crate::devotion::ShrineWindow>,
-            Res<crate::cauldron::PotionWindow>,
-            Option<Res<NewCharacter>>,
-        ),
+        Option<Res<NewCharacter>>,
         Option<Res<crate::reclamation::SkillReclamation>>,
         Res<BoxedItems>,
         Res<gd_game_core::stash::SharedFiles>,
     ),
 ) {
-    *since += time.delta_secs();
-    // The timed autosave waits while a shrine or potions window has saving disabled.
-    let auto = hooks.session.autosave_secs.is_some_and(|s| *since >= s)
-        && !crate::devotion::save_disabled(&shrine)
-        && !crate::cauldron::save_disabled(&potions);
+    // `GD_AUTOSAVE_SECS` (hooks.rs): a timed save, which waits while a shrine or potions window has saving disabled.
+    #[cfg(feature = "dev")]
+    let auto = {
+        *since += time.delta_secs();
+        hooks.session.autosave_secs.is_some_and(|s| *since >= s)
+            && !crate::devotion::save_disabled(&shrine)
+            && !crate::cauldron::save_disabled(&potions)
+    };
+    #[cfg(not(feature = "dev"))]
+    let auto = false;
 
     // F5, and closing the window (the game saves on quit).
     let requested = requests.read().count() > 0;
@@ -883,7 +893,10 @@ pub fn save_game(
     if !requested && !auto && !hardcore_death {
         return;
     }
-    *since = 0.0;
+    #[cfg(feature = "dev")]
+    {
+        *since = 0.0;
+    }
     let (Some(progress), Some(inv), Some(rules), Ok((loadout, caster, player_at))) =
         (progress, inv, rules, players.single())
     else {

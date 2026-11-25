@@ -22,6 +22,7 @@ pub mod day_clock;
 pub mod entry;
 pub mod factions;
 pub mod floating;
+#[cfg(feature = "dev")]
 pub mod hooks;
 pub mod illusion;
 pub mod inventory;

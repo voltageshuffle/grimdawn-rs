@@ -176,6 +176,14 @@ impl Plugin for AfflictionsPlugin {
                 .chain()
                 .after(gd_game_core::combat::CombatSet),
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            debuffs_hook
+                .after(add_afflictions)
+                .before(sick_stuns)
+                .run_if(|h: Res<gd_game_core::hooks::Hooks>| h.gameplay.debuffs),
+        );
     }
 }
 
@@ -521,22 +529,24 @@ fn fx_field(ty: T) -> Option<&'static str> {
 }
 
 fn add_afflictions(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
-    q: Query<(Entity, Has<Player>), (With<Combatant>, Without<Afflictions>)>,
+    q: Query<Entity, (With<Combatant>, Without<Afflictions>)>,
 ) {
-    for (e, is_player) in &q {
-        let mut a = Afflictions::default();
-        // `GD_DEBUFFS` (hooks.rs).
-        if is_player && hooks.gameplay.debuffs {
-            a.add_dot(T::Fire, 5.0, 40.0, Entity::PLACEHOLDER);
-            a.add_dot(T::Bleeding, 5.0, 25.0, Entity::PLACEHOLDER);
-            a.fixed.push((T::RunSpeed, 30.0, 35.0));
-            a.fixed.push((T::DefensiveReduction, 50.0, 30.0));
-            a.fixed.push((T::OffensiveAbility, 50.0, 20.0));
-            a.cc.push((T::Stun, 3.0));
-        }
-        commands.entity(e).try_insert(a);
+    for e in &q {
+        commands.entity(e).try_insert(Afflictions::default());
+    }
+}
+
+/// `GD_DEBUFFS` (hooks.rs): the player's afflictions start with one of each kind, the frame they are added.
+#[cfg(feature = "dev")]
+fn debuffs_hook(mut q: Query<&mut Afflictions, (With<Player>, Added<Afflictions>)>) {
+    for mut a in &mut q {
+        a.add_dot(T::Fire, 5.0, 40.0, Entity::PLACEHOLDER);
+        a.add_dot(T::Bleeding, 5.0, 25.0, Entity::PLACEHOLDER);
+        a.fixed.push((T::RunSpeed, 30.0, 35.0));
+        a.fixed.push((T::DefensiveReduction, 50.0, 30.0));
+        a.fixed.push((T::OffensiveAbility, 50.0, 20.0));
+        a.cc.push((T::Stun, 3.0));
     }
 }
 

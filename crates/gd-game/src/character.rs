@@ -35,9 +35,6 @@ impl Plugin for CharacterPlugin {
             .add_systems(
                 Update,
                 (
-                    start_hooks.run_if(|h: Res<gd_game_core::hooks::Hooks>| {
-                        h.render.char_state.is_some() || h.render.char_hold.is_some()
-                    }),
                     player_long_idle,
                     npc_chat.run_if(resource_exists::<crate::conversation::Conversation>),
                     crate::npc_controller::attach_npc_controllers,
@@ -61,6 +58,17 @@ impl Plugin for CharacterPlugin {
                 PostUpdate,
                 CharacterStage::Animate.after(TransformSystems::Propagate),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            start_hooks
+                .run_if(|h: Res<gd_game_core::hooks::Hooks>| {
+                    h.render.char_state.is_some() || h.render.char_hold.is_some()
+                })
+                .before(player_long_idle)
+                .in_set(CharacterStage::Drive)
+                .after(gd_game_core::combat::CombatSet),
+        );
     }
 }
 
@@ -164,6 +172,7 @@ fn preload_anims(
 
 /// The start state of a new character ([`RenderHooks::char_state`]) and its attack hold (`GD_CHAR_HOLD`):
 /// applied to every character the frame it appears, before it is driven.
+#[cfg(feature = "dev")]
 fn start_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut new: Query<&mut Character, Added<Character>>,
@@ -332,7 +341,7 @@ pub fn npc_chat(
 /// shape (finish ended actions → run pending → animate), so a swing that ends this
 /// frame chains into the next in the same pass, with no rendered idle frame between.
 pub fn finish_actions(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
     data: Res<GameData>,
     mut cache: ResMut<AnimCache>,
@@ -448,6 +457,8 @@ pub fn finish_actions(
                 // scripted clip every wrap (the doll's twitch).
                 (CharState::Scripted, t) if t == c.scripted => c.state = CharState::Idle,
                 (CharState::Attack, t) if anim::is_attack(t) => {
+                    // `GD_CHAR_STATE=attack` (hooks.rs): swing again.
+                    #[cfg(feature = "dev")]
                     if hooks.render.char_state.as_deref() == Some("attack") {
                         c.swing_special = None;
                         c.play(
@@ -458,10 +469,10 @@ pub fn finish_actions(
                             Some(SpeedKind::Attack),
                             false,
                         );
-                    } else {
-                        c.state = CharState::Idle;
-                        c.playing = AnimType::None;
+                        continue;
                     }
+                    c.state = CharState::Idle;
+                    c.playing = AnimType::None;
                 }
                 _ => {}
             }

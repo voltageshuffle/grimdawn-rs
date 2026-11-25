@@ -98,6 +98,9 @@ pub struct FactionsView {
     pub open: bool,
     pub selected: Option<usize>,
     pub scroll: [f32; 2],
+    /// `GD_FACTION_HOVER` (hooks.rs), copied by [`test_hooks`]: [`hovered`] reports that part.
+    #[cfg(feature = "dev")]
+    pub hover_hook: Option<String>,
 }
 
 /// A hit area of the window.
@@ -157,6 +160,7 @@ impl FactionsLayout {
     }
 
     /// The centre of a named part (`GD_FACTION_HOVER`), screen px at `scroll`.
+    #[cfg(feature = "dev")]
     fn named(&self, name: &str, scroll: f32) -> Option<(Part, Vec2)> {
         let n = |k: &str| name.strip_prefix(k).and_then(|v| v.parse::<usize>().ok());
         let want = match name {
@@ -191,17 +195,13 @@ impl FactionsLayout {
 }
 
 /// The hovered part and the pointer (`GD_FACTION_HOVER`, else `GD_HOVER` / the cursor), while the window is built.
-pub fn hovered(
-    layout: &FactionsLayout,
-    view: &FactionsView,
-    hooks: &gd_game_core::hooks::Hooks,
-    win: &Window,
-) -> Option<(Part, Vec2)> {
+pub fn hovered(layout: &FactionsLayout, view: &FactionsView, win: &Window) -> Option<(Part, Vec2)> {
     layout.window?;
-    if let Some(name) = hooks.ui.faction_hover.as_deref() {
+    #[cfg(feature = "dev")]
+    if let Some(name) = view.hover_hook.as_deref() {
         return layout.named(name, view.scroll[0]);
     }
-    let p = super::cursor_px(hooks, win)?;
+    let p = super::cursor_px(win)?;
     layout.part_at(p, view.scroll[0]).map(|part| (part, p))
 }
 
@@ -441,7 +441,8 @@ fn standing_lines(
     out
 }
 
-/// `GD_UI_OPEN` / `GD_FACTION_SELECT` (hooks.rs): the window once the player exists, on that row.
+/// `GD_UI_OPEN` / `GD_FACTION_SELECT` / `GD_FACTION_HOVER` (hooks.rs): the window once the player exists, on that
+/// row; the hovered part.
 #[cfg(feature = "dev")]
 fn test_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -457,6 +458,9 @@ fn test_hooks(
         return;
     }
     *done = true;
+    if let Some(h) = &hooks.ui.faction_hover {
+        view.hover_hook = Some(h.clone());
+    }
     if hooks.ui.open.as_deref() == Some("factions") {
         view.open = true;
         view.selected = hooks.ui.faction_select;
@@ -996,7 +1000,6 @@ fn bitmap_icon(ui: &mut Ui, rec: &str, at: Vec2, icon: Option<&str>) -> Option<U
 /// the close button's focus bitmap.
 #[allow(clippy::too_many_arguments)]
 fn live(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     view: Res<FactionsView>,
     layout: Res<FactionsLayout>,
@@ -1037,7 +1040,7 @@ fn live(
     let Ok(win) = window.single() else { return };
     let inv = 1.0 / win.scale_factor();
     // The game menu / Options holds the cursor: no hover under it.
-    let hover = hovered(&layout, &view, &hooks, win)
+    let hover = hovered(&layout, &view, win)
         .filter(|_| !pause.menu)
         .map(|(p, _)| p);
     let row = match hover {
@@ -1092,7 +1095,6 @@ fn live(
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     scale: Res<gd_ui_kit::state::settings::UiScaleOption>,
     layout: Res<FactionsLayout>,
     mut view: ResMut<FactionsView>,
@@ -1117,7 +1119,7 @@ fn clicks(
     }
     // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let max = |i: usize| layout.panes[i].map_or(0.0, |p| p.max);

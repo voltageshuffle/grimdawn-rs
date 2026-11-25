@@ -145,7 +145,6 @@ fn build_game_over(
 /// The box's hover / press look in place ([`gd_ui_kit::confirm::apply_look`]).
 fn game_over_live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     state: Res<GameOverBox>,
     mouse: Res<ButtonInput<MouseButton>>,
     roots: Query<Entity, With<GameOverRoot>>,
@@ -155,7 +154,7 @@ fn game_over_live(
     else {
         return;
     };
-    let hit = cursor_px(&hooks, win).and_then(|p| {
+    let hit = cursor_px(win).and_then(|p| {
         if contains(&ok, p) {
             Some(gd_ui_kit::confirm::Hit::Yes)
         } else if close.is_some_and(|r| contains(&r, p)) {
@@ -173,7 +172,6 @@ fn game_over_live(
 fn game_over_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut state: ResMut<GameOverBox>,
     mut capture: ResMut<UiCapture>,
     data: Res<gd_game_core::data::GameData>,
@@ -186,7 +184,7 @@ fn game_over_clicks(
     capture.0 = true;
     let mut answer = false;
     if let (Ok(win), Some((ok, close))) = (window.single(), state.rects)
-        && let Some(p) = cursor_px(&hooks, win)
+        && let Some(p) = cursor_px(win)
         && buttons.just_pressed(MouseButton::Left)
     {
         if contains(&ok, p) {

@@ -69,7 +69,6 @@ pub(super) struct LocalBuilt {
 /// The local map window (module doc), rebuilt when its view or hover changes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn local_map(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -223,7 +222,7 @@ pub(super) fn local_map(
         })
         .collect();
     // The game menu / Options holds the cursor: no icon name under it.
-    let cursor = gd_ui_kit::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let cursor = gd_ui_kit::cursor_px(win).filter(|_| !pause.menu);
     let hover = cursor.and_then(|c| {
         placed.iter().rposition(|(p, i, _)| {
             i.kind != 14 && !i.name.is_empty() && (c - *p).length() < isz * 0.5

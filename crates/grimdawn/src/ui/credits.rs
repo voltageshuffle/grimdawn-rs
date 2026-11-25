@@ -130,7 +130,7 @@ fn roll(
     mut sounds: ResMut<gd_audio::Sounds>,
     roots: Query<Entity, With<CreditsRoot>>,
     mut assets: UiAssets,
-    (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
+    #[cfg(feature = "dev")] (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
     (mut built, mut fader, mut nodes): (
         Local<Option<Built>>,
         gd_ui::fade::Fader,
@@ -138,6 +138,7 @@ fn roll(
     ),
 ) {
     // `GD_MENU_CREDITS` (hooks.rs): opens the roll once.
+    #[cfg(feature = "dev")]
     if hooks.ui.menu_credits && !*hooked {
         *hooked = true;
         credits.open = true;
@@ -222,7 +223,7 @@ fn roll(
         }
     }
     if pressed
-        && let (Some(r), Some(c)) = (credits.back, super::cursor_px(&hooks, win))
+        && let (Some(r), Some(c)) = (credits.back, super::cursor_px(win))
         && super::contains(&r, c)
     {
         credits.open = false;

@@ -894,7 +894,7 @@ fn load_cube(data: &GameData, path: &str) -> Option<Image> {
 
 #[allow(clippy::too_many_arguments)]
 fn finish_water(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut WaterSurface)>,
     data: Res<GameData>,
@@ -911,6 +911,7 @@ fn finish_water(
         if ws.mesh.is_none() {
             continue;
         }
+        #[cfg(feature = "dev")]
         if hooks.render.no_water {
             commands.entity(e).try_remove::<WaterSurface>();
             continue;

@@ -187,6 +187,17 @@ fn types<'a>(item: &'a ItemFacts, store: StoreKind) -> impl Iterator<Item = u8> 
         })
 }
 
+/// The filter's Armor group (option 15): head, chest, legs, feet, hands, shoulders
+/// (`gd_sim::items::illusion::item_type` 1, 3, 4, 5, 7, 14).
+pub fn is_armor(item_type: u32) -> bool {
+    matches!(item_type, 1 | 3 | 4 | 5 | 7 | 14)
+}
+
+/// The filter's Accessories group (option 16): amulet, ring, waist, medal (item types 2, 6, 13, 15).
+pub fn is_accessory(item_type: u32) -> bool {
+    matches!(item_type, 2 | 6 | 13 | 15)
+}
+
 /// `Item::PassLootFilter`.
 pub fn passes(f: &[bool; COUNT], mode: Mode, item: &ItemFacts, masteries: &Masteries) -> bool {
     let r = item.resolved;
@@ -239,8 +250,8 @@ pub fn passes(f: &[bool; COUNT], mode: Mode, item: &ItemFacts, masteries: &Maste
         || (f[12] && matches!(w, 5 | 6 | 9))
         || (f[13] && w == 12)
         || (f[14] && w == 11)
-        || (f[15] && matches!(ty, 1 | 3 | 4 | 5 | 7 | 14))
-        || (f[16] && matches!(ty, 2 | 6 | 13 | 15));
+        || (f[15] && is_armor(ty))
+        || (f[16] && is_accessory(ty));
     if !kind {
         return false;
     }

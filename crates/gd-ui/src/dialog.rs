@@ -242,7 +242,7 @@ fn build(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     // No row hover under the game menu / Options or under the quest reward window (it sits over this one).
-    let cursor = super::cursor_px(&assets.hooks, win).filter(|p| !pause.menu && !popup.covers(*p));
+    let cursor = super::cursor_px(win).filter(|p| !pause.menu && !popup.covers(*p));
     let hover = cursor.and_then(|p| layout.rows.iter().position(|(r, _)| contains(r, p)));
     // Fade in on opening, out after closing, 0.002 per ms (`ConversationWindow::Update`).
     let step = time.delta_secs() * 1000.0 * 0.002;
@@ -568,17 +568,19 @@ pub fn faction_lines(
 /// Clicks on the window: a reply row answers, the close button closes; the
 /// window takes the click (no walking). `GD_DIALOG_CLICK` (hooks.rs).
 pub fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] (hooks, time, mut opened, mut seen): (
+        Res<gd_game_core::hooks::Hooks>,
+        Res<Time>,
+        Local<Option<(u64, f32)>>,
+        // The conversations the test hook has seen open (`GD_DIALOG_CLICK` rows by conversation).
+        Local<(bool, usize)>,
+    ),
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<DialogLayout>,
     conv: Res<Conversation>,
-    time: Res<Time>,
     mut capture: ResMut<UiCapture>,
     mut out: MessageWriter<ConversationRequest>,
-    mut opened: Local<Option<(u64, f32)>>,
-    // The conversations the test hook has seen open (`GD_DIALOG_CLICK` rows by conversation).
-    mut seen: Local<(bool, usize)>,
     (keys, motion, real, mut idle): (
         Res<ButtonInput<KeyCode>>,
         Res<bevy::input::mouse::AccumulatedMouseMotion>,
@@ -593,8 +595,11 @@ pub fn clicks(
 ) {
     // The hook's conversation count and click state describe the last session's conversations.
     if fresh.begun() {
-        *opened = None;
-        *seen = Default::default();
+        #[cfg(feature = "dev")]
+        {
+            *opened = None;
+            *seen = Default::default();
+        }
         *idle = 0.0;
     }
     // Idle close: no input for 150 s closes it (`Engine::IsUserIdle(150000)`,
@@ -613,16 +618,23 @@ pub fn clicks(
         }
     }
     // The conversations opened so far (the hook's rows go by conversation).
-    let open_now = conv.view.is_some();
-    if open_now && !seen.0 {
-        seen.1 += 1;
+    #[cfg(feature = "dev")]
+    {
+        let open_now = conv.view.is_some();
+        if open_now && !seen.0 {
+            seen.1 += 1;
+        }
+        seen.0 = open_now;
     }
-    seen.0 = open_now;
     let Some(wr) = layout.window else {
-        *opened = None;
+        #[cfg(feature = "dev")]
+        {
+            *opened = None;
+        }
         return;
     };
     // `GD_DIALOG_CLICK`: a scripted click on a row, once per window state.
+    #[cfg(feature = "dev")]
     if let Some((rows, secs)) = &hooks.ui.dialog_click {
         let (secs, nth) = (*secs, seen.1.saturating_sub(1));
         let row = rows[nth.min(rows.len() - 1)];
@@ -646,7 +658,7 @@ pub fn clicks(
     }
     let Ok(win) = window.single() else { return };
     // The game menu / Options holds the mouse; the quest reward window over this one takes its own presses.
-    let Some(p) = super::cursor_px(&hooks, win).filter(|p| !pause.menu && !popup.covers(*p)) else {
+    let Some(p) = super::cursor_px(win).filter(|p| !pause.menu && !popup.covers(*p)) else {
         return;
     };
     if !contains(&wr, p) && !layout.close.is_some_and(|c| contains(&c, p)) {

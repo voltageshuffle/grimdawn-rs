@@ -16,7 +16,8 @@ impl Plugin for DataPlugin {
         let root = &self.root;
         let t = std::time::Instant::now();
         let data = GameData::open(root).expect("open game data");
-        // `GD_SURVIVAL`: a Crucible process (hooks are inserted before the plugins).
+        // `GD_SURVIVAL`: a Crucible process (the dev game inserts its hooks before the plugins).
+        #[cfg(feature = "dev")]
         if app
             .world()
             .get_resource::<gd_game_core::hooks::Hooks>()

@@ -94,11 +94,16 @@ fn report_destination(
     pending: Res<PendingTravel>,
     world: Option<Res<gd_world::StreamedMap>>,
     levels: Option<Res<gd_game_core::levels::Levels>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut ready: MessageWriter<gd_game::doors::DestinationReady>,
 ) {
     let Some(dest) = pending.0 else { return };
-    let loaded = hooks.session.testworld.is_some()
+    // The dev test arena (`GD_TESTWORLD`) has no streaming.
+    #[cfg(feature = "dev")]
+    let arena = hooks.session.testworld.is_some();
+    #[cfg(not(feature = "dev"))]
+    let arena = false;
+    let loaded = arena
         || match (&world, &levels) {
             (Some(w), Some(l)) => w.area_ready(l, dest),
             _ => true,

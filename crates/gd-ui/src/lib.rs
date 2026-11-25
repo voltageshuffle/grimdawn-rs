@@ -50,6 +50,7 @@ pub mod floating;
 pub mod gamemenu;
 pub mod hotbar_pick;
 pub mod hud;
+pub mod item_styles;
 pub mod loading;
 pub mod lootfilter;
 pub mod menufolder;
@@ -735,82 +736,86 @@ impl Plugin for UiPlugin {
         .init_resource::<hud::LevelUpIndicator>()
         .init_resource::<hud::HotbarRow>()
         .init_resource::<FontCache>()
-        .add_systems(PreStartup, (keys::load, open_panels))
+        .add_systems(PreStartup, keys::load)
         .add_systems(
             PreUpdate,
             keys::sync_mode.run_if(resource_exists::<gd_game_core::options::GameOptions>),
-        )
-        // Before the windows that reset the mouse (game menu, options; the main menu's after them).
-        .add_systems(
-            PreUpdate,
-            (widgets::play_button_sounds, keys::mouse_codes)
-                .after(bevy::input::InputSystems)
-                .before(gamemenu::GameMenuInputSet)
-                .before(crate::state::options::OptionsInputSet),
-        )
-        .add_systems(Update, load_tags.before(HudSet))
-        .add_systems(
-            Update,
-            (
-                // After the window clicks (a modal box answers Esc first) and the pet input (Esc
-                // clears the pet selection whatever the dispatcher then closes).
-                esc_dispatcher
-                    .after(window::WindowClicks)
-                    .after(crate::state::pets::PetInputSet),
-                (hud::capture, hud::buttons).chain(),
-            )
-                .in_set(gd_ui_kit::UiInputSet),
-        )
-        .add_systems(
-            Update,
-            gd_game::pause::apply_pause_key
-                .after(UiInputSet)
-                .before(gd_game_core::player::PlayerSet),
-        )
-        .add_systems(
-            Update,
-            trade::live_gold
-                .after(HudSet)
-                .after(crate::state::trade::TradeInputSet)
-                .in_set(UiPlaySet),
-        )
-        .add_systems(
-            Update,
-            (
-                (
-                    swap_fresh,
-                    toggle_panels,
-                    rebuild,
-                    hud::button_states,
-                    hud::hot_slot_states,
-                    character::scroll_sheet,
-                    hud::animate_bars,
-                    hud::flash_bars,
-                )
-                    .chain()
-                    .in_set(HudBuildSet),
-                (
-                    hud::orb_texts,
-                    hud::pulse_hud,
-                    character::sheet_vitals,
-                    status::draw,
-                    cooldown::draw,
-                    status::hotbar_tooltip,
-                    status::buff_tooltip,
-                    skills::tooltip,
-                    hud::clock,
-                    hud::fps_overlay,
-                )
-                    .chain()
-                    .in_set(HudSet),
-            )
-                .chain(),
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(PreStartup, open_panels);
+        app
+            // Before the windows that reset the mouse (game menu, options; the main menu's after them).
+            .add_systems(
+                PreUpdate,
+                (widgets::play_button_sounds, keys::mouse_codes)
+                    .after(bevy::input::InputSystems)
+                    .before(gamemenu::GameMenuInputSet)
+                    .before(crate::state::options::OptionsInputSet),
+            )
+            .add_systems(Update, load_tags.before(HudSet))
+            .add_systems(
+                Update,
+                (
+                    // After the window clicks (a modal box answers Esc first) and the pet input (Esc
+                    // clears the pet selection whatever the dispatcher then closes).
+                    esc_dispatcher
+                        .after(window::WindowClicks)
+                        .after(crate::state::pets::PetInputSet),
+                    (hud::capture, hud::buttons).chain(),
+                )
+                    .in_set(gd_ui_kit::UiInputSet),
+            )
+            .add_systems(
+                Update,
+                gd_game::pause::apply_pause_key
+                    .after(UiInputSet)
+                    .before(gd_game_core::player::PlayerSet),
+            )
+            .add_systems(
+                Update,
+                trade::live_gold
+                    .after(HudSet)
+                    .after(crate::state::trade::TradeInputSet)
+                    .in_set(UiPlaySet),
+            )
+            .add_systems(
+                Update,
+                (
+                    (
+                        swap_fresh,
+                        toggle_panels,
+                        rebuild,
+                        hud::button_states,
+                        hud::hot_slot_states,
+                        character::scroll_sheet,
+                        hud::animate_bars,
+                        hud::flash_bars,
+                    )
+                        .chain()
+                        .in_set(HudBuildSet),
+                    (
+                        hud::orb_texts,
+                        hud::pulse_hud,
+                        character::sheet_vitals,
+                        status::draw,
+                        cooldown::draw,
+                        status::hotbar_tooltip,
+                        status::buff_tooltip,
+                        skills::tooltip,
+                        hud::clock,
+                        hud::fps_overlay,
+                    )
+                        .chain()
+                        .in_set(HudSet),
+                )
+                    .chain(),
+            );
     }
 }
 
 /// `GD_UI_OPEN` (hooks.rs) opens the inventory, character, skills or devotion window at start
 /// (`quests`, `potions`, `localmap`, `lootfilter`: their own modules).
+#[cfg(feature = "dev")]
 fn open_panels(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let Some(v) = hooks
         .ui
@@ -992,7 +997,7 @@ fn esc_dispatcher(
         if reclaim.escape() {
             break 'close true;
         }
-        if windows.loot.escape_confirm() {
+        if windows.loot.escape() {
             break 'close true;
         }
         if stack.open.is_some() {
@@ -1113,6 +1118,7 @@ fn rebuild(
         ),
     ),
     mut assets: UiAssets,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
@@ -1210,6 +1216,11 @@ fn rebuild(
             let root = spawn(&mut commands, Group::Trade);
             let mut ui = ui!(root);
             ui.docked = docked(&panels, &trade, potions_open.open, &data, screen, s);
+            // `GD_REROLL`: every reroll kind is usable.
+            #[cfg(feature = "dev")]
+            let reroll_test = hooks.items.reroll.is_some();
+            #[cfg(not(feature = "dev"))]
+            let reroll_test = false;
             trade::build(
                 &mut ui,
                 &trade,
@@ -1219,6 +1230,7 @@ fn rebuild(
                 (values.gold, values.level),
                 Some(&inv),
                 live.trade_afford,
+                reroll_test,
             );
         } else {
             retire(&mut commands, Group::Trade);

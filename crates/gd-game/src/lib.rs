@@ -56,6 +56,7 @@ pub mod hotbar;
 pub mod illusion;
 pub mod inventory;
 pub mod item_drop;
+pub mod item_style;
 pub mod lead;
 pub mod levels;
 pub mod line_fan;
@@ -126,9 +127,7 @@ pub struct GameLogicPlugin;
 
 impl Plugin for GameLogicPlugin {
     fn build(&self, app: &mut App) {
-        // `Hooks` first: `SaveDir` (`FromWorld`) reads it; the game inserts the process's before this plugin.
-        app.init_resource::<gd_game_core::hooks::Hooks>()
-            .init_resource::<gd_game_core::session::SessionEpoch>()
+        app.init_resource::<gd_game_core::session::SessionEpoch>()
             .init_resource::<gd_game_core::session::SaveDir>()
             .init_resource::<nav::Nav>()
             .init_resource::<gd_game_core::session::Choice>()

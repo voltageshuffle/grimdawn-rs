@@ -12,6 +12,7 @@ pub mod crafting;
 pub mod db;
 pub mod display_tags;
 pub mod illusion;
+pub mod item_style;
 pub mod jitter;
 pub mod loot;
 pub mod loot_filter;

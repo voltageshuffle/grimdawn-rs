@@ -45,6 +45,9 @@ pub struct Stash {
     /// Stash items of the files that found no cell on load (`inventory::place_saved`), `true` = the
     /// transfer stash: written back at their saved page and cell (`to_sacks`).
     pub unplaced: Vec<(bool, crate::inventory::Unplaced)>,
+    /// Per page, the layout its sort button starts with ([`StashRequest::Sort`]), `[personal, transfer]`
+    /// (`StashTab.sortCounts`; a page past the end is at 0). Session state, never saved.
+    pub sort_layouts: [Vec<u32>; 2],
 }
 
 impl Stash {
@@ -448,11 +451,10 @@ pub enum StashRequest {
         cell: (u32, u32),
         cursor: Vec2,
     },
-    /// The sort button (`InventorySack::Sort` with flags 0, the
-    /// first press; its sorter `InventorySack::SortCompare` orders by height, then width,
-    /// then the item-type rank (`Item::GetItemTypeRank`,
-    /// [`sort_rank`](gd_formats::inventory::sort_rank)), all largest first, then
-    /// by display name (`GetGameDescription`)), packed from the top left.
+    /// The page's sort button (the caravan's `StashTab::SortSelectedSack` → `InventorySack::Sort`, layouts and
+    /// retry: `gd_formats::inventory` module doc). It starts with the page's [`Stash::sort_layouts`] and adds
+    /// the retries that moved nothing to it, but not the press itself: a messy page is sorted in the page's
+    /// current layout, an already sorted one goes on to the next layout that moves anything.
     Sort { transfer: bool, page: usize },
     /// The buy-a-page tab, sent once the player answered Yes to the window's question (GrimDawn.exe
     /// caravan click `CaravanWindow::PromptBuy`: gold below [`page_cost`] → an Ok box `tagTransferError01`, else

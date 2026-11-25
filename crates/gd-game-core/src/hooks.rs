@@ -1,9 +1,11 @@
 //! Test hooks (`GD_*` environment variables, one typed field each, documented below), parsed once at startup into
-//! [`Hooks`]; systems read the resource instead of `std::env`. A `dev` build of the game inserts
-//! `Hooks::from_env()` (gated by this crate's `dev` feature, which gd-game's `dev` forwards); any other build inserts
-//! the empty [`Hooks::default`] (= `from_vars([])`), so a release build reads no variable and its hook reads are
-//! inert. Tests never depend on the process environment: a test that needs a hook builds the app with
-//! `Hooks::from_vars`.
+//! [`Hooks`]; systems read the resource instead of `std::env`. Dev builds only: the module exists with this crate's
+//! `dev` feature (forwarded by every crate's `dev`, grimdawn's `cargo dev`), and a build without it (release, tests)
+//! has no `Hooks` type, no hook read, no hook-only system and no `GD_*` hook string (release.yml checks the
+//! binary). The code that reads a hook is gated the same way: a hook-only system and its registration, a dev overlay
+//! system ordered after the production one it overrides, or a `hooks` param and branch of a production system.
+//! A dev game inserts `Hooks::from_env()`; the dev test harness (`gd_game::testing`) the empty `from_vars([])`, so
+//! tests never depend on the process environment.
 //!
 //! Every variable has a typed field, grouped by area: [`SessionHooks`] (`session`: character, menu skipping, world
 //! and save folder), [`UiHooks`] (`ui`: windows, hovers, scripted clicks, menus), [`RenderHooks`] (`render`:
@@ -15,9 +17,10 @@
 //! parses it. To add a hook: add the field (with a doc comment giving its syntax) to the area struct, parse it in
 //! `from_vars` and read it in a system through `Res<Hooks>`.
 //!
-//! There is no process-wide copy: `main` builds the hooks first and inserts them before the plugins, so
-//! plugin `build`s (which decide what to register), `FromWorld` resources (`SaveDir`, `TimeOfDay`) and systems
-//! all read the one resource of the world; helpers get the typed value from their calling system.
+//! There is no process-wide copy: `main` builds the hooks first and inserts them before the plugins (along with
+//! the `GD_SAVE_DIR` `SaveDir`), so plugin `build`s (which decide what to register, or replace a default resource
+//! such as `TimeOfDay` with its hook value) and systems all read the one resource of the world; helpers get the
+//! typed value from their calling system.
 use bevy::math::Vec2;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
@@ -32,12 +35,6 @@ pub struct Hooks {
     pub gameplay: GameplayHooks,
     pub items: ItemHooks,
     pub audit: AuditHooks,
-}
-
-impl Default for Hooks {
-    fn default() -> Self {
-        Self::from_vars(std::iter::empty())
-    }
 }
 
 /// `GD_SAVE` / `GD_NAME` / ...: the session's start without the main menu.
@@ -93,7 +90,8 @@ pub struct UiHooks {
     /// `GD_HOVER=x,y` (logical px) when it is a position.
     pub hover_px: Option<Vec2>,
     /// `GD_UI_OPEN`: the window open at start (`inventory`/`character`, `skills`, `devotion`, `factions`,
-    /// `quests`, `potions`, `achievements`, `localmap`, `worldmap`, `lootfilter`).
+    /// `quests`, `potions`, `achievements`, `localmap`, `worldmap`, `lootfilter`; `itemstyles`: the loot filter
+    /// window on its Item Styles page).
     pub open: Option<String>,
     /// `GD_UI_TAB`: the opened window's tab.
     pub tab: Option<u8>,
@@ -423,8 +421,7 @@ pub struct AuditHooks {
 }
 
 impl Hooks {
-    /// The process environment's hooks: only `dev` builds read it (the game inserts `Hooks::default()` otherwise).
-    #[cfg(feature = "dev")]
+    /// The process environment's hooks (the game inserts them before its plugins).
     pub fn from_env() -> Self {
         Self::from_vars(std::env::vars())
     }

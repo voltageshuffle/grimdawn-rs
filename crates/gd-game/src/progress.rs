@@ -58,7 +58,7 @@ pub(crate) type LevelUpQuery<'w, 's> =
 
 /// Creates [`PlayerProgress`] once the player exists.
 pub fn init_progress(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     // Option: `progress` is the existence check (this system creates it); `loaded` is absent for a new character.
     progress: Option<Res<PlayerProgress>>,
@@ -68,11 +68,16 @@ pub fn init_progress(
     if progress.is_some() || players.is_empty() {
         return;
     }
-    let mut p = PlayerProgress::from_save(loaded.as_deref());
+    let p = PlayerProgress::from_save(loaded.as_deref());
     // `GD_XP` (hooks.rs).
-    if let Some(xp) = hooks.gameplay.xp {
-        p.progress.experience = xp;
-    }
+    #[cfg(feature = "dev")]
+    let p = {
+        let mut p = p;
+        if let Some(xp) = hooks.gameplay.xp {
+            p.progress.experience = xp;
+        }
+        p
+    };
     commands.insert_resource(p);
 }
 

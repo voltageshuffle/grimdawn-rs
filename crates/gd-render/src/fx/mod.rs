@@ -94,6 +94,7 @@ impl Plugin for FxPlugin {
         // Gameplay spawns bare effect requests (`gd_game::visuals`).
         app.register_required_components::<EffectSpec, Visibility>();
         // `GD_NO_FX`: leave effects out (A/B frame-time checks).
+        #[cfg(feature = "dev")]
         if app
             .world()
             .resource::<gd_game_core::hooks::Hooks>()
@@ -599,7 +600,7 @@ struct FxWaiting {
 
 #[allow(clippy::too_many_arguments)]
 fn init_effects(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     q: Query<
         (
@@ -708,11 +709,14 @@ fn init_effects(
         for (order, d) in pfx.emitters.iter().enumerate() {
             let mut frames = 1;
             // `GD_FX_SKIP=<emitter name>` (debug): don't draw that emitter.
+            #[cfg(feature = "dev")]
             let skip = hooks
                 .render
                 .fx_skip
                 .as_ref()
                 .is_some_and(|n| n.split(',').any(|n| n == d.name));
+            #[cfg(not(feature = "dev"))]
+            let skip = false;
             let draw = if skip || d.texture.is_empty() {
                 None
             } else if let Some((img, n)) = assets.texture(&data, &d.texture, &mut images) {
@@ -881,7 +885,7 @@ pub fn simulated(
 /// light components, the despawns and restarts.
 #[allow(clippy::too_many_arguments)]
 fn update_effects(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     time: Res<Time>,
     mut fx: Query<(
@@ -1089,6 +1093,7 @@ fn update_effects(
                 // light buffer reads intensity / (40 000 × range) as brightness.
                 pl.intensity = 40_000.0 * ls.radius * ls.intensity;
                 // `GD_NO_FX_LIGHTS=1` (debug): effect lights off.
+                #[cfg(feature = "dev")]
                 if hooks.render.no_fx_lights {
                     pl.intensity = 0.0;
                 }

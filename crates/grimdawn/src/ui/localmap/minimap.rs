@@ -160,7 +160,6 @@ pub(super) fn compass_window(
 /// pool node is added when a frame has more icons than any before it, the name when the hovered icon changes).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn minimap(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -285,7 +284,7 @@ pub(super) fn minimap(
     // Custom quads go under the other icons (their own pass).
     placed.sort_by_key(|(_, i, _)| i.kind != 14);
     // The game menu / Options holds the cursor: no icon name under it.
-    let cursor = gd_ui_kit::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let cursor = gd_ui_kit::cursor_px(win).filter(|_| !pause.menu);
     let isz = (16.0 * s).round();
     let hover = cursor
         .and_then(|c| {

@@ -902,7 +902,7 @@ pub fn draw(
 #[allow(clippy::too_many_arguments)]
 pub fn buff_tooltip(
     mut fresh: gd_game_core::session::NewSession,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     (values, vitals): (Res<HudValues>, Res<super::HudVitals>),
     caster: Query<
@@ -934,26 +934,27 @@ pub fn buff_tooltip(
         return;
     }
     let rects = &built.0;
-    let forced = hooks.ui.buff_hover;
     // A covering window hides the bar: the pause menu, the map / journal (`skills::Above`) and a
     // registered window button / blocker in front of the icon (`widgets::frontmost`, as
     // `rollover::hud_rollover`). `UiCapture` alone would also hide it over the HUD itself (`hud::capture`).
-    let cursor = super::cursor_px(&hooks, win).filter(|p| !pause.menu && !above.covers(*p));
+    let cursor = super::cursor_px(win).filter(|p| !pause.menu && !above.covers(*p));
     let front = cursor.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
+    let hit = cursor.and_then(|p| {
+        vitals
+            .status
+            .iter()
+            .zip(rects)
+            .find(|(_, r)| super::contains(r, p) && in_front(r))
+    });
+    #[cfg(feature = "dev")]
+    let hit = match hooks.ui.buff_hover {
+        Some(n) => vitals.status.get(n).zip(rects.get(n)),
+        None => hit,
+    };
     let hover = {
         let fonts = &canvas.assets.fonts;
-        match forced {
-            Some(n) => vitals.status.get(n).zip(rects.get(n)),
-            None => cursor.and_then(|p| {
-                vitals
-                    .status
-                    .iter()
-                    .zip(rects)
-                    .find(|(_, r)| super::contains(r, p) && in_front(r))
-            }),
-        }
-        .and_then(|(i, r)| {
+        hit.and_then(|(i, r)| {
             // `PlayerStatusIcons::GetRolloverText` kind 2: tagHUDComboCharge (class 46), the multiplier line
             // (49, when non-zero) and the time left (49; `…Precise` under 1000 ms). PORT: the
             // stock text files lack both combo tags; the engine then shows the tag name.
@@ -1124,7 +1125,7 @@ pub fn buff_tooltip(
 #[allow(clippy::too_many_arguments)]
 pub fn hotbar_tooltip(
     mut fresh: gd_game_core::session::NewSession,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     (values, hud_layout): (Res<HudValues>, Res<super::hud::HudLayout>),
     caster: Query<
@@ -1169,11 +1170,10 @@ pub fn hotbar_tooltip(
     // A covering window hides the slots: the pause menu, the map / journal (`skills::Above`) and a
     // registered window button / blocker in front of the slot (`widgets::frontmost`, as
     // `rollover::hud_rollover`). `UiCapture` alone would also hide them over the HUD itself (`hud::capture`).
-    let cursor = hooks
-        .ui
-        .hot_hover
-        .or_else(|| super::cursor_px(&hooks, win))
-        .filter(|p| !pause.menu && !above.covers(*p));
+    let cursor = super::cursor_px(win);
+    #[cfg(feature = "dev")]
+    let cursor = hooks.ui.hot_hover.or(cursor);
+    let cursor = cursor.filter(|p| !pause.menu && !above.covers(*p));
     let front = cursor.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
 

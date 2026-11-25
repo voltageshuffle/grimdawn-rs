@@ -460,7 +460,6 @@ impl Plugin for DevotionUiPlugin {
                 First,
                 clear_is_power_on_mod_change.after(gd_render::model::drop_on_mod_change),
             )
-            .add_systems(Startup, start_view)
             .add_systems(
                 PreUpdate,
                 search_typing
@@ -489,6 +488,8 @@ impl Plugin for DevotionUiPlugin {
                     .after(super::HudSet)
                     .in_set(gd_ui_kit::UiPlaySet),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(Startup, start_view);
     }
 }
 
@@ -590,6 +591,7 @@ fn transitions(
 }
 
 /// `GD_DEVOTION_SCROLL` / `GD_DEVOTION_ZOOM` (hooks.rs): the start view.
+#[cfg(feature = "dev")]
 fn start_view(hooks: Res<gd_game_core::hooks::Hooks>, mut view: ResMut<DevotionView>) {
     if let Some(v) = hooks.ui.devotion_scroll {
         view.scroll = v;
@@ -619,7 +621,7 @@ type TipKey = (
 /// `gd_sim::skill_tooltip::devotion_lines`), drawn in its own overlay.
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     panels: Res<super::UiPanels>,
     values: Res<HudValues>,
@@ -640,20 +642,27 @@ fn tooltip(
     };
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
+    let hover = view.hover;
     // `GD_DEVOTION_HOVER` (hooks.rs) fakes a hover.
-    let faked = hooks.ui.devotion_hover.as_deref().and_then(|n| {
-        state
-            .as_ref()
-            .and_then(|s| s.data.locate(n))
-            .map(|(c, st)| {
-                (
-                    c,
-                    Some(st),
-                    Vec2::new(size.x as f32 * 0.4, size.y as f32 * 0.1),
-                )
-            })
-    });
-    let hover = faked.or(view.hover).filter(|_| panels.devotion);
+    #[cfg(feature = "dev")]
+    let hover = hooks
+        .ui
+        .devotion_hover
+        .as_deref()
+        .and_then(|n| {
+            state
+                .as_ref()
+                .and_then(|s| s.data.locate(n))
+                .map(|(c, st)| {
+                    (
+                        c,
+                        Some(st),
+                        Vec2::new(size.x as f32 * 0.4, size.y as f32 * 0.1),
+                    )
+                })
+        })
+        .or(hover);
+    let hover = hover.filter(|_| panels.devotion);
     let key: Option<TipKey> = hover.zip(state.as_ref()).map(|((c, st, _), s)| {
         let reclaim = values
             .devotion_reclaim
@@ -2084,7 +2093,6 @@ fn pick_list(ui: &mut Ui, pk: &PickState, values: &HudValues, layout: &mut Devot
 /// Clicks, pan / zoom, hover and binding keys on the devotion window.
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<super::keys::KeyBindings>,
@@ -2110,7 +2118,7 @@ pub fn clicks(
         gd_game_core::session::NewSession,
     ),
     mut was_open: Local<bool>,
-    mut hooked: Local<bool>,
+    #[cfg(feature = "dev")] (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
 ) {
     if fresh.begun() {
         *drag = None;
@@ -2140,6 +2148,7 @@ pub fn clicks(
     };
     let screen = Vec2::new(win.physical_width() as f32, win.physical_height() as f32);
     // `GD_DEVOTION_PICK` (hooks.rs): opens that star's skill-select list once.
+    #[cfg(feature = "dev")]
     if let Some(n) = &hooks.ui.devotion_pick
         && !*hooked
         && let Ok(loadout) = loadouts.single()
@@ -2180,7 +2189,7 @@ pub fn clicks(
     // No cursor, the game menu / Options over the map, or the journal (its Help button opens it on top) under the
     // cursor: nothing here is hovered, dragged, zoomed, clicked or bound (the wheel is a per-frame accumulator, so
     // skipping it drops it). The pick list's row hover stays as it was.
-    let p = super::cursor_px(&hooks, win)
+    let p = super::cursor_px(win)
         .filter(|p| !pause.menu && !(requests.journal.open && journal_layout.covers(*p)));
     let Some(p) = p else {
         if view.hover.is_some() {

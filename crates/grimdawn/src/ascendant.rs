@@ -164,13 +164,13 @@ fn close_far(
 /// expansions are always loaded.
 fn altar_key(
     (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<gd_ui_kit::keys::KeyBindings>),
-    (hooks, data, altar): (
-        Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    (data, altar): (
         Res<gd_game_core::data::GameData>,
         Res<gd_game_core::ascendant::AltarState>,
     ),
-    rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
-    (dialog, rift_map): (
+    (rt, dialog, rift_map): (
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
         Res<gd_game::conversation::Conversation>,
         Res<gd_game::riftgates::RiftgateMap>,
     ),
@@ -182,10 +182,15 @@ fn altar_key(
         ResMut<gd_ui::factions::FactionsView>,
     ),
 ) {
+    // The `GD_ALTAR_OFFER` hook allows the altar without the token.
+    #[cfg(feature = "dev")]
+    let hooked = hooks.items.altar_offer.is_some();
+    #[cfg(not(feature = "dev"))]
+    let hooked = false;
     if !bindings.just_pressed(gd_ui_kit::keys::ALTAR_WINDOW, &keys)
         || dialog.view.is_some()
         || rift_map.open
-        || !gd_game::ascendant::may_use_altar(&hooks, &data.db, rt.as_deref())
+        || !(hooked || gd_game::ascendant::may_use_altar(&data.db, rt.as_deref()))
     {
         return;
     }

@@ -1,12 +1,11 @@
 //! The session lifecycle systems: [`begin`] starts a session, [`end_session_state`]
-//! tears it down, [`load_save`] starts one from `GD_SAVE`, [`set_mod_data`] mounts the
+//! tears it down, `load_save` (dev builds) starts one from `GD_SAVE`, [`set_mod_data`] mounts the
 //! session's mod (the session resources are [`gd_game_core::session`]).
 use bevy::prelude::*;
 use gd_formats::save::gdc::Gdc;
-use gd_game_core::session::{
-    Choice, CustomMap, GameMode, LoadedCharacter, SessionEpoch, SessionReady, arena_map,
-    last_difficulty, mode_for,
-};
+use gd_game_core::session::{Choice, GameMode, LoadedCharacter, SessionReady, last_difficulty};
+#[cfg(feature = "dev")]
+use gd_game_core::session::{CustomMap, SessionEpoch, arena_map, mode_for};
 use std::sync::Arc;
 
 /// The session state the rules read beyond the database: the mode and the
@@ -87,6 +86,7 @@ pub fn begin(
         // (`GD_MOD` / `GD_SAVE` hooks): never run a mod-labelled session over another mod's save.
         if let Some(msg) = choice.mod_mismatch(difficulty) {
             error!("session: {} does not start: {msg}", choice.name);
+            #[cfg(feature = "dev")]
             if world
                 .resource::<gd_game_core::hooks::Hooks>()
                 .session
@@ -98,6 +98,7 @@ pub fn begin(
         }
         if let Err(e) = set_mod_data(world, mod_name.as_deref()) {
             error!("session: mod {mod_name:?} does not mount, start aborted: {e:#}");
+            #[cfg(feature = "dev")]
             if world
                 .resource::<gd_game_core::hooks::Hooks>()
                 .session
@@ -227,6 +228,8 @@ pub fn end_session_state(world: &mut World) {
     world.insert_resource(gd_game_core::pause::GamePause::default());
 }
 
+/// The session the hooks describe starts without the menu (`skip_menu`: no `GD_MENU`, hooks.rs).
+#[cfg(feature = "dev")]
 pub fn load_save(
     mut commands: Commands,
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -266,7 +269,9 @@ pub fn load_save(
     {
         Ok(gdc) => {
             info!("loaded character {:?} from {path}", gdc.header.name);
-            let (d, vet) = mode_for(hooks, &gdc);
+            // `GD_DIFFICULTY` / `GD_VETERAN` override the save's.
+            let (d, vet) = mode_for(&gdc);
+            let (d, vet) = (hooks.difficulty.unwrap_or(d), hooks.veteran.unwrap_or(vet));
             begin(
                 &mut commands,
                 Choice {

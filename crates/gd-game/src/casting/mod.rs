@@ -100,7 +100,6 @@ impl Plugin for CastingPlugin {
                     sync_ranged.run_if(resource_exists::<gd_game_core::inventory::Inventory>),
                     regen_and_cooldowns,
                     potions,
-                    fx_test,
                     (cast_requests, move_to_use_skill, end_warm_ups).chain(),
                     spell_attack_target,
                     ranged_swings,
@@ -120,6 +119,17 @@ impl Plugin for CastingPlugin {
                     .after(gd_game_core::player::PlayerSet)
                     .before(gd_game_core::combat::CombatSet),
             );
+        // `GD_FX_TEST` (hooks.rs): where it ran in the chain above.
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            fx_test
+                .after(potions)
+                .before(cast_requests)
+                .in_set(CastingSet)
+                .after(gd_game_core::player::PlayerSet)
+                .before(gd_game_core::combat::CombatSet),
+        );
         // The procs the frame's combat / trigger writers sent after
         // `fire_casts` ran (autocast triggers, secondaries, monster casts,
         // weapon-pool special clips): fired the same frame, through the

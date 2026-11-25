@@ -16,6 +16,10 @@
 //! `minCharsBeforeWrapping`. Line pads, icons, the wrap width and the window size: [`layout`],
 //! [`spawn_box`]; PORT: the placement (beside the cursor, kept on screen).
 //!
+//! Item styles (`gd_game::item_style`, a port addition): the name line of every box (the hovered item and the
+//! compared ones) takes the first matching style's tag and colour ([`style_name`]); the shown boxes rebuild when
+//! the styles' generation changes, not per frame.
+//!
 //! Delay (the rollover window, `ui::tip` module doc): the window shows once the item has been hovered its
 //! style's `delay` ms (250 for `style_itemsinventory` / `style_itemsequipped`; `style_itemsground` has none), at once
 //! while game time is paused; another item restarts the count. Under the game menu nothing is hovered
@@ -183,6 +187,7 @@ fn layout(
     gfx: &mut Gfx,
     fonts: &mut FontCache,
     lines: &[Line],
+    name_color: Option<[f32; 3]>,
     s: f32,
     screen_w: u32,
 ) -> (Vec<Placed>, Vec2) {
@@ -217,13 +222,24 @@ fn layout(
     debug!("tooltip wrap: sample {sample_w} px, line limit {max_total} px (scale {s})");
     let mut out = Vec::new();
     let (mut y, mut width) = (0.0f32, 0.0f32);
+    // An item style's colour replaces the item's own name line only: the first `Name` line, the one `style_name`
+    // tagged (a socketed component's or augment's name line further down keeps its colour).
+    let mut name_color = name_color;
     for l in lines {
+        let recolor = if l.kind == LineKind::Name {
+            name_color.take()
+        } else {
+            None
+        };
         let (Some(path), indent) = fonts.class_style(&gfx.data, l.class) else {
             continue;
         };
-        let Some(st) = line_style(gfx, fonts, &path) else {
+        let Some(mut st) = line_style(gfx, fonts, &path) else {
             continue;
         };
+        if let Some(c) = recolor {
+            (st.color0, st.color1) = (c, c);
+        }
         let Some(f) = fonts.font(&gfx.data, &st.font, &mut gfx.font_assets) else {
             continue;
         };
@@ -344,33 +360,35 @@ fn hover(
     mut nodes: Query<(&mut Node, &mut Visibility), With<TooltipBox>>,
     mut shown: Local<Option<(Item, Spot, Option<u64>)>>,
     mut gfx: Gfx,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     (
         keys,
         options,
         mut last_details,
         mut fresh,
-        hooks,
         mut dps,
         bindings,
         stash,
         anims,
         mut waited,
         mut shown_version,
+        styles,
     ): (
         Res<ButtonInput<KeyCode>>,
         Res<gd_game_core::options::GameOptions>,
         Local<bool>,
         gd_game_core::session::NewSession,
-        Res<gd_game_core::hooks::Hooks>,
         Local<DpsJobs>,
         Res<gd_ui_kit::keys::KeyBindings>,
         Option<Res<gd_game_core::stash::Stash>>,
         Res<gd_game_core::character::AnimCache>,
         // The hovered item and its show delay (module doc, "Delay"; the shared `ui::tip::TipDelay`).
         Local<(Option<(Item, Spot, Option<u64>)>, gd_ui_kit::tip::TipDelay)>,
-        // `Inventory::version` the shown box was built at: a weapon swap or any equipment change rebuilds
-        // the compare box and DPS change.
-        Local<u64>,
+        // `Inventory::version` and the item styles' generation the shown box was built at: a weapon swap or any
+        // equipment change rebuilds the compare box and DPS change, a style edit the name line.
+        Local<(u64, u32)>,
+        // The name line's item style (`gd_game::item_style`, a port addition).
+        Res<gd_game::item_style::ItemStyles>,
     ),
 ) {
     if fresh.begun() {
@@ -383,34 +401,10 @@ fn hover(
     };
     let anim_frames = anims.shared();
     // `GD_HOVER` (hooks.rs) stands in for the mouse.
-    let cursor = gd_ui_kit::cursor_px(&hooks, win).map(|p| p / win.scale_factor());
+    let cursor = gd_ui_kit::cursor_px(win).map(|p| p / win.scale_factor());
     // What is under the cursor.
     let mut hovered: Hovered = None;
-    // `GD_HOVER_ITEM` (hooks.rs; with `GD_HOVER`, optionally `GD_HOVER_PRICE`): shows that item's tooltip.
-    if let Some(v) = hooks.items.hover_item.as_deref() {
-        let mut it = v.split(',').map(str::to_string);
-        let mut n = || it.next().unwrap_or_default();
-        let (base_name, relic_name, prefix_name, suffix_name) = (n(), n(), n(), n());
-        let item = Item {
-            base_name,
-            relic_name,
-            prefix_name,
-            suffix_name,
-            seed: 12345,
-            var1: 1,
-            stack_count: 1,
-            ..Default::default()
-        };
-        let price = hooks.items.hover_price;
-
-        // `GD_HOVER_SPOT` (default: a bag item).
-        let spot = match hooks.items.hover_spot.as_deref() {
-            Some("ground") => Spot::Ground,
-            Some("equipped") => Spot::Equipped,
-            _ => Spot::Inventory,
-        };
-        hovered = Some((Cow::Owned(item), spot, price));
-    } else if let Some(c) = cursor
+    if let Some(c) = cursor
         && inv.held.is_none()
     {
         let p = c * win.scale_factor();
@@ -462,6 +456,32 @@ fn hover(
                 .map(|i| (Cow::Borrowed(i), Spot::Ground, None));
         }
     }
+    // `GD_HOVER_ITEM` (hooks.rs; with `GD_HOVER`, optionally `GD_HOVER_PRICE`): shows that item's tooltip.
+    #[cfg(feature = "dev")]
+    if let Some(v) = hooks.items.hover_item.as_deref() {
+        let mut it = v.split(',').map(str::to_string);
+        let mut n = || it.next().unwrap_or_default();
+        let (base_name, relic_name, prefix_name, suffix_name) = (n(), n(), n(), n());
+        let item = Item {
+            base_name,
+            relic_name,
+            prefix_name,
+            suffix_name,
+            seed: 12345,
+            var1: 1,
+            stack_count: 1,
+            ..Default::default()
+        };
+        let price = hooks.items.hover_price;
+
+        // `GD_HOVER_SPOT` (default: a bag item).
+        let spot = match hooks.items.hover_spot.as_deref() {
+            Some("ground") => Spot::Ground,
+            Some("equipped") => Spot::Equipped,
+            _ => Spot::Inventory,
+        };
+        hovered = Some((Cow::Owned(item), spot, price));
+    }
     // The game menu takes the mouse: nothing under it is hovered (`ui::rollover` module doc); nor under a
     // modal question or the stack window (whose buttons the tooltip would cover).
     if gfx.pause.menu
@@ -489,10 +509,11 @@ fn hover(
     let details = details_option
         || scroll_pick
         || keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let version = (inv.version, styles.generation);
     if !same(&hovered, &shown)
-        || (hovered.is_some() && (details != *last_details || inv.version != *shown_version))
+        || (hovered.is_some() && (details != *last_details || version != *shown_version))
     {
-        *shown_version = inv.version;
+        *shown_version = version;
         *last_details = details;
         for (e, _) in &boxes {
             commands.entity(e).try_despawn();
@@ -654,6 +675,7 @@ fn hover(
             ..ctx
         };
         let mut lines = item_tooltip(&ctx_dps, &item);
+        let name_color = style_name(&styles, &inv, &idb, &item, &mut lines);
         if lines.is_empty() {
             return;
         }
@@ -739,7 +761,7 @@ fn hover(
         {
             lines.insert(0, banner(&fonts, h));
         }
-        let mut sets: Vec<(Vec<Line>, Spot)> = compared
+        let mut sets: Vec<(Vec<Line>, Spot, Option<[f32; 3]>)> = compared
             .iter()
             .map(|e| {
                 let ctx = TipCtx {
@@ -747,14 +769,15 @@ fn hover(
                     ..ctx
                 };
                 let mut l = item_tooltip(&ctx, e);
+                let c = style_name(&styles, &inv, &idb, e, &mut l);
                 l.insert(0, banner(&fonts, "tagItemCompareEquipped"));
-                (l, Spot::Equipped)
+                (l, Spot::Equipped, c)
             })
             .collect();
-        sets.push((lines, spot));
+        sets.push((lines, spot, name_color));
         let boxes: Vec<(Entity, Vec2)> = sets
             .iter()
-            .map(|(l, sp)| spawn_box(&mut commands, &mut gfx, &mut fonts, &hooks, l, *sp, win))
+            .map(|(l, sp, c)| spawn_box(&mut commands, &mut gfx, &mut fonts, (l, *c), *sp, win))
             .collect();
         // Side by side, 16 px apart (physical px at the UI scale).
         let gap = 16.0
@@ -800,14 +823,38 @@ fn hover(
     }
 }
 
+/// The first matching item style (`gd_game::item_style`, a port addition) on the tooltip's name line: its tag is
+/// added to the text, its colour returned for [`layout`] (`None`: the stock colour).
+fn style_name(
+    styles: &gd_game::item_style::ItemStyles,
+    inv: &Inventory,
+    idb: &gd_sim::items::ItemDb,
+    item: &Item,
+    lines: &mut [Line],
+) -> Option<[f32; 3]> {
+    use gd_sim::items::item_style::{Name, StyledItem};
+    if styles.rules.rules.is_empty() {
+        return None;
+    }
+    let info = inv.info(item)?;
+    let line = lines.iter_mut().find(|l| l.kind == LineKind::Name)?;
+    let styled = StyledItem::new(
+        &info.resolved,
+        idb.get(&item.base_name),
+        Name::Shown(&line.text),
+    );
+    let style = styles.style(&styled)?;
+    style.apply_tag(&mut line.text);
+    style.rgb()
+}
+
 /// Spawns one tooltip window (hidden until placed); returns it and its size
 /// (logical px).
 fn spawn_box(
     commands: &mut Commands,
     gfx: &mut Gfx,
     fonts: &mut FontCache,
-    hooks: &gd_game_core::hooks::Hooks,
-    lines: &[Line],
+    (lines, name_color): (&[Line], Option<[f32; 3]>),
     spot: Spot,
     win: &Window,
 ) -> (Entity, Vec2) {
@@ -825,7 +872,7 @@ fn spawn_box(
         f("backgroundColorBlue", 0.04),
         f("backgroundColorAlpha", 0.9),
     );
-    let (placed, mut content) = layout(gfx, fonts, lines, s, win.physical_width());
+    let (placed, mut content) = layout(gfx, fonts, lines, name_color, s, win.physical_width());
     // The window is its text box (exe `RolloverWindow::GetSize` size / `RolloverWindow::Layout` text box: the box
     // plus, from the style's border object, a rect each of the upper-left, left / right and top / bottom
     // bitmaps read through `UIBitmapBorder::GetPieceSize` (width / height); those add nothing for the stock
@@ -883,7 +930,6 @@ fn spawn_box(
             images: &mut gfx.images,
             fonts,
             font_assets: &mut gfx.font_assets,
-            hooks,
             classic_hud: false,
             s,
             inv,

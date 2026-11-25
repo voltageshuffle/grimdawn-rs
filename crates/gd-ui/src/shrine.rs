@@ -74,6 +74,17 @@ impl Plugin for ShrineUiPlugin {
                 open.shrine.is_some() || layout.window.is_some()
             },
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            accept_hook
+                .in_set(super::UiInputSet)
+                .after(build)
+                .before(clicks)
+                .run_if(|open: Res<ShrineWindow>, layout: Res<ShrineLayout>| {
+                    open.shrine.is_some() || layout.window.is_some()
+                }),
+        );
         app.add_systems(
             Update,
             live.after(build)
@@ -338,7 +349,6 @@ fn live_button(
 
 /// Hover in place (no rebuild): the button bitmaps and the hovered offering's item.
 fn live(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut layout: ResMut<ShrineLayout>,
     pause: Res<gd_game_core::pause::GamePause>,
@@ -346,7 +356,7 @@ fn live(
 ) {
     let Ok(win) = window.single() else { return };
     // The game menu / Options over the window takes the pointer.
-    let p = super::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let p = super::cursor_px(win).filter(|_| !pause.menu);
     let hover = p.and_then(|p| {
         layout
             .buttons
@@ -372,32 +382,25 @@ fn live(
     }
 }
 
-/// Clicks on the window: the shrine button accepts, cancel / close cancel (Esc through the shared
-/// dispatcher, `ui::esc_dispatcher`); the window takes the click (no walking). `GD_SHRINE_ACCEPT` (hooks.rs)
-/// presses the shrine button once a window has been open that long.
-#[allow(clippy::too_many_arguments)]
-fn clicks(
+/// `GD_SHRINE_ACCEPT` (hooks.rs): presses the shrine button (when enabled) once per window, after it has been open
+/// that long.
+#[cfg(feature = "dev")]
+fn accept_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<ShrineLayout>,
     open: Res<ShrineWindow>,
     time: Res<Time>,
-    mut capture: ResMut<UiCapture>,
     mut out: MessageWriter<ShrineRequest>,
     mut fresh: gd_game_core::session::NewSession,
     mut opened: Local<Option<(u64, f32)>>,
-    data: Res<GameData>,
-    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
     if fresh.begun() {
         *opened = Default::default();
     }
-    let Some(wr) = layout.window else {
+    if layout.window.is_none() {
         *opened = None;
         return;
-    };
-    // `GD_SHRINE_ACCEPT`: press the shrine button (when enabled) once per window.
+    }
     if let Some(secs) = hooks.ui.shrine_accept {
         let since = opened.get_or_insert((open.version, time.elapsed_secs()));
         if since.0 != open.version {
@@ -414,9 +417,27 @@ fn clicks(
             }
         }
     }
+}
+
+/// Clicks on the window: the shrine button accepts, cancel / close cancel (Esc through the shared
+/// dispatcher, `ui::esc_dispatcher`); the window takes the click (no walking).
+#[allow(clippy::too_many_arguments)]
+fn clicks(
+    buttons: Res<ButtonInput<MouseButton>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<ShrineLayout>,
+    open: Res<ShrineWindow>,
+    mut capture: ResMut<UiCapture>,
+    mut out: MessageWriter<ShrineRequest>,
+    data: Res<GameData>,
+    mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
+) {
+    let Some(wr) = layout.window else {
+        return;
+    };
     // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let hit = layout

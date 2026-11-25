@@ -85,7 +85,6 @@ impl Plugin for CombatPlugin {
                     crate::dodge::notify_monsters,
                     crate::anger_rolls::update,
                     monster_ai,
-                    auto_fight,
                     player_attack,
                     apply_hits.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     hit_aggro,
@@ -115,6 +114,16 @@ impl Plugin for CombatPlugin {
                     .in_set(CombatSet)
                     .after(gd_game_core::player::PlayerSet),
             );
+        // `GD_AUTO_FIGHT` (hooks.rs): where it ran in the core chain above.
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            auto_fight
+                .after(monster_ai)
+                .before(player_attack)
+                .in_set(CombatSet)
+                .after(gd_game_core::player::PlayerSet),
+        );
     }
 }
 

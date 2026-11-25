@@ -2,14 +2,15 @@ lints.workspace = true
 
 [package]
 name = "gd-ui"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Grim Dawn's in-game UI windows and HUD over gd-ui-kit, gd-game and gd-render: the record-driven window clusters, the rebuild hub, the Esc dispatcher and the presentation state the binary's input systems share"
 license = "MIT"
 
 [features]
-# Dev builds: the `GD_*` hook systems the windows carry (the hooks resource is gd-game-core's).
-dev = []
+# Dev builds: the `GD_*` hook systems the windows carry (the hooks resource is gd-game-core's, which this
+# forwards to). grimdawn's `dev` forwards here.
+dev = ["gd-game-core/dev"]
 
 [dependencies]
 # The UI records / fonts / text layout (gd-formats), the gameplay the windows read and send requests to
@@ -39,12 +40,12 @@ bevy = {
   ]
 }
 fastrand = "2.5.0"
-gd-formats = { path = "../gd-formats", version = "0.1.0" }
-gd-game = { path = "../gd-game", version = "0.1.0" }
-gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
-gd-render = { path = "../gd-render", version = "0.1.0" }
-gd-rules = { path = "../gd-rules", version = "0.1.0" }
-gd-sim = { path = "../gd-sim", version = "0.1.0" }
-gd-story = { path = "../gd-story", version = "0.1.0" }
-gd-ui-kit = { path = "../gd-ui-kit", version = "0.1.0" }
+gd-formats = { path = "../gd-formats" }
+gd-game = { path = "../gd-game" }
+gd-game-core = { path = "../gd-game-core" }
+gd-render = { path = "../gd-render" }
+gd-rules = { path = "../gd-rules" }
+gd-sim = { path = "../gd-sim" }
+gd-story = { path = "../gd-story" }
+gd-ui-kit = { path = "../gd-ui-kit" }
 libc = "0.2"

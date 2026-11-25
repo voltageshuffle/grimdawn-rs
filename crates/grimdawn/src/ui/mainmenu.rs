@@ -1,5 +1,6 @@
 //! The main menu screens (state and input: `menu.rs`): the play menu, the
-//! Difficulty Select, Create Character and Delete Character windows.
+//! Difficulty Select, Create Character and Delete Character windows. PORT: the engine's version label in the
+//! bottom-right corner (`MainMenu::Initialize`, `Engine::GetVersion`) is not drawn.
 //!
 //! Grim Dawn.exe:
 //! - the play menu is `records/ui/mainmenu/playmenu/playmenu_mastertable.dbr`
@@ -570,7 +571,6 @@ fn build(
     if let Some(v) = view {
         background(&mut ui, v);
     }
-    version_line(&mut ui);
     preview(&mut ui, &menu);
     // The credits roll replaces the button panel (menu state 9: the scene, character and logo stay).
     if credits.open {
@@ -743,7 +743,6 @@ fn build(
 /// cannot be hovered through it). Writes only on a change.
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<MenuLayout>,
     (options, credits): (
         Res<gd_ui::state::options::OptionsWindow>,
@@ -756,7 +755,7 @@ fn live(
         return;
     }
     let Ok(win) = window.single() else { return };
-    let hover = super::cursor_px(&hooks, win)
+    let hover = super::cursor_px(win)
         .and_then(|p| layout.at(p))
         .filter(|_| !options.open && !credits.open);
     let inv = 1.0 / win.scale_factor();
@@ -797,24 +796,6 @@ fn preview(ui: &mut Ui, menu: &MainMenu) {
         .map(|i| gd_sim::items::illusion::look_record(i).to_owned())
         .collect();
     gd_ui::doll::menu_character(ui, (female, looks));
-}
-
-/// The engine version in the bottom-right corner. `MainMenu::Initialize` (menu
-/// constructor): a label with `Engine::GetVersion()` ("v1.3.1.1 (x64)",
-/// Engine.dll), anchored 10 px from the right edge and 15 px above
-/// the bottom (reference shot); a second label at the top-left is created
-/// empty. PORT: the label's style name is an empty global in the exe, so the
-/// style is `style_defaultwhite_sizen`.
-const VERSION: &str = "v1.3.1.1 (x64)";
-
-fn version_line(ui: &mut Ui) {
-    let style = "records/ui/styles/text/style_defaultwhite_sizen.dbr";
-    let (w, h) = (ui.text_width(style, VERSION), ui.line_height(style));
-    let (x, y) = (
-        ui.screen.x - ui.sc(10.0) - w,
-        ui.screen.y - ui.sc(15.0) - h * 0.5,
-    );
-    ui.text_line(style, Vec2::new(x.round(), y.round()), VERSION, 1.0);
 }
 
 /// The scene record's vignette and logo over the scene (module docs).

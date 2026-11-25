@@ -59,7 +59,6 @@ pub(in crate::ui) fn center_map_key(
 /// the window takes the mouse.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<MouseWheel>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -97,7 +96,7 @@ pub(super) fn clicks(
         win_state.pan = Vec2::ZERO;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(win) else {
         return;
     };
     // A drag keeps going while the button is held inside the window; it

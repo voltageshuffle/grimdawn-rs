@@ -525,7 +525,7 @@ pub fn bind_riftgates(
 /// gate or buff shrine) are their own systems' and stay set while the player walks to them.
 #[allow(clippy::too_many_arguments)]
 pub fn use_gate(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     gates: Query<(&GlobalTransform, &Waypoint)>,
     portals: Query<(&GlobalTransform, &Portal)>,
     mut players: Query<
@@ -565,7 +565,12 @@ pub fn use_gate(
     if ptf.translation.distance(at) > reach {
         return;
     }
-    if !hooks.gameplay.use_riftgate {
+    // `GD_USE_RIFTGATE` (hooks.rs): the gate stays targeted (used again).
+    #[cfg(feature = "dev")]
+    let keep = hooks.gameplay.use_riftgate;
+    #[cfg(not(feature = "dev"))]
+    let keep = false;
+    if !keep {
         interact.0 = None;
     }
     path.points.clear();

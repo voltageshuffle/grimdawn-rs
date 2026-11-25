@@ -309,18 +309,20 @@ pub fn build(
         }
     }
 
-    // Inventory: main grid + the selected bag (tab 1) with its panel image.
-    ui.bitmap_field(&field("inventoryTab1Bitmap"), o);
+    // Inventory: the main grid, and the selected extra bag with its tab's panel image only once the character
+    // has one (`CharacterWindow::RenderInventory`: the panel of the selected sack, none for sack 0; the tab
+    // buttons and the second auto-sort button only while `PlayerInventoryCtrl::GetNumberOfSacks` > 1).
+    let bag_count = inv.map_or(1, |i| i.bags.len());
+    let shown = inv.map(|i| i.bag_tab).filter(|&t| t >= 1 && t < bag_count);
+    if let Some(t) = shown {
+        ui.bitmap_field(&field(&format!("inventoryTab{t}Bitmap")), o);
+    }
     // One tab per extra bag the character has; the selected one is shown.
-    let (bag_count, bag_tab) = inv.map_or((1, 1), |i| (i.bags.len(), i.bag_tab));
-    for i in 1..=5usize {
-        if i >= bag_count {
-            break;
-        }
+    for i in 1..bag_count.min(6) {
         if let Some(Widget::Button { x, y, .. }) =
             ui.widget(&field(&format!("inventoryTab{i}Button")))
         {
-            let t = if i == bag_tab {
+            let t = if Some(i) == shown {
                 field("inventoryTabActive")
             } else {
                 field("inventoryTabInactive")
@@ -332,7 +334,9 @@ pub fn build(
         }
     }
     // Bag grids: the main bag and the selected extra bag.
-    for (b, k) in [(0usize, "inventoryGrid0"), (bag_tab, "inventoryGrid1")] {
+    for (b, k) in
+        std::iter::once((0usize, "inventoryGrid0")).chain(shown.map(|t| (t, "inventoryGrid1")))
+    {
         let Some(Widget::InventoryGrid { rect }) = ui.widget(&field(k)) else {
             continue;
         };
@@ -386,25 +390,27 @@ pub fn build(
     }
 
     // Under the grids: auto-sort of the main bag (left) and of the selected
-    // extra bag (right), and the move-reagents button between them (`gd_game_core::stash::DepositReagents`) (their
-    // records sit at y 420, level with the gold number).
+    // extra bag (right, only with one), and the move-reagents button between them
+    // (`gd_game_core::stash::DepositReagents`) (their records sit at y 420, level with the gold number).
     for (k, which) in [
         ("invSortButton1", Some(0usize)),
         ("reagentDepositButton", None),
-        ("invSortButton2", Some(bag_tab)),
+        ("invSortButton2", shown),
     ] {
+        if k == "invSortButton2" && which.is_none() {
+            continue;
+        }
         if let Some(Widget::Button {
             up: Some(up), x, y, ..
         }) = ui.widget(&field(k))
             && let Some((_, r)) = ui.bitmap(&up, x, y, o)
         {
             match which {
-                Some(b) if b == 0 || bag_count > 1 => {
+                Some(b) => {
                     // The reagent button's sound is played by its click (`inventory.rs`).
                     ui.record_path_button_sound(r, &field(k));
                     layout.sort_buttons.push((b, r));
                 }
-                Some(_) => {}
                 None => layout.reagent_button = Some(r),
             }
         }

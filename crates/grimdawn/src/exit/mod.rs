@@ -195,6 +195,8 @@ const KEEP: &[&str] = &[
     // The process's test hooks.
     "gd_game_core::hooks::Hooks",
     "gd_ui_kit::keys::KeyBindings",
+    // The item styles (gd-game item_style.rs): the install's, read at start-up from the port's settings folder.
+    "gd_game::item_style::ItemStyles",
     // The achievement manager is the game engine's: kill counts persist across sessions of the process
     // (`AchievementKill::OnCreatureKilled`, gd-game achievements.rs).
     "gd_game::achievements::KillCounts",

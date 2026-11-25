@@ -34,7 +34,7 @@ pub fn take_bonus(
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn potions(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut requests: MessageReader<UsePotion>,
     data: Res<GameData>,
     mut q: Query<
@@ -50,12 +50,13 @@ pub fn potions(
     >,
     mut commands: Commands,
     mut activations: MessageWriter<crate::secondary::Activate>,
-    time: Res<Time>,
+    #[cfg(feature = "dev")] time: Res<Time>,
     // The `GD_POTION` schedule left to run and the session's play time it is measured on: session state,
     // restarted with each session.
-    mut scripted: Local<Option<(f32, Vec<(f32, bool)>)>>,
-    mut fresh: gd_game_core::session::NewSession,
+    #[cfg(feature = "dev")] mut scripted: Local<Option<(f32, Vec<(f32, bool)>)>>,
+    #[cfg(feature = "dev")] mut fresh: gd_game_core::session::NewSession,
 ) {
+    #[cfg(feature = "dev")]
     if fresh.begun() {
         *scripted = None;
     }
@@ -63,13 +64,17 @@ pub fn potions(
     let Ok((e, mut caster, mut cb, tf, links, pools)) = q.single_mut() else {
         return;
     };
-    let st = scripted.get_or_insert_with(|| (0.0, hooks.gameplay.potion.clone()));
-    st.0 += time.delta_secs();
-    let now = st.0;
-    let test =
+    #[cfg(feature = "dev")]
+    let test = {
+        let st = scripted.get_or_insert_with(|| (0.0, hooks.gameplay.potion.clone()));
+        st.0 += time.delta_secs();
+        let now = st.0;
         st.1.iter()
             .position(|(t, _)| now >= *t)
-            .map(|i| st.1.remove(i).1);
+            .map(|i| st.1.remove(i).1)
+    };
+    #[cfg(not(feature = "dev"))]
+    let test: Option<bool> = None;
     let skill = if request == Some(UsePotion::Health) || test == Some(true) {
         HEALTH_POTION
     } else if request == Some(UsePotion::Energy) || test == Some(false) {
@@ -243,6 +248,7 @@ pub(super) fn potion_over_time(
 }
 
 /// `GD_FX_TEST` (hooks.rs).
+#[cfg(feature = "dev")]
 pub(super) fn fx_test(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,

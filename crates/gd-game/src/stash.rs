@@ -96,6 +96,7 @@ pub fn init_stash(
         materials,
         formulas,
         unplaced,
+        sort_layouts: Default::default(),
     });
 }
 
@@ -343,14 +344,22 @@ fn apply_stash_requests(
                 done.write(Default::default());
             }
             StashRequest::Sort { transfer, page } => {
-                let pages = stash.view_mut(*transfer);
-                let i = (*page).min(pages.len().saturating_sub(1));
+                let i = (*page).min(stash.view(*transfer).len().saturating_sub(1));
+                let layouts = &mut stash.sort_layouts[*transfer as usize];
+                if layouts.len() <= i {
+                    layouts.resize(i + 1, 0);
+                }
+                let first = layouts[i];
                 let tags = data.tags();
-                if let Some(page) = pages.get_mut(i)
-                    && gd_formats::inventory::sort_sack(page, |it| {
-                        gd_game_core::inventory::sort_key(&inv, &tags, it)
-                    })
-                {
+                let Some(page) = stash.view_mut(*transfer).get_mut(i) else {
+                    continue;
+                };
+                let sorted = gd_formats::inventory::sort_sack(page, first, |it| {
+                    gd_game_core::inventory::sort_key(&inv, &tags, it)
+                });
+                // `StashTab::SortSelectedSack`: the count moves by the retries only (`StashRequest::Sort`).
+                stash.sort_layouts[*transfer as usize][i] = first.wrapping_add(sorted.unwrap_or(4));
+                if sorted.is_some() {
                     done.write(Default::default());
                 }
             }

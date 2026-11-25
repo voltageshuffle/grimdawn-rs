@@ -873,6 +873,7 @@ pub fn cone_frustum_meets_box(
 }
 
 /// The `GD_CAST` script: `state` (a `Local` of the calling system) holds the start time and the entries left.
+#[cfg(feature = "dev")]
 pub fn test_cast(
     state: &mut Option<(std::time::Instant, Vec<(f32, usize)>)>,
     hooks: &crate::hooks::Hooks,

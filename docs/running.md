@@ -15,7 +15,12 @@ holding `database/database.arz`). Then either `source local.env`, or prefix comm
   `perf record` for CPU hot spots. Stress scene: `GD_SPAWN_MONSTER` around the start, `GD_FX` +
   `GD_FX_GRID`, `GD_GOD GD_AUTO_FIGHT`, and `GD_OPTIONS` pointing at an options file with every quality maxed.
 - Shipped build: `cargo build -p grimdawn --release` (thin LTO, panic = abort, stripped). Linux (Wayland and
-  X11) and Windows x86-64; `.github/workflows/release.yml` builds both on a `v*` tag or by hand.
+  X11) and Windows x86-64.
+- Releases: the whole workspace has one version (`[workspace.package] version` in the root `Cargo.toml`, inherited
+  by every crate; it is the port's own, unrelated to the game's). To release, bump it, commit, and push a tag
+  `v<version>`: `.github/workflows/release.yml` builds Linux and Windows and publishes the release, titled and
+  described by `scripts/release-notes` (the game version, then the commits since the previous `v*` tag). The game
+  version the port targets is `game-version` under `[workspace.metadata.grimdawn]` in the same file.
 - Saves go to `GD_SAVE_DIR` (default `$XDG_DATA_HOME/grimdawn-rs/save`, `%APPDATA%\grimdawn-rs\save` on
   Windows). Maps are read straight from the install's archives; nothing is cached on disk.
 
@@ -35,7 +40,9 @@ rotation, the `PlayAnimation` flag, `HasAffix`'s record→instance bridge) are l
 `GD_*` environment variables script a `dev` run: pick a character (`GD_SAVE`, `GD_NAME`), place the player
 (`GD_START=x,z`), fight (`GD_AUTO_FIGHT`, `GD_KILL_ALL=<secs>`, `GD_GOD`), talk (`GD_STORY_TALK`,
 `GD_DIALOG_CLICK`), open windows (`GD_UI_OPEN`), take a screenshot and exit (`GD_SHOT=<png>`), and more. The
-list, with syntax, is the field docs of `crates/gd-game-core/src/hooks.rs`.
+list, with syntax, is the field docs of `crates/gd-game-core/src/hooks.rs`. Hooks exist only in `dev` builds
+(`cargo dev` / `cargo dev-build`, or `--features dev`): any other build, the tests included, has no hook code and
+ignores the variables.
 
 Recipes:
 - Intro video: a new character from the menu plays `video/intro.ogg` (any key or click skips it); test sessions

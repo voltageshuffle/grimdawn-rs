@@ -46,6 +46,11 @@
 //! also resets (`UIWidget::Reset`) is not identified; opening the devotion window
 //! (its opener not traced) does not close the loot filter window.
 //!
+//! PORT (addition): the bottom row's page button switches to the Item Styles page (`super::item_styles`: the
+//! user's name colour / tag rules, `gd_game::item_style`), whose bottom row has Load Preset and Clear All in
+//! place of Defaults; both ask first (Yes / No box as Defaults, English text: no stock string). Esc cancels a
+//! question or the page's text field before the window closes ([`LootFilterView::escape`]).
+//!
 //! Both directions go through the shared window policy
 //! (`super::window::WindowPolicy` / `Windows`): the press opens with
 //! `Windows::open(Window::LootFilter)` — its row closes the play field — and
@@ -81,6 +86,7 @@ use crate::state::inventory::UiCapture;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, TextAlign, TextBox, WindowDef};
+use gd_game::item_style::{ItemStyleRequest, ItemStyles};
 use gd_game::loot_filter::{LootFilter, LootFilterRequest};
 use gd_game_core::data::GameData;
 use gd_sim::items::loot_filter::OPTIONS;
@@ -110,10 +116,11 @@ impl Plugin for LootFilterWindowPlugin {
                     .in_set(gd_ui_kit::UiPlaySet),
             );
         // Live: open, or still built (the closing frame despawns the root), with the character's
-        // filter loaded. Its hover tips are `rollover.rs`'s.
+        // filter loaded. Its hover tips are `rollover.rs`'s. After the loot filter's / item styles' requests are
+        // applied, so a build and the next press read the rules the previous presses changed.
         super::window::add_window(
             app,
-            build,
+            build.after(gd_game::loot_filter::LootFilterStage::Apply),
             clicks,
             // Option: a run condition's params are validated before any state gate.
             |v: Res<LootFilterView>, f: Option<Res<LootFilter>>| {
@@ -124,11 +131,31 @@ impl Plugin for LootFilterWindowPlugin {
         app.add_systems(
             Update,
             confirm_live
-                .run_if(|v: Res<LootFilterView>| v.confirm)
+                .run_if(|v: Res<LootFilterView>| v.confirm.is_some())
                 .after(build)
                 .in_set(gd_ui_kit::UiPlaySet),
         );
+        // The Item Styles page: its rules file (port settings folder) and its text fields' keyboard.
+        app.add_systems(Startup, load_item_styles).add_systems(
+            PreUpdate,
+            super::item_styles::typing
+                .after(bevy::input::InputSystems)
+                .before(super::gamemenu::GameMenuInputSet)
+                .before(crate::state::options::OptionsInputSet)
+                .run_if(in_state(crate::state::session::AppState::InGame)),
+        );
     }
+}
+
+/// A question the window asks before acting (Yes / No box).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Confirm {
+    /// Defaults (`tagLootFilterResetConfirm`).
+    Defaults,
+    /// The Item Styles page's Load Preset.
+    Preset,
+    /// The Item Styles page's Clear All.
+    Clear,
 }
 
 /// Whether the window is open and its built clickable parts (physical px).
@@ -139,22 +166,28 @@ pub struct LootFilterView {
     boxes: Vec<(URect, usize, &'static str)>,
     defaults: Option<URect>,
     close: Option<URect>,
-    /// The Defaults confirmation is up (its Yes / No rects).
-    confirm: bool,
+    /// The page button (checkboxes <-> Item Styles) and the Item Styles page's bottom buttons.
+    page_button: Option<URect>,
+    preset: Option<URect>,
+    clear: Option<URect>,
+    /// The Item Styles page (a port addition, `super::item_styles`).
+    pub(super) styles: super::item_styles::StylesPage,
+    /// The confirmation that is up (its Yes / No rects).
+    confirm: Option<Confirm>,
     yes_no: Option<super::confirm::ConfirmRects>,
 }
 
 impl LootFilterView {
-    /// The shared Esc dispatcher's cancel of the Defaults confirmation (`ui::esc_dispatcher`);
-    /// the window itself closes through the focus stack. Whether it was up.
-    pub fn escape_confirm(&mut self) -> bool {
-        std::mem::replace(&mut self.confirm, false)
+    /// The shared Esc dispatcher's cancel of a confirmation or of the Item Styles page's text field
+    /// (`ui::esc_dispatcher`); the window itself closes through the focus stack. Whether one was up.
+    pub fn escape(&mut self) -> bool {
+        self.confirm.take().is_some() || self.styles.escape()
     }
 
     /// The `...Info` tag of the checkbox or button under `p` (physical px) while the window is open: shown by
     /// `rollover.rs` as a rollover (the `...Info` text in the default rollover style).
     pub(super) fn tip_tag(&self, p: Vec2) -> Option<String> {
-        if !self.open || self.confirm {
+        if !self.open || self.confirm.is_some() {
             return None;
         }
         if let Some((_, _, tag)) = self.boxes.iter().find(|(r, _, _)| contains(r, p)) {
@@ -264,7 +297,7 @@ fn hud_button(
     mut rect: Local<(Rebuild<(UVec2, u32, u32, bool)>, Option<URect>)>,
 ) {
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&assets.hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let size = UVec2::new(win.physical_width(), win.physical_height());
@@ -306,11 +339,11 @@ fn hud_button(
 /// The loot filter key (`super::keys::LOOT_FILTER`, O by default) presses the HUD button (`GD_UI_OPEN` opens the window once).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<super::keys::KeyBindings>,
     mut windows: Windows,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
     (hidden, mut tutorial, data): (
         Res<crate::state::loot::ItemsHidden>,
         MessageWriter<gd_game::tutorials::UnlockTutorial>,
@@ -318,20 +351,29 @@ fn toggle(
     ),
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
+    #[cfg(feature = "dev")]
     if !*tested {
         *tested = true;
-        if hooks.ui.open.as_deref() == Some("lootfilter") {
+        // `itemstyles` opens it on the Item Styles page.
+        if let Some(page @ ("lootfilter" | "itemstyles")) = hooks.ui.open.as_deref() {
             windows.loot.open = true;
+            windows.loot.styles.shown = page == "itemstyles";
         }
     }
     if bindings.just_pressed(super::keys::LOOT_FILTER, &keys) && !hidden.0 {
         press(&mut windows, &mut tutorial, &data, &mut sound);
     }
-    // Esc cancels the confirmation, else closes the window, through the shared dispatcher
+    // Esc cancels the confirmation or the text field, else closes the window, through the shared dispatcher
     // (`ui::esc_dispatcher`).
     if !windows.loot.open {
-        windows.loot.confirm = false;
+        windows.loot.confirm = None;
+        windows.loot.styles.close();
     }
+}
+
+/// Reads the item styles' file (`gd_game::item_style`, the port's settings folder) once at start-up.
+fn load_item_styles(mut commands: Commands) {
+    commands.insert_resource(ItemStyles::load(gd_game::item_style::path()));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -343,8 +385,20 @@ fn build(
     mut view: ResMut<LootFilterView>,
     roots: Query<Entity, With<LootFilterRoot>>,
     mut fresh: gd_game_core::session::NewSession,
-    mut built: Local<Rebuild<(bool, UVec2, [bool; 42], bool, u32)>>,
+    mut built: Local<
+        Rebuild<(
+            bool,
+            UVec2,
+            [bool; 42],
+            Option<Confirm>,
+            u32,
+            bool,
+            u32,
+            u32,
+        )>,
+    >,
     mut assets: gd_ui_kit::UiAssets,
+    styles: Res<ItemStyles>,
 ) {
     if fresh.begun() {
         built.reset();
@@ -357,6 +411,9 @@ fn build(
         filter.options,
         view.confirm,
         assets.scale(size).to_bits(),
+        view.styles.shown,
+        view.styles.version,
+        styles.generation,
     );
     if size.x == 0 || !built.changed(sig) {
         return;
@@ -366,6 +423,9 @@ fn build(
     view.boxes.clear();
     view.defaults = None;
     view.close = None;
+    view.page_button = None;
+    view.preset = None;
+    view.clear = None;
     view.yes_no = None;
     let (true, Some(rec)) = (view.open, data.db.get(RECORD)) else {
         return;
@@ -426,26 +486,56 @@ fn build(
             ui.record_button_sound(r, &b);
         }
     }
-    if let Some(b) = ui.record(&field("lootFilterResetButton")) {
-        // Auto-sized to its label (kit `static_button`); the stock centre is kept when it grows.
+    let reset = ui.record(&field("lootFilterResetButton"));
+    if let Some(b) = &reset {
+        // The bottom row in the reset button's look, each auto-sized to its label (kit `static_button`).
         let tex_w = b
             .str("bitmapNameUp")
             .and_then(|p| ui.image(p))
             .map(|(_, sz)| ui.sc(sz.x as f32))
             .unwrap_or(0.0);
-        let text = b.str("textTag").map(|t| ui.fonts.tag(t).to_string());
-        let bw = super::widgets::button_width(&mut ui, &b, tex_w, text.as_deref());
-        let bo = o - Vec2::new((bw - tex_w) * 0.5, 0.0);
-        if let Some(r) = super::widgets::static_button(
-            &mut ui,
-            &b,
-            bo,
-            true,
-            false,
-            super::widgets::Label::Record,
-        ) {
-            ui.record_button_sound(r, &b);
-            view.defaults = Some(r);
+        let bx = ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0));
+        let width =
+            |ui: &mut Ui, text: &str| super::widgets::button_width(ui, b, tex_w, Some(text));
+        // Drawn with its left edge at `x`.
+        let at = |ui: &mut Ui, x: f32, text: &str| -> Option<URect> {
+            let r = super::widgets::static_button(
+                ui,
+                b,
+                Vec2::new(x - bx, o.y),
+                true,
+                false,
+                super::widgets::Label::Text(text),
+            )?;
+            ui.record_button_sound(r, b);
+            Some(r)
+        };
+        // The stock centre, kept when a label grows.
+        let centre = o.x + bx + tex_w * 0.5;
+        // The page button (a port addition), at the window's right.
+        let page = if view.styles.shown {
+            ui.fonts.tag("tagLootFilterWindowTitle").to_string()
+        } else {
+            "Item Styles".to_owned()
+        };
+        let pw = width(&mut ui, &page);
+        let right = w.x + w.w - ui.sc(40.0);
+        view.page_button = at(&mut ui, right - pw, &page);
+        if view.styles.shown {
+            let pw = width(&mut ui, "Load Preset");
+            view.preset = at(&mut ui, centre - pw * 0.5, "Load Preset");
+            let cw = width(&mut ui, "Clear All");
+            if let Some(p) = view.preset {
+                let gap = ui.sc(16.0);
+                view.clear = at(&mut ui, p.x - gap - cw, "Clear All");
+            }
+        } else {
+            let text = b
+                .str("textTag")
+                .map(|t| ui.fonts.tag(t).to_string())
+                .unwrap_or_default();
+            let dw = width(&mut ui, &text);
+            view.defaults = at(&mut ui, centre - dw * 0.5, &text);
         }
     }
     let (Some(cb), spacer) = (
@@ -466,6 +556,29 @@ fn build(
         .str("style")
         .or(cb.str("textStyleName"))
         .map(str::to_owned);
+    // The Item Styles page replaces the checkboxes (`super::item_styles`).
+    if view.styles.shown {
+        let titles = [
+            "lootFilterTitle01",
+            "lootFilterTitle02",
+            "lootFilterTitle03",
+            "lootFilterTitle04",
+        ]
+        .map(|t| ui.record(&field(t)).map(|r| TextBox::from_record(&r)));
+        if let Some(label) = &label_style {
+            let look = super::item_styles::Look {
+                o,
+                w,
+                checkbox: &cb,
+                button: reset.as_ref(),
+                label,
+                titles,
+            };
+            super::item_styles::build(&mut ui, &mut view.styles, &styles, &look);
+        }
+        finish(&mut ui, &mut view, w);
+        return;
+    }
     // The columns flow to their content: a row is as wide as its box + label (or spacer line),
     // the gaps spread within bounds and each column clamps inside the window's right edge.
     let box_w = cb
@@ -576,29 +689,46 @@ fn build(
             }
         }
     }
+    finish(&mut ui, &mut view, w);
+}
+
+/// The built window's last parts: its click rect and, when one is up, the confirmation box.
+fn finish(ui: &mut Ui, view: &mut LootFilterView, w: URect) {
     view.window = Some(w);
     // The window takes every click over it: nothing behind it plays a button sound there.
     ui.sound_blocker(w);
-    if view.confirm {
-        // The prompt box is the dialog manager's: Toggle UI leaves it shown (`hud::toggle_ui`).
-        // Its hover / press look moves in place (`confirm_live`), so the look is not in the signature.
-        ui.root = gd_ui_kit::spawn_root(
-            ui.commands,
-            (LootFilterRoot, super::hud::KeepsShown),
-            super::window::Z_MODAL + 1,
-        );
-        view.yes_no =
-            super::confirm::confirm_box(&mut ui, "tagLootFilterResetConfirm", (None, false));
-        // The box is modal: it takes every click on screen.
-        ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
-    }
+    let Some(confirm) = view.confirm else {
+        return;
+    };
+    // The prompt box is the dialog manager's: Toggle UI leaves it shown (`hud::toggle_ui`).
+    // Its hover / press look moves in place (`confirm_live`), so the look is not in the signature.
+    ui.root = gd_ui_kit::spawn_root(
+        ui.commands,
+        (LootFilterRoot, super::hud::KeepsShown),
+        super::window::Z_MODAL + 1,
+    );
+    view.yes_no = match confirm {
+        Confirm::Defaults => {
+            super::confirm::confirm_box(ui, "tagLootFilterResetConfirm", (None, false))
+        }
+        // PORT: the Item Styles page's questions have no stock text.
+        Confirm::Preset => super::confirm::confirm_text(
+            ui,
+            "Replace every item style with the built-in preset?",
+            (None, false),
+        ),
+        Confirm::Clear => {
+            super::confirm::confirm_text(ui, "Remove every item style?", (None, false))
+        }
+    };
+    // The box is modal: it takes every click on screen.
+    ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
 }
 
 /// The Defaults box's hover / press look in place ([`super::confirm::apply_look`]): the box is
 /// built in its base look, so a hover never rebuilds the window.
 fn confirm_live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     view: Res<LootFilterView>,
     mouse: Res<ButtonInput<MouseButton>>,
     roots: Query<Entity, (With<LootFilterRoot>, With<super::hud::KeepsShown>)>,
@@ -607,46 +737,60 @@ fn confirm_live(
     let (Ok(win), Some(b), Ok(root)) = (window.single(), view.yes_no, roots.single()) else {
         return;
     };
-    let look = b.look(
-        super::cursor_px(&hooks, win),
-        mouse.pressed(MouseButton::Left),
-    );
+    let look = b.look(super::cursor_px(win), mouse.pressed(MouseButton::Left));
     super::confirm::apply_look(root, look, &mut looks);
 }
 
-/// Clicks on the window (it takes every click over it).
+/// Clicks on the window (it takes every click over it); the wheel over the Item Styles list scrolls it.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut view: ResMut<LootFilterView>,
     filter: Res<LootFilter>,
     mut capture: ResMut<UiCapture>,
     mut requests: MessageWriter<LootFilterRequest>,
     data: Res<GameData>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
+    (styles, mut style_requests, mut wheel): (
+        Res<ItemStyles>,
+        MessageWriter<ItemStyleRequest>,
+        MessageReader<bevy::input::mouse::MouseWheel>,
+    ),
 ) {
+    let lines: f32 = wheel.read().map(|w| w.y).sum();
     let Ok(win) = window.single() else {
         return;
     };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
-    // The Defaults box takes every click on screen while up (it is modal), not only those over the window.
-    if view.confirm {
+    // A confirmation takes every click on screen while up (it is modal), not only those over the window.
+    if let Some(confirm) = view.confirm {
         capture.0 = true;
         if !super::widgets::button_pressed(&buttons) {
             return;
         }
         if let Some(b) = view.yes_no {
             if contains(&b.yes, p) {
-                requests.write(LootFilterRequest::Defaults);
-                view.confirm = false;
+                match confirm {
+                    Confirm::Defaults => {
+                        requests.write(LootFilterRequest::Defaults);
+                    }
+                    Confirm::Preset => {
+                        style_requests.write(ItemStyleRequest::Preset);
+                        view.styles.replaced();
+                    }
+                    Confirm::Clear => {
+                        style_requests.write(ItemStyleRequest::Clear);
+                        view.styles.replaced();
+                    }
+                }
+                view.confirm = None;
             } else if contains(&b.no, p) {
-                view.confirm = false;
+                view.confirm = None;
             } else if b.close.is_some_and(|r| contains(&r, p)) {
-                view.confirm = false;
+                view.confirm = None;
                 if let Some(pak) = super::confirm::close_sound(&data) {
                     sound.write(gd_game_core::visuals::PlaySound { pak, at: None });
                 }
@@ -655,16 +799,36 @@ fn clicks(
         return;
     }
     if !view.window.is_some_and(|w| contains(&w, p)) {
+        // A press outside leaves the Item Styles text field (committing it), so the game gets the keys back.
+        if super::widgets::button_pressed(&buttons) {
+            super::item_styles::commit_open(&mut view.styles, &styles, &mut style_requests);
+        }
         return;
     }
     capture.0 = true;
+    if view.styles.shown {
+        view.styles.wheel(p, lines, styles.rules.rules.len());
+    }
     if !super::widgets::button_pressed(&buttons) {
+        return;
+    }
+    // The page's own parts (a press anywhere else commits its open text field first).
+    if view.styles.shown
+        && super::item_styles::click(&mut view.styles, &styles, p, &mut style_requests)
+    {
         return;
     }
     if view.close.is_some_and(|r| contains(&r, p)) {
         view.open = false;
+    } else if view.page_button.is_some_and(|r| contains(&r, p)) {
+        view.styles.shown = !view.styles.shown;
+        view.styles.close();
+    } else if view.preset.is_some_and(|r| contains(&r, p)) {
+        view.confirm = Some(Confirm::Preset);
+    } else if view.clear.is_some_and(|r| contains(&r, p)) {
+        view.confirm = Some(Confirm::Clear);
     } else if view.defaults.is_some_and(|r| contains(&r, p)) {
-        view.confirm = true;
+        view.confirm = Some(Confirm::Defaults);
     } else if let Some((_, opt, _)) = view.boxes.iter().find(|(r, _, _)| contains(r, p)) {
         requests.write(LootFilterRequest::Set(*opt, !filter.options[*opt]));
     }

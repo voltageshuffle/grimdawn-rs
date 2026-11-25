@@ -662,7 +662,7 @@ fn live(
         *titled = None;
         return;
     };
-    let cursor = super::cursor_px(&assets.hooks, win);
+    let cursor = super::cursor_px(win);
     let hover = cursor.and_then(|p| view.icon_at(p));
     let bhover = cursor.and_then(|p| view.button_at(p));
     for (s, mut vis) in &mut swaps {
@@ -727,7 +727,7 @@ fn pan_content(
 /// n-th gate icon (1-based, the gate in use left out).
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<super::keys::KeyBindings>),
     mut wheel: MessageReader<MouseWheel>,
@@ -737,7 +737,7 @@ pub fn clicks(
     mut mapwin: ResMut<gd_ui::state::map::MapWindow>,
     mut capture: ResMut<UiCapture>,
     mut out: MessageWriter<RiftgateRequest>,
-    mut picked: Local<bool>,
+    #[cfg(feature = "dev")] mut picked: Local<bool>,
     pause: Res<gd_game_core::pause::GamePause>,
 ) {
     let Some(wr) = view.layout.window.filter(|_| mapwin.world_shown(&map)) else {
@@ -754,6 +754,7 @@ pub fn clicks(
             out.write(RiftgateRequest::Close);
         }
     };
+    #[cfg(feature = "dev")]
     if !*picked && let Some(n) = hooks.ui.rift_pick {
         let gates: Vec<Rift> = view
             .layout
@@ -787,10 +788,7 @@ pub fn clicks(
     if super::localmap::center_map_key(&keys, &bindings) {
         view.centred = false;
     }
-    let p = window
-        .single()
-        .ok()
-        .and_then(|win| super::cursor_px(&hooks, win));
+    let p = window.single().ok().and_then(super::cursor_px);
     if let (Some(p), Some(last)) = (p, view.drag) {
         view.pan -= p - last;
         view.clamp();
@@ -897,7 +895,7 @@ fn teleport_button(
     let (Some(t), Ok(win)) = (values.teleport, window.single()) else {
         return;
     };
-    let Some(p) = super::cursor_px(&assets.hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let size = UVec2::new(win.physical_width(), win.physical_height());

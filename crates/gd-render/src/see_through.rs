@@ -133,25 +133,27 @@ pub struct SeeThroughPlugin;
 impl Plugin for SeeThroughPlugin {
     fn build(&self, app: &mut App) {
         // Test hook: `GD_NO_SEE_THROUGH` keeps all scenery opaque (before / after shots).
-        if !app
+        #[cfg(feature = "dev")]
+        if app
             .world()
             .resource::<gd_game_core::hooks::Hooks>()
             .render
             .no_see_through
         {
-            app.init_resource::<FadeWarm>().add_systems(
-                Update,
-                (
-                    fade_scenery.run_if(not(resource_exists::<
-                        crate::render::backdrop::MenuBackdrop,
-                    >)),
-                    warm_fade_pipelines
-                        .run_if(resource_exists::<gd_game_core::session::SessionReady>)
-                        .run_if(not(gd_game_core::session::in_game)),
-                    clear_fade_warm.run_if(gd_game_core::session::in_game),
-                ),
-            );
+            return;
         }
+        app.init_resource::<FadeWarm>().add_systems(
+            Update,
+            (
+                fade_scenery.run_if(not(
+                    resource_exists::<crate::render::backdrop::MenuBackdrop>,
+                )),
+                warm_fade_pipelines
+                    .run_if(resource_exists::<gd_game_core::session::SessionReady>)
+                    .run_if(not(gd_game_core::session::in_game)),
+                clear_fade_warm.run_if(gd_game_core::session::in_game),
+            ),
+        );
     }
 }
 

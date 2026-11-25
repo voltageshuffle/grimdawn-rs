@@ -11,8 +11,24 @@
 //!   `AddSack` sets the vertical flag) and row-major otherwise
 //!   (`SearchHorizantal`), first non-conflicting position wins;
 //! - a held item goes down with its footprint centred on the cursor ([`drop_cell`]), swapping out the one
-//!   item it overlaps ([`place_held`]); [`sort_sack`] repacks a grid; [`shard_target`] picks the partial
-//!   component a picked-up one joins.
+//!   item it overlaps ([`place_held`]); [`shard_target`] picks the partial component a picked-up one joins.
+//!
+//! Auto-sort ([`sort_sack`], `InventorySack::Sort(flags)`, Game.dll): the items go into a packer
+//! (`InventoryPacker::Init` / `InventoryPacker::Place`) as (cell width, height, item-type rank `Item::GetSortRank`
+//! = [`sort_rank`], display name); `InventoryPacker::Solve` sorts them (`InventorySack::SortCompare`) and places
+//! each at the first free cell (`InventoryPacker::PlaceOne`), ANDing the results. Four layouts, flag bits:
+//! - bit 0 (scan): 0 column-major (x outer, y inner), 1 row-major (y outer, x inner), whatever the sack's own
+//!   auto-placement direction;
+//! - bit 1 (order): 0 largest first (height, then width, then rank, all descending), 1 smallest first (the same
+//!   keys ascending); the name ascends in both (UTF-16 ordinal compare).
+//!
+//! So layout 0 = tall items first down the columns, 1 = the same order along the rows, 2 / 3 = smallest first
+//! down the columns / along the rows. `Sort` writes the positions only when the solve fits every item, and
+//! returns true only when an item moved; the item order (the sack's id map) never changes. Its callers retry
+//! a layout that moved nothing or did not fit with the next one, at most four more times
+//! (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack`, the caravan's `StashTab::SortSelectedSack`);
+//! what picks the first layout is the caller's (`gd_game_core::inventory::SortBag`,
+//! `gd_game_core::stash::StashRequest::Sort`).
 use crate::collections::HashMap;
 use crate::save::item::Item;
 use crate::tex::Tex;
@@ -151,7 +167,12 @@ impl<T: Clone> Sack<T> {
 
     /// `FindNextPosition`: first free cell in the sack's scan order.
     pub fn find_position(&self, size: Footprint) -> Option<(u32, u32)> {
-        if self.vertical {
+        self.first_fit(size, self.vertical)
+    }
+
+    /// The first free cell scanning column-major (`vertical`) or row-major.
+    fn first_fit(&self, size: Footprint, vertical: bool) -> Option<(u32, u32)> {
+        if vertical {
             for x in 0..self.width {
                 if x + size.w > self.width {
                     return None;
@@ -298,35 +319,63 @@ pub fn sort_rank(class: &str) -> u32 {
     }
 }
 
-/// `InventorySack::Sort` on one grid: the items ordered by footprint height, then width, then the item-type
-/// rank ([`sort_rank`]), all largest first, then display name (`key` gives an item's (rank, name), asked once
-/// per item in grid order), each at the first free cell. False (nothing changed) when the new layout cannot
-/// hold every item. `InventorySack::Sort`: the items go into a packer (`InventoryPacker::AddItem` /
-/// `InventoryPacker::Place`) whose solve (`InventoryPacker::Solve`) ANDs every item's placement result; the
-/// sack's positions are rewritten only when it returns true, so a sort that does not fit leaves the sack as it
-/// was and no item ever leaves it.
-pub fn sort_sack<T: Clone>(sack: &mut Sack<T>, mut key: impl FnMut(&T) -> (u32, String)) -> bool {
-    let mut keyed: Vec<_> = sack
+/// Auto-sort of one grid (module doc), the callers' retry included: layout `first` (any number; its low two bits
+/// are the layout's flags), else the next ones, at most four more. `key` gives an item's (rank, name), asked once per
+/// item. `Some(n)`: the `n`-th retry (0 = `first` itself) moved items, now at their new cells; `None`: no
+/// layout moved anything or fitted every item, the sack is unchanged.
+pub fn sort_sack<T>(
+    sack: &mut Sack<T>,
+    first: u32,
+    mut key: impl FnMut(&T) -> (u32, String),
+) -> Option<u32> {
+    let keys: Vec<_> = sack
         .items
         .iter()
         .map(|q| {
             let (rank, name) = key(&q.item);
-            (q.size.h, q.size.w, rank, name, q)
+            ((q.size.h, q.size.w, rank), name)
         })
         .collect();
-    keyed.sort_by(|a, b| {
-        (b.0, b.1, b.2)
-            .cmp(&(a.0, a.1, a.2))
-            .then_with(|| a.3.cmp(&b.3))
-    });
-    let mut sorted = Sack::new(sack.width, sack.height, sack.vertical);
-    for k in keyed {
-        if sorted.add(k.4.item.clone(), k.4.size).is_none() {
-            return false;
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    let mut cells = vec![(0, 0); keys.len()];
+    let mut packed = Sack::<()>::new(sack.width, sack.height, true);
+    packed.items.reserve(keys.len());
+    for n in 0..=4 {
+        let flags = first.wrapping_add(n);
+        let smallest_first = flags & 2 != 0;
+        order.sort_by(|&a, &b| {
+            let ((ka, na), (kb, nb)) = (&keys[a], &keys[b]);
+            let size = if smallest_first {
+                ka.cmp(kb)
+            } else {
+                kb.cmp(ka)
+            };
+            size.then_with(|| na.cmp(nb))
+        });
+        packed.items.clear();
+        let fits = order.iter().all(|&i| {
+            let size = sack.items[i].size;
+            packed
+                .first_fit(size, flags & 1 == 0)
+                .is_some_and(|(x, y)| {
+                    packed.items.push(Placed {
+                        item: (),
+                        x,
+                        y,
+                        size,
+                    });
+                    cells[i] = (x, y);
+                    true
+                })
+        });
+        if fits && sack.items.iter().zip(&cells).any(|(q, &c)| (q.x, q.y) != c) {
+            for (q, &(x, y)) in sack.items.iter_mut().zip(&cells) {
+                (q.x, q.y) = (x, y);
+            }
+            return Some(n);
         }
     }
-    sack.items = sorted.items;
-    true
+    None
 }
 
 /// The bag component an incomplete component (`item`, `need` shards complete it, `completedRelicLevel`)

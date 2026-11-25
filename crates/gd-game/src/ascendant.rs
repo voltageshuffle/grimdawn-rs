@@ -24,7 +24,7 @@ pub struct DreadCount(pub u32, pub Option<Entity>);
 /// The Dread (see the module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn dread(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     mut killed: MessageReader<MonsterKilled>,
     mut count: ResMut<DreadCount>,
@@ -59,17 +59,22 @@ pub fn dread(
         return;
     }
     count.0 += kills;
-    let need = hooks
-        .gameplay
-        .dread_kills
-        .unwrap_or_else(|| gd_sim::ascendant::super_boss_kills(&db, st));
+    let need = gd_sim::ascendant::super_boss_kills(&db, st);
+    // `GD_DREAD_KILLS` (hooks.rs): that many kills summon it for sure.
+    #[cfg(feature = "dev")]
+    let (need, forced) = (
+        hooks.gameplay.dread_kills.unwrap_or(need),
+        hooks.gameplay.dread_kills.is_some(),
+    );
+    #[cfg(not(feature = "dev"))]
+    let forced = false;
     let chance = gd_sim::ascendant::super_boss_chance(&db, st, mode);
     if count.0 < need || chance <= 0.0 {
         return;
     }
     let roll = gd_game_core::rng::f32() * 100.0;
     debug!("ascendant: dread roll {roll:.2} vs {chance:.2} %");
-    if roll > chance && hooks.gameplay.dread_kills.is_none() {
+    if roll > chance && !forced {
         return;
     }
     let Some(record) = gd_sim::ascendant::super_boss_record(&db, st, mode) else {
@@ -316,8 +321,8 @@ pub fn altar_reach(db: &gd_formats::vfs::Database, a: &Altar, player_radius: f32
 /// Within reach of the interacted altar (`player_orders::InteractTarget`): stop and use it (module doc).
 #[allow(clippy::too_many_arguments)]
 pub fn use_altar(
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    mut scratch: Local<gd_sim::nav::PathScratch>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] mut scratch: Local<gd_sim::nav::PathScratch>,
     altar: Res<AltarState>,
     altars: Query<(Entity, &GlobalTransform, &Altar)>,
     mut players: Query<
@@ -331,14 +336,15 @@ pub fn use_altar(
     >,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     data: Res<gd_game_core::data::GameData>,
-    nav: Res<Nav>,
+    #[cfg(feature = "dev")] nav: Res<Nav>,
     mut open: MessageWriter<AltarOpen>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
     // `GD_USE_ALTAR` (hooks.rs): use the nearest altar within 40 m once.
+    #[cfg(feature = "dev")]
     if hooks.gameplay.use_altar && !*tested && interact.0.is_none() {
         let near = altars
             .iter()
@@ -377,7 +383,12 @@ pub fn use_altar(
     }
     interact.0 = None;
     path.points.clear();
-    if !may_use_altar(&hooks, &data.db, rt.as_deref()) {
+    #[cfg(feature = "dev")]
+    let offer = hooks.items.altar_offer.is_some();
+    #[cfg(not(feature = "dev"))]
+    let offer = false;
+    // `GD_ALTAR_OFFER` (hooks.rs) allows it.
+    if !(offer || may_use_altar(&data.db, rt.as_deref())) {
         return;
     }
     if altar.activated {
@@ -388,9 +399,8 @@ pub fn use_altar(
 }
 
 /// `MainPlayerCanUseAscendantAltar`: the `ascendantToken` (no token in the game engine
-/// record, or the main player holds it). The `GD_ALTAR_OFFER` hook allows it.
+/// record, or the main player holds it).
 pub fn may_use_altar(
-    hooks: &gd_game_core::hooks::Hooks,
     db: &gd_formats::vfs::Database,
     rt: Option<&gd_game_core::story::StoryRuntime>,
 ) -> bool {
@@ -398,9 +408,8 @@ pub fn may_use_altar(
         .get("records/game/gameengine.dbr")
         .and_then(|r| r.str("ascendantToken").map(str::to_owned))
         .unwrap_or_default();
-    let allowed = token.is_empty()
-        || hooks.items.altar_offer.is_some()
-        || rt.is_some_and(|rt| rt.story.borrow().player.tokens.contains(&token));
+    let allowed =
+        token.is_empty() || rt.is_some_and(|rt| rt.story.borrow().player.tokens.contains(&token));
     if !allowed {
         info!("ascendant: the altar needs {token}");
     }

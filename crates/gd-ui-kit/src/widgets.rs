@@ -140,16 +140,12 @@ pub fn frontmost<'a>(
 pub fn play_button_sounds(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Query<(&ButtonSound, &ChildOf, &InheritedVisibility)>,
     roots: RootZ,
     mut last: Local<Option<URect>>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
 ) {
-    let p = window
-        .single()
-        .ok()
-        .and_then(|w| super::cursor_px(&hooks, w));
+    let p = window.single().ok().and_then(super::cursor_px);
     let hovered = p.and_then(|p| frontmost(p, &buttons, &roots));
     for pak in button_sounds(hovered, &mut last, mouse.just_pressed(MouseButton::Left)) {
         sound.write(gd_game_core::visuals::PlaySound { pak, at: None });

@@ -9,11 +9,6 @@
 #![allow(clippy::type_complexity)]
 use gd_game::{afflictions, collision, combat, consumables, data};
 mod ascendant;
-#[cfg(feature = "dev")]
-mod dev;
-mod exit;
-mod hooks;
-use gd_game_core::hooks::Hooks;
 mod breakables;
 mod camera_input;
 mod casting;
@@ -21,11 +16,14 @@ mod chests;
 mod controller_target;
 mod crafting;
 mod death;
+#[cfg(feature = "dev")]
+mod dev;
 mod devotion;
 mod doll;
 mod doors;
 mod endless_shrine;
 mod evade;
+mod exit;
 mod fade;
 mod fps_limit;
 mod gibs;
@@ -65,23 +63,22 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // Parsed once, first: the window below needs two of them, and the resource must exist before the
-    // plugins are built (plugin builds and `FromWorld` resources read it). Only `dev` builds read the
-    // environment (`dev` module); otherwise every hook is off.
+    // Dev builds: parsed once, first: the window below reads two of them, and the resource must exist before
+    // the plugins are built (plugin builds read it). A build without `dev` has no hooks.
     #[cfg(feature = "dev")]
-    let hooks = Hooks::from_env();
-    #[cfg(not(feature = "dev"))]
-    let hooks = Hooks::default();
+    let hooks = gd_game_core::hooks::Hooks::from_env();
     // The `device` option (int 7) picks the launch adapter: read the options file early (the same file
     // `settings::load` reads at PreStartup), enumerate the wgpu adapters once and pass the choice to
     // `WgpuSettings` below. PORT: applied at the NEXT launch only (no hot-swap); an out-of-range index
     // keeps Bevy's default adapter. `WGPU_ADAPTER_NAME` still overrides the name (Bevy reads it itself).
+    let options_file = gd_ui_kit::state::settings::path();
+    // `GD_OPTIONS`: another options file.
+    #[cfg(feature = "dev")]
     let options_file = hooks
         .session
         .options_file
         .as_ref()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(gd_ui_kit::state::settings::path);
+        .map_or(options_file, std::path::PathBuf::from);
     let device = std::fs::read_to_string(&options_file)
         .map(|text| gd_game_core::options::GameOptions::parse(&text).int("device"))
         .unwrap_or(0);
@@ -102,9 +99,36 @@ fn main() {
         // sharing the name cannot win.
         wgpu_settings.backends = Some(wgpu::Backends::from(*backend));
     }
+    // `GD_RES=1920x1080` e.g. to match a reference screenshot.
+    let resolution: (u32, u32) = (1600, 900);
+    #[cfg(feature = "dev")]
+    let resolution = hooks.render.res.unwrap_or(resolution);
+    // Automated screenshot runs (`GD_SHOT`) must not block on vsync: a hidden window gets no frame callbacks
+    // from the compositor.
+    let present_mode = bevy::window::PresentMode::AutoVsync;
+    #[cfg(feature = "dev")]
+    let present_mode = if hooks.shot.path.is_some() {
+        bevy::window::PresentMode::AutoNoVsync
+    } else {
+        present_mode
+    };
+    // Debug: `GD_CLEAR=1` shows the clear colour as magenta (finds holes).
+    let clear = Color::BLACK;
+    #[cfg(feature = "dev")]
+    let clear = if hooks.render.clear {
+        Color::srgb(1.0, 0.0, 1.0)
+    } else {
+        clear
+    };
     let mut app = App::new();
-    app.insert_resource(hooks.clone())
-        .insert_resource(render_devices::RenderAdapters { entries: adapters })
+    // `GD_SAVE_DIR`: the save folder (before `GameLogicPlugin`'s default).
+    #[cfg(feature = "dev")]
+    if let Some(d) = &hooks.session.save_dir {
+        app.insert_resource(gd_game_core::session::SaveDir(d.into()));
+    }
+    #[cfg(feature = "dev")]
+    app.insert_resource(hooks);
+    app.insert_resource(render_devices::RenderAdapters { entries: adapters })
         .add_plugins(
             DefaultPlugins
                 // The doll and portrait cameras carry the light rig in their `ColorGrading` with
@@ -122,15 +146,8 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Grim Dawn (Rust/Bevy port)".into(),
-                        // `GD_RES=1920x1080` e.g. to match a reference screenshot.
-                        resolution: hooks.render.res.unwrap_or((1600, 900)).into(),
-                        // Automated screenshot runs must not block on vsync: a hidden
-                        // window gets no frame callbacks from the compositor.
-                        present_mode: if hooks.shot.path.is_some() {
-                            bevy::window::PresentMode::AutoNoVsync
-                        } else {
-                            bevy::window::PresentMode::AutoVsync
-                        },
+                        resolution: resolution.into(),
+                        present_mode,
                         ..default()
                     }),
                     ..default()
@@ -206,12 +223,7 @@ fn main() {
         ))
         .add_systems(Startup, setup_lighting)
         .add_systems(PostStartup, place_camera)
-        // Debug: `GD_CLEAR=1` shows the clear colour as magenta (finds holes).
-        .insert_resource(ClearColor(if hooks.render.clear {
-            Color::srgb(1.0, 0.0, 1.0)
-        } else {
-            Color::BLACK
-        }))
+        .insert_resource(ClearColor(clear))
         .add_systems(Update, follow_focus);
     // The logger exists once DefaultPlugins are built (LogPlugin installs its subscriber in `build`).
     match &adapter {

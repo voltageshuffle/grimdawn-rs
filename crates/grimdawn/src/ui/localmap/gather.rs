@@ -276,6 +276,7 @@ pub struct MapSources<'w, 's> {
     pub(super) devotion: Option<Res<'w, gd_game::devotion::DevotionState>>,
     pub(super) inv: Option<Res<'w, gd_game_core::inventory::Inventory>>,
     pub(super) filter: Option<Res<'w, gd_game::loot_filter::LootFilter>>,
+    pub(super) styles: Res<'w, gd_game::item_style::ItemStyles>,
     pub(super) loadout:
         Query<'w, 's, &'static gd_game_core::player::Loadout, With<gd_game_core::player::Player>>,
     pub(super) values: Res<'w, gd_ui::HudValues>,
@@ -453,10 +454,12 @@ pub(super) fn gather(
                         .filter(|b| !b.is_empty())
                         .map(str::to_owned)
                 })?;
+            // The item styles' hide applies here too (`gd_game::item_style`, inside `LootFilter::passes`).
             let passes = src.filter.as_ref().is_none_or(|f| {
                 f.passes(
+                    &src.styles,
                     inv,
-                    &data.db,
+                    data,
                     item,
                     gd_sim::items::loot_filter::Mode::Filter,
                     loadout,

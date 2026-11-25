@@ -47,16 +47,16 @@ impl Plugin for QuestPopupPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestPopup>()
             .add_systems(Update, clicks.in_set(super::UiInputSet))
-            .add_systems(
-                Update,
-                (sample, open, input, draw).chain().in_set(super::UiPlaySet),
-            );
+            .add_systems(Update, (open, input, draw).chain().in_set(super::UiPlaySet));
+        #[cfg(feature = "dev")]
+        app.add_systems(Update, sample.before(open).in_set(super::UiPlaySet));
     }
 }
 
 /// `GD_QUEST_REWARD=<secs>` (hooks.rs): a sample reward, and a HUD notification (`tagTransferStashError`), every
 /// that many seconds of game time (the window auto-accepts after 10). The item icons are a GiveItem preview and
 /// a GiveRandomItem roll (a fixed seed, so the shot is stable).
+#[cfg(feature = "dev")]
 fn sample(
     hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
@@ -195,7 +195,6 @@ fn clicks(
     mut popup: ResMut<QuestPopup>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     mut capture: ResMut<crate::state::inventory::UiCapture>,
     data: Res<GameData>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
@@ -204,11 +203,7 @@ fn clicks(
     if p.shown.is_none() || p.closing {
         return;
     }
-    let Some(c) = window
-        .single()
-        .ok()
-        .and_then(|w| super::cursor_px(&hooks, w))
-    else {
+    let Some(c) = window.single().ok().and_then(super::cursor_px) else {
         return;
     };
     if p.window.is_some_and(|w| super::contains(&w, c)) {
@@ -311,7 +306,6 @@ fn draw(
     mut popup: ResMut<QuestPopup>,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     roots: Query<Entity, With<PopupRoot>>,
     mut assets: UiAssets,
     #[allow(clippy::type_complexity)] mut drawn: Local<
@@ -327,7 +321,7 @@ fn draw(
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let p = &mut popup.0;
     // The game menu / Options holds the cursor: no Accept hover, no rollover under it.
-    let cursor = super::cursor_px(&hooks, win).filter(|_| !pause.menu);
+    let cursor = super::cursor_px(win).filter(|_| !pause.menu);
     let hovered = !p.closing
         && cursor
             .zip(p.accept)

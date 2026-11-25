@@ -1045,7 +1045,7 @@ pub fn discover_shrines(
 #[allow(clippy::too_many_arguments)]
 pub fn use_shrine(
     mut commands: Commands,
-    mut scratch: Local<gd_sim::nav::PathScratch>,
+    #[cfg(feature = "dev")] mut scratch: Local<gd_sim::nav::PathScratch>,
     mut window: ResMut<ShrineWindow>,
     mut shrines: Query<(Entity, &GlobalTransform, &mut Shrine)>,
     mut players: Query<
@@ -1061,16 +1061,17 @@ pub fn use_shrine(
     s: Res<DevotionState>,
     mut notify: MessageWriter<gd_game_core::story::Notify>,
     mut fights: ShrineFights,
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    nav: Res<crate::nav::Nav>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] nav: Res<crate::nav::Nav>,
     data: Res<gd_game_core::data::GameData>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     let Ok((ptf, mut path, mut interact, pcb, ch)) = players.single_mut() else {
         return;
     };
     // `GD_USE_SHRINE` (hooks.rs): use the nearest shrine within 40 m once (opens its window).
+    #[cfg(feature = "dev")]
     if hooks.gameplay.use_shrine && !*tested && interact.0.is_none() {
         let near = shrines
             .iter()

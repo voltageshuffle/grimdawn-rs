@@ -2,15 +2,15 @@ lints.workspace = true
 
 [package]
 name = "gd-render"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Grim Dawn's look on Bevy: the game's shading, lighting and post chain, models, textures, characters, effects and the drawing halves of water / weather over gd-game-core"
 license = "MIT"
 
 [features]
-# Dev builds: the dev-gated render code (the `GD_FPS` effect counters, fx/mod.rs). grimdawn's `dev`
-# forwards here; the hooks themselves are gd-game-core's.
-dev = []
+# Dev builds: the `GD_*` hook reads and the dev-gated render code (the `GD_FPS` effect counters, fx/mod.rs).
+# grimdawn's `dev` forwards here; the hooks resource is gd-game-core's, which this forwards to.
+dev = ["gd-game-core/dev"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -44,7 +44,7 @@ bevy = {
     "x11",
   ]
 }
-gd-formats = { path = "../gd-formats", version = "0.1.0" }
-gd-game-core = { path = "../gd-game-core", version = "0.1.0" }
-gd-sim = { path = "../gd-sim", version = "0.1.0" }
+gd-formats = { path = "../gd-formats" }
+gd-game-core = { path = "../gd-game-core" }
+gd-sim = { path = "../gd-sim" }
 parking_lot = "0.12"

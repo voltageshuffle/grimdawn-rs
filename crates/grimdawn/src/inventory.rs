@@ -82,9 +82,7 @@ fn clicks(
     mut capture: ResMut<UiCapture>,
     players: Query<(), With<Player>>,
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
-    time: Res<Time>,
     data: Res<gd_game_core::data::GameData>,
-    mut script: Local<Option<Vec<gd_game_core::hooks::Click>>>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
     (loaded, mut requests, mut apply, mut sell, mut sell_held, mut sell_worn): (
         Option<Res<gd_game_core::session::LoadedCharacter>>,
@@ -95,14 +93,18 @@ fn clicks(
         MessageWriter<gd_game::trade::SellEquipped>,
     ),
     mut sort: MessageWriter<gd_game_core::inventory::SortBag>,
-    (mut spend, mut swap, hooks, mut stack, keys, real, mut bar_hold): (
+    (mut spend, mut swap, mut stack, keys, real, mut bar_hold): (
         MessageWriter<gd_game::points::SpendAttribute>,
         MessageWriter<gd_game::weapon_sets::SwapWeapons>,
-        Res<gd_game_core::hooks::Hooks>,
         ResMut<gd_ui::stack::StackWindow>,
         Res<ButtonInput<KeyCode>>,
         Res<Time<Real>>,
         Local<Option<(u8, gd_ui::window::BarHold)>>,
+    ),
+    #[cfg(feature = "dev")] (hooks, time, mut script): (
+        Res<gd_game_core::hooks::Hooks>,
+        Res<Time>,
+        Local<Option<Vec<gd_game_core::hooks::Click>>>,
     ),
     (mut deposit, options, mut confirm, mut sound, mut stash_req, mut quick_error, above): (
         MessageWriter<gd_game_core::stash::DepositReagents>,
@@ -116,9 +118,11 @@ fn clicks(
 ) {
     capture.0 = false;
     // `GD_INV_CLICKS` (hooks.rs) clicks the window without a mouse.
-    let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
-    let scripted =
-        gd_game_core::hooks::take_due(script, time.elapsed_secs()).map(|c| (c.secs, c.right, c.at));
+    #[cfg(feature = "dev")]
+    let scripted = {
+        let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
+        gd_game_core::hooks::take_due(script, time.elapsed_secs()).map(|c| (c.right, c.at))
+    };
     let Some(inv) = inv else { return };
     if !panels.character {
         // Closing the window ends the apply mode and drops nothing: the held
@@ -130,11 +134,15 @@ fn clicks(
         return;
     }
     let Ok(win) = window.single() else { return };
+    #[cfg(feature = "dev")]
+    let scripted = scripted.map(|(r, p)| {
+        info!("scripted {} click at {p}", if r { "right" } else { "left" });
+        (p, !r, r)
+    });
+    #[cfg(not(feature = "dev"))]
+    let scripted = None;
     let (p, left, right) = match scripted {
-        Some((_, r, p)) => {
-            info!("scripted {} click at {p}", if r { "right" } else { "left" });
-            (p, !r, r)
-        }
+        Some(click) => click,
         None => {
             let Some(cursor) = win.cursor_position() else {
                 return;
@@ -253,7 +261,7 @@ fn clicks(
         }
         return;
     }
-    // Auto-sort: `InventorySack::Sort` (the stash sort, see trade.rs),
+    // Auto-sort (`gd_game_core::inventory::SortBag`: each sort starts one layout further),
     // at once with option `sortConfirmBypass`, else after `tagCaravanSort`
     // (`ui/apply.rs`); not while an item is held (`CharacterWindow::OnButtonEvent`).
     if left && let Some((b, _)) = layout.sort_buttons.iter().find(|(_, r)| contains(r, p)) {
@@ -546,7 +554,6 @@ fn sheet_wheel(
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<InvLayout>,
     mut panels: ResMut<UiPanels>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     pause: Res<gd_game_core::pause::GamePause>,
     (inv, trade, confirm): (
         Option<Res<Inventory>>,
@@ -567,7 +574,7 @@ fn sheet_wheel(
         wheel.clear();
         return;
     };
-    let Some(p) = gd_ui_kit::cursor_px(&hooks, win) else {
+    let Some(p) = gd_ui_kit::cursor_px(win) else {
         wheel.clear();
         return;
     };
@@ -622,10 +629,9 @@ fn held_overlay(
     trade: Res<gd_ui::state::trade::Trade>,
     stash: Option<Res<crate::trade::Stash>>,
     panels: Res<UiPanels>,
-    (pause, confirm, hooks): (
+    (pause, confirm): (
         Res<gd_game_core::pause::GamePause>,
         Res<gd_ui::apply::InvConfirm>,
-        Res<gd_game_core::hooks::Hooks>,
     ),
 ) {
     // The rects to show (screen px); the nodes are moved / recoloured in
@@ -637,7 +643,7 @@ fn held_overlay(
         && !question_up(&inv, &trade, &confirm)
         && let Some(h) = inv.held.as_ref()
         && let Ok(win) = window.single()
-        && let Some(p) = gd_ui_kit::cursor_px(&hooks, win)
+        && let Some(p) = gd_ui_kit::cursor_px(win)
     {
         let size = inv
             .info(h)

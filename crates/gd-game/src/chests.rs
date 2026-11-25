@@ -319,6 +319,7 @@ pub fn open_chests(
 }
 
 /// `GD_OPEN_CHESTS` (hooks.rs).
+#[cfg(feature = "dev")]
 pub fn test_open(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut timer: Local<f32>,
@@ -444,14 +445,18 @@ impl Plugin for ChestsPlugin {
             .add_message::<LockedUse>()
             .add_systems(
                 Update,
-                (
-                    test_open,
-                    open_chests.run_if(resource_exists::<crate::lore::LoreCodex>),
-                )
-                    .chain()
+                open_chests
+                    .run_if(resource_exists::<crate::lore::LoreCodex>)
                     .after(gd_game_core::player::PlayerSet),
             )
             .add_systems(Update, (story_locks, radius_locks).chain());
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            test_open
+                .before(open_chests)
+                .after(gd_game_core::player::PlayerSet),
+        );
     }
 }
 

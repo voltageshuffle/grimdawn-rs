@@ -110,11 +110,13 @@ impl Plugin for QuestUiPlugin {
                     .chain()
                     .in_set(QuestSet),
             );
+        #[cfg(feature = "dev")]
         app.add_systems(PreStartup, open_journal);
     }
 }
 
 /// `GD_UI_OPEN=quests` opens the journal at start (`GD_UI_TAB=2`: the completed quests).
+#[cfg(feature = "dev")]
 fn open_journal(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     if hooks.ui.open.as_deref() != Some("quests") {
         return;
@@ -303,7 +305,7 @@ fn tracker_open(options: &gd_game_core::options::GameOptions) -> bool {
 
 /// The fade, the title hover and the toggle button (module doc).
 fn tracker_input(
-    (hooks, time): (Res<gd_game_core::hooks::Hooks>, Res<Time<Real>>),
+    time: Res<Time<Real>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut options: ResMut<gd_game_core::options::GameOptions>,
@@ -343,7 +345,7 @@ fn tracker_input(
     let p = window
         .single()
         .ok()
-        .and_then(|w| super::cursor_px(&hooks, w))
+        .and_then(super::cursor_px)
         .filter(|_| !pause.menu);
     let inside = |r: Option<URect>| r.zip(p).is_some_and(|(r, p)| super::contains(&r, p));
     let over_button = inside(fade.button);
@@ -470,7 +472,6 @@ fn tracked(view: &QuestView) -> impl Iterator<Item = &QuestEntry> {
 /// row; the window takes the mouse.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -503,7 +504,7 @@ fn clicks(
         }
         return;
     }
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let inside = |r: &URect| super::contains(r, p);

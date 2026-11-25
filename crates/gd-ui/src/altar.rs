@@ -99,12 +99,13 @@ impl Plugin for AltarUiPlugin {
         app.add_systems(
             Update,
             (
-                open_hook,
                 animate_glows.run_if(|l: Res<AltarLayout>| l.window.is_some()),
                 (live, tooltip).after(build),
             )
                 .in_set(super::UiPlaySet),
         );
+        #[cfg(feature = "dev")]
+        app.add_systems(Update, open_hook.in_set(super::UiPlaySet));
     }
 }
 
@@ -837,6 +838,7 @@ fn animate_glows(time: Res<Time<Real>>, mut glows: Query<(&Glow, &mut Node)>) {
 
 /// `GD_UI_OPEN=altar`: opens the window as the Altar Window key does, once (after the `GD_ALTAR_OFFER` activation
 /// when that hook is set).
+#[cfg(feature = "dev")]
 fn open_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,
     altar: Res<gd_game_core::ascendant::AltarState>,
@@ -862,7 +864,11 @@ fn open_hook(
 /// an offer (accepted: the window hides). Esc closes it through the shared dispatcher (`ui::esc_dispatcher`).
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] (hooks, mut scripted, mut fresh): (
+        Res<gd_game_core::hooks::Hooks>,
+        Local<bool>,
+        gd_game_core::session::NewSession,
+    ),
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<AltarLayout>,
@@ -877,9 +883,8 @@ pub fn clicks(
     ),
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     pause: Res<gd_game_core::pause::GamePause>,
-    mut scripted: Local<bool>,
-    mut fresh: gd_game_core::session::NewSession,
 ) {
+    #[cfg(feature = "dev")]
     if fresh.begun() {
         *scripted = false;
     }
@@ -911,6 +916,7 @@ pub fn clicks(
         }
     };
     // `GD_ALTAR_OFFER`: fill the boxes in order and activate, once.
+    #[cfg(feature = "dev")]
     if menu.altar.is_some()
         && !*scripted
         && let Some(list) = hooks.items.altar_offer.clone()
@@ -938,7 +944,7 @@ pub fn clicks(
         return;
     };
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     if !contains(&wr, p) {
@@ -1009,7 +1015,6 @@ pub fn clicks(
 /// highlights, the button bitmaps and the three scroll panes.
 #[allow(clippy::too_many_arguments)]
 fn live(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     menu: Res<AltarMenu>,
     layout: Res<AltarLayout>,
@@ -1023,7 +1028,7 @@ fn live(
         return;
     }
     let Ok(win) = window.single() else { return };
-    let hover = super::cursor_px(&hooks, win)
+    let hover = super::cursor_px(win)
         .filter(|_| !pause.menu)
         .and_then(|p| layout.hit(p, &menu.scroll));
     for (t, mut vis) in &mut tabs {
@@ -1055,7 +1060,6 @@ fn live(
 /// delay — not drawn into the window build.
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     menu: Res<AltarMenu>,
     mode: Res<gd_game_core::session::GameMode>,
@@ -1077,7 +1081,7 @@ fn tooltip(
         }
         return;
     }
-    let hover = super::cursor_px(&hooks, win)
+    let hover = super::cursor_px(win)
         .filter(|_| !pause.menu)
         .and_then(|p| layout.hit(p, &menu.scroll));
     let uv = mode.0.ultimate_veteran();
@@ -1149,7 +1153,7 @@ fn tooltip(
     if tip.is_empty() {
         return;
     }
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     canvas.show(

@@ -205,7 +205,7 @@ fn apply_options(
     settings: Option<Res<SunShadowSettings>>,
     mut commands: Commands,
     mut map: ResMut<DirectionalLightShadowMap>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if settings.is_some() && !options.is_changed() {
         return;
@@ -214,8 +214,10 @@ fn apply_options(
         Some(gd_formats::options::Value::Quality(q)) => quality_index(q),
         _ => 1,
     };
+    let enabled = options.flag("shadows");
     // Test hook: GD_SHADOWS=0 turns the sun shadow off like `shadows = false`.
-    let enabled = options.flag("shadows") && !hooks.render.no_shadows;
+    #[cfg(feature = "dev")]
+    let enabled = enabled && !hooks.render.no_shadows;
 
     let s = SunShadowSettings { enabled, quality };
     if settings.as_deref() != Some(&s) {

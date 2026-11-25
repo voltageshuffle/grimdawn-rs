@@ -72,15 +72,17 @@ impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameCursor>().add_systems(
             PostUpdate,
-            (
-                choose,
-                (
-                    os_pointer,
-                    // The sprite stands in only for the `GD_HOVER` hook (module doc).
-                    draw.run_if(|hooks: Res<gd_game_core::hooks::Hooks>| hooks.ui.hover.is_some()),
-                ),
-            )
+            (choose, os_pointer)
                 .chain()
+                .before(bevy::window::CursorSystems::Update)
+                .before(bevy::ui::UiSystems::Prepare),
+        );
+        // The sprite stands in only for the `GD_HOVER` hook (module doc).
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            PostUpdate,
+            draw.run_if(|hooks: Res<gd_game_core::hooks::Hooks>| hooks.ui.hover.is_some())
+                .after(choose)
                 .before(bevy::window::CursorSystems::Update)
                 .before(bevy::ui::UiSystems::Prepare),
         );
@@ -173,6 +175,7 @@ pub struct GameCursor {
     pub large: bool,
 }
 
+#[cfg(feature = "dev")]
 #[derive(Component)]
 struct CursorSprite;
 
@@ -260,7 +263,7 @@ fn choose(
 fn os_pointer(
     mut commands: Commands,
     mut windows: Query<(Entity, &mut CursorOptions), With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     cursor: Res<GameCursor>,
     data: Res<gd_game_core::data::GameData>,
     mut images: ResMut<Assets<Image>>,
@@ -277,7 +280,10 @@ fn os_pointer(
     let Ok((e, mut o)) = windows.single_mut() else {
         return;
     };
+    #[cfg(feature = "dev")]
     let hide = hooks.ui.hover.is_some();
+    #[cfg(not(feature = "dev"))]
+    let hide = false;
     if o.visible == hide {
         o.visible = !hide;
     }
@@ -328,6 +334,7 @@ fn cursor_image(data: &gd_game_core::data::GameData, path: &str) -> Option<Image
 /// spawned (after an Exit to Main Menu that despawned a sprite spawned inside the session, i.e. after
 /// `exit::capture_baseline`).
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dev")]
 fn draw(
     mut commands: Commands,
     cursor: Res<GameCursor>,

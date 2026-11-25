@@ -18,20 +18,19 @@ fn sync_state(
     world: Option<Res<StreamedMap>>,
     levels: Option<Res<gd_game_core::levels::Levels>>,
     start: Option<Res<PlayerStart>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let want = if playing.0 {
         // Lift the cover only once the spawn area is fully streamed in, like a
         // teleport (`StreamedMap::area_ready`); once playing, stay playing. The test
         // arena replaces the streamed levels, so it does not wait.
         // (Tested only while still loading: the area test is not free.)
-        let area_ready = || {
-            hooks.session.testworld.is_some()
-                || match (&world, &levels, &start) {
-                    (Some(w), Some(l), Some(sp)) => w.area_ready(l, sp.0),
-                    _ => true,
-                }
+        let area_ready = || match (&world, &levels, &start) {
+            (Some(w), Some(l), Some(sp)) => w.area_ready(l, sp.0),
+            _ => true,
         };
+        #[cfg(feature = "dev")]
+        let area_ready = || hooks.session.testworld.is_some() || area_ready();
         if *state.get() == AppState::InGame || area_ready() {
             AppState::InGame
         } else {
@@ -53,7 +52,6 @@ impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
             .add_systems(PreUpdate, in_game.pipe(sync_state))
-            .add_systems(Startup, load_save)
             .add_systems(
                 Update,
                 (
@@ -61,6 +59,8 @@ impl Plugin for SessionPlugin {
                     save_input.before(gd_game::save::SaveStage::Save),
                 ),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(Startup, load_save);
     }
 }
 
@@ -70,20 +70,30 @@ fn resolve_start(
     character: Option<Res<LoadedCharacter>>,
     start: Option<Res<PlayerStart>>,
     ready: Option<Res<SessionReady>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     choice: Res<gd_game_core::session::Choice>,
 ) {
     if start.is_some() || ready.is_none() {
         return;
     }
     let Some(world) = world else { return };
-    if let Some(p) = gd_game::save::player_start(
-        &world.map,
-        world.spawn_point(),
-        hooks.session.start.as_deref(),
-        character.as_deref().map(|c| &*c.0),
-        &choice,
-    ) {
+    // `GD_START` (hooks.rs).
+    #[cfg(feature = "dev")]
+    let hooked = hooks
+        .session
+        .start
+        .as_deref()
+        .and_then(gd_game::save::start_hook);
+    #[cfg(not(feature = "dev"))]
+    let hooked = None;
+    if let Some(p) = hooked.or_else(|| {
+        gd_game::save::player_start(
+            &world.map,
+            world.spawn_point(),
+            character.as_deref().map(|c| &*c.0),
+            &choice,
+        )
+    }) {
         commands.insert_resource(PlayerStart(p));
     }
 }

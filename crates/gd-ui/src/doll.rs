@@ -184,10 +184,13 @@ pub fn panel(ui: &mut gd_ui_kit::Ui, view: DollView, record: &str, rect: URect) 
                 });
             (size, image, material)
         });
+        #[cfg(feature = "dev")]
         let rotation = world
             .resource::<gd_game_core::hooks::Hooks>()
             .render
             .doll_rot;
+        #[cfg(not(feature = "dev"))]
+        let rotation = 0.0;
         let mut dolls = world.resource_mut::<Dolls>();
         let d = dolls.0.entry(view).or_default();
         if !d.shown {

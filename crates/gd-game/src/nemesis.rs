@@ -65,15 +65,8 @@ struct NemesisState {
 #[derive(Resource, Default)]
 pub struct Nemeses(HashMap<String, NemesisState>);
 
-/// `GD_NEMESIS_KILLS` (hooks.rs) overrides the kill threshold.
-fn roll(
-    pack: &gd_formats::arz::Record,
-    difficulty: usize,
-    hooks: &gd_game_core::hooks::Hooks,
-) -> u32 {
-    if let Some(n) = hooks.gameplay.nemesis_kills {
-        return n;
-    }
+/// A faction pack's kill threshold roll.
+fn roll(pack: &gd_formats::arz::Record, difficulty: usize) -> u32 {
     let sfx = ["", "Elite", "Ultimate"][difficulty.min(2)];
     let lo = pack
         .i32(&format!("nemesisSpawnKillsMin{sfx}"))
@@ -125,9 +118,17 @@ fn nemesis_kills(
     >,
     credit: crate::combat::KillCredit,
     session: crate::session::Session,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut cinematic: MessageWriter<gd_game_core::story::CinematicText>,
 ) {
+    // `GD_NEMESIS_KILLS` (hooks.rs) overrides the kill threshold (no roll).
+    #[cfg(feature = "dev")]
+    let roll = |pack: &gd_formats::arz::Record, difficulty: usize| {
+        hooks
+            .gameplay
+            .nemesis_kills
+            .unwrap_or_else(|| roll(pack, difficulty))
+    };
     let Ok((player, ptf, pcb, challenged)) = players.single() else {
         killed.clear();
         return;
@@ -204,7 +205,7 @@ fn nemesis_kills(
         s.counter += n;
         if s.threshold == 0 {
             // No roll at all with a 0 minimum (the pack never spawns).
-            let t = roll(pack, difficulty, &hooks);
+            let t = roll(pack, difficulty);
             s.threshold = if t == 0 {
                 0
             } else {
@@ -315,7 +316,7 @@ fn nemesis_kills(
             .and_then(|g| g.f32("nemesisRespawnKillModifier"))
             .unwrap_or(1.0);
         s.threshold = ascendant_cut(
-            (roll(pack, difficulty, &hooks) as f32 * respawn) as u32,
+            (roll(pack, difficulty) as f32 * respawn) as u32,
             nemesis_spawn,
         );
     }

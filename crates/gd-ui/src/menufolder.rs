@@ -145,7 +145,6 @@ pub fn draw_folder(ui: &mut Ui, view: FolderView, to: Vec2) {
 fn close_on_world_press(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<HudLayout>,
     capture: Res<crate::state::inventory::UiCapture>,
     mut folder: ResMut<MenuFolder>,
@@ -157,7 +156,7 @@ fn close_on_world_press(
         return;
     }
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     if !layout.covers(p) {

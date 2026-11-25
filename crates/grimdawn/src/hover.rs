@@ -432,7 +432,7 @@ fn pick(
     window: Query<&Window, With<PrimaryWindow>>,
     cams: Query<(&Camera, &GlobalTransform), With<gd_render::camera::GameCamera>>,
     capture: Res<gd_ui::state::inventory::UiCapture>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     data: Res<GameData>,
     fonts: Res<FontCache>,
     objects: (
@@ -552,54 +552,54 @@ fn pick(
         let available = o.in_world && o.available_for_conversation;
         (available, available && o.conversation.is_some())
     };
-    let cursor = hooks
-        .ui
-        .hover
-        .as_deref()
-        .and_then(|v| {
-            let cam = cams.single().ok()?;
-            let project = |p: Vec3| cam.0.world_to_viewport(cam.1, p + Vec3::Y).ok();
-            let near = |it: &mut dyn Iterator<Item = Vec3>| {
-                it.min_by(|a, b| a.distance(ppos).total_cmp(&b.distance(ppos)))
-            };
-            match v {
-                "monster" => near(
-                    &mut foes
-                        .iter()
-                        .filter(|f| player_foe(&f.4))
-                        .map(|f| f.1.translation()),
-                )
-                .and_then(project),
-                "breakable" => near(
-                    &mut breakables
-                        .iter()
-                        .filter(|b| b.3.targetable)
-                        .map(|b| b.1.translation()),
-                )
-                .and_then(project),
-                "decoration" => near(&mut described.iter().map(|d| d.1.translation()))
-                    .and_then(|p| cam.0.world_to_viewport(cam.1, p + Vec3::Y * 2.0).ok()),
-                "npc" => near(
-                    &mut friends
-                        .iter()
-                        .filter(|f| {
-                            !player_foe(&f.6)
-                                && facts.of(&data, fonts, &f.2.record).npc
-                                && npc_state(f.3).0
-                        })
-                        .map(|f| f.1.translation()),
-                )
-                .and_then(project),
-                _ => {
-                    // `@dx,dy`: from the window centre (the player), whatever the window size.
-                    let (rel, v) = v.strip_prefix('@').map_or((false, v), |r| (true, r));
-                    let (x, y) = v.split_once(',')?;
-                    let p = Vec2::new(x.parse().ok()?, y.parse().ok()?);
-                    Some(if rel { p + win.size() / 2.0 } else { p })
-                }
+    // `GD_HOVER`: the pointer on the nearest object of a kind, or at a fixed point.
+    #[cfg(feature = "dev")]
+    let hooked = hooks.ui.hover.as_deref().and_then(|v| {
+        let cam = cams.single().ok()?;
+        let project = |p: Vec3| cam.0.world_to_viewport(cam.1, p + Vec3::Y).ok();
+        let near = |it: &mut dyn Iterator<Item = Vec3>| {
+            it.min_by(|a, b| a.distance(ppos).total_cmp(&b.distance(ppos)))
+        };
+        match v {
+            "monster" => near(
+                &mut foes
+                    .iter()
+                    .filter(|f| player_foe(&f.4))
+                    .map(|f| f.1.translation()),
+            )
+            .and_then(project),
+            "breakable" => near(
+                &mut breakables
+                    .iter()
+                    .filter(|b| b.3.targetable)
+                    .map(|b| b.1.translation()),
+            )
+            .and_then(project),
+            "decoration" => near(&mut described.iter().map(|d| d.1.translation()))
+                .and_then(|p| cam.0.world_to_viewport(cam.1, p + Vec3::Y * 2.0).ok()),
+            "npc" => near(
+                &mut friends
+                    .iter()
+                    .filter(|f| {
+                        !player_foe(&f.6)
+                            && facts.of(&data, fonts, &f.2.record).npc
+                            && npc_state(f.3).0
+                    })
+                    .map(|f| f.1.translation()),
+            )
+            .and_then(project),
+            _ => {
+                // `@dx,dy`: from the window centre (the player), whatever the window size.
+                let (rel, v) = v.strip_prefix('@').map_or((false, v), |r| (true, r));
+                let (x, y) = v.split_once(',')?;
+                let p = Vec2::new(x.parse().ok()?, y.parse().ok()?);
+                Some(if rel { p + win.size() / 2.0 } else { p })
             }
-        })
-        .or(win.cursor_position());
+        }
+    });
+    #[cfg(not(feature = "dev"))]
+    let hooked = None;
+    let cursor = hooked.or(win.cursor_position());
     point.set_if_neq(HoverPoint(cursor));
     // No main player (the main menu): nothing is hovered, but the pointer
     // stays known (the game cursor sprite follows it there).

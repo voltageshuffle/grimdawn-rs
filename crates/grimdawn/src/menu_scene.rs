@@ -103,11 +103,7 @@ impl Plugin for MenuPlugin {
 }
 
 /// The menu record `option` (the `mainMenu` option) picks (module doc).
-pub fn menu_view(
-    data: &GameData,
-    hooks: &gd_game_core::hooks::Hooks,
-    option: i32,
-) -> Option<(MenuView, f32)> {
+pub fn menu_view(data: &GameData, option: i32) -> Option<(MenuView, f32)> {
     let eng = data.db.get("records/game/gameengine.dbr")?;
     let records: Vec<&str> = [
         "menuRecord",
@@ -131,7 +127,7 @@ pub fn menu_view(
     let r = v("mmPlayerRotation") * (std::f32::consts::PI / 180.0);
     // Row-vector R(X)·R(Y)·R(Z) = column-vector R(Z)·R(Y)·R(X).
     let rot = Quat::from_euler(EulerRot::ZYX, r.z, r.y, r.x);
-    let time = hooks.render.time.or(rec.f32("mmTime")).unwrap_or(12.0);
+    let time = rec.f32("mmTime").unwrap_or(12.0);
     Some((
         MenuView {
             index,
@@ -180,7 +176,7 @@ fn open_scene(
     mut sounds: ResMut<gd_audio::Sounds>,
     layers: Res<gd_render::render::terrain::TerrainLayers>,
     grass: Res<gd_render::render::grass::GrassQuality>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut options: Option<ResMut<GameOptions>>,
     (scene, backdrop): (Option<Res<MenuScene>>, Option<Res<MenuBackdrop>>),
     owned: Query<Entity, With<MenuSceneEntity>>,
@@ -191,16 +187,24 @@ fn open_scene(
         if !o.flag("gdx3FirstRun") {
             o.set("mainMenu", Value::Int(3));
             o.set("gdx3FirstRun", Value::Bool(true));
-            if hooks.session.options_file.is_none() {
+            // `GD_OPTIONS` (hooks.rs): another options file is not overwritten.
+            #[cfg(feature = "dev")]
+            let store = hooks.session.options_file.is_none();
+            #[cfg(not(feature = "dev"))]
+            let store = true;
+            if store {
                 gd_ui_kit::state::settings::store(o);
             }
         }
         option = o.int("mainMenu");
     }
-    let Some((view, time)) = menu_view(&data, &hooks, option) else {
+    let Some((view, time)) = menu_view(&data, option) else {
         warn!("main menu: no menu record");
         return;
     };
+    // `GD_TIME` (hooks.rs): the time of day.
+    #[cfg(feature = "dev")]
+    let time = hooks.render.time.unwrap_or(time);
     if scene.is_some() {
         if backdrop.is_some_and(|b| b.view.index == view.index) {
             return;
@@ -268,7 +272,7 @@ fn finish_scene(
     mut cache: ResMut<gd_render::model::ModelCache>,
     mut bodies: ResMut<gd_game_core::creature::BodyCache>,
     mut textures: ResMut<gd_render::textures::Textures>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut backdrop: ResMut<MenuBackdrop>,
 ) {
     let Some(task) = scene.task.as_mut() else {
@@ -288,6 +292,10 @@ fn finish_scene(
     // Nothing walks or shoots in the scene: its collision is dropped.
     let mut coll = crate::collision::WorldCollision::default();
     let mut receivers = gd_render::decal::DecalReceivers::default();
+    #[cfg(feature = "dev")]
+    let opts = gd_world::LevelOpts::from_hooks(&hooks.render);
+    #[cfg(not(feature = "dev"))]
+    let opts = gd_world::LevelOpts::default();
     for (i, mut cpu) in levels {
         let (origin, sectors) = (cpu.origin(), cpu.take_sectors());
         let root = gd_world::spawn_level(
@@ -306,7 +314,7 @@ fn finish_scene(
             &mut textures,
             &mut coll,
             &mut receivers,
-            &hooks.render,
+            opts,
         );
         commands
             .entity(root)

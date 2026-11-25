@@ -92,7 +92,6 @@ fn stance_hook(
 /// Pet selection keys and world clicks (module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn world_input(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -113,10 +112,11 @@ pub fn world_input(
     >,
     mut out: MessageWriter<PetCommand>,
     mut swallow: Local<bool>,
-    (time, mut hook, bindings): (
+    bindings: Res<gd_ui_kit::keys::KeyBindings>,
+    #[cfg(feature = "dev")] (hooks, time, mut hook): (
+        Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
         Local<Option<Vec<(f32, Option<Vec2>)>>>,
-        Res<gd_ui_kit::keys::KeyBindings>,
     ),
 ) {
     let Ok(owner) = players.single() else { return };
@@ -157,7 +157,9 @@ pub fn world_input(
         }
     }
     // `GD_PET_ORDER` (hooks.rs, module doc).
+    #[cfg(feature = "dev")]
     let hook = hook.get_or_insert_with(|| hooks.ui.pet_order.clone());
+    #[cfg(feature = "dev")]
     if let Some(i) = hook.iter().position(|(t, _)| time.elapsed_secs() >= *t) {
         let (_, at) = hook.remove(i);
         if selection.0.is_empty()

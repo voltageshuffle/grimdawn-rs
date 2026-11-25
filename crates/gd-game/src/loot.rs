@@ -1269,8 +1269,8 @@ fn take_ground_item(
 /// 1.0, 3D (the Pickup key uses +2.0, `loot_filter::pick_up_nearest`).
 #[allow(clippy::too_many_arguments)]
 pub fn pick_up(
-    hooks: Res<gd_game_core::hooks::Hooks>,
-    mut scratch: Local<gd_sim::nav::PathScratch>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] mut scratch: Local<gd_sim::nav::PathScratch>,
     mut commands: Commands,
     mut progress: ResMut<PlayerProgress>,
     mut players: Query<
@@ -1294,7 +1294,7 @@ pub fn pick_up(
         Has<PickupDelay>,
     )>,
     waiting: Query<&Tossed>,
-    nav: Res<Nav>,
+    #[cfg(feature = "dev")] nav: Res<Nav>,
     (mut inv, mut taken): (
         // Option: without an inventory the pickup is skipped entirely (the item stays on the ground).
         Option<ResMut<gd_game_core::inventory::Inventory>>,
@@ -1316,6 +1316,7 @@ pub fn pick_up(
         return;
     };
     // `GD_AUTO_LOOT` (hooks.rs).
+    #[cfg(feature = "dev")]
     if hooks.items.auto_loot && cb.target.is_none() && interact.0.is_none_or(|e| !items.contains(e))
     {
         let near = items

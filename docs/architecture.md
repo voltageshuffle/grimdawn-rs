@@ -66,8 +66,11 @@ reference for formats and rules; this file holds only the cross-cutting conventi
   menu starts again. New session state needs its reset there; the exit test enumerates every registered
   resource. A `Local` caching session data takes `NewSession` and clears itself when `begun()`. Never despawn
   `IsResource` entities.
-- **Hooks.** `GD_*` variables are parsed once into `Hooks` (`gd_game_core::hooks`); hook-only code is
-  `dev`-only. Use `try_despawn` / `try_insert` on entities another system may have removed the same frame.
+- **Hooks.** `GD_*` variables are parsed once into `Hooks` (`gd_game_core::hooks`), which exists only with the
+  `dev` feature: every hook read is `#[cfg(feature = "dev")]` (a hook-only system and its `add_systems` line, a
+  dev overlay system `.after()` the production one it overrides, or a `hooks` param plus its branch), so a
+  release build has none. Use `try_despawn` / `try_insert` on entities another
+  system may have removed the same frame.
 
 ## UI
 - `gd_ui::rebuild` builds the HUD in root groups, each with a signature. A signature holds only what changes

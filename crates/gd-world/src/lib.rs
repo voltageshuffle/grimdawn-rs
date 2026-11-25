@@ -209,17 +209,17 @@ impl StreamedMap {
 }
 
 /// The session's map, read from its archive entry (`MapFile::open_resource`).
-/// `GD_MAP` selects another map resource (e.g. `levels/mainmenu/mainmenu_gdx3.map`).
+/// `gd_map` (`GD_MAP`, dev builds) selects another map resource (e.g. `levels/mainmenu/mainmenu_gdx3.map`).
 fn open_world_map(
     data: &GameData,
-    hooks: &gd_game_core::hooks::Hooks,
+    gd_map: Option<&str>,
     choice: &gd_game_core::session::Choice,
 ) -> anyhow::Result<MapFile> {
     // A Crucible arena or a custom game's map (`Choice::map_path`, read through the mounted mod,
     // `World::Load` opens it through the `FileSystem`), else `GD_MAP`, else the campaign's world.
     let res = (choice.game_mode() != 0)
         .then(|| choice.map_path())
-        .or(hooks.session.map.as_deref())
+        .or(gd_map)
         .map(gd_formats::vfs::normalize)
         .filter(|m| data.vfs.exists(m))
         .unwrap_or_else(|| "levels/world001.map".into());
@@ -229,10 +229,14 @@ fn open_world_map(
 pub fn open_world(
     commands: Commands,
     data: Res<GameData>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     choice: Res<gd_game_core::session::Choice>,
 ) {
-    let map = open_world_map(&data, &hooks, &choice).expect("open world map");
+    #[cfg(feature = "dev")]
+    let gd_map = hooks.session.map.as_deref();
+    #[cfg(not(feature = "dev"))]
+    let gd_map = None;
+    let map = open_world_map(&data, gd_map, &choice).expect("open world map");
     install_world(In(map), commands);
 }
 
@@ -293,10 +297,11 @@ fn stream_levels(
     mut nav: ResMut<Nav>,
     mut coll: ResMut<gd_game::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut lingering: ResMut<Lingering>,
 ) {
     // The test arena replaces the levels.
+    #[cfg(feature = "dev")]
     if hooks.session.testworld.is_some() {
         return;
     }
@@ -1089,6 +1094,42 @@ fn finish_levels(
     }
 }
 
+/// Debug switches for spawning a level: `GD_NO_DECALS` / `GD_NO_TERRAIN` leave the decals / the terrain out (dev
+/// builds; without `dev` the accessors are constant `false`).
+#[derive(Clone, Copy, Default)]
+pub struct LevelOpts {
+    #[cfg(feature = "dev")]
+    no_decals: bool,
+    #[cfg(feature = "dev")]
+    no_terrain: bool,
+}
+
+impl LevelOpts {
+    #[cfg(feature = "dev")]
+    pub fn from_hooks(h: &gd_game_core::hooks::RenderHooks) -> Self {
+        Self {
+            no_decals: h.no_decals,
+            no_terrain: h.no_terrain,
+        }
+    }
+
+    #[inline]
+    pub fn no_decals(&self) -> bool {
+        #[cfg(feature = "dev")]
+        return self.no_decals;
+        #[cfg(not(feature = "dev"))]
+        false
+    }
+
+    #[inline]
+    pub fn no_terrain(&self) -> bool {
+        #[cfg(feature = "dev")]
+        return self.no_terrain;
+        #[cfg(not(feature = "dev"))]
+        false
+    }
+}
+
 /// Spawns a built level under a new root. `gameplay`: the world's levels
 /// (their proxies, NPCs, chests, ... go to gd-game through `LevelProxies`, map
 /// points to the local map); without it only what is drawn (the main menu's
@@ -1110,7 +1151,7 @@ pub fn spawn_level(
     textures: &mut Textures,
     coll: &mut gd_game::collision::WorldCollision,
     receivers: &mut gd_render::decal::DecalReceivers,
-    hooks: &gd_game_core::hooks::RenderHooks,
+    opts: LevelOpts,
 ) -> Entity {
     let root = spawn_level_root(
         &mut cpu,
@@ -1122,7 +1163,7 @@ pub fn spawn_level(
         terrain_mats,
         mats,
         textures,
-        hooks,
+        opts,
     );
     if gameplay {
         attach_gameplay(commands, root, &mut cpu);
@@ -1157,7 +1198,7 @@ pub fn spawn_level(
             .map(|(p, m, tf)| (p.as_str(), &**m, *tf)),
     );
     let all = std::mem::take(&mut cpu.decals);
-    let mut decals = if hooks.no_decals { Vec::new() } else { all }.into_iter();
+    let mut decals = if opts.no_decals() { Vec::new() } else { all }.into_iter();
     // No budget here: the whole level at once.
     let far = Instant::now() + Duration::from_secs(3600);
     spawn_level_decals(
@@ -1259,7 +1300,7 @@ fn spawn_level_root(
     terrain_mats: &mut Assets<TerrainMaterial>,
     mats: &mut gd_render::render::material::MaterialAssets,
     textures: &mut Textures,
-    hooks: &gd_game_core::hooks::RenderHooks,
+    opts: LevelOpts,
 ) -> Entity {
     let root = commands
         .spawn((
@@ -1277,7 +1318,7 @@ fn spawn_level_root(
             .id();
         commands.entity(root).add_child(e);
     }
-    if let Some(mut t) = cpu.terrain.take().filter(|_| !hooks.no_terrain) {
+    if let Some(mut t) = cpu.terrain.take().filter(|_| !opts.no_terrain()) {
         // The terrain layers' grass (render/grass.rs): terrain-local blades.
         gd_render::render::grass::spawn(
             commands,
@@ -1687,8 +1728,12 @@ fn spawn_levels(
     mut textures: ResMut<Textures>,
     mut coll: ResMut<gd_game::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
+    #[cfg(feature = "dev")]
+    let opts = LevelOpts::from_hooks(&hooks.render);
+    #[cfg(not(feature = "dev"))]
+    let opts = LevelOpts::default();
     if world.spawning.is_empty() {
         return;
     }
@@ -1718,12 +1763,7 @@ fn spawn_levels(
                 continue;
             }
             // Its grass layers' textures decode in the background first (a new one would stall the root's frame).
-            if let Some(t) = job
-                .cpu
-                .terrain
-                .as_ref()
-                .filter(|_| !hooks.render.no_terrain)
-            {
+            if let Some(t) = job.cpu.terrain.as_ref().filter(|_| !opts.no_terrain()) {
                 let mut ready = true;
                 for g in &t.grass.batches {
                     ready &= textures.ready(&data, &g.texture, false, &mut images);
@@ -1742,7 +1782,7 @@ fn spawn_levels(
                 &mut terrain_mats,
                 &mut mats,
                 &mut textures,
-                &hooks.render,
+                opts,
             ));
             base_done = true;
         }
@@ -1781,12 +1821,7 @@ fn spawn_levels(
                     .map(|(p, m, tf)| (p.as_str(), &**m, *tf)),
             );
             let all = std::mem::take(&mut job.cpu.decals);
-            if hooks.render.no_decals {
-                Vec::new()
-            } else {
-                all
-            }
-            .into_iter()
+            if opts.no_decals() { Vec::new() } else { all }.into_iter()
         });
         if spawn_level_decals(
             decals,
@@ -1872,11 +1907,15 @@ pub fn open_session_map(
             choice.mod_name()
         );
     }
-    let map = open_world_map(
-        world.resource::<GameData>(),
-        world.resource::<gd_game_core::hooks::Hooks>(),
-        choice,
-    );
+    #[cfg(feature = "dev")]
+    let gd_map = world
+        .resource::<gd_game_core::hooks::Hooks>()
+        .session
+        .map
+        .as_deref();
+    #[cfg(not(feature = "dev"))]
+    let gd_map = None;
+    let map = open_world_map(world.resource::<GameData>(), gd_map, choice);
     let map = match map {
         Ok(map) => map,
         Err(e) => {

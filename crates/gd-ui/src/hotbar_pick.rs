@@ -175,8 +175,8 @@ fn clicks(
         Query<(&super::widgets::ButtonSound, &ChildOf, &InheritedVisibility)>,
         Query<&GlobalZIndex>,
     ),
-    time: Res<Time>,
-    (mut hook, hooks): (
+    #[cfg(feature = "dev")] (time, mut hook, hooks): (
+        Res<Time>,
         Local<Option<(Option<usize>, Option<usize>, Option<usize>)>>,
         Res<gd_game_core::hooks::Hooks>,
     ),
@@ -203,34 +203,37 @@ fn clicks(
         view.slot = Some(slot);
         view.first = 0;
     };
-    // Hooks (module docs).
-    let hook = hook.get_or_insert_with(|| {
-        (
-            hooks.ui.hotbar_pick,
-            hooks.ui.hotbar_choose,
-            hooks.ui.hotbar_page,
-        )
-    });
-    if let Some(slot) = hook.0.take() {
-        open(&mut view, slot);
-    }
-    if view.slot.is_some()
-        && layout.list.is_some()
-        && let Some(n) = hook.2.take()
-    {
-        view.first = (0..n)
-            .fold(layout.paged, |pg, _| super::slot_select::Paged {
-                first: pg.step(true),
-                ..pg
-            })
-            .first;
-    }
     let mut picked: Option<usize> = None;
-    if time.elapsed_secs() > 3.0
-        && view.slot.is_some()
-        && let Some(n) = hook.1.take()
+    // Hooks (module docs).
+    #[cfg(feature = "dev")]
     {
-        picked = Some(n);
+        let hook = hook.get_or_insert_with(|| {
+            (
+                hooks.ui.hotbar_pick,
+                hooks.ui.hotbar_choose,
+                hooks.ui.hotbar_page,
+            )
+        });
+        if let Some(slot) = hook.0.take() {
+            open(&mut view, slot);
+        }
+        if view.slot.is_some()
+            && layout.list.is_some()
+            && let Some(n) = hook.2.take()
+        {
+            view.first = (0..n)
+                .fold(layout.paged, |pg, _| super::slot_select::Paged {
+                    first: pg.step(true),
+                    ..pg
+                })
+                .first;
+        }
+        if time.elapsed_secs() > 3.0
+            && view.slot.is_some()
+            && let Some(n) = hook.1.take()
+        {
+            picked = Some(n);
+        }
     }
     // A pick binds the option, plays `skillSelectSound` and closes the list;
     // a page arrow plays it too (`HotSlotPickList::HandleMouseEvent`).
@@ -260,7 +263,7 @@ fn clicks(
     }
     // Esc closes the list through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let over_list = layout.list.is_some_and(|l| contains(&l, p));
@@ -430,7 +433,7 @@ fn disarm(
 /// ([`super::slot_select::PickHover`], [`super::slot_select::ArrowHover`]) are shown in place.
 #[allow(clippy::too_many_arguments)]
 fn draw(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,
     data: Res<GameData>,
@@ -474,11 +477,10 @@ fn draw(
         return;
     }
     // The game menu / Options holds the mouse (module docs).
-    let p = super::cursor_px(&hooks, win).filter(|_| !pause.menu);
-    let hover = hooks
-        .ui
-        .hotbar_hover
-        .or_else(|| p.and_then(|p| layout.picks.iter().position(|r| contains(r, p))));
+    let p = super::cursor_px(win).filter(|_| !pause.menu);
+    let hover = p.and_then(|p| layout.picks.iter().position(|r| contains(r, p)));
+    #[cfg(feature = "dev")]
+    let hover = hooks.ui.hotbar_hover.or(hover);
     let arrow = p
         .and_then(|p| {
             [(layout.paged.prev, false), (layout.paged.next, true)]
@@ -590,7 +592,7 @@ fn build(
 /// `HotSlotOptionScroll::GetRolloverText`).
 fn tooltip(
     mut fresh: gd_game_core::session::NewSession,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     (values, view, mut layout): (Res<super::HudValues>, Res<PickView>, ResMut<PickLayout>),
     data: Res<GameData>,
@@ -601,11 +603,10 @@ fn tooltip(
         *shown = None;
     }
     let Ok(win) = window.single() else { return };
-    let p = super::cursor_px(&hooks, win);
-    let hover = hooks
-        .ui
-        .hotbar_hover
-        .or_else(|| p.and_then(|p| layout.picks.iter().position(|r| contains(r, p))));
+    let p = super::cursor_px(win);
+    let hover = p.and_then(|p| layout.picks.iter().position(|r| contains(r, p)));
+    #[cfg(feature = "dev")]
+    let hover = hooks.ui.hotbar_hover.or(hover);
     let hovered = hover
         .and_then(|i| view.options.get(i))
         .and_then(Option::as_deref);

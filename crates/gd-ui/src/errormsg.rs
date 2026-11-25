@@ -44,19 +44,20 @@ fn show_error(
     roots: Query<Entity, With<ErrorRoot>>,
     mut shown: Local<Option<(UVec2, bool)>>,
     mut assets: UiAssets,
-    (hooks, mut fired): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
+    #[cfg(feature = "dev")] (hooks, mut fired): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
 ) {
     if fresh.begun() {
         *state = ErrorMessage::default();
         *shown = None;
     }
+    let pressed = requests.read().count() > 0;
     // `GD_NOT_READY` (hooks.rs): raised once at that time.
-    let hooked = hooks.gameplay.not_ready.is_some_and(|t| {
+    #[cfg(feature = "dev")]
+    let pressed = hooks.gameplay.not_ready.is_some_and(|t| {
         let hit = !*fired && clock.elapsed_secs() >= t;
         *fired |= hit;
         hit
-    });
-    let pressed = requests.read().count() > 0 || hooked;
+    }) || pressed;
     if pressed && options.flag("errorMessages") {
         state.left_ms = MS;
     }

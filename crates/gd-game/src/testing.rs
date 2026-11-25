@@ -55,7 +55,9 @@ pub fn headless_app(data: GameData, seed: u64) -> App {
     use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel, SingleThreadedExecutor};
     gd_game_core::rng::seed(seed);
     let mut app = App::new();
-    app.insert_resource(gd_game_core::hooks::Hooks::default());
+    // Dev builds: the hook systems read the resource; a test never gets the environment's hooks.
+    #[cfg(feature = "dev")]
+    app.insert_resource(gd_game_core::hooks::Hooks::from_vars(std::iter::empty()));
     // Each game saves into its own temp folder (removed with the app), never
     // the player's save folder and never one shared by parallel tests.
     let save = TempDir::new("gd-game-save");
@@ -216,9 +218,7 @@ impl TestGame {
             female,
             hardcore,
         } = start;
-        let saved_mode = gdc.as_ref().map_or((0, false), |gdc| {
-            mode_for(&gd_game_core::hooks::SessionHooks::default(), gdc)
-        });
+        let saved_mode = gdc.as_ref().map_or((0, false), mode_for);
         let mut app = headless_app(data, seed);
         let (difficulty, veteran) = mode.unwrap_or(saved_mode);
         let choice = match &gdc {

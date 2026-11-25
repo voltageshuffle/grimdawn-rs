@@ -238,17 +238,24 @@ pub struct PlaySoundOn {
 }
 
 /// When the first effect matching `GD_SHOT_ON` ([`crate::hooks::ShotHooks::on`]) played (the screenshot timer's start).
+#[cfg(feature = "dev")]
 #[derive(Resource, Default)]
 pub struct ShotTrigger(pub Option<std::time::Instant>);
 
 /// `GD_SHOT_ON` (hooks.rs): the first effect whose record matches starts the screenshot timer ([`ShotTrigger`]).
-/// Queued, so spawn helpers that only hold `Commands` can call it.
+/// Queued, so spawn helpers that only hold `Commands` can call it. Dev builds only: empty otherwise.
+#[cfg(feature = "dev")]
 pub fn notify(commands: &mut Commands, record: &str) {
     let record = record.to_owned();
     commands.queue(move |world: &mut World| notify_world(world, &record));
 }
 
+#[cfg(not(feature = "dev"))]
+#[inline(always)]
+pub fn notify(_commands: &mut Commands, _record: &str) {}
+
 /// [`notify`] for code that has the world.
+#[cfg(feature = "dev")]
 pub fn notify_world(world: &mut World, record: &str) {
     let Some(want) = world.resource::<crate::hooks::Hooks>().shot.on.clone() else {
         return;
@@ -263,6 +270,10 @@ pub fn notify_world(world: &mut World, record: &str) {
         trigger.0 = Some(std::time::Instant::now());
     }
 }
+
+#[cfg(not(feature = "dev"))]
+#[inline(always)]
+pub fn notify_world(_world: &mut World, _record: &str) {}
 
 /// Spawns an `EffectEntity` record, or every effect of an `FxPak`, once
 /// (with its ground decal).

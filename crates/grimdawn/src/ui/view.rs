@@ -135,14 +135,14 @@ pub fn collect(
     (row, bindings): (Res<gd_ui::hud::HotbarRow>, Res<super::keys::KeyBindings>),
     // Option: both are created with the player (`gd_game::reclamation`, `gd_game::devotion`).
     // Option: `PlayerFactions` is created with the player too (`gd_game::factions::init_factions`).
-    (skill_undo, reclaim, devotion_state, stash, factions): (
+    (skill_undo, reclaim, devotion_state, stash, factions, devotion_undo): (
         Res<gd_game::points::SkillUndo>,
         Option<Res<gd_game::reclamation::SkillReclamation>>,
         Option<Res<gd_game::devotion::DevotionState>>,
         Option<Res<gd_game_core::stash::Stash>>,
         Option<Res<gd_game::factions::PlayerFactions>>,
+        Res<gd_game::devotion::DevotionUndo>,
     ),
-    devotion_undo: Res<gd_game::devotion::DevotionUndo>,
     player: Query<PlayerParts, With<Player>>,
     constitution: Query<&gd_game::constitution::Constitution, With<Player>>,
     (mut hud, mut vitals): (ResMut<HudValues>, ResMut<HudVitals>),
@@ -167,7 +167,7 @@ pub fn collect(
         gd_game_core::session::NewSession,
         Local<StripSeen>,
     ),
-    (session, pet_cbs, mut cache, hovered, targets, hooks, challenged, areas): (
+    (session, pet_cbs, mut cache, hovered, targets, challenged, areas): (
         Res<gd_game::play_stats::PlayCounts>,
         Query<
             (
@@ -184,10 +184,10 @@ pub fn collect(
             Option<Ref<gd_game_core::skill_buffs::ReceivedBuffs>>,
             Option<&gd_game_core::monsters::Monster>,
         )>,
-        Res<gd_game_core::hooks::Hooks>,
         Query<&gd_game::challenge_areas::InChallengeArea, With<Player>>,
         Res<gd_game::challenge_areas::ChallengeAreas>,
     ),
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     if fresh.begun() {
         *bar = Default::default();
@@ -706,6 +706,7 @@ pub fn collect(
         changed = true;
     }
     // `GD_SUNDERED` (hooks.rs): overrides the entry's value (a shot of the overlay without an enemy that applies it).
+    #[cfg(feature = "dev")]
     if let Some(h) = hooks.ui.sundered {
         vitals.damage_taken_debuff = h;
     }

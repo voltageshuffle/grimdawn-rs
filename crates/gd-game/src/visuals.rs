@@ -2,7 +2,9 @@
 //! plays and the `GD_SHOT_ON` feed (the request data is
 //! [`gd_game_core::visuals`]).
 use bevy::prelude::*;
-use gd_game_core::visuals::{PlaySound, PlaySoundOn, StopSound, notify};
+#[cfg(feature = "dev")]
+use gd_game_core::visuals::notify;
+use gd_game_core::visuals::{PlaySound, PlaySoundOn, StopSound};
 
 pub struct VisualsPlugin;
 
@@ -13,11 +15,12 @@ impl Plugin for VisualsPlugin {
             .add_message::<PlaySoundOn>()
             .add_message::<gd_game_core::visuals::PointDisturbance>()
             .add_message::<gd_game_core::visuals::LineDisturbance>()
-            .add_observer(stop_sounds)
-            .add_systems(
-                Update,
-                shot_feed.run_if(|h: Res<gd_game_core::hooks::Hooks>| h.shot.on.is_some()),
-            );
+            .add_observer(stop_sounds);
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            shot_feed.run_if(|h: Res<gd_game_core::hooks::Hooks>| h.shot.on.is_some()),
+        );
     }
 }
 
@@ -40,6 +43,7 @@ fn stop_sounds(
 /// `GD_SHOT_ON` feed from the shared messages: every sound played (`PlaySound` / `PlaySoundOn`, the `SoundPak`
 /// record) and every proc cast (`ProcCast`, the skill record), whichever system sent them. Casts, FX starts and the
 /// other hook sites feed [`notify`] directly.
+#[cfg(feature = "dev")]
 fn shot_feed(
     mut commands: Commands,
     mut sounds: MessageReader<PlaySound>,

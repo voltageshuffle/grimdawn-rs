@@ -119,6 +119,11 @@ impl Plugin for PetPortraitPlugin {
                 )
                     .chain(),
             );
+        #[cfg(feature = "dev")]
+        app.add_systems(
+            Update,
+            test_hooks.in_set(gd_ui_kit::UiInputSet).before(clicks),
+        );
     }
 }
 
@@ -298,7 +303,7 @@ fn build(
             buffs,
         ));
     }
-    let cursor = super::cursor_px(&assets.hooks, win);
+    let cursor = super::cursor_px(win);
     let hover = match (layout.menu, cursor) {
         (Some((r, row_h)), Some(p)) if contains(&r, p) => Some(((p.y - r.y) / row_h) as usize),
         _ => None,
@@ -571,15 +576,41 @@ fn background(ui: &mut Ui, r: URect) {
     }
 }
 
-/// Portrait and menu clicks (module docs); the UI takes the click. Also the
-/// `GD_PET_SELECT` / `GD_PET_MENU` hooks.
+/// `GD_PET_SELECT` / `GD_PET_MENU` (hooks.rs): after their seconds, select the first portrait's pet / open its
+/// menu, ahead of [`clicks`].
+#[cfg(feature = "dev")]
+fn test_hooks(
+    hooks: Res<gd_game_core::hooks::Hooks>,
+    time: Res<Time>,
+    layout: Res<PortraitLayout>,
+    mut menu: ResMut<PetMenu>,
+    mut selection: ResMut<PetSelection>,
+    mut script: Local<Option<(Option<f32>, Option<f32>)>>,
+) {
+    let timers = script.get_or_insert_with(|| (hooks.ui.pet_select, hooks.ui.pet_menu));
+    let Some(hit) = layout.portraits.first() else {
+        return;
+    };
+    if timers.0.is_some_and(|t| time.elapsed_secs() >= t) {
+        timers.0 = None;
+        info!("pets test: selecting the first portrait");
+        selection.toggle(hit.pet);
+    }
+    if timers.1.is_some_and(|t| time.elapsed_secs() >= t)
+        && let Some(r) = hit.frame.or(hit.stance)
+    {
+        timers.1 = None;
+        info!("pets test: opening the first portrait's menu");
+        menu.0 = Some((hit.pet, Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5)));
+    }
+}
+
+/// Portrait and menu clicks (module docs); the UI takes the click.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     armed: Res<gd_game::hotbar::ArmedSlot>,
     window: Query<&Window, With<PrimaryWindow>>,
-    time: Res<Time>,
     layout: Res<PortraitLayout>,
     mut menu: ResMut<PetMenu>,
     mut selection: ResMut<PetSelection>,
@@ -587,7 +618,6 @@ fn clicks(
     mut stance: MessageWriter<SetPetStance>,
     mut disband: MessageWriter<DisbandPet>,
     mut cast: MessageWriter<CastOnAlly>,
-    mut script: Local<Option<(Option<f32>, Option<f32>)>>,
 ) {
     // The menu's pet is gone: close it.
     if let Some((pet, _)) = menu.0
@@ -595,24 +625,8 @@ fn clicks(
     {
         menu.0 = None;
     }
-    let timers = script.get_or_insert_with(|| (hooks.ui.pet_select, hooks.ui.pet_menu));
-
-    if let Some(hit) = layout.portraits.first() {
-        if timers.0.is_some_and(|t| time.elapsed_secs() >= t) {
-            timers.0 = None;
-            info!("pets test: selecting the first portrait");
-            selection.toggle(hit.pet);
-        }
-        if timers.1.is_some_and(|t| time.elapsed_secs() >= t)
-            && let Some(r) = hit.frame.or(hit.stance)
-        {
-            timers.1 = None;
-            info!("pets test: opening the first portrait's menu");
-            menu.0 = Some((hit.pet, Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5)));
-        }
-    }
     let Ok(win) = window.single() else { return };
-    let Some(p) = super::cursor_px(&hooks, win) else {
+    let Some(p) = super::cursor_px(win) else {
         return;
     };
     let pressed =

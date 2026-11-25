@@ -43,7 +43,7 @@ pub(super) fn rollover(
     mut assets: gd_ui_kit::UiAssets,
 ) {
     let Ok(w) = window.single() else { return };
-    let p = gd_ui_kit::cursor_px(&assets.hooks, w);
+    let p = gd_ui_kit::cursor_px(w);
     let tag = p
         .filter(|_| win.open && win.rebind.is_none())
         .and_then(|p| {

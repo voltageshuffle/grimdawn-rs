@@ -39,7 +39,7 @@
 //!
 //! PORT: the dungeon's monsters are its activated proxies' (the engine flags a monster in any of its regions).
 //!
-//! PORT test hook `GD_ENDLESS_FLOOR` ([`force_floor`]): a held override — floor 0 of every generated section is
+//! PORT test hook `GD_ENDLESS_FLOOR` (`force_floor`, dev builds): a held override — floor 0 of every generated section is
 //! the named floor record (through [`gd_story::endless::EndlessMap::forced_floor`], which `pick_floors` reads);
 //! placed (story) monsters log their level once armed.
 //!
@@ -723,8 +723,9 @@ pub fn exit_gates(
 
 /// `FixedItemDungeonTeleport::RequestToUse`: in reach, the player travels to the active
 /// floor's entrance and the soul buffs are dispelled (no other condition, the gate is reusable).
+#[allow(clippy::too_many_arguments)]
 pub fn use_exit_gate(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     gates: Query<(Entity, &GlobalTransform), With<EndlessGate>>,
     mut players: Query<
         (
@@ -738,21 +739,22 @@ pub fn use_exit_gate(
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<gd_game_core::data::GameData>,
     mut travel: MessageWriter<crate::riftgates::GateTravel>,
-    (mut fresh, mut tried, activity): (
-        gd_game_core::session::NewSession,
-        Local<Vec<Entity>>,
-        Res<crate::teleport::TeleportActivity>,
-    ),
+    activity: Res<crate::teleport::TeleportActivity>,
+    #[cfg(feature = "dev")] mut fresh: gd_game_core::session::NewSession,
+    #[cfg(feature = "dev")] mut tried: Local<Vec<Entity>>,
 ) {
     // The gate ids are the session's (a reused id is a new gate).
+    #[cfg(feature = "dev")]
     if fresh.begun() {
         tried.clear();
     }
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_EXIT_GATE` (hooks.rs).
+    // `GD_USE_EXIT_GATE` (hooks.rs): use each gate once, from anywhere.
+    #[cfg(feature = "dev")]
     let test = hooks.gameplay.use_exit_gate;
+    #[cfg(feature = "dev")]
     if test
         && interact.0.is_none()
         && let Some((e, _)) = gates.iter().find(|(e, _)| !tried.contains(e))
@@ -760,6 +762,8 @@ pub fn use_exit_gate(
         tried.push(e);
         interact.0 = Some(e);
     }
+    #[cfg(not(feature = "dev"))]
+    let test = false;
     // The player is frozen through a teleport's activity (`doors::run_teleport`): the gate is used once it
     // ends, not dropped (a travel granted while another is pending would be lost).
     if activity.active() {
@@ -1082,7 +1086,7 @@ pub fn shrine_shield(
 /// the dressing's (`grimdawn::endless_shrine`). PORT: only while a dungeon runs.
 #[allow(clippy::too_many_arguments)]
 pub fn use_shrine(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut shrines: Query<(Entity, &GlobalTransform, &mut EndlessShrine)>,
     mut players: Query<
         (
@@ -1101,8 +1105,11 @@ pub fn use_shrine(
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_BUFF_SHRINE` (hooks.rs).
-    if hooks.gameplay.use_buff_shrine && interact.0.is_none() {
+    // `GD_USE_BUFF_SHRINE` (hooks.rs): use the nearest unused shrine, from anywhere.
+    #[cfg(feature = "dev")]
+    let test = hooks.gameplay.use_buff_shrine;
+    #[cfg(feature = "dev")]
+    if test && interact.0.is_none() {
         let nearest = shrines
             .iter()
             .filter(|(_, _, s)| !s.used)
@@ -1113,6 +1120,8 @@ pub fn use_shrine(
             .map(|(e, ..)| e);
         interact.0 = nearest;
     }
+    #[cfg(not(feature = "dev"))]
+    let test = false;
     let Some(e) = interact.0 else { return };
     let Ok((_, gt, mut shrine)) = shrines.get_mut(e) else {
         return;
@@ -1130,7 +1139,7 @@ pub fn use_shrine(
         gd_game_core::combat::fixed_usable_range(Some(rec)),
         path.points.is_empty(),
     );
-    if !hooks.gameplay.use_buff_shrine && ptf.translation.distance(gt.translation()) > reach {
+    if !test && ptf.translation.distance(gt.translation()) > reach {
         return;
     }
     interact.0 = None;
@@ -1153,6 +1162,7 @@ pub fn use_shrine(
 /// `pick_floors`): this system builds the map ahead of the first generation (the Lua binding builds it lazily)
 /// and keeps the field set. While the hook is set, placed (story) monsters log their level once armed
 /// (`Character::Load`'s clamp, [`crate::monsters::placed_char_level`]).
+#[cfg(feature = "dev")]
 pub fn force_floor(
     hooks: Res<gd_game_core::hooks::Hooks>,
     rt: Option<NonSend<StoryRuntime>>,
@@ -1284,13 +1294,14 @@ impl Plugin for EndlessPlugin {
                     .chain()
                     .run_if(resource_exists::<ProxyStates>),
             );
-        app.add_systems(Update, force_floor.before(crate::story::tick_story))
-            .add_systems(
-                Update,
-                sync_endless
-                    .after(gd_game_core::story::StoryStage::Sync)
-                    .before(gd_game_core::story::StoryStage::Tick)
-                    .run_if(resource_exists::<gd_game_core::save::MapLayout>),
-            );
+        #[cfg(feature = "dev")]
+        app.add_systems(Update, force_floor.before(crate::story::tick_story));
+        app.add_systems(
+            Update,
+            sync_endless
+                .after(gd_game_core::story::StoryStage::Sync)
+                .before(gd_game_core::story::StoryStage::Tick)
+                .run_if(resource_exists::<gd_game_core::save::MapLayout>),
+        );
     }
 }

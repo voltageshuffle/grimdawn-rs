@@ -241,7 +241,6 @@ fn build(
 /// The box's hover / press look in place ([`super::confirm::apply_look`]).
 fn box_live(
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     view: Res<ApplyView>,
     mouse: Res<ButtonInput<MouseButton>>,
     roots: Query<Entity, With<ApplyRoot>>,
@@ -250,10 +249,7 @@ fn box_live(
     let (Ok(win), Some(rects), Ok(root)) = (window.single(), view.yes_no, roots.single()) else {
         return;
     };
-    let look = rects.look(
-        super::cursor_px(&hooks, win),
-        mouse.pressed(MouseButton::Left),
-    );
+    let look = rects.look(super::cursor_px(win), mouse.pressed(MouseButton::Left));
     super::confirm::apply_look(root, look, &mut looks);
 }
 
@@ -315,7 +311,7 @@ fn world_click(
     mut fresh: gd_game_core::session::NewSession,
     mut requests: MessageWriter<ApplyRequest>,
     mut drops: MessageWriter<gd_game::item_drop::DropHeld>,
-    (hooks, time, layout, trade_layout, mut script): (
+    #[cfg(feature = "dev")] (hooks, time, layout, trade_layout, mut script): (
         Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
         Res<InvLayout>,
@@ -326,13 +322,26 @@ fn world_click(
     if fresh.begun() {
         *held = None;
     }
-    let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
-    let scripted = gd_game_core::hooks::take_due(script, time.elapsed_secs()).filter(|c| {
+    #[cfg(feature = "dev")]
+    let scripted = gd_game_core::hooks::take_due(
+        script.get_or_insert_with(|| hooks.items.inv_clicks.clone()),
+        time.elapsed_secs(),
+    )
+    .filter(|c| {
         ![layout.window, trade_layout.window]
             .iter()
             .flatten()
             .any(|r| contains(r, c.at))
+    })
+    .map(|c| {
+        if c.right {
+            MouseButton::Right
+        } else {
+            MouseButton::Left
+        }
     });
+    #[cfg(not(feature = "dev"))]
+    let scripted: Option<MouseButton> = None;
     if let Some(b) = *held {
         if buttons.pressed(b) {
             capture.0 = true;
@@ -349,20 +358,11 @@ fn world_click(
     {
         return;
     }
-    let Some(b) = scripted
-        .map(|c| {
-            if c.right {
-                MouseButton::Right
-            } else {
-                MouseButton::Left
-            }
-        })
-        .or_else(|| {
-            [MouseButton::Left, MouseButton::Right]
-                .into_iter()
-                .find(|b| buttons.just_pressed(*b))
-        })
-    else {
+    let Some(b) = scripted.or_else(|| {
+        [MouseButton::Left, MouseButton::Right]
+            .into_iter()
+            .find(|b| buttons.just_pressed(*b))
+    }) else {
         return;
     };
     if dropping {
@@ -393,16 +393,13 @@ fn clicks(
         MessageWriter<gd_game::item_drop::DestroyAnswer>,
         MessageWriter<gd_game::consumables::UseAnswer>,
     ),
-    (hooks, time, mut asked): (
+    #[cfg(feature = "dev")] (hooks, time, mut asked): (
         Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
         Local<Option<f32>>,
     ),
 ) {
-    let cursor = window
-        .single()
-        .ok()
-        .and_then(|w| super::cursor_px(&hooks, w));
+    let cursor = window.single().ok().and_then(super::cursor_px);
     // The move-reagents / auto-sort question (module doc).
     if *reagents != InvConfirm::None {
         capture.0 = true;
@@ -440,25 +437,34 @@ fn clicks(
     // `CursorHandlerEnchant::Escape`: refused while the confirmation is up, else it calls the
     // handler's `CursorHandler::Finish` virtual (taken as its end) and consumes the key).
     if pending(&inv).is_none() {
-        *asked = None;
+        #[cfg(feature = "dev")]
+        {
+            *asked = None;
+        }
         return;
     }
     capture.0 = true;
     // `GD_APPLY_YES` (hooks.rs).
-    let since = *asked.get_or_insert(time.elapsed_secs());
-    if hooks
-        .items
-        .apply_yes
-        .is_some_and(|s| time.elapsed_secs() - since >= s)
+    #[cfg(feature = "dev")]
     {
-        info!("apply: scripted Yes to {:?}", pending(&inv));
-        *asked = None;
-        requests.write(ApplyRequest::Answer(true));
-        return;
+        let since = *asked.get_or_insert(time.elapsed_secs());
+        if hooks
+            .items
+            .apply_yes
+            .is_some_and(|s| time.elapsed_secs() - since >= s)
+        {
+            info!("apply: scripted Yes to {:?}", pending(&inv));
+            *asked = None;
+            requests.write(ApplyRequest::Answer(true));
+            return;
+        }
     }
     let answer = answer(&buttons, cursor, view.yes_no, &data, &mut sound);
     if let Some(yes) = answer {
-        *asked = None;
+        #[cfg(feature = "dev")]
+        {
+            *asked = None;
+        }
         requests.write(ApplyRequest::Answer(yes));
     }
 }
@@ -472,7 +478,6 @@ fn highlights(
     inv: Res<Inventory>,
     reqs: Query<&gd_game_core::inventory::Requirements, With<gd_game_core::player::Player>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
     layout: Res<InvLayout>,
     panels: Res<super::UiPanels>,
     (trade, trade_layout, stash): (
@@ -497,10 +502,7 @@ fn highlights(
             &reqs.single().copied().unwrap_or_default(),
             shared.accepts(&choice, &save_dir, gd_formats::save::Shared::Transfer),
         ),
-        window
-            .single()
-            .ok()
-            .and_then(|w| super::cursor_px(&hooks, w)),
+        window.single().ok().and_then(super::cursor_px),
         &layout,
         &panels,
         (&*trade, &*trade_layout, stash.as_deref()),

@@ -32,7 +32,6 @@ use gd_audio::{LiveAudio, SoundClass};
 use gd_formats::video::{Event, Video};
 use gd_game_core::data::GameData;
 use gd_game_core::entry::EnteredGame;
-use gd_game_core::hooks::Hooks;
 use gd_game_core::pause::GamePause;
 use gd_game_core::story::StoryEffect;
 use gd_story::story::Effect;
@@ -131,16 +130,20 @@ impl Drop for Playing {
 /// `Game::LoadModMap`: a character that has not been in the game gets the intro, in single player without a mod.
 fn queue_intro(
     mut queue: ResMut<VideoQueue>,
-    hooks: Res<Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     data: Res<GameData>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
 ) {
+    // `GD_VIDEO` (hooks.rs): that video instead; a session that skips the menu (`GD_*` test sessions) plays no
+    // intro.
+    #[cfg(feature = "dev")]
     if let Some(video) = &hooks.session.video {
         queue.0.push_back(video.clone());
-    } else if !hooks.session.skip_menu
-        && data.active_mod().is_none()
-        && gd_game::entry::first_time_in_game(loaded.as_deref())
-    {
+        return;
+    } else if hooks.session.skip_menu {
+        return;
+    }
+    if data.active_mod().is_none() && gd_game::entry::first_time_in_game(loaded.as_deref()) {
         queue.0.push_back(INTRO.to_owned());
     }
 }

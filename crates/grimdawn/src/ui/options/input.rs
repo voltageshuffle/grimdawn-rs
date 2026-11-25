@@ -2,11 +2,10 @@ use super::*;
 use gd_ui::state::options::{OptionsWindow, Tab};
 
 /// The read-only resources the input system consults, bundled as one parameter (Bevy systems take at most
-/// 16): the cursor hooks, the UI scale, the window layout, the app state, the mounted data and the font
+/// 16): the UI scale, the window layout, the app state, the mounted data and the font
 /// cache (its tags localize the dropdown rows, [`ChoiceCtx`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InputReads<'w> {
-    hooks: Res<'w, gd_game_core::hooks::Hooks>,
     scale: Res<'w, gd_ui_kit::state::settings::UiScaleOption>,
     layout: Res<'w, OptionsLayout>,
     state: Res<'w, State<gd_ui::state::session::AppState>>,
@@ -37,7 +36,6 @@ pub fn input(
     )>,
 ) {
     let InputReads {
-        hooks,
         scale,
         layout,
         state,
@@ -126,10 +124,7 @@ pub fn input(
         mouse.reset_all();
         return;
     }
-    let cursor = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
     // (Esc: see above.)
     let lines: f32 = wheel
         .read()

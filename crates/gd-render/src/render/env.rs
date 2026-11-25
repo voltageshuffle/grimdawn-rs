@@ -28,28 +28,37 @@ pub struct EnvPlugin;
 
 impl Plugin for EnvPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TimeOfDay>()
-            .add_systems(
-                Update,
-                (
-                    advance_time_of_day,
-                    player_light,
-                    player_light_radius,
-                    player_light_shadow,
-                )
-                    .chain(),
+        app.init_resource::<TimeOfDay>();
+        // `GD_TIME`: a fixed hour from the first frame on (`advance_time_of_day` keeps it, across session resets too).
+        #[cfg(feature = "dev")]
+        if let Some(t) = app
+            .world()
+            .get_resource::<gd_game_core::hooks::Hooks>()
+            .and_then(|h| h.render.time)
+        {
+            app.insert_resource(TimeOfDay(t));
+        }
+        app.add_systems(
+            Update,
+            (
+                advance_time_of_day,
+                player_light,
+                player_light_radius,
+                player_light_shadow,
             )
-            // Before Bevy builds the sun's shadow cascades: `update_env` switches the
-            // sun's shadows on, and a sun switched on after them reaches the renderer
-            // with no cascade for a view (a panic in `prepare_lights` when an area
-            // with a sun loads after one without).
-            .add_systems(
-                PostUpdate,
-                update_env
-                    .after(TransformSystems::Propagate)
-                    .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
-                    .in_set(EnvSystems),
-            );
+                .chain(),
+        )
+        // Before Bevy builds the sun's shadow cascades: `update_env` switches the
+        // sun's shadows on, and a sun switched on after them reaches the renderer
+        // with no cascade for a view (a panic in `prepare_lights` when an area
+        // with a sun loads after one without).
+        .add_systems(
+            PostUpdate,
+            update_env
+                .after(TransformSystems::Propagate)
+                .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
+                .in_set(EnvSystems),
+        );
     }
 }
 
@@ -206,14 +215,9 @@ fn player_light_shadow(
 #[derive(Resource)]
 pub struct TimeOfDay(pub f32);
 
-impl FromWorld for TimeOfDay {
-    fn from_world(world: &mut bevy::ecs::world::World) -> Self {
-        Self(
-            world
-                .get_resource::<gd_game_core::hooks::Hooks>()
-                .and_then(|h| h.render.time)
-                .unwrap_or(12.0),
-        )
+impl Default for TimeOfDay {
+    fn default() -> Self {
+        Self(12.0)
     }
 }
 
@@ -222,17 +226,16 @@ fn advance_time_of_day(
     mut tod: ResMut<TimeOfDay>,
     options: Res<gd_game_core::options::GameOptions>,
     clock: Res<gd_game_core::day_clock::DayClock>,
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
-    if hooks.render.time.is_some() {
-        return;
-    }
+    let cycle = options.flag("dayNightCycle");
     // Screenshot runs keep the noon of the reference shots (`GD_TIME` picks another hour).
-    let hour = if options.flag("dayNightCycle") && hooks.shot.path.is_none() {
-        clock.0
-    } else {
-        12.0
-    };
+    #[cfg(feature = "dev")]
+    let cycle = cycle && hooks.shot.path.is_none();
+    let hour = if cycle { clock.0 } else { 12.0 };
+    // `GD_TIME` wins every frame: the exit reset puts the resource back to its default.
+    #[cfg(feature = "dev")]
+    let hour = hooks.render.time.unwrap_or(hour);
     if (hour - tod.0).abs() > f32::EPSILON {
         tod.0 = hour;
     }
@@ -872,12 +875,12 @@ fn update_env(
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut cache: Local<Cache>,
     menu: Option<Res<super::backdrop::MenuBackdrop>>,
-    (mut commands, current, hooks): (
+    (mut commands, current, story): (
         Commands,
         Option<Res<Ambiance>>,
-        Res<gd_game_core::hooks::Hooks>,
+        Option<NonSend<gd_game_core::story::StoryRuntime>>,
     ),
-    story: Option<NonSend<gd_game_core::story::StoryRuntime>>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let Some(defaults) = defaults else { return };
     let cam = cams.iter().next();
@@ -984,7 +987,14 @@ fn update_env(
             .as_ref()
             .map(|o| super::post::VideoOptions::from_options(o))
             .unwrap_or_default();
-        let v = super::post::GammaOut::from_ambiance(&amb, cam_distance, &hooks.render, video)
+        // `GD_FOG=1` forces the fog on, `GD_DOF=0` the depth of field off.
+        #[cfg(feature = "dev")]
+        let video = super::post::VideoOptions {
+            fog: video.fog || hooks.render.fog,
+            depth_of_field: video.depth_of_field && !hooks.render.no_dof,
+            ..video
+        };
+        let v = super::post::GammaOut::from_ambiance(&amb, cam_distance, video)
             .with_post_effects(options.as_ref().is_none_or(|o| o.flag("advancedEffects")))
             .with_colorblind(options.as_ref().map_or(0, |o| o.int("colorblind")));
         let v = match options.as_ref() {

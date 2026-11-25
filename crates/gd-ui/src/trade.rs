@@ -62,6 +62,7 @@ pub fn build(
     (gold, level): (u64, u32),
     inv: Option<&Inventory>,
     afford: (bool, bool),
+    reroll_test: bool,
 ) {
     let mut layout = TradeLayout::default();
     if let (Some(open), Some(inv)) = (&trade.open, inv) {
@@ -101,7 +102,16 @@ pub fn build(
             }
             TradeOpen::Inventor { .. } => {
                 if let Some(stash) = stash {
-                    inventor_window(ui, trade, stash, afford, level, inv, &mut layout);
+                    inventor_window(
+                        ui,
+                        trade,
+                        stash,
+                        afford,
+                        level,
+                        inv,
+                        reroll_test,
+                        &mut layout,
+                    );
                 }
             }
             TradeOpen::Ascension { .. } => {
@@ -1090,6 +1100,7 @@ fn inventor_window(
     afford: (bool, bool),
     level: u32,
     inv: &Inventory,
+    reroll_test: bool,
     layout: &mut TradeLayout,
 ) {
     let Some(m) = ui.record(crate::state::crafting::WINDOW) else {
@@ -1157,7 +1168,7 @@ fn inventor_window(
     }
     match trade.panel {
         Panel::Dismantle => dismantle_panel(ui, &m, trade, stash, afford, inv, o, layout),
-        Panel::Reroll => reroll_panel(ui, &m, trade, stash, afford, inv, o, layout),
+        Panel::Reroll => reroll_panel(ui, &m, trade, stash, afford, inv, reroll_test, o, layout),
         Panel::Recover | Panel::Craft => recover_panel(ui, &m, trade, afford, inv, o, layout),
         Panel::Convert => convert_panel(ui, &m, trade, stash, afford, level, inv, o, layout),
     }
@@ -2040,6 +2051,7 @@ fn reroll_panel(
     stash: &Stash,
     afford: (bool, bool),
     inv: &Inventory,
+    test: bool,
     o: Vec2,
     layout: &mut TradeLayout,
 ) {
@@ -2052,7 +2064,6 @@ fn reroll_panel(
         item_slot(ui, r, trade.slot.as_ref(), inv, layout);
     }
     let idb = ui.data.item_db();
-    let test = ui.hooks.items.reroll.is_some();
 
     for (kind, key) in [
         (Kind::Seed, "rerollSeedButton"),

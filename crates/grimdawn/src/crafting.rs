@@ -18,7 +18,6 @@ use crate::trade::Stash;
 use bevy::prelude::*;
 pub use gd_game::crafting::{convert_unlocked, dismantle_unlocked};
 use gd_game_core::inventory::Inventory;
-pub use gd_game_core::stash::count;
 use gd_ui::state::crafting::CraftList;
 use gd_ui::trade::CraftScrolled;
 use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
@@ -28,7 +27,7 @@ use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
 /// recipe whose record contains the text and craft.
 #[allow(clippy::too_many_arguments)]
 pub fn craft_clicks(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
@@ -41,12 +40,12 @@ pub fn craft_clicks(
     mut capture: ResMut<gd_ui::state::inventory::UiCapture>,
     mut requests: MessageWriter<gd_game::crafting::CraftRequest>,
     // The row count is cached by `Trade::version`, which restarts with each session (`NewSession`).
-    (mut tested, mut rows, mut last_query, mut fresh): (
-        Local<bool>,
+    (mut rows, mut last_query, mut fresh): (
         Local<Option<(u64, bool, usize)>>,
         Local<String>,
         gd_game_core::session::NewSession,
     ),
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
     (pause, confirm, stack): (
         Res<gd_game_core::pause::GamePause>,
         Res<gd_ui::apply::InvConfirm>,
@@ -61,15 +60,20 @@ pub fn craft_clicks(
     if !matches!(trade.open, Some(crate::trade::TradeOpen::Crafter { .. })) {
         return;
     }
-    let (Some(list), Some(stash), Some(inv), Some(progress)) = (list, stash, inv, progress) else {
+    let (Some(list), Some(inv)) = (list, inv) else {
         return;
     };
-    let level = progress.progress.level.max(1) as u32;
+    if stash.is_none() || progress.is_none() {
+        return;
+    }
     let mut do_craft = false;
+    #[cfg(feature = "dev")]
     if let Some(want) = hooks.items.craft.as_deref()
         && !*tested
+        && let (Some(stash), Some(progress)) = (&stash, &progress)
     {
         *tested = true;
+        let level = progress.progress.level.max(1) as u32;
         trade.recipe = list.recipes.iter().position(|r| r.bp.record.contains(want));
         if let Some(i) = trade.recipe {
             trade.tab = list.recipes[i].tab;
@@ -77,7 +81,7 @@ pub fn craft_clicks(
                 .bp
                 .reagents
                 .iter()
-                .map(|(n, q)| format!("{}/{q}", count(n, &inv, &stash)))
+                .map(|(n, q)| format!("{}/{q}", gd_game_core::stash::count(n, &inv, stash)))
                 .collect();
             info!(
                 "craft test: {} cost {} reagents {have:?}",
@@ -88,10 +92,7 @@ pub fn craft_clicks(
         do_craft = true;
         trade.version += 1;
     }
-    let p = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let p = window.single().ok().and_then(gd_ui_kit::cursor_px);
     trade.hover = None;
     // The game menu, a modal question (`inventory::question_up`) or the stack window takes every click and
     // the wheel: none reaches the window under it (as `trade_clicks`).
@@ -221,7 +222,6 @@ pub fn craft_clicks(
 /// here too; the wheel and the row clicks are [`craft_clicks`]'. Runs after the rebuild and clicks.
 #[allow(clippy::too_many_arguments)]
 pub fn craft_scroll(
-    hooks: Res<gd_game_core::hooks::Hooks>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
     time: Res<Time<Real>>,
@@ -294,10 +294,7 @@ pub fn craft_scroll(
     .max(1);
     let max_scroll = n.saturating_sub(visible);
     let max_px = max_scroll as f32 * line;
-    let p = window
-        .single()
-        .ok()
-        .and_then(|w| gd_ui_kit::cursor_px(&hooks, w));
+    let p = window.single().ok().and_then(gd_ui_kit::cursor_px);
     // A modal (the game menu, a question, the stack box) takes the press and the hold.
     if pause.menu
         || gd_ui::apply::question_up(&inv, &trade, &confirm)
@@ -354,14 +351,15 @@ pub fn craft_scroll(
 /// the slot item to `gd_game::crafting` (rules, cost and notes there; window UI: `ui/trade.rs`
 /// `dismantle_panel`; results: [`dismantle_results`]).
 pub fn dismantle(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
     mut requests: MessageWriter<gd_game::crafting::DismantleRequest>,
-    mut stage: MessageWriter<gd_game::crafting::StageItem>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut stage: MessageWriter<gd_game::crafting::StageItem>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     // `GD_DISMANTLE` (hooks.rs): once the crafter is open, put the first bag item into the dismantle slot
     // and press the button.
+    #[cfg(feature = "dev")]
     if hooks.items.dismantle
         && !*tested
         && matches!(trade.open, Some(crate::trade::TradeOpen::Inventor { .. }))
@@ -457,11 +455,11 @@ pub fn slot_returns(
 /// destroys the component (`RemoveRelic`) and the augment and gives the item
 /// back. The cost is taken from the player's money in each case.
 pub fn salvage(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
     mut requests: MessageWriter<gd_game::crafting::SalvageRequest>,
-    mut stage: MessageWriter<gd_game::crafting::StageItem>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut stage: MessageWriter<gd_game::crafting::StageItem>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     use gd_ui::state::trade::Button;
     if !matches!(trade.open, Some(crate::trade::TradeOpen::Inventor { .. }))
@@ -470,6 +468,7 @@ pub fn salvage(
         return;
     }
     // `GD_SALVAGE` (hooks.rs): once, put the first bag item in the slot and press the button.
+    #[cfg(feature = "dev")]
     if let Some(k) = hooks.items.salvage.clone()
         && !*tested
         && trade.slot.is_none()
@@ -509,16 +508,18 @@ pub fn salvage(
 /// keeps it when they are full. `GD_CONVERT` (hooks.rs): once the Inventor is open, puts the first bag
 /// set item into the slot and presses the button (money and reagents provided).
 pub fn convert(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
     mut requests: MessageWriter<gd_game::crafting::ConvertRequest>,
-    mut stage: MessageWriter<gd_game::crafting::StageItem>,
-    mut tested: Local<bool>,
+    #[cfg(feature = "dev")] mut stage: MessageWriter<gd_game::crafting::StageItem>,
+    #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
     if !matches!(trade.open, Some(crate::trade::TradeOpen::Inventor { .. })) {
         return;
     }
+    #[cfg(feature = "dev")]
     let test = hooks.items.convert.clone();
+    #[cfg(feature = "dev")]
     if let Some(k) = &test
         && !*tested
         && trade.slot.is_none()
@@ -544,6 +545,7 @@ pub fn convert(
     requests.write(gd_game::crafting::ConvertRequest {
         item,
         random: trade.random_set,
+        #[cfg(feature = "dev")]
         test: test.is_some(),
     });
 }

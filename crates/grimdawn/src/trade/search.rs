@@ -23,14 +23,13 @@ use gd_ui::state::trade::{Clipboard, Panel, Trade, TradeSearch, search_box_recor
 /// has no search box; the crafting panel keeps it while another tab shows.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn search_input(
-    hooks: Res<gd_game_core::hooks::Hooks>,
+    #[cfg(feature = "dev")] (hooks, mut hooked): (Res<gd_game_core::hooks::Hooks>, Local<bool>),
     mut trade: ResMut<Trade>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     data: Res<gd_game_core::data::GameData>,
     fonts: ResMut<gd_ui_kit::text::FontCache>,
     mut font_assets: ResMut<Assets<Font>>,
-    mut hooked: Local<bool>,
     time: Res<Time>,
     mut clipboard: ResMut<Clipboard>,
     mut mods: Local<(bool, bool)>,
@@ -38,11 +37,12 @@ pub(super) fn search_input(
 ) {
     use bevy::input::keyboard::Key;
     use gd_sim::edit::EditKey;
-    // `GD_VENDOR_SEARCH` (hooks.rs): types the text into the open trade window's search box (left focused).
     let has_box = trade.open.as_ref().is_some_and(|o| {
         search_box_record(o).is_some()
             && (!matches!(o, TradeOpen::Crafter { .. }) || trade.panel == Panel::Craft)
     });
+    // `GD_VENDOR_SEARCH` (hooks.rs): types the text into the open trade window's search box (left focused).
+    #[cfg(feature = "dev")]
     if !*hooked
         && has_box
         && let Some(t) = hooks.items.vendor_search.clone()
