@@ -12,7 +12,7 @@
 //! the name selects it), an `emissiveStyle` one with an `envmapTexture` the
 //! portal's cube-map look ([`super::envmap::EnvmapMaterial`]).
 //!
-//! A model's materials are built with the model (`model.rs` `build_model`, [`MaterialAssets::msh_material`]):
+//! A model's materials are built with the model ([`MaterialAssets::msh_material`]):
 //! each part spawns with its [`PartMaterial`]. An entity record's overrides (shader, glow, textures) are
 //! variants of a model material, made once and kept while it lives ([`MaterialCache`]).
 use super::GdDefaults;
@@ -54,15 +54,15 @@ pub const FLAG_ALPHA_TEST: u32 = 16;
 pub const FLAG_HAS_TANGENTS: u32 = 32;
 pub const FLAG_GLOW_SCROLL_ALPHA: u32 = 64;
 /// A mesh being (un)dissolved: the `standarddissolve*` override shader (`fade.z` = `dissolveValue`, the
-/// dissolve texture in the detail slot; grimdawn `monsters.rs`).
+/// dissolve texture in the detail slot).
 pub const FLAG_DISSOLVE: u32 = 128;
 /// The `deferred` pass writes the material target's x (the lit flag) as 0: deferred.ssh
 /// `ambientPS` / `directionalAmbientPS` then output the albedo as is (no ambient, no sun), `pointPS`
 /// still adds its light with the normal target's decoded (−1, −1, −1). `albedo.ssh` (the NPC marks'
-/// gems, `npc_marks.rs`) and `effects/skybox*.ssh` do it: their deferredPS writes the texel, then
+/// gems) and `effects/skybox*.ssh` do it: their deferredPS writes the texel, then
 /// (0, 0, 0, 1) to the normal, material and specular targets. Recognised by [`unlit_pixel_program`].
 pub const FLAG_UNLIT: u32 = 256;
-/// The `icey*.ssh` override shader of a frozen / petrified character (grimdawn `icy.rs`):
+/// The `icey*.ssh` override shader of a frozen / petrified character:
 /// iceyskinned.ssh `deferredPS`: the albedo is `lerp(base, iceyTexture, iceyFactor)` after the base alpha test
 /// (the icy texture in the detail slot, `fade.w` = `iceyFactor`).
 pub const FLAG_ICEY: u32 = 512;
@@ -85,7 +85,7 @@ pub const FLAG_ICEY: u32 = 512;
 ///   `remaining / rubbleFade`; the bone bitset it also writes has no writer in the binaries).
 ///   Without it the factor is 1. Stock: the harpy gibs and the breakables' `*_break` meshes;
 ///   the other gibs are `standardblendedstatic` and fade through `blendedGlobalFadeFactor`
-///   (`Gib::UpdateSelf` → `BeginFade`, grimdawn `gibs.rs`). `fade.x` carries the factor here.
+///   (`Gib::UpdateSelf` → `BeginFade`). `fade.x` carries the factor here.
 /// - the decal shaders (`effects/decal_*.ssh`, `fxdecal.ssh`): `decal.rs`.
 pub const FLAG_VERTEX_COLOR: u32 = 1024;
 /// standardstaticglacial.ssh (= `_nofade`, `standardskinnedglacial`; the `t` variant also × the
@@ -110,14 +110,13 @@ pub const FLAG_GLACIAL: u32 = 2048;
 pub const FLAG_VERTEX_ALPHA: u32 = 4096;
 /// `bonefadeskinned.ssh` `deferredVS` / `deferredPS` (the [`FLAG_VERTEX_COLOR`] doc):
 /// alpha = `base.a · boneFadeFactor`, dropped below 0.01, rgb untinted. `fade.x` is the factor
-/// (the breakables' rubble fade, grimdawn `breakables.rs`; 1 otherwise). The engine binds it per
+/// (the breakables' rubble fade; 1 otherwise). The engine binds it per
 /// bone, but `Destructible` sets every bone the same value, so one per-instance value is exact.
 pub const FLAG_BONE_FADE: u32 = 8192;
 /// The `standardblended*` `deferredPS` (standardblendedstatic / skinned_nofade /
 /// glowstatic DXBC): alpha = `base.a · blendedGlobalFadeFactor`, dropped below 0.1 — always,
-/// not only while fading. `fade.x` is the factor (the gibs' `BeginFade`, grimdawn `gibs.rs`;
-/// the see-through opacity, `see_through.rs`). The "…T.ssh" variants test 0.5 instead
-/// (`see_through.rs` reshades to them) and are excluded.
+/// not only while fading. `fade.x` is the factor (the gibs' `BeginFade`; the see-through opacity).
+/// The "…T.ssh" variants test 0.5 instead and are excluded.
 pub const FLAG_BLENDED_FADE: u32 = 16384;
 
 #[derive(Clone, Copy, Debug, ShaderType)]
@@ -132,8 +131,8 @@ pub struct GdParams {
     pub snow: Vec4,
     /// x: kind, y: flags.
     pub flags: UVec4,
-    /// x: `blendedGlobalFadeFactor` — the see-through scenery opacity (`see_through.rs`), the
-    /// gibs' fade (`gibs.rs`), or the bone fade factor ([`FLAG_BONE_FADE`]); 1 = full.
+    /// x: `blendedGlobalFadeFactor` — the see-through scenery opacity, the
+    /// gibs' fade, or the bone fade factor ([`FLAG_BONE_FADE`]); 1 = full.
     /// y: the alpha-test reference (0.5; the grass passes' 0.65 / 0.35), z: `dissolveValue` ([`FLAG_DISSOLVE`]).
     pub fade: Vec4,
     /// w: > 0 = this is an outline mask copy ([`GdMaterial::outline_mask`]), its palette class (1, 2, 3).
@@ -206,7 +205,7 @@ pub struct GdMaterial {
     pub snow_normal: Handle<Image>,
     #[storage(13, read_only)]
     pub env: Handle<ShaderBuffer>,
-    /// Every loaded terrain's grass offset field (render/grass.rs `GrassOffsets`): read by the grass bend only.
+    /// Every loaded terrain's grass offset field: read by the grass bend only.
     #[storage(14, read_only)]
     pub grass: Handle<ShaderBuffer>,
     pub states: PassStates,
@@ -225,14 +224,14 @@ pub struct PassStates {
     /// `deferredOutlineStyle` ([`GdMaterial::outline_mask`]).
     pub outline: bool,
     /// Depth test `Less` (DepthFunc 2) instead of `LessEqual`: the grass
-    /// fringe pass (render/grass.rs) skips the pixels its base pass drew.
+    /// fringe pass skips the pixels its base pass drew.
     pub depth_strict: bool,
-    /// One of the two forward passes of a faded scenery part (`see_through.rs`).
+    /// One of the two forward passes of a faded scenery part.
     pub fade: Option<FadePass>,
 }
 
 /// The "…T.ssh" passes the engine's transparency list draws a faded section
-/// with (`see_through.rs` module doc), after the lit scene, far to near.
+/// with, after the lit scene, far to near.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FadePass {
     /// `depthStyle`: depth only, texels with base alpha ≥ 0.5.
@@ -281,11 +280,10 @@ pub struct GdMaterialKey {
 }
 
 impl GdMaterial {
-    /// This material's `deferredOutlineStyle` pass (post.rs,
-    /// standard*.ssh): same mesh and base texture, cull none, no depth
-    /// writes, the depth test of the scene; every lit shader has it, blended
+    /// This material's `deferredOutlineStyle` pass (standard*.ssh): same mesh and base texture, cull none, no
+    /// depth writes, the depth test of the scene; every lit shader has it, blended
     /// ones too, the additive / multiply FX shaders do not (`None`). `class`: the outline colour's palette entry
-    /// (1, 2, 3; `render::post::OutlineGlow`).
+    /// (1, 2, 3).
     pub fn outline_mask(&self, class: u8) -> Option<Self> {
         (self.params.flags.x == KIND_LIT).then(|| {
             let mut mask = self.clone();
@@ -318,8 +316,7 @@ impl From<&GdMaterial> for GdMaterialKey {
 /// default (Bevy's `AlphaMode::Blend` never writes depth).
 /// standardblendedskinned.ssh `deferred`: SrcAlpha / OneMinusSrcAlpha with no
 /// DepthWrite state (the D3D default, on) and DepthFunc LessEqual, so a
-/// blended mesh hides its own far side; without it the inner lining of
-/// Mazaan's hood (`head_055_01b`) drew over the swirl of its outer shell.
+/// blended mesh hides its own far side.
 fn depth_write_of(s: &PassStates) -> Option<bool> {
     match s.fade {
         Some(FadePass::Depth) => Some(true),
@@ -331,7 +328,7 @@ fn depth_write_of(s: &PassStates) -> Option<bool> {
 }
 
 /// Sort bias of a faded part's depth pass (view-space metres): drawn just
-/// before its colour pass, which shares its mesh centre (`see_through.rs`).
+/// before its colour pass, which shares its mesh centre.
 const FADE_DEPTH_FIRST: f32 = 1e-3;
 
 pub(crate) fn blend_factor(v: u8) -> BlendFactor {
@@ -353,7 +350,7 @@ pub(crate) fn blend_factor(v: u8) -> BlendFactor {
 
 impl Material for GdMaterial {
     /// The forward vertex: Bevy's mesh vertex with the engine's first-bone
-    /// skinned normal/tangent frame (gd_forward.wesl).
+    /// skinned normal/tangent frame.
     fn vertex_shader() -> ShaderRef {
         FORWARD_SHADER.into()
     }
@@ -364,7 +361,7 @@ impl Material for GdMaterial {
         SHADER.into()
     }
     /// The shadow passes: Bevy's prepass vertex plus the point-light
-    /// paraboloid (render/point_shadow.rs).
+    /// paraboloid.
     fn prepass_vertex_shader() -> ShaderRef {
         PREPASS_SHADER.into()
     }
@@ -388,8 +385,8 @@ impl Material for GdMaterial {
         if key.bind_group_data.wind {
             descriptor.vertex.shader = WIND_SHADER;
         } else if let Some(frag) = descriptor.fragment.as_mut() {
-            // The mesh tag is a character's light group and highlight (render/light_rig.rs); on the wind
-            // pipeline it is the grass wind (render/grass.rs).
+            // The mesh tag is a character's light group and highlight; on the wind
+            // pipeline it is the grass wind.
             frag.shader_defs.push("GD_TAGGED".into());
         }
         // Indices are reversed on load, so game "back" is Bevy back.
@@ -399,7 +396,7 @@ impl Material for GdMaterial {
             _ => None,
         };
         // The shadow / prepass pipelines write depth whatever the colour pass does: the T shaders' and the blended
-        // shaders' `shadow` techniques write the caster's depth (`see_through.rs`), so a faded part keeps its shadow.
+        // shaders' `shadow` techniques write the caster's depth, so a faded part keeps its shadow.
         let prepass = descriptor
             .vertex
             .shader_defs
@@ -423,7 +420,7 @@ impl Material for GdMaterial {
                 operation: BlendOperation::Add,
             };
             // Target alpha is kept: in the glow view it holds the outline
-            // mask (post.rs), which depth-writing passes clear and the
+            // mask, which depth-writing passes clear and the
             // masks write; blended passes leave it alone.
             let keep = BlendComponent {
                 src_factor: BlendFactor::Zero,
@@ -453,7 +450,7 @@ impl Material for GdMaterial {
         if s.outline
             && let Some(frag) = descriptor.fragment.as_mut()
         {
-            // Only the target's alpha, the mask (post.rs); the glow stays.
+            // Only the target's alpha, the mask; the glow stays.
             let keep = BlendComponent {
                 src_factor: BlendFactor::Zero,
                 dst_factor: BlendFactor::One,
@@ -531,11 +528,11 @@ pub struct Wind {
     pub amplitude: bool,
 }
 
-/// [`Wind::mode`] bit of the grass bend (render/grass.rs).
+/// [`Wind::mode`] bit of the grass bend.
 pub const WIND_GRASS: f32 = 4.0;
 
 impl Wind {
-    /// `GdParams::wind.w` / `DistortParams::wind.w` (gd_wind.wesl).
+    /// `GdParams::wind.w` / `DistortParams::wind.w`.
     pub fn mode(&self) -> f32 {
         (self.cos as u32 | (self.pre_skin as u32) << 1) as f32
     }
@@ -584,12 +581,12 @@ fn wind_of(p: &Profile, path: &str) -> Option<Wind> {
     })
 }
 
-/// Families drawn by their own material (module doc).
+/// Families drawn by their own material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Special {
     #[default]
     None,
-    /// `distort*` (render/distort.rs): `additive` = no `tint` in the pixel
+    /// `distort*`: `additive` = no `tint` in the pixel
     /// program, `color_scroll` = `*colorscroll*`, `post_object` = drawn by
     /// `postObjectRenderStyle` (else `postRenderStyle`).
     Distort {
@@ -603,7 +600,7 @@ pub enum Special {
     /// `deferredStencilStyle`; then `RenderPostObjects`' two post styles and
     /// `deferredOutlineStyle`): `distortstandard*`.
     Hidden,
-    /// `portalenvmapped*` (render/envmap.rs).
+    /// `portalenvmapped*`.
     Envmap,
 }
 
@@ -642,9 +639,9 @@ fn pixel_program(p: &Profile, pass: &gd_formats::ssh::Pass) -> Option<gd_formats
 }
 
 /// [`FLAG_UNLIT`]: the pass's pixel program reads nothing but its texture coordinates (no
-/// interpolated normal or tangent frame), so it cannot write a surface normal. Checked against the
-/// disassembly of every stock `deferredPS`: the shaders with that input signature are exactly the
-/// ones that write the lit flag 0 (`albedo.ssh`, `effects/skybox.ssh`, `effects/skyboxscroll.ssh`).
+/// interpolated normal or tangent frame), so it cannot write a surface normal. Among the stock
+/// `deferredPS`, the shaders with that input signature are exactly the ones that write the lit flag 0
+/// (`albedo.ssh`, `effects/skybox.ssh`, `effects/skyboxscroll.ssh`).
 fn unlit_pixel_program(p: &Profile, pass: &gd_formats::ssh::Pass) -> bool {
     pixel_program(p, pass).is_some_and(|d| {
         let mut user = d.inputs.iter().filter(|e| e.system_value == 0);
@@ -714,7 +711,7 @@ fn analyse_passes(ssh: &Ssh, path: &str) -> Option<ShaderInfo> {
     };
     if let Some(t) = tech("deferred") {
         let pass = t.passes.first()?;
-        // The programs reading a `COLOR` are told apart by family (FLAG_VERTEX_COLOR doc).
+        // The programs reading a `COLOR` are told apart by family.
         let colour = vertex_color_pixel_program(p, pass);
         let glacial = colour && path.contains("glacial");
         let mut states = states_of(pass, true);
@@ -728,14 +725,14 @@ fn analyse_passes(ssh: &Ssh, path: &str) -> Option<ShaderInfo> {
             vertex_color: colour && (path.contains("vertexcolor") || path.contains("vertcolor")),
             vertex_alpha: colour && path.contains("vertexalpha"),
             bone_fade: path.contains("bonefade"),
-            // The T variants test transparencyValue against 0.5 (see_through.rs), not this.
+            // The T variants test transparencyValue against 0.5, not this.
             blended_fade: path.contains("standardblended") && !path.ends_with("t.ssh"),
             glacial,
             ..Default::default()
         });
     }
     if has_param("screenTexture") {
-        // Distortion (render/distort.rs): its post technique. The
+        // Distortion: its post technique. The
         // `distortstandard*` shaders have only forward styles
         // (`dLightDiffuseAmbientStyle`), which the deferred renderer never
         // collects: not drawn.
@@ -788,16 +785,15 @@ fn analyse_passes(ssh: &Ssh, path: &str) -> Option<ShaderInfo> {
     })
 }
 
-/// The material caches: the `.ssh` analyses and grass materials by data path (emptied on a mod change,
-/// `model::drop_on_mod_change`), and the variants of each model material ([`MaterialAssets::reshade`],
-/// [`MaterialAssets::retexture`], [`MaterialAssets::reglow`]), dropped with it ([`evict_variants`]).
+/// The material caches: the `.ssh` analyses and grass materials by data path (emptied on a mod change), and the
+/// variants of each model material ([`MaterialAssets::reshade`], [`MaterialAssets::retexture`],
+/// [`MaterialAssets::reglow`]), dropped with it ([`evict_variants`]).
 #[derive(Resource, Default)]
 pub struct MaterialCache {
-    /// `.ssh` analysis by normalised path ([`MaterialCache::shader_info`]).
+    /// `.ssh` analysis by normalised path.
     shaders: HashMap<String, Option<ShaderInfo>>,
     /// [`MaterialAssets::grass`] by (texture, `bladeHeight` bits, fringe pass): one per pass for every level.
     grass: HashMap<(String, u32, bool), Handle<GdMaterial>>,
-    /// The variants of a material, by its asset id.
     variants: HashMap<UntypedAssetId, HashMap<Variant, PartMaterial>>,
     /// Shaders analysed in the background ([`MaterialCache::shader_ready`]), by normalised path.
     shader_loads: HashMap<String, bevy::tasks::Task<(String, Option<ShaderInfo>)>>,
@@ -841,9 +837,8 @@ impl MaterialCache {
         self.shaders.entry(path).or_insert(info);
     }
 
-    /// Whether `shader` is analysed (or unusable): [`MaterialCache::shader_info`] then costs nothing. Otherwise its
-    /// analysis runs in the background and this is false: a spawn whose override names a new shader waits a few
-    /// frames instead of parsing it on the game thread.
+    /// Whether `shader` is analysed (or unusable). Otherwise its analysis runs in the background and this is
+    /// false: a spawn whose override names a new shader waits a few frames.
     pub fn shader_ready(&mut self, data: &GameData, shader: &str, skinned: bool) -> bool {
         use bevy::tasks::{block_on, futures_lite::future};
         let path = gd_formats::vfs::normalize(&shader.replace('\\', "/").to_ascii_lowercase());
@@ -969,8 +964,7 @@ impl PartMaterial {
         }
     }
 
-    /// Gives a part its material component. The glow view takes the models that glow (post.rs
-    /// `sync_glow_layers`); distortion and the cube-map portal are main-view only.
+    /// Gives a part its material component. Distortion and the cube-map portal are main-view only.
     pub fn insert(&self, e: &mut EntityCommands<'_>) {
         match self {
             PartMaterial::Gd(h) => {
@@ -995,7 +989,6 @@ impl PartMaterial {
 pub struct MeshFacts {
     pub skinned: bool,
     pub tangents: bool,
-    /// Vertex colours.
     pub colors: bool,
 }
 
@@ -1007,11 +1000,7 @@ pub struct MeshFacts {
 /// own parameters; `glowTexture` → `SetGlowTexture` (every material),
 /// `glowTextures[i]` per material, the global one first (`GetTexture`). Shader
 /// parameters are bound by name (`SetShaderParameters`), so the glow shows only
-/// when the shader has a `glowTexture` (e.g. a robe's runes: Mazaan's
-/// `c109_torso` draws its `standardskinned` mesh with `standardglowskinned`
-/// and the record's `_glo.tex`). The main menu's `kurnplatformstoneround_01a_paintable`
-/// draws its `standardstaticdetailsnow` mesh with `standardstaticdetail` (no
-/// snow), the snowy rose bushes with `standardstaticds_unusedcolor` (no wind).
+/// when the shader has a `glowTexture`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Reshade<'a> {
     pub shader: Option<&'a str>,
@@ -1077,7 +1066,7 @@ impl MaterialAssets<'_> {
         PartMaterial::Gd(self.gd.add(blank(&self.defaults)))
     }
 
-    /// The material one msh material draws with (module doc).
+    /// The material one msh material draws with.
     pub fn msh_material(
         &mut self,
         data: &GameData,
@@ -1103,7 +1092,7 @@ impl MaterialAssets<'_> {
         let defaults = &*self.defaults;
         let base = tex("baseTexture", textures, images);
         let bump = tex("bumpTexture", textures, images);
-        // Wind: meshes with vertex colours (gd_wind.wesl); the material's values,
+        // Wind: meshes with vertex colours; the material's values,
         // else the shader's defaults (the amplitudes a shader lacks stay 1).
         let wind = info
             .wind
@@ -1338,9 +1327,9 @@ impl MaterialAssets<'_> {
     /// Whether [`Self::reshade`] of `def` with `ov`, then [`Self::retexture`] with `base` / `bump`, decode and analyse
     /// nothing on the game thread: the override shader is analysed and the textures the variant reads (the msh
     /// material's [`RESHADE_TEXTURES`] with the glow override, the replacements) are decoded or failed. What is not
-    /// starts loading in the background ([`MaterialCache::shader_ready`], [`Textures::ready_held`]); the decoded
-    /// textures go into `held`, so a caller waiting on several keeps the ones already in. A cached variant costs
-    /// nothing. Not covered: an override to a cube-map portal shader (its `envmapTexture` still decodes on the spot).
+    /// starts loading in the background; the decoded textures go into `held`, so a caller waiting on several keeps
+    /// the ones already in. Not covered: an override to a cube-map portal shader (its `envmapTexture` decodes on the
+    /// spot).
     #[allow(clippy::too_many_arguments)]
     pub fn variant_ready(
         &mut self,
@@ -1460,8 +1449,8 @@ impl MaterialAssets<'_> {
         v
     }
 
-    /// `def` glowing with `glow` (an entity record's `glowTexture` overriding the mesh's, e.g. Devastation's
-    /// meteors); only the lit family has a glow.
+    /// `def` glowing with `glow` (an entity record's `glowTexture` overriding the mesh's); only the lit family has
+    /// a glow.
     pub fn reglow(
         &mut self,
         data: &GameData,
@@ -1477,8 +1466,7 @@ impl MaterialAssets<'_> {
         if let Some(v) = self.cache.variant(id, &key) {
             return v;
         }
-        // UNORM like every engine texture (the msh glow too, [`MaterialAssets::msh_material`]):
-        // gd_standard.wesl adds the stored values; an sRGB view would decode
+        // UNORM like every engine texture: the shader adds the stored values; an sRGB view would decode
         // them and dim the glow (0.5 → 0.21).
         let (Some(t), Some(mut m)) = (
             textures.get(data, glow, false, images),
@@ -1497,13 +1485,11 @@ impl MaterialAssets<'_> {
         v
     }
 
-    /// The material for one pass of a terrain grass layer's blades
-    /// (render/grass.rs): lit, its blade atlas as base texture, both faces, no
-    /// specular, the grass wind bend (gd_wind.wesl, strength set by
-    /// [`super::grass::grass_wind`]); `fringe` = grass.ssh `deferred` (alpha ≥ 0.35,
+    /// The material for one pass of a terrain grass layer's blades: lit, its blade atlas as base texture, both
+    /// faces, no specular, the grass wind bend; `fringe` = grass.ssh `deferred` (alpha ≥ 0.35,
     /// SrcAlpha / InvSrcAlpha, depth `Less`), else `deferredBase` (alpha ≥ 0.65, opaque);
-    /// `blade_height` = the layer's `bladeHeight` (the offset field's drop, gd_wind.wesl).
-    /// One per (texture, height, pass) until the mod changes ([`MaterialCache`]): every load of a level reuses it.
+    /// `blade_height` = the layer's `bladeHeight` (the offset field's drop).
+    /// One per (texture, height, pass) until the mod changes.
     pub fn grass(
         &mut self,
         data: &GameData,

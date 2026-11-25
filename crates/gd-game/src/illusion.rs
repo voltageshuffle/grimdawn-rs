@@ -1,52 +1,29 @@
-//! The Illusionist (`NpcTransmuter`): unlocked appearances and applying
-//! them to worn items. Rules and their sources: `gd_sim::items::illusion`.
+//! The Illusionist (`NpcTransmuter`): unlocked appearances and applying them to worn items. Rules:
+//! `gd_sim::items::illusion`.
 //!
-//! - [`Illusions`]: the account-wide unlocked looks (`transmutes.gst`, `transmutes.gsh` for a hardcore
-//!   character: `gd_formats::save::Shared`; read from the loaded character's `save/` folder like
-//!   `transfer.gst`, written to the port's; `save.rs`), one list per `Item_Type`
-//!   (`GameEngine::GetPlayerTransmutes`).
-//! - [`unlock_items`]: every item in the bags or worn is unlocked the way
-//!   `Inventory::AddItemToInventory` / `Player::LoadTransmutes` call
-//!   `GameEngine::AddItemToTransmutes` (also on load).
-//! - [`choices`]: the window's list for a worn item, [`apply`] (sent as
-//!   [`ApplyIllusions`] by the window): the picks, the cost per changed item
-//!   and the new `transmute_name` (saved with the item in the gdc; the body
-//!   is rebuilt from `look_record`).
-//! - [`use_sets`]: a used transmute set (`ItemTransmuterSet`, the DLC illusion packs and the Coven's Black Knight set;
-//!   right click, `consumables::use_items` sends [`UseTransmuteSet`]). `ItemTransmuterSet::Use`
-//!   (main player only): each record of `transmuteDbrs` goes through `AddItemToTransmutes` (the
-//!   [`Illusions::unlock`] dedupe); when any was new, `SaveTransmutes` writes `transmutes.gst` at once (the account's
-//!   shared save folder, `GetSharedSavePath`; here the port's save folder root, where `save.rs` writes it too). Then
-//!   the `useSound` plays and, when `transmuteTag` is set, the cinematic text type 8, colour (0.9, 0.9, 1): headline
-//!   `tagTransmuteNew` ("You have gained a new Illusion: {%s0}") with the localised set name, subline empty, on every
-//!   use (also when nothing was new). `AllowUse` always allows it and removes the item when its stack is
-//!   1; a larger stack loses one (`DecrementStack`), the generic rule of `consumables::consumed`.
-//! - [`gd_game_core::illusion::transmute_check`]: a single-piece transmuter (`ItemTransmuter`: the DLC illusion pieces and the removal
-//!   flask, given by the bonus-items NPC's conversations `npc_bonusitems_0{1,2}.cnv`). A right click on one in the
-//!   bags or stash enters its cursor mode (`ItemTransmuter::CreateSecondaryCursorHandler` makes a
-//!   `CursorHandlerTransmute`, no requirement test), which is the component / augment apply mode of
-//!   `crate::inventory` (`Inventory::start_apply`; the handler shares `Update` / `Escape` / `CleanupDialog` with
-//!   `CursorHandlerRelicCombine`, folded, and its `Cancel` callers): a click on a bag, equipped or stash item it
-//!   `CanBeUsedOn` asks the confirmation, Yes applies it (`ControllerPlayer::UseItemOnConfigCmd` →
-//!   `Character::UseItemOn` → `ItemTransmuter::UseOn`). `ItemTransmuter::Load` reads
-//!   `transmuteDbr`, `transmuteTag`,
-//!   `removeTransmute`; `InitializeItem` loads the look when `transmuteDbr` is set and it is no remover.
-//!   `CanBeUsedOn` (always "ask first"): a look piece takes an `ItemEquipment` of the look's item type
-//!   whose current mesh is not the look's, both weapons by the weapon groups of the Illusionist window
-//!   (`gd_sim::items::illusion::fits`); the remover any equipment with an illusion. The text
-//!   (`CursorHandlerTransmute::Primary{Inventory,Equip,Stash,Transfer}Activate`):
-//!   `tagTransmuteConfirmation`, `…SoulboundConfirmation` when the piece is
-//!   soulbound and the item not; onto an item with an illusion `tagTransmuteOverwrite` / `…SoulboundOverwrite`;
-//!   the remover `tagTransmuteRemove`. A transfer-stash item is never a target unless the piece
-//!   `CanBePlacedInTransferStash` (not soulbound, no material), which no stock piece is. `UseOn`: a
-//!   look piece becomes the item's illusion (`ItemEquipment::AddTransmute(Item)`), one of a stack or
-//!   the last one; the remover clears it (`RemoveTransmute`) and is used up the same way. No sound.
-//!   PORT: the engine's illusion is the piece itself (the gdc's transmute name is the piece's record, its look
-//!   `GetTransmute`, and `AddTransmute` marks the item untradeable, soulbound when the piece is); the port stores
-//!   the look record, as the Illusionist window does (`AddTransmute(string)`), and an item's soulbound state stays
-//!   its base record's or augment's (`Inventory::apply_check`). The "capture" kind (no `transmuteDbr`, no
-//!   `removeTransmute`: `tagTransmuteDestroy`, infuses an item's look) exists only as a sandbox record
-//!   (`records/sandbox/jakub/transmute_capture_test.dbr`): not ported.
+//! - [`Illusions`]: the account-wide unlocked looks (`transmutes.gst`, `.gsh` for a hardcore character), one list
+//!   per `Item_Type` (`GameEngine::GetPlayerTransmutes`).
+//! - [`unlock_items`]: every item in the bags or worn is unlocked (`GameEngine::AddItemToTransmutes`, also on load).
+//! - [`choices`]: the window's list for a worn item; [`apply`]: the picks, the cost per changed item and the new
+//!   `transmute_name` (the body is rebuilt from `look_record`).
+//! - [`use_sets`]: a used transmute set (`ItemTransmuterSet::Use`, main player only): each record of
+//!   `transmuteDbrs` goes through `AddItemToTransmutes`; when any was new, `SaveTransmutes` writes the file at once.
+//!   Then the `useSound` plays and, when `transmuteTag` is set, the cinematic text type 8, colour (0.9, 0.9, 1):
+//!   headline `tagTransmuteNew` with the localised set name, subline empty, on every use. One of the stack is used up.
+//! - [`gd_game_core::illusion::transmute_check`]: a single-piece transmuter (`ItemTransmuter`: the DLC illusion
+//!   pieces and the removal flask). A right click on one in the bags or stash enters the inventory's apply mode
+//!   (`CursorHandlerTransmute`, no requirement test): a click on an item it `CanBeUsedOn` asks the confirmation, Yes
+//!   applies it (`ItemTransmuter::UseOn`). `CanBeUsedOn`: a look piece takes an `ItemEquipment` of the look's item
+//!   type whose current mesh is not the look's, both weapons by the Illusionist window's weapon groups; the remover
+//!   any equipment with an illusion. The text: `tagTransmuteConfirmation`, `…SoulboundConfirmation` when the piece
+//!   is soulbound and the item not; onto an item with an illusion `tagTransmuteOverwrite` / `…SoulboundOverwrite`;
+//!   the remover `tagTransmuteRemove`. A transfer-stash item is never a target (no stock piece
+//!   `CanBePlacedInTransferStash`). `UseOn`: a look piece becomes the item's illusion, the remover clears it; one of
+//!   the stack is used up. No sound.
+//!   PORT: the engine's illusion is the piece itself (and `AddTransmute` marks the item untradeable, soulbound when
+//!   the piece is); the port stores the look record, as the Illusionist window does, and an item's soulbound state
+//!   stays its base record's or augment's. The "capture" kind (no `transmuteDbr`, no `removeTransmute`) exists only
+//!   as a sandbox record: not ported.
 use bevy::prelude::*;
 use gd_formats::save::Shared;
 use gd_formats::save::gst::{TransmuteEntry, Transmutes};
@@ -55,14 +32,12 @@ use gd_formats::vfs::Database;
 use gd_game_core::inventory::{Inventory, SLOTS};
 use gd_sim::items::illusion::{fits, item_type, same_look, sort_key, takes_illusion};
 
-/// The window record (`transmuterwindow.tpl`).
 pub const WINDOW: &str = "records/ui/transmuter/transmuter_mastertable.dbr";
 
-/// The unlocked looks (`transmutes.gst`).
 #[derive(Resource, Clone)]
 pub struct Illusions {
     pub file: Transmutes,
-    /// Unlocked since loading (`save.rs` writes the file when set).
+    /// Unlocked since loading (the file is written when set).
     pub changed: bool,
 }
 
@@ -79,7 +54,6 @@ impl Illusions {
         }
     }
 
-    /// The records unlocked for an item type.
     pub fn of_type(&self, ty: u32) -> &[String] {
         self.file
             .entries
@@ -88,7 +62,7 @@ impl Illusions {
             .map_or(&[], |e| &e.records)
     }
 
-    /// `AddItemToTransmutes` (module doc): true when `record` was added.
+    /// `AddItemToTransmutes`: true when `record` was added.
     pub fn unlock(&mut self, db: &Database, record: &str) -> bool {
         let Some(mut rec) = db.get(record) else {
             return false;
@@ -144,9 +118,8 @@ impl Illusions {
     }
 }
 
-/// Loads [`Illusions`] once the session has a character (the shared
-/// `transmutes.gst`; an empty list when there is none, and an unreadable one is never overwritten:
-/// `gd_game_core::stash::read_shared`).
+/// Loads [`Illusions`] once the session has a character (an empty list when there is no file; an unreadable one is
+/// never overwritten).
 pub fn init_illusions(
     mut commands: Commands,
     // Option: the existence check (this system creates it).
@@ -178,8 +151,7 @@ pub fn init_illusions(
     });
 }
 
-/// Unlocks the looks of the bags' and the worn items when the inventory
-/// changes.
+/// Unlocks the looks of the bags' and the worn items when the inventory changes.
 pub fn unlock_items(
     inv: Res<Inventory>,
     mut ill: ResMut<Illusions>,
@@ -208,13 +180,9 @@ pub fn unlock_items(
     }
 }
 
-/// The unlocked looks offered for the worn `item`, in the window's order
-/// (`name`: a record's display name, the last sort key). Empty when the
-/// item takes no illusion. A male player (`female` false) is not offered the
-/// records flagged `preventMaleTransmute` (page builder
-/// `TransmuteWindow::BuildPage`: `Item::IsMaleCompatible`, true unless the record's
-/// `preventMaleTransmute` is set and the item's gender, the main player's at
-/// `AddItemToTransmutes`, is male).
+/// The unlocked looks offered for the worn `item`, in the window's order (`name`: a record's display name, the last
+/// sort key). Empty when the item takes no illusion. A male player (`female` false) is not offered the records
+/// flagged `preventMaleTransmute` (`TransmuteWindow::BuildPage`: `Item::IsMaleCompatible`).
 pub fn choices(
     db: &Database,
     ill: &Illusions,
@@ -244,8 +212,7 @@ pub fn choices(
     list.into_iter().map(|(_, r)| r).collect()
 }
 
-/// Whether picking `look` for `item` changes nothing but clearing its
-/// illusion (the look is the item's own).
+/// Whether picking `look` for `item` only clears its illusion (the look is the item's own).
 pub fn is_own_look(db: &Database, item: &Item, look: &str) -> bool {
     match (db.get(&item.base_name), db.get(look)) {
         (Some(a), Some(b)) => same_look(&item.base_name, a, look, b),
@@ -253,7 +220,7 @@ pub fn is_own_look(db: &Database, item: &Item, look: &str) -> bool {
     }
 }
 
-/// The cost of one changed item at `level` (the window's equation).
+/// The cost of one changed item at `level`.
 pub fn cost_each(db: &Database, level: u32) -> u64 {
     let eq = db
         .get(WINDOW)
@@ -262,8 +229,8 @@ pub fn cost_each(db: &Database, level: u32) -> u64 {
     gd_sim::items::illusion::cost(&eq, level, 0)
 }
 
-/// What a set of picks (worn slot index, look record) costs: one
-/// [`cost_each`] per pick that is not the item's own look.
+/// What a set of picks (worn slot index, look record) costs: one [`cost_each`] per pick that is not the item's own
+/// look.
 pub fn picks_cost(db: &Database, inv: &Inventory, picks: &[(usize, String)], level: u32) -> u64 {
     let changed = picks
         .iter()
@@ -277,8 +244,8 @@ pub fn picks_cost(db: &Database, inv: &Inventory, picks: &[(usize, String)], lev
     changed * cost_each(db, level)
 }
 
-/// Applies the picks: pays [`picks_cost`] (refused when short), sets or
-/// clears each item's illusion. Returns the price paid.
+/// Applies the picks: pays [`picks_cost`] (refused when short), sets or clears each item's illusion. Returns the
+/// price paid.
 pub fn apply(
     db: &Database,
     inv: &mut Inventory,
@@ -336,12 +303,12 @@ pub fn apply_requests(
     }
 }
 
-/// A transmute set (`ItemTransmuterSet` record) was used (module doc).
+/// A transmute set (`ItemTransmuterSet` record) was used.
 #[derive(Message, Clone, Debug)]
 pub struct UseTransmuteSet(pub String);
 
-/// `ItemTransmuterSet::Use` (module doc): unlocks the set's looks, saves them when one is new, plays `useSound`
-/// and sends the cinematic text.
+/// `ItemTransmuterSet::Use`: unlocks the set's looks, saves them when one is new, plays `useSound` and sends the
+/// cinematic text.
 #[allow(clippy::too_many_arguments)]
 pub fn use_sets(
     mut commands: Commands,
@@ -358,7 +325,6 @@ pub fn use_sets(
         let Some(rec) = data.db.get(record) else {
             continue;
         };
-        // Test hook `GD_SHOT_ON=<set record text>`: shots of the cinematic text.
         gd_game_core::visuals::notify(&mut commands, record);
         let mut new = false;
         for r in rec.strs("transmuteDbrs") {
@@ -382,8 +348,7 @@ pub fn use_sets(
         let Some(tag) = rec.str("transmuteTag").filter(|t| !t.is_empty()) else {
             continue;
         };
-        // The headline is `Localize("tagTransmuteNew", name)`: formatted here (the event carries no headline
-        // arguments).
+        // The headline is `Localize("tagTransmuteNew", name)`, formatted here (the event carries no headline args).
         let tags = data.tags();
         let name = gd_sim::items::tooltip::format_exact(tags.get(tag).unwrap_or(tag), &[]);
         let head = gd_sim::items::tooltip::format_exact(

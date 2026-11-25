@@ -1,55 +1,32 @@
-//! Reflect links (`Skill_AttackSpellReflectLink`: the Necromancer's Mark of
-//! Torment, `playerclass08/soultransfer.dbr`, and Blackheart's monster copy):
-//! the caster binds itself to a foe; while the link lasts, damage the caster
-//! takes is cut and part of it goes on to the linked foe.
+//! Reflect links (`Skill_AttackSpellReflectLink`: the Necromancer's Mark of Torment and Blackheart's
+//! monster copy): the caster binds itself to a foe; while the link lasts, damage the caster takes is cut
+//! and part of it goes on to the linked foe.
 //!
 //! Game.dll:
-//! - `Load`: `linkName` (the beam), `maxRange`, `emitPointName`
-//!   (default `FXCentered`), `linkDelay` (s → ms), `linkLimit` (default 1),
-//!   `startSound`, `endSound`, `loopSound`, `startEffect`, `endEffect`; the
-//!   profile gives `damageAbsorptionPercent` (in the `SkillProfile`),
-//!   `damageAbsorptionReflectPercent` (per level) and `skillActiveDuration`
-//!   (`GetMaxDuration`).
-//! - `ActivateNow` (Ashes of Malmouth loaded): the target must
-//!   be a living character. A link to it already: its time is reset to the
-//!   full duration, the cooldown starts and the energy is paid. Else, with
-//!   `linkLimit` links, the oldest is ended; the caster's emit point must be
-//!   within `maxRange` of the target's (else nothing happens: no cooldown,
-//!   no cost); a link is made (beam, start / end effects, loop sound, the
-//!   duration, `linkDelay` only for the main player), a `CombatFilter` added
-//!   to the caster, the cooldown started and the energy paid.
-//! - `Update`: every link's time runs down; at 0, or when its
-//!   target is gone or dead, it ends. After the start (the start effect) it
-//!   waits out the delay, then shows the beam and loops its sound; from then
-//!   on it ends when caster and target are `maxRange` apart or more. Ending:
-//!   the end sound, the effects stop, the beam goes, the filter is removed.
-//! - Damage the caster takes (`CombatManager::TakeAttack`,
-//!   `SkillManager::GetReflectLinkDamageReduction` /
-//!   `SkillManager::ReflectLinkDamage`): the link's filter
-//!   (`ModifyDamage`) cuts every damage application by
-//!   `damageAbsorptionPercent` per link; after the defenses a copy of the
-//!   attack scaled by the links' summed `damageAbsorptionPercent` is, for
-//!   attacks other than retaliation and reflection, sent through
-//!   `Skill_AttackSpellReflectLink::ReflectLinkDamage`: per link, scaled by
-//!   `damageAbsorptionReflectPercent` (debuffs by at most the player's reflect
-//!   cap), a style-6 attack of the caster on the link's target
-//!   (`Character::AttackTarget`). So at level 1 the caster takes 85 % and the
-//!   target gets 15 % × 200 % = 30 % of the defended damage, through its own
-//!   defenses (`gd_sim::actor::attack_linked`, `link_reflection`, `reflect`;
-//!   `combat::apply_hits`).
+//! - `Load`: `linkName` (the beam), `maxRange`, `emitPointName` (default `FXCentered`), `linkDelay`
+//!   (s → ms), `linkLimit` (default 1), `startSound`, `endSound`, `loopSound`, `startEffect`,
+//!   `endEffect`; `damageAbsorptionPercent`, `damageAbsorptionReflectPercent` and `skillActiveDuration`.
+//! - `ActivateNow`: the target must be a living character. A link to it already: its time is reset,
+//!   the cooldown starts and the energy is paid. Else, with `linkLimit` links, the oldest is ended; the
+//!   caster's emit point must be within `maxRange` of the target's (else nothing: no cooldown, no
+//!   cost); a link is made (`linkDelay` only for the main player), a `CombatFilter` added to the
+//!   caster, the cooldown started and the energy paid.
+//! - `Update`: every link's time runs down; at 0, or when its target is gone or dead, it ends. After
+//!   the delay it shows the beam and loops its sound; from then on it ends when caster and target are
+//!   `maxRange` apart or more. Ending: the end sound, effects stop, the beam goes, the filter is removed.
+//! - Damage the caster takes (`SkillManager::GetReflectLinkDamageReduction` / `ReflectLinkDamage`): the
+//!   filter cuts every damage application by `damageAbsorptionPercent` per link; after the defenses, for
+//!   attacks other than retaliation and reflection, a copy scaled by the summed
+//!   `damageAbsorptionPercent` goes per link, scaled by `damageAbsorptionReflectPercent` (debuffs by at
+//!   most the player's reflect cap), as a style-6 attack of the caster on the link's target
+//!   (`Character::AttackTarget`), through the target's own defenses.
+//! - DoT ticks (`CombatManager::ApplyDamage` runs every filter) are cut too, but only `TakeAttack`
+//!   passes damage on.
 //!
-//! - DoT ticks (`DurationDamageManager::ExecuteDamage` →
-//!   `CombatManager::ApplyDamage`, which runs every filter) are
-//!   cut too, but only `TakeAttack` passes damage on (`afflictions::tick`).
-//!
-//! PORT: the link starts when the cast fires; an out-of-range target
-//! (feet to aim point, checked before the cast pays,
-//! `casting::try_cast`) is refused unpaid like the engine's; the reflected
-//! attack is a [`crate::combat::CounterHit`] (combat numbers) plus a
-//! [`crate::combat::LinkedAttack`] (the caster's `AttackEnemy(Crit)` autocast
-//! triggers, as `AttackTarget` runs them); a dead
-//! caster's links end; the range is measured centre to centre (not emit
-//! point to emit point); the beam and effects are not drawn; the sounds: `crate::combat_sounds::held_loops`.
+//! PORT: the link starts when the cast fires; an out-of-range target (feet to aim point) is refused
+//! unpaid; the reflected attack is a [`crate::combat::CounterHit`] plus a [`crate::combat::LinkedAttack`]
+//! (autocast triggers); a dead caster's links end; the range is centre to centre; the beam and effects
+//! are not drawn.
 use bevy::prelude::*;
 use gd_game_core::combat::Dead;
 use gd_game_core::data::GameData;

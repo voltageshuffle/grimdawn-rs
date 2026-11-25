@@ -60,8 +60,7 @@ impl Plugin for DevPlugin {
 
 /// `GD_HOVER=x,y` (logical px): the window's cursor stands there every frame, set before the input systems
 /// (`First`, as [`mouse`]), so every pointer read (`gd_ui_kit::cursor_px`, the world hover) sees it as the OS
-/// pointer. Only a change is written: bevy_winit then tries to warp the OS pointer once (Wayland refuses and it logs
-/// one `could not set cursor position` error; the window's position stands either way).
+/// pointer. Only a change is written (bevy_winit warps the OS pointer on each; Wayland refuses with a logged error).
 fn hover_pointer(
     hooks: Res<Hooks>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
@@ -107,7 +106,7 @@ fn gpu_times_log(
 #[derive(Resource)]
 pub struct SceneCamera;
 
-/// Model viewer: `GD_MODELS` (hooks.rs) in a row on a ground plane.
+/// Model viewer: `GD_MODELS` in a row on a ground plane.
 #[allow(clippy::too_many_arguments)]
 fn models(
     mut commands: Commands,
@@ -201,7 +200,7 @@ fn fps_log(
     }
 }
 
-/// `GD_PATH_TEST` (hooks.rs): every 5 s logs the nav obstacle count and whether the player can path to (x, z).
+/// `GD_PATH_TEST`: every 5 s logs the nav obstacle count and whether the player can path to (x, z).
 fn path_test(
     hooks: Res<Hooks>,
     nav: Res<gd_game::nav::Nav>,

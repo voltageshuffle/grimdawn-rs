@@ -1,6 +1,5 @@
 //! Ground decals (`GAME::Decal`, Engine.dll): level-placed `Decal` entities
-//! (`gd_world`) and effect decals (an `EffectEntity`'s `decal`, `casting.rs`
-//! `fx_decals`) share this record parsing, geometry, material
+//! and effect decals (an `EffectEntity`'s `decal`) share this record parsing, geometry, material
 //! (`shaders/decal.wesl`: `decal_standard` / `decal_glow` / `decal_bump` /
 //! `decal_selfillum`, UNORM textures) and opacity.
 //!
@@ -14,27 +13,17 @@
 //!
 //! Meshes (`World::GeometryBusStop`, skipped with
 //! `terrainOnly`): every entity of `GetEntitiesInBox` that is an `Actor`
-//! (`Actor::GeometryBusStop`) with `IsStatic()` (among
-//! the level classes only Game.dll `Decoration::IsStatic` =
-//! `!allowPathing` is ever true, `Destructible` / `FixedItem` return false)
-//! and `OccludesPathing()` (true for an `Actor`) gives its mesh to
-//! `GraphicsMesh::GeometryBusStop`. That walks the mesh's system
-//! copy (`GraphicsMesh.decalVertices`: 56-byte position / uv / normal records,
-//! `GraphicsMesh.decalFaces`: the u16 faces of
-//! chunk 5, every face set and material; `Initialize` keeps it when the bone
-//! count (`GraphicsMesh.boneCount`) is still 0 as chunks 4 / 5 are read, and chunk 6 follows them
-//! in every stock file, so every mesh has one). A vertex goes to the world as
+//! (`Actor::GeometryBusStop`) with `IsStatic()` (of the level classes only
+//! `Decoration::IsStatic` = `!allowPathing` is ever true) and `OccludesPathing()`
+//! gives its mesh to `GraphicsMesh::GeometryBusStop`, which walks the mesh's system
+//! copy (`GraphicsMesh.decalVertices` / `decalFaces`: every face of chunk 5). A vertex goes to the world as
 //! coords × (scale ⊙ p) + 0.001 × its rotated normal; a face is kept when its
 //! world AABB overlaps the box and the y of its normal ‖(v2 − v0) × (v1 − v0)‖
-//! (the front side of a clockwise face) is ≥ sin(π/2 − `maxAngle`) (`Load`
-//! stores π/2 − maxAngle and passes its sine): one-sided, so a face seen from
+//! (the front side of a clockwise face) is ≥ sin(π/2 − `maxAngle`): one-sided, so a face seen from
 //! below is dropped, and `maxAngle` only culls mesh faces. No clipping: whole
 //! faces go in, the shader discards outside the UV square. The port keeps
-//! those meshes per level in [`DecalReceivers`]. When: a placed
-//! decal builds its geometry in `Decal::InitialUpdate`, so with
-//! what is loaded then; again only on `OnMoveInLevel`, the exported (and
-//! uncalled) `RebuildMesh`, and after a device reset (`PostDeviceReset` sets
-//! the flag `RenderPass` rebuilds on). A level loading later does not
+//! those meshes per level in [`DecalReceivers`]. A placed decal builds its geometry in `Decal::InitialUpdate`, with
+//! what is loaded then (again only on `OnMoveInLevel` and after a device reset): a level loading later does not
 //! re-project its neighbours' decals.
 //!
 //! Every vertex gets colour 0xFFFFFFFF: there is no per-vertex fade
@@ -44,8 +33,8 @@
 //! the port discards outside [0, 1] in the shader and remaps there instead.
 //! PORT: terrain vertices are lifted 0.03 m (the engine 0.01) and the
 //! material has a depth bias, against z-fighting.
-//! The base layer is blended before SSAO, as into the engine's G-buffer
-//! (render/gbuffer_blend.rs); the additive glow layer later, unoccluded.
+//! The base layer is blended before SSAO, as into the engine's G-buffer;
+//! the additive glow layer later, unoccluded.
 //!
 //! Opacity (`Decal::GetOpacity`, times in integer ms,
 //! the age advanced by `UpdateSelf`): see [`DecalTiming::opacity`];
@@ -53,15 +42,9 @@
 //! PORT: every layer's opacity (the record's, a fade's, a particle decal's
 //! ring alpha) reaches the shader through the entity's `MeshTag`
 //! ([`alpha_tag`]), and the materials hold the unfaded values, so decals of
-//! one record share one material per layer ([`DecalMats`]): placing,
-//! fading or re-ranking a decal changes no asset, and a ring of blood decals
-//! batches into a few draws.
+//! one record share one material per layer ([`DecalMats`]).
 //! A decal with `life` > 0 is removed when its age reaches it, level (static)
-//! decals too. `UpdateSelf`: while updating (`Decal.updating`, set by `Load`),
-//! at age ≥ life the decal stops updating and, in the world, is removed and
-//! destroyed unless `Engine::IsEditorMode` (`Engine.editorMode`) holds and it is
-//! not dynamic (`Decal.dynamic`, `SetDynamic`; `EffectEntity::Load` sets it): only the
-//! editor loops a static decal's age back to 0.
+//! decals too (`Decal::UpdateSelf`; only the editor loops a static decal's age back to 0).
 //!
 //! Effect decals (`EffectEntity::Load` /
 //! `InitialUpdate`): with chance `decalChance` % (0 = 100,
@@ -124,9 +107,8 @@ impl MaterialExtension for DecalExt {
 /// Devastation / devotion cracks): deferredPS writes `bumpTexture`
 /// rgb × its alpha × 4 into the G-buffer glow target (MRT 4) with the base
 /// texel's alpha × opacity as the blend alpha (SrcAlpha / OneMinusSrcAlpha),
-/// so like every glow it is added to the frame unblurred and through
-/// `RenderSceneGlow`'s blur. Here the additive layer is drawn in both the
-/// main and the glow view (`render::post`).
+/// so it is added to the frame unblurred and through `RenderSceneGlow`'s blur.
+/// Here the additive layer is drawn in both the main and the glow view.
 pub const DECAL_GLOW_GAIN: f32 = 4.0;
 
 pub struct DecalPlugin;
@@ -142,8 +124,7 @@ impl Plugin for DecalPlugin {
 }
 
 /// The shared decal materials ([`spawn`]): one per (texture, bump / glow texture, variant strip, unlit, layer),
-/// by id only, so the material goes once no decal uses it (and a texture reloaded under a new handle gets a new
-/// entry). Holds no strong handle, so nothing to reset between sessions.
+/// by id only, so the material goes once no decal uses it.
 #[derive(Resource, Default)]
 pub struct DecalMatCache(HashMap<DecalMatKey, AssetId<DecalMaterial>>);
 
@@ -178,15 +159,13 @@ impl DecalMats<'_> {
     }
 }
 
-/// A decal placed by the level (`Decal` entity, `gd_world`), as opposed to an effect's.
+/// A decal placed by the level, as opposed to an effect's.
 #[derive(Component)]
 pub struct LevelDecal;
 
-/// `detailObjects` gates `DecalSet::AddToScene` (Engine.dll):
-/// with it off no decal is drawn.
+/// `detailObjects` gates `DecalSet::AddToScene` (Engine.dll): with it off no decal is drawn.
 /// PORT: the decals stay spawned and are hidden, so the option applies live
-/// like the engine's per-frame `UpdateFromOptions`. All decals are walked when
-/// the option flips (`last`: the value applied), else only new ones.
+/// (`last`: the value applied).
 fn gate_level_decals(
     options: Option<Res<gd_game_core::options::GameOptions>>,
     mut last: Local<Option<bool>>,
@@ -402,9 +381,8 @@ impl ReceiverMesh {
     }
 }
 
-/// A placed receiver: its mesh, placement, world AABB and each face's
-/// world AABB (padded for the 0.001 normal push + a rounding margin), built
-/// once at registration: the coarse per-face reject of [`Receiver::gather`].
+/// A placed receiver: its mesh, placement, world AABB and each face's world AABB (padded for the 0.001 normal push +
+/// a rounding margin; the coarse per-face reject of [`Receiver::gather`]).
 struct Receiver {
     mesh: Arc<ReceiverMesh>,
     /// Coords × scale (positions).
@@ -454,9 +432,7 @@ impl DecalReceivers {
 
     pub fn remove_level(&mut self, index: usize) {
         self.levels.remove(&index);
-        // The path cache holds its meshes strongly: one no receiver holds
-        // anymore goes with its level (the asset-lifetime rule). A failed
-        // mesh (`None`) is re-derived on a reload.
+        // Drop the cached meshes no receiver holds anymore; a failed mesh (`None`) is re-derived on a reload.
         self.meshes
             .retain(|_, m| m.as_ref().is_some_and(|a| Arc::strong_count(a) > 1));
     }
@@ -517,9 +493,7 @@ impl Receiver {
     /// (normals rotated by `rot`) whose world AABB overlaps the box (centre
     /// `c`, half-extent `e`) and whose front normal has y ≥ `min_normal_y`;
     /// vertices pushed out 0.001 along their normal. A dynamic decal leaves
-    /// them out of N. The padded `tri_bounds` reject most faces without
-    /// transforming anything; only candidate faces' vertices are transformed
-    /// and the exact tests decide, so the output is the full scan's.
+    /// them out of N. The padded `tri_bounds` only pre-reject; the exact tests decide.
     fn gather(&self, patch: &mut DecalPatch, c: Vec3, e: f32, min_normal_y: f32, dynamic: bool) {
         let (lo, hi) = (c - Vec3::splat(e), c + Vec3::splat(e));
         let mut map: HashMap<u16, u32> = HashMap::default();
@@ -738,8 +712,7 @@ pub fn extent(w: f32, h: f32, dynamic: bool) -> f32 {
     w.max(h) * if dynamic { 0.7 } else { 0.5 }
 }
 
-/// On a decal layer entity whose opacity changes ([`DecalTiming::animated`]). The opacity reaches the shader through
-/// the entity's `MeshTag` ([`alpha_tag`]), not its material: a fading decal changes no asset.
+/// On a decal layer entity whose opacity changes ([`DecalTiming::animated`]); the opacity goes through [`alpha_tag`].
 #[derive(Component)]
 pub struct DecalFade {
     pub age: f32,
@@ -767,8 +740,7 @@ pub fn alpha_tag(o: f32) -> MeshTag {
 }
 
 /// Whether [`spawn`] of `dec` decodes nothing on the game thread: its texture, bump and glow are decoded (or failed).
-/// What is not decodes in the background ([`crate::textures::Textures::ready_held`]) and this is false; the decoded
-/// ones go into `held`, so a caller waiting on the rest keeps them.
+/// The rest decode in the background; the decoded ones go into `held`.
 pub fn textures_ready(
     dec: &DecalRecord,
     data: &gd_game_core::data::GameData,
@@ -787,10 +759,8 @@ pub fn textures_ready(
     ready
 }
 
-/// Spawns the decal's layers (lit / unlit base, the additive glow) on `mesh`
-/// and returns them, each on its record's shared material ([`DecalMats`]) with its opacity in its `MeshTag`
-/// ([`alpha_tag`]). Decodes a texture not loaded yet on the spot
-/// (a streaming caller waits on [`textures_ready`] first).
+/// Spawns the decal's layers (lit / unlit base, the additive glow) on `mesh` and returns them, each on its record's
+/// shared material ([`DecalMats`]) with its opacity in its `MeshTag` ([`alpha_tag`]).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
     commands: &mut Commands,
@@ -803,8 +773,7 @@ pub fn spawn(
     mats: &mut DecalMats,
     fade: Option<Option<Entity>>,
 ) -> Vec<Entity> {
-    // UNORM like every texture: the decal is shaded in gamma space (an sRGB
-    // view darkened the rugs to black and the road tracks to dark stripes).
+    // UNORM like every texture: the decal is shaded in gamma space.
     let Some(tex) = textures.get(data, &dec.texture, false, images) else {
         return Vec::new();
     };
@@ -823,8 +792,7 @@ pub fn spawn(
     // decal_selfillum.ssh has no `deferred` technique: its only pass
     // (`emissiveStyle`, sort 3500) adds texel × alpha × opacity
     // (SrcAlpha / One, DepthWrite false) after the lighting, so it is
-    // additive and not part of the G-buffer blend (a green glyph turns the
-    // sand under it yellow-green rather than painting it green).
+    // additive and not part of the G-buffer blend.
     let key = (
         tex.id(),
         bump.as_ref().map(Handle::id),

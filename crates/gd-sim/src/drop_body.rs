@@ -1,5 +1,4 @@
-//! The rigid body a dropped item flies as, until it lands (the throw itself:
-//! [`crate::loot_toss`]; the ECS side: `gd_game::loot::toss_flight`).
+//! The rigid body a dropped item flies as, until it lands.
 //!
 //! Engine.dll (Bullet 2.8x behind `PhysicsEngine2`):
 //! - The world steps at a fixed 1/60 s ([`STEP`]), at most 4 steps a frame
@@ -41,7 +40,7 @@
 //!   still run with the contact solved (the box pivots on its touching corner),
 //!   and the frame's `Item::PhysicsUpdate` takes it out of the
 //!   simulation. The item rests in that pose: nothing lays it flat. It also lands
-//!   when its centre of mass reaches the path mesh (gd-game).
+//!   when its centre of mass reaches the path mesh.
 //! - Contacts persist between steps as Bullet's `btPersistentManifold`: per
 //!   world object at most 4 points, a new one matched to a kept one within
 //!   0.02 m on the box, points dropped once they separate or slide past 0.02 m,
@@ -71,9 +70,7 @@ pub const STEP: f32 = 1.0 / 60.0;
 pub const MAX_SUBSTEPS: u32 = 4;
 /// `PhysicsEngine2::kGravity` (m/s², downwards).
 pub const GRAVITY: f32 = 14.0;
-/// Linear damping of item bodies.
 pub const LINEAR_DAMPING: f32 = 0.05;
-/// Angular damping of item bodies.
 pub const ANGULAR_DAMPING: f32 = 0.95;
 /// Per-step (linear, angular) velocity factors: `(1 - damping)^STEP`.
 static STEP_DAMPING: std::sync::LazyLock<(f32, f32)> = std::sync::LazyLock::new(|| {
@@ -236,7 +233,7 @@ pub struct DropBody {
     pub spin: V3,
     pub half: V3,
     pub friction: f32,
-    /// The kept contact points, per world object (module doc).
+    /// The kept contact points, per world object.
     manifolds: Vec<(u64, Vec<ManifoldPoint>)>,
 }
 
@@ -293,7 +290,7 @@ impl DropBody {
         unrotate(self.rot, sub(p, self.pos))
     }
 
-    /// The contacts with `world` in the current pose (module doc).
+    /// The contacts with `world` in the current pose.
     fn contacts(&self, world: &[Tri]) -> Vec<(u64, Contact)> {
         let corners = self.corners();
         let (lo, hi) = self.aabb();
@@ -492,7 +489,7 @@ impl DropBody {
         self.manifolds.retain(|m| !m.1.is_empty());
     }
 
-    /// One physics step against `world` (module doc); true when the box touches it.
+    /// One physics step against `world`; true when the box touches it.
     pub fn step(&mut self, world: &[Tri]) -> bool {
         let (lin, ang) = *STEP_DAMPING;
         self.vel = scale(self.vel, lin);

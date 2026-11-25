@@ -1,41 +1,30 @@
 //! The render adapters the options window's Video tab lists: `device` (int 7). Index i is entry i of the
-//! list (0-based, no Default row — the engine's device index selects a listed adapter directly), sorted
-//! best-first ([`enumerate`]) so the factory default `device` 0 is the GPU Bevy would pick itself, like the
-//! engine's adapter 0 (the primary D3D adapter). An out-of-range index falls back to Bevy's default adapter.
+//! list (0-based, no Default row), sorted best-first ([`enumerate`]) so `device` 0 is the GPU Bevy would
+//! pick itself. An out-of-range index falls back to Bevy's default adapter.
 //!
-//! PORT: the engine lists the D3D adapters (`OptionsWindow::Load` fills the render-device dropdown from the
-//! graphics engine's adapter list); the port lists wgpu's adapters instead. The choice is applied at the NEXT
-//! launch only — `main` reads `device` before `DefaultPlugins` and sets the `bevy::render::settings::WgpuSettings`
-//! `adapter_name` / `backends` — there is no hot-swap. A stale index (the adapter disappeared) falls back to Bevy's default
-//! adapter selection.
+//! PORT: the engine lists the D3D adapters (`OptionsWindow::Load`); the port lists wgpu's adapters. The
+//! choice applies at the next launch only (`main` sets `WgpuSettings` `adapter_name` / `backends`).
 use bevy::prelude::*;
 
-/// One listed adapter: its name and backend as the dropdown row shows them (`[i] name (Backend)`).
+/// One listed adapter (`[i] name (Backend)` in the dropdown).
 pub struct RenderAdapter {
     pub name: String,
     pub backend: String,
 }
 
-/// The adapter list for the options Video tab (index i = entries[i], 0-based). `main` enumerates it once
-/// before the plugins build (the launch adapter choice reads it) and inserts it; the options window refreshes
-/// it when it opens.
 #[derive(Resource)]
 pub struct RenderAdapters {
     pub entries: Vec<RenderAdapter>,
 }
 
 impl RenderAdapters {
-    /// Re-enumerates the list.
     pub fn refresh(&mut self) {
         self.entries = enumerate();
     }
 }
 
-/// The host's wgpu adapters, best first and stable across launches: by device type (discrete, integrated,
-/// virtual, other, then software such as WARP's "Microsoft Basic Render Driver"), then backend (Vulkan, Metal,
-/// Dx12, Gl: the order wgpu's own adapter request prefers), then name. Identical (name, backend) pairs deduped.
-/// A name-only order would make index 0 — the default `device` — whatever sorts first alphabetically, e.g.
-/// the software WARP adapter on an NVIDIA-only Windows machine.
+/// The host's wgpu adapters, best first and stable across launches: by device type (software last), then
+/// backend (Vulkan, Metal, Dx12, Gl), then name. Identical (name, backend) pairs deduped.
 pub fn enumerate() -> Vec<RenderAdapter> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
@@ -57,14 +46,13 @@ pub fn enumerate() -> Vec<RenderAdapter> {
         .into_iter()
         .map(|info| RenderAdapter {
             name: info.name,
-            backend: format!("{:?}", info.backend),
+            backend: backend_name(info.backend).to_owned(),
         })
         .collect();
     entries.dedup_by(|a, b| a.name == b.name && a.backend == b.backend);
     entries
 }
 
-/// [`enumerate`]'s device type order: hardware GPUs first, software rasterizers last.
 fn type_rank(t: wgpu::DeviceType) -> u8 {
     match t {
         wgpu::DeviceType::DiscreteGpu => 0,
@@ -75,7 +63,7 @@ fn type_rank(t: wgpu::DeviceType) -> u8 {
     }
 }
 
-/// [`enumerate`]'s backend order: the native APIs wgpu's adapter request tries first, GL last.
+/// [`enumerate`]'s backend order: the order wgpu's adapter request tries, GL last.
 fn backend_rank(b: wgpu::Backend) -> u8 {
     match b {
         wgpu::Backend::Vulkan => 0,
@@ -86,17 +74,29 @@ fn backend_rank(b: wgpu::Backend) -> u8 {
     }
 }
 
-/// The `wgpu::Backend` a listed backend string names (the `Debug` spelling [`enumerate`] stores); None
-/// for an unknown string. `main` restricts `bevy::render::settings::WgpuSettings::backends` to it so a substring name match
-/// cannot pick an adapter of another backend.
-pub fn backend_of(backend: &str) -> Option<wgpu::Backend> {
-    match backend {
-        "Vulkan" => Some(wgpu::Backend::Vulkan),
-        "Metal" => Some(wgpu::Backend::Metal),
-        "Dx12" => Some(wgpu::Backend::Dx12),
-        "Gl" => Some(wgpu::Backend::Gl),
-        "BrowserWebGpu" => Some(wgpu::Backend::BrowserWebGpu),
-        "Noop" => Some(wgpu::Backend::Noop),
-        _ => None,
+const BACKENDS: [wgpu::Backend; 6] = [
+    wgpu::Backend::Vulkan,
+    wgpu::Backend::Metal,
+    wgpu::Backend::Dx12,
+    wgpu::Backend::Gl,
+    wgpu::Backend::BrowserWebGpu,
+    wgpu::Backend::Noop,
+];
+
+/// The backend's name as the dropdown row shows it and as `device` settings / `main` match it.
+pub fn backend_name(b: wgpu::Backend) -> &'static str {
+    match b {
+        wgpu::Backend::Vulkan => "Vulkan",
+        wgpu::Backend::Metal => "Metal",
+        wgpu::Backend::Dx12 => "Dx12",
+        wgpu::Backend::Gl => "Gl",
+        wgpu::Backend::BrowserWebGpu => "BrowserWebGpu",
+        wgpu::Backend::Noop => "Noop",
     }
+}
+
+/// The `wgpu::Backend` a listed backend string names ([`backend_name`]); None
+/// for an unknown string.
+pub fn backend_of(backend: &str) -> Option<wgpu::Backend> {
+    BACKENDS.into_iter().find(|b| backend_name(*b) == backend)
 }

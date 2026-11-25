@@ -6,29 +6,24 @@
 //! and indent from `records/game/gameengine.dbr` (`GameEngine::
 //! GetGameTextStyleName` / `GetGameTextStyleIndent`: the engine
 //! keeps a class -> style-record map loaded from that record's keys, see
-//! `gd_sim::items::tooltip::CLASS_KEYS`; cached in `ui::text::FontCache::class_style`, shared with `ui::tip`).
-//! Lines are rasterised through the shared text LRU (`FontCache::rasterize_cached`), so a rebuild
-//! (the inventory version's DPS change) reuses the unchanged lines' images.
+//! `gd_sim::items::tooltip::CLASS_KEYS`).
 //! Window: the `RolloverStyleUIHelp` record the exe selects
 //! (`style_itemsequipped` for an equipped item, else `style_itemsinventory`,
 //! exe `RolloverWindow::SetRollover`; `style_itemsground` for the ground labels'
 //! rollover): background colour + alpha, eight border bitmaps and
-//! `minCharsBeforeWrapping`. Line pads, icons, the wrap width and the window size: [`layout`],
-//! [`spawn_box`]; PORT: the placement (beside the cursor, kept on screen).
+//! `minCharsBeforeWrapping`. PORT: the placement (beside the cursor, kept on screen).
 //!
 //! Item styles (`gd_game::item_style`, a port addition): the name line of every box (the hovered item and the
-//! compared ones) takes the first matching style's tag and colour ([`style_name`]); the shown boxes rebuild when
-//! the styles' generation changes, not per frame.
+//! compared ones) takes the first matching style's tag and colour ([`style_name`]).
 //!
-//! Delay (the rollover window, `ui::tip` module doc): the window shows once the item has been hovered its
-//! style's `delay` ms (250 for `style_itemsinventory` / `style_itemsequipped`; `style_itemsground` has none), at once
-//! while game time is paused; another item restarts the count. Under the game menu nothing is hovered
-//! (`ui::rollover` module doc). The counter is the shared [`crate::tip::TipDelay`] (real time, the same rules).
+//! Delay: the window shows once the item has been hovered its style's `delay` ms (250 for
+//! `style_itemsinventory` / `style_itemsequipped`; `style_itemsground` has none), at once while game time
+//! is paused; another item restarts the count. Under the game menu nothing is hovered.
 //!
 //! Ground labels: `UIWorldDescManager::Update` (the ground label manager's update): the hovered label's tooltip
 //! opens when
 //! the option `autoItemTooltips` is on or the key action 36 ("Display World Item Tooltips", `keys::GROUND_TOOLTIP`, X by
-//! default) is held; the hovered label is `loot::HoveredLabel` (its drawn rect). (The engine's action numbers are `keys.rs`'s: 35 / 36 / 37 are Alt / X / Z.)
+//! default) is held; the hovered label is `loot::HoveredLabel` (its drawn rect).
 //!
 //! Comparison (GrimDawn.exe item rollover build `ItemRollover::Build`,
 //! compare list `ItemRollover::BuildCompareList` / `ItemRollover::FindCompareItems`): an item hovered outside
@@ -40,7 +35,7 @@
 //! `ItemBanner`): `tagItemCompareInventory` (bags, stash; the rollover's
 //! default), `tagItemCompareVendor` or `tagItemCompareGround` (the ground
 //! items widget `UIWorldDescManager::UIWorldDescManager`). PORT: the boxes sit side by side, tops
-//! aligned, 16 px apart, the compared ones first (as in the real game);
+//! aligned, 16 px apart, the compared ones first;
 //! the group goes right of the cursor when it fits,
 //! else left.
 use crate::state::inventory::InvLayout;
@@ -81,7 +76,7 @@ struct TooltipBox {
     /// x of this box in its group and the group's size (logical px).
     dx: f32,
     group: Vec2,
-    /// This box's own size (logical px): the cursor follow writes it back unchanged.
+    /// This box's own size (logical px).
     size: Vec2,
 }
 
@@ -104,7 +99,7 @@ impl Spot {
         }
     }
 
-    /// The rollover style of its window (module doc).
+    /// The rollover style of its window.
     fn style(self) -> &'static str {
         match self {
             Spot::Equipped => "records/ui/styles/rollover/style_itemsequipped.dbr",
@@ -170,19 +165,10 @@ fn wrap_sample(screen_w: u32) -> &'static str {
 
 /// Lays out and rasterises all lines; returns the placed images and the content size (px).
 ///
-/// Exe `RolloverWindow::Layout` layout, `RolloverWindow::Draw` draw; Game.dll `GameTextString` ctor
-/// `GameTextString::GameTextString` / `GameTextString::Initialize`: each line is a `GameTextString` with a left pad
-/// `(indent + 6) x UI
-/// scale` (the class's `GetGameTextStyleIndent`), a right pad `6 x scale`, and, with a bitmap, the icon
-/// (`GetIconWidth`: texture size x line scale x UI scale) between the left pad and the text plus one more
-/// right pad; its height is the text's (or the icon's when taller). The wrap width is the request's sample
-/// ([`wrap_sample`]) as a `GameTextString` of the request's style, which the item rollover leaves empty:
-/// `StyleManager::LoadStyle` of an unknown record gives the defaults `fonts/jura.fnt` at 16 (scaled, at
-/// least `lowResMinimumFontSize` 8), with the two pads. A line wider than that is wrapped to the width
-/// less its pads (and its icon; the icon stays on the first row); the content is as wide as the widest
-/// line (the sample itself does not count) and as tall as all lines; text and icon are drawn at the
-/// line's top. (`minCharsBeforeWrapping` of the rollover style is loaded, `RolloverStyleUIHelp::Load`, but this path
-/// never reads it.)
+/// `RolloverWindow::Layout` / `GameTextString::Initialize`: each line has a left pad `(indent + 6) x UI scale`,
+/// a right pad `6 x scale`, and an optional icon between the left pad and the text plus one more right pad.
+/// The wrap width is [`wrap_sample`] in the default style (`fonts/jura.fnt` at 16, at least 8) plus the pads;
+/// `minCharsBeforeWrapping` is never read.
 fn layout(
     gfx: &mut Gfx,
     fonts: &mut FontCache,
@@ -271,8 +257,7 @@ fn layout(
                 max_total - left - right
             }
         };
-        // The colour in effect carries over a `^n` break (real window: the `^w`
-        // before `^n(Used in amulets and medals)` makes that line white).
+        // The colour in effect carries over a `^n` break.
         let mut carry = String::new();
         let mut first = true;
         for part in text.split('\n') {
@@ -382,12 +367,10 @@ fn hover(
         Res<gd_ui_kit::keys::KeyBindings>,
         Option<Res<gd_game_core::stash::Stash>>,
         Res<gd_game_core::character::AnimCache>,
-        // The hovered item and its show delay (module doc, "Delay"; the shared `ui::tip::TipDelay`).
+        // The hovered item and its show delay.
         Local<(Option<(Item, Spot, Option<u64>)>, gd_ui_kit::tip::TipDelay)>,
-        // `Inventory::version` and the item styles' generation the shown box was built at: a weapon swap or any
-        // equipment change rebuilds the compare box and DPS change, a style edit the name line.
+        // `Inventory::version` and the item styles' generation the shown box was built at.
         Local<(u64, u32)>,
-        // The name line's item style (`gd_game::item_style`, a port addition).
         Res<gd_game::item_style::ItemStyles>,
     ),
 ) {
@@ -400,9 +383,7 @@ fn hover(
         return;
     };
     let anim_frames = anims.shared();
-    // `GD_HOVER` (hooks.rs) stands in for the mouse.
     let cursor = gd_ui_kit::cursor_px(win).map(|p| p / win.scale_factor());
-    // What is under the cursor.
     let mut hovered: Hovered = None;
     if let Some(c) = cursor
         && inv.held.is_none()
@@ -439,7 +420,7 @@ fn hover(
             // A hot slot pick list's scroll (`GetPotionTextOfType`: the first carried item).
             hovered = Some((Cow::Borrowed(item), Spot::Inventory, None));
         } else if let Some((item, _)) = gfx.quest.hovered_item() {
-            // The Quest Complete window's item icon (`ui/questpopup.rs`).
+            // The Quest Complete window's item icon.
             hovered = Some((Cow::Owned(item), Spot::Inventory, None));
         } else if let Some(item) = &gfx.shrine.hover_item {
             hovered = Some((Cow::Borrowed(item), Spot::Inventory, None));
@@ -456,7 +437,6 @@ fn hover(
                 .map(|i| (Cow::Borrowed(i), Spot::Ground, None));
         }
     }
-    // `GD_HOVER_ITEM` (hooks.rs; with `GD_HOVER`, optionally `GD_HOVER_PRICE`): shows that item's tooltip.
     #[cfg(feature = "dev")]
     if let Some(v) = hooks.items.hover_item.as_deref() {
         let mut it = v.split(',').map(str::to_string);
@@ -474,7 +454,6 @@ fn hover(
         };
         let price = hooks.items.hover_price;
 
-        // `GD_HOVER_SPOT` (default: a bag item).
         let spot = match hooks.items.hover_spot.as_deref() {
             Some("ground") => Spot::Ground,
             Some("equipped") => Spot::Equipped,
@@ -482,8 +461,8 @@ fn hover(
         };
         hovered = Some((Cow::Owned(item), spot, price));
     }
-    // The game menu takes the mouse: nothing under it is hovered (`ui::rollover` module doc); nor under a
-    // modal question or the stack window (whose buttons the tooltip would cover).
+    // The game menu takes the mouse; nor under a modal question or the stack window
+    // (whose buttons the tooltip would cover).
     if gfx.pause.menu
         || crate::apply::question_up(&inv, &gfx.trade, &gfx.confirm)
         || cursor.is_some_and(|c| gfx.stack.covers(c * win.scale_factor()))
@@ -579,7 +558,6 @@ fn hover(
             dps_offhand: None,
             weapon_anim_rate,
         };
-        // The worn items it is compared with.
         let ty = |it: &Item| {
             idb.get(&it.base_name)
                 .map_or(0, |r| gd_sim::items::illusion::item_type(&r.class))
@@ -606,9 +584,7 @@ fn hover(
             && let (Ok((cb, loadout, caster, links, character)), Some(rules)) =
                 (players.single(), gfx.rules.as_ref())
         {
-            // `compare_dps` rebuilds the player's profile twice (about 75 ms each): it runs on the task pool
-            // and the tooltip waits for it (nothing drawn meanwhile); results last until the inventory
-            // or the level changes.
+            // `compare_dps` runs on the task pool; the tooltip waits for it (nothing drawn meanwhile).
             let sig = (inv.version, cb.profile.level);
             if dps.sig != sig {
                 dps.sig = sig;
@@ -662,7 +638,7 @@ fn hover(
                         (dps_delta, dps_offhand) = v;
                     }
                     None => {
-                        // Not ready: ask again next frame (`shown` no longer matches `hovered`).
+                        // Not ready: ask again next frame.
                         *shown = None;
                         return;
                     }
@@ -796,8 +772,7 @@ fn hover(
         }
         return;
     }
-    // Follow the cursor, kept inside the window; shown once its style's delay has passed (module doc,
-    // "Delay"; the counter is the shared `ui::tip::TipDelay`).
+    // Follow the cursor, kept inside the window; shown once its style's delay has passed.
     let Some(c) = cursor else { return };
     if !tip_shown {
         return;
@@ -873,12 +848,8 @@ fn spawn_box(
         f("backgroundColorAlpha", 0.9),
     );
     let (placed, mut content) = layout(gfx, fonts, lines, name_color, s, win.physical_width());
-    // The window is its text box (exe `RolloverWindow::GetSize` size / `RolloverWindow::Layout` text box: the box
-    // plus, from the style's border object, a rect each of the upper-left, left / right and top / bottom
-    // bitmaps read through `UIBitmapBorder::GetPieceSize` (width / height); those add nothing for the stock
-    // rollover styles: the
-    // real game's ground-item box is 362 px for a 351 px line, its text 6 px in, the lines' own pads). The
-    // border bitmaps are drawn over the box's edges; its height is held to the screen less 10 px.
+    // The window is its text box (`RolloverWindow::GetSize`; the stock border pieces add nothing).
+    // The border bitmaps are drawn over the box's edges; its height is held to the screen less 10 px.
     content.y = content.y.min(win.physical_height() as f32 - 10.0);
     let (w, h) = (content.x, content.y);
     let node = |x: f32, y: f32, w: f32, h: f32| Node {
@@ -902,8 +873,8 @@ fn spawn_box(
             Visibility::Hidden,
         ))
         .id();
-    // The border chrome is the shared `Ui::border_over` (MOD-3): the rollover box draws the eight
-    // bitmaps over its edges with the style's 1 px `borderCorrectionOffset*` correction.
+    // The rollover box draws the eight border bitmaps over its edges with the style's 1 px
+    // `borderCorrectionOffset*` correction.
     let keys = [
         "upperLeftTexture",
         "upperRightTexture",

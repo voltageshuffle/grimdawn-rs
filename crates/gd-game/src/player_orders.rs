@@ -1,36 +1,25 @@
 //! Player orders: what the game's mouse and keyboard handlers decided, applied to the player.
 //!
-//! The input side (grimdawn `player.rs`: `click_to_move`, `wasd_move`, in [`PlayerInputSet`]) reads the buttons,
-//! the cursor ray and the hovered object and writes [`PlayerOrder`]s; [`apply_orders`] applies them in order in
-//! the same frame, before the walk advances (`MovementStage::Follow`). An order is one of the engine's controller
-//! requests:
-//! - the held button's repeat timer (`MovePath::repath`, `InGameUI::HandleMouseEvent`'s
-//!   `InGameUI.commandWait`, [`command_wait`]);
-//! - a walk to an object the player interacts with ([`PlayerOrder::Interact`], `MoveToNpc` / `MoveToFixedItem` /
-//!   `MoveAndPickUpItem`), an attack on a foe (`SelectPrimaryAction`): one
-//!   use of the primary attack ([`PrimaryUse`]), repeated only while the button is held;
-//! - a plain move ([`crate::movement::request_move`]): to the object's coordinates when there is one, else the
-//!   ground point under the cursor. PORT: the engine moves to the object's coordinates only; a request the rules
-//!   drop falls back to the ground point;
+//! The input side ([`PlayerInputSet`]) writes [`PlayerOrder`]s; [`apply_orders`] applies them in order the same
+//! frame, before the walk advances. An order is one of the engine's controller requests:
+//! - the held button's repeat timer (`InGameUI.commandWait`, [`command_wait`]);
+//! - a walk to an object the player interacts with (`MoveToNpc` / `MoveToFixedItem` / `MoveAndPickUpItem`), an
+//!   attack on a foe (`SelectPrimaryAction`): one use of the primary attack ([`PrimaryUse`]);
+//! - a plain move: to the object's coordinates when there is one, else the ground point under the cursor.
+//!   PORT: the engine moves to the object's coordinates only; a request the rules drop falls back to the ground
+//!   point;
+//! - the keyboard movement (`InGameUI::Update`): the controller direction, a turn toward a look-at point
+//!   (`RequestRotateAction`) and a hop 1.25 m ahead. PORT: the engine reaches the hop with a short plain move;
+//!   here a strict nav path.
 //!
-//! One interaction target ([`InteractTarget`], a component of the player controller) replaces the engine's one
-//! controller state (`MoveToFixedItem` / `MoveToNpc` / `MoveToItem`): [`apply_orders`] sets it for an
-//! [`PlayerOrder::Interact`] (or the Interact key's [`crate::controller_target::UseObject`]) and walks beside the
-//! object with a single path search; the object's own use system (chests, doors, shrines, riftgates, the altar,
-//! the gravestone, NPCs, ground items) takes it once in reach, routing by the entity's component. Every new order
-//! (Clear / Move / Attack / Interact, the keyboard's move and hop) drops it, as a new primary action replaces the
-//! controller state (`InGameUI::HandleMouseEvent`'s `SelectPrimaryAction`); a started attack / cast /
-//! evade drops it too (`follow_path`), and a target that left the world expires. The session's end despawns the
-//! player with it.
+//! One interaction target ([`InteractTarget`]) replaces the engine's controller state (`MoveToFixedItem` /
+//! `MoveToNpc` / `MoveToItem`); the object's own use system takes it once in reach. Every new order drops it, as
+//! a new primary action replaces the controller state; a started attack / cast / evade drops it too, and a
+//! target that left the world expires.
 //!
-//! A move requested mid-swing / mid-cast / mid-evade is remembered in the character's pending-action slot
-//! ([`gd_game_core::character::QueuedAction`], last request wins) and runs at the clip's `AllowInterrupt` point or its
-//! "End" (`follow_path`); the engine's one-slot action queue, `CharacterHandlerUpdate`.
-//!
-//! - the keyboard movement (`InGameUI::Update`): the controller direction
-//!   ([`ControllerDirection`]), a turn
-//!   toward a look-at point (`RequestRotateAction`) and a hop 1.25 m ahead. PORT: the engine reaches the hop with
-//!   a short plain move; here a strict nav path.
+//! A move requested mid-swing / mid-cast / mid-evade waits in the character's pending-action slot
+//! ([`gd_game_core::character::QueuedAction`], last wins) until the clip's `AllowInterrupt` point or its "End"
+//! (the engine's one-slot action queue, `CharacterHandlerUpdate`).
 use crate::movement::{MovePath, MovementStage, apply_move_order};
 use crate::nav::Nav;
 use bevy::ecs::entity::Entities;
@@ -40,26 +29,22 @@ use gd_game_core::combat::{Combatant, Dead};
 use gd_game_core::data::GameData;
 use gd_game_core::player::{ControllerDirection, Player, PlayerSet};
 
-/// The input systems that write [`PlayerOrder`]s (the game's mouse and keyboard handlers).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerInputSet;
 
-/// One request of the player's input to its controller (module doc).
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub enum PlayerOrder {
     /// The held button's repeat timer runs for this many seconds.
     Elapse(f32),
-    /// Drops the attack target and the pending interaction.
     Clear,
-    /// Walks beside the object `0` and interacts with it once in reach (its own use system routes by component),
-    /// dropping the attack target and the pending interaction. A non-interactable object (a described decoration)
-    /// is only walked to.
+    /// Walks beside the object `0` and interacts with it once in reach, dropping the attack target and the
+    /// pending interaction. A non-interactable object is only walked to.
     Interact(Entity),
     /// One use of the primary attack on `0` ([`PrimaryUse`]): walks into reach and swings / casts once. A new
     /// target stops the walk; the held button's repeat on the same one keeps it.
     Attack(Entity),
-    /// A plain move to `to`, else to `ground`; `camera` is the camera position (the retry of a point above the
-    /// player). Sets the repeat timer.
+    /// A plain move to `to`, else to `ground`; `camera` is for the retry of a point above the player. Sets the
+    /// repeat timer.
     Move {
         to: Option<Vec3>,
         ground: Option<Vec3>,
@@ -73,31 +58,26 @@ pub enum PlayerOrder {
     },
     /// Turns toward a look-at point (`RequestRotateAction`).
     Turn(Vec3),
-    /// The keyboard's hop to a point ahead (its height taken from the nav ground there).
+    /// The keyboard's hop to a point ahead (its height from the nav ground there).
     Hop(Vec3),
 }
 
-/// The wait before a held button (or the held Move key) issues its next command, in seconds.
-/// `InGameUI::HandleMouseEvent`: the timer `InGameUI.commandWait` is 10 ms when the command was
-/// taken (`HandleActionFromMouse` true) or the player
-/// is moving (`ControllerAI::IsMoving`), else 50 ms.
+/// The wait before a held button (or the held Move key) issues its next command, in seconds
+/// (`InGameUI::HandleMouseEvent`): 10 ms when the command was taken or the player is moving, else 50 ms.
 pub fn command_wait(taken: bool, moving: bool) -> f32 {
     if taken || moving { 0.010 } else { 0.050 }
 }
 
-/// The player controller's pending interaction (module doc): the object walked to and used once in reach. One
-/// target for every interactable kind; the use systems route by the entity's component and clear it on use.
+/// The player controller's pending interaction; the use systems route by the entity's component and clear it
+/// on use.
 #[derive(Component, Default)]
 pub struct InteractTarget(pub Option<Entity>);
 
-/// The click's attack order is one use of the primary attack: `SelectPrimaryAction`'s UseSkill controller state ends
-/// once its skill was used, and only the held button's repeat (grimdawn `player.rs`, every 10 / 50 ms) asks again, so
-/// a click attacks once and a held button keeps attacking. [`PlayerOrder::Attack`] arms it; the swing / cast that
-/// starts on [`Combatant::target`] spends it (`combat::player_attack`, `casting::spell_attack_target`), and so does
-/// any skill request that runs (a hot slot key, the right button: `casting::cast_requests`), as a new controller
-/// state replaces the UseSkill one. The target stays the running swing's (its hit lands on it) and is dropped when the
-/// action ends unarmed. A skill queued meanwhile goes before the next primary use (the action queue's pending slot,
-/// [`gd_game_core::character::QueuedAction`]): between two held attacks.
+/// One use of the primary attack: `SelectPrimaryAction`'s UseSkill controller state ends once its skill was
+/// used, so a click attacks once and only the held button's repeat attacks again. [`PlayerOrder::Attack`] arms
+/// it; the swing / cast that starts on [`Combatant::target`] spends it, and so does any skill request that runs,
+/// as a new controller state replaces the UseSkill one. The target stays the running swing's and is dropped when
+/// the action ends unarmed. A skill queued meanwhile goes before the next primary use.
 #[derive(Component, Default)]
 pub struct PrimaryUse(pub bool);
 
@@ -120,10 +100,9 @@ impl Plugin for PlayerOrdersPlugin {
     }
 }
 
-/// What an interact order walks to and uses (module doc): the walk goal's ring radius and its kind. Inserted at
-/// spawn by every interactable object (chests, doors, devotion shrines, riftgates, portals, dynamic rifts, the
-/// endless dungeon's gates and shrines, the gravestone, the ascendant altar; ground items and characters by the
-/// observers below), so [`apply_orders`] reads one query. An entity without it is only walked to.
+/// What an interact order walks to and uses: the walk goal's ring radius and its kind. Every interactable
+/// object inserts it at spawn (ground items and characters by the observers below). An entity without it is
+/// only walked to.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Interactable {
     pub radius: f32,
@@ -139,14 +118,14 @@ impl Interactable {
     }
 }
 
-/// How an interact walk is planned: an NPC's failed path falls back to a straight move to it (`talk_input`'s PORT).
+/// How an interact walk is planned: an NPC's failed path falls back to a straight move to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InteractKind {
     Fixed,
     Npc,
 }
 
-/// A ground item's [`Interactable`]: its record's item radius (`crate::loot_filter::item_radius`; gold: 0).
+/// A ground item's [`Interactable`]: its record's item radius (gold: 0).
 fn ground_item_interactable(
     ev: On<Insert<crate::loot::GroundItem>>,
     items: Query<&crate::loot::GroundItem>,
@@ -164,8 +143,7 @@ fn ground_item_interactable(
     commands.entity(ev.entity).insert(Interactable::fixed(r));
 }
 
-/// A non-player character's [`Interactable`] (NPCs are talked to; monsters and pets are attacked, never sent
-/// here): its record's radius.
+/// A non-player character's [`Interactable`] (only NPCs are interacted with): its record's radius.
 fn character_interactable(
     ev: On<Insert<Character>>,
     chars: Query<&Character>,
@@ -188,8 +166,7 @@ fn character_interactable(
     });
 }
 
-/// Routes an interact request (a click or the Interact key): drop the attack target and the pending interaction,
-/// set the new target and walk beside it with one path search (module doc).
+/// Routes an interact request (a click or the Interact key).
 #[allow(clippy::too_many_arguments)]
 fn apply_interact(
     e: Entity,
@@ -204,13 +181,11 @@ fn apply_interact(
 ) {
     cb.target = None;
     interact.0 = None;
-    // A new command supersedes the pending slot (last wins).
     ch.queued = None;
     let Ok((gt, it)) = objects.get(e) else {
         return;
     };
     let at = gt.translation();
-    // A non-interactable object (a described decoration): walk to its coordinates only.
     let r = it.map_or(0.6, |i| i.radius);
     if it.is_some() {
         interact.0 = Some(e);
@@ -218,13 +193,12 @@ fn apply_interact(
     if let Some(p) = crate::chests::path_near(&nav.0, scratch, from, at, r) {
         path.points = p;
     } else if it.is_some_and(|i| i.kind == InteractKind::Npc) {
-        // No nav path (e.g. a cell a new defense turret blocks): a straight move, not a talk from afar that
-        // `run_conversations` closes at once (PORT, `DefaultRequestMoveAction`'s `FindPath` fallback).
+        // No nav path: a straight move, not a talk from afar that `run_conversations` closes at once
+        // (PORT, `DefaultRequestMoveAction`'s `FindPath` fallback).
         path.points = vec![at];
     }
 }
 
-/// Applies the frame's [`PlayerOrder`]s to the (living) player, in order.
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn apply_orders(
@@ -256,7 +230,6 @@ pub fn apply_orders(
         return;
     };
     let from = tf.translation;
-    // A target that left the world (opened, taken, despawned) expires.
     if interact.0.is_some_and(|e| !entities.contains(e)) {
         interact.0 = None;
     }
@@ -284,16 +257,14 @@ pub fn apply_orders(
                 );
             }
             PlayerOrder::Attack(e) => {
-                // The held button's repeat on the same target keeps the walk to it.
                 if cb.target != Some(e) {
                     path.points.clear();
                 }
                 cb.target = Some(e);
                 primary.0 = true;
                 interact.0 = None;
-                // A new command supersedes a pending move (last wins); a queued skill stays and runs before the
-                // attack ([`PrimaryUse`]), as the action queue drops a primary attack request while a skill waits
-                // (`AttackAction::QueryActionPermission`, `casting::cast_requests`).
+                // A queued skill stays and runs before the attack: the action queue drops a primary attack
+                // request while a skill waits (`AttackAction::QueryActionPermission`).
                 ch.queued
                     .take_if(|q| matches!(q, gd_game_core::character::QueuedAction::Move(_)));
             }
@@ -308,14 +279,12 @@ pub fn apply_orders(
                         | gd_game_core::character::CharState::Pickup
                 );
                 if busy && !ch.can_act() {
-                    // Remembered, not dropped: it runs at the clip's `AllowInterrupt`
-                    // point or its "End" (`follow_path`, the action queue).
+                    // Runs at the clip's `AllowInterrupt` point or its "End".
                     ch.queued = Some(gd_game_core::character::QueuedAction::Move(order));
                 } else {
                     if busy {
                         // Recovery cancel: the cancelled remainder becomes the attack-delay
-                        // (`AttackAction::QueryActionPermission`); the evade's
-                        // components go with its state (`evade::evading`).
+                        // (`AttackAction::QueryActionPermission`).
                         if matches!(
                             ch.state,
                             gd_game_core::character::CharState::Attack
@@ -337,7 +306,7 @@ pub fn apply_orders(
                 }
             }
             PlayerOrder::Controller { dir, length, aim } => {
-                // A held direction moves the player: it drops the pending interaction (a release does not).
+                // A held direction drops the pending interaction (a release does not).
                 if length > 0.0 {
                     interact.0 = None;
                 }
@@ -367,7 +336,6 @@ pub fn apply_orders(
             }
         }
     }
-    // The Interact key's request (`gd_game::controller_target::UseObject`) routes as a click on the object.
     for u in used.read() {
         primary.0 = false;
         apply_interact(

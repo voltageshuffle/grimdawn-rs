@@ -1,15 +1,12 @@
 //! The mixer ([`Bus`]): every sound entity's [`Voice`] is summed in blocks of [`BLOCK`] frames on the audio thread,
-//! and a port-owned rodio sink plays that one stereo stream at the selected device's rate ([`start_bus`]):
-//! bevy_audio 0.20 opens only the default sink (no public device hook). A `soundDevice` change reopens the sink
-//! without dropping the voice queue or the playing voices ([`switch_device`], `devices`).
+//! and a port-owned rodio sink plays that one stereo stream at the selected device's rate ([`start_bus`]). A
+//! `soundDevice` change reopens the sink without dropping the voice queue or the playing voices ([`switch_device`]).
 //!
-//! PORT (deliberate): rodio plays every sink through a chain of generic per-sample sources (speed, position, pause,
-//! volume, the mixer's resampler); a fight's 60+ voices starved the device callback that way. The bus costs well under
-//! 0.1% of a core per voice. WAVs up to [`BUFFER_BYTES`] are decoded once, in the background, and then play from
-//! memory (the engine's sound buffers); `.ogg` files and bigger WAVs are decoded while they play (the engine's
-//! streams), a looped one's next pass from a decoder built on the game thread ([`Spare`]). The pitch / rate
-//! conversion of each file is linear interpolation, as rodio's. 2D sounds (music, ambient loops, dialog, stereo files:
-//! the engine's `Play2D` / `StartStream`) pass through without ear gains.
+//! WAVs up to [`BUFFER_BYTES`] are decoded once, in the background, and play from memory (the engine's sound
+//! buffers); `.ogg` files and bigger WAVs are decoded while they play (the engine's streams), a looped one's next
+//! pass from a decoder built on the game thread ([`Spare`]). PORT: the pitch / rate conversion is linear
+//! interpolation. 2D sounds (music, ambient loops, dialog, stereo files: the engine's `Play2D` / `StartStream`)
+//! pass through without ear gains.
 use super::Sounds;
 use super::cache::Loaded;
 use super::devices::{self, AudioDevices};
@@ -69,8 +66,7 @@ pub fn spawn_2d(
 }
 
 /// A sound fading out to silence, then despawned: `SoundManager::FadeSound` / `SoundManager::Update`
-/// (`timeLeft -= min(dt, 100)`, volume = start × timeLeft / total). Used by the boss / event music and
-/// the weather loops.
+/// (`timeLeft -= min(dt, 100)`, volume = start × timeLeft / total).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Fade {
     from: f32,
@@ -134,9 +130,7 @@ pub(super) struct Pcm {
 }
 
 /// One file to play: a mono one heard in 3D (`ears` Some), or a 2D one (music, ambient loops, stereo files: `ears`
-/// None, the samples pass through). `looped` repeats the file inside the voice. The engine plays music, ambient loops
-/// and dialog 2D (`Play2D` / `StartStream`); a stereo file cannot be a 3D buffer
-/// (`pak` module doc).
+/// None, the samples pass through). `looped` repeats the file inside the voice.
 pub struct Voice3d {
     file: AudioSource,
     /// The decoded file; `None`: the file streams.
@@ -226,9 +220,9 @@ impl Voice3d {
 /// A file's decoder as bevy_audio builds it.
 type FileDecoder = <AudioSource as Decodable>::Decoder;
 
-/// A looped stream's decoder for its next pass: built on the game thread ([`refill_spares`]) and swapped in by the
-/// mixer at the loop's seam, so the audio thread never probes a file or sets up a Vorbis decoder. After the swap the
-/// slot holds the spent decoder until the refill drops it.
+/// A looped stream's decoder for its next pass: built on the game thread ([`refill_spares`]), never on the audio
+/// thread, and swapped in by the mixer at the loop's seam. After the swap the slot holds the spent decoder until the
+/// refill drops it.
 struct Spare {
     file: AudioSource,
     slot: Mutex<Option<FileDecoder>>,
@@ -314,8 +308,7 @@ impl Drop for Voice {
 /// The mixer's rate without an output device to ask ([`start_bus`]).
 const FALLBACK_HZ: u32 = 44100;
 
-/// Frames mixed at a time (5.8 ms at 44.1 kHz); a voice's volume and pan changes ramp across one, as rodio's sink
-/// applied them every 5 ms.
+/// Frames mixed at a time (5.8 ms at 44.1 kHz); a voice's volume and pan changes ramp across one.
 const BLOCK: usize = 256;
 
 /// A WAV of at most this many bytes (24 s of 16-bit 44.1 kHz mono) is decoded once when loaded and played from
@@ -323,8 +316,7 @@ const BLOCK: usize = 256;
 pub(super) const BUFFER_BYTES: usize = 4 << 20;
 
 /// The game's mixer: every voice summed in blocks of [`BLOCK`] frames into one endless stereo span at the device's
-/// rate (`hz`). Shared behind a mutex so a device switch ([`open_bus`]) moves it to the new sink with the voice
-/// queue and the playing voices intact.
+/// rate (`hz`). Shared behind a mutex so a device switch ([`open_bus`]) keeps the voices.
 pub(super) struct BusState {
     rx: mpsc::Receiver<BusVoice>,
     hz: u32,
@@ -356,11 +348,9 @@ impl BusState {
     }
 }
 
-/// The mixer's rodio source: one [`BLOCK`]-frame span at a time out of the shared [`BusState`] — one lock per
-/// block, not per sample.
+/// The mixer's rodio source: one [`BLOCK`]-frame span at a time out of the shared [`BusState`].
 struct Bus {
     state: Arc<Mutex<BusState>>,
-    /// The current block copied out of the state.
     out: Box<[f32]>,
     at: usize,
 }
@@ -809,9 +799,8 @@ pub(super) struct BusSink {
     device: i32,
 }
 
-/// Starts the mixer: the voice queue and the shared mixing state, then the port-owned rodio sink on the options'
-/// `soundDevice` ([`open_bus`]). bevy_audio 0.20 opens only the default sink (no public device hook), so the port
-/// owns this one; it plays for the whole process, reopened on a device change ([`switch_device`]).
+/// Starts the mixer: the voice queue and the shared mixing state, then the rodio sink on the options'
+/// `soundDevice` ([`open_bus`]).
 pub(super) fn start_bus(
     mut sounds: ResMut<Sounds>,
     options: Res<GameOptions>,
@@ -829,10 +818,9 @@ pub(super) fn start_bus(
 }
 
 /// Opens the bus's sink on the `soundDevice` index (0 = system default) and appends a [`Bus`] reading the shared
-/// mixing state. A selected device that fails to open falls back to the default sink and is recorded as index 0,
-/// so a re-Apply of the same `soundDevice` retries it ([`switch_device`]); no sink at all keeps the
-/// current one playing (at startup: silence, [`FALLBACK_HZ`]). The state — the voice queue and the playing voices —
-/// survives the switch; the voices rescale to the new rate.
+/// mixing state. A selected device that fails to open falls back to the default sink and is recorded as index 0;
+/// no sink at all keeps the current one playing (at startup: silence, [`FALLBACK_HZ`]). The voices survive the
+/// switch, rescaled to the new rate.
 fn open_bus(sounds: &mut Sounds, devices: &AudioDevices, index: i32) {
     let Some(state) = sounds.bus_state.clone() else {
         return;
@@ -877,9 +865,7 @@ fn open_bus(sounds: &mut Sounds, devices: &AudioDevices, index: i32) {
     info!("sound mixer at {hz} Hz");
 }
 
-/// The options window's Apply changing `soundDevice`: reopens the bus's sink on the new device, keeping the voice
-/// queue and the playing voices ([`open_bus`]). PORT: the engine stores a device index too; hotplug shifts the
-/// enumeration under a saved index — the same weakness (a stale index falls back to the default).
+/// The options window's Apply changing `soundDevice`: reopens the bus's sink on the new device ([`open_bus`]).
 pub(super) fn switch_device(
     options: Res<GameOptions>,
     devices: Res<AudioDevices>,
@@ -939,12 +925,9 @@ pub(super) fn focus_pause(
     }
 }
 
-/// Volumes from the options, the game pause and the window focus (module docs). In `Last`, after every system that
-/// starts a sound, so a sound started this frame plays from this frame's mix on. A voice's volume is written when it
-/// starts, its [`BaseVolume`] changes or the option volumes are read again (`Listener::sync_volumes`); its pause when
-/// it starts or the pause / focus changes.
-/// While the game is held every voice is paused (it resumes where it stopped) except those marked
-/// [`PlaysWhilePaused`]; an unfocused window pauses them all.
+/// Volumes from the options, the game pause and the window focus. In `Last`, after every system that starts a
+/// sound, so a sound started this frame plays from this frame's mix on. While the game is held every voice is
+/// paused except those marked [`PlaysWhilePaused`]; an unfocused window pauses them all.
 pub(super) fn mix(
     options: Res<GameOptions>,
     pause: Res<GamePause>,

@@ -1,5 +1,4 @@
-//! Loads the session's [`CombatRules`] at its difficulty (the rules data is
-//! [`gd_game_core::rules`]).
+//! Loads the session's [`CombatRules`] at its difficulty.
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 use gd_game_core::rules::{CombatRules, RulesFailed};
@@ -20,7 +19,6 @@ impl Plugin for RulesPlugin {
     }
 }
 
-/// The rules, at the session's difficulty (game balance level).
 fn load_rules(
     mut commands: Commands,
     data: Res<GameData>,
@@ -29,7 +27,6 @@ fn load_rules(
     match Rules::load(&data.db) {
         Ok(r) => {
             let difficulty = mode.0.difficulty;
-            // The session's choice (Veteran / Ultimate Veteran).
             let veteran = mode.0.veteran() || mode.0.ultimate_veteran();
             commands.insert_resource(CombatRules(Arc::new(
                 r.with_difficulty(difficulty)

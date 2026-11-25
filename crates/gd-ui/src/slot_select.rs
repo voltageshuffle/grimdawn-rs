@@ -1,6 +1,5 @@
-//! `SlotSelectWindow` pick lists (`slotselectwindow.tpl` records): the
-//! potions window's modifier list (`skillSelect`, `ui/potions.rs`) and the
-//! HUD's hot slot list (`hudSlotSelectWindow`, `ui/hotbar_pick.rs`).
+//! `SlotSelectWindow` pick lists (`slotselectwindow.tpl` records): the potions window's modifier list
+//! (`skillSelect`) and the HUD's hot slot list (`hudSlotSelectWindow`).
 //!
 //! `SlotSelectWindow` (loader `SlotSelectWindow::Load`, layout `SlotSelectWindow::Layout` /
 //! `SlotSelectWindow::RefreshLayout`, draw `SlotSelectWindow::Draw`, mouse `SlotSelectWindow::HandleMouseEvent`; the
@@ -12,9 +11,8 @@
 //!   height, `button{X,Y}PixelSeparator` between columns / rows;
 //! - the background colour rect with the `genericrolloverbox_*` frame
 //!   outside it, kept a frame corner + 25 px inside the screen;
-//! - a hovered pick tints the pick template's `displayBitmap`
-//!   (1, 1, 1, 0.55) over its text part (right of the icon); [`draw_live`] draws the tint hidden per
-//!   row ([`PickHover`]) for the owner window's live system to show (no rebuild on hover);
+//! - a hovered pick tints the pick template's `displayBitmap` (1, 1, 1, 0.55) over its text part (right
+//!   of the icon);
 //! - an empty pick (no option) shows the template's `displayBitmap` as its
 //!   icon and its `displayTag` text (`SlotSelectPick::GetSize`).
 //! - a pick's look ([`PickLook`], update `SlotSelectPick::Update`, draw `SlotSelectPick::Draw`, hit test
@@ -48,7 +46,7 @@ pub struct Pick {
     pub look: PickLook,
 }
 
-/// A pick's row look (module doc; the devotion list sets them, `DevotionSkillSelectWindow::Filter`).
+/// A pick's row look (the devotion list sets them, `DevotionSkillSelectWindow::Filter`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PickLook {
     #[default]
@@ -59,17 +57,14 @@ pub enum PickLook {
     Selected,
 }
 
-/// A pick row's hidden hover tint ([`draw_live`]): the owner window's live system shows the hovered
-/// row's, so hovering the list does not rebuild the window.
+/// A pick row's hidden hover tint; the owner window's live system shows the hovered row's.
 #[derive(Component)]
 pub struct PickHover(pub usize);
 
-/// A paged list's arrow hidden hover tint ([`draw_paged`]): previous (`false`) / next (`true`), shown
-/// in place by the owner window's live system.
+/// A paged list's arrow hidden hover tint: previous (`false`) / next (`true`).
 #[derive(Component)]
 pub struct ArrowHover(pub bool);
 
-/// Which hidden hover tint a live-drawn pick gets.
 #[derive(Clone, Copy)]
 enum LiveTint {
     Row(usize),
@@ -85,8 +80,7 @@ pub enum Place {
     /// The HUD list: its bottom at the slot's top (`HotSlotPickList::HandleMouseEvent`: y = slot
     /// y − bottom offset − list height).
     Above(URect),
-    /// The base window's own placement (draw `SlotSelectWindow::Draw`, flag `SlotSelectWindow.centerOnPoint` set by
-    /// the constructor `SlotSelectWindow::SlotSelectWindow` and cleared by nothing): centred on the
+    /// The base window's own placement (`SlotSelectWindow.centerOnPoint`, always set): centred on the
     /// point (the devotion window's star centre).
     Centred(Vec2),
 }
@@ -102,14 +96,13 @@ const FRAME: [&str; 8] = [
     "ui/generic/genericrolloverbox_edgeright.tex",
 ];
 
-/// The pick template record's empty pick (`displayBitmap`, `displayTag`
-/// localized).
+/// The pick template record's empty pick.
 pub fn empty_pick(ui: &mut Ui, sel: &Record) -> Pick {
     display_pick(ui, sel.str("pickTemplate").unwrap_or(""))
 }
 
-/// A pick template record's own pick (`displayBitmap` icon, `displayTag` text localized): the empty
-/// pick and the paging arrows.
+/// A pick template record's own pick (`displayBitmap` icon, `displayTag` text): the empty pick and the
+/// paging arrows.
 fn display_pick(ui: &mut Ui, path: &str) -> Pick {
     let rec = ui.record(path);
     let name = rec
@@ -172,8 +165,7 @@ pub fn draw(
     (lr, rows)
 }
 
-/// [`draw`] whose hover tint moves in place: every enabled row gets a hidden [`PickHover`] quad the
-/// owner window's live system shows (no `hover` argument, no rebuild on hover).
+/// [`draw`] with a hidden [`PickHover`] quad per enabled row instead of a `hover` argument.
 pub fn draw_live(
     ui: &mut Ui,
     sel: &Record,
@@ -185,9 +177,8 @@ pub fn draw_live(
     (lr, rows)
 }
 
-/// [`draw_live`] with the HUD list's paging (`None` = the base window, no
-/// paging): the rows' and the arrows' hover tints are hidden ([`PickHover`], [`ArrowHover`]) for the
-/// owner window's live system. Picks off the page get an empty rect.
+/// [`draw_live`] with the HUD list's paging (`None` = the base window, no paging); the arrows get hidden
+/// [`ArrowHover`] tints. Picks off the page get an empty rect.
 pub fn draw_paged(
     ui: &mut Ui,
     sel: &Record,
@@ -200,7 +191,6 @@ pub fn draw_paged(
 }
 
 /// [`draw_paged`] with the live-hover mode ([`draw_live`]).
-// The paging draw's seven arguments plus the live-hover flag.
 #[allow(clippy::too_many_arguments)]
 fn draw_paged_live(
     ui: &mut Ui,

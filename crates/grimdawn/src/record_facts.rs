@@ -21,29 +21,24 @@ impl Plugin for RecordFactsPlugin {
     }
 }
 
-/// The engine's outline colours and the per-record facts.
 #[derive(Resource, Default)]
 pub struct RecordFacts {
-    /// Object, friend, enemy outline colours (`GameEngine::LoadFromDatabase`).
+    /// Object, friend, enemy (`GameEngine::LoadFromDatabase`).
     colours: Option<[Vec3; 3]>,
     records: HashMap<String, RecordFact>,
 }
 
 pub struct RecordFact {
-    /// `Actor::GetRadius` (`gd_game_core::combat::get_radius`; the record's `scale` counts).
+    /// `Actor::GetRadius`.
     pub radius: f32,
-    /// Record `Class` starts with `Npc`.
     pub npc: bool,
-    /// Record `Class` is `NpcMerchant`.
     pub merchant: bool,
     /// An `Npc` subclass (always `IsOfInterest`).
     pub npc_subclass: bool,
-    /// Record `Class` is `FixedItemBlastContainer`.
     pub blast: bool,
-    /// `FixedActor::GetUsableRange`'s record term (`gd_game_core::combat::fixed_usable_range`).
+    /// `FixedActor::GetUsableRange`'s record term.
     pub usable: f32,
     pub invincible: bool,
-    /// Record `interactIconOverride`.
     pub icon: Option<Interact>,
     /// `monsterClassification` index (Common 0 … SuperBoss 5).
     pub classification: u8,
@@ -69,7 +64,6 @@ fn classification(s: &str) -> u8 {
     }
 }
 
-/// A record's `interactIconOverride`.
 pub fn icon_override(v: &str) -> Option<Interact> {
     match v {
         "Dialog" => Some(Interact::Dialog),
@@ -79,7 +73,6 @@ pub fn icon_override(v: &str) -> Option<Interact> {
 }
 
 impl RecordFacts {
-    /// Object, friend and enemy outline colours.
     pub fn colours(&mut self, data: &GameData) -> [Vec3; 3] {
         *self.colours.get_or_insert_with(|| {
             let r = data.db.get(ENGINE);
@@ -95,7 +88,6 @@ impl RecordFacts {
         })
     }
 
-    /// The record's facts, resolved on first use and kept.
     pub fn of(&mut self, data: &GameData, fonts: &FontCache, record: &str) -> &RecordFact {
         if !self.records.contains_key(record) {
             let f = resolve(data, fonts, record);

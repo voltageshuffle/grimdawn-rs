@@ -2,8 +2,7 @@
 //! player's velocity sampling. Engine.dll crowd update `Crowd::Update` (`crowd.cpp`), the agents'
 //! parameters from Game.dll `Character::CrowdAgentCreated` / `CrowdAgentUpdate` and the
 //! `Player` / `Monster` overrides (`Player::CrowdAgentCreated`, `Monster::CrowdAgentCreated` /
-//! `Monster::CrowdAgentUpdate`); the ECS side is
-//! `gd_game::movement`. Positions and velocities here are horizontal (x, z).
+//! `Monster::CrowdAgentUpdate`). Positions and velocities here are horizontal (x, z).
 //!
 //! Collision groups (`CrowdAgentParams.collisionGroup`) and masks (`CrowdAgentParams.collisionMask`): an agent's
 //! neighbours are the agents whose group meets its mask,
@@ -23,7 +22,6 @@ use std::f32::consts::PI;
 /// A horizontal vector (x, z).
 pub type V2 = [f32; 2];
 
-/// The collision groups and masks (module docs).
 pub mod group {
     pub const PLAYER: (u32, u32) = (1, 2);
     pub const HOSTILE: (u32, u32) = (2, 7);
@@ -31,7 +29,7 @@ pub mod group {
     pub const OTHER: (u32, u32) = (4, 6);
     /// Added to the group of a `forceCollision` monster.
     pub const FORCED: u32 = 8;
-    /// The mask of a spinning non-monster (module docs).
+    /// The mask of a spinning non-monster.
     pub const SPIN_MASK: u32 = 8;
 }
 
@@ -41,8 +39,7 @@ pub const PLAYER_PRIORITY: i32 = 2;
 /// other characters.
 pub const MONSTER_SEPARATION: f32 = 1.1;
 /// `CrowdAgentParams.arriveDistance`: the agent arrives within this distance of its target; the player's avoidance
-/// also ignores a
-/// neighbour standing at the target by this margin.
+/// also ignores a neighbour standing at the target by this margin.
 pub const ARRIVE_DIST: f32 = 0.025;
 /// `CrowdAgentParams.stuckSpeed` / `stuckTime`: a moving agent slower than this (m/s) for more than [`STUCK_MS`]
 /// fails its path (reason 3).
@@ -106,7 +103,6 @@ pub struct Body {
 }
 
 impl Body {
-    /// Whether `other` is in this agent's neighbour query of range `range`.
     pub fn meets(&self, other: &Body, range: f32) -> bool {
         let (dx, dz, dy) = (
             other.pos[0] - self.pos[0],
@@ -124,13 +120,13 @@ impl Body {
 /// Coincident agents (d ≤ 1 mm) part by 1 mm along the agent's direction (x negated for the earlier agent, z for
 /// the later one: the engine orders by address, PORT: by index). A still agent only takes a push of at least
 /// √0.001 m; all pushes are computed from the same positions and applied together. `out` receives one push per
-/// body; `grid` and `near` are the caller's reused scratch (rebuilt here).
+/// body.
 pub fn depenetration(bodies: &[Body], grid: &mut Grid, near: &mut Vec<usize>, out: &mut Vec<V2>) {
     let max_r = bodies.iter().map(|b| b.radius).fold(0.0, f32::max);
     out.clear();
     out.resize(bodies.len(), [0.0; 2]);
     grid.rebuild(grid_cell(max_r), bodies.iter().map(|b| b.pos));
-    // (|radius|: negative radii, bad data, still overlap by |r_a + r_b|.)
+    // |radius|: negative radii (bad data) still overlap by |r_a + r_b|.
     let reach = bodies.iter().map(|b| b.radius.abs()).fold(0.0, f32::max);
     for (i, a) in bodies.iter().enumerate() {
         if !a.collides || !a.pushable {
@@ -215,7 +211,6 @@ pub fn separation(
     (n > 0.0).then(|| [sum[0] / n, sum[1] / n])
 }
 
-/// `v` scaled down to at most `max` long.
 pub fn clamp_len(v: V2, max: f32) -> V2 {
     let l2 = v[0] * v[0] + v[1] * v[1];
     if l2 > max * max {
@@ -278,7 +273,6 @@ pub fn occupied_target(
 pub struct Obstacle {
     pub pos: V2,
     pub radius: f32,
-    /// Its velocity (speed × direction).
     pub vel: V2,
     /// Its desired velocity.
     pub dvel: V2,

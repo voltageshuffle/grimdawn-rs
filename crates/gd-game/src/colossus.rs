@@ -1,34 +1,17 @@
-//! `Skill_BuffSelfColossus` (the Forsaken's Overflowing Rage, the cultist
-//! leaders' Possession): a timed self buff (a `Skill_BuffSelfDuration`, its
-//! stats and absorption run through the ordinary `Kind::Buff` path) that
-//! also grows the caster to `actorScale` while it lasts and back after.
+//! `Skill_BuffSelfColossus` (e.g. the Forsaken's Overflowing Rage): a `Skill_BuffSelfDuration` that also
+//! grows the caster to `actorScale` while it lasts and back after.
 //!
 //! Game.dll:
-//! - `SkillProfile::LoadProfile` reads `actorScaleTime` (s →
-//!   ms, `SkillProfile.actorScaleTime`) and `actorScale` (`SkillProfile.actorScale`), once per skill (not per level).
-//! - `ReceiveActiveUpdate` (the buff going on or off): turns the
-//!   scaling on (`Skill_BuffSelfColossus.scaling`); going on, the goal is `actorScale` (an absolute
-//!   scale, not × the actor's own), going off `Actor.baseScale`; the time
-//!   is `actorScaleTime` either way and the step the distance from
-//!   `GetCurrentScale` to the goal (`Skill_BuffSelfColossus.scaleStep`). Then the usual self-buff cast
-//!   (cost, activate sound, secondaries, visual effects).
-//! - `Update` calls `Scale` every update while
-//!   scaling is on: current ± dt / time × step toward the goal, clamped at it
-//!   (reaching it turns scaling off), through `Actor::SetScale`. So the size
-//!   changes linearly over `actorScaleTime` both ways.
+//! - `SkillProfile::LoadProfile` reads `actorScaleTime` (s) and `actorScale` once per skill (not per level).
+//! - `ReceiveActiveUpdate` (buff on or off) turns scaling on: the goal is `actorScale` (absolute, not × the
+//!   actor's own) going on, `Actor.baseScale` going off; the step is the distance from `GetCurrentScale`.
+//! - `Update` calls `Scale` while scaling: current ± dt / time × step toward the goal, clamped (reaching it
+//!   stops), so the size changes linearly over `actorScaleTime` both ways.
 //!
-//! The port keeps the scale on the entity's `Transform` (the actor's scale,
-//! `creature.rs`); [`Colossus`] runs the growth while the caster's timed buff
-//! of the skill is listed (`MonsterSkills::buffs`, `Pet::buffs`).
-//!
-//! The radius follows the scale. `Actor::GetRadius` (Engine.dll, a virtual):
-//! the length of the actor's scale vector x
-//! `actorRadius`, so the reach / melee-distance radii
-//! (`Character::GetTargetDistance`, `NearTarget`)
-//! grow with the Colossus scale, while `Character::GetExtents` (spawn-set
-//! spacing) does not scale. [`Combatant::radius`] is the radius at the
-//! base scale (sqrt(3) x `scale` x `actorRadius`, `combat::get_radius`)
-//! x scale / base scale.
+//! The scale lives on the entity's `Transform`; [`Colossus`] runs while the caster's timed buff is listed.
+//! The radius follows the scale (`Actor::GetRadius`: the scale vector's length x `actorRadius`), so the reach
+//! radii grow, while `Character::GetExtents` (spawn-set spacing) does not: [`Combatant::radius`] is the base
+//! radius x scale / base scale.
 use bevy::prelude::*;
 use gd_game_core::combat::Combatant;
 use gd_game_core::data::GameData;
@@ -47,30 +30,28 @@ impl Plugin for ColossusPlugin {
     }
 }
 
-/// A `Skill_BuffSelfColossus` cast went off on `caster` (`casting::fire_casts`).
+/// A `Skill_BuffSelfColossus` cast went off on `caster`.
 #[derive(Message, Clone, Debug)]
 pub struct Grow {
     pub caster: Entity,
     pub skill: String,
 }
 
-/// The scaling of one caster (`Skill_BuffSelfColossus.scaling` … `Skill_BuffSelfColossus.scaleStep`).
+/// `Skill_BuffSelfColossus.scaling` … `scaleStep`.
 #[derive(Component, Clone, Debug)]
 pub struct Colossus {
     pub skill: String,
     /// `Actor.baseScale`: what it shrinks back to.
     pub base: f32,
-    /// The radius at the base scale (`combat::get_radius`).
     base_radius: f32,
-    /// The scale it is going to.
     pub goal: f32,
     /// `actorScaleTime` (s).
     time: f32,
-    /// The distance from the scale at the start to the goal.
+    /// The distance from the start scale to the goal.
     step: f32,
     /// The buff is on (the goal is `actorScale`).
     pub grown: bool,
-    /// Scaling is on.
+    /// `Skill_BuffSelfColossus.scaling`.
     moving: bool,
 }
 
@@ -122,7 +103,7 @@ fn start(
     }
 }
 
-/// `Actor::GetRadius` at `scale` (see the module doc).
+/// `Actor::GetRadius` at `scale`.
 fn radius_at(base_radius: f32, scale: f32, base: f32) -> f32 {
     if base > 0.0 {
         base_radius * scale / base
@@ -166,7 +147,6 @@ fn scale(
         let running = ms.is_some_and(|m| m.buffs.list.iter().any(|b| b.0 == c.skill))
             || pet.is_some_and(|p| p.buffs().iter().any(|b| b.0 == c.skill));
         if c.grown && !running {
-            // The buff went off: back to the base scale.
             c.grown = false;
             c.goal = c.base;
             c.step = (c.base - tf.scale.x).abs();

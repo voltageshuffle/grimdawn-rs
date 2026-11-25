@@ -1,5 +1,4 @@
-//! Achievements (`gd_game::achievements`): the `Kill` trigger unlocks the right achievement on the player's kill
-//! (and not the wrong ones).
+//! The `Kill` achievement trigger unlocks the right achievement on the player's kill (and not the wrong ones).
 use bevy::prelude::*;
 use gd_game::achievements::{Achievements, groups};
 use gd_game::combat::MonsterKilled;

@@ -1,55 +1,22 @@
-//! The Inventor's reroll panel (Fangs of Asterkarn): a new seed for an item,
-//! a new prefix / suffix (`gd_sim::ascendant::reroll_affix`) or a new
-//! ascendant affix (`gd_sim::ascendant::reroll_ascended`).
+//! The Inventor's reroll panel (Fangs of Asterkarn): a new seed for an item, a new prefix / suffix or a new
+//! ascendant affix; and the Runekeeper's item ascension.
 //!
-//! The reroll panel (GrimDawn.exe `UIEnchanterRerollTab::Update` / `UIEnchanterRerollTab::SelectFormula` /
-//! `UIEnchanterRerollTab::Reroll`, Game.dll `ItemArtifactFormula::GetRerollCost` /
-//! `GetReagent<n>QuantityForReroll`): the panel (`reroll_table.dbr`) names a
-//! `seedRecipe` (`ItemRerollFormula`), an `affixRecipe` and
-//! `ascended<Rarity>Recipe`s (`ItemAscensionFormula`); the cost (`rerollCost`) and each reagent's
-//! quantity (`reagent<n>Quantity`) are indexed by the item's reroll count
-//! (seed rerolls for the seed, affix rerolls otherwise): index 0 for counts
-//! 0 and 1, else count − 1, clamped; a seed reroll draws a new random seed,
-//! the others a different affix; the count goes up by one (prefix, suffix
-//! and ascendant share `affix_rerolls`). Items whose record sets
-//! `preventReroll` are refused. Using the panel needs the `gameengine.dbr`
-//! `rerollToken` (`MainPlayerCanUseReroll`).
-//! Reroll tab button states (`UIEnchanterRerollTab::UpdateButtonStates`): the seed button
-//! needs an item; the prefix / suffix buttons need the item to have that
-//! affix and are off for Epic and Legendary items
-//! (`GetItemClassification`); the ascendant button needs an ascendant affix.
-//! Reagents are taken from the bags, the material store, the personal stash
-//! and the transfer stash, in that order (`CreateArtifactConfigCmd::
-//! TakeReagents`), as for crafting.
-//! Reroll tab (GrimDawn.exe `UIEnchanterRerollTab::Load` loader, `UIEnchanterRerollTab::Update`
-//! update, `UIEnchanterRerollTab::HandleButton` button handler): the item goes into the tab's item
-//! slot (`reagentBaseBox`; only `ItemEquipment` with `Item::CanReroll`,
-//! `UIEnchanterRerollTab::AcceptsItem`); a new item resets the kind; `rerollSeedButton` /
-//! `rerollPrefixButton` / `rerollSuffixButton` / `rerollAscendedAffixButton`
-//! pick the kind (1..4) and its formula, which fills the reagent boxes and
-//! the `rerollCost` number (red `tooExpensiveCostNumber` when short; the
-//! `tagRerollQuantity` line shows the reroll count); `rerollNowButton` is
-//! enabled with a kind, enough money and every reagent, and sends
-//! `CreateArtifactCmd` at once (no confirm prompt; the item stays in the slot
-//! and is changed in place). Window UI in `gd_ui::trade` (`reroll_panel`).
-//! The Runekeeper (`NpcItemAscension`, GrimDawn.exe
-//! `UIItemAscensionWindow::Update` / `UIItemAscensionWindow::AscendItem`): the item's rarity picks the window's
-//! `<rarity>Recipe`, which costs its `creationCost` and first reagent
-//! quantities and draws the affix as an ascended reroll does (no counter, no
-//! token). Only items without an ascendant affix (the window's
-//! ready test `UIItemAscensionWindow::IsReady` → item slot `AscensionSlot::IsEmpty`: the item's
-//! ascendant name, in its replica, must be empty); `preventReroll` is not
-//! checked (`Item::CanReroll` is used by the reroll tab only, `UIEnchanterRerollTab::AcceptsItem`).
-//! The ascend button (`UIItemAscensionWindow::Ascend`, `UIItemAscensionWindow::AscendItem`) runs at
-//! once, no prompt; enabled by `UIItemAscensionWindow::IsReady` (item, all reagent boxes,
-//! enough money, ascendant name empty). Window UI in `gd_ui::trade`
-//! (`ascension_window`). Shift + left click on a bag item moves it into the
-//! slot (`BagWidget_HandleMouseEvent`, `grimdawn` `inventory.rs`).
-//! Hook `GD_REROLL=seed|prefix|suffix|ascended|ascend` (`ascend` with
-//! `GD_TRADE=ascension`): once the crafter (`GD_TRADE=crafter` or
-//! `enchanter`) is open, puts the first bag item into the slot and presses
-//! the button (reagents and money provided; `ascended` also works on an item
-//! without an ascendant affix).
+//! The reroll panel (`UIEnchanterRerollTab`, Game.dll `ItemArtifactFormula::GetRerollCost` /
+//! `GetReagent<n>QuantityForReroll`): the panel (`reroll_table.dbr`) names a `seedRecipe` (`ItemRerollFormula`), an
+//! `affixRecipe` and `ascended<Rarity>Recipe`s (`ItemAscensionFormula`); the cost (`rerollCost`) and each reagent's
+//! quantity (`reagent<n>Quantity`) are indexed by the item's reroll count (seed rerolls for the seed, affix rerolls
+//! otherwise): index 0 for counts 0 and 1, else count − 1, clamped; a seed reroll draws a new random seed, the
+//! others a different affix; the count goes up by one (prefix, suffix and ascendant share `affix_rerolls`). Items
+//! whose record sets `preventReroll` are refused. Using the panel needs the `gameengine.dbr` `rerollToken`.
+//! Button states (`UpdateButtonStates`): the seed button needs an item; the prefix / suffix buttons need the item to
+//! have that affix and are off for Epic and Legendary items; the ascendant button needs an ascendant affix.
+//! Reagents are taken from the bags, the material store, the personal stash and the transfer stash, in that order,
+//! as for crafting. The reroll runs at once (no confirm prompt; the item stays in the slot and is changed in place).
+//!
+//! The Runekeeper (`NpcItemAscension`, `UIItemAscensionWindow::AscendItem`): the item's rarity picks the window's
+//! `<rarity>Recipe`, which costs its `creationCost` and first reagent quantities and draws the affix as an ascended
+//! reroll does (no counter, no token). Only items without an ascendant affix; `preventReroll` is not checked. The
+//! ascend button runs at once, no prompt.
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game_core::inventory::Inventory;
@@ -63,12 +30,23 @@ pub enum Kind {
     Prefix,
     Suffix,
     Ascended,
-    /// The Runekeeper's item ascension: an ascendant affix for an item
-    /// without one.
+    /// The Runekeeper's item ascension: an ascendant affix for an item without one.
     Ascend,
 }
 
-/// What a reroll costs: the money and the reagents (name, quantity).
+impl Kind {
+    /// The text `Rerolled (..)` shows.
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Seed => "Seed",
+            Kind::Prefix => "Prefix",
+            Kind::Suffix => "Suffix",
+            Kind::Ascended => "Ascended",
+            Kind::Ascend => "Ascend",
+        }
+    }
+}
+
 pub struct Plan {
     pub cost: u64,
     pub reagents: Vec<(String, u32)>,
@@ -83,8 +61,7 @@ pub fn index(count: u32, len: usize) -> usize {
     }
 }
 
-/// Whether the item may go into the slot (`UIEnchanterRerollTab::AcceptsItem`: equipment
-/// that can be rerolled; the Runekeeper only needs equipment).
+/// `UIEnchanterRerollTab::AcceptsItem`: equipment that can be rerolled; the Runekeeper only needs equipment.
 pub fn accepts(idb: &ItemDb, item: &Item, ascension: bool) -> Result<(), String> {
     let resolved = gd_sim::items::resolve(idb, item);
     if resolved
@@ -103,8 +80,8 @@ pub fn accepts(idb: &ItemDb, item: &Item, ascension: bool) -> Result<(), String>
     }
 }
 
-/// Whether `kind` can be used on the item (`UIEnchanterRerollTab::UpdateButtonStates` button
-/// states; the Runekeeper needs no ascendant affix yet).
+/// Whether `kind` can be used on the item (`UIEnchanterRerollTab::UpdateButtonStates`; the Runekeeper needs no
+/// ascendant affix yet).
 pub fn kind_state(idb: &ItemDb, item: &Item, kind: Kind, test: bool) -> Result<(), String> {
     let epic = gd_sim::items::resolve(idb, item).is_some_and(|r| {
         matches!(
@@ -136,13 +113,13 @@ pub fn plan(
     kind: Kind,
 ) -> Option<Plan> {
     let class = gd_sim::items::resolve(idb, item)
-        .map(|r| format!("{:?}", r.classification))
+        .map(|r| r.classification.name())
         .unwrap_or_default();
     let recipe = match kind {
-        Kind::Seed => gd_sim::ascendant::reroll_recipe(idb, "seed", &class),
+        Kind::Seed => gd_sim::ascendant::reroll_recipe(idb, "seed", class),
         Kind::Prefix | Kind::Suffix => gd_sim::ascendant::affix_recipe(idb),
-        Kind::Ascended => gd_sim::ascendant::reroll_recipe(idb, "ascended", &class),
-        Kind::Ascend => gd_sim::ascendant::ascension_recipe(idb, &class),
+        Kind::Ascended => gd_sim::ascendant::reroll_recipe(idb, "ascended", class),
+        Kind::Ascend => gd_sim::ascendant::ascension_recipe(idb, class),
     }
     .and_then(|r| data.db.get(&r))?;
     let count = match kind {
@@ -170,7 +147,7 @@ pub fn plan(
     Some(Plan { cost, reagents })
 }
 
-/// Why the plan cannot be paid yet: the player's money and reagents.
+/// Why the plan cannot be paid yet.
 pub fn shortfall(
     plan: &Plan,
     gold: u64,
@@ -192,9 +169,8 @@ pub fn shortfall(
         })
 }
 
-/// Rerolls `item` (`kind`) when the rules allow it: pays the plan's gold and
-/// reagents; `Ok` / `Err` is the notice. `unlocked`: the reroll token is
-/// known (the story's); `test`: a test hook that also gets the costs.
+/// Rerolls `item` (`kind`) when the rules allow it: pays the plan's gold and reagents; `Ok` / `Err` is the notice.
+/// `unlocked`: the reroll token is known; `test`: a test hook that also gets the costs.
 #[allow(clippy::too_many_arguments)]
 pub fn reroll_item(
     data: &gd_game_core::data::GameData,
@@ -234,7 +210,7 @@ pub fn reroll_item(
     let resolved = gd_sim::items::resolve(idb, item);
     let class = resolved
         .as_ref()
-        .map(|r| format!("{:?}", r.classification))
+        .map(|r| r.classification.name())
         .unwrap_or_default();
     let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     match kind {
@@ -273,9 +249,7 @@ pub fn reroll_item(
             item.ascendant_name = resolved
                 .as_ref()
                 .and_then(|r| {
-                    gd_sim::ascendant::ascend_item(
-                        idb, &r.class, &class, masteries, level, &mut rng,
-                    )
+                    gd_sim::ascendant::ascend_item(idb, &r.class, class, masteries, level, &mut rng)
                 })
                 .ok_or("No ascendant affix for this item")?;
         }
@@ -286,7 +260,7 @@ pub fn reroll_item(
                     gd_sim::ascendant::reroll_ascended(
                         idb,
                         &r.class,
-                        &class,
+                        class,
                         masteries,
                         level,
                         &item.ascendant_name,
@@ -308,15 +282,15 @@ pub fn reroll_item(
         Kind::Ascended | Kind::Ascend => item.ascendant_name.clone(),
     };
     Ok(format!(
-        "Rerolled ({kind:?}) for {} iron bits: {}",
+        "Rerolled ({}) for {} iron bits: {}",
+        kind.name(),
         plan.cost,
         affix.rsplit('/').next().unwrap_or("")
     ))
 }
 
-/// The reroll tab's / Runekeeper window's button: [`RerollRequest`] is
-/// written by the window, [`apply_reroll`] runs [`reroll_item`] and answers
-/// with a [`crate::crafting::SlotReturn`] (the item changed in place).
+/// [`apply_reroll`] runs [`reroll_item`] for each [`RerollRequest`] and answers with a
+/// [`crate::crafting::SlotReturn`].
 pub struct RerollPlugin;
 
 impl Plugin for RerollPlugin {
@@ -334,8 +308,7 @@ impl Plugin for RerollPlugin {
     }
 }
 
-/// Reroll the slot's `item` (`kind`); `test`: the `GD_REROLL` hook (the
-/// token is not needed and the costs are provided).
+/// `test`: the `GD_REROLL` hook (the token is not needed and the costs are provided).
 #[derive(Message, Clone, Debug)]
 pub struct RerollRequest {
     pub item: Item,

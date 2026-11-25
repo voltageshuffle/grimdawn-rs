@@ -24,36 +24,28 @@
 //! - `reflectionStyle` (every mesh): `base × (sat(N·L)·sun + hemisphere ambient)`,
 //!   alpha `base.a`, clipped at the water plane — no point lights, shadows,
 //!   specular or glow. `reflectPS` then samples the target at the water pixel's
-//!   screen uv (+ the bump distortion) and blends it over the sky reflection
-//!   (`water.rs` / `shaders/water.wesl`).
+//!   screen uv (+ the bump distortion) and blends it over the sky reflection.
 //!
-//! PORT: Bevy draws the reflection with a second [`ReflectionCamera`] (the glow
-//! camera's convention, `render/post.rs`): the main camera mirrored across the
+//! PORT: Bevy draws the reflection with a second [`ReflectionCamera`]: the main camera mirrored across the
 //! water plane (`bevy::math::reflection_matrix`, [`reflection_camera`]),
 //! `Camera::invert_culling` for the flipped winding, and the water plane as the
 //! projection's oblique `near_clip_plane` (Bevy's Lengyel clip). The scene
 //! materials recognise the view by its exposure ([`REFLECTION_EV100`]) and output
-//! `reflectionStyle` (`gd_standard.wesl` / `gd_terrain.wesl`); the water itself
-//! draws nothing there. The target is the engine's fixed 512 wide
+//! `reflectionStyle`; the water itself draws nothing there. The target is the engine's fixed 512 wide
 //! ([`reflection_target_size`]), kept at the screen's aspect so the reflection
 //! lines up with the screen uv the water samples; the caster distance is the
 //! engine's 64 m / far ([`reflection_caster_distance`]). One pass for the
 //! nearest reflecting plane (the engine: one per plane).
 //!
-//! What reflects follows the content flags (`cull_reflection`, which filters the view's
-//! `VisibleEntities` after Bevy's visibility check, so no spawn site tags anything): every
+//! What reflects follows the content flags (`cull_reflection` filters the view's `VisibleEntities`): every
 //! `GdMaterial` mesh (props, buildings, characters, monsters), the grass from high up, the
 //! other meshes (particles, ribbons, ...) at ultra only, the terrain never. PORT: the particle
 //! shader (like the decal and water ones) draws nothing in this view, so the ultra particles
 //! the engine reflects do not show.
 //!
-//! PORT (performance): the pass runs only while a reflecting surface has a block
-//! in the main camera's frustum (last frame's, so the reflection starts one frame
-//! after the water enters the screen edge), and then only every
-//! [`REFLECTION_INTERVAL`]th frame (at once on activation and on a resize; the
-//! target keeps its last image between, so the reflection trails the camera by up to a
-//! frame). Bevy drops an inactive view's phases and per-view specializations, so each
-//! rendered frame queues the reflected set afresh.
+//! PORT: the pass runs only while a reflecting surface has a block in the main camera's frustum (last
+//! frame's), and then only every [`REFLECTION_INTERVAL`]th frame (at once on activation and on a resize; the
+//! target keeps its last image between).
 //! The view renders no sun shadow map (`shadow::NoSunShadow`) and clusters point lights
 //! into one cluster only (`ClusterConfig` Single; None breaks Bevy 0.20's GPU clustering):
 //! `reflectionStyle` reads neither.
@@ -78,22 +70,20 @@ use std::any::TypeId;
 /// view is 0.83 and the main camera ≈ 0, so the three never collide.
 pub const REFLECTION_EV100: f32 = -2.0;
 /// The engine's reflection target width (`GraphicsMTRenderer::ReflectionViewport` viewport), fixed for
-/// every enabled quality (module doc).
+/// every enabled quality.
 pub const REFLECTION_SIZE: u32 = 512;
 /// The engine's reflection caster distance (`BuildReflections` v8): 64 m below
 /// ultra, the scene far plane at ultra.
 pub const REFLECTION_DISTANCE: f32 = 64.0;
-/// The reflection renders every this many frames while it is on (module doc).
+/// The reflection renders every this many frames while it is on.
 pub const REFLECTION_INTERVAL: u32 = 2;
 
 pub struct ReflectionPlugin;
 
 impl Plugin for ReflectionPlugin {
     fn build(&self, app: &mut App) {
-        // Before the transform propagation, after the camera moves: Bevy builds the
-        // sun's shadow cascades (after propagation) only for active views, so a camera
-        // switched on after them reaches the renderer with none (a panic in
-        // `prepare_lights`), and its mirrored transform would lag a frame.
+        // Before the transform propagation, after the camera moves: Bevy builds the sun's shadow cascades only
+        // for active views, so a camera switched on after propagation panics in `prepare_lights`.
         app.add_systems(PostStartup, setup_reflection).add_systems(
             PostUpdate,
             (
@@ -106,20 +96,17 @@ impl Plugin for ReflectionPlugin {
     }
 }
 
-/// The reflection camera (mirrors the [`GameCamera`] across the water plane).
 #[derive(Component)]
 pub struct ReflectionCamera;
 
-/// The reflection render target, shared with the water material (`water.rs`).
-/// Kept across sessions like the other render targets (`exit.rs` KEEP).
+/// The reflection render target, shared with the water material; kept across sessions.
 #[derive(Resource)]
 pub struct ReflectionTarget {
     pub image: Handle<Image>,
 }
 
 /// The reflection target's width for a `reflectionQuality`: the engine's fixed
-/// 512 for every enabled quality, 0 = off (module doc — the quality selects the
-/// reflected content + caster distance, not the resolution).
+/// 512 for every enabled quality, 0 = off.
 pub fn reflection_target_size(quality: u32) -> u32 {
     if quality == 0 { 0 } else { REFLECTION_SIZE }
 }
@@ -146,8 +133,7 @@ pub fn option_quality(options: &gd_game_core::options::GameOptions) -> u32 {
 /// reflected across `y = plane_height` (the engine's `GraphicsMTRenderer::ReflectViewMatrix` reflection +
 /// handedness flip, which Bevy expresses as the reflection matrix +
 /// `Camera::invert_culling`), and the water plane as the oblique near clip plane
-/// so nothing below the surface reflects. The reflection matrix /
-/// clip follow `BuildReflections` (module doc).
+/// so nothing below the surface reflects.
 pub fn reflection_camera(
     main: &Transform,
     proj: &PerspectiveProjection,
@@ -191,7 +177,7 @@ fn setup_reflection(
         Camera3d::default(),
         Camera {
             order: -1,
-            // The reflection flips every polygon's winding (module doc).
+            // The reflection flips every polygon's winding.
             invert_culling: true,
             clear_color: ClearColorConfig::Custom(Color::NONE),
             is_active: false,
@@ -214,7 +200,7 @@ fn setup_reflection(
 
 /// Follows the main camera across the nearest reflecting water plane, sizes the
 /// target by the option, turns the pass off when there is nothing to reflect, and
-/// renders it every [`REFLECTION_INTERVAL`]th frame (module doc).
+/// renders it every [`REFLECTION_INTERVAL`]th frame.
 fn sync_reflection(
     options: Res<gd_game_core::options::GameOptions>,
     mains: Query<
@@ -321,8 +307,7 @@ fn sync_reflection(
 }
 
 /// Drops from the reflection view's visible meshes what the quality's content flags
-/// leave out (module doc): the terrain always, the grass below high, every mesh
-/// but the `GdMaterial` ones below ultra.
+/// leave out: the terrain always, the grass below high, every mesh but the `GdMaterial` ones below ultra.
 fn cull_reflection(
     options: Res<gd_game_core::options::GameOptions>,
     mut views: Query<(&Camera, &mut VisibleEntities), With<ReflectionCamera>>,

@@ -1,44 +1,33 @@
 //! World objects that matter to gameplay: training dummies, breakables,
 //! chests' identities, described decorations.
 //!
-//! A described decoration (the direction signs, `records/storyelements/signs/
-//! sign_signpost_*.dbr`, the aether crystals, a cave mouth) is a `Decoration`
-//! with a `description`: Engine.dll `Actor::Load` sets
-//! `IsDescriptionVisible` (`Actor.isDescriptionVisible`) to "`description` is not empty", and
-//! Grim Dawn.exe `InGameUIActorCapture::CollectCandidates` adds a `Decoration` to the hover candidates only
-//! when that flag is set, so the cursor outlines it (object colour) and names it
-//! (`Actor::GetGameDescription`: `SimpleStringFormat` = `{%s0}` of the
-//! localized tag: the tag's text). The bare posts carry no description and stay
-//! scenery. Such a decoration is not part of the level either
-//! (`Decoration::GetIsPartOfLevel`): no physics body (`gd_world`).
+//! A described decoration (direction signs, aether crystals, a cave mouth) is
+//! a `Decoration` with a `description`: `Actor::Load` sets
+//! `IsDescriptionVisible` when `description` is not empty, and
+//! `InGameUIActorCapture::CollectCandidates` makes only those hoverable
+//! (outlined, named by the tag's text). Such a decoration is not part of the
+//! level (`Decoration::GetIsPartOfLevel`): no physics body.
 //! PORT: `Decoration`'s subclasses take the flag too; no stock record of one
 //! has a description.
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 
-/// A training dummy: never moves or attacks, never dies. The Target Dummy (`trainingdummy.dbr`, the record whose
-/// `description` is [`DUMMY_TAG`]; `gd_game::creature::spawn_creature`) and the test arena's dummies carry it.
-/// No AI runs on it (`combat::monster_ai`, `cc_states`), and its life never drops below 1 (`combat::apply_hits`,
-/// `afflictions::tick`): it takes every hit, DoT and number, then refills by its own record (the bio's high
-/// regeneration and `targetdummy_lowhealthshield_01`, a 100 % heal with full absorption for 6 s at 15 % life).
-/// PORT: the real dummy relies on that shield alone, so a burst from above 15 % to 0 within one frame (many
-/// projectiles at once) killed it here; the floor rules that out. Its `causesAnger` 0 already keeps it out of
-/// the monsters' and pets' sight (`combat::sight`, `pets::ai`) and the overhead bars (grimdawn `ui::overhead`).
+/// A training dummy: never moves, attacks or dies (the Target Dummy and the test arena's dummies). No AI runs on
+/// it and its life never drops below 1. PORT: the real dummy relies on its 15 %-life shield alone, so a one-frame
+/// burst from above 15 % could kill it; the floor rules that out.
 #[derive(Component)]
 pub struct Dummy;
 
-/// The Target Dummy's `description` tag (`records/creatures/enemies/special/trainingdummy.dbr`).
+/// `records/creatures/enemies/special/trainingdummy.dbr`'s `description`.
 pub const DUMMY_TAG: &str = "tagMiscTargetDummy";
 
-/// A described decoration (module docs): what the hover names.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub struct Described {
-    /// The record's `description` tag.
     pub tag: String,
 }
 
 impl Described {
-    /// `Actor::IsDescriptionVisible` of a `Decoration` record (module docs).
+    /// `Actor::IsDescriptionVisible` of a `Decoration` record.
     pub fn from_record(rec: &gd_formats::arz::Record) -> Option<Self> {
         if rec.class != "Decoration" {
             return None;
@@ -58,10 +47,7 @@ pub struct Broken(pub HashSet<(usize, u32)>);
 pub struct Breakable {
     pub record: String,
     pub key: (usize, u32),
-    /// The record's `targetable`: `Destructible::IsTargetable`
-    /// (`targetable` and not broken; a broken one is gone here) decides
-    /// whether the cursor picks it as an enemy (hover, click; Grim Dawn.exe
-    /// `InGameUI::CollectEnemyCandidates`). Others only break by area damage.
+    /// `Destructible::IsTargetable`: whether the cursor picks it as an enemy. Others only break by area damage.
     pub targetable: bool,
 }
 
@@ -76,8 +62,7 @@ pub enum ChestKey {
     Story(u32),
 }
 
-/// A door (its nav obstacle stops projectiles while closed); the game's
-/// doors carry it.
+/// A door (its nav obstacle stops projectiles while closed).
 #[derive(Component, Default)]
 pub struct DoorMarker;
 
@@ -89,20 +74,15 @@ pub struct ChestStates {
     pub accessories: HashMap<(usize, u32), Vec<(String, Vec3, f32)>>,
 }
 
-/// A level's `AreaOfInterest` (spawned with the level, `gd_world`): an icon of the local map (grimdawn
-/// `ui::localmap`).
+/// A level's `AreaOfInterest`: an icon of the local map.
 #[derive(Component)]
 pub struct MapPoint {
     pub record: String,
 }
 
-/// `SoundPeriodic` (Game.dll `SoundPeriodic::Load` / `Update`), the periodic sound of a
-/// `Decoration` (`periodicSound`, `soundPeriod`, `randomPeriod`,
-/// `randomPeriodMin` / `Max` in seconds): the timer starts at one period (or a random draw, both ends inclusive) and
-/// counts down; at 0 the pak plays at the object and the timer is armed again, counted from the start of the sound.
-/// The play is skipped (the timer re-armed all the same) while the previous one still sounds (`!pak.IsPlaying()`;
-/// PORT: the pak's last voice entity being alive stands for it). Placed by `gd_world`, played by
-/// `gd_audio::pak::periodic_sounds`.
+/// `SoundPeriodic::Load` / `Update`: a `Decoration`'s periodic sound. Counts down from one period (or a random
+/// draw); at 0 plays and re-arms, skipping the play while the previous one still sounds (PORT: its last voice
+/// entity being alive stands for `pak.IsPlaying()`).
 #[derive(Component, Clone, Debug)]
 pub struct PeriodicSound {
     pub pak: String,
@@ -110,7 +90,6 @@ pub struct PeriodicSound {
     random: Option<(f32, f32)>,
     /// Seconds until the next play.
     pub left: f32,
-    /// The last play's voice.
     pub last: Option<Entity>,
 }
 
@@ -135,7 +114,6 @@ impl PeriodicSound {
         Some(s)
     }
 
-    /// Sets the timer to the next period.
     pub fn arm(&mut self) {
         self.left = match self.random {
             Some((lo, hi)) => {

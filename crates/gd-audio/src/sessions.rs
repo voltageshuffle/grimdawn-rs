@@ -20,53 +20,49 @@ use gd_game_core::save::MapLayout;
 use gd_render::camera::CameraFocus;
 use gd_sim::jukebox::Channel;
 
-/// The area's music and ambient sessions (the jukebox, `gd_sim::jukebox`): each channel crossfades its sessions; a
-/// session's player entities ([`SessionSound`]) are keyed by slot.
+/// The area's music and ambient sessions (`gd_sim::jukebox`); a session's players
+/// ([`SessionSound`]) are keyed by slot.
 #[derive(Resource, Default)]
 pub struct Ambience {
     music_record: Option<String>,
     ambient_record: Option<String>,
     music: Channel,
     ambient: Channel,
-    /// Per music session (slot id): the last track picked, and whether it waits for its file's background read.
+    /// Per music session (slot id): the last track picked, and whether it waits for its file.
     last_track: Vec<(u32, usize, bool)>,
-    /// Ms until the day / night flip is looked at again (`kDayNightChangeDelay`, armed by every ambient load).
+    /// Ms until the day / night flip is looked at again (`kDayNightChangeDelay`).
     day_night_wait: f32,
-    /// The current ambient session's slot id, its `enableNightSounds`, and its one-shot classes (frequent, moderate,
-    /// unique) in its day or night set, read once per session.
+    /// The current ambient session's slot id, its `enableNightSounds`, and its one-shot classes
+    /// (frequent, moderate, unique) in its day or night set.
     session_id: u32,
     night_sounds: bool,
     shot_classes: Option<[ShotClass; 3]>,
-    /// The ambient loop of each audible ambient session, by slot id (read once per slot).
     loops: Vec<(u32, AmbientLoop)>,
     /// Per one-shot class: the sound playing and the countdown (ms).
     shots: [(Option<Entity>, f32); 3],
-    /// Where the sector layers were last probed ([`track_area`]): (focus, region, menu scene).
+    /// (focus, region, menu scene) of the last probe.
     probed: Option<(Vec3, Option<usize>, bool)>,
-    /// What the ambient layer (2) named there and whether the cell is mapped; whether the listener is in a boss music
-    /// zone (sector type 3).
+    /// The sector layers' names there; boss music zone = sector type 3.
     sector_mapped: bool,
     sector_music: String,
     sector_ambient: String,
     sector_event: String,
     in_boss_zone: bool,
-    /// The event music last started (its name), those already played this session.
+    /// The event music last started, and those already played this session.
     last_event: String,
     played_events: Vec<String>,
     /// The playing event music: its sound and its `EventMusicSession` record.
     event: Option<(Entity, String)>,
-    /// The event session a boss session interrupted (its record): `PlayBossMusic` only fades its sound, the session
-    /// lives on and `StopBossMusic` replays it.
+    /// The event session a boss session interrupted: `PlayBossMusic` only fades its sound and
+    /// `StopBossMusic` replays it.
     held_event: Option<String>,
-    /// The boss session (`BossMusicSession`), the bosses tracked for it and a boss waiting for the zone.
     boss: Option<Boss>,
     tracked: Vec<Entity>,
     pending_boss: Option<Entity>,
 }
 
-/// A boss music session (`BossMusicSession`, `BossMusicSession::Update`): intro, loop, then the
-/// boss death or player death stinger; each state's sound is one entity. The record's (file, volume) pairs are read
-/// when the session starts.
+/// `BossMusicSession::Update`: intro, loop, then the boss death or player death stinger; each state's
+/// sound is one entity.
 struct Boss {
     name: String,
     looping: Option<(String, f32)>,
@@ -78,13 +74,12 @@ struct Boss {
     sound: Option<Entity>,
 }
 
-/// A boss record's file `key` and its volume `vkey` (default 1).
 fn boss_track(rec: &Record, key: &str, vkey: &str) -> Option<(String, f32)> {
     rec.str(key)
         .map(|p| (p.to_owned(), rec.f32(vkey).unwrap_or(1.0)))
 }
 
-/// A monster's boss-music facts (its record's `MonsterMusic`), read once when it spawns.
+/// A monster's `MonsterMusic` facts.
 #[derive(Component)]
 pub(super) struct MonsterMusic {
     name: String,
@@ -112,13 +107,13 @@ pub(super) fn cache_monster_music(
     }
 }
 
-/// A session's player: a music track or an ambient loop of the (music?, slot) session.
+/// A music track or an ambient loop of the (music?, slot) session.
 #[derive(Component)]
 pub(super) struct SessionSound(bool, u32);
 
 const CLASSES: [&str; 3] = ["frequent", "moderate", "unique"];
 
-/// The record key of an ambient session field in its day (`base`) or night (`night` + capitalised) set.
+/// `base` in the day set, `night` + capitalised in the night set.
 fn skey(night: bool, base: &str) -> String {
     if night {
         format!("night{}", capitalized(base))
@@ -137,8 +132,7 @@ fn uses_night(rec: &Record, is_day: bool) -> bool {
     !is_day && rec.bool("enableNightSounds")
 }
 
-/// `AmbianceManager::GetIsDay`, which `AmbientSession::Load` and the `Jukebox::Update` flip read: the area's own cycle
-/// ([`gd_render::render::env::Ambiance::is_day`]); before the first ambiance, the default cycle at the clock.
+/// `AmbianceManager::GetIsDay`: the area's own cycle; before the first ambiance, the default cycle.
 fn is_day_now(ambiance: Option<&gd_render::render::env::Ambiance>, tod: f32) -> bool {
     ambiance.map_or_else(
         || gd_render::render::env::DayNightCycle::default().is_day(tod),
@@ -146,18 +140,14 @@ fn is_day_now(ambiance: Option<&gd_render::render::env::Ambiance>, tod: f32) -> 
     )
 }
 
-/// An ambient session's loop in its day or night set.
 struct AmbientLoop {
     path: Option<String>,
     volume: f32,
 }
 
-/// One ambient one-shot class of a session in its day or night set.
 #[derive(Default)]
 struct ShotClass {
-    /// `<class>Sound1..N`.
     paths: Vec<String>,
-    /// `force2d<Class>N` of each path.
     force2d: Vec<bool>,
     volume: f32,
     min: i32,
@@ -187,8 +177,7 @@ impl ShotClass {
         }
     }
 
-    /// The wait in ms after a sound (`1000 * (min + rand() % (max - min))`, integer seconds;
-    /// `AmbientSession::UpdateOneShots`).
+    /// `AmbientSession::UpdateOneShots`: `1000 * (min + rand() % (max - min))` ms.
     fn delay(&self) -> f32 {
         let span = (self.max - self.min).max(1) as u32;
         1000.0 * (self.min as f32 + (fastrand::u32(..) % span) as f32)
@@ -196,7 +185,7 @@ impl ShotClass {
 }
 
 /// Probes the sector layers under the listener for the area's music, ambience, event music and boss music zone, and
-/// loads changed sessions. The probe reruns only when the focus, the region or the loaded levels changed.
+/// loads changed sessions; only when the focus, the region or the loaded levels changed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn track_area(
     world: Option<Res<MapLayout>>,
@@ -212,10 +201,9 @@ pub(super) fn track_area(
     if world.is_none() && menu.is_none() {
         return;
     }
-    // In the game the camera focus and the world's sectors; in the main menu the scene's map at the character. The
-    // sectors are read from the player's own region's level (`Player::UpdateSelf`; the Shattered Realm's
-    // regions overlap main-world ground). PORT: the engine's ambience / music sector source is not traced, the
-    // player's region stands in for it.
+    // In the game the camera focus, in the main menu the scene's map at the character. The sectors are read from
+    // the player's own region's level (the Shattered Realm's regions overlap main-world ground).
+    // PORT: the engine's ambience / music sector source is not traced.
     let region = gd_game_core::riftgates::player_region(story.as_deref());
     let at = match (&menu, focus.single()) {
         (Some(m), _) => m.view.player.translation,
@@ -265,8 +253,8 @@ pub(super) fn track_area(
     if !amb.sector_mapped {
         return;
     }
-    // An empty name ends the session (it fades out); the same name keeps it. While a boss session exists the area
-    // music is not loaded (`ShouldPlayMusic`).
+    // An empty name ends the session; the same name keeps it. No area music while a boss session exists
+    // (`ShouldPlayMusic`).
     if amb.boss.is_none() && amb.music_record.as_deref() != Some(amb.sector_music.as_str()) {
         amb.music_record = Some(amb.sector_music.clone());
         amb.music
@@ -284,9 +272,8 @@ pub(super) fn track_area(
     }
 }
 
-/// Plays one file of a music record once at `volume` (the entity despawns when it ends). A file not loaded yet is
-/// read in the background: the entity stands for the music from now on and plays it when it lands
-/// (`cache::AwaitedFile`).
+/// Plays one file of a music record once at `volume`. A file not loaded yet plays when its background
+/// read lands.
 fn play_once(
     commands: &mut Commands,
     data: &GameData,
@@ -339,7 +326,7 @@ pub(super) fn boss_and_event_music(
     };
     let amb = &mut *amb;
     let sounds = &mut *sounds;
-    // Bosses to track: `MonsterMusic` within `MonsterMusicRadius` (the facts were cached when the monster spawned).
+    // Bosses to track: `MonsterMusic` within `MonsterMusicRadius`.
     for (e, gt, mm) in &monsters {
         let r = mm.radius;
         if gt.translation().distance_squared(pgt.translation()) < r * r {
@@ -353,7 +340,6 @@ pub(super) fn boss_and_event_music(
         let from = volumes.get(e).map_or(1.0, |v| v.0);
         commands.entity(e).try_insert(Fade::out(from, ms));
     };
-    // The pending boss starts the boss session in a boss music zone (or ignoring it).
     if let Some(pending) = amb.pending_boss.take()
         && let Ok((_, _, mm)) = monsters.get(pending)
     {
@@ -385,7 +371,6 @@ pub(super) fn boss_and_event_music(
             });
         }
     }
-    // The boss state machine.
     if let Some(mut boss) = amb.boss.take() {
         let bosses_dead =
             !amb.tracked.is_empty() && amb.tracked.iter().all(|e| monsters.get(*e).is_err());
@@ -421,7 +406,7 @@ pub(super) fn boss_and_event_music(
             _ => done = !playing,
         }
         if done {
-            // `StopBossMusic`: a living event session replays, else the area music loads afresh.
+            // `StopBossMusic`: a living event session replays, else the area music reloads.
             info!("boss music ended: {}", boss.name);
             amb.tracked.clear();
             let replay = amb.held_event.take().and_then(|name| {
@@ -436,7 +421,7 @@ pub(super) fn boss_and_event_music(
                 Some((e, name))
             });
             match replay {
-                // The area's name stays remembered (as at an event's start), so it is not reloaded over the event.
+                // The area's name stays remembered, so it is not reloaded over the event.
                 Some(ev) => {
                     amb.event = Some(ev);
                     amb.music_record = Some(amb.sector_music.clone());
@@ -447,7 +432,6 @@ pub(super) fn boss_and_event_music(
             amb.boss = Some(boss);
         }
     }
-    // Event music: only while no boss session; once per name per session.
     if amb.boss.is_some() {
         return;
     }
@@ -457,7 +441,6 @@ pub(super) fn boss_and_event_music(
         .is_some_and(|(e, _)| !alive_sounds.contains(*e))
         && let Some((_, name)) = amb.event.take()
     {
-        // It ended: the named music session resumes, else the area music reloads.
         match data
             .db
             .get(&name)
@@ -482,8 +465,7 @@ pub(super) fn boss_and_event_music(
     {
         amb.played_events.push(name.clone());
         info!("event music: {name}");
-        // `StopMusic` once the event track plays; the area's name stays remembered, so it is not reloaded until the
-        // event ends. A track that fails to play leaves the area music running.
+        // `StopMusic` once the event track plays; a track that fails to play leaves the area music running.
         if let Some(e) = rec.str("eventMusicName").and_then(|p| {
             play_once(
                 &mut commands,
@@ -499,9 +481,8 @@ pub(super) fn boss_and_event_music(
     }
 }
 
-/// Runs the two channels and their players (`Jukebox::Update`): fades, the day / night reload of an ambient session
-/// with `enableNightSounds`, a music track chain (a random track, never the same twice in a row; the next starts as
-/// the last ends), the ambient loop; the sessions' fade is the players' volume.
+/// `Jukebox::Update`: fades, the day / night reload, the music track chain and the ambient loop;
+/// the sessions' fade is the players' volume.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_sessions(
     mut commands: Commands,
@@ -518,7 +499,6 @@ pub(super) fn drive_sessions(
     let day = is_day_now(ambiance.as_deref(), tod.0);
     let amb = &mut *amb;
     let sounds = &mut *sounds;
-    // The day / night flip.
     amb.day_night_wait = (amb.day_night_wait - dt).max(0.0);
     if amb.day_night_wait <= 0.0
         && amb.ambient.next.is_none()
@@ -533,11 +513,8 @@ pub(super) fn drive_sessions(
     }
     amb.music.update(dt);
     amb.ambient.update(dt);
-    // Music: the track chain of each audible session.
     for slot in amb.music.audible() {
-        // `MusicSession::Load` (Engine.dll): every track's SoundDescriptor is built with volume
-        // 0.8 (the ctor default), and the tick (`MusicSession::Update`) plays it unchanged; the session fade is
-        // `slot.volume`.
+        // `MusicSession::Load`: every track's SoundDescriptor has volume 0.8 (the ctor default).
         let nominal = 0.8 * slot.volume;
         if let Some((.., mut v)) = players.iter_mut().find(|(_, s, _)| s.0 && s.1 == slot.id) {
             v.set_if_neq(BaseVolume(nominal));
@@ -579,7 +556,6 @@ pub(super) fn drive_sessions(
             attach_voice(&mut commands, e, Voice3d::of(f, false, None));
         }
     }
-    // Ambient: the loop of each audible session (its day or night set), read once per slot.
     for slot in amb.ambient.audible() {
         if !amb.loops.iter().any(|(id, _)| *id == slot.id) {
             let l = data.db.get(&slot.name).map_or(
@@ -605,13 +581,12 @@ pub(super) fn drive_sessions(
             b.set_if_neq(BaseVolume(v));
             continue;
         }
-        // Read in the background the first time: the loop starts on a later frame.
         if let Some(path) = &l.path
             && let Ok(f) = sounds.file_or_fetch(&data, path)
         {
             info!("ambience: {path}");
             let speed = f.speed(ENGINE_HZ);
-            // The loop repeats inside the voice; the entity is kept, the session despawns it.
+            // The loop repeats inside the voice; the session despawns the entity.
             let e = commands
                 .spawn((
                     sound(SoundClass::Ambient, v, OnEnd::Keep, speed),
@@ -621,7 +596,6 @@ pub(super) fn drive_sessions(
             attach_voice(&mut commands, e, Voice3d::of(f, true, None));
         }
     }
-    // Players of sessions no longer audible end.
     for (e, s, _) in &players {
         let channel = if s.0 { &amb.music } else { &amb.ambient };
         if !channel.audible().any(|a| a.id == s.1) {
@@ -637,8 +611,7 @@ pub(super) fn drive_sessions(
     } = &mut *amb;
     last_track.retain(|(id, ..)| music.audible().any(|s| s.id == *id));
     loops.retain(|(id, _)| ambient.audible().any(|s| s.id == *id));
-    // The one-shots follow the current ambient session; its record is read once per session (the slot id is unique
-    // per load). A new session starts its class timers at 0 (the first sound plays at once).
+    // A new session (the slot id is unique per load) starts its class timers at 0.
     let id = amb.ambient.cur.as_ref().map_or(0, |c| c.id);
     if id != amb.session_id {
         amb.session_id = id;
@@ -656,29 +629,23 @@ pub(super) fn drive_sessions(
     }
 }
 
-/// A `SoundDescriptor`'s own `fallOff`: constructor `SoundDescriptor::SoundDescriptor` (5.5), which the ambient
-/// sessions'
-/// one-shots keep.
+/// `SoundDescriptor::SoundDescriptor`'s `fallOff`, which ambient one-shots keep.
 const DEFAULT_FALLOFF: f32 = 5.5;
 
-/// Where an ambient session's one-shot plays: `AmbientSession::PlaceOneShot`, 1 m from the ears at `rand() % 360`
-/// degrees,
-/// level with them (`force2d<Class>N` plays it 2D). It stays there as the player walks on.
+/// `AmbientSession::PlaceOneShot`: 1 m from the ears at `rand() % 360` degrees, level with them
+/// (`force2d<Class>N` plays it 2D). It stays there as the player walks on.
 pub fn ambient_spot(ears: Vec3, roll: u32) -> Vec3 {
     let a = (roll % 360) as f32 * 0.017444445;
     ears + Vec3::new(a.cos(), 0.0, a.sin())
 }
 
-/// Frequencies of an ambient session's one-shots (frequent / moderate / unique): the `AmbientSession` updates
-/// (Engine.dll `AmbientSession::UpdateFrequent`, `AmbientSession::UpdateModerate`, `AmbientSession::UpdateUnique`):
-/// `rand() % 4` picks 2 and 1 semitones down, 44100 Hz or 1
-/// semitone up.
+/// `AmbientSession::UpdateFrequent` / `UpdateModerate` / `UpdateUnique`: `rand() % 4` picks 2 and 1
+/// semitones down, 44100 Hz or 1 semitone up.
 pub const AMBIENT_ONESHOT_HZ: [f32; 4] = [39293.098, 41630.4, 44100.0, 46701.902];
 
-/// The ambient session's one-shots (`AmbientSession::UpdateOneShots`): per class, while its sound
-/// plays the wait is armed once; when nothing plays the wait counts down, and at 0 the next sound starts (so the first
-/// plays at once). The class volume is not scaled by the session fade. A class without sounds never plays; a file that
-/// cannot be read waits as if it had played instead of retrying every frame.
+/// `AmbientSession::UpdateOneShots`: per class, while its sound plays the wait is armed once; when
+/// nothing plays the wait counts down, and at 0 the next sound starts. The class volume is not scaled
+/// by the session fade. A file that cannot be read waits as if it had played.
 pub(super) fn ambient_oneshots(
     mut commands: Commands,
     time: Res<Time>,
@@ -709,7 +676,6 @@ pub(super) fn ambient_oneshots(
         let pick = fastrand::usize(..class.paths.len());
         let f = match sounds.file_or_fetch(&data, &class.paths[pick]) {
             Ok(f) => f,
-            // Read in the background: the shot plays on a later frame instead of stalling this one.
             Err(true) => continue,
             Err(false) => {
                 shot.1 = class.delay();
@@ -737,7 +703,6 @@ pub(super) fn ambient_oneshots(
             speed,
             place,
         );
-        // Accepted: the wait is armed once it plays.
         *shot = (Some(e), 0.0);
     }
 }

@@ -6,12 +6,9 @@
 //! (`gd_game::ragdoll::floor`), lies for the engine's 5 s
 //! (`PhysicsDecoration::UpdateSelf`'s 5000 ms), then fades over 3 s and goes.
 //!
-//! The fade is the engine's `BeginFade(255, 255, 255, 3 s)` instance opacity:
-//! the port draws it through the blended-fade material flag (`base.a · fade.x`,
-//! `render/material.rs` `FLAG_BLENDED_FADE`, SrcAlpha / OneMinusSrcAlpha), a
-//! per-instance copy of each part's material made once when the fade starts —
-//! the static scenery shaders have no T variant, so this stands in for the
-//! engine's transparency-list draw (as the gibs' fade does).
+//! The fade is the engine's `BeginFade(255, 255, 255, 3 s)` instance opacity. PORT: drawn through the
+//! blended-fade material flag (`base.a · fade.x`) on per-instance material copies, standing in for the
+//! engine's transparency-list draw.
 //!
 //! PORT: the tossed mesh is a point with a spin (no box contacts): it stops
 //! falling on the floor, slides with the gibs' friction and stops below
@@ -38,7 +35,7 @@ impl Plugin for PhysicsDecorationViewPlugin {
     }
 }
 
-/// A tossed prop in flight / fading (the `gibs::GibBody` shape).
+/// A tossed prop in flight / fading.
 #[derive(Component)]
 struct PropBody {
     vel: Vec3,
@@ -54,8 +51,7 @@ struct PropBody {
     faded: Option<Vec<Handle<GdMaterial>>>,
 }
 
-/// An intact prop's mesh (module doc), once it is loaded (`CharAssets::record_ready`; loaded in the background, so a
-/// streamed-in level's props never build their models on the game thread).
+/// An intact prop's mesh (module doc), once it is loaded in the background (`CharAssets::record_ready`).
 fn dress_props(
     mut commands: Commands,
     new: Query<(Entity, &PhysicsDecoration), Without<gd_render::character::RecordDressed>>,
@@ -84,8 +80,7 @@ fn dress_props(
     }
 }
 
-/// A [`PropTossed`] becomes a tumbling mesh, dressed synchronously from the
-/// record (no frame of blank body).
+/// A [`PropTossed`] becomes a tumbling mesh, dressed synchronously from the record.
 fn toss_props(
     mut commands: Commands,
     mut tossed: MessageReader<PropTossed>,
@@ -121,8 +116,7 @@ fn toss_props(
     }
 }
 
-/// Gravity, the floor, friction, the 3 s fade, the removal (module doc; the
-/// `gibs::move_gibs` motion).
+/// Gravity, the floor, friction, the 3 s fade, the removal (module doc).
 #[allow(clippy::too_many_arguments)]
 fn move_props(
     mut commands: Commands,

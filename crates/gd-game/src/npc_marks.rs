@@ -1,29 +1,14 @@
-//! The marks floating over NPCs: green-ish exclamation (a quest to take),
-//! gold / grey question marks (turn in / in progress), conversation gems
-//! (something to say, new or heard), and the service icons of merchants,
-//! blacksmiths, ... (the `punctuation` field of the NPC's record).
+//! The marks floating over NPCs: quest exclamation / question marks, conversation gems and service icons
+//! (the `punctuation` field of the NPC's record).
 //!
-//! * `Character::UpdatePunctuation` (Game.dll): a
-//!   character with a conversation asks `Conversation::GetPunctuation`
-//!   ([`gd_story::story::Story::conversation_punctuation`]) at most every 500 ms
-//!   (its own timer, `Character::UpdateSelf` adds the frame time; it resets
-//!   only when a conversation exists) and attaches the FX record
-//!   [`punctuation_record`]: 1 `npcexclaimationpoint01`, 2
-//!   `npcquestionmark02` (grey texture), 4 `npcquestionmark01` (gold), 6
-//!   `npcconversationmark02`. For 0 / 5 (nothing / a heard speech) the record's `punctuation`
-//!   string (`Character::Load` field) wins when it is not empty; else a heard
-//!   speech gets `npcconversationmark01` and nothing detaches the mark. A
-//!   character without a conversation shows its `punctuation` record, or no
-//!   mark. `NpcTransmuter::Load` always attaches `npcillusionistmark01`, and
-//!   `Npc::SetBoatMasterPunctuation` `npctravelicon01` (no stock boat master
-//!   is in the port's data path): PORT: the Illusionist's is just its record's
-//!   `punctuation`, which the stock data has too.
-//! * [`NpcMark`] is the derived value (the attached FX record, set only when it
-//!   changes); the presentation (`grimdawn::npc_marks`) reads it.
-//! * PORT: one shared 500 ms poll for all NPCs instead of each one's own
-//!   timer; story NPCs ([`StoryActor`]) and placed level NPCs ([`LevelNpc`],
-//!   no story hooks: only the `punctuation` record) are covered, not
-//!   monsters.
+//! * `Character::UpdatePunctuation`: a character with a conversation asks `Conversation::GetPunctuation` at
+//!   most every 500 ms and attaches [`punctuation_record`]. For 0 / 5 (nothing / a heard speech) the record's
+//!   `punctuation` wins when not empty; else a heard speech gets `npcconversationmark01` and nothing detaches
+//!   the mark. A character without a conversation shows its `punctuation` record, or no mark.
+//!   PORT: the Illusionist's mark is its record's `punctuation`, not `NpcTransmuter::Load`'s
+//!   `npcillusionistmark01`; `Npc::SetBoatMasterPunctuation` is not ported.
+//! * PORT: one shared 500 ms poll for all NPCs instead of each one's own timer; story NPCs ([`StoryActor`])
+//!   and placed level NPCs ([`LevelNpc`]) are covered, not monsters.
 use crate::monsters::LevelNpc;
 use bevy::prelude::*;
 use gd_game_core::character::Character;
@@ -31,7 +16,6 @@ use gd_game_core::data::GameData;
 use gd_game_core::story::{StoryActor, StoryRuntime};
 use gd_story::story::Punctuation;
 
-/// `Character::UpdateSelf`'s poll period for the mark.
 pub const POLL_SECS: f32 = 0.5;
 
 pub struct NpcMarksPlugin;
@@ -60,9 +44,8 @@ pub fn punctuation_record(p: Punctuation) -> Option<&'static str> {
     }
 }
 
-/// The mark record `UpdatePunctuation` picks: `p` is the conversation's
-/// punctuation (`None` when the character has no conversation), `own` the
-/// NPC record's `punctuation` field.
+/// The mark record `UpdatePunctuation` picks: `p` is the conversation's punctuation (`None` without a
+/// conversation), `own` the record's `punctuation`.
 pub fn mark_record(p: Option<Punctuation>, own: &str) -> Option<&str> {
     if let Some(r) = p.and_then(punctuation_record) {
         return Some(r);

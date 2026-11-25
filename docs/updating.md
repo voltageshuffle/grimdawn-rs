@@ -2,7 +2,7 @@
 
 The port runs on the install's data, so most of a patch arrives for free. The work is finding the few rules that
 changed in the binary, and checking which of them we actually share. Work in this order; each step narrows the
-next. A full update is a few hours, most of it waiting on IDA.
+next.
 
 ## 1. Install side by side
 One folder per version (`gd_1_3_1_2`), one RE subfolder per version (`<re>/1_3_1_2`). Point `GD_ROOT` and
@@ -37,15 +37,14 @@ scripts/re-match <dir> <old> <new> --symbols <re>/<old>/symbols.tsv <re>/<new>/s
 ```
 `re-match` anchors on names both builds export, then grows the pairing by instruction hash, size, strings and
 the call graph. It writes:
-- **`changed.tsv`** — the functions whose code differs. This is the update's work list. 1.3.1.2 changed **50**
-  functions out of ~60k; reading those beats reading the patch notes.
+- **`changed.tsv`** — the functions whose code differs. This is the update's work list.
 - **`unmatched.tsv`** — old functions with no counterpart.
 - the new **`symbols.tsv`**, with `fn` / `global` rows re-addressed. Rows it cannot place keep `?`; place those
-  by hand from callers, strings and constants (1.3.1.2: 98 of ~3.4k). Field, vtable and option rows carry over
-  **unchecked** — offsets move; verify one when a change touches it.
+  by hand from callers, strings and constants. Field, vtable and option rows carry over **unchecked** — offsets
+  move; verify one when a change touches it.
 
 Sanity-check the matcher on a build pair you already know: hide a fifth of the names the old database has and
-see how many it re-finds correctly. On 1.3.1.2 it was 2145/2150 (Game.dll) and 757/758 (Engine.dll).
+see how many it re-finds correctly.
 
 Then write our names into the new databases so the decompiles read like the comments:
 ```sh
@@ -58,13 +57,6 @@ and saving twice corrupts the `.i64`.
 **Their bug is not necessarily our bug.** We restructured the engine; a fix to their plumbing may have no
 counterpart here. For each changed function, read the old and new decompile, then find our equivalent and ask
 whether the wrong behaviour is reachable. Write the answer down either way.
-
-1.3.1.2 examples:
-- *Duration refresh* — a real rule change; we had the old rule. Ported.
-- *Werewolf / Avalanche weapon damage* — their fix passes the animation name into the hit-callback lookup.
-  Our weapon damage comes from hand states and the profile, never from the callback, so we never had the bug.
-- *`removeOnUnload` on traps* — we already despawn every monster of an unloaded level.
-- *Pet resists missing from the sheet* — our sheet derives from the pet profile each rebuild.
 
 Only port what is reachable. A new visual field is not worth a renderer change unless our version looks wrong
 (`AGENTS.md`, priority 3).

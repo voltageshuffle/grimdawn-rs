@@ -1,17 +1,12 @@
 //! The spirit guide (`NpcSkillReallocator`, rules and engine facts in `gd_game::reclamation`): clicking one is the
-//! shared interact order (`gd_game::player_orders`, the hover pick); gd-game walks beside it and in reach (the NPC
-//! service rule, `gd_game::reclamation`) opens the mode; this module opens what the answer says, after closing the open
-//! windows (GrimDawn.exe `GameUI::DisplaySkillReallocationWindow` → `UIPlayerHud::CloseWindows`): the skills window in
-//! reclamation mode (drawn by `ui::skills`, its clicks become [`ReclaimRequest::Refund`]) or the devotion window in its
-//! reclaim mode (drawn by `ui::devotion`: a star click refunds, the sidebar shows the money, aether and price). The two
-//! windows' tabs to each other move the mode ([`ReclaimRequest::Switch`]). Hiding the window that has the mode sends
-//! [`ReclaimRequest::Close`]; the mode ending in gd-game (walking away) hides that window.
+//! shared interact order; in reach gd-game opens the mode, and this module opens what the answer says after closing
+//! the open windows (GrimDawn.exe `GameUI::DisplaySkillReallocationWindow` → `UIPlayerHud::CloseWindows`): the skills
+//! window in reclamation mode (its clicks become [`ReclaimRequest::Refund`]) or the devotion window in its reclaim
+//! mode (a star click refunds, the sidebar shows the money, aether and price). The two windows' tabs to each other
+//! move the mode ([`ReclaimRequest::Switch`]). Hiding the window that has the mode sends [`ReclaimRequest::Close`];
+//! the mode ending in gd-game (walking away) hides that window.
 //!
-//! The "nothing to reclaim" message box is the dialog manager's ok box (`confirm.rs`): built
-//! once in its base look, its hover / press look moves in place (`box_live`).
-//!
-//! `GD_USE_SPIRIT_GUIDE` (hooks.rs): once, walks to the nearest spirit guide within 40 m as if it were clicked
-//! (one stands at `GD_START=-3455,6972`, Region0J001).
+//! The "nothing to reclaim" message box is the dialog manager's ok box.
 use crate::state::inventory::UiCapture;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -38,7 +33,6 @@ impl Plugin for ReclamationUiPlugin {
         super::window::add_window(app, build_box, box_clicks, |b: Res<NoPointsBox>| {
             b.open || b.rects.is_some()
         });
-        // The box's hover / press look moves in place (no rebuild on a hover).
         app.add_systems(
             Update,
             box_live
@@ -49,8 +43,7 @@ impl Plugin for ReclamationUiPlugin {
     }
 }
 
-/// What the skills window draws in reclamation mode (`HudValues::reclaim`, from `ui::view::collect`; `None` while
-/// the devotion window has the mode).
+/// What the skills window draws in reclamation mode (`None` while the devotion window has the mode).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReclaimView {
     /// Refunds made (`SkillReclamation::used`; prices the next one).
@@ -60,8 +53,7 @@ pub struct ReclaimView {
 }
 
 impl ReclaimView {
-    /// Writes the view of an active mode (`None` without one) into `slot`, allocating only when it differs;
-    /// whether it changed.
+    /// Writes the view of an active mode (`None` without one) into `slot`; whether it changed.
     pub fn put(
         slot: &mut Option<Self>,
         r: Option<&SkillReclamation>,
@@ -90,9 +82,7 @@ impl ReclaimView {
     }
 }
 
-/// What the devotion window draws in its reclaim mode (`HudValues::devotion_reclaim`, from `ui::view::collect`):
-/// the aether crystals held (`gd_game::devotion::aether_held`); the money and the price come from `HudValues::gold`
-/// and the devotion state.
+/// What the devotion window draws in its reclaim mode: the aether crystals held.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DevotionReclaimView {
     pub aether: u32,
@@ -106,10 +96,8 @@ impl DevotionReclaimView {
     }
 }
 
-/// Clicking a spirit guide is the shared interact order ([`gd_game::player_orders::PlayerOrder::Interact`],
-/// from the hover pick [`crate::state::hover::Hovered`]): gd-game walks beside it and, in reach, opens the mode
-/// (`NpcSkillReallocator::OnPlayerInteract`). The Interact key's `UseObject` routes through the same
-/// order (`apply_orders`).
+/// Clicking a spirit guide is the shared interact order ([`gd_game::player_orders::PlayerOrder::Interact`]);
+/// in reach gd-game opens the mode (`NpcSkillReallocator::OnPlayerInteract`).
 #[allow(clippy::too_many_arguments)]
 fn click_spirit_guide(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -128,7 +116,6 @@ fn click_spirit_guide(
     {
         return;
     }
-    // The hover pick (one pick feeds the hover and the world clicks): a spirit guide under the cursor.
     let Some(e) = hovered.entity else { return };
     if npcs
         .get(e)
@@ -138,7 +125,6 @@ fn click_spirit_guide(
     }
 }
 
-/// `GD_USE_SPIRIT_GUIDE` (hooks.rs): once, walks to the nearest spirit guide within 40 m as if it were clicked.
 #[cfg(feature = "dev")]
 fn use_spirit_guide(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -182,7 +168,7 @@ fn use_spirit_guide(
 fn answers(
     mut answers: MessageReader<ReclaimAnswer>,
     mut windows: super::window::Windows,
-    // Option: created with the player (`gd_game::reclamation::init_reclamation`).
+    // Option: created with the player.
     state: Option<Res<SkillReclamation>>,
     mut out: MessageWriter<ReclaimRequest>,
     mut no_points: ResMut<NoPointsBox>,
@@ -190,8 +176,7 @@ fn answers(
     use super::window::Window;
     for a in answers.read() {
         match a {
-            // Through the window policy, so Factions / Achievements / Loot Filter close too; the other
-            // of the three character windows always closes (the spirit guide switches between them).
+            // Through the window policy, so Factions / Achievements / Loot Filter close too.
             ReclaimAnswer::Skills => {
                 windows.close(Window::Character);
                 windows.close(Window::Devotion);
@@ -210,8 +195,7 @@ fn answers(
             ReclaimAnswer::Closed { devotion: true } => windows.close(Window::Devotion),
         }
     }
-    // The window with the mode hid (Esc, its close button, the key; not its tab to the other window, which
-    // switches): the mode ends.
+    // The window with the mode hid (not by its tab to the other window): the mode ends.
     let panels = &windows.panels;
     if state
         .is_some_and(|s| s.skills_mode() && !panels.skills || s.devotion_mode() && !panels.devotion)
@@ -220,7 +204,6 @@ fn answers(
     }
 }
 
-/// The "nothing to reclaim" message box (module doc).
 #[derive(Resource, Default)]
 pub struct NoPointsBox {
     open: bool,
@@ -229,7 +212,6 @@ pub struct NoPointsBox {
 }
 
 impl NoPointsBox {
-    /// The shared Esc dispatcher's close (`ui::esc_dispatcher`): the box is a notice, Esc dismisses it.
     pub fn escape(&mut self) -> bool {
         std::mem::replace(&mut self.open, false)
     }
@@ -284,8 +266,7 @@ fn build_box(
     ));
 }
 
-/// The box's hover / press look in place ([`super::confirm::apply_look`]): the box is built in
-/// its base look, so a hover never rebuilds it.
+/// The box's hover / press look in place ([`super::confirm::apply_look`]).
 fn box_live(
     window: Query<&Window, With<PrimaryWindow>>,
     pause: Res<gd_game_core::pause::GamePause>,
@@ -327,7 +308,6 @@ fn box_clicks(
         return;
     }
     capture.0 = true;
-    // Esc dismisses the box through the shared dispatcher (`ui::esc_dispatcher`).
     let (Ok(win), Some((ok, close))) = (window.single(), state.rects) else {
         return;
     };

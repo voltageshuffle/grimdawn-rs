@@ -1,6 +1,4 @@
-//! Skill point reclamation: the spirit guide's refunds (the rules; the session
-//! state and the requests are `gd_game::reclamation`, the window
-//! `grimdawn::ui::skills`).
+//! Skill point reclamation: the spirit guide's refunds.
 //!
 //! Price (Game.dll `SkillManager::UseReclamationPoints`,
 //! `GetCurrentSkillReclamationCost`, `SkillManager::Load` reads
@@ -11,12 +9,11 @@
 //! refund of `n` points charges the cost at each count before raising it and
 //! fails (count unchanged) when the money is short; a negative `n` (the
 //! window's undo) lowers the count first and pays the cost at the lowered
-//! count back, the money capped at 2,000,000,000 (`gd_game::loot::add_gold`). The devotion refunds are
-//! the same with the `devotion*` fields (`gd_game::devotion::reclaim_cost`).
+//! count back, the money capped at 2,000,000,000. The devotion refunds are
+//! the same with the `devotion*` fields.
 //!
-//! Which buttons refund (GrimDawn.exe `UISkillPane::GetRequirementFlags` flags, used by
-//! the button update `UISkillPane::Update` and the frame draw `UISkillPane::Draw` while
-//! the window's reclaim flag `UISkillPane.reclamationMode` is set), [`Flags`]:
+//! Which buttons refund (`UISkillPane::GetRequirementFlags` flags, used by
+//! `UISkillPane::Update` and `UISkillPane::Draw` while `UISkillPane.reclamationMode` is set), [`Flags`]:
 //! * disabled (no click) = [`Flags::disabled`]: unlearned (f11), the cost above
 //!   the money (f8, the cost at the current count), removing the last point
 //!   would orphan a dependant (f10, [`orphans`]) or a celestial power is bound
@@ -85,8 +82,8 @@ pub fn payback(db: &Database, count: u32, n: u32) -> u64 {
     (1..=n.min(count)).map(|k| cost(&t, &c, count - k)).sum()
 }
 
-/// Money text: `%i` with a comma before each group of three digits (Game.dll `Game::FormatMoney`, the
-/// tooltip's cost; the window's numbers use GrimDawn.exe's copy `UI::FormatThousands`).
+/// Money text: `%i` with a comma before each group of three digits (`Game::FormatMoney`; the
+/// window's numbers use GrimDawn.exe's copy `UI::FormatThousands`).
 pub fn money(v: u64) -> String {
     let d = v.to_string();
     let n = d.len();
@@ -152,9 +149,8 @@ pub fn orphans(db: &Database, book: &SkillBook, tree: &ClassTree, skill: &str) -
         .any(|(c, _)| !alternative || dependencies(db, c).0.is_empty())
 }
 
-/// f13, `UISkillPane::IsMasteryNeeded`: some learned skill of the mastery's tree needs the mastery's level (`tree`
-/// one of
-/// `trees`).
+/// f13, `UISkillPane::IsMasteryNeeded`: some learned skill of the mastery's tree needs the
+/// mastery's level (`tree` one of `trees`).
 pub fn mastery_needed(
     db: &Database,
     book: &SkillBook,
@@ -169,7 +165,7 @@ pub fn mastery_needed(
         .any(|s| book.level(s) > 0 && trees.tier_requirement(db, s) >= level)
 }
 
-/// A skill button's reclaim flags (`UISkillPane::GetRequirementFlags`, module docs).
+/// A skill button's reclaim flags (`UISkillPane::GetRequirementFlags`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags {
     pub mastery: bool,
@@ -187,7 +183,7 @@ pub struct Flags {
     pub mastery_needed: bool,
 }
 
-/// A reclaim tooltip line (module docs).
+/// A reclaim tooltip line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tip {
     /// `tagReclaimMastery`.

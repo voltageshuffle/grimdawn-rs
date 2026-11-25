@@ -2,36 +2,23 @@
 //! the page unlocks for the first time ([`gd_game::tutorials::TutorialTip`], the engine's event 54).
 //!
 //! Grim Dawn.exe: `HelpPage::ShowQuickTip` reads the page's `quickTag` (nothing when empty) and `quickTagKey` (a key
-//! action name, [`gd_ui::quests::key_operation`]: the key bound to it is the tag's `%s`), and with the option on hands
-//! the text to the tip manager `TipManager::AddTip` at (20, 100); `TipManager::Update`: 250 ms fade in, 10 s opaque,
-//! 500 ms fade out; `TipManager::OnTipClick`: a click on the box opens the Tutorial (Help) window on the page and fades
-//! the tip out (500 ms). A tip created while another shows is queued behind it (FIFO). The option off: no tip is made
-//! (the page still unlocks). The page number is the index into the Help window's `tutorialPages` list.
+//! action whose bound key is the tag's `%s`), and with the option on hands the text to `TipManager::AddTip` at
+//! (20, 100); `TipManager::Update`: 250 ms fade in, 10 s opaque, 500 ms fade out; `TipManager::OnTipClick`: a click
+//! opens the Help window on the page and fades the tip out (500 ms). A tip created while another shows is queued
+//! (FIFO). The page number is the index into the Help window's `tutorialPages` list.
 //!
-//! HUD widget tips: every widget loaded from a record with `tutorialTag` (loader `UIWidget::LoadTutorialTip`:
-//! `tutorialTrigger`, `tutorialTag`, `tutorialKey`, `tutorialOffsetY`) listens to event 54
-//! (`UIWidget::RegisterTutorialListener`); when the unlocked page is its `tutorialTrigger` and the tag is not empty,
-//! `UIWidget::ShowTutorialTip` hands the tag (with the `tutorialKey` action's key name as its `%s`, else without
-//! parameters) to the tip manager as a pointer tip (`TipManager::AddTip` mode 1, kind 1) at the widget rect's centre,
-//! `tutorialOffsetY` lower, when the option is on. A pointer tip starts at once (it is never queued and does not hold
-//! back the page tips: `TipManager::Update` waits only for kind-0 tips); its box (`TipBox::Layout`) is 340 + 2 ×
-//! padding wide and its text's height + 2 × padding high, centred on the point with its bottom on it, then raised 50 px
-//! (top at least 20), with `ui/tutorialwindow/tutorialtipbottom.tex` centred under it; same fades, and a click opens
-//! the trigger's Help page (`TipManager::OnTipClick`). The HUD widgets with one ([`POINTER_FIELDS`]): the health and
-//! constitution bars, the teleport button, the character button and the classic HUD's level-up indicator
-//! (`playerPortraitLevelUpIndicatorButton`, page 14). By design not the group button's (page 26: no multiplayer).
+//! HUD widget tips (`UIWidget::LoadTutorialTip`: `tutorialTrigger`, `tutorialTag`, `tutorialKey`, `tutorialOffsetY`):
+//! when the unlocked page is the widget's `tutorialTrigger` and the tag is set, `UIWidget::ShowTutorialTip` adds a
+//! pointer tip (`TipManager::AddTip` mode 1, kind 1) at the widget rect's centre, `tutorialOffsetY` lower. A pointer
+//! tip starts at once (never queued; `TipManager::Update` waits only for kind-0 tips); its box (`TipBox::Layout`) is
+//! 340 + 2 × padding wide and its text's height + 2 × padding high, centred on the point with its bottom on it, then
+//! raised 50 px (top at least 20), with `ui/tutorialwindow/tutorialtipbottom.tex` centred under it; same fades, and a
+//! click opens the trigger's Help page. The widgets: [`POINTER_FIELDS`]; not the group button's (page 26).
 //!
-//! PORT: the box is the black rect + `genericrolloverbox` border of the button rollover (the tip manager's own frame
-//! is `genericbox_*.tex`, same pieces), [`TIP_TEXT`] wide like the pointer tips' (`TipBox::Layout`). The text
-//! ([`layout`]): the title (the tag up to its first `{^-}`, `Title{^-}{^n}{^n}Body` in every `tagQuickTip*`) in
-//! `style_rollover_title`, the body in `style_rollover_description` (its `{^h}` highlights), every line centred, a
-//! blank line a short gap ([`PARAGRAPH_GAP`]): read off the real game's main-menu tip, not decompiled. The page tips'
-//! point (20, 100) / (20, 150) is the box's left edge and vertical centre (the real main-menu box is centred on
-//! y = 150). `GD_TUTORIAL_TIP` (hooks.rs) unlocks that page at that time.
-//! PORT (a performance choice): the tips are built once per (window size, HUD table, set of tips, tags
-//! generation), each in a [`FadeGroup`]; the fades change the nodes' alpha in place ([`Fader`]). The tags
-//! generation (`FontCache::generation`) bumps on a mod or language swap: a rebuild re-resolves each tip's text
-//! from its stored tag, so the tips follow the new language (the engine localises live, `MainMenu::SetState`).
+//! PORT: the box is the button rollover's black rect + `genericrolloverbox` border, [`TIP_TEXT`] wide. The text
+//! ([`layout`]): the title (the tag up to its first `{^-}`) in `style_rollover_title`, the body in
+//! `style_rollover_description`, every line centred, a blank line a short gap ([`PARAGRAPH_GAP`]): read off the real
+//! game, not decompiled. The page tips' point (20, 100) / (20, 150) is the box's left edge and vertical centre.
 use super::UiAssets;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -59,7 +46,7 @@ pub struct QuickTip {
     queue: VecDeque<u32>,
     /// The main menu's tip was made (once per process, `MainMenu.quickTipShown`; not reset with a session).
     menu_tip_done: bool,
-    /// The HUD widgets' pointer tips on screen (module doc).
+    /// The HUD widgets' pointer tips on screen.
     pointers: Vec<Pointer>,
 }
 
@@ -87,7 +74,7 @@ struct Pointer {
     built: bool,
 }
 
-/// The HUD master table's widgets with a tutorial tip (module doc).
+/// The HUD master table's widgets with a tutorial tip.
 const POINTER_FIELDS: [&str; 5] = [
     "hudHealthBar",
     "hudConstitutionBar",
@@ -133,16 +120,14 @@ pub struct QuickTipPlugin;
 impl Plugin for QuickTipPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuickTip>()
-            // The in-game click half, before the player's world click.
             .add_systems(Update, clicks.in_set(super::UiInputSet))
-            // In the game and, for the main menu's tip, in the menu. After the text tags load: the menu's tip
-            // resolves its tag on the first menu frame.
+            // After the text tags load: the menu's tip resolves its tag on the first menu frame.
             .add_systems(
                 Update,
                 tip.after(gd_ui::load_tags)
                     .run_if(not(in_state(gd_ui::state::session::AppState::Loading))),
             )
-            // Every tip on screen goes when the loading screen comes up (the menu's tip as in the real game).
+            // Every tip on screen goes when the loading screen comes up.
             .add_systems(OnEnter(gd_ui::state::session::AppState::Loading), drop_tips);
     }
 }
@@ -159,9 +144,7 @@ fn drop_tips(
     gd_ui::window::despawn_all(&mut commands, &roots);
 }
 
-/// The tip click half ([`super::UiInputSet`], before the player's world click): a click inside a
-/// tip's box opens its Help page and dismisses it, and takes the cursor so the click does not reach
-/// the world.
+/// A click inside a tip's box opens its Help page, dismisses it and takes the cursor.
 fn clicks(
     mut state: ResMut<QuickTip>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -429,8 +412,7 @@ fn tip(
         }
     }
     let Ok(win) = window.single() else { return };
-    // The main menu's tip click only — the in-game clicks are [`clicks`]' ([`super::UiInputSet`],
-    // before the player's world click).
+    // The main menu's tip click only; the in-game clicks are [`clicks`]'.
     if menu.is_some() {
         click_tips(
             &mut state,
@@ -472,7 +454,6 @@ fn tip(
     if !wanted {
         return;
     }
-    // A rebuild re-resolves each tip's text from its tag: a language swap bumps the tags generation.
     for t in &mut state.pointers {
         t.text = with_key(&assets.fonts, &bindings, &t.tag, t.key);
     }
@@ -526,8 +507,7 @@ fn fade(age: f32, out_at: Option<f32>) -> f32 {
     }
 }
 
-/// A pointer tip's box over `p` (module doc) and its arrow, built opaque (its [`FadeGroup`] fades it); returns
-/// the box.
+/// A pointer tip's box over `p` and its arrow, built opaque; returns the box.
 fn draw_pointer(ui: &mut super::Ui, text: &str, p: Vec2) -> URect {
     let alpha = 1.0;
     let max_w = ui.sc(TIP_TEXT);
@@ -548,7 +528,7 @@ fn draw_pointer(ui: &mut super::Ui, text: &str, p: Vec2) -> URect {
     r
 }
 
-/// A tip's text laid out (module doc): its lines (style, text with markup, top relative to the text's top) at most
+/// A tip's text laid out: its lines (style, text with markup, top relative to the text's top) at most
 /// `max_w` px wide, and the text's height.
 fn layout(ui: &mut super::Ui, text: &str, max_w: f32) -> (Vec<(&'static str, String, f32)>, f32) {
     let text = text.replace("{^n}", "\n").replace("^n", "\n");

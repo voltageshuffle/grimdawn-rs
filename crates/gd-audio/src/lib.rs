@@ -7,24 +7,20 @@
 //! weight1..N, volume, volumeSet, fallOff, pitchUp/pitchStep, force2d}`.
 //!
 //! Volumes (`gd_game_core::options`): every sound has a [`SoundClass`]; its gain is `masterVolume` × the class's option
-//! (`musicVolume`, `effectsVolume`, `ambientVolume`, `dialogVolume`), read into `listener::Listener` when the options
-//! change. A voice plays at its own volume × that gain clamped to 1 (`Listener::voice_volume`: DirectSound never
-//! amplifies); a 3D voice's distance gain and pan come on top (`Listener::gains`).
-//! A sound's voice starts paused at zero volume; `mixer::mix` runs in `Last` (after every system that starts a
-//! sound), sets the final volume and starts it the same frame its event fires.
+//! (`musicVolume`, `effectsVolume`, `ambientVolume`, `dialogVolume`). A voice plays at its own volume × that gain
+//! clamped to 1 (DirectSound never amplifies); a 3D voice's distance gain and pan come on top.
+//! A sound's voice starts paused at zero volume; `mixer::mix` runs in `Last`, sets the final volume and starts it
+//! the same frame its event fires.
 //!
-//! Pause: Engine.dll `SoundManager::Pause` (the game menu, its options window and the pause key
-//! pause with sound) pauses every playing stream and every sound not flagged by `SoundPak::EnablePauseHack`, and starts
-//! later unflagged ones at volume 0; the UI's widgets flag their sounds, so a click plays during the pause. PORT: a
-//! pak played without a position is such an interface sound ([`mixer::PlaysWhilePaused`], set where it is requested,
-//! never inferred from when it starts), and so is a video's soundtrack; every other voice, a world loop or ambience
-//! that starts during the pause included, is held and resumes in place. The session timers and fades run on virtual
-//! [`Time`], so they freeze too. While the window is not focused every sound is paused (`mixer::unfocused_mute`).
+//! Pause: `SoundManager::Pause` pauses every playing stream and every sound not flagged by
+//! `SoundPak::EnablePauseHack`, and starts later unflagged ones at volume 0; UI widgets flag their sounds. PORT: a
+//! pak played without a position ([`mixer::PlaysWhilePaused`]) and a video's soundtrack play during the pause;
+//! every other voice is held and resumes in place. Session timers and fades run on virtual [`Time`]. While the
+//! window is not focused every sound is paused.
 //!
-//! Devices (`devices`): the options Audio tab lists the host's output / input devices by name (index 0 = system
-//! default, i >= 1 = entry i - 1). bevy_audio 0.20 opens only the default sink (`AudioOutput` is pub(crate), no
-//! device hook), so the bus plays through a port-owned rodio sink on the selected `soundDevice`
-//! (`mixer::start_bus`); Apply reopens it without dropping the voice queue (`mixer::switch_device`).
+//! Devices: the options Audio tab lists output / input devices by name (index 0 = system default, i >= 1 = entry
+//! i - 1). PORT: the bus plays through a port-owned rodio sink on the selected `soundDevice` (bevy_audio opens only
+//! the default sink); Apply reopens it without dropping the voice queue.
 #![allow(clippy::type_complexity)]
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
@@ -60,9 +56,8 @@ impl Plugin for GameAudioPlugin {
             .add_systems(Startup, (devices::init_devices, mixer::start_bus).chain())
             .add_systems(
                 Update,
-                // One sequence, in two halves (a tuple holds at most 20 systems); each half is chained itself, as a
-                // nested tuple is unordered inside: the listener is refreshed and the landed files collected before
-                // any sound starts, a skill loop is moved to its source before its emitter is heard.
+                // Two chained halves (a tuple holds at most 20 systems; nested tuples are unordered): the listener
+                // and landed files before any sound starts, a skill loop moved before its emitter is heard.
                 (
                     (
                         mixer::focus_pause,
@@ -109,34 +104,27 @@ impl Plugin for GameAudioPlugin {
     }
 }
 
-/// The sound files, the `SoundPak` facts read so far, the listener, and the mixer's input and output.
 #[derive(Resource, Default)]
 pub struct Sounds {
-    /// Loaded files, held weakly (`cache::WeakLoaded`): a playing voice or a creature's preloaded sounds
-    /// (`cache::HeldSounds`) keep a file.
+    /// Held weakly: a playing voice or a creature's preloaded sounds keep a file.
     cache: HashMap<String, Option<cache::WeakLoaded>>,
-    /// The last files used, played or preloaded, held strongly (`gd_game_core::weak_cache::Recent`;
-    /// `cache::reset_sounds` empties it).
+    /// The last files used, held strongly.
     recent: gd_game_core::weak_cache::Recent<cache::Loaded>,
     /// The size at which the next new file drops the dead entries of `cache`.
     prune_at: usize,
-    /// `SoundPak` records by name, read once (`pak::PakInfo`); cleared with the files on a mod change.
+    /// `SoundPak` records by name; cleared with the files on a mod change.
     paks: HashMap<String, Option<Arc<pak::PakInfo>>>,
-    /// The listener's limits for [`play_pak`].
     pub listener: listener::Listener,
-    /// Background file reads in flight (`cache::preload_sounds`), drained by `cache::collect_preload`.
+    /// Background file reads in flight.
     preload: Vec<bevy::tasks::Task<Vec<(String, Option<cache::Loaded>)>>>,
-    /// File keys being read in the background, so a file is read once.
     in_flight: HashSet<String>,
-    /// The preloads waiting for their files, each handed to its owner once complete (`cache::Hold`).
+    /// Preloads waiting for their files, each handed to its owner once complete.
     holds: Vec<cache::Hold>,
-    /// One-shots waiting for their file's background read (`pak::replay_pending`).
+    /// One-shots waiting for their file's background read.
     pending: Vec<pak::PendingPlay>,
-    /// New voices to the mixer; set at startup (`mixer::start_bus`).
     bus: Option<mpsc::SyncSender<mixer::BusVoice>>,
-    /// The bus's mixing state, shared with its rodio source (`mixer::BusState`); survives a device switch.
+    /// Shared with the bus's rodio source; survives a device switch.
     bus_state: Option<Arc<Mutex<mixer::BusState>>>,
-    /// The port-owned rodio sink playing the bus (`mixer::start_bus`), reopened on a `soundDevice` change
-    /// (`mixer::switch_device`).
+    /// Reopened on a `soundDevice` change.
     bus_out: Option<mixer::BusSink>,
 }

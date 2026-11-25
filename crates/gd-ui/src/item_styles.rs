@@ -7,7 +7,8 @@
 //! rule matching everything, at the end), Remove, Move Up / Move Down. Right: the selected rule's editor:
 //! rarity and type check boxes (none checked: any), the four traits cycling Any / Yes / No, the item level
 //! range, the name substring, the colour (a palette of [`PALETTE`] swatches, Stock, or a `#RRGGBB` field),
-//! the tag with its place (before / after the name), "Hide the label", and a preview line. The window's
+//! the tag with its place (before / after the name), "Hide the label", and a preview line; at the editor's foot
+//! the file's load / save problem, if any (`ItemStyles::notice`). The window's
 //! bottom row has Load Preset (`StyleRules::preset`) and Clear All, each asking first (`super::lootfilter`).
 //!
 //! The page only reads `ItemStyles`: every change goes as an [`ItemStyleRequest`] (`Set` with the whole edited
@@ -33,7 +34,7 @@ use gd_sim::items::item_style::{
 };
 
 /// List rows shown at once.
-const ROWS: usize = 13;
+const ROWS: usize = 16;
 
 /// The page's state (module doc).
 #[derive(Default)]
@@ -315,18 +316,15 @@ pub fn click(
     true
 }
 
-/// What the page draws with: the window's origin and rect and the loot filter records it reuses.
+/// What the page draws with: the window's origin and the loot filter records it reuses.
 pub struct Look<'a> {
     pub o: Vec2,
-    pub w: URect,
     /// `lootFilterCheckbox`: the check box bitmaps.
     pub checkbox: &'a Record,
     /// `lootFilterResetButton`: the small buttons' bitmap.
     pub button: Option<&'a Record>,
     /// The check boxes' label style.
     pub label: &'a str,
-    /// The four stock column titles' text boxes (`lootFilterTitle01..04`: rect and style), relabelled.
-    pub titles: [Option<TextBox>; 4],
 }
 
 /// A text in `r` in `style`, its colour replaced by `color` (as a text widget's override colour).
@@ -475,29 +473,16 @@ pub fn build(ui: &mut Ui, page: &mut StylesPage, styles: &ItemStyles, look: &Loo
     let at = |ui: &Ui, x: f32, y: f32| Vec2::new(o.x + ui.sc(x), o.y + ui.sc(y));
     let label = look.label;
     let line_h = ui.line_height(label);
-    // The four stock column titles, relabelled.
-    let rule_of = format!("{} of {}", sel + 1, rules.len());
-    let titles = [
-        "Item Styles",
-        "First Wins",
-        "Edit Rule",
-        if rules.is_empty() { "" } else { &rule_of },
-    ];
-    for (tb, text) in look.titles.iter().zip(titles) {
-        if let (Some(tb), false) = (tb, text.is_empty()) {
-            let text = match tb.style.as_deref() {
-                Some(st) => ui.truncate_line(st, ui.sc(tb.rect.w), text),
-                None => text.to_owned(),
-            };
-            ui.text(tb, o, &text);
-        }
-    }
-    // The page's own backdrop over the content area: the stock background's column dividers (drawn for the
-    // four checkbox columns) would run through the list and the editor.
-    let a = at(ui, 22.0, 90.0);
-    let b = at(ui, 980.0, 556.0);
-    let panel = URect::new(a.x, a.y, b.x - a.x, b.y - a.y);
-    ui.solid(panel, Color::srgb(0.045, 0.04, 0.032));
+    // The page's own backdrop from under the title bar down to the bottom row: it hides the stock column
+    // titles' frames, the column dividers and the columns' bottom ornaments (the bottom row draws its own
+    // frames, `super::lootfilter`).
+    let a = at(ui, 21.0, 48.0);
+    let b = at(ui, 980.0, 610.0);
+    ui.solid(
+        URect::new(a.x, a.y, b.x - a.x, b.y - a.y),
+        Color::srgb(0.045, 0.04, 0.032),
+    );
+    let panel = URect::new(a.x, a.y, b.x - a.x, at(ui, 0.0, 554.0).y - a.y);
     let edge = Color::srgba(0.55, 0.48, 0.33, 0.8);
     let t1 = ui.sc(1.0).max(1.0);
     for r in [
@@ -511,7 +496,7 @@ pub fn build(ui: &mut Ui, page: &mut StylesPage, styles: &ItemStyles, look: &Loo
         ui.solid(r, edge);
     }
     // The rule list.
-    let p = at(ui, 30.0, 96.0);
+    let p = at(ui, 30.0, 54.0);
     let row_h = ui.sc(26.0);
     let list = URect::new(p.x, p.y, ui.sc(342.0), row_h * ROWS as f32);
     page.list = Some(list);
@@ -535,21 +520,31 @@ pub fn build(ui: &mut Ui, page: &mut StylesPage, styles: &ItemStyles, look: &Loo
     }
     let n = rules.len();
     let by = list.y + list.h + ui.sc(8.0);
-    let (bw, bh, gap) = (ui.sc(80.0), ui.sc(28.0), ui.sc(6.0));
-    for (k, (hit, text, enabled)) in [
+    let (bh, gap, pad_x) = (ui.sc(28.0), ui.sc(6.0), ui.sc(10.0));
+    let buttons = [
         (Hit::Add, "Add", true),
         (Hit::Remove, "Remove", sel < n),
         (Hit::Up, "Move Up", sel > 0 && sel < n),
         (Hit::Down, "Move Down", sel + 1 < n),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let r = URect::new(list.x + (bw + gap) * k as f32, by, bw, bh);
+    ];
+    let widths = buttons.map(|(_, text, _)| ui.text_width(look.label, text) + 2.0 * pad_x);
+    let room = list.w - gap * (buttons.len() - 1) as f32;
+    let fit = (room / widths.iter().sum::<f32>()).min(1.0);
+    let mut x = list.x;
+    for ((hit, text, enabled), w) in buttons.into_iter().zip(widths) {
+        let r = URect::new(x, by, w * fit, bh);
+        x += w * fit + gap;
         small_button(ui, look, r, text, enabled);
         if enabled {
             page.hits.push((r, hit));
         }
+    }
+    // The file's load / save problem, at the editor column's foot (`ItemStyles::notice`).
+    if let Some(notice) = &styles.notice {
+        let (x0, right) = (at(ui, 392.0, 0.0).x, at(ui, 978.0, 0.0).x);
+        let r = URect::new(x0, panel.y + panel.h - row_h - pad, right - x0, row_h);
+        let t = ui.truncate_line(label, r.w, notice);
+        text_in(ui, r, label, TextAlign::Start, &t, Some([1.0, 0.45, 0.35]));
     }
     let Some(rule) = rules.get(sel) else {
         return;
@@ -560,7 +555,7 @@ pub fn build(ui: &mut Ui, page: &mut StylesPage, styles: &ItemStyles, look: &Loo
     let cap_w = ui.sc(90.0);
     let xc = x0 + cap_w;
     let row = ui.sc(28.0);
-    let mut y = at(ui, 0.0, 96.0).y;
+    let mut y = at(ui, 0.0, 54.0).y;
     let caption = |ui: &mut Ui, y: f32, text: &str| {
         let r = URect::new(x0, y, cap_w, row);
         text_in(
@@ -597,7 +592,6 @@ pub fn build(ui: &mut Ui, page: &mut StylesPage, styles: &ItemStyles, look: &Loo
                 let br = URect::new(p.x, (p.y + (row - sz.y) * 0.5).round(), sz.x, sz.y);
                 ui.quad(img, br, None, Color::WHITE);
                 ui.record_button_sound(br, look.checkbox);
-                // Measured with the style the label is drawn in (same font, size and flags).
                 let lw = ui.text_width(label, t);
                 let lr = URect::new(br.x + br.w + ui.sc(4.0), p.y, lw, row);
                 text_in(ui, lr, label, TextAlign::Start, t, None);

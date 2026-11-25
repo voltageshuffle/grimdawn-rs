@@ -36,18 +36,16 @@
 //! camera-facing text at position + offset, centred on it, in the style's
 //! colour with the entry's alpha; the line is font size × scale × 0.009 m
 //! tall and glyph widths are 1.33 × that height / the font's line height
-//! per font pixel. PORT: rasterised at the style's size through the shared raster cache
-//! ([`FontCache::rasterize_cached`], no texture per event) and scaled; the text is drawn over the
+//! per font pixel. PORT: rasterised at the style's size and scaled; the text is drawn over the
 //! scene (no depth test).
 //!
-//! Combat numbers (`gd_game::floating` docs): flag 0x40 sets the direction to
+//! Combat numbers: flag 0x40 sets the direction to
 //! normalize(3 × `rand` in [−1, 1]) (`FloatingTextList::RandomDirection`); 0x80 keeps a list of
 //! objects with a counter: the first text of an object adds it (counter 0, no
 //! offset), each further one steps the counter (mod 7) and starts at the
 //! offset a × camera right + b × camera up of `FloatingTextList::critOffsets` (0, 0),
 //! (±0.6, ±0.5), (0, ±1); an object 3000 ms without a text leaves the list
 //! (update); the text then drops the object (it does not follow it).
-//! `GD_SHOT_ON` (hooks.rs) with the style record `moneypickup` shoots after a pickup.
 use super::text::{FontCache, LoadedFont};
 use bevy::prelude::*;
 use gd_game::floating::FloatingText;
@@ -89,7 +87,7 @@ struct Entry {
     node: Entity,
 }
 
-/// The game window's floating-text list (`InGameUI.floatingTexts`).
+/// `InGameUI.floatingTexts`.
 #[derive(Resource)]
 pub struct FloatingTexts {
     entries: Vec<Entry>,
@@ -98,13 +96,10 @@ pub struct FloatingTexts {
     /// The 0x80 per-object offset counters (`FloatingTextList.objectCounters`): object, counter,
     /// ms since its last text.
     slots: Vec<(Entity, usize, f32)>,
-    /// The 0x40 combat-number scatter: a seeded engine RNG, not `fastrand`'s
-    /// process generator (gameplay RNG stays untouched; the scatter is stable
-    /// per session).
+    /// The 0x40 combat-number scatter: a seeded RNG, separate from gameplay RNG.
     scatter: gd_rules::Rng,
 }
 
-/// The scatter's fixed seed (the draw is presentation, so any stable seed do).
 const SCATTER_SEED: u32 = 0x5CA7_7E21;
 
 impl Default for FloatingTexts {
@@ -203,7 +198,6 @@ fn add_texts(
         if list.entries.len() >= MAX_TEXTS {
             continue;
         }
-        // `GD_SHOT_ON=moneypickup`: screenshots after an iron pickup.
         gd_game_core::visuals::notify(&mut commands, &ev.style);
         let text = format_text(&fonts, &ev.tag, &ev.args);
         if text.is_empty() {

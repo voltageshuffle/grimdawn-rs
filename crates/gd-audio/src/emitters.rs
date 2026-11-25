@@ -7,11 +7,8 @@ use super::pak::{audible_gain, could_possibly_hear, volume_set};
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 
-/// A placed looping sound: attenuated and panned by `Listener::gains` (`gd_sim::sound3d::distance_gain`), its
-/// volume clamped as every voice's (`Listener::voice_volume`), and started / stopped by [`loop_rule`]. Spawned
-/// when its level loads, gone with it. A stereo file's loop (no 3D buffer, `pak` module doc) is not cut by the d²
-/// limit of [`loop_rule`] (`SoundManager::Update` checks the buffer's 3D flag `SoundBuffer.is3d`); `spawnAtCameraY`
-/// is not applied to loops (no stock looping pak has it).
+/// A placed looping sound, started / stopped by [`loop_rule`]; spawned when its level loads, gone with it.
+/// `spawnAtCameraY` is not applied to loops (no stock looping pak has it).
 #[derive(Component)]
 pub struct Emitter {
     pak: String,
@@ -53,7 +50,7 @@ pub fn spawn_emitter(
     )
 }
 
-/// An [`Emitter`] looping the sound pak `pak` at `at` (e.g. a riftgate's state sound, `riftgates::gate_effects`).
+/// An [`Emitter`] looping the sound pak `pak` at `at`.
 pub fn spawn_loop(commands: &mut Commands, data: &GameData, pak: &str, at: Vec3) -> Option<Entity> {
     let p = data.db.get(pak)?;
     Some(
@@ -145,18 +142,14 @@ pub enum LoopStep {
     Stop,
 }
 
-/// The engine's looping 3D sounds `d` metres from the ears. `SoundAmbient::Update` (Game.dll;
-/// `SoundObject`, `Monster` and `Decoration` `ambientSound`, every update; Engine.dll's `SoundEntity::UpdateSelf`
-/// alike): a pak not playing is played again (`Play3D` with loop, so only while [`could_possibly_hear`]);
-/// one playing farther than 8 × `fallOff` fades out over 500 ms (`FadeLastPlayedSound` → `SoundManager::FadeSound`,
-/// which also clears the instance's distance check). `SoundManager::Update` (with
-/// `EnableDistanceCheck`, on from the constructor, never switched off): every looping 3D instance with its distance
-/// check farther than d² = 5000 (70.7 m; fade value (d² − 5000) × 0.0004 ≥ 1e-4) is stopped at once
-/// ([`LOOP_STOP_D2`]), so a loop with 8 × `fallOff` beyond 70.7 m is silent there.
+/// The engine's looping 3D sounds `d` metres from the ears. `SoundAmbient::Update` (and Engine.dll's
+/// `SoundEntity::UpdateSelf`): a pak not playing is played again (`Play3D` with loop, so only while
+/// [`could_possibly_hear`]); one playing farther than 8 × `fallOff` fades out over 500 ms
+/// (`SoundManager::FadeSound`). `SoundManager::Update` (`EnableDistanceCheck` always on): every looping 3D
+/// instance farther than d² = 5000 (70.7 m) is stopped at once ([`LOOP_STOP_D2`]).
 ///
-/// `three_d`: the d² cut is skipped for a stereo file (no 3D buffer: `SoundManager::Update` tests the buffer's
-/// `SoundBuffer.is3d` flag first); the hearing check and the 8 × `fallOff` fade are `Play3D`'s / `SoundAmbient`'s
-/// and apply to both.
+/// `three_d`: the d² cut is skipped for a stereo file (`SoundBuffer.is3d`); the hearing check and the fade apply
+/// to both.
 pub fn loop_rule(playing: bool, three_d: bool, falloff: f32, d: f32) -> LoopStep {
     let cut = three_d && d * d > LOOP_STOP_D2 && (d * d - LOOP_STOP_D2) * 0.0004 >= 0.0001;
     match playing {

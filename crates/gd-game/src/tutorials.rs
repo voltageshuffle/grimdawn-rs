@@ -1,17 +1,11 @@
-//! Unlocked tutorial pages (the journal's help pages, `player.gdc` block 15:
-//! the page numbers in unlock order).
+//! Unlocked tutorial pages (`player.gdc` block 15: page numbers in unlock order).
 //!
-//! `GameEngine::UnlockTutorialPage`: a page not yet
-//! unlocked is set in the engine's page bit set and appended to the list;
-//! with its `show` flag the engine then sends event 54 (the tutorial tip).
-//! Callers: the scripts' `UnlockTutorial` (`Effect::UnlockTutorial`, show),
-//! a riftgate binding the player (`StaticTeleporter::BindToCharacter`:
-//! page 9, show; [`crate::riftgates::bind_riftgates`]).
-//! [`TutorialTip`] is that event 54: sent once per newly unlocked page (the UI shows the quick tip, `ui/quicktip.rs`).
-//! PORT: the engine ignores pages past its page count (the bit set's size, not traced).
+//! `GameEngine::UnlockTutorialPage`: a page not yet unlocked is appended; with its `show` flag the
+//! engine sends event 54 ([`TutorialTip`]). Callers: the scripts' `UnlockTutorial` (show) and
+//! `StaticTeleporter::BindToCharacter` (page 9, show).
+//! PORT: the engine ignores pages past its page count (not traced).
 use bevy::prelude::*;
 
-/// The unlocked pages, in unlock order.
 #[derive(Resource, Default, Debug, Clone, PartialEq)]
 pub struct TutorialPages {
     pub pages: Vec<u32>,
@@ -21,15 +15,14 @@ pub struct TutorialPages {
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct UnlockTutorial(pub u32);
 
-/// The engine's event 54: a page was just unlocked (the quick tip of the page may show).
+/// The engine's event 54: a page was just unlocked.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct TutorialTip(pub u32);
 
-/// The pages from the loaded character once the player exists (no save:
-/// none).
+/// The pages from the loaded character once the player exists.
 pub fn init_tutorials(
     mut commands: Commands,
-    // Option: `pages` is the existence check (this system creates it); `loaded` is absent for a new character.
+    // Option: `pages` is the existence check; `loaded` is absent for a new character.
     pages: Option<Res<TutorialPages>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     players: Query<(), With<gd_game_core::player::Player>>,

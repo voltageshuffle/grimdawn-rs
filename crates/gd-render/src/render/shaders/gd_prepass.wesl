@@ -1,15 +1,15 @@
-// Shadow-pass vertex program of the Grim Dawn materials (render/material.rs):
+// Shadow-pass vertex program of the Grim Dawn materials:
 // Bevy's prepass vertex (skinning; no morph targets in the port) plus the
-// engine's point-light paraboloid (render/point_shadow.rs): in a point-light
+// engine's point-light paraboloid: in a point-light
 // shadow view (a shadow-only spot light whose projection carries the map
 // layout) the vertex goes to the lower-hemisphere paraboloid of
 // `pLightShadowVS` instead of the view's projection. The foliage wind vertex
 // program (gd_wind.wesl) does the same. Skinned normals/tangents use the FIRST
-// bone only (standardskinned.ssh deferredVS; see gd_forward.wesl).
+// bone only (standardskinned.ssh deferredVS).
 //
 // The snow lift (gd_forward.wesl, standardstaticsnow deferredVS):
 // world y += s · snowDepth, s = sat((Nworld.y − snowThreshold) / (1 − snowThreshold)).
-// PORT: the engine's depthMapVS is not dumped; the shadow depth lifts like the
+// PORT: the engine's depthMapVS is not traced; the shadow depth lifts like the
 // deferred VS so it matches the lifted surface.
 import bevy_pbr::{
     prepass::io::{Vertex, VertexOutput, decompress_vertex},
@@ -48,7 +48,7 @@ const FLAG_SNOW: u32 = 8u;
 /// (W texels) in the top-left of the S-texel layer, or (0, 0) for any other
 /// view. Tag: an aspect-1 infinite reverse perspective whose focal length is
 /// (n + 64 k)·1e-4 (a field of view just under 180°), n = 64 W / S, S = 1024·2^k
-/// (render/point_shadow.rs `spot_code`).
+/// (point_shadow.rs `spot_code`).
 fn paraboloid_layout() -> vec2<f32> {
     let p = view.clip_from_view;
     if p[2][3] != -1.0 || p[3][3] != 0.0 || p[1][1] >= 0.02 || p[0][0] != p[1][1] {
@@ -116,10 +116,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(VERTEX_UVS_B)
     out.uv_b = vertex.uv_b;
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && SKINNED && (VERTEX_NORMALS || VERTEX_TANGENTS))
-    // standardskinned.ssh deferredVS: normal / tangent / binormal turn
-    // by the FIRST bone only (the one paired with weight slot 0, joint_indices.x);
-    // the position stays blended. skin_model with weights (1,0,0,0) selects that
-    // bone's world matrix. The binormal is rebuilt in the fragment (gd_standard.wesl).
+    // standardskinned.ssh deferredVS: the normal / tangent frame turns by the FIRST bone only (module doc).
     let first_bone_world = skinning::skin_model(vertex.joint_indices, vec4<f32>(1.0, 0.0, 0.0, 0.0), vertex_in.instance_index);
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS && SKINNED)
     out.world_normal = skinning::skin_normals(first_bone_world, vertex.normal);

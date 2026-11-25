@@ -1,12 +1,7 @@
 //! The gameplay's data leaf: components, resources, messages, pure resolvers
-//! and the system sets gameplay and presentation order against. No systems
-//! live here — `gd-game` adds those (`GameLogicPlugin`); `gd-render` reads
-//! this crate directly, so the drawing code compiles without the systems.
-//!
-//! Layering and the rules (one source per value, UI only reads and sends
-//! requests): `docs/architecture.md`.
-// Bevy system parameters (queries with filters, param tuples) are long by
-// nature; Bevy recommends allowing this lint for them.
+//! and system sets. No systems live here — `gd-game` adds those; `gd-render`
+//! reads this crate directly. Layering: `docs/architecture.md`.
+// Bevy system parameters are long by nature.
 #![allow(clippy::type_complexity)]
 pub mod afflictions;
 pub mod ascendant;

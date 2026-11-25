@@ -49,7 +49,7 @@ pub enum Button {
     IllusionSlot(usize),
     IllusionPick(usize),
     IllusionPage(bool),
-    /// The Illusionist's weapon-swap button (`illusion.rs`).
+    /// The Illusionist's weapon-swap button.
     IllusionSwap,
     Close,
 }
@@ -100,18 +100,16 @@ pub struct Trade {
     /// The convert tab's mode: `randomSetButton` (else `sameSetButton`, the
     /// default).
     pub random_set: bool,
-    /// Item under the cursor in the trade window and its price
-    /// (`tooltip.rs`).
+    /// Item under the cursor in the trade window and its price.
     pub hover: Option<(Item, Option<u64>)>,
-    /// The Illusionist window's state (`illusion.rs`).
+    /// The Illusionist window's state.
     pub illusion: crate::state::illusion::IllusionView,
     /// The open window's search box (vendor, stash, crafting panel).
     pub search: TradeSearch,
 }
 
-/// The trade windows' search box (`gd_ui::trade` module doc): its text, focus, and what the
-/// text finds in the open market or stash (the binary's `trade/search.rs` `search_hits`); the
-/// crafting panel filters its recipe list with the query instead (`crafting.rs`).
+/// The trade windows' search box: its text, focus, and what the
+/// text finds in the open market or stash; the crafting panel filters its recipe list with the query instead.
 #[derive(Default)]
 pub struct TradeSearch {
     pub text: String,
@@ -222,7 +220,7 @@ impl Trade {
     }
 }
 
-/// Screen rects of the open trade window (physical px; `ui/trade.rs`).
+/// Screen rects of the open trade window (physical px).
 #[derive(Resource, Default, Clone)]
 pub struct TradeLayout {
     pub window: Option<URect>,
@@ -250,7 +248,7 @@ pub struct TradeLayout {
     /// The dismantle tab's result boxes (index into [`Trade::results`]).
     pub results: Vec<(usize, URect)>,
     pub buttons: Vec<(Button, URect)>,
-    /// The Illusionist's weapon-swap button (its rollover: `ui/rollover.rs`).
+    /// The Illusionist's weapon-swap button.
     pub swap_button: Option<URect>,
     /// The dismantle warning's / [`Trade::prompt`]'s Yes / No box while it shows.
     pub confirm: Option<gd_ui_kit::confirm::ConfirmRects>,

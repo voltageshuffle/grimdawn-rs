@@ -7,8 +7,7 @@
 //!
 //! Random draws are the CRT's `rand()` (MSVC, [`CrtRand`]) as in the engine. PORT: the engine's emitters share
 //! the process's one stream; here each emitter draws from its own (seeded by [`EmitterState::new`]'s `stream`), so
-//! an emitter's update touches nothing but its own state and the effects simulate in parallel
-//! (`super::update_effects`).
+//! an emitter's update touches nothing but its own state and the effects simulate in parallel.
 use bevy::math::{Mat3, Vec3, Vec4};
 use gd_formats::pfx::{Emitter as Data, Shape, curve as c};
 use gd_sim::crt::CrtRand;
@@ -19,7 +18,7 @@ const DEG: f32 = 0.017_453_292;
 /// setting kept here; emitters already running keep theirs.
 static DENSITY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
 
-/// The density now set (the emitter spawn path passes it to [`EmitterState::new`]).
+/// The density now set.
 pub fn fx_density() -> f32 {
     f32::from_bits(DENSITY.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -132,9 +131,9 @@ pub struct LightState {
 }
 
 impl EmitterState {
-    /// `density` is the fx-quality setting ([`fx_density`]) the caller passes in. `stream` picks the emitter's
-    /// `rand()` stream (module doc): distinct values give unrelated streams (hashed into the CRT seed, since
-    /// LCG seeds that differ little start out drawing nearly the same numbers).
+    /// `density` is the fx-quality setting ([`fx_density`]). `stream` picks the emitter's `rand()` stream (module
+    /// doc): distinct values give unrelated streams (hashed into the CRT seed, since LCG seeds that differ little
+    /// start out drawing nearly the same numbers).
     pub fn new(d: &Data, frames: u32, density: f32, stream: u32) -> Self {
         // Emitter::Reset: identity, then X, Y, Z increments of floats[1..3] degrees.
         let rot = Mat3::from_rotation_x(d.rotation[0] * DEG)
@@ -409,7 +408,6 @@ impl EmitterState {
 
     fn update_particles(&mut self, d: &Data, dt: f32, dtc: f32) {
         let (gravity_dt, drag_k) = if d.converge() { (0.0, 0.0) } else { (dtc, 1.0) };
-        // The per-particle curves, looked up once per emitter instead of per particle.
         let (size, stretch, orbit, spin, gravity, drag) = (
             d.curve(c::SIZE),
             d.curve(c::STRETCH),
@@ -429,12 +427,8 @@ impl EmitterState {
         let orbit_half = orbit.range * 0.5;
         let local = d.local();
         let frames = self.frames as i32;
-        // Drag is applied once per engine update (no dt): the engine
-        // has no fixed simulation rate: Engine.dll `Engine::Update`
-        // runs once per frame with the frame's elapsed ms
-        // (`Engine::UpdateTime`) and effects update in it
-        // (`EffectEntity::UpdateSelf` → `Effect::Update` → `Emitter::Update`).
-        // The port also updates once per rendered frame, so once per call.
+        // Drag is applied once per update (no dt): the engine has no fixed simulation rate (`Engine::Update` runs
+        // once per frame, `EffectEntity::UpdateSelf` → `Effect::Update` → `Emitter::Update`), and neither has the port.
         self.max_alpha = 0.0;
         let mut i = 0;
         while i < self.particles.len() {

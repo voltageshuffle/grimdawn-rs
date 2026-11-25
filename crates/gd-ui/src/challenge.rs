@@ -11,8 +11,7 @@
 //! the rollover; render (`ChallengeAreaWindow::Render`) draws the bitmap then the text at the window origin; hover
 //! (`ChallengeAreaWindow::UpdateRollover`) tests the text box and shows the rollover (line 1 the name, line 2
 //! the description, the record's styles). The window is shifted with the Crucible / Shattered Realm panes for the
-//! minimap (`survival.rs` module doc). The same update shows the info icon window with the area's mutators
-//! (`survival.rs` `collect_mutators`).
+//! minimap.
 use super::{HudValues, UiAssets, Widget};
 use crate::state::survival::{PaneRollovers, Zone, compass_mode, hud_shift};
 use bevy::prelude::*;
@@ -20,8 +19,7 @@ use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, TextBox, WindowDef};
 use gd_game_core::data::GameData;
 
-/// What the window shows: the area's id, its name and description tags and the mutator paks it rolled (the info
-/// icon window's list).
+/// The area's id, name / description tags and rolled mutator paks.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ChallengeHud {
     pub id: [i32; 4],
@@ -32,8 +30,7 @@ pub struct ChallengeHud {
 
 impl ChallengeHud {
     /// Refreshes `cur` to the window's view of the player's area (`None`: none, or one that does not show the
-    /// HUD); true when it changed. The same area (by id) only compares its mutators; the record is read when the
-    /// area changes.
+    /// HUD); true when it changed.
     pub fn refresh(
         cur: &mut Option<Self>,
         data: &GameData,
@@ -82,14 +79,13 @@ impl Plugin for ChallengeUiPlugin {
     }
 }
 
-/// The window's table record in the HUD master.
 fn table(ui: &super::Ui) -> Option<gd_formats::arz::Record> {
     ui.record(gd_ui_kit::MASTER)
         .and_then(|m| m.str("hudChallengeAreaWindow").map(str::to_owned))
         .and_then(|p| ui.record(&p))
 }
 
-/// Builds the window when the area (or the window size) changes; nothing while the player is in no displayed area.
+/// Rebuilds when the area or window size changes.
 #[allow(clippy::too_many_arguments)]
 fn build(
     mut fresh: gd_game_core::session::NewSession,
@@ -111,7 +107,6 @@ fn build(
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let mode = compass_mode(compass.as_deref());
     let view = &values.challenge_area;
-    // The UI scale is a layout input too (an applied UI Scale option rebuilds).
     let sk = size
         .extend(mode as u32)
         .extend(assets.scale(size).to_bits());
@@ -142,14 +137,13 @@ fn build(
     if let Some(r) = ui.record(&field("challengeAreaName")) {
         let tb = TextBox::from_record(&r);
         let b = tb.rect;
-        // PORT: cut the area name to its box (stock lets a localised name spill); the rollover keeps the full name.
+        // PORT: the area name is cut to its box; the rollover keeps the full name.
         let shown = match tb.style.as_deref() {
             Some(st) => ui.truncate_line(st, ui.sc(b.w), &name),
             None => name.clone(),
         };
         ui.text(&tb, origin, &shown);
-        // The rollover: the name text's box (`ChallengeAreaWindow::UpdateRollover`), lines from the `RolloverLine2`
-        // record's styles.
+        // `ChallengeAreaWindow::UpdateRollover`: the name text's box, lines from the `RolloverLine2` record's styles.
         let rollover = field("challengeAreaRollover");
         let roll = ui.record(&rollover);
         let style = |k: &str, or: &str| {

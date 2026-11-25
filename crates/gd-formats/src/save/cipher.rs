@@ -38,7 +38,7 @@ pub fn string_to_bytes(s: &str) -> Result<Vec<u8>> {
         .map(|c| {
             let v = c as u32;
             if v > 0xff {
-                bail!("character {c:?} does not fit a byte string");
+                bail!("character '{c}' does not fit a byte string");
             }
             Ok(v as u8)
         })

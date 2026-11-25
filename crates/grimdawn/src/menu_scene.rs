@@ -1,63 +1,34 @@
-//! Main-menu scene: the menu record's map drawn behind the main menu, seen
-//! from the record's fixed camera, with the selected character standing in it
-//! (`crate::doll`, [`DollView::Menu`](crate::doll::DollView)).
+//! Main-menu scene: the menu record's map drawn behind the main menu, seen from the record's fixed camera, with
+//! the selected character standing in it ([`DollView::Menu`](crate::doll::DollView)).
 //!
 //! Grim Dawn.exe:
-//! - the record (`MainMenu::LoadMenuRecord`): one of the menu's record list (MainMenu ctor
-//!   `MainMenu::MainMenu`: `records/game/gameengine.dbr` `menuRecord`, then
-//!   `menuRecordExpansion1..3` of each loaded expansion when the field is set;
-//!   `database/templates/gamemenu.tpl`), picked by the menu-scene option
-//!   (`mainMenu`, at most the list's last). Before the pick,
-//!   once (`gdx3FirstRun`, with the third expansion enabled): the
-//!   option is set to 3 and the options are saved. A record other than the
-//!   loaded one unloads the scene (world, ambience, weather, jukebox) and
-//!   loads the new one; the options' Apply calls it too (`OptionsWindow::Apply`).
-//!   Its camera: eye `mmCameraPosition`, looking at `mmCameraTarget` with up
-//!   +Y (`Camera::LookAt`), `mmCameraFOV` (degrees; vertical, as every
-//!   `GAME::Camera`), `mmCameraNearPlane` / `mmCameraFarPlane`; fixed (no path
-//!   or orbit). The character: `mmPlayerPosition`, `mmPlayerRotation`
-//!   (degrees), `mmPlayerScale`; `mmTime`, `mmMusic`, `mmVignetteBitmap`,
-//!   `mmLogo`.
-//! - loading (`MainMenu::LoadScene`): `AmbianceManager::SetTime(mmTime)`,
-//!   `SetTimeEnabled(false)`, `SetDepthFogClamp(0)`, the jukebox starts the
-//!   ambience and the music, `World::Load(mmMap)` and region 0 is loaded.
-//! - the selected character (`MainMenu::SelectCharacter`): its `Player` entity is added to
-//!   the menu region at `mmPlayerPosition` with `Actor::SetScale(mmPlayerScale)`
-//!   (Engine.dll: replaces the record's `scale`), `Player::RemoveLight` and
-//!   `Character::SetMenuCharacter`; `MainMenu::SetCharacterRotation` sets its rotation
-//!   R(X, x) · R(Y, y + turn) · R(Z, z) (row vectors; `turn` is a menu
-//!   rotation, 0 here). Its controller state is `ControllerPlayerStateMenuIdle`
-//!   → `MenuIdleAction` (Game.dll; shares `LongIdleAction`'s transition timer).
-//! - an `AmbientShadow` with `fx/textures/ambientshadowmainmenu.tex` under it
-//!   (`MainMenu::Initialize` `SetTexture`; drawn by `MainMenu::Render` with
-//!   `AddToScene(coords, 1.0, 1.0)` 0.25 m below the scene's point
-//!   `MainMenu.scenePoint`, unrotated). Game.dll `AmbientShadow::RenderPass` /
-//!   `AddToScene`: a horizontal quad `size` (1 m) to each side of
-//!   the point, white with alpha `scale` × 255, drawn with
-//!   `shaders/effects/ambientshadow.ssh` `emissiveStyle` (sort 6000; alpha
-//!   blend, depth test LessEqual without depth write, depth bias −0.001;
-//!   [`ambient_shadow`]).
+//! - the record (`MainMenu::LoadMenuRecord`): one of the menu's record list (`MainMenu::MainMenu`:
+//!   `records/game/gameengine.dbr` `menuRecord`, then `menuRecordExpansion1..3` of each loaded expansion when set),
+//!   picked by the `mainMenu` option (at most the list's last). Before the pick, once (`gdx3FirstRun`, with the
+//!   third expansion enabled): the option is set to 3 and the options are saved. A record other than the loaded
+//!   one unloads the scene and loads the new one; `OptionsWindow::Apply` calls it too.
+//!   Its camera: eye `mmCameraPosition`, looking at `mmCameraTarget` with up +Y, `mmCameraFOV` (degrees,
+//!   vertical), `mmCameraNearPlane` / `mmCameraFarPlane`; fixed. The character: `mmPlayerPosition`,
+//!   `mmPlayerRotation` (degrees), `mmPlayerScale`; `mmTime`, `mmMusic`, `mmVignetteBitmap`, `mmLogo`.
+//! - loading (`MainMenu::LoadScene`): `AmbianceManager::SetTime(mmTime)`, `SetTimeEnabled(false)`,
+//!   `SetDepthFogClamp(0)`, the jukebox starts the ambience and the music, `World::Load(mmMap)`, region 0 loaded.
+//! - the selected character (`MainMenu::SelectCharacter`): added at `mmPlayerPosition` with
+//!   `Actor::SetScale(mmPlayerScale)` (replaces the record's `scale`), `Player::RemoveLight`;
+//!   `MainMenu::SetCharacterRotation` sets R(X, x) · R(Y, y + turn) · R(Z, z) (row vectors; `turn` 0 here). Its
+//!   controller state is `ControllerPlayerStateMenuIdle` → `MenuIdleAction`.
+//! - an `AmbientShadow` with `fx/textures/ambientshadowmainmenu.tex` under it (`MainMenu::Render`
+//!   `AddToScene(coords, 1.0, 1.0)` 0.25 m below `MainMenu.scenePoint`, unrotated; `AmbientShadow::RenderPass`:
+//!   a horizontal quad 1 m to each side, white with alpha `scale` × 255, `ambientshadow.ssh` `emissiveStyle`,
+//!   sort 6000, alpha blend, depth test LessEqual without depth write, depth bias −0.001).
 //!
-//! The scene is the map's levels built by the world streamer's own code
-//! (`gd_world::build_level` on a background task, `gd_world::spawn_level` without
-//! gameplay content: no proxies, chests, breakables, nav or collision); it is
-//! despawned when the menu closes, before the session's world streams
-//! (`SessionReady`). The environment (`env.rs`) reads the menu map's sector
-//! data, `mmTime` and a fog clamp of 0 while it exists.
+//! The scene is the map's levels without gameplay content (no proxies, chests, breakables, nav or collision); it
+//! is despawned when the menu closes, before the session's world streams. The environment reads the menu map's
+//! sector data, `mmTime` and a fog clamp of 0 while it exists. The scenery never fades in the menu (only
+//! `GameCamera::UpdateTransparencyFrustum` marks it).
 //!
-//! The scenery never fades in the menu (see_through.rs: only
-//! `GameCamera::UpdateTransparencyFrustum` marks it; the menu's camera is a
-//! plain `Camera` with `SetCoords`): with the player-centred frustum the
-//! character's round stone platform (`allowTransparency`, between eye and
-//! target) faded out and left one stray paving block, a dark square, under
-//! the character's feet.
-//!
-//! PORT: the three expansions are always loaded (`gd_formats::vfs`), so the
-//! list is the four records; the first-run pick is not saved under
-//! `GD_OPTIONS` (the port's own file is not the one read); the menu idle is
-//! the doll's looped long idle; the menu ambience (`StartAmbient`) and the
-//! scene's two breakable containers are not shown; the music plays at the
-//! area music's volume (0.6).
+//! PORT: the three expansions are always loaded, so the list is the four records; the first-run pick is not saved
+//! under `GD_OPTIONS`; the menu idle is the doll's looped long idle; the menu ambience (`StartAmbient`) and the
+//! scene's two breakable containers are not shown; the music plays at the area music's volume (0.6).
 use bevy::prelude::*;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
@@ -102,7 +73,7 @@ impl Plugin for MenuPlugin {
     }
 }
 
-/// The menu record `option` (the `mainMenu` option) picks (module doc).
+/// The menu record the `mainMenu` option picks.
 pub fn menu_view(data: &GameData, option: i32) -> Option<(MenuView, f32)> {
     let eng = data.db.get("records/game/gameengine.dbr")?;
     let records: Vec<&str> = [
@@ -150,25 +121,23 @@ pub fn menu_view(data: &GameData, option: i32) -> Option<(MenuView, f32)> {
 
 type Built = anyhow::Result<(Arc<MapFile>, Vec<(usize, LevelCpu)>)>;
 
-/// The menu scene while the main menu is open; its record's view is the [`MenuBackdrop`]'s.
 #[derive(Resource)]
 pub struct MenuScene {
     task: Option<Task<Built>>,
     music: Option<Entity>,
 }
 
-/// An entity of the menu scene (level roots, the ambient shadow, the music): despawned with the scene.
+/// An entity of the menu scene: despawned with the scene.
 #[derive(Component)]
 struct MenuSceneEntity;
 
 impl MenuScene {
-    /// The menu music's entity (faded by the credits roll).
     pub fn music(&self) -> Option<Entity> {
         self.music
     }
 }
 
-/// Opens the picked record's scene, in place of another record's (module doc: `MainMenu::LoadMenuRecord`).
+/// Opens the picked record's scene, in place of another record's (`MainMenu::LoadMenuRecord`).
 #[allow(clippy::too_many_arguments)]
 fn open_scene(
     mut commands: Commands,
@@ -187,7 +156,6 @@ fn open_scene(
         if !o.flag("gdx3FirstRun") {
             o.set("mainMenu", Value::Int(3));
             o.set("gdx3FirstRun", Value::Bool(true));
-            // `GD_OPTIONS` (hooks.rs): another options file is not overwritten.
             #[cfg(feature = "dev")]
             let store = hooks.session.options_file.is_none();
             #[cfg(not(feature = "dev"))]
@@ -202,7 +170,6 @@ fn open_scene(
         warn!("main menu: no menu record");
         return;
     };
-    // `GD_TIME` (hooks.rs): the time of day.
     #[cfg(feature = "dev")]
     let time = hooks.render.time.unwrap_or(time);
     if scene.is_some() {
@@ -289,7 +256,6 @@ fn finish_scene(
             return;
         }
     };
-    // Nothing walks or shoots in the scene: its collision is dropped.
     let mut coll = crate::collision::WorldCollision::default();
     let mut receivers = gd_render::decal::DecalReceivers::default();
     #[cfg(feature = "dev")]
@@ -335,10 +301,8 @@ fn finish_scene(
     backdrop.map = Some(map);
 }
 
-/// The character's `AmbientShadow` quad (module doc). PORT: 2 cm above
-/// `mmPlayerPosition` (the source of the engine's point, 0.25 m above its
-/// quad, was not traced; 0.25 m below `mmPlayerPosition` it is under the
-/// platform and depth-tested away); the shader's depth bias is left out.
+/// The character's `AmbientShadow` quad. PORT: 2 cm above `mmPlayerPosition` (the source of the engine's point
+/// was not traced); no depth bias.
 fn ambient_shadow(
     commands: &mut Commands,
     data: &GameData,
@@ -372,7 +336,6 @@ fn ambient_shadow(
     )
 }
 
-/// The menu closed (a session starts): the scene, its music and camera go.
 fn close_scene(
     mut commands: Commands,
     owned: Query<Entity, With<MenuSceneEntity>>,
@@ -388,7 +351,6 @@ fn close_scene(
     commands.remove_resource::<MenuBackdrop>();
 }
 
-/// The record's fixed camera over the world camera's orbit.
 fn menu_camera(
     backdrop: Res<MenuBackdrop>,
     mut cams: Query<(&mut GameCamera, &mut Transform, &mut Projection)>,

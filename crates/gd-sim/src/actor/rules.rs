@@ -4,7 +4,6 @@
 use super::*;
 use anyhow::{Context, Result};
 
-/// Game-wide rule records.
 #[derive(Clone)]
 pub struct Rules {
     pub formulas: CombatFormulas,
@@ -19,12 +18,8 @@ pub struct Rules {
     pub monster_pak: Option<Record>,
     pub pet_pak: Option<Record>,
     pub player_pak: Option<Record>,
-    /// Game balance level (`GameEngine::SetGameBalanceLevel`): the paks'
-    /// column, `difficulty * 4 + players - 1` (the server's
-    /// player-manager update sends `difficulty * min(maxPlayers, 4) +
-    /// players` (`ServerPlayerManager::UpdateGameBalance`) and `CharAttributeVal::AddToAccumulator` reads
-    /// index level - 1; the port takes maxPlayers >= 4); single player:
-    /// `difficulty * 4`.
+    /// Game balance level (`GameEngine::SetGameBalanceLevel`): the paks' column, `difficulty * 4 + players - 1`;
+    /// single player `difficulty * 4`. PORT: takes maxPlayers >= 4 (`ServerPlayerManager::UpdateGameBalance`).
     pub balance: usize,
     /// `gameengine.dbr` (speed caps).
     pub engine: Option<Record>,
@@ -34,8 +29,7 @@ pub struct Rules {
     pub challenge: Option<Record>,
     /// The list index `challenge` is read at (0 for Veteran; the Crucible's ramp - 1).
     pub challenge_index: usize,
-    /// The Ascendant altar's monster attribute paks installed this session
-    /// (`crate::ascendant::Ascendant::monster_paks`).
+    /// The Ascendant altar's monster attribute paks installed this session.
     pub ascendant_paks: Vec<(String, usize, crate::ascendant::Scope)>,
     /// The Crucible's active mutators' attribute packs by who they affect
     /// ([`Rules::with_mutators`]): `AttributePak`s added to every monster / the player at the
@@ -75,14 +69,10 @@ impl Default for SpeedCap {
 }
 
 impl SpeedCap {
-    /// The speed slowed by `slow_pct` % and then capped.
-    /// `Character::GetRunSpeed` / `GetAttackSpeed` /
-    /// `GetSpellCastSpeed`: speed × (1 − 0.01 × slow) goes into
-    /// `Cap*Speed` (`Character::CapRunSpeed` / `CapAttackSpeed` / `CapSpellCastSpeed`), so a slow can only push the
-    /// speed down to the cap's min (`*SpeedCapMin` % of the bio base), and a
-    /// speed above the max loses nothing until the slowed value drops below it.
-    /// The slow % is `DurationDamageManager::GetFixedDamage` of the run /
-    /// attack / cast type (0x13 / 0x11 / 0x12).
+    /// The speed slowed by `slow_pct` % and then capped (`Character::GetRunSpeed` / `GetAttackSpeed` /
+    /// `GetSpellCastSpeed` into `Character::Cap*Speed`): a slow only pushes the speed down to the cap's min, and a
+    /// speed above the max loses nothing until the slowed value drops below it. The slow % is
+    /// `DurationDamageManager::GetFixedDamage` of type 0x13 / 0x11 / 0x12.
     pub fn capped(&self, slow_pct: f32) -> f32 {
         let v = self.raw * (1.0 - slow_pct * 0.01);
         if self.min <= 0.0 || self.max <= 0.0 {
@@ -93,19 +83,11 @@ impl SpeedCap {
     }
 }
 
-/// Run, attack and cast speed from the accumulators (
-/// `Character::GetRunSpeed` / `GetAttackSpeed` /
-/// `GetSpellCastSpeed`): run = RunSpeed, attack = AttackSpeed ×
-/// (1 + BaseAttackSpeed), cast = CastSpeed, each clamped by `Cap*`:
-/// [min% × base, (max% + `character*MaxModifier`) × base] with the caps of
-/// `gameengine.dbr` (`player*`, `monster*`, `boss*SpeedCapMin/Max`, the
-/// min per difficulty). Dual-wielding melee weapons (hand state 10) scales
-/// BaseAttackSpeed (both weapons' sum) by `dwWeaponSpeedFactor` (0.5:
-/// their average; `GetAttackSpeed`). `base` is the
-/// bio base value (before gear/skills): `Player/Monster::CapAttackSpeed`
-/// read the bio's base accumulator (`CharacterBio::ReloadBaseAttrAcc`).
-/// Returned uncapped with the bounds so slows can be folded in
-/// before the cap ([`SpeedCap::capped`]).
+/// Run, attack and cast speed from the accumulators (`Character::GetRunSpeed` / `GetAttackSpeed` /
+/// `GetSpellCastSpeed`): run = RunSpeed, attack = AttackSpeed × (1 + BaseAttackSpeed), cast = CastSpeed, each
+/// clamped to [min% × base, (max% + `character*MaxModifier`) × base] by the `gameengine.dbr` caps (min per
+/// difficulty). Dual-wielding melee weapons scales BaseAttackSpeed by `dwWeaponSpeedFactor`. `base` is the bio base
+/// accumulator (`CharacterBio::ReloadBaseAttrAcc`). Returned uncapped with the bounds ([`SpeedCap::capped`]).
 pub fn speed_caps(
     rules: &Rules,
     acc: &CharAttrAccumulator,
@@ -284,14 +266,11 @@ impl Rules {
 }
 
 impl Rules {
-    /// The Crucible's monster stats at a `ramp` (`Game.SetSurvivalDifficulty`): next to the
-    /// stock pak, a monster with a non-zero ramp adds the survival adjustment pak
-    /// (`survivalinfo.dbr` `survivalAdjustmentNormal` / `Elite` / `Ultimate` by game difficulty,
-    /// `GameEngine::GetChallengeAdjustment` in mode 1) at list index `ramp - 1`
-    /// (`CharAttributeVal::AddToAccumulator`: column 0 adds nothing, else
-    /// `list[min(column - 1, len - 1)]`; `Monster::ContributeGameBalanceCharAttributes`).
-    /// Players and pets take no such pak. Live monsters take the new pak through
-    /// `gd_game::monster_skills::rebuild_profiles` (the engine's `Monster::OnDifficultyRampLevel` reload).
+    /// The Crucible's monster stats at a `ramp` (`Game.SetSurvivalDifficulty`): a monster with a non-zero ramp adds
+    /// the survival adjustment pak (`survivalinfo.dbr` `survivalAdjustmentNormal` / `Elite` / `Ultimate` by game
+    /// difficulty, `GameEngine::GetChallengeAdjustment` in mode 1) at list index `ramp - 1`
+    /// (`CharAttributeVal::AddToAccumulator`: column 0 adds nothing, else `list[min(column - 1, len - 1)]`).
+    /// Players and pets take no such pak. Live monsters reload it (`Monster::OnDifficultyRampLevel`).
     pub fn with_survival_ramp(&self, db: &Database, ramp: u32) -> Self {
         let challenge = (ramp > 0)
             .then(|| {
@@ -316,13 +295,9 @@ impl Rules {
 }
 
 impl Rules {
-    /// The Crucible's mutators (`Game.AddMutator(record)`): each `Mutator` record
-    /// (`mutatorpak_*`: `affectsPlayers`, and `normalMutator` / `eliteMutator` / `ultimateMutator`
-    /// attribute packs) contributes the pack of the game difficulty to the player (`affectsPlayers`)
-    /// or to every monster. `Game.AddMutator` and
-    /// `Monster` / `Player::ContributeMutator*`: the pak by
-    /// difficulty (`normalMutator` / `eliteMutator` / `ultimateMutator`) at column = the contributor's
-    /// character level (stock paks are single-valued, so any level reads the same value).
+    /// The Crucible's mutators (`Game.AddMutator(record)`): each `Mutator` record's pak of the game difficulty
+    /// (`normalMutator` / `eliteMutator` / `ultimateMutator`) goes to the player (`affectsPlayers`) or to every
+    /// monster, at column = the contributor's character level (`Monster` / `Player::ContributeMutator*`).
     pub fn with_mutators(&self, db: &Database, mutators: &[String]) -> Self {
         let (mut monster, mut player) = (Vec::new(), Vec::new());
         for m in mutators {
@@ -350,7 +325,7 @@ impl Rules {
 }
 
 impl Rules {
-    /// The rules of a character standing in a challenge area (`gd_game::challenge_areas`):
+    /// The rules of a character standing in a challenge area:
     /// `Monster::ContributeGameBalance*`: a monster adds the area's `difficultyAdjustment`
     /// `AttributePak` (`ChallengeArea.difficultyPak`, loaded by `ChallengeArea::Load`) at the game-balance column,
     /// after the challenge pak (pets and players take none, `Pet::` / `Player::ContributeGameBalance*`). `mutators`

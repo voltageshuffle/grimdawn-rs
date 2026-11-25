@@ -1,196 +1,78 @@
-//! Combat sounds: weapon swipes, melee strikes, what the struck character
-//! hears, ranged shots, skill activations and projectiles. Chosen here
-//! (pure functions over the records, the character's sound tables with a
-//! form's overrides from [`crate::char_sounds::sound`], and the worn items:
-//! [`Holdings`]) and sent as [`PlaySound`] at a position; the renderer plays
-//! them like any other positional sound.
+//! Combat sounds: weapon swipes, melee strikes, what the struck character hears, ranged shots,
+//! skill activations and projectiles. Chosen here (pure functions over the records, the
+//! character's sound tables and the worn items: [`Holdings`]) and sent as [`PlaySound`].
+//! Every engine sound below is `SoundPak::Play3D(coords, 0, true)` at the coordinates named.
 //!
-//! Every engine sound below is `SoundPak::Play3D(coords, 0, true)` at the
-//! coordinates named.
+//! Records: `Weapon` `hitSound` / `swipeSound`; shield and `Armor` `blockSound`, `Armor`
+//! `armorImpactSound`; `Character` `impactSoundChance`; the `CharacterSounds` entries
+//! `attackSound`, `swipeSound`, `criticalHitSound`, `impactSound`; the skill profile's
+//! `skillWarmUpSound`, `skillSwipeSound`, `skillHitSound`, `skillActivatedSound`,
+//! `skillDeactivatedSound`, `skillCastSound`, `skillUnCastSound`, `playSpecialAttackSound1..4`;
+//! the projectile's `projectileHitSound`, `projectileExplodingHitSound`, `projectileSwipeSound`,
+//! `projectileBounceSound`, `projectileDestructSound`. Every shield and off-hand is a `Weapon`,
+//! so they swipe and hit with their own sounds.
 //!
-//! Records (loaders): `Weapon::Load` reads `hitSound`
-//! (`Weapon.hitSound`) and `swipeSound` (`Weapon.swipeSound`); `WeaponArmor_Shield::Load`
-//! `blockSound` (`WeaponArmor_Shield.blockSound`); `Armor::Load` `blockSound` and
-//! `armorImpactSound` (`Armor.armorImpactSound`, no stock record sets it); `Character::Load`
-//! `impactSoundChance` (`Character.impactSoundChance`, the own record's); the `CharacterSounds`
-//! entries `attackSound`, `swipeSound`, `criticalHitSound`, `impactSound`
-//! (`crate::char_sounds`); `SkillProfile::LoadProfile`
-//! `skillWarmUpSound`, `skillSwipeSound`, `skillHitSound`,
-//! `skillActivatedSound`, `skillDeactivatedSound`, `skillCastSound`,
-//! `skillUnCastSound`, `playSpecialAttackSound1..4` (`Skill::LoadSounds`
-//! makes paks `Skill.warmUpSound` … `Skill.unCastSound` of them); `ProjectileBase::Load`
-//! `projectileHitSound` (`ProjectileBase.hitSound`), `projectileExplodingHitSound`
-//! (`.explodingHitSound`), `projectileSwipeSound` (`.swipeSound`), `projectileBounceSound` (`.bounceSound`),
-//! `projectileDestructSound` (`.destructSound`). Every shield and off-hand is a `Weapon`
-//! (RTTI `WeaponArmor_Shield` / `WeaponArmor_Offhand` → `WeaponArmor` →
-//! `Weapon`), so they swipe and hit with their own sounds.
-//!
-//! - Swipes ([`swipe`]; `SkillActivatedWeapon::SwipeAction`:
-//!   `PlayWeaponSwipeSound`, then `PlaySwipeSound` at
-//!   the character): `Skill::PlayWeaponSwipeSound` on
-//!   `SwipeRight` / `SwipeLeft` takes that hand's weapon; with none, or
-//!   while shifted (`Character.shapeshifted`), `Character::PlayArmSwipeSound` (the
-//!   `swipeSound` entry). `Weapon::PlaySwipeSound` plays the
-//!   weapon enchantment pak's swipe sound (`meleeSwipeSound` /
-//!   `ranged1hSwipeSound` / `ranged2hSwipeSound` / `staffSwipeSound` by
-//!   weapon kind, loader `WeaponEnchantmentPak::Load`; no stock pak sets one, so not read
-//!   here) and then the weapon's `swipeSound`, the illusion's when its
-//!   transmute (`ItemEquipment::GetTransmute`) is a `Weapon`.
-//!   `Skill::PlaySwipeSound` plays `skillSwipeSound` on every
-//!   swipe callback, `SwipeBoth` too.
-//! - A melee strike ([`strike`]; `SkillActivated::ApplyMeleeDamage`,
-//!   the hit callback): first `Skill::PlayHitSound`
-//!   (`skillHitSound`) at the attacker; then, for the first
-//!   target `AttackTarget` hit (it returns `TakeAttack`'s result) that is not
-//!   evading (`GetActionState() != 21`; action state 21 is Evade, 18 Dying,
-//!   `Character::GetActionStateAsText`), checked after the damage, so a
-//!   killing blow plays too: `Weapon::PlayHitSound` of the
-//!   right-hand and of the left-hand weapon (`AttackInfo.rightWeapon` / `AttackInfo.leftWeapon`; the
-//!   enchantment's hit sound, then the weapon's or its illusion's
-//!   `hitSound`) at the attacker, and `Character::PlayAttackSound`
-//!   (`attackSound`) when it holds neither. Once per strike.
-//! - The struck character ([`struck`]; `CombatManager::TakeAttack`,
-//!   all at the defender): a shield block plays the shield's
-//!   `blockSound` (with `PlayBlockEffect`); a melee attack (combat type 1)
-//!   on a character not evading (action state 21 = Evade, 18 = Dying,
-//!   `Character::GetActionStateAsText`), checked after the damage so a
-//!   killing blow plays too, plays `Character::PlayImpactSound`
-//!   (`impactSound` when `rand() × 0.0030519` (0 .. 100) <
-//!   `impactSoundChance`) and the body armour's `armorImpactSound`; a
-//!   critical (crit multiplier > 1) of at least 1 absolute damage on a
-//!   character not evading plays its `criticalHitSound`
-//!   (`GetCriticalHitSound`: override, else own). No miss or
-//!   dodge sound.
-//! - A ranged weapon shot ([`shot`]; `SkillActivated::CreateProjectile`):
-//!   the right-hand weapon (else the left) plays
-//!   `Weapon::PlayHitSound` at the shooter (no stock gun or crossbow has a
-//!   `hitSound`: their shot is their `swipeSound`), and the new projectile `PlaySwipeSound`
-//!   (`projectileSwipeSound`, tracked with the projectile) at the shooter.
-//! - Projectile impacts ([`projectile_hit`]; `ProjectileFireballLike::
-//!   UpdateSelf`, `ProjectileArrowLike::UpdateSelf`):
-//!   each target hit plays at the target
-//!   `projectileExplodingHitSound` when the projectile explodes there
-//!   (`ProjectileBase::ExplodesOnHit`), else `projectileHitSound`; an `explodeOnMiss` end
-//!   (state 3) the exploding sound at the projectile; reaching its full
-//!   distance without a hit `projectileDestructSound` there.
-//! - Activation ([`activate`]; `Skill::PlayActivateSound` from the spells'
-//!   `ActivateNow`, e.g. `Skill_AttackProjectile`,
-//!   `Skill_AttackRadius`, `Skill_BuffOther`, and
-//!   the buffs' / toggles' `ReceiveActiveUpdate`): `skillActivatedSound` at
-//!   the caster, then each `playSpecialAttackSoundN` set plays the caster's
-//!   `specialAttackSoundN` (`PlayOverridableSound3d`, chance 0: always).
-//!
-//! - A spell's swipe ([`swipe_action`], [`spell_swipe`]): the animation's
-//!   `Swipe` / `SwipeRight` / `SwipeLeft` / `SwipeBoth` callback goes through
-//!   `SkillManager::HandleSkillAnimationCallback` to the action's
-//!   skill, its virtual `SwipeAction`; `SkillActivatedSpell`,
-//!   `SkillActivatedBuffSelf` and `SkillActivatedBuffOther` share the one
-//!   IDA names `Skill_Kick::SwipeAction`: `PlaySwipeSound`
-//!   (`skillSwipeSound`, the profile's, so a wrapper's buff
-//!   record's) at the caster and nothing else. That is the cast sound of
-//!   most spells: 1 631 stock skill records set it and only 153 of them are
-//!   weapon skills. `HandleSkillAnimationCallback` is the only caller of
-//!   `SwipeAction`, so an action-less proc swipes nothing. Its `SkillSound1` /
-//!   `SkillSound2` callbacks play the profile's `skillSound1` / `2`; no stock
-//!   animation sends them (11 send a lowercase `skillSound1`, a different
-//!   name: `Name::Create` hashes the text as it is, and nothing
-//!   else reads it), so those fields stay unread.
+//! - Swipes ([`swipe`]; `SkillActivatedWeapon::SwipeAction`): `SwipeRight` / `SwipeLeft` play
+//!   that hand's weapon's `swipeSound` (the illusion's when its transmute is a `Weapon`); with
+//!   none, or while shifted, the arm's `swipeSound` entry. Then `skillSwipeSound` on every swipe
+//!   callback, `SwipeBoth` too.
+//! - A melee strike ([`strike`]; `SkillActivated::ApplyMeleeDamage`): `skillHitSound` at the
+//!   attacker; then, for the first target hit that is not evading (checked after the damage, so
+//!   a killing blow plays too), both hands' weapon `hitSound` at the attacker, or `attackSound`
+//!   when it holds neither. Once per strike.
+//! - The struck character ([`struck`]; `CombatManager::TakeAttack`, at the defender): a shield
+//!   block plays the shield's `blockSound`; a melee attack on a character not evading plays
+//!   `impactSound` (when `rand() × 0.0030519` < `impactSoundChance`) and the body armour's
+//!   `armorImpactSound`; a critical (multiplier > 1) of at least 1 damage plays
+//!   `criticalHitSound`. No miss or dodge sound.
+//! - A ranged weapon shot ([`shot`]; `SkillActivated::CreateProjectile`): the right-hand weapon
+//!   (else the left) plays its `hitSound` at the shooter, and the new projectile its
+//!   `projectileSwipeSound`, tracked.
+//! - Projectile impacts ([`projectile_hit`]): each target hit plays `projectileExplodingHitSound`
+//!   when the projectile explodes there, else `projectileHitSound`; an `explodeOnMiss` end the
+//!   exploding sound; full distance without a hit `projectileDestructSound`.
+//! - Activation ([`activate`]; `Skill::PlayActivateSound`): `skillActivatedSound` at the caster,
+//!   then each `playSpecialAttackSoundN` set plays the caster's `specialAttackSoundN`.
+//! - A spell's swipe ([`swipe_action`], [`spell_swipe`]): the spell / buff classes'
+//!   `SwipeAction` (`Skill_Kick::SwipeAction` in IDA) plays only the profile's `skillSwipeSound`
+//!   at the caster: the cast sound of most spells. Only `HandleSkillAnimationCallback` calls
+//!   `SwipeAction`, so an action-less proc swipes nothing. No stock animation sends
+//!   `SkillSound1` / `SkillSound2`, so `skillSound1` / `2` stay unread.
 //! - FX paks ([`gd_game_core::combat_sounds::fx_pak_sound`]): `FxPak::OnAddToLevel` plays its
-//!   `activateSound` (`FxPak::Load`) at its coordinates whoever
-//!   made it: Callidor's Tempest's whole sound is the one in its
-//!   `radiusEffectName` pak. `CharFxPak::Start` plays `startSound`
-//!   at the character and loops the tracked `activeSound`; `Stop`
-//!   fades that over its `CharFxPak.fadeTime` ms (the constructor's 10, no setter) and plays
-//!   `stopSound` (`LoadFromDatabase`).
-//! - Spells' `skillHitSound` ([`spell_hit`]; the `Skill::PlayHitSound` call
-//!   sites): every projectile a skill creates plays it at the launch point
-//!   (`Skill_AttackProjectile::CreateProjectile`, inherited by
-//!   `…Drop` / `…Fan` / `…Orbiting`; `Skill_AttackProjectileAreaEffect::
-//!   CreateProjectile` at the area; the weapon shot's
-//!   `SkillActivated::CreateProjectile` between the weapon's hit sound and the
-//!   projectile's swipe sound: [`HitAt::Launch`]); the per-target
-//!   `TargetResult`s play it at each target, next to `CreateTargetFx`
-//!   (`Skill_AttackSpell`, `Skill_AttackWave`,
-//!   `…SpellChaos`, `…SpellCone`, `…SpellBeam`, `…SpellDrain`,
-//!   `…RadiusGrow`, `…RadiusSpin`, `Skill_AttackLineFan`,
-//!   `SkillSecondary_AttackRadiusLightning`, each bolt of
-//!   `Skill_AttackChain::CreateLightning`: [`HitAt::Target`]);
-//!   others once at the caster (`Skill_AttackRadius::ActivateNow`
-//!   at its end, `Skill_AttackRadiusLightning` /
-//!   `Skill_BuffAttackRadiusLightning` / `…RadiusLeap` / `Skill_AttackPathCharge`
-//!   / `Skill_ChargePotion` `TargetResult`,
-//!   `Skill_AttackProjectileBurst::ActivateNow`, `Skill_SpawnPet::ActivateNow`,
-//!   `Skill_RefreshCooldown::ActivateNow`, `Skill_GiveBonus::
-//!   TargetResult`, `Skill_OnHitAttackRadius` /
-//!   `Skill_OnHitBuffSelf::ReceiveActiveUpdate`, `Skill_CerberusGeysers::
-//!   CreateProjectile`: [`HitAt::Caster`]); the summons' and the
-//!   buff wrappers' at the skill's point (`Skill_TargetedSpawnPet::
-//!   SkillSpawnObject` and its secondary, `Skill_AttackBuff::
-//!   CreateProjectile`, `Skill_BuffRadius::CreateProjectile`:
-//!   [`HitAt::Point`]). The class is the skill's own, the
-//!   sound its profile's.
+//!   `activateSound` at its coordinates. `CharFxPak::Start` plays `startSound` and loops the
+//!   tracked `activeSound`; `Stop` fades that over 10 ms and plays `stopSound`.
+//! - Spells' `skillHitSound` ([`spell_hit`]): at the launch point per projectile
+//!   ([`HitAt::Launch`]), at each target of a per-target `TargetResult` ([`HitAt::Target`]), once
+//!   at the caster for the radius / burst / summon / bonus classes ([`HitAt::Caster`]), at the
+//!   skill's point for the targeted summons and buff wrappers ([`HitAt::Point`]). The class is
+//!   the skill's own, the sound its profile's.
 //! - Sounds that last while a skill does ([`SoundLoop`](gd_game_core::visuals::SoundLoop);
-//!   [`held_loops`] for those without an entity): `Skill_AttackWave::
-//!   TargetResult` `waveLoopSound` tracked with the wave, `Update`
-//!   fades it over 250 ms; `Skill_AttackLineFan` `loopSound`, 250 ms from the
-//!   first line's end; `startSound`, tracked `loopSound` (500 ms) and
-//!   `endSound` of `Skill_AttackSpellCone` (`ActivateNow`, `Update`,
-//!   `StopEmitting`), `…SpellDrain`, `…SpellBeam`
-//!   (`ActivateNow`, `Update`, with `groundSound`), `…RadiusSpin`
-//!   (`StartAction`), `…RadiusGrow`, `Skill_AttackSpellReflectLink`
-//!   (`Update`) and `SkillSecondary_Tether` (`Update`).
-//! - Lasting areas: `ProjectileAreaEffect::PlaySwipeSound` plays
-//!   `projectileSwipeSound` once, tracked, at the area (the fields named
-//!   `…_loop` too: not looped); `ProjectileStop`
+//!   [`held_loops`] for those without an entity): a wave's `waveLoopSound` (250 ms fade), a line
+//!   fan's `loopSound` (250 ms from the first line's end); `startSound`, tracked `loopSound`
+//!   (500 ms) and `endSound` of the cone, drain, beam (with `groundSound`), spin, grow, reflect
+//!   link and tether classes.
+//! - Lasting areas: `projectileSwipeSound` once, tracked, at the area (not looped);
 //!   `projectileHitSound` where it ends.
-//! - Switching off ([`deactivate`]): `Skill_BuffSelfToggled::
-//!   ReceiveActiveUpdate` (and `SkillSecondary_BuffSelfDuration`,
-//!   `Skill_BuffRadius`, `Skill_Shapeshift`,
-//!   the other buff / toggle classes alike) plays the
-//!   activation sounds going active and `skillDeactivatedSound` (`Skill.deactivatedSound`) going
-//!   inactive, at the caster (not while loading: their bool argument).
-//! - A buff on its recipient ([`buff_cast`]; `SkillBuff::ReceiveActiveUpdate`):
-//!   `skillCastSound` (`Skill.castSound`) going active, `skillUnCastSound`
-//!   (`Skill.unCastSound`, no stock record sets one) going inactive, at the recipient.
-//! - Projectile flight: `ProjectileBase::PlaySwipeSound` plays
-//!   `projectileSwipeSound` and `SoundPak::Track`s it with the projectile
-//!   (`SoundManager::RegisterMovingObject`: `Update` moves it to the object
-//!   every frame until the object is gone), sent as [`PlaySoundOn`](gd_game_core::visuals::PlaySoundOn);
-//!   `PlayBounceSound` (tracked too) is only played by
-//!   `ProjectileGrenade::CollisionCallback` at the first non-water contact only (`casting::projectiles::Grenade`).
-//! - The stun sound ([`StunSound`]; `Character::PlayStunSound`:
-//!   the `stunSound` entry, override else own, at the character): from
-//!   `TakeStunAction::Execute` / `TakeSleepAction::Execute` on entering the
-//!   stun / sleep state (`crate::afflictions`) and `SkillBuff_DebufTrap::
-//!   Install` (`SkillBuff_DebufFreeze` inherits it)
-//!   after `SkillBuff::Install`, i.e. each time a trap / freeze buff is
-//!   created on its holder, new or replaced, not on a refresh
-//!   (`crate::skill_buffs`). Entering the trap / freeze state itself plays
-//!   nothing (`TakeTrapAction::Execute`).
+//! - Switching off ([`deactivate`]): the buff / toggle classes play the activation sounds going
+//!   active and `skillDeactivatedSound` going inactive, at the caster (not while loading).
+//! - A buff on its recipient ([`buff_cast`]; `SkillBuff::ReceiveActiveUpdate`): `skillCastSound`
+//!   going active, `skillUnCastSound` going inactive.
+//! - Projectile flight: `projectileSwipeSound` tracked with the projectile; `PlayBounceSound`
+//!   only from `ProjectileGrenade::CollisionCallback`'s first non-water contact.
+//! - The stun sound ([`StunSound`]; `Character::PlayStunSound`): on entering the stun / sleep
+//!   state, and each time a trap / freeze buff is created (`SkillBuff_DebufTrap::Install`), not
+//!   on a refresh.
 //!
-//! PORT: a strike is the frame's attacks of one attacker; a strike that
-//! reaches no target plays no `skillHitSound` (the port makes no attack for
-//! it); the not-evading gate is no miss (evasion is `MissReason::Dodge`);
-//! the `ParametersCombat.critSoundGate` flag of the
-//! critical sound (not identified) is taken as clear; a breakable's
-//! (`Destructible`) `impactSound` is not played; world contact plays the
-//! destruct sound like the end of the flight; every non-weapon cast plays
-//! the activation sounds when it fires; a path charge's `skillHitSound` plays
-//! as it starts, whether it reaches anyone or not; a tether's and a link's
-//! loops on their target (the engine's beam objects are not modelled), a
-//! tether's end sound at the caster; a beam's `groundSound` is
-//! [`beam_ground_sounds`]'; a monster's channels make no loop (only the player
-//! channels); `skillDeactivatedSound` plays for the
-//! player's toggles, timed self buffs and forms and for monsters' and pets'
-//! timed buffs running out and for the player's and monsters' timed buffs a dispel ends (`crate::skill_buffs` module docs); `skillCastSound` / `skillUnCastSound` for every
-//! buff another character puts on one: aura passes and curses
-//! (`Skill_AttackBuff::TargetResult` → `SkillActivated::
-//! ApplyBuffOnTarget` → `Character::DebufTarget` puts the
-//! `buffSkillName` record, a `SkillBuff_Debuf*` inheriting
-//! `SkillBuff::ReceiveActiveUpdate`, on each target: the [`buff_cast`] rule
-//! when the buff is created, new or replaced, not on a refresh;
-//! `crate::skill_buffs`); bounce sounds and weapon enchantment sounds are
-//! not played.
+//! PORT: a strike is the frame's attacks of one attacker; a strike that reaches no target plays
+//! no `skillHitSound`; the not-evading gate is no miss; `ParametersCombat.critSoundGate` (not
+//! identified) is taken as clear; a breakable's `impactSound` is not played; world contact plays
+//! the destruct sound; every non-weapon cast plays the activation sounds when it fires; a path
+//! charge's `skillHitSound` plays as it starts; tether and link loops play on their target, a
+//! tether's end sound at the caster; a beam's `groundSound` is [`beam_ground_sounds`]'; a
+//! monster's channels make no loop; `skillDeactivatedSound` plays for the player's toggles,
+//! timed self buffs and forms, for monsters' and pets' timed buffs running out and for dispels;
+//! `skillCastSound` / `skillUnCastSound` for every buff another character puts on one, when
+//! created, not on a refresh; bounce and weapon enchantment sounds are not played.
 use crate::char_sounds::sound;
 use crate::combat::AttackMade;
 use bevy::ecs::system::SystemParam;
@@ -209,11 +91,9 @@ pub const SHORT_LOOP_FADE: f32 = 0.25;
 
 pub struct CombatSoundsPlugin;
 
-/// The combat sound writers that run after the frame's combat and casting:
-/// `gd_audio::pak::play_requests` orders itself after this set (and
-/// `CastingSet`) so it hears their `PlaySound`s the same frame. `swipe_sounds`
-/// stays out of it — it reads the swipe callbacks before `CastingSet` advances
-/// them, so it is already before `play_requests` through `CastingSet`.
+/// The combat sound writers that run after the frame's combat and casting; `play_requests`
+/// orders after it. `swipe_sounds` stays out: it must read the swipe callbacks before
+/// `CastingSet` advances them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CombatSoundsSet;
 
@@ -246,8 +126,7 @@ impl Plugin for CombatSoundsPlugin {
     }
 }
 
-/// A creature's hand items and body armour, from its look (set once at
-/// spawn, `creature::spawn_creature`; the player's come from the
+/// A creature's hand items and body armour, from its look (the player's come from the
 /// `Inventory`).
 #[derive(Component, Clone, Debug, Default)]
 pub struct Gear {
@@ -271,8 +150,8 @@ impl HeldItem {
         }
     }
 
-    /// The record whose swipe / hit sounds the weapon plays: the transmute's
-    /// when it is a `Weapon` (`Weapon::PlaySwipeSound` / `PlayHitSound`).
+    /// The record whose swipe / hit sounds the weapon plays: the transmute's when it is a
+    /// `Weapon`.
     fn weapon_record(&self, data: &GameData) -> Option<Record> {
         self.transmute
             .as_deref()
@@ -282,7 +161,6 @@ impl HeldItem {
     }
 }
 
-/// What a character holds and wears, for its sounds ([`Holdings::of`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Held {
     pub right: Option<HeldItem>,
@@ -290,8 +168,7 @@ pub struct Held {
     pub chest: Option<HeldItem>,
 }
 
-/// Weapon classes (`Weapon` and its RTTI children: melee, hunting,
-/// magical, shields and off-hands).
+/// Weapon classes (`Weapon` and its RTTI children, shields and off-hands included).
 fn is_weapon(class: &str) -> bool {
     class.starts_with("Weapon")
 }
@@ -303,7 +180,7 @@ fn field(r: &Record, k: &str) -> Option<String> {
 /// The worn items of characters: the player's inventory, creatures' [`Gear`].
 #[derive(SystemParam)]
 pub struct Holdings<'w, 's> {
-    /// Option: SystemParam; the player's worn items are empty without it.
+    /// Option: the player's worn items are empty without it.
     inv: Option<Res<'w, gd_game_core::inventory::Inventory>>,
     players: Query<'w, 's, (), With<Player>>,
     gear: Query<'w, 's, &'static Gear>,
@@ -326,8 +203,7 @@ impl Holdings<'_, '_> {
     }
 }
 
-/// The player's attached main hand, off hand and chest items, with their
-/// illusions.
+/// The player's attached main hand, off hand and chest items, with their illusions.
 pub fn player_held(inv: &gd_game_core::inventory::Inventory) -> Held {
     use gd_formats::inventory::EquipSlot as S;
     let slot = |s: S| {
@@ -348,8 +224,7 @@ pub fn player_held(inv: &gd_game_core::inventory::Inventory) -> Held {
     }
 }
 
-/// The sound paks a creature's weapons play (each hand's effective weapon
-/// record's `swipeSound` / `hitSound`), for the renderer's sound preload.
+/// The sound paks a creature's weapons play, for the renderer's sound preload.
 pub fn weapon_sound_paks(data: &GameData, held: &Held) -> Vec<String> {
     let mut out = Vec::new();
     for h in [&held.right, &held.left] {
@@ -385,10 +260,7 @@ pub fn skill_sound_paks(data: &GameData, skill: &str) -> Vec<String> {
     .collect()
 }
 
-/// The sounds of a weapon skill's swipe callback `name` (module doc):
-/// the hand's weapon's `swipeSound` (`SwipeRight` / `SwipeLeft`), the
-/// character's `swipeSound` for an empty hand or while shifted (a worn
-/// form), then the skill's `skillSwipeSound` (every swipe).
+/// The sounds of a weapon skill's swipe callback `name` (module doc).
 pub fn swipe(
     data: &GameData,
     c: &Character,
@@ -421,10 +293,7 @@ pub fn swipe(
     out
 }
 
-/// The attacker's sounds of a melee strike (module doc): the skill's
-/// `skillHitSound`, then, when it `landed` (hit, the target not evading),
-/// each hand weapon's `hitSound`, or the character's `attackSound` without
-/// weapons.
+/// The attacker's sounds of a melee strike (module doc); `landed`: hit, the target not evading.
 pub fn strike(
     data: &GameData,
     c: &Character,
@@ -457,7 +326,6 @@ pub fn strike(
     out
 }
 
-/// How an attack went for the struck character ([`struck`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Struck {
     /// Not missed.
@@ -465,16 +333,12 @@ pub struct Struck {
     pub blocked: bool,
     /// Combat type 1 (melee).
     pub melee: bool,
-    /// Crit multiplier > 1.
     pub critical: bool,
     /// The absolute damage.
     pub total: f32,
 }
 
-/// The struck character's sounds (module doc): the shield's `blockSound`,
-/// `impactSound` (rolled against `impactSoundChance`: `roll` 0 .. 100) and
-/// the body armour's `armorImpactSound` for a melee hit, `criticalHitSound`
-/// for a critical.
+/// The struck character's sounds (module doc); `roll` is 0 .. 100 against `impactSoundChance`.
 pub fn struck(
     data: &GameData,
     c: &Character,
@@ -517,8 +381,8 @@ pub fn struck(
     out
 }
 
-/// A ranged weapon shot's sound at the shooter: the right-hand weapon's
-/// (else the left's) `hitSound`.
+/// A ranged weapon shot's sound at the shooter: the right-hand weapon's (else the left's)
+/// `hitSound`.
 pub fn shot(data: &GameData, held: &Held) -> Option<String> {
     let w = [&held.right, &held.left].into_iter().find_map(|h| {
         h.as_ref()
@@ -528,8 +392,7 @@ pub fn shot(data: &GameData, held: &Held) -> Option<String> {
     field(&w, "hitSound")
 }
 
-/// A skill's activation sounds at the caster: `skillActivatedSound`, then
-/// the caster's `specialAttackSoundN` for each `playSpecialAttackSoundN`.
+/// A skill's activation sounds at the caster (module doc).
 pub fn activate(data: &GameData, c: &Character, skill: &str) -> Vec<String> {
     let Some(r) = profile_record(data, skill) else {
         return Vec::new();
@@ -543,25 +406,21 @@ pub fn activate(data: &GameData, c: &Character, skill: &str) -> Vec<String> {
     out
 }
 
-/// A spell's swipe callback: its `skillSwipeSound` at the caster.
 pub fn spell_swipe(data: &GameData, skill: &str) -> Option<String> {
     profile_record(data, skill).and_then(|r| field(&r, "skillSwipeSound"))
 }
 
-/// What a swipe callback reaches ([`swipe_action`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SwipeBy {
-    /// `SkillActivatedWeapon::SwipeAction`, the character's default attack
-    /// without a cast.
+    /// `SkillActivatedWeapon::SwipeAction`, the default attack without a cast.
     Weapon(String),
     /// The spells' and buffs' `SwipeAction`: the skill's `skillSwipeSound` only.
     Spell(String),
 }
 
-/// The action a swipe callback of the animation slot `anim` belongs to: the
-/// cast the character is doing (its [`Casting`](gd_game_core::casting::Casting), an
-/// ally cast), the default attack (the Attack slot), else, for the rest of an
-/// animation whose hit has fired the cast already, that cast.
+/// The action a swipe callback of `anim` belongs to: the cast the character is doing (or an
+/// ally cast), the default attack (the Attack slot), else the cast whose hit already fired in
+/// this animation.
 pub fn swipe_action(
     anim: gd_sim::anim::AnimType,
     cast: Option<&gd_game_core::casting::Casting>,
@@ -586,7 +445,6 @@ pub fn swipe_action(
     }
 }
 
-/// What happened to a projectile ([`projectile_hit`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectileEvent {
     /// Hit a target (exploding there or not).
@@ -597,7 +455,6 @@ pub enum ProjectileEvent {
     Destruct,
 }
 
-/// The projectile record `projectile`'s sound for `ev`.
 pub fn projectile_hit(data: &GameData, projectile: &str, ev: ProjectileEvent) -> Option<String> {
     let r = data.db.get(projectile)?;
     let key = match ev {
@@ -610,7 +467,6 @@ pub fn projectile_hit(data: &GameData, projectile: &str, ev: ProjectileEvent) ->
     field(r, key)
 }
 
-/// Where a skill plays its `skillHitSound` (module doc).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HitAt {
     /// Each projectile it creates, at the launch point.
@@ -623,8 +479,7 @@ pub enum HitAt {
     Point,
 }
 
-/// The `skillHitSound` rule of skill class `class` other than [`HitAt::Launch`]
-/// (which every projectile-creating skill has), if any.
+/// The `skillHitSound` rule of skill class `class` other than [`HitAt::Launch`], if any.
 pub fn hit_at(class: &str) -> Option<HitAt> {
     match class {
         "Skill_AttackSpell"
@@ -665,8 +520,7 @@ pub fn hit_at(class: &str) -> Option<HitAt> {
     }
 }
 
-/// Skill `skill`'s `skillHitSound` for the event `at`, when its class plays
-/// it there ([`hit_at`]; every skill at [`HitAt::Launch`]).
+/// Skill `skill`'s `skillHitSound` for the event `at`, when its class plays it there.
 pub fn spell_hit(data: &GameData, skill: &str, at: HitAt) -> Option<String> {
     if at != HitAt::Launch && hit_at(&data.db.get(skill)?.class) != Some(at) {
         return None;
@@ -674,22 +528,14 @@ pub fn spell_hit(data: &GameData, skill: &str, at: HitAt) -> Option<String> {
     profile_record(data, skill).and_then(|r| field(&r, "skillHitSound"))
 }
 
-/// The record a skill's sounds come from: its `SkillProfile`'s:
-/// the sound fields (`skillSwipeSound`, `skillHitSound`,
-/// `skillActivatedSound`, `playSpecialAttackSound1..4`,
-/// `skillDeactivatedSound`, `skillCastSound`) are read by `SkillProfile::
-/// LoadProfile`, and buff wrappers (curses, projectile debuffs, radius / other
-/// buffs and auras) load their profile from the `buffSkillName` table: the
-/// same record their stats come from ([`gd_sim::skills::profile_record`]).
+/// The record a skill's sounds come from: its profile (a buff wrapper's `buffSkillName` record).
 pub fn profile_record(data: &GameData, skill: &str) -> Option<gd_formats::arz::Record> {
     gd_sim::skills::profile_record(&data.db, skill)
 }
 
 /// The weapon-pool parent's own sound after a pool attack's (`Skill_WPAttack::PlaySwipeSound` /
-/// `PlayHitSound`: the attack's own pak (`Skill.swipeSound` / `Skill.hitSound`), then, when its parent skill
-/// (`Skill.parentSkill`) is a skill with the parent flag (`Skill.isParent`; `Skill_WeaponPool_ChargedFinale`'s
-/// constructor clears it), the parent's `PlaySwipeSound` / `PlayHitSound` at the same point). `key` is
-/// `skillSwipeSound` or `skillHitSound`.
+/// `PlayHitSound`), unless the parent lacks `Skill.isParent` (`Skill_WeaponPool_ChargedFinale`
+/// clears it). `key` is `skillSwipeSound` or `skillHitSound`.
 pub fn parent_sound(data: &GameData, parent: &str, key: &str) -> Option<String> {
     if parent.is_empty()
         || data
@@ -702,13 +548,11 @@ pub fn parent_sound(data: &GameData, parent: &str, key: &str) -> Option<String> 
     profile_record(data, parent).and_then(|r| field(&r, key))
 }
 
-/// A buff or toggle going inactive: its `skillDeactivatedSound`.
 pub fn deactivate(data: &GameData, skill: &str) -> Option<String> {
     profile_record(data, skill).and_then(|r| field(&r, "skillDeactivatedSound"))
 }
 
-/// A `SkillBuff` record going active (`skillCastSound`) or inactive
-/// (`skillUnCastSound`) on its recipient.
+/// A `SkillBuff` record going active (`skillCastSound`) or inactive (`skillUnCastSound`).
 pub fn buff_cast(data: &GameData, buff: &str, active: bool) -> Option<String> {
     data.db.get(buff).and_then(|r| {
         field(
@@ -722,27 +566,24 @@ pub fn buff_cast(data: &GameData, buff: &str, active: bool) -> Option<String> {
     })
 }
 
-/// The projectile's launch sound (`projectileSwipeSound`, tracked with it:
-/// [`PlaySoundOn`](gd_game_core::visuals::PlaySoundOn)).
+/// The projectile's launch sound (`projectileSwipeSound`, tracked with it).
 pub fn projectile_launch(data: &GameData, projectile: &str) -> Option<String> {
     data.db
         .get(projectile)
         .and_then(|r| field(r, "projectileSwipeSound"))
 }
 
-/// `Character::PlayStunSound` on `holder` (module doc): sent on entering a
-/// stun / sleep and when a trap / freeze buff is created.
+/// `Character::PlayStunSound` on `holder` (module doc).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StunSound {
     pub holder: Entity,
 }
 
-/// A character's stun sound: its `stunSound` entry (a form's first).
+/// A character's `stunSound` entry (a form's first).
 pub fn stun(data: &GameData, c: &Character) -> Option<String> {
     sound(data, c, "stunSound")
 }
 
-/// [`StunSound`]s: [`stun`] at the holder.
 fn stun_sounds(
     data: Res<GameData>,
     mut stuns: MessageReader<StunSound>,
@@ -762,8 +603,7 @@ fn stun_sounds(
     }
 }
 
-/// The per-target `skillHitSound`s ([`HitAt::Target`]) of the frame's
-/// non-projectile skill hits, at the target.
+/// The per-target `skillHitSound`s ([`HitAt::Target`]) of the frame's non-projectile skill hits.
 fn spell_hit_sounds(
     data: Res<GameData>,
     mut hits: MessageReader<gd_game_core::casting::SkillHit>,
@@ -786,9 +626,8 @@ fn spell_hit_sounds(
     }
 }
 
-/// Swipe callbacks: a weapon action's [`swipe`] sounds, a spell's
-/// [`spell_swipe`], at the character ([`swipe_action`]). Characters without
-/// combat (the paper doll) make none.
+/// Swipe callbacks at the character ([`swipe_action`]). Characters without combat (the paper
+/// doll) make none.
 fn swipe_sounds(
     data: Res<GameData>,
     mut callbacks: MessageReader<AnimCallback>,
@@ -818,10 +657,9 @@ fn swipe_sounds(
         };
         let paks = match swipe_action(cb.anim, cast, ally.map(|a| a.skill.as_str()), last) {
             Some(SwipeBy::Weapon(skill)) => {
-                // A weapon-pool action forwards the swipe to the pool skill it picked
-                // (`SkillActivatedWeaponPool::SwipeAction` → the
-                // `Skill_WPAttack`'s), which plays its own sound and then the parent's
-                // ([`parent_sound`]). PORT: the picked attack's own animation is not played.
+                // `SkillActivatedWeaponPool::SwipeAction` forwards to the picked
+                // `Skill_WPAttack`, which plays its own sound and then the parent's.
+                // PORT: the picked attack's own animation is not played.
                 let pick = picks
                     .get(cb.entity)
                     .ok()
@@ -849,7 +687,6 @@ fn swipe_sounds(
     }
 }
 
-/// A skill sound that lasts ([`held_loops`]).
 struct HeldLoop {
     owner: Entity,
     skill: String,
@@ -857,12 +694,9 @@ struct HeldLoop {
     loops: Vec<Entity>,
 }
 
-/// The channels' (`gd_game_core::casting::Channel`), tethers' and reflect links'
-/// sounds (module doc): `startSound` and the loops when one begins,
-/// `endSound` and the loops' fade when it is gone, seen from the state those
-/// systems keep. Reconciled only in frames where that state changed or went.
-/// PORT: every class by the same fields; the class-specific
-/// moments of `startSound` (a drain's first target) are its start here.
+/// The channels', tethers' and reflect links' sounds (module doc): `startSound` and the loops when
+/// one begins, `endSound` and the loops' fade when it is gone. PORT: every class by the same
+/// fields; class-specific `startSound` moments (a drain's first target) are its start here.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn held_loops(
     mut commands: Commands,
@@ -960,13 +794,10 @@ fn held_loops(
     }
 }
 
-/// A beam's `groundSound` (`Skill_AttackSpellBeam::StartEndEffects` / `DestroyBeams`):
-/// each frame a ray that meets a surface starts the node's ground sound (`Play3D` at the skill's emit point
-/// `Skill_AttackSpellBeam.emitPoint`, looping, not tracked: it stays where it began) when it is not playing, a ray
-/// that meets none stops it (`SoundPak::Stop`), and the node going (`DestroyBeams`, after the retract) fades it over
-/// 500 ms.
-/// PORT: the node's pak is shared by its rays, so the last ray decides; a stop fades over 500 ms too; the sound
-/// sits at the emit point, not at the beam's far end (the engine's coordinates are the skill's emit point).
+/// A beam's `groundSound` (`Skill_AttackSpellBeam::StartEndEffects` / `DestroyBeams`): a ray that
+/// meets a surface starts it at the emit point (looping, not tracked) when it is not playing, a
+/// ray that meets none stops it, and the node going fades it over 500 ms.
+/// PORT: the node's rays share one pak, so the last ray decides; a stop fades over 500 ms too.
 fn beam_ground_sounds(
     mut commands: Commands,
     data: Res<GameData>,
@@ -1007,12 +838,11 @@ fn beam_ground_sounds(
     }
 }
 
-/// The critical hit effect (`CombatManager::TakeAttack`): a critical hit
-/// (multiplier above 1) of the local player that dealt at least 1 damage spawns, at the defender's feet, the combat
-/// record's (`combatformulas.dbr`) `criticalhitFxPak` for a melee attack (combat style 1) or `projectileCritFxPak` for a
-/// ranged weapon hit (style 2, `ApplyRangedDamage`); spells, area and damage-over-time hits (style 0 / 3..6) spawn
-/// nothing, and neither do monsters' or pets' crits. Sound and camera shake are the pak's own.
-/// PORT: a ranged weapon hit (`weapon && !melee`) stands for style 2 (which projectile hit paths use it was not traced).
+/// The critical hit effect (`CombatManager::TakeAttack`): a crit (multiplier > 1) of the local
+/// player of at least 1 damage spawns at the defender `combatformulas.dbr`'s `criticalhitFxPak`
+/// (melee, style 1) or `projectileCritFxPak` (ranged weapon, style 2); other styles and
+/// non-players spawn nothing.
+/// PORT: `weapon && !melee` stands for style 2 (which projectile paths use it is not traced).
 fn critical_fx(
     mut commands: Commands,
     data: Res<GameData>,
@@ -1050,8 +880,7 @@ fn critical_fx(
     }
 }
 
-/// The attacker's [`strike`] and the defender's [`struck`] sounds of the
-/// frame's attacks.
+/// The attacker's [`strike`] and the defender's [`struck`] sounds of the frame's attacks.
 fn hit_sounds(
     data: Res<GameData>,
     mut made: MessageReader<AttackMade>,
@@ -1060,7 +889,6 @@ fn hit_sounds(
     holdings: Holdings,
     mut out: MessageWriter<PlaySound>,
 ) {
-    // The pool parents of the frame's skill hits (attacker, skill, parent).
     let parents: Vec<(Entity, &str, &str)> = skill_hits
         .read()
         .filter_map(|h| {
@@ -1068,7 +896,6 @@ fn hit_sounds(
             Some((h.attacker, h.skill.as_str(), p.0.as_str()))
         })
         .collect();
-    // Attacker → (skill, landed yet).
     let mut strikes: Vec<(Entity, Option<std::sync::Arc<str>>, bool)> = Vec::new();
     for m in made.read() {
         if m.melee {
@@ -1106,7 +933,7 @@ fn hit_sounds(
             .as_deref()
             .unwrap_or(gd_game_core::casting::DEFAULT_ATTACK);
         let mut paks = strike(&data, c, &holdings.of(attacker), Some(skill), landed);
-        // The pool attack's parent's `skillHitSound` follows its own (`parent_sound`).
+        // The pool attack's parent's `skillHitSound` follows its own.
         if let Some(p) = parents
             .iter()
             .find(|p| p.0 == attacker && p.1.eq_ignore_ascii_case(skill))

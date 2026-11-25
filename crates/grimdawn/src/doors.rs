@@ -88,8 +88,7 @@ fn locked_feedback(
 struct TravelCover;
 
 /// Tells the teleport activity that the pending travel's destination has streamed in
-/// ([`gd_game::doors::DestinationReady`]: every level around it is in, [`gd_world::StreamedMap::area_ready`]; always
-/// in the test arena, which has no streaming).
+/// ([`gd_game::doors::DestinationReady`]: every level around it is in, [`gd_world::StreamedMap::area_ready`]).
 fn report_destination(
     pending: Res<PendingTravel>,
     world: Option<Res<gd_world::StreamedMap>>,
@@ -98,7 +97,6 @@ fn report_destination(
     mut ready: MessageWriter<gd_game::doors::DestinationReady>,
 ) {
     let Some(dest) = pending.0 else { return };
-    // The dev test arena (`GD_TESTWORLD`) has no streaming.
     #[cfg(feature = "dev")]
     let arena = hooks.session.testworld.is_some();
     #[cfg(not(feature = "dev"))]
@@ -159,11 +157,6 @@ fn travel_screen(
     }
 }
 
-/// `GD_USE_DOOR` (hooks.rs): walks to the nearest
-/// (matching) door or lever within 20 m and uses it, not before `secs` of play; a list uses one door per
-/// text, in order (a Shattered Realm run's portal, its treasure room portal, the treasure room's exit). A
-/// later door may be 40 m away and waits until a script unlocks it, and with `GD_OPEN_CHESTS` until the
-/// chests in its range are open.
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_use(
@@ -210,7 +203,6 @@ fn test_use(
     {
         return;
     }
-    // `GD_USE_DOOR` text: only records containing it ("1": any).
     let Some((e, at, r)) = doors
         .iter()
         .filter(|(_, _, d)| want == "1" || d.record.to_ascii_lowercase().contains(want))
@@ -289,8 +281,7 @@ struct OpenFx {
     pending: Vec<(usize, f32)>,
 }
 
-/// A door whose record has no open effect ([`open_effects`]): marked on first sight so its record is not
-/// re-read every frame.
+/// A door whose record has no open effect ([`open_effects`]), marked on first sight.
 #[derive(Component)]
 struct NoOpenFx;
 
@@ -327,8 +318,7 @@ fn open_effects(
     for (e, door, state, skel) in &mut doors {
         let Some(mut state) = state else {
             // First sight: only doors with open effects are tracked; one
-            // open at load starts them at once (`InitialUpdate`). An effect-less
-            // door is marked ([`NoOpenFx`]) so its record is read only once.
+            // open at load starts them at once (`InitialUpdate`).
             let has_fx = data.db.get(&door.record).is_some_and(|rec| {
                 OPEN_FX
                     .iter()

@@ -1,9 +1,6 @@
 use super::*;
 use gd_ui::state::options::{OptionsWindow, Tab};
 
-/// The read-only resources the input system consults, bundled as one parameter (Bevy systems take at most
-/// 16): the UI scale, the window layout, the app state, the mounted data and the font
-/// cache (its tags localize the dropdown rows, [`ChoiceCtx`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InputReads<'w> {
     scale: Res<'w, gd_ui_kit::state::settings::UiScaleOption>,
@@ -14,8 +11,7 @@ pub(crate) struct InputReads<'w> {
 }
 
 /// Clicks, drags, the bindings' wheel; a rebind wait takes keys, mouse buttons (not Left / Right) and the
-/// wheel; opening the window starts a draft of the session's options.
-/// Esc: in game the shared dispatcher's (`ui::esc_dispatcher`), in the menu state the window's own.
+/// wheel. Esc: in game the shared dispatcher's (`ui::esc_dispatcher`), in the menu state the window's own.
 #[allow(clippy::too_many_arguments)]
 pub fn input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -42,8 +38,7 @@ pub fn input(
         data,
         fonts,
     } = reads;
-    // The release comes from the raw messages: the window resets the `ButtonInput` below, so a held button is never
-    // `pressed` on the next frame.
+    // From the raw messages: the window resets the `ButtonInput` below.
     let released = gd_ui_kit::left_released(&mut clicks);
     if !win.open {
         win.draft = None;
@@ -56,8 +51,7 @@ pub fn input(
         return;
     }
     if win.draft.is_none() {
-        // The window just opened: re-enumerate the audio devices and render adapters
-        // (`OptionsWindow::Load`).
+        // `OptionsWindow::Load` re-enumerates the devices.
         devices.refresh();
         adapters.refresh();
         win.draft = Some(options.clone());
@@ -66,21 +60,18 @@ pub fn input(
         win.keys = Some(bindings.clone());
         win.keys_ver += 1;
     }
-    // In game Esc is the shared dispatcher's (`ui::esc_dispatcher`, Update): it cancels the rebind
-    // wait, closes an open list, then the window. The menu state has no dispatcher: Esc acts here.
+    // In game the dispatcher handles Esc; the menu state has none.
     let in_game = *state.get() == gd_ui::state::session::AppState::InGame;
     let esc = !in_game && keys.just_pressed(KeyCode::Escape);
-    // A cell waiting for a key takes the next key press (Esc cancels). The engine binds mouse codes too
-    // (`keys.rs`, 145 to 152): a mouse button binds — except Left / Right, which cancel the wait (a click
-    // on another cell or away) — and a wheel notch binds Wheel Up / Down.
+    // A cell waiting for a key takes the next key press (Esc cancels), a mouse button (Left / Right cancel
+    // the wait) or a wheel notch (codes 145 to 152).
     if let Some((action, slot)) = win.rebind {
-        // The wheel's notches this frame, as `keys::mouse_codes` reads them.
         let (mut up, mut down) = (false, false);
         for w in wheel.read() {
             up |= w.y > 0.0;
             down |= w.y < 0.0;
         }
-        // The buttons' codes 147 to 152: `keys.rs`'s `MOUSE_BUTTONS` order after the wheel's 145 / 146.
+        // `keys.rs`'s `MOUSE_BUTTONS` order after the wheel's 145 / 146.
         let button = mouse.get_just_pressed().find_map(|b| match *b {
             MouseButton::Middle => Some(147),
             MouseButton::Back => Some(148),
@@ -125,7 +116,6 @@ pub fn input(
         return;
     }
     let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
-    // (Esc: see above.)
     let lines: f32 = wheel
         .read()
         .map(|w| {
@@ -140,14 +130,11 @@ pub fn input(
     let Some(draft) = w.draft.as_mut() else {
         return;
     };
-    // The keys draft shows and edits the map of the draft's Movement Type, not the applied one (`KeyBindings::map`
-    // follows `mode`), so a Movement Type change before Apply already switches the Key Bindings tab.
+    // The keys draft edits the map of the draft's Movement Type, not the applied one.
     sync_keys_mode(w.keys.as_mut(), draft, &mut w.keys_ver);
     let screen = window.single().map_or(Vec2::ZERO, |w| {
         Vec2::new(w.physical_width() as f32, w.physical_height() as f32)
     });
-    // Only a wheel step or a left press reads the dropdown rows below (`ctx`): the language list walks the
-    // mounted paths, so other frames skip it.
     let languages = if lines != 0.0 || mouse.just_pressed(MouseButton::Left) {
         data.available_languages()
     } else {
@@ -161,7 +148,7 @@ pub fn input(
         &languages,
         &fonts.tags,
     );
-    // An open list scrolls a row per wheel step, up to its last page (`MenuDropBox::HandleMouseEvent` events 17 / 18).
+    // `MenuDropBox::HandleMouseEvent` events 17 / 18: a row per wheel step, up to the last page.
     if lines != 0.0
         && let Some(Ctl::Drop(shown, ..)) = w.dropdown.and_then(|i| ctls(w.tab).get(i).copied())
     {
@@ -180,7 +167,6 @@ pub fn input(
         && let Some(p) = cursor
     {
         let h = hit_at(&layout, draft, w.scroll, w.drop_top, p);
-        // An open list takes the click: its scroll column scrolls it, a row picks, anything else closes it.
         if let Some(i) = w.dropdown.take() {
             if let Some(Hit::DropBar(top, height, rows)) = h {
                 let s = scale.factor(screen.x as u32, screen.y as u32);
@@ -216,11 +202,9 @@ pub fn input(
                 let v = !draft.flag(k);
                 draft.set(k, Value::Bool(v));
             }
-            // The slider's mouse handler `MenuSlider::HandleMouseEvent`: a press on the knob grabs it; a press
-            // elsewhere on the slider does nothing.
+            // `MenuSlider::HandleMouseEvent`: only a press on the knob grabs it.
             Some(Hit::Knob(k, _)) => w.drag = Some(k),
-            // The list scroll bar's input `MenuScrollBar::HandleMouseEvent`: a press on the thumb grabs it (offset from
-            // its top).
+            // `MenuScrollBar::HandleMouseEvent`: offset from the thumb's top.
             Some(Hit::KeyThumb) => w.key_grab = Some(p.y - key_thumb_top(&layout, w.scroll)),
             Some(Hit::Default) => {
                 if w.tab == Tab::KeyBindings {
@@ -230,7 +214,6 @@ pub fn input(
                 }
                 let defaults = GameOptions::default();
                 for c in ctls(w.tab) {
-                    // A dropdown resets every option its rows set ([`choices`]).
                     let keys: Vec<&'static str> = match c {
                         Ctl::Check(k, ..) | Ctl::CheckLeft(k, ..) | Ctl::Slider(k, ..) => vec![k],
                         Ctl::Drop(shown, ..) => choices(shown, draft, &ctx)
@@ -275,8 +258,7 @@ pub fn input(
             _ => {}
         }
     }
-    // While grabbed, the knob follows the cursor (`MenuSlider::HandleMouseEvent` on a mouse move: the value from the
-    // cursor x over the knob centre's travel, clamped) until the button is released.
+    // `MenuSlider::HandleMouseEvent`: the value from the cursor x over the knob centre's travel, clamped.
     if let Some(k) = w.drag {
         if released {
             w.drag = None;
@@ -306,9 +288,7 @@ pub fn input(
             }
         }
     }
-    // A grabbed key-list thumb follows the cursor until the release (`MenuScrollBar::HandleMouseEvent`: a move places
-    // the thumb at the cursor less the grab offset, within the track; event 9 lets go). PORT: the list scrolls by whole
-    // rows, so it shows the row nearest the thumb's place.
+    // `MenuScrollBar::HandleMouseEvent`. PORT: the list scrolls by whole rows, the nearest to the thumb.
     if let Some(grab) = w.key_grab {
         if released {
             w.key_grab = None;
@@ -321,18 +301,14 @@ pub fn input(
             }
         }
     }
-    if esc {
-        // Esc closes an open list first.
-        if w.dropdown.take().is_none() {
-            w.open = false;
-        }
+    if esc && w.dropdown.take().is_none() {
+        w.open = false;
     }
-    // The window takes the keyboard and mouse (Escape stays for the dispatcher in game).
     gd_ui_kit::keys::reset_but_escape(&mut keys);
     mouse.reset_all();
 }
 
-/// Sets the keys draft's `mode` to the options draft's `movementType` (bumping the list's version when it changes).
+/// Sets the keys draft's `mode` to the options draft's `movementType`.
 fn sync_keys_mode(keys: Option<&mut KeyBindings>, draft: &GameOptions, ver: &mut u64) {
     let mode = draft.int("movementType");
     if let Some(k) = keys
@@ -343,8 +319,7 @@ fn sync_keys_mode(keys: Option<&mut KeyBindings>, draft: &GameOptions, ver: &mut
     }
 }
 
-/// `GD_OPTION_SET` (hooks.rs): sets options at those times, as Apply does in memory
-/// (nothing is stored). The value is read as the option's own kind.
+/// `GD_OPTION_SET`: sets options at the given times, in memory only.
 #[cfg(feature = "dev")]
 pub(super) fn option_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,

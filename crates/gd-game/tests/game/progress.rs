@@ -21,7 +21,6 @@ fn game() -> Option<(TestGame, Entity)> {
     Some((g, p))
 }
 
-/// The player's kill of a `record` at `level`.
 fn kill(g: &mut TestGame, record: &str, level: i32) {
     let p = g
         .app
@@ -29,7 +28,7 @@ fn kill(g: &mut TestGame, record: &str, level: i32) {
         .query_filtered::<Entity, With<gd_game_core::player::Player>>()
         .single(g.app.world())
         .unwrap();
-    // A body all of whose damage was the player's (the experience share, `combat::Attackers`).
+    // All the body's damage was the player's.
     let mut by = gd_game_core::combat::Attackers::default();
     by.register(p, p, 1.0, true);
     let entity = g.app.world_mut().spawn(by).id();
@@ -42,9 +41,8 @@ fn kill(g: &mut TestGame, record: &str, level: i32) {
     });
 }
 
-/// The experience is the reward × the player's share of the damage the monster took (`HandleBonus` ×
-/// `GetExperienceMultiplier`, `combat::Attackers`): his hits and his pets' count for him, an ally's dilute it;
-/// a monster that kills itself (`SkillActivated_Suicide`) is its last attacker's kill.
+/// Experience = reward × the player's share of the damage (`HandleBonus` × `GetExperienceMultiplier`):
+/// his and his pets' hits count for him, an ally's dilute it; a suicide is its last attacker's kill.
 #[test]
 fn experience_is_the_damage_share() {
     use gd_game::combat::Suicide;
@@ -83,9 +81,7 @@ fn experience_is_the_damage_share() {
     assert_eq!(none, 0, "its last attacker (a monster) killed it: nothing");
 }
 
-/// A kill gives experience; one that crosses the threshold levels up:
-/// profile at the new level, full life, and the game is told (energy
-/// refill).
+/// Crossing the threshold levels up: new level, full life, energy refilled.
 #[test]
 fn level_up_refills_life() {
     let Some((mut g, p)) = game() else { return };

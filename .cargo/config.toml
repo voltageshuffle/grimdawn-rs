@@ -2,8 +2,7 @@
 dev = "run -p grimdawn --features dev"
 dev-build = "build -p grimdawn --features dev"
 
-# MSVC's link.exe is the slowest step of a Windows build (the thin-LTO release link above all); rustup ships
-# rust-lld in the sysroot, so this needs no install.
+# rust-lld ships in the rustup sysroot and links far faster than MSVC's link.exe.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 

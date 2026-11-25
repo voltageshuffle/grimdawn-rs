@@ -13,8 +13,7 @@
 //! unlock level in `SkillActiveState` (`skillSubLevel`, the save's
 //! `sublevel`) and its chosen tier as the skill level.
 //!
-//! The potions window ("Cauldron", `records/ui/cauldron/potions_table.dbr`,
-//! GrimDawn.exe; the window itself is `gd_game::cauldron`):
+//! The potions window ("Cauldron", `records/ui/cauldron/potions_table.dbr`, GrimDawn.exe):
 //! - lists ([`trees`], loader `PotionsWindow::LoadTrees`): per potion (the player's
 //!   health / energy `Skill_ChargePotion`, `customPotionTree1/2`), its
 //!   `Skill_PotionContainer`s in tree order and its modifiers: the skill's
@@ -34,12 +33,10 @@
 //!   kept; the picked and kept modifiers turn on (level 1 when at 0), every
 //!   other unlocked modifier of the potion turns off, and so does the other
 //!   potion's unlocked modifier at the same position in its unlocked list
-//!   as the picked or the kept one (the two lists run in parallel: the same
-//!   modifier can't be on both potions while unlocks come in pairs, as every
-//!   stock formula unlocks both).
+//!   as the picked or the kept one.
 //!
-//! The test hook's [`select`] (`GD_POTION_SELECT`, not a game path) takes no
-//! slot: a modifier goes into the first empty slot, else the second.
+//! [`select`] (hook `GD_POTION_SELECT`, not a game path) takes no slot: a modifier goes into
+//! the first empty slot, else the second.
 //!
 //! The potion's bitmap ([`potion_bitmap`] Game.dll
 //! `Skill_ChargePotion::UpdatePotionBitmap`, run by its `Update` every frame,
@@ -60,8 +57,7 @@
 //! other): `LoadFromDatabase` files a combo without a `container` under it,
 //! the stock `potionhealth_default.dbr` (`modifier1` the heal over time) and
 //! `potionenergy_default.dbr` (no lists): no texture (the slot keeps the
-//! skill's icon) but the mask `cauldron_potion01a-01_msk.tex`, offsets 9 / 9,
-//! the potion slots' cooldown fill (`ui/cooldown.rs`). PORT: "enabled" is
+//! skill's icon) but the mask `cauldron_potion01a-01_msk.tex`, offsets 9 / 9. PORT: "enabled" is
 //! level > 0 (`IsSkillEnabled` also checks the skill's enabled flags);
 //! names compare case-insensitively (the engine compares exact record
 //! names, stored lower case).
@@ -70,16 +66,14 @@ use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
 
 /// Containers and modifiers: `Skill_PotionModifier` and the secondary
-/// effects (`SkillSecondary_*`: Stoneskin, Explosive, ...) — the 46 potion
-/// skills of a character's save; not their `_buff` records.
+/// effects (`SkillSecondary_*`), not their `_buff` records.
 fn is_potion_skill(class: &str) -> bool {
     matches!(class, "Skill_PotionContainer" | "Skill_PotionModifier")
         || class.starts_with("SkillSecondary_")
 }
 
-/// Adds the potion skills a character lacks (level 0, locked per record): every skill of the player's two potion
-/// trees (`customPotionTree1/2`) in tree order, as the real game's saves hold exactly those, not every potion
-/// record in `records/skills/itemskillsgdx3/potionmodifiers/` (the `_blank` and unused ones).
+/// Adds the potion skills a character lacks (level 0, locked per record): every skill of the
+/// player's two potion trees (`customPotionTree1/2`) in tree order.
 pub fn ensure_skills(db: &Database, book: &mut SkillBook) {
     let Some(pc) = db.get(PLAYER) else {
         return;
@@ -97,8 +91,7 @@ pub fn ensure_skills(db: &Database, book: &mut SkillBook) {
         if !is_potion_skill(&r.class) {
             continue;
         }
-        // A missing `skillLocked` reads as locked: exactly the eight records
-        // saying 0 are unlocked, the rest locked.
+        // A missing `skillLocked` reads as locked.
         if r.i32("skillLocked").unwrap_or(1) != 0 {
             book.locked.insert(n.to_ascii_lowercase());
         }
@@ -141,8 +134,7 @@ pub fn apply_unlock(db: &Database, book: &mut SkillBook, item: &Record) {
 /// The player record holding the potion skill trees.
 pub const PLAYER: &str = "records/creatures/pc/malepc01.dbr";
 
-/// One potion of the window: its skill, containers and modifiers in the
-/// window's order (see the module docs).
+/// One potion of the window: its skill, containers and modifiers in the window's order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PotionTree {
     pub potion: String,
@@ -302,7 +294,7 @@ pub fn place_modifier(
 }
 
 /// Chooses a container (at its unlock level) or modifier for its potion
-/// (hook `GD_POTION_SELECT`; see the module docs).
+/// (hook `GD_POTION_SELECT`).
 pub fn select(db: &Database, book: &mut SkillBook, skill: &str) -> Result<(), &'static str> {
     let r = db.get(skill).ok_or("no such skill")?;
     if !is_potion_skill(&r.class) {
@@ -350,8 +342,8 @@ pub struct PotionBitmap {
     pub mask_bottom: i32,
 }
 
-/// The bitmap of the potion's current container and modifiers (see the
-/// module docs); `None`: no combo matches (the engine keeps the last one).
+/// The bitmap of the potion's current container and modifiers; `None`: no combo matches
+/// (the engine keeps the last one).
 pub fn potion_bitmap(db: &Database, book: &SkillBook, tree: &PotionTree) -> Option<PotionBitmap> {
     let container = tree
         .containers

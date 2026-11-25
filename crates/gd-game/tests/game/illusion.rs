@@ -5,7 +5,7 @@ use gd_game::illusion::Illusions;
 use gd_game::testing::TestGame;
 use gd_game_core::inventory::Inventory;
 
-/// A transmute set (`ItemTransmuterSet::Use`, `gd_game::illusion` module doc): a right click uses it up, unlocks
+/// A transmute set (`ItemTransmuterSet::Use`): a right click uses it up, unlocks
 /// every look of `transmuteDbrs`, writes `transmutes.gst` at once and sends the type-8 cinematic text; the looks
 /// come back when the saved character is loaded again.
 #[test]
@@ -105,8 +105,8 @@ fn transmute_set_unlocks_saves_and_reloads() {
             .iter()
             .any(|e| e.records.iter().any(|r| r.eq_ignore_ascii_case(LOOK)))
     );
-    // Save the character and load it back: the looks are still unlocked (read from the saved tree's
-    // `transmutes.gst`, `stash::shared_path`; the first game keeps its save folder alive).
+    // Save the character and load it back: the looks are still unlocked (the first game keeps its save
+    // folder alive).
     let saved = g.save_now();
     let Some(mut again) = TestGame::with_save(&saved) else {
         return;

@@ -1,158 +1,76 @@
-//! Monster skills: which active skill a monster
-//! uses and when, after `ControllerMonster` (Game.dll).
+//! Monster skills: which active skill a monster uses and when, after `ControllerMonster` (Game.dll).
 //!
-//! `Monster::InitSkillsInController` reads from the monster
-//! record, each resolved among the monster's own skills (`skillName1..N` at
-//! `skillLevelN`, `SkillManager::FindSkillId`):
+//! `Monster::InitSkillsInController` reads from the monster record, each resolved among the monster's own
+//! skills (`skillName1..N` at `skillLevelN`, `SkillManager::FindSkillId`):
 //! - `attackSkillName`: replaces the default attack;
-//! - `specialAttack[2..8]SkillName` with `…Timeout`, `…Delay` (s),
-//!   `…Chance` (%) and `…Range` (`ShortRange` 1 / `MediumRange` 2 /
-//!   `LongRange` 3, anything else 0 = any distance);
-//! - `buffSelf[2,3]SkillName`, `buffOther…`, `heal…`, `berserk…`,
-//!   `dying…`, `initial…`; `short/medium/longRangeMin/Max`.
+//! - `specialAttack[2..8]SkillName` with `…Timeout`, `…Delay` (s), `…Chance` (%) and `…Range` (`ShortRange` 1 /
+//!   `MediumRange` 2 / `LongRange` 3, anything else 0 = any distance);
+//! - `buffSelf[2,3]SkillName`, `buffOther…`, `heal…`, `berserk…`, `dying…`, `initial…`;
+//!   `short/medium/longRangeMin/Max`.
 //!
-//! `ControllerMonster::ChooseBestSkill` takes the first special
-//! slot whose delay and timeout countdowns are both ≤ 0, that passes
-//! `rand() % 100 < chance`, and whose target is in range
-//! (`IsSkillInProperRange`: centre distance − both radii, at least 0.5,
-//! strictly inside the band; band 0 always passes); else the attack skill
-//! (in a shapeshift form every pick passes the form's set gate too,
-//! [`MonsterSkills::set_active_set`]).
-//! `Update` counts the delays down always and the timeouts (initially the
-//! timeout) only once the monster found an enemy (`FindEnemy` sets the flag);
-//! `SkillUsed` re-arms the used slot's delay.
+//! `ControllerMonster::ChooseBestSkill` takes the first special slot whose delay and timeout countdowns are both
+//! ≤ 0, that passes `rand() % 100 < chance`, and whose target is in range (`IsSkillInProperRange`: centre
+//! distance − both radii, at least 0.5, strictly inside the band; band 0 always passes); else the attack skill
+//! (in a shapeshift form every pick also passes the form's set gate, [`MonsterSkills::set_active_set`]).
+//! `Update` counts the delays down always and the timeouts (initially the timeout) only once the monster found
+//! an enemy; `SkillUsed` re-arms the used slot's delay.
 //!
-//! When (`ControllerMonsterStateAttack::OnUpdate`,
-//! `ControllerMonsterStatePursue::OnUpdate`, `ControllerMonster::Update`):
-//! the next skill is chosen when an attack ends (and on
-//! finding an enemy); while the chosen skill is out of reach the monster
-//! pursues and chooses again every 200 ms, unless the skill's
-//! `Skill::CanRechooseInPursuit` is false (`ControllerMonsterStatePursue::OnUpdate`: weapon charges, blinks,
-//! path charges, leaps, disengage, evade keep their Pursue,
-//! `crate::melee::SkillMove::rechooses`). A skill is used once the
-//! centre distance is within both radii + its `Skill::GetRange` + 0.5
-//! (`ControllerAIStateT::CloseEnoughToUseSkill`, `GetSkillUseTolerance`):
-//! the skill's `distanceProfile` (Melee / Short / Moderate / Long / Maximum
-//! / Boss, `Skill::LoadResources`) picks `gameengine.dbr` `meleeRange` …
-//! `bossRange` (`GameEngine::LoadFromDatabase`), and the swing timer
-//! (`ResetSwingTimer`: `min/maxSwingPause`, counted down every update) has
-//! run out; the timer is re-armed as the attack starts. `attackSkillName`
-//! of any kind, weapon attacks included, is the attack used
-//! (`AttackEnemyOrReturn` → `UseSkill`). Line of sight: in Game.dll only
-//! `Skill::IsTargetInLOS` (its three overloads) reaches `World::CheckLOS`;
-//! `ControllerAIStateT<ControllerMonster>::UseSkill` calls the
-//! `(character, id)` / `(character, position)` ones only when the skill's `Skill::GetRequiresLOS` says it needs
-//! LOS, and on failure, when the monster `CanMove`, looks for a nearby spot that
-//! sees the target (`(position, position)`) and moves there. The rays aim at the target's
-//! [`center_of_mass`]. `GetRequiresLOS` is false for weapon attacks and most skills, true
-//! for the chain skills (`Skill_AttackChain`, `Skill_AttackProjectileChain`,
-//! `Skill_AttackRadiusLightning*`, the chain secondaries) and conditional
-//! for `Skill_AttackProjectileBurst` / `Skill_GiveBonus`, which
-//! [`requires_los`] / [`los_spot`] model with `collision.rs`'s `BlockLOS`
-//! boxes.
+//! When (`ControllerMonsterStateAttack::OnUpdate`, `ControllerMonsterStatePursue::OnUpdate`): the next skill is
+//! chosen when an attack ends and on finding an enemy; while the chosen skill is out of reach the monster
+//! pursues and chooses again every 200 ms, unless `Skill::CanRechooseInPursuit` is false (weapon charges,
+//! blinks, path charges, leaps, disengage, evade). A skill is used once the centre distance is within both
+//! radii + its `Skill::GetRange` + 0.5 (`ControllerAIStateT::CloseEnoughToUseSkill`) and the swing timer
+//! (`ResetSwingTimer`: `min/maxSwingPause`) has run out; the timer is re-armed as the attack starts.
+//! `attackSkillName` of any kind, weapon attacks included, is the attack used. Line of sight: only
+//! `Skill::IsTargetInLOS` reaches `World::CheckLOS`; `ControllerAIStateT<ControllerMonster>::UseSkill` checks it
+//! only when `Skill::GetRequiresLOS` says so, and on failure, when the monster `CanMove`, moves to a nearby spot
+//! that sees the target. The rays aim at the target's [`center_of_mass`]. `GetRequiresLOS` is true for the chain
+//! skills (`Skill_AttackChain`, `Skill_AttackProjectileChain`, `Skill_AttackRadiusLightning*`, the chain
+//! secondaries), conditional for `Skill_AttackProjectileBurst` / `Skill_GiveBonus` ([`requires_los`] /
+//! [`los_spot`]), false otherwise.
 //!
-//! Self buffs (`ChooseBestBuffSelfSkill`, the controller's
-//! `BuffSelfBehavior`: NeverUseSkill / WhenIdle / WhenEnemyIsSeen (default)
-//! / WheneverPossible): unless NeverUseSkill, the first of `buffSelf`,
-//! `buffSelf2`, `buffSelf3` that is enabled and not already running is used
-//! when an enemy is found (`DefaultEnemyFoundResponse`) and when an attack
-//! ends (`ControllerMonsterStateAttack::HandleEvent` "End"); WheneverPossible
-//! also every 4 s (`Update`, first after 4 s), in or out of combat. Toggled
-//! skills are switched on by that use: a monster's toggled skills turn on
-//! only when its AI uses them (`AutoActivateNow` runs only for the main
-//! player in `SkillManager::Update`), so a damaging aura that is neither a
-//! self buff nor an initial skill stays off.
-//! A switched-on radius aura (`Skill_BuffRadiusToggled`) and a running
-//! timed `Skill_BuffRadius` buff the monster and its friends in radius (a
-//! debuff one its foes) through `auras.rs` ([`MonsterSkills::emissions`]);
-//! the buffs on a monster count in [`rebuild_profiles`]. Its skills' autocast children (`autoCastSkill`) are
-//! set up with its skills ([`init_skills`], `crate::autocast::SkillAutocasts`).
+//! Self buffs (`ChooseBestBuffSelfSkill`, `BuffSelfBehavior`: NeverUseSkill / WhenIdle / WhenEnemyIsSeen
+//! (default) / WheneverPossible): unless NeverUseSkill, the first of `buffSelf`, `buffSelf2`, `buffSelf3` that
+//! is enabled and not already running is used when an enemy is found and when an attack ends; WheneverPossible
+//! also every 4 s, in or out of combat. A monster's toggled skills turn on only when its AI uses them
+//! (`AutoActivateNow` runs only for the main player), so a damaging aura that is neither a self buff nor an
+//! initial skill stays off. A switched-on radius aura or running timed `Skill_BuffRadius` buffs the monster and
+//! its friends in radius (a debuff one its foes) ([`MonsterSkills::emissions`]).
 //!
-//! Dying skill: `ControllerMonsterStateDying::OnBegin` →
-//! `StartDyingSkill` casts `dyingSkillName` when the monster
-//! dies unless suppressed: an `ActivateSkillConfigCmd` at the
-//! monster's position, so it goes off at once, with no cast animation.
-//! Suppressed = `Character::ShouldSuppressDyingSkill` (`Character.suppressDyingSkill`), which only
-//! `SuppressDyingSkill` / a flagged `ReleasePetConfigCmd` (`pets.rs` docs)
-//! and `Monster::UpdateSelf`'s Shattered Realm / Crucible region check (a
-//! non-pet monster outside its endless-dungeon region) set: a summon whose
-//! time to live runs out ([`expire_minions`]) fires it like any death.
-//! Heal: `Update` counts a timer down from `healSkillDelay` (only when it is
-//! above 0) and calls `TryToHealAlly` at 0, then re-arms it.
-//! `TryToHealAlly`: the
-//! leader (`Monster::GetLeader`: the summoner of a minion, the leader of a
-//! follower, the converter of a converted monster; `PatrolState::leader`) when
-//! its life is below `healLeaderHealthPercentage` (% of max life, default 0),
-//! else the character with the lowest life fraction below
-//! `healAllyHealthPercentage` (default 70 here) among its friends in its
-//! `ViewDistance` sphere other than itself (`GetCharactersInSphere`:
-//! `IsFriend`, `MaxYViewDistance` in height when set; PORT: the
-//! candidates are the monsters), via
-//! the `UseSkillOnAlly` state. Each healer picks on its own, so two healers
-//! can pick the same ally. The heal skills are `Skill_GiveBonus`, whose
-//! `TargetResult` gives the target the bonus
-//! (`CharacterBio::TakeBonus`, [`crate::casting::Bonus`]) when the cast
-//! goes off. Initial skills (`initialSkillName`, `initial2SkillName`):
-//! `ControllerMonsterStateStartup::UseInitialSkillIfSet` uses
-//! them on the monster itself at startup; here when its skills
-//! are first set up. Chains: when the attack state ends after
-//! `chainInitialSkill`, `chainNextSkill` follows at once — on the current
-//! enemy (`chainBehavior` UseOnCurrentEnemy, 0), via `UseSkillOnAlly` on the
-//! leader (UseOnLeader, 1), on the monster itself (UseOnSelf, 2) or on
-//! `ChooseBestAllyToBuff` (UseOnAllies, 3)
-//! (`ControllerMonsterStateAttack::HandleEvent`,
-//! `Monster::InitSkillsInController`; the data uses only
-//! UseOnCurrentEnemy and UseOnSelf). Berserk: `Character::PlayLowHealthSoundIfNeeded`
-//! raises the controller's `LowHealth` once life
-//! drops to `lowHealthTriggerLevel` % of max life (the monster record,
-//! `Character::Load`) and re-arms once it is back at `lowHealthResetLevel`
-//! %; `DefaultLowHealthResponse` then flees when the
-//! controller's `FleeBehavior` is FleeOnLowHealth and `CanFlee`, else
-//! pursues its target with `berserkSkillName` as the chosen skill
-//! (the Flee state is in `flee.rs`). Buff other: only
-//! `buffOtherSkillName` is used (`buffOther2/3` are loaded but never read);
-//! by the controller's `BuffAllyBehavior` (default NeverUseSkill): on
-//! finding an enemy (WhenEnemyIsSeen) or every 4 s (WheneverPossible),
-//! `ChooseBestAllyToBuff` picks among the live friends
-//! (`FactionManager::IsFriend`) within `ViewDistance` (`ControllerMonster.viewDistance`, and
-//! `MaxYViewDistance` in height when set) other than itself
-//! (`GetCharactersInSphere` with both flags false: busy or not,
-//! and only those without a leader or quest pets, [`buff_ally_candidate`]:
-//! the player, monsters that follow nobody; never a minion, follower or
-//! normal pet) that lack the buff, by
-//! `BuffAllyTargeting`: BuffClosest (`FindClosest`, skipping
-//! `Npc`s), BuffStrongest (highest current life, `ControllerAI::FindStrongest`) or
-//! BuffWeakest (lowest life fraction, `FindWeakest`). "Lack the buff" =
-//! `!Character::IsSkillBuffActive(Skill_BuffOther.buffSkillName)` (the skill manager's buff
-//! names), the wrapper's `buffSkillName` (`Skill_BuffRadius::Load`;
-//! `Skill_BuffOther::IsValidTarget` tests the
-//! same); the caster then needs the skill enabled (`IsSkillEnabled`) and
-//! `IsValidTarget` (a `Skill_BuffOther`'s: a live character without the buff;
-//! the base slot is `true`) before `UseSkillOnAlly` (`OnBegin` →
-//! `UseSkill` at the ally). The buff (the `Skill_BuffOther`'s
-//! `buffSkillName`, `skillActiveDuration`) lands when the caster's cast goes
-//! off, then the profile's bonus (`Skill_BuffOther::TargetResult`,
-//! [`crate::casting::Bonus`]; its `achievementTracking` branch differs only in
-//! bookkeeping). A `Skill_BuffRadius` used there goes off on the caster
-//! (`ActivateNow`): one pass around it at once, heal included,
-//! and, when its buff record has a `skillActiveDuration`, the timed passes
-//! after it; without one it is an instant heal / buff (the Crucible's
-//! Defense Banner heals; `UpdateSkillController` turns it off
-//! before a second pass). `auras.rs` has the passes. Its cooldown is the
-//! buff record's (`Load` loads the skill's resources from that table).
+//! Dying skill: `ControllerMonsterStateDying::OnBegin` → `StartDyingSkill` casts `dyingSkillName` at once, with
+//! no cast animation (`ActivateSkillConfigCmd`), unless `Character::ShouldSuppressDyingSkill` (set by
+//! `SuppressDyingSkill`, a flagged `ReleasePetConfigCmd`, and `Monster::UpdateSelf` for a non-pet monster outside
+//! its endless-dungeon region): a summon whose time to live runs out ([`expire_minions`]) fires it.
 //!
-//! Channelled skills ([`Kind::Beam`]: the `SkillChanneled` classes) are left out of every monster slot, by
-//! design: no stock monster, pet or Crucible / Shattered Realm creature has one (base … gdx3 and
-//! `survivalmode*` record survey: the only monster record naming one is the unreferenced
-//! `records/sandbox/arthur/humanoutlaw_arcanist01.dbr`; the Solael leader's Aether Ray shoulder augment is on an
-//! `Npc`). What the engine would do: `SkillChanneled::Load` reads `duration` (ms, at least
-//! 20) and `useResetsDuration` (default on); `GetValidTarget` re-arms the running timer on each use,
-//! `Update` counts it down and stops the channel (`Skill::EndChannel`) at 0 or when the character can no
-//! longer act (`Character::CanAct`). Only the player controllers re-use a channel while it runs
-//! (`DefaultRequestSkillAction` and the trapped states call `GetValidTarget`, `ControllerPlayerStateUseSkill` reads
-//! `Skill::IsRunning`); no `ControllerMonster*`
-//! state calls either, and `ControllerMonsterStateAttack::OnUpdate` uses its skill once per swing
-//! (`AttackEnemyOrReturn`), so a monster's channel would last one `duration` (Aether Ray: 250 ms) per attack.
+//! Heal: `Update` counts a timer down from `healSkillDelay` (when above 0) and calls `TryToHealAlly` at 0, then
+//! re-arms it. `TryToHealAlly`: the leader (`Monster::GetLeader`) when its life is below
+//! `healLeaderHealthPercentage` (default 0), else the friend with the lowest life fraction below
+//! `healAllyHealthPercentage` (default 70) in its `ViewDistance` sphere (`MaxYViewDistance` in height when set)
+//! other than itself, via `UseSkillOnAlly`. PORT: the candidates are the monsters. Each healer picks on its own.
+//! The heal skills are `Skill_GiveBonus` ([`crate::casting::Bonus`]).
+//!
+//! Initial skills (`initialSkillName`, `initial2SkillName`): `UseInitialSkillIfSet` uses them on the monster
+//! itself at startup; here when its skills are first set up. Chains: when the attack state ends after
+//! `chainInitialSkill`, `chainNextSkill` follows at once by `chainBehavior`: UseOnCurrentEnemy (0), UseOnLeader
+//! (1), UseOnSelf (2), UseOnAllies (3); the data uses only 0 and 2.
+//!
+//! Berserk: `Character::PlayLowHealthSoundIfNeeded` raises `LowHealth` once life drops to
+//! `lowHealthTriggerLevel` % and re-arms at `lowHealthResetLevel` %; `DefaultLowHealthResponse` then flees when
+//! `FleeBehavior` is FleeOnLowHealth and `CanFlee`, else pursues its target with `berserkSkillName`.
+//!
+//! Buff other: only `buffOtherSkillName` is used (`buffOther2/3` are never read), by `BuffAllyBehavior`
+//! (default NeverUseSkill): on finding an enemy (WhenEnemyIsSeen) or every 4 s (WheneverPossible),
+//! `ChooseBestAllyToBuff` picks among the live friends within `ViewDistance` other than itself and without a
+//! leader ([`buff_ally_candidate`]) that lack the buff (`!Character::IsSkillBuffActive(buffSkillName)`), by
+//! `BuffAllyTargeting`: BuffClosest (skipping `Npc`s), BuffStrongest (highest life) or BuffWeakest (lowest life
+//! fraction). The caster needs the skill enabled and `IsValidTarget` before `UseSkillOnAlly`. The buff lands when
+//! the cast goes off (`Skill_BuffOther::TargetResult`). A `Skill_BuffRadius` used there goes off on the caster:
+//! one pass at once, heal included, then timed passes when its buff record has a `skillActiveDuration`; without
+//! one it is instant. Its cooldown is the buff record's.
+//!
+//! Channelled skills ([`Kind::Beam`]) are left out of every monster slot: no stock monster has one. In the
+//! engine only the player controllers re-use a running channel, so a monster's channel would last one
+//! `duration` per attack.
 use crate::combat::MonsterAi;
 use crate::nav::Nav;
 use bevy::prelude::*;
@@ -192,7 +110,6 @@ impl Plugin for MonsterSkillsPlugin {
                     )
                         .chain()
                         .before(crate::auras::AurasSet),
-                    // Auras' buffs on monsters (`auras.rs`) count in the rebuild.
                     (
                         rebuild_profiles
                             .in_set(MonsterSkillStage::Rebuild)
@@ -211,9 +128,8 @@ impl Plugin for MonsterSkillsPlugin {
     }
 }
 
-/// Starts parsing, in the background, the bodies and animation clips of every creature a new monster's skills can
-/// summon ([`gd_game_core::creature::BodyCache::ready`], [`gd_game_core::character::AnimCache::ready`]), so its first summon does
-/// not parse them on the game thread mid-fight. Each summoned record once a session.
+/// Starts parsing, in the background, the bodies and animation clips of every creature a new monster's skills
+/// can summon, so its first summon does not parse them on the game thread mid-fight.
 fn prefetch_summons(
     new: Query<&MonsterSkills, Added<MonsterSkills>>,
     mut assets: crate::creature::Spawner,
@@ -253,15 +169,13 @@ fn prefetch_summons(
     }
 }
 
-/// `ControllerAIStateT::GetSkillUseTolerance` (0.5 m).
+/// `ControllerAIStateT::GetSkillUseTolerance`.
 pub(crate) const SKILL_USE_TOLERANCE: f32 = 0.5;
 
-/// `ControllerMonster::Update`: the WheneverPossible buff checks run every
-/// 4 s (the timer starts at 4000 ms).
+/// `ControllerMonster::Update`: the WheneverPossible buff checks run every 4 s (first after 4 s).
 const BUFF_POLL: f32 = 4.0;
 
-/// `ControllerMonsterStatePursue::OnUpdate`: re-choose every 200 ms while
-/// pursuing.
+/// `ControllerMonsterStatePursue::OnUpdate`: re-choose every 200 ms while pursuing.
 const PURSUE_REPICK: f32 = 0.2;
 
 /// `BuffSelfBehavior` / `BuffAllyBehavior` (`ControllerMonster::Load`).
@@ -275,111 +189,87 @@ pub(crate) fn behaviour(s: Option<&str>, default: u8) -> u8 {
     }
 }
 
-/// The skill the monster is going for (`ChooseBestSkill`'s result, or the
-/// berserk skill).
+/// The skill the monster is going for (`ChooseBestSkill`'s result, or the berserk skill).
 #[derive(Clone, Debug)]
 enum Pick {
-    /// The attack skill: `attackSkillName`, else the plain swing
-    /// (`combat.rs`).
+    /// `attackSkillName`, else the plain swing.
     Attack,
-    /// The default attack (the plain swing) though an attack skill is set: the form's set gate
-    /// bars the attack skill (`MonsterSkills::choose`).
+    /// The plain swing though an attack skill is set: the form's set gate bars the attack skill.
     Plain,
-    /// Nothing passes the form's set gate (`ChooseBestSkill` returns 0; PORT: the monster keeps
-    /// its approach and chooses again at its next attack turn).
+    /// Nothing passes the form's set gate (`ChooseBestSkill` returns 0; PORT: the monster keeps its approach
+    /// and chooses again at its next attack turn).
     Nothing,
     Special(usize),
     Skill(String, usize, Kind),
 }
 
-/// `SkillManager::LoadDefaultSkills`'s default attack (the plain swing's skill, class
-/// `Skill_WPAttack_BasicAttack`): the controller's `ControllerMonster.defaultAttackSkill` (`InitSkillsInController`).
+/// `SkillManager::LoadDefaultSkills`'s default attack (`ControllerMonster.defaultAttackSkill`).
 const DEFAULT_ATTACK: &str = "records/skills/default/defaultwpbasicattack.dbr";
 
 #[derive(Component, Clone, Debug)]
 pub struct MonsterSkills {
-    /// `attackSkillName`, used for every attack: (skill, level index, kind,
-    /// `Skill::GetRange`).
+    /// `attackSkillName`: (skill, level index, kind, `Skill::GetRange`).
     pub attack: Option<(String, usize, Kind, f32)>,
     pub specials: Vec<Special>,
     /// `(min, max)` of the short, medium and long range bands.
     pub bands: [(f32, f32); 3],
     /// Timed `buffSelf` skills: (skill, level index).
     pub buff_self: Vec<(String, usize)>,
-    /// Toggled `buffSelf` skills, switched on by their first use: (skill,
-    /// level index).
+    /// Toggled `buffSelf` skills, switched on by their first use.
     toggles: Vec<(String, usize)>,
-    /// Toggled skills that are on, other than radius auras (those reach the
-    /// monster and its allies as aura buffs, `auras.rs`): (stat record,
+    /// Toggled skills that are on, other than radius auras (those reach it as aura buffs): (stat record,
     /// level index).
     pub auras: Vec<(String, usize)>,
-    /// `Skill_BuffAttackRadiusToggled`s that are on: (skill, level index).
+    /// `Skill_BuffAttackRadiusToggled`s that are on.
     damage_auras: Vec<(String, usize)>,
-    /// Toggled skills switched on: (skill, level index).
     toggled: Vec<(String, usize)>,
-    /// The timed self buffs (the shared [`gd_game_core::skill_buffs::TimedBuffs`]
-    /// store, ticked by `casting::expire_buffs`).
     pub buffs: gd_game_core::skill_buffs::TimedBuffs,
-    /// `skillCooldownTime` left per used skill (`Skill` "ready" check).
+    /// `skillCooldownTime` left per used skill.
     cooldowns: Vec<(String, f32)>,
     /// `healSkillName`: (skill, level index, `healSkillDelay`, timer left).
     pub heal: Option<(String, usize, f32, f32)>,
-    /// The controller's `healAllyHealthPercentage`.
     pub heal_pct: f32,
-    /// The controller's `healLeaderHealthPercentage` (default 0: never).
+    /// `healLeaderHealthPercentage` (default 0: never).
     pub heal_leader_pct: f32,
-    /// `dyingSkillName`: (skill, level index, kind).
     pub dying: Option<(String, usize, Kind)>,
     /// `initialSkillName` / `initial2SkillName`, until used.
     pub initial: Vec<(String, usize, Kind)>,
-    /// (`chainInitialSkill`, `chainNextSkill` with level index and kind, on self).
+    /// (`chainInitialSkill`, `chainNextSkill`, on self).
     pub chain: Option<(String, (String, usize, Kind), bool)>,
-    /// The chain's first skill was started: the next one follows when it ends.
     chain_pending: bool,
     /// `buffOtherSkillName`: (wrapper skill, level index, buff record, seconds).
     pub buff_other: Option<(String, usize, String, f32)>,
     /// `BuffAllyTargeting`: 0 closest, 1 strongest, 2 weakest.
     pub buff_targeting: u8,
-    /// `BuffSelfBehavior` and `BuffAllyBehavior` (0 never … 3 whenever possible).
     buff_self_behaviour: u8,
     buff_ally_behaviour: u8,
-    /// The 4 s timer of the WheneverPossible checks.
     poll: f32,
-    /// A WheneverPossible ally buff is due (set by the poll).
+    /// A WheneverPossible ally buff is due.
     ally_poll: bool,
-    /// The enemy-found ally buff is due.
     ally_on_found: bool,
-    /// `berserkSkillName` and the low-health trigger / reset levels (%).
+    /// `berserkSkillName`.
     pub berserk: Option<(String, usize, Kind)>,
-    /// `Skill_MonsterGenerator`s among the monster's skills: (skill, level
-    /// index, seconds to the next spawn).
+    /// `Skill_MonsterGenerator`s: (skill, level index, seconds to the next spawn).
     pub generators: Vec<(String, usize, f32)>,
-    /// `Skill_OnDeathSpawnActor`s: (skill, level index).
+    /// `Skill_OnDeathSpawnActor`s.
     pub on_death: Vec<(String, usize)>,
     low_health: (f32, f32, bool),
     in_combat: bool,
     was_aggro: bool,
     /// An attack or cast was seen running: its end is next.
     attacking: bool,
-    /// The chosen skill and the pursuit re-choose timer.
     pick: Option<Pick>,
     repick: f32,
     dirty: bool,
-    /// Skills `SetAvailability` turns off: a summon skill [`pen_gated`] while
-    /// one of its summons lives ([`mirage_availability`]).
+    /// Skills `SetAvailability` turns off: a summon skill [`pen_gated`] while one of its summons lives.
     unavailable: Vec<String>,
-    /// Its [`pen_gated`] skills among the specials and the attack, from the
-    /// records ([`mirage_availability`]).
+    /// Its [`pen_gated`] skills among the specials and the attack.
     mirages: Vec<String>,
-    /// The character's active skill set (`Character.activeSkillSet`; 0 = default,
-    /// a timed form's `activeSkillSet` while it lasts) and the skills
-    /// `Skill::SetAvailability` turns off for it ([`MonsterSkills::set_active_set`]).
+    /// `Character.activeSkillSet` (0 = default) and the skills `Skill::SetAvailability` turns off for it.
     active_set: i32,
     off_set: Vec<String>,
-    /// The form's `allowedSkillTypes` (`Character::SetAllowedSkillTypes`; empty out of a form):
-    /// `ChooseBestSkill`'s set gate ([`MonsterSkills::set_active_set`]).
+    /// The form's `allowedSkillTypes` (empty out of a form): `ChooseBestSkill`'s set gate.
     allowed: Vec<String>,
-    /// The timed form's stat record and level while it is on.
     form: Option<(String, usize)>,
 }
 
@@ -431,11 +321,9 @@ impl Default for MonsterSkills {
 }
 
 impl MonsterSkills {
-    /// Dispelled (`crate::skill_buffs::DispelOn`): its timed buffs end and
-    /// its switched-on toggles switch off (`DispellSelfBuff` → `StopSkill`,
-    /// `crate::skill_buffs` docs), but those `keep` names
-    /// (`notDispelable`); a toggle comes back only when its AI uses it again
-    /// (no auto toggle for monsters). The ended ones.
+    /// Dispelled: its timed buffs end and its switched-on toggles switch off (`DispellSelfBuff` → `StopSkill`),
+    /// but those `keep` names (`notDispelable`); a toggle comes back only when its AI uses it again. The ended
+    /// ones.
     pub fn dispel(
         &mut self,
         db: &gd_formats::vfs::Database,
@@ -473,9 +361,8 @@ impl MonsterSkills {
         gone
     }
 
-    /// The controller's attack skill and special slots are replaced
-    /// (`ControllerGraeae` / `ControllerMonsterSynergy` rewrite `ControllerMonster.attackSkill` and the
-    /// `ControllerMonster.specialAttacks` slots): the pending choice is dropped.
+    /// `ControllerGraeae` / `ControllerMonsterSynergy` rewrite `ControllerMonster.attackSkill` and the special
+    /// slots: the pending choice is dropped.
     pub(crate) fn set_kit(
         &mut self,
         attack: Option<(String, usize, Kind, f32)>,
@@ -486,7 +373,6 @@ impl MonsterSkills {
         self.pick = None;
     }
 
-    /// Whether `skill` is a toggle that is switched on.
     pub(crate) fn toggle_is_on(&self, skill: &str) -> bool {
         self.toggled.iter().any(|t| t.0 == skill)
     }
@@ -520,7 +406,7 @@ impl MonsterSkills {
         self.dirty = true;
     }
 
-    /// The rules changed (the Crucible's ramp / mutators): [`rebuild_profiles`] runs for it.
+    /// The rules changed (the Crucible's ramp / mutators).
     pub fn mark_profile_dirty(&mut self) {
         self.dirty = true;
     }
@@ -530,13 +416,11 @@ impl MonsterSkills {
         self.dirty = true;
     }
 
-    /// The toggled skills switched on (skill, level index).
     pub fn toggled(&self) -> &[(String, usize)] {
         &self.toggled
     }
 
-    /// Its skill `skill` is active (`Skill.active`): a toggle switched on or a timed buff running
-    /// (`crate::autocast`, skill-level autocasts).
+    /// `Skill.active`: a toggle switched on or a timed buff running.
     pub(crate) fn skill_running(&self, skill: &str) -> bool {
         self.toggled
             .iter()
@@ -545,9 +429,8 @@ impl MonsterSkills {
             .any(|s| s.eq_ignore_ascii_case(skill))
     }
 
-    /// A toggled skill switches on: its stats (a radius aura's come back as
-    /// aura buffs, `auras.rs`), and its damage when it is a
-    /// `Skill_BuffAttackRadiusToggled`.
+    /// A toggled skill switches on: its stats (a radius aura's come back as aura buffs), and its damage when
+    /// it is a `Skill_BuffAttackRadiusToggled`.
     fn toggle_on(&mut self, rec: &gd_formats::arz::Record, skill: &str, li: usize) {
         if rec.class != "Skill_BuffRadiusToggled" {
             self.auras.push((
@@ -564,9 +447,9 @@ impl MonsterSkills {
         self.dirty = true;
     }
 
-    /// Its auras on (`auras.rs`; a non-debuff one buffs the monster too):
-    /// switched-on radius toggles and running `Skill_BuffRadius` buffs. Reads only
-    /// the toggles' and buffs' skills and levels (`auras::CachedEmissions` relies on it).
+    /// Its auras on (a non-debuff one buffs the monster too): switched-on radius toggles and running
+    /// `Skill_BuffRadius` buffs. Reads only the toggles' and buffs' skills and levels (`auras::CachedEmissions`
+    /// relies on it).
     pub fn emissions(&self, db: &gd_formats::vfs::Database) -> Vec<crate::auras::Emission> {
         let toggles = self
             .toggled
@@ -591,7 +474,7 @@ impl MonsterSkills {
     fn from_record(data: &GameData, record: &str, level: i32) -> Option<Self> {
         let rec = data.db.get(record)?;
         let levels = gd_sim::actor::monster_skill_levels(rec, level);
-        // FindSkillId: only the monster's own skills.
+        // `FindSkillId`: only the monster's own skills.
         let own = |key: &str| -> Option<(String, usize, gd_formats::arz::Record)> {
             let name = rec.str(key)?;
             let (n, l) = levels.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))?;
@@ -720,7 +603,7 @@ impl MonsterSkills {
                 })
                 .map(|(n, l)| (n.clone(), (*l).max(1) as usize - 1))
                 .collect(),
-            // Only the first buff-other slot is ever used; a `Skill_BuffRadius` without a duration is instant.
+            // A `Skill_BuffRadius` without a duration is instant.
             buff_other: own("buffOtherSkillName").and_then(|(s, li, r)| {
                 let inner = gd_sim::skills::profile_name(&r)
                     .map(str::to_owned)
@@ -751,8 +634,7 @@ impl MonsterSkills {
             toggles,
             ..Self::default()
         };
-        // Initial skills that are toggles go on at startup with their use
-        // (`UseInitialSkillIfSet`).
+        // Initial skills that are toggles go on at startup (`UseInitialSkillIfSet`).
         for k in ["initialSkillName", "initial2SkillName"] {
             if let Some((n, li, r)) = own(k)
                 && gd_sim::skills::is_toggle(&r.class)
@@ -763,8 +645,7 @@ impl MonsterSkills {
         Some(s)
     }
 
-    /// Not turned off by `SetAvailability` (a mirage with live copies, a
-    /// skill of another set).
+    /// Not turned off by `SetAvailability` (a mirage with live copies, a skill of another set).
     pub fn available(&self, skill: &str) -> bool {
         !self.unavailable.iter().any(|u| u == skill) && !self.off_set.iter().any(|u| u == skill)
     }
@@ -773,18 +654,13 @@ impl MonsterSkills {
         !self.cooldowns.iter().any(|c| c.0 == skill) && self.available(skill)
     }
 
-    /// The character's active skill set changes (a timed shapeshift form
-    /// starts or ends) with the form's `allowedSkillTypes` (`Character::SetAllowedSkillTypes`, empty
-    /// coming out). `Skill::SetAvailability`: a
-    /// skill whose `skillSet` is not 0 is usable only while it equals
-    /// the character's set (`Character.activeSkillSet`); set 0 skills stay available in any set.
-    /// `ControllerMonster::ChooseBestSkill`: every pick (special slots, the attack
-    /// skill `ControllerMonster.attackSkill`, the default attack `ControllerMonster.defaultAttackSkill`) also needs
-    /// `skillSet == set`, or a set other than 0 and
-    /// `SkillManager::IsGlobalSkillTypeAndAllowed` (the class is a known skill class, then
-    /// no allowed types = all, else the class name among them, case-insensitive): in a form, set 0
-    /// skills are chosen only when their class is allowed ([`Self::barred`]); other picks
-    /// (buffs, heal, berserk) are not gated.
+    /// The active skill set changes (a timed shapeshift form starts or ends) with the form's
+    /// `allowedSkillTypes` (empty coming out). `Skill::SetAvailability`: a skill whose `skillSet` is not 0 is
+    /// usable only while it equals the active set. `ChooseBestSkill`: every pick (special slots, the attack
+    /// skill, the default attack) also needs `skillSet == set`, or a set other than 0 and
+    /// `SkillManager::IsGlobalSkillTypeAndAllowed` (no allowed types = all, else the class name among them,
+    /// case-insensitive): in a form, set 0 skills are chosen only when their class is allowed
+    /// ([`Self::barred`]); buffs, heal and berserk are not gated.
     pub fn set_active_set(&mut self, data: &GameData, set: i32, allowed: &[String]) {
         self.active_set = set;
         self.allowed = allowed.to_vec();
@@ -807,16 +683,14 @@ impl MonsterSkills {
             .collect();
     }
 
-    /// A timed form's stats count while it lasts (it is a `BuffSelfToggled`:
-    /// [`Self::toggle_on`]'s stat record).
+    /// A timed form's stats count while it lasts (it is a `BuffSelfToggled`).
     pub fn set_form_stats(&mut self, form: Option<(String, usize)>) {
         self.form = form;
         self.dirty = true;
     }
 
-    /// A skill is used: its `skillCooldownTime` starts; a `Skill_BuffRadius`'s profile is its
-    /// `buffSkillName` record's (`Skill_BuffRadius::Load` loads the skill's resources
-    /// from that table).
+    /// A skill is used: its `skillCooldownTime` starts; a `Skill_BuffRadius`'s is its `buffSkillName`
+    /// record's.
     pub(crate) fn used(&mut self, data: &GameData, cb: &Combatant, skill: &str, li: usize) {
         let cd = data.db.get(skill).map_or(0.0, |r| {
             let profile = (r.class == "Skill_BuffRadius")
@@ -835,9 +709,8 @@ impl MonsterSkills {
         }
     }
 
-    /// Disruption (`SkillManager::ApplyCooldownDamage`, `combat::influence`): every skill
-    /// of the monster that disruption reaches (`gd_sim::skills::disruptable`) cools down for `secs` unless it
-    /// already does for longer.
+    /// Disruption (`SkillManager::ApplyCooldownDamage`): every skill disruption reaches cools down for `secs`
+    /// unless it already does for longer.
     pub(crate) fn disrupt(&mut self, db: &gd_formats::vfs::Database, secs: f32) {
         let mut names: Vec<String> = self.specials.iter().map(|s| s.skill.clone()).collect();
         names.extend(self.attack.iter().map(|a| a.0.clone()));
@@ -859,9 +732,8 @@ impl MonsterSkills {
         }
     }
 
-    /// `ControllerMonster::Update`'s special-slot countdowns (module docs): the delays always, the
-    /// timeouts once an enemy was found. `ControllerMonster::Update`: they run on
-    /// every update in any state but Dying, casting included ([`skill_timers`]).
+    /// `ControllerMonster::Update`'s special-slot countdowns: the delays always, the timeouts once an enemy was
+    /// found; in any state but Dying, casting included.
     fn count_specials(&mut self, aggro: bool, dt: f32) {
         if aggro {
             self.in_combat = true;
@@ -887,11 +759,8 @@ impl MonsterSkills {
         g > lo && g < hi
     }
 
-    /// `ChooseBestSkill`: the first special whose delay and timeout are over,
-    /// that passes its chance and whose band holds the target; else the
-    /// attack skill.
-    /// In a form the set gate ([`Self::set_active_set`]) bars specials and the attack skill: then
-    /// the default attack (the plain swing) when allowed, else nothing (`ChooseBestSkill` returns 0).
+    /// `ChooseBestSkill`. In a form the set gate bars specials and the attack skill: then the plain swing when
+    /// allowed, else nothing.
     fn choose(&self, data: &GameData, gap: f32) -> Pick {
         let barred = |s: &str| self.barred(data, s);
         (0..self.specials.len())
@@ -914,8 +783,8 @@ impl MonsterSkills {
             )
     }
 
-    /// `ChooseBestSkill`'s set gate fails for `skill` ([`Self::set_active_set`]): its `skillSet` is
-    /// not the active set and, in a form, its class is not allowed.
+    /// `ChooseBestSkill`'s set gate fails for `skill`: its `skillSet` is not the active set and, in a form,
+    /// its class is not allowed.
     pub fn barred(&self, data: &GameData, skill: &str) -> bool {
         let Some(r) = data.db.get(skill) else {
             return false;
@@ -930,16 +799,14 @@ impl MonsterSkills {
         r.i32("skillSet").unwrap_or(0) != self.active_set && (self.active_set == 0 || !allowed())
     }
 
-    /// The controller's state has a skill (the one chosen and being pursued or used: the state data's
-    /// skill id, `Skill_Shapeshift::Update` reads it, `crate::shapeshift`).
+    /// The controller's state has a skill (the state data's skill id, read by `Skill_Shapeshift::Update`).
     pub(crate) fn has_pick(&self) -> bool {
         self.pick
             .as_ref()
             .is_some_and(|p| !matches!(p, Pick::Nothing))
     }
 
-    /// `ChooseBestBuffSelfSkill`: the first self buff that is ready and not
-    /// running (a toggle not on, a timed buff not active).
+    /// `ChooseBestBuffSelfSkill`: the first self buff that is ready and not running.
     fn best_self_buff(&self) -> Option<(String, usize, bool)> {
         let toggles = self
             .toggles
@@ -955,17 +822,15 @@ impl MonsterSkills {
     }
 }
 
-/// The stages the monster skill pipeline exposes to other skill modules (graeae, spirit, synergy): `Init` creates a monster's
-/// skills, `Choose` picks what it casts.
+/// The monster skill pipeline's stages: `Init` creates a monster's skills, `Choose` picks what it casts.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MonsterSkillStage {
     Init,
     Choose,
     /// Skills cast by dying monsters.
     Dying,
-    /// Skill generators (periodic spawns).
     Generators,
-    /// The profile rebuild after the aura buffs.
+    /// After the aura buffs.
     Rebuild,
 }
 
@@ -996,20 +861,15 @@ pub(crate) fn init_skills(
         }
         sync_damage_auras(&mut commands, &data, e, &s);
         commands.entity(e).try_insert(s);
-        // Its skills' secondaries (`secondary.rs`) and modifiers.
         if let Some(rec) = data.db.get(&m.record) {
             let list = gd_sim::actor::monster_skill_levels(rec, m.level);
             let mut links = gd_game_core::weapon_pool::SkillLinks::of_list(&data.db, &list);
-            // Its skills' autocast children (`crate::autocast`, skill-level autocasts).
             if let Some(a) = crate::autocast::SkillAutocasts::of(&data.db, &list) {
                 commands.entity(e).try_insert(a);
             }
-            // Weapon-pool skills (`SkillManager::SelectWeaponPoolSkill`
-            // walks the manager's skills, monsters' included):
-            // the list's `Skill_WPAttack*` with a chance weight make the pool
-            // (PORT: their weapon requirements are not checked, monsters
-            // have no worn-weapon types), and a `Skill_WeaponPool_Charged*`
-            // skill (the giants' Cleaving Strikes) keeps charges.
+            // Weapon-pool skills (`SkillManager::SelectWeaponPoolSkill`): the list's `Skill_WPAttack*` with a
+            // chance weight make the pool (PORT: their weapon requirements are not checked), and a
+            // `Skill_WeaponPool_Charged*` skill keeps charges.
             let mut charged = false;
             for (s, level) in &list {
                 let Some(sr) = data.db.get(s) else { continue };
@@ -1070,14 +930,9 @@ pub(crate) fn sync_damage_auras(
     }
 }
 
-/// A script's `UseSkillAction`: the monster uses one of its own skills on a
-/// target (`Character::QuestCommandUseSkill`: `SkillManager::FindSkillId`
-/// by name, then the controller's "QuestUseSkill" state). The state
-/// ignores enemy events; a target that is not a Character (none, or another
-/// kind of object) makes it use the skill on itself, at its own position
-/// (`ControllerMonsterStateQuestUseSkill::OnBegin`); at the end of the skill's animation (the "End"
-/// event) it goes back to idle (`ControllerMonsterStateQuestUseSkill::
-/// HandleEvent`), here the cast simply ends.
+/// A script's `UseSkillAction` (`Character::QuestCommandUseSkill`): the monster uses one of its own skills on a
+/// target in the "QuestUseSkill" state, which ignores enemy events; a target that is not a Character makes it
+/// use the skill on itself (`ControllerMonsterStateQuestUseSkill::OnBegin`).
 #[derive(Component)]
 pub struct QuestUseSkill {
     pub skill: String,
@@ -1085,9 +940,8 @@ pub struct QuestUseSkill {
     pub point: Vec3,
 }
 
-/// `Character:ToggleSkills(false)` (engine `GameEngine::QuestCommandEnableMonsterSkills`, Game.dll
-/// → `Monster::EnableSkills`, gated in `ControllerMonster::ChooseBestSkill`): the monster
-/// chooses no skill — it only swings. Removed by `ToggleSkills(true)`; absent by default (enabled).
+/// `Character:ToggleSkills(false)` (`Monster::EnableSkills`, gated in `ChooseBestSkill`): the monster chooses no
+/// skill, it only swings.
 #[derive(Component)]
 pub struct SkillsDisabled;
 
@@ -1116,7 +970,7 @@ fn quest_use_skill(
         let Some(rec) = data.db.get(&m.record) else {
             continue;
         };
-        // FindSkillId: only the monster's own skills.
+        // `FindSkillId`: only the monster's own skills.
         let levels = gd_sim::actor::monster_skill_levels(rec, m.level);
         let Some((name, level)) = levels
             .iter()
@@ -1169,7 +1023,7 @@ pub(crate) fn start(
     if !ch.start_cast(&rec.class, special) {
         ch.start_cast("Skill_AttackSpell", None);
     }
-    // `AttackAction::Execute`: the caster turns to its target as the skill starts (`crate::turning`).
+    // `AttackAction::Execute`: the caster turns to its target as the skill starts.
     if kind != Kind::Buff {
         ch.begin_cast(tf, target.map(|t| (t, point)), point);
     }
@@ -1198,8 +1052,7 @@ pub(crate) fn start(
     );
 }
 
-/// Uses a self buff: a toggle switches on with the cast animation, a timed
-/// buff is cast.
+/// A toggle switches on with the cast animation, a timed buff is cast.
 #[allow(clippy::too_many_arguments)]
 fn use_self_buff(
     commands: &mut Commands,
@@ -1256,10 +1109,8 @@ fn skill_of<'m>(
     }
 }
 
-/// How near (centre distance) the target must be to use the chosen skill:
-/// both radii + its range + the tolerance; a weapon attack with a ranged
-/// weapon reaches as far as the weapon (Long profile); the plain swing uses
-/// the weapon's profile likewise (Melee without a ranged weapon).
+/// The centre distance to use the chosen skill: both radii + its range + the tolerance; a weapon attack or the
+/// plain swing with a ranged weapon reaches as far as the weapon.
 fn reach_of(
     data: &GameData,
     ms: &MonsterSkills,
@@ -1274,11 +1125,9 @@ fn reach_of(
     }
 }
 
-/// What the approach states (melee.rs) need of the chosen skill: the key
-/// (the state data's skill), `CloseEnoughToUseSkill`'s centre distance,
-/// `Skill::GetRange` and whether the range profile is Melee
-/// (`Skill::GetRangeProfile`, `Character::GetMoveToPoint`: only
-/// those use the enemy's attack slots).
+/// What the approach states need of the chosen skill: the key (the state data's skill),
+/// `CloseEnoughToUseSkill`'s centre distance, `Skill::GetRange` and whether the range profile is Melee
+/// (`Character::GetMoveToPoint`: only those use the enemy's attack slots).
 pub fn approach(
     data: &GameData,
     ms: Option<&MonsterSkills>,
@@ -1292,7 +1141,6 @@ pub fn approach(
     let kind = picked.map(|p| p.2);
     let range = picked.map_or(gd_game_core::combat::MELEE_RANGE, |p| p.3);
     let key = picked.map(|p| p.0.to_owned()).unwrap_or_default();
-    // The chosen skill's record once for the profile, the move and the charge buffer.
     let rec = picked.and_then(|p| data.db.get(p.0));
     let melee_profile = !matches!(
         rec.and_then(|r| r.str("distanceProfile")),
@@ -1340,14 +1188,9 @@ pub fn approach(
     }
 }
 
-/// The skill timers of every living monster, whatever it is doing:
-/// Skill cooldowns and the special-slot countdowns run down (the timed buffs
-/// expire in `casting::expire_buffs`, the one store's tick). `SkillManager::Update`
-/// is called from `Character::PreAnimationUpdate` every frame
-/// regardless of the controller state, so a stun or a cast does not pause
-/// them; `ControllerMonster::Update` counts the specials in any
-/// state but Dying ([`MonsterSkills::count_specials`]). [`choose_skills`]
-/// skips casting / stunned / quest-moving monsters, so they tick here.
+/// The skill timers of every living monster, whatever it is doing: `SkillManager::Update` runs every frame
+/// regardless of the controller state, so a stun or a cast does not pause them; [`choose_skills`] skips
+/// casting / stunned / quest-moving monsters, so they tick here.
 fn skill_timers(time: Res<Time>, mut q: Query<(&MonsterAi, &mut MonsterSkills), Without<Dead>>) {
     let dt = time.delta_secs();
     for (ai, mut ms) in &mut q {
@@ -1395,8 +1238,8 @@ pub(crate) fn choose_skills(
     ),
 ) {
     let dt = time.delta_secs();
-    // The monsters a monster of a foe faction may target (they are in `q`, not in `foes`; `combat::FoeLists`):
-    // position and radius, only when some monster's target is one of them.
+    // The monsters a monster of a foe faction may target (not in `foes`), only when some monster's target is
+    // one of them.
     let monster_targets: bevy::ecs::entity::EntityHashMap<(Transform, f32)> = if q
         .iter()
         .any(|(_, _, _, cb, ..)| cb.target.is_some_and(|t| !foes.contains(t)))
@@ -1409,7 +1252,7 @@ pub(crate) fn choose_skills(
     };
     for (e, mut tf, mut ai, mut cb, mut ch, mut ms, ranged, toggling_eye, skills_off) in &mut q {
         ms.repick -= dt;
-        // The 4 s WheneverPossible checks (`ControllerMonster::Update`).
+        // `ControllerMonster::Update`'s WheneverPossible poll.
         ms.poll -= dt;
         let poll = ms.poll <= 0.0;
         if poll {
@@ -1418,9 +1261,8 @@ pub(crate) fn choose_skills(
                 ms.ally_poll = true;
             }
         }
-        // The Graeae's "ToggleEye" temporary state chooses nothing, nor does the
-        // "AlertBeforePursue" one (`combat::Alert`: its handlers are empty), nor
-        // a monster down or getting up (`crate::ragdoll`).
+        // The Graeae's "ToggleEye" state chooses nothing, nor does "AlertBeforePursue" (its handlers are empty),
+        // nor a monster down or getting up.
         if toggling_eye
             || skills_off
             || matches!(
@@ -1440,13 +1282,12 @@ pub(crate) fn choose_skills(
             continue;
         }
         let ended = std::mem::take(&mut ms.attacking);
-        // Enemy found (`DefaultEnemyFoundResponse`).
+        // `DefaultEnemyFoundResponse`.
         let found = ai.aggro && !ms.was_aggro;
         ms.was_aggro = ai.aggro;
         if found && ms.buff_ally_behaviour == 2 {
             ms.ally_on_found = true;
         }
-        // Initial skills on itself at startup.
         if !ms.initial.is_empty() {
             let (s, li, kind) = ms.initial.remove(0);
             ms.used(&data, &cb, &s, li);
@@ -1465,8 +1306,6 @@ pub(crate) fn choose_skills(
             );
             continue;
         }
-        // Self buffs: on finding an enemy, at an attack's end, and every 4 s
-        // for WheneverPossible.
         let buff_now = match ms.buff_self_behaviour {
             0 => false,
             b => found || (ended && ai.aggro) || (b == 3 && poll),
@@ -1475,7 +1314,6 @@ pub(crate) fn choose_skills(
             use_self_buff(&mut commands, &data, e, &mut tf, &mut ch, &mut ms, &cb, b);
             continue;
         }
-        // A chain's next skill right after its first.
         if std::mem::take(&mut ms.chain_pending)
             && let Some((_, (s, li, kind), on_self)) = ms.chain.clone()
         {
@@ -1525,16 +1363,14 @@ pub(crate) fn choose_skills(
         let dist = (to - tf.translation).with_y(0.0).length();
         let radii = cb.radius + tradius;
         let gap = dist - radii;
-        // Low health (`PlayLowHealthSoundIfNeeded`): pursue with the berserk
-        // skill.
+        // `PlayLowHealthSoundIfNeeded`.
         let pct = 100.0 * cb.life / cb.profile.sheet.life.max(1.0);
         let (trig, reset, fired) = ms.low_health;
         if fired && pct >= reset {
             ms.low_health.2 = false;
         } else if !fired && pct <= trig {
             ms.low_health.2 = true;
-            // `DefaultLowHealthResponse`: FleeOnLowHealth flees when `CanFlee`,
-            // else berserk.
+            // `DefaultLowHealthResponse`: FleeOnLowHealth flees when `CanFlee`, else berserk.
             let fled = target.is_some_and(|t| ai.flee.trigger(crate::flee::Behavior::LowHealth, t));
             if !fled
                 && let Some((s, li, kind)) = ms.berserk.clone()
@@ -1545,8 +1381,7 @@ pub(crate) fn choose_skills(
                 ms.repick = PURSUE_REPICK;
             }
         }
-        // Choose after an attack, or again every 200 ms while pursuing, unless the chosen skill is one Pursue keeps
-        // (`melee::SkillMove::rechooses`: charges, leaps, disengage, evade).
+        // Choose after an attack, or again every 200 ms while pursuing, unless Pursue keeps the chosen skill.
         let pursuing = |ms: &MonsterSkills| {
             ms.pick.as_ref().is_some_and(|p| {
                 dist > reach_of(&data, ms, p, radii, ranged)
@@ -1562,43 +1397,35 @@ pub(crate) fn choose_skills(
         } else if ms.repick <= 0.0 {
             ms.repick = PURSUE_REPICK;
         }
-        // The swing timer, then the chosen skill once in reach
-        // (`CloseEnoughToUseSkill`).
         let Some(pick) = ms.pick.clone() else {
             continue;
         };
-        // Only the Attack state uses the skill, once the swing timer has run
-        // out and wherever the enemy now is (`AttackEnemyOrReturn` →
-        // `UseSkill` has no range test; Pursue brought the monster in reach),
-        // and only before it has attacked: an ended attack re-chooses and
-        // re-checks the reach first (`MeleeAi::may_attack`,
-        // `ControllerMonsterStateAttack::OnUpdate`).
+        // Only the Attack state uses the skill, wherever the enemy now is (`AttackEnemyOrReturn` → `UseSkill`
+        // has no range test), and only before it has attacked: an ended attack re-chooses and re-checks the
+        // reach first (`ControllerMonsterStateAttack::OnUpdate`).
         if !ai.melee.may_attack() || cb.cooldown > 0.0 {
             continue;
         }
         if matches!(pick, Pick::Nothing) {
-            // No skill passed the form's set gate: choose again.
             ms.pick = None;
             continue;
         }
         let Some((skill, li, kind, range)) =
             skill_of(&data, &ms, &pick).map(|s| (s.0.to_owned(), s.1, s.2, s.3))
         else {
-            // The plain swing: `combat.rs` swings; the next choice follows it.
+            // The plain swing: `combat.rs` swings.
             continue;
         };
         if !ms.ready(&skill) {
             ms.pick = None;
             continue;
         }
-        // `ControllerAIStateT<ControllerMonster>::UseSkill`: a skill that
-        // needs line of sight is used only when the target is in it, else the
-        // monster looks for a spot that sees it.
+        // `ControllerAIStateT<ControllerMonster>::UseSkill`: a skill that needs line of sight is used only when
+        // the target is in it, else the monster moves to a spot that sees it.
         if requires_los(&data, &skill) {
             let (head, aim) = sight_ray(&data, &ch, &tf, ttf, tch);
             if !target_in_los(&coll, head, to, aim) {
-                // `ControllerMonster::CanMove` gates the search (PORT: here
-                // "not rooted" and the controller class, `combat::ControllerClass`).
+                // `ControllerMonster::CanMove` gates the search (PORT: "not rooted" and the controller class).
                 let spot = if rooted.contains(e) || !ai.class.can_move() {
                     None
                 } else {
@@ -1617,16 +1444,9 @@ pub(crate) fn choose_skills(
                         debug!("monster {e}: {skill} needs sight of its target, moving");
                         ai.reposition = Some(spot);
                     }
-                    // No such spot: a monster with a leader enters "Return"
-                    // (`Monster::GetLeader`), else "RepositionForAttack" with
-                    // zeroed state data (enemy 0, skill 0). That
-                    // state's `OnBegin` finds no entity for enemy 0 and idles
-                    // (its `GetMoveToPoint` walk is only for the states that
-                    // pass a real enemy); its `OnUpdate` ends via
-                    // `EndOfPathReached` (nothing to attack: "Pursue") and,
-                    // `IsEnemyValid(0)` failing, "Return": the monster gives
-                    // up the fight and goes back, finding its enemy again
-                    // at a later `FindEnemyUpdate`.
+                    // No such spot: a monster with a leader enters "Return", else "RepositionForAttack" with
+                    // zeroed state data, which idles and ends in "Return": the monster gives up the fight and
+                    // finds its enemy again at a later `FindEnemyUpdate`.
                     None => {
                         debug!("monster {e}: {skill} has no spot that sees its target, returning");
                         ai.give_up = true;
@@ -1648,8 +1468,7 @@ pub(crate) fn choose_skills(
         // `ResetSwingTimer` as the attack starts.
         cb.cooldown = ai.swing_pause.0
             + gd_game_core::rng::f32() * (ai.swing_pause.1 - ai.swing_pause.0).max(0.0);
-        // `LeadTarget`: a projectile aimed where the moving target will be
-        // (lead.rs; a ranged weapon's projectile leads for every skill).
+        // `LeadTarget` (a ranged weapon's projectile leads for every skill).
         let mut point = to;
         if crate::lead::roll(&ai.lead, mode.0.difficulty)
             && let Some(rec) = data.db.get(&skill)
@@ -1704,11 +1523,8 @@ pub(crate) fn choose_skills(
     }
 }
 
-/// `Skill::GetRequiresLOS` (per class): true for
-/// `Skill_AttackChain`, `Skill_AttackProjectileChain`,
-/// `Skill_AttackRadiusLightning` (+ `SpawnPet`) and the chain secondaries;
-/// `Skill_AttackProjectileBurst` and `Skill_GiveBonus` when the skill's owner
-/// is not a player (monsters here); false for every other class.
+/// `Skill::GetRequiresLOS` (per class): the chain classes, and `Skill_AttackProjectileBurst` / `Skill_GiveBonus`
+/// for a non-player owner.
 pub(crate) fn requires_los(data: &GameData, skill: &str) -> bool {
     data.db.get(skill).is_some_and(|r| {
         matches!(
@@ -1723,14 +1539,8 @@ pub(crate) fn requires_los(data: &GameData, skill: &str) -> bool {
     })
 }
 
-/// `GetCenterOfMass`, in the entity's frame: a player's is (0,
-/// `actorHeight` × scale × ½, 0) (`Player::GetCenterOfMass`,
-/// `Actor::GetHeight` = scale × `actorHeight`); any other actor's is the
-/// centre of its mesh's bounding box, unscaled (Engine.dll
-/// `Actor::GetCenterOfMass` reads the `GraphicsMesh` "bounds
-/// origin" that `GraphicsMesh::Initialize` sets from msh chunk 10 as (min +
-/// max) / 2; `Entity::GetCoords`, which `IsTargetInLOS` turns it by, holds
-/// position and rotation, not the scale). No bounding box: the origin.
+/// `GetCenterOfMass`, in the entity's frame: a player's is (0, `actorHeight` × scale × ½, 0); any other actor's
+/// is the centre of its mesh's bounding box, unscaled (`Actor::GetCenterOfMass`). No bounding box: the origin.
 pub fn center_of_mass(
     is_player: bool,
     actor_height: f32,
@@ -1745,7 +1555,6 @@ pub fn center_of_mass(
     })
 }
 
-/// [`center_of_mass`] of a character (its record's `actorHeight`).
 pub(crate) fn character_center(data: &GameData, ch: &Character) -> Vec3 {
     let height = data
         .db
@@ -1755,12 +1564,8 @@ pub(crate) fn character_center(data: &GameData, ch: &Character) -> Vec3 {
     center_of_mass(ch.is_player, height, ch.scale, &ch.body)
 }
 
-/// The ray of `Skill::IsTargetInLOS(character, id)`:
-/// from `ch`'s `HeadEffect` attach point (`Actor::GetAttachedCoords`; PORT:
-/// 1.6 m above its feet without one) to the target's centre of mass in the
-/// world (its coordinates' position and rotation, [`center_of_mass`]). The
-/// ray is clear when `World::CheckLOS` finds nothing on it
-/// (`crate::collision::WorldCollision::los_clear`).
+/// The ray of `Skill::IsTargetInLOS(character, id)`: from `ch`'s `HeadEffect` attach point (PORT: 1.6 m above
+/// its feet without one) to the target's centre of mass in the world.
 pub(crate) fn sight_ray(
     data: &GameData,
     ch: &Character,
@@ -1776,12 +1581,8 @@ pub(crate) fn sight_ray(
     )
 }
 
-/// `UseSkill`'s test: `IsTargetInLOS(character, id)`
-/// casts a `World::CheckLOS` ray from the caster's `HeadEffect` attach point
-/// to the target's centre of mass in the world (`aim`), and
-/// `IsTargetInLOS(character, position)` from the same point to
-/// the target's coordinates (`target`); the skill is used when either is
-/// clear.
+/// `UseSkill`'s test: `IsTargetInLOS(character, id)` to the target's centre of mass (`aim`) or
+/// `IsTargetInLOS(character, position)` to its coordinates (`target`) is clear.
 pub(crate) fn target_in_los(
     coll: &crate::collision::WorldCollision,
     head: Vec3,
@@ -1791,14 +1592,11 @@ pub(crate) fn target_in_los(
     coll.los_clear(head, aim) || coll.los_clear(head, target)
 }
 
-/// The search of `UseSkill`: starting at a random
-/// one of the angles 0, 36 … 180 degrees, up to 5 tries (each 36 degrees
-/// further, wrapping to 0 past 180): the spot at distance min(range,
-/// current distance) from the target along its direction to the monster
-/// turned by that angle (x' = x·sin − z·cos, z' = x·cos + z·sin), on the
-/// floor and raised by the monster's centre of mass, qualifies when the
-/// `IsTargetInLOS(position, position)` ray from it to
-/// the target is clear and the monster can reach it.
+/// The search of `UseSkill`: starting at a random one of the angles 0, 36 … 180 degrees, up to 5 tries (each 36
+/// degrees further, wrapping to 0 past 180): the spot at distance min(range, current distance) from the target
+/// along its direction to the monster turned by that angle (x' = x·sin − z·cos, z' = x·cos + z·sin), on the
+/// floor and raised by the monster's centre of mass, qualifies when the `IsTargetInLOS(position, position)` ray
+/// from it to the target is clear and the monster can reach it.
 pub(crate) fn los_spot(
     coll: &crate::collision::WorldCollision,
     nav: &Nav,
@@ -1840,8 +1638,7 @@ pub(crate) fn los_spot(
     None
 }
 
-/// A skill used on an ally (`UseSkillOnAlly`): it lands when the caster's
-/// cast goes off (its animation's hit, else its end).
+/// A skill used on an ally (`UseSkillOnAlly`): it lands when the caster's cast goes off.
 #[derive(Component, Clone)]
 pub(crate) struct AllyCast {
     pub(crate) caster: Entity,
@@ -1852,8 +1649,7 @@ pub(crate) struct AllyCast {
     pub(crate) buff: Option<(String, f32)>,
 }
 
-/// Starts an ally cast: the caster plays the skill's animation; without one
-/// it lands at once.
+/// Starts an ally cast; without an animation it lands at once (returned).
 pub(crate) fn cast_on_ally(
     commands: &mut Commands,
     data: &GameData,
@@ -1873,8 +1669,7 @@ pub(crate) fn cast_on_ally(
     }
 }
 
-/// Healers: every `healSkillDelay` seconds the leader when it is hurt enough, else the most hurt friend in
-/// view (`TryToHealAlly`, module docs).
+/// `TryToHealAlly` every `healSkillDelay` seconds.
 #[allow(clippy::type_complexity)]
 fn heal_allies(
     time: Res<Time>,
@@ -1896,13 +1691,11 @@ fn heal_allies(
     mut land: MessageWriter<AllyLanded>,
 ) {
     let dt = time.delta_secs();
-    // The timers run for every healer; the snapshot of the hurt is only built
-    // when one is due this frame.
+    // The snapshot of the hurt is only built when a heal is due this frame.
     let mut due = false;
     for (_, _, _, ms, _, ch) in q.iter_mut() {
         let Some(mut ms) = ms else { continue };
         let Some(h) = ms.heal.as_mut() else { continue };
-        // The timer runs only with a delay above 0.
         if h.2 <= 0.0 {
             continue;
         }
@@ -1923,7 +1716,6 @@ fn heal_allies(
         return;
     }
     let pct_of = |c: &Combatant| c.life.max(0.0) / c.profile.sheet.life.max(1.0) * 100.0;
-    // (entity, position, life %, faction pack).
     let snapshot: Vec<(
         Entity,
         Vec3,
@@ -1947,7 +1739,6 @@ fn heal_allies(
             continue;
         }
         h.3 = h.2;
-        // The leader first, when below `healLeaderHealthPercentage`.
         let leader = ai
             .patrol
             .leader
@@ -1985,7 +1776,7 @@ fn heal_allies(
     }
 }
 
-/// The caster a [`buff_ally_candidate`] test is for: its side, position, `ViewDistance` and `MaxYViewDistance`.
+/// The caster a [`buff_ally_candidate`] test is for.
 pub(crate) struct BuffSphere<'a> {
     pub side: &'a crate::combat::Side,
     pub at: Vec3,
@@ -1993,10 +1784,8 @@ pub(crate) struct BuffSphere<'a> {
     pub view_y: f32,
 }
 
-/// Whether another live character at `at` on side `other` is a `ChooseBestAllyToBuff` candidate of a monster's or a
-/// pet's buff-other: `ControllerMonster::GetCharactersInSphere` with both flags false: in the
-/// caster's `ViewDistance` sphere, within `MaxYViewDistance` in height when that is set, a friend of the caster
-/// (`FactionManager::IsFriend`, between characters the complement of `IsFoe`: by [`crate::combat::Side`]) and
+/// `ControllerMonster::GetCharactersInSphere` with both flags false, for `ChooseBestAllyToBuff`: in the
+/// caster's `ViewDistance` sphere, within `MaxYViewDistance` in height when set, a friend of the caster and
 /// [`buff_candidate_by_leader`].
 pub(crate) fn buff_ally_candidate(
     sphere: &BuffSphere,
@@ -2010,12 +1799,8 @@ pub(crate) fn buff_ally_candidate(
         && (sphere.view_y == 0.0 || (at.y - sphere.at.y).abs() <= sphere.view_y)
 }
 
-/// `GetCharactersInSphere`'s leader test (see [`buff_ally_candidate`]): a character without a leader
-/// (`GetLeader` 0: the player, a monster that follows nobody, a released quest pet) or a quest pet
-/// (`Character.questPet`, `IsQuestPet`, set by `Skill_SpawnPet::SpawnPet` for a `Skill_SpawnQuestPet`). A pet is
-/// always led (its
-/// owner, or the monster a convert joined it to); a monster's leader is `PatrolState::leader` (a minion its
-/// summoner, a follower, a converted monster its converter).
+/// `GetCharactersInSphere`'s leader test: a character without a leader (`GetLeader` 0) or a quest pet
+/// (`IsQuestPet`). A pet is always led.
 pub(crate) fn buff_candidate_by_leader(
     ai: Option<&MonsterAi>,
     pet: Option<&crate::pets::Pet>,
@@ -2026,7 +1811,7 @@ pub(crate) fn buff_candidate_by_leader(
     }
 }
 
-/// The characters a buff-other may pick: (entity, position, life, life fraction, buffs on it, side).
+/// The characters a buff-other may pick.
 type AllyQuery<'w, 's> = Query<
     'w,
     's,
@@ -2043,8 +1828,8 @@ type AllyQuery<'w, 's> = Query<
     (Without<Dead>, Without<gd_game_core::world::Breakable>),
 >;
 
-/// Buff-other skills on allies (`BuffAllyBehavior`, module docs): the candidates are [`buff_ally_candidate`]s
-/// (the player and pets too, busy monsters as well).
+/// Buff-other skills on allies (`BuffAllyBehavior`): the player and pets are candidates too, busy monsters as
+/// well.
 fn buff_allies(
     data: Res<GameData>,
     mut commands: Commands,
@@ -2072,11 +1857,9 @@ fn buff_allies(
         frac: f32,
         on: Vec<String>,
         side: crate::combat::Side,
-        /// [`buff_candidate_by_leader`].
         by_leader: bool,
     }
-    // The snapshot of every character's buffs is only built when a monster
-    // has a buff-other use due this frame.
+    // The snapshot of every character's buffs is only built when a buff-other use is due this frame.
     let due = set.p1().iter().any(|(.., ch, ms)| {
         (ms.ally_poll || ms.ally_on_found)
             && !matches!(
@@ -2091,7 +1874,7 @@ fn buff_allies(
         .p0()
         .iter()
         .map(|(e, t, c, sd, ms, received, loadout, pet)| {
-            // `Character::IsSkillBuffActive`: the buffs in its skill manager.
+            // `Character::IsSkillBuffActive`.
             let mut on: Vec<String> = ms
                 .map(|m| m.buffs.list.iter().map(|b| b.0.clone()).collect())
                 .unwrap_or_default();
@@ -2135,8 +1918,8 @@ fn buff_allies(
         else {
             continue;
         };
-        // `FactionManager::IsFriend` by the sides: two monsters by their packs (one without a pack is everyone's
-        // friend); PORT: the player's side by the `Allied` mark (`crate::combat::Side`).
+        // `FactionManager::IsFriend`: two monsters by their packs (one without a pack is everyone's friend);
+        // PORT: the player's side by the `Allied` mark.
         let side = crate::combat::Side::Monster {
             pack: ai.faction.clone(),
             allied,
@@ -2147,7 +1930,7 @@ fn buff_allies(
             view: if ai.view > 0.0 { ai.view } else { 15.0 },
             view_y: ai.view_y,
         };
-        // The candidates other than itself that lack the buff (`ChooseBestAllyToBuff`).
+        // `ChooseBestAllyToBuff`.
         let cands = snapshot.iter().filter(|a| {
             a.e != e
                 && buff_ally_candidate(&sphere, a.at, a.side.as_ref(), a.by_leader)
@@ -2180,17 +1963,13 @@ fn buff_allies(
     }
 }
 
-/// An ally cast that lands this frame: an immediate one (no animation to wait
-/// for) or one whose clip reached its callback ([`ally_cast_callbacks`]).
+/// An ally cast that lands this frame.
 #[derive(Message)]
 pub(crate) struct AllyLanded(pub(crate) AllyCast);
 
-/// Ally casts land ([`AllyLanded`]), monsters' and
-/// pets' alike. A buff-other lands on its target (a monster, a pet, the
-/// player) for its duration; a `Skill_BuffRadius` used as the buff-other
-/// skill goes off on the caster instead ([`crate::auras::Activated`]: its
-/// first pass now, a lasting one's later passes from its timed buff),
-/// reaching the target with its other allies.
+/// Ally casts land, monsters' and pets' alike. A buff-other lands on its target for its duration; a
+/// `Skill_BuffRadius` goes off on the caster instead ([`crate::auras::Activated`]), reaching the target with its
+/// other allies.
 #[allow(clippy::too_many_arguments)]
 fn ally_casts_land(
     mut commands: Commands,
@@ -2208,8 +1987,7 @@ fn ally_casts_land(
     >,
     mut activated: MessageWriter<crate::auras::Activated>,
 ) {
-    // A duplicate (the same landing twice this frame, from a hit and the `End` together or an immediate
-    // landing) lands once.
+    // The same landing twice this frame (a hit and the `End` together) lands once.
     let mut landed: Vec<AllyCast> = Vec::new();
     for l in now.read() {
         if !landed
@@ -2225,8 +2003,8 @@ fn ally_casts_land(
             .get(&c.skill)
             .is_some_and(|r| r.class == "Skill_BuffRadius");
         if radius {
-            // `Skill_BuffRadius::ActivateNow` on the caster: the first pass now (`auras.rs`), and a lasting one
-            // runs as the caster's timed buff.
+            // `Skill_BuffRadius::ActivateNow` on the caster: the first pass now, and a lasting one runs as the
+            // caster's timed buff.
             activated.write(crate::auras::Activated {
                 caster: c.caster,
                 skill: c.skill.clone(),
@@ -2256,7 +2034,7 @@ fn ally_casts_land(
                     "ally buff {} on {on}",
                     name.rsplit('/').next().unwrap_or("")
                 );
-                // `Skill_BuffOther::TargetResult`: the buff, then the profile's bonus (`casting::Bonus`).
+                // `Skill_BuffOther::TargetResult`: the buff, then the profile's bonus.
                 if let Some(brec) = data.db.get(&name) {
                     crate::casting::Bonus::of_record(&data.db, brec, c.level_index, &[])
                         .queue(&mut commands, on);
@@ -2266,8 +2044,6 @@ fn ally_casts_land(
                 } else if let Some(mut pet) = pet {
                     pet.add_buff(&name, c.level_index, secs);
                 } else if let Some(mut loadout) = loadout {
-                    // The player: the one timed-buff store; its stats derive
-                    // at the profile rebuild.
                     loadout.buffs.add(&name, c.level_index, secs);
                     commands
                         .entity(on)
@@ -2299,10 +2075,8 @@ fn ally_casts_land(
     }
 }
 
-/// The ally casts whose clip reached its hit or `End` this frame land
-/// ([`AllyLanded`], applied by [`ally_casts_land`]). It runs before
-/// [`choose_skills`]: a cast started later this frame would make the previous
-/// clip's callbacks look stale (`Character::callbacks_after_cast`).
+/// The ally casts whose clip reached its hit or `End` this frame land. Runs before [`choose_skills`]: a cast
+/// started later this frame would make the previous clip's callbacks look stale.
 fn ally_cast_callbacks(
     mut commands: Commands,
     mut events: MessageReader<AnimCallback>,
@@ -2316,11 +2090,10 @@ fn ally_cast_callbacks(
         let Ok((c, ch)) = casters.get(ev.entity) else {
             continue;
         };
-        // The previous clip's callbacks of this frame are not this cast's (`fire_casts` alike).
         if !ch.callbacks_after_cast() {
             continue;
         }
-        // Every consumed callback takes the cast off (a hit and the `End` together land once, `ally_casts_land`).
+        // Every consumed callback takes the cast off.
         commands.entity(ev.entity).try_remove::<AllyCast>();
         land.write(AllyLanded(c.clone()));
     }
@@ -2350,12 +2123,9 @@ pub fn dying_skills(
     }
 }
 
-/// `Skill_MonsterGenerator::Update`: while the owner
-/// is alive and no spawn is pending, a timer (0 at first, so the first
-/// spawn comes at once) counts down; at 0 it tops the owner's live spawns
-/// of this skill up by `petBurstSpawn`, at most to `petLimit` (both per
-/// level, `SkillProfile`), then re-arms with `petPeriod`. Not gated on
-/// combat; the spawns share the owner's anger (`TransferAnger`).
+/// `Skill_MonsterGenerator::Update`: while the owner is alive and no spawn is pending, a timer (0 at first)
+/// counts down; at 0 it tops the owner's live spawns of this skill up by `petBurstSpawn`, at most to `petLimit`
+/// (both per level), then re-arms with `petPeriod`. Not gated on combat.
 pub fn generators(
     time: Res<Time>,
     mut q: Query<(Entity, &Transform, &mut MonsterSkills), Without<Dead>>,
@@ -2384,9 +2154,8 @@ pub fn generators(
     }
 }
 
-/// Buffs and auras change a monster's profile: rebuilt from its record with
-/// them added, keeping the life fraction. Its timed `Skill_BuffRadius`
-/// buffs reach it as aura buffs (`auras.rs`) like everyone else's auras.
+/// Buffs and auras change a monster's profile: rebuilt from its record with them added, keeping the life
+/// fraction.
 pub(crate) fn rebuild_profiles(
     data: Res<GameData>,
     rules: Res<CombatRules>,
@@ -2399,15 +2168,13 @@ pub(crate) fn rebuild_profiles(
         Option<&crate::challenge_areas::AreaRules>,
     )>,
 ) {
-    // Each monster's rebuild reads only shared records / rules and writes its own components: a group gaining an
-    // aura at once is rebuilt across the task pool's threads (the results are the same as one by one).
+    // Each monster's rebuild reads only shared records / rules and writes its own components.
     let base = &rules.0;
     q.par_iter_mut()
         .for_each(|(m, mut ms, mut cb, worn, mut auras, area)| {
-            // In a challenge area: its rules (mutators, scaling).
             let rules = area.map_or(base, |a| &a.0);
-            // The flags are read before they are taken: taking them through `DerefMut` would flag
-            // `ReceivedBuffs` / `MonsterSkills` changed for every monster every frame.
+            // Read before taking: taking through `DerefMut` would flag `ReceivedBuffs` / `MonsterSkills` changed
+            // for every monster every frame.
             let received = auras.as_ref().is_some_and(|a| a.changed)
                 && auras.as_mut().is_some_and(|a| a.take_changed());
             if !ms.dirty && !received {
@@ -2459,26 +2226,19 @@ pub(crate) fn rebuild_profiles(
         });
 }
 
-/// A monster summon (`Skill_SpawnPet*` cast by a monster).
 #[derive(Component)]
 pub struct Minion {
     pub owner: Entity,
     pub summon: String,
     spawned_at: f32,
-    /// Seconds left to live (`Monster::SetLifetime`, the skill's
-    /// `spawnObjectsTimeToLive`: [`crate::pets::spawn_time_to_live`], a
-    /// monster's skills have no modifiers); None = forever.
+    /// Seconds left to live (`Monster::SetLifetime`, `spawnObjectsTimeToLive`); None = forever.
     pub time_to_live: Option<f32>,
-    /// The summon record's `overkillOnDismiss` (`Character::GetDismissBehavior`): its
-    /// `KillMe` on expiry and on the pet limit is an overkill (it gibs).
+    /// `overkillOnDismiss` (`Character::GetDismissBehavior`): its `KillMe` on expiry and on the pet limit gibs.
     pub overkill_on_dismiss: bool,
 }
 
-/// Monster summons: each one's record from `gd_sim::skills::spawn_object`
-/// (the weighted `spawnObjects{,2,3,4}` lists, else `spawnObjects[level]`) at
-/// the owner's level, on the owner's side and sharing its anger; `petLimit`
-/// per owner and skill, oldest first. The hit spawners (projectile ends, chaos
-/// beams) summon where they land (`pets::placement::hit_spots`).
+/// Monster summons: each one's record from `gd_sim::skills::spawn_object` at the owner's level, on the owner's
+/// side and sharing its anger; `petLimit` per owner and skill, oldest first.
 #[allow(clippy::too_many_arguments)]
 fn spawn_minions(
     mut commands: Commands,
@@ -2498,8 +2258,8 @@ fn spawn_minions(
     time: Res<Time>,
     mut assets: crate::creature::Spawner,
 ) {
-    // This run's spawns (owner, minion, skill, time) and dismissals: the queries see neither until the commands
-    // apply, so a second event for the same skill this frame counts them here against `petLimit`.
+    // This run's spawns and dismissals: the queries see neither until the commands apply, so a second event for
+    // the same skill this frame counts them here against `petLimit`.
     let mut fresh: Vec<(Entity, Entity, String, f32)> = Vec::new();
     let mut culled: Vec<Entity> = Vec::new();
     for ev in events.read() {
@@ -2510,13 +2270,13 @@ fn spawn_minions(
         let owner_record = owner.record.clone();
         let owner_radius = combatants.get(ev.owner).map_or(0.5, |c| c.radius);
         let owner_aggro = oai.aggro;
-        // The database by its own handle: the record stays borrowed while `assets` spawns.
+        // Its own handle: the record stays borrowed while `assets` spawns.
         let db = assets.data.db.clone();
         let Some(rec) = db.get(&ev.skill) else {
             continue;
         };
-        // The level's `spawnObjects`: the pet object the placement measures;
-        // each summon picks its own record below.
+        // The level's `spawnObjects`: the pet object the placement measures; each summon picks its own record
+        // below.
         let Some(base_name) = rec
             .strs_iter("spawnObjects")
             .nth(ev.level_index)
@@ -2525,10 +2285,8 @@ fn spawn_minions(
         else {
             continue;
         };
-        // Per level (`SkillProfile`). Casts spawn `petBurstSpawn` up to the
-        // limit but at least one (`Skill_SpawnPet::ActivateNow`), then the
-        // oldest beyond `petLimit` die (`Skill_TargetedSpawnPet::SpawnPet`);
-        // generators only top up (`Skill_MonsterGenerator::Update`).
+        // Casts spawn `petBurstSpawn` up to the limit but at least one (`Skill_SpawnPet::ActivateNow`), then the
+        // oldest beyond `petLimit` die (`Skill_TargetedSpawnPet::SpawnPet`); generators only top up.
         let limit = level_f(rec, "petLimit", ev.level_index).max(0.0) as usize;
         let burst = level_f(rec, "petBurstSpawn", ev.level_index).max(0.0) as usize;
         let generator = rec.class == "Skill_MonsterGenerator";
@@ -2548,12 +2306,9 @@ fn spawn_minions(
         let mirage = rec.class == MIRAGE;
         let db = &assets.data.db;
         let pet = db.get(&base_name);
-        // The spots (`pets::placement`): a `Skill_TargetedSpawnPet` packs
-        // all `petBurstSpawn` of them around its target / point (the oldest
-        // beyond the limit die), the hit spawners around what their attack
-        // hit, a generator tops up around the caster clear of its footprint,
-        // the `Skill_SpawnPet` classes fill the set around the caster (its
-        // own spot first).
+        // The spots: a `Skill_TargetedSpawnPet` packs all `petBurstSpawn` around its target / point, the hit
+        // spawners around what their attack hit, a generator tops up around the caster clear of its footprint,
+        // the `Skill_SpawnPet` classes fill the set around the caster (its own spot first).
         let target = ev
             .target
             .and_then(|t| match owners.get(t) {
@@ -2610,17 +2365,14 @@ fn spawn_minions(
             } else {
                 crate::pets::placement::spawn_pet_set(&nav, otf.translation, radii, n)
             };
-            // Base `GetNewCasterCoords`: the first point (the caster's) is
-            // dropped; the mirage's own picks below.
+            // Base `GetNewCasterCoords`: the first point (the caster's) is dropped.
             if !mirage && !set.is_empty() {
                 set.remove(0);
             }
             set
         };
-        // `Skill_AktaiosMirage::GetNewCasterCoords` (see [`MIRAGE`]): the
-        // caster takes a random spot of the set (its own included), the
-        // copies the rest; the draw past the end keeps it in place and the
-        // copies take every spot.
+        // `Skill_AktaiosMirage::GetNewCasterCoords`: the caster takes a random spot of the set (its own
+        // included), the copies the rest; the draw past the end keeps it in place.
         if mirage {
             let m = spots.len() as i32;
             let i = gd_game_core::rng::i32(0..=m);
@@ -2640,16 +2392,13 @@ fn spawn_minions(
             }
         }
         for at in spots {
-            // Each summon's record (`SpawnPet` per point): the weighted lists
-            // (`gd_sim::skills::spawn_object`; a monster's skills have no
-            // modifiers, so no `petChanges`).
+            // `SpawnPet` per point (a monster's skills have no modifiers, so no `petChanges`).
             let rec_name =
                 gd_sim::skills::spawn_object(&assets.data.db, rec, ev.level_index, &[], &[], |n| {
                     gd_game_core::rng::u32(0..n)
                 })
                 .unwrap_or_else(|| base_name.clone());
-            // `KillExtraPets`: the oldest beyond the limit die
-            // through `KillMe(overkillOnDismiss)` (`pets` module docs).
+            // `KillExtraPets`: the oldest beyond the limit die through `KillMe(overkillOnDismiss)`.
             while !generator && limit > 0 && mine.len() >= limit {
                 let (old, _) = mine.remove(0);
                 culled.push(old);
@@ -2665,7 +2414,7 @@ fn spawn_minions(
             ) else {
                 break;
             };
-            // A generator's pet faces a random yaw (`pets::placement`).
+            // A generator's pet faces a random yaw.
             let rot = if generator {
                 Quat::from_rotation_y(gd_game_core::rng::f32() * std::f32::consts::TAU)
             } else {
@@ -2683,13 +2432,12 @@ fn spawn_minions(
             };
             let radius = gd_game_core::combat::get_radius(assets.data.db.get(&rec_name), 0.5);
             let mut ai = MonsterAi::from_record(&assets.data, &rec_name, tf.translation);
-            // The owner's anger passes on (`Monster::TransferAnger`).
+            // `Monster::TransferAnger`.
             ai.aggro = owner_aggro;
-            // `Monster::JoinMe` (every `Skill_SpawnPet*` /
-            // `Skill_MonsterGenerator` spawn calls it): the owner leads.
+            // `Monster::JoinMe`: the owner leads.
             ai.patrol.join(ev.owner);
             // `Skill_SpawnPet::SpawnPet` / `Skill_MonsterGenerator::SkillSpawnObject`: every spawn plays its
-            // Spawn animation (`MonsterAi::enable_spawn_animation`).
+            // Spawn animation.
             ai.enable_spawn_animation();
             commands.entity(e).insert((
                 // Culled with the owner's level; no proxy slot to mark dead.
@@ -2719,22 +2467,14 @@ fn spawn_minions(
     }
 }
 
-/// Summon skills a monster cannot cast again while a summon of theirs lives:
-/// `Skill_AktaiosMirage::SetAvailability`, and
-/// `Skill_TargetedSpawnPet::Update`, which for a `Monster` owner
-/// turns the skill's availability off while its pen holds a live entry of
-/// the skill unless the record sets `ignorePetLimit` (`Load`,
-/// `Skill_TargetedSpawnPet.ignorePetLimit`; its only reader): the Kraken's sliths, Ravager's minds, Yugol's
-/// tentacles, ... are cast again while their earlier summons live. The flag
-/// does not touch `KillExtraPets` (the `petLimit` cull at the spawn).
+/// Summon skills a monster cannot cast again while a summon of theirs lives: `Skill_AktaiosMirage::SetAvailability`,
+/// and `Skill_TargetedSpawnPet::Update` for a `Monster` owner unless the record sets `ignorePetLimit` (which does
+/// not touch the `petLimit` cull).
 fn pen_gated(r: &gd_formats::arz::Record) -> bool {
     r.class == MIRAGE || (r.class == "Skill_TargetedSpawnPet" && !r.bool("ignorePetLimit"))
 }
 
-/// [`pen_gated`]: the skill is off while any summon of it lives (the
-/// character's pet list, entries of this skill not dead). The gated skills are
-/// precomputed ([`MonsterSkills::mirages`]); a monster without one does no
-/// record lookups and no minion scan.
+/// [`pen_gated`]: the skill is off while any summon of it lives.
 fn mirage_availability(
     mut q: Query<(Entity, &mut MonsterSkills)>,
     minions: Query<&Minion, Without<Dead>>,
@@ -2758,11 +2498,8 @@ fn mirage_availability(
     }
 }
 
-/// Summons with a time to live die when it runs out, as player pets
-/// (`ControllerMonster::Update` counts the lifetime
-/// down by the frame time and at 0 calls `ControllerCombat::KillMe` with the
-/// record's `overkillOnDismiss`; nothing suppresses the dying skill, so it
-/// goes off, [`dying_skills`]; `pets.rs` module docs).
+/// Summons with a time to live die when it runs out (`ControllerMonster::Update` → `ControllerCombat::KillMe`
+/// with `overkillOnDismiss`); the dying skill still goes off.
 fn expire_minions(
     mut commands: Commands,
     time: Res<Time>,
@@ -2781,10 +2518,8 @@ fn expire_minions(
     }
 }
 
-/// A summon's `ControllerCombat::KillMe(overkillOnDismiss)` (expiry, pet
-/// limit): an ordinary death through the one death path
-/// ([`crate::combat::kill_me`]), an overkill ([`crate::combat::Overkill`], the
-/// gib death) when the flag is set (inserted first: the death systems see it).
+/// A summon's `ControllerCombat::KillMe(overkillOnDismiss)`: an ordinary death, or an overkill (the gib death)
+/// when the flag is set (inserted first: the death systems see it).
 fn dismiss(commands: &mut Commands, e: Entity, overkill: bool) {
     if overkill {
         commands.entity(e).try_insert(crate::combat::Overkill);

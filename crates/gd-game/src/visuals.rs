@@ -1,6 +1,4 @@
-//! The presentation-request systems: the sounds a removed [`StopSound`]
-//! plays and the `GD_SHOT_ON` feed (the request data is
-//! [`gd_game_core::visuals`]).
+//! The sounds a removed [`StopSound`] plays and the `GD_SHOT_ON` feed.
 use bevy::prelude::*;
 #[cfg(feature = "dev")]
 use gd_game_core::visuals::notify;
@@ -40,9 +38,7 @@ fn stop_sounds(
     }
 }
 
-/// `GD_SHOT_ON` feed from the shared messages: every sound played (`PlaySound` / `PlaySoundOn`, the `SoundPak`
-/// record) and every proc cast (`ProcCast`, the skill record), whichever system sent them. Casts, FX starts and the
-/// other hook sites feed [`notify`] directly.
+/// Feeds `GD_SHOT_ON` every sound played and every proc cast; other hook sites call [`notify`] directly.
 #[cfg(feature = "dev")]
 fn shot_feed(
     mut commands: Commands,

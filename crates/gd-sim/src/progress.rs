@@ -16,8 +16,7 @@
 //!   `goldAmountEquation`s (each `(int)(v + 0.5)` clamped to
 //!   `[goldValueMin, goldValueMax]`), split by `GoldGenerator::SplitGold` into
 //!   `rand[goldSplitMin, goldSplitMax]` piles of at least `goldSplitSizeMin`.
-//! - [`class_tag`]: the class name tag (`Player::GetClassTag`), the one source for the save
-//!   header (`Player::WriteNewFormatHeader` writes it on every save) and the character window.
+//! - [`class_tag`]: the class name tag (`Player::GetClassTag`).
 use crate::stats::LevelTable;
 use gd_formats::vfs::Database;
 use gd_rules::Rng;
@@ -27,8 +26,7 @@ fn irange(rng: &mut Rng, lo: i32, hi: i32) -> i32 {
     if hi <= lo {
         return lo;
     }
-    // Span in i64 (bad data: `goldValueMax` defaults to i32::MAX, so the i32
-    // span can overflow); the same draw on every in-range span.
+    // Span in i64: `goldValueMax` defaults to i32::MAX, so an i32 span can overflow.
     let span = hi as i64 - lo as i64 + 1;
     (lo as i64 + rng.next() as i64 % span) as i32
 }

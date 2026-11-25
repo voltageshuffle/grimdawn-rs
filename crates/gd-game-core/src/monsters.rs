@@ -1,20 +1,17 @@
-//! Who the monsters are: the [`Monster`] component (record, level, proxy slot)
-//! and the faction pack ([`FactionPack`]) every creature's record gives it.
-//! The spawning, AI and session state are gd-game's `monsters`.
+//! The [`Monster`] component (record, level, proxy slot) and the [`FactionPack`] every creature's record
+//! gives it. Spawning, AI and session state are gd-game's `monsters`.
 use bevy::prelude::*;
 
 #[derive(Component, Clone, Debug)]
 pub struct Monster {
     pub record: String,
     pub level: i32,
-    /// (level, proxy entity, index in its spawn list) — for `gd_game::monsters::ProxyStates`.
+    /// (level, proxy entity, index in its spawn list).
     pub slot: (usize, u32, usize),
 }
 
-/// A monster's faction pack (`Character::Load`: the record's `factions`
-/// pack, `FactionPack::Load`): its own faction (`myFaction`,
-/// `FactionPack.myFaction`) and its value for each of the 47 factions (`FactionPack.values`,
-/// keyed like [`gd_rules::faction::KEYS`]).
+/// A monster's faction pack (`FactionPack::Load`): its own faction (`myFaction`) and its value for each
+/// of the 47 factions (keyed like [`gd_rules::faction::KEYS`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FactionPack {
     pub mine: usize,
@@ -22,7 +19,6 @@ pub struct FactionPack {
 }
 
 impl FactionPack {
-    /// The pack of a creature record; `None` without one.
     pub fn of(db: &gd_formats::vfs::Database, record: &str) -> Option<Self> {
         let pack = db
             .get(record)?
@@ -41,7 +37,7 @@ impl FactionPack {
         })
     }
 
-    /// [`Self::of`] sharing one `Arc` per `factions` record, so [`Self::same`] meets `Arc::ptr_eq`.
+    /// [`Self::of`] sharing one `Arc` per `factions` record ([`Self::same`] uses `Arc::ptr_eq`).
     pub fn shared(data: &crate::data::GameData, record: &str) -> Option<std::sync::Arc<Self>> {
         let key = data
             .db
@@ -56,13 +52,9 @@ impl FactionPack {
             .clone()
     }
 
-    /// `FactionManager::IsFriend(FactionPack const&, FactionType, FactionPack
-    /// const&)`, `self` being the asking character's
-    /// pack and `other` the other character's: friends when the other's
-    /// faction is its own; for a faction index above 46 (the invisible
-    /// faction) always; else its value for the other's faction decides when
-    /// it is non-zero (friend from 0 up), else the other's value for its
-    /// faction does (friend unless below 0).
+    /// `FactionManager::IsFriend`: friends when the other's faction is its own; for a faction index
+    /// above 46 (invisible) always; else its value for the other's faction decides when non-zero
+    /// (friend from 0 up), else the other's value for its faction (friend unless below 0).
     pub fn is_friend(&self, other: &FactionPack) -> bool {
         let t = other.mine;
         if t == self.mine {
@@ -82,14 +74,13 @@ impl FactionPack {
 }
 
 impl FactionPack {
-    /// `FactionManager::IsFoe` (both overloads): the complement of
-    /// [`Self::is_friend`] between two packs: the asker's own value for the other's faction decides when it is
-    /// non-zero (foe below 0), else the other's value for the asker's faction.
+    /// `FactionManager::IsFoe`: the asker's value for the other's faction decides when non-zero
+    /// (foe below 0), else the other's value for the asker's faction.
     pub fn is_foe(&self, other: &FactionPack) -> bool {
         !self.is_friend(other)
     }
 
-    /// `IsFoe(me, other)` between two creatures' packs: one without a pack is nobody's foe (PORT: the engine's
+    /// `IsFoe` between two creatures' packs: one without a pack is nobody's foe (PORT: the engine's
     /// pack of a record without `factions` is not traced).
     pub fn foes(me: &Option<std::sync::Arc<Self>>, other: &Option<std::sync::Arc<Self>>) -> bool {
         match (me, other) {
@@ -98,7 +89,7 @@ impl FactionPack {
         }
     }
 
-    /// Whether two creatures stand on the same side of every faction relation (same pack contents).
+    /// Same pack contents.
     pub fn same(a: &Option<std::sync::Arc<Self>>, b: &Option<std::sync::Arc<Self>>) -> bool {
         match (a, b) {
             (None, None) => true,

@@ -26,17 +26,13 @@
 //! - the background is a `bgColor` rect over the window, the border the
 //!   eight `*Texture` bitmaps around it ([`Ui::border`]); the close button
 //!   (`closeButton`) sits `bitmapPosition` from the top-right corner and plays
-//!   its record's `soundNameDown` on press (the shared `ButtonSound`,
-//!   `ui/widgets.rs`); the reply rows are drawn rows, not button records, and
-//!   have no click sound.
+//!   its record's `soundNameDown` on press; the reply rows are drawn rows, not
+//!   button records, and have no click sound.
 //!
 //! - fade (update `ConversationWindow::Update`, draw `ConversationWindow::Render`): opening fades the
 //!   background, border and reply rows in at 0.002 alpha per ms, closing
 //!   fades them out (the name and speech text are drawn opaque); no input
 //!   for 150 s (`Engine::IsUserIdle`) closes the conversation.
-//!   PORT (a performance choice): the fading parts are built once in a [`FadeGroup`] whose alpha the
-//!   live pass moves, and every reply row's hover rect is built and shown in place: no rebuild per
-//!   fade step or hover change.
 //!
 //! - name line (layout `ConversationWindow::Layout`): the NPC's faction icon
 //!   ([`Conversation::faction_icon`], shown when its visible faction is not
@@ -58,8 +54,7 @@
 //!   camera stays in front of the NPC while it turns to the player; looking
 //!   at the target with up +Y, `cameraFov` / near / far. The render clears
 //!   the NPC's highlight flag first (`Entity::SetHighlight(false)`): no
-//!   hover highlight in the portrait (PORT: the mesh tag's flag bit, which
-//!   a doll view ignores, `render/light_rig.rs`). The scene holds only the NPC (`GraphicsScene::AddRegion(region, false)`
+//!   hover highlight in the portrait. The scene holds only the NPC (`GraphicsScene::AddRegion(region, false)`
 //!   adds no region content, then the entity adds itself), live: it plays
 //!   its animation inside the fixed frame. `worldLighting` 0: the record's
 //!   light rig (one directional light along R·`lightDirection`, sky /
@@ -69,37 +64,27 @@
 //!   (`AmbianceManager::GetSky/GroundAmbientColor`,
 //!   `GraphicsMTRenderer::RenderBackground`).
 //!
-//! Port: the portrait is a camera on its own render layer ([`PORTRAIT_LAYER`],
-//! added to the NPC's meshes and to the emitter meshes of the effects attached
-//! to it, its gear's, while the window is open) rendering into a small image
-//! drawn by the doll's material (its nodes stay hidden until the camera has
-//! run two frames, [`Portrait::warm`]: the target is empty before its first
-//! render) (`crate::doll`, its light rig in the camera's `ColorGrading`); the
-//! camera is inactive and the NPC untagged while no conversation is open (no
-//! cost then). The target point is the attach point in the NPC's current pose each frame
-//! (PORT: tracked live, not frozen at open, so a sitting NPC keeps its head framed); the camera and background move with the facing. The background is drawn into the target like the
-//! engine's `RenderBackground`: a quad behind the NPC with the gradient as an
-//! unlit texture ([`background_assets`]), so the target is opaque and blended
-//! parts (Mazaan's hood) and particles composite on it. The scene glow runs in the portrait too
-//! (Engine.dll `GraphicsDeferredRenderer::RenderFinalScene` calls `RenderSceneGlow`
-//! unconditionally; `SetPostEffectsEnabled(false)` only stops `RenderPostEffects`): its own glow camera and the
-//! main view's composite ([`portrait_glow`]). PORT: the portrait target is sRGB, so the composite adds in linear
-//! values there (the engine adds gamma values).
-//! PORT: the gradient's top is the sky colour (assumed from the argument
-//! order); the portrait has the window's border around it; the
-//! faction icon's hover tooltip ([`faction_lines`]) is drawn by `rollover.rs`.
+//! Port: the portrait is a camera on its own render layer ([`PORTRAIT_LAYER`], on the NPC's meshes and its
+//! attached effects' emitter meshes while the window is open) rendering into an image drawn by the doll's
+//! material; its nodes stay hidden until the camera has run two frames ([`Portrait::warm`]).
+//! PORT: the target point is tracked live, not frozen at open.
+//! The background is a quad behind the NPC with the gradient as an unlit texture ([`background_assets`]).
+//! The scene glow runs in the portrait too (`GraphicsDeferredRenderer::RenderFinalScene` calls
+//! `RenderSceneGlow` unconditionally): its own glow camera and composite ([`portrait_glow`]).
+//! PORT: the portrait target is sRGB, so the composite adds linear values (the engine adds gamma values).
+//! PORT: the gradient's top is the sky colour (assumed from the argument order); the portrait has the
+//! window's border around it.
 //! `ConversationReplyRow::Render` (row draw) / `ConversationWindow::Render` / `ConversationWindow::OnButtonClicked`:
 //! the hovered reply row (the first whose rect contains the cursor) gets a `hoverColor` rect over the whole row rect,
 //! alpha times the fade; nothing else changes on hover. `ConversationWindow::UpdateStep` /
 //! `ConversationWindow::CollectSpeeches` / `ScriptableConditionCollection::Evaluate`:
-//! a reply with an unmet condition is not listed at all (no grey text), see
-//! `Story::advance`. The speech and reply texts keep their `^X` colour markup: `Ui::wrap_lines` carries the active
-//! colour over line breaks and `Ui::text_line` draws it (`gd_formats::ui::layout_text`).
+//! a reply with an unmet condition is not listed at all (no grey text). The speech and reply texts keep
+//! their `^X` colour markup.
 use super::text::FontCache;
 use super::window::Rebuild;
 use crate::fade::{Fader, fade_group, seal_fade_group};
 
-/// `ConversationWindow::Load`: the window's locked-quests icon.
+/// `ConversationWindow::Load`.
 const LOCKED_ICON: &str = "ui/conversationwindow/icon_lockedquests.tex";
 use super::contains;
 use crate::doll::{DollMaterial, SceneView};
@@ -131,7 +116,7 @@ impl Plugin for DialogUiPlugin {
                     .after(build)
                     .in_set(gd_ui_kit::UiPlaySet),
             );
-        // Live: a conversation is open, or the window is still fading out (its root exists).
+        // Live while a conversation is open or the window is still fading out.
         super::window::add_window(
             app,
             build,
@@ -143,33 +128,30 @@ impl Plugin for DialogUiPlugin {
     }
 }
 
-/// What a click on a reply row does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Row {
     Choose(u32),
     NextPage,
 }
 
-/// The built window (physical px): its rect, the reply rows and the close
-/// button. Empty while no conversation is open.
+/// The built window (physical px). Empty while no conversation is open.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct DialogLayout {
     pub window: Option<URect>,
     pub rows: Vec<(URect, Row)>,
     pub close: Option<URect>,
-    /// The name line's faction / locked-quests icon (its hover shows the faction tooltip).
+    /// The name line's faction / locked-quests icon.
     pub icon: Option<URect>,
 }
 
 #[derive(Component)]
 struct DialogRoot;
 
-/// The portrait's gradient and view nodes: hidden until the camera has
-/// rendered the NPC once ([`Portrait::warm`]).
+/// Hidden until the camera has rendered the NPC once ([`Portrait::warm`]).
 #[derive(Component)]
 struct PortraitNode;
 
-/// The reply rows of a view: (text, bitmap field, action).
+/// (text, bitmap field, action).
 fn rows(view: &DialogView, fonts: &FontCache) -> Vec<(String, &'static str, Row)> {
     if !view.on_last_page() {
         return vec![(
@@ -197,14 +179,12 @@ fn rows(view: &DialogView, fonts: &FontCache) -> Vec<(String, &'static str, Row)
         .collect()
 }
 
-/// Speech text as the window shows it: `{^n}` / `^n` become line breaks, the other markup stays for the text
-/// drawing.
+/// `{^n}` / `^n` become line breaks; the other markup stays.
 fn plain(text: &str) -> String {
     text.replace("{^n}", "\n").replace("^n", "\n")
 }
 
-/// The window's fade (module doc): its alpha and the view it shows (kept
-/// while fading out after the conversation ended).
+/// The view is kept while fading out after the conversation ended.
 #[derive(Default)]
 struct Fade {
     alpha: f32,
@@ -223,7 +203,6 @@ fn build(
     roots: Query<Entity, With<DialogRoot>>,
     mut layout: ResMut<DialogLayout>,
     mut built: Local<Rebuild<(u64, UVec2, u32)>>,
-    // The built fade group and its rows' hover rects.
     mut live: Local<Option<(Entity, Vec<Entity>)>>,
     (mut portrait, mut mats): (ResMut<Portrait>, ResMut<Assets<DollMaterial>>),
     mut assets: gd_ui_kit::UiAssets,
@@ -241,10 +220,9 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    // No row hover under the game menu / Options or under the quest reward window (it sits over this one).
     let cursor = super::cursor_px(win).filter(|p| !pause.menu && !popup.covers(*p));
     let hover = cursor.and_then(|p| layout.rows.iter().position(|(r, _)| contains(r, p)));
-    // Fade in on opening, out after closing, 0.002 per ms (`ConversationWindow::Update`).
+    // `ConversationWindow::Update`.
     let step = time.delta_secs() * 1000.0 * 0.002;
     match &conv.view {
         Some(v) => {
@@ -267,7 +245,6 @@ fn build(
     let closing = conv.view.is_none();
     let a = fade.alpha;
     if fade.view.is_none() {
-        // The fade-out is over: the window goes (the live gate stops this system next frame).
         super::window::despawn_all(&mut commands, &roots);
         *layout = DialogLayout::default();
         built.reset();
@@ -277,9 +254,6 @@ fn build(
     if size.x == 0 {
         return;
     }
-    // The fade and the hover are not in the signature: they move in place (the fade group's alpha, the
-    // hover rects' visibility), no rebuild per fade step or hover change. The UI scale is: an applied UI
-    // Scale rebuilds.
     let sig = (conv.version, size, assets.scale(size).to_bits());
     if !built.changed(sig) {
         if let Some((group, hovers)) = live.as_ref() {
@@ -349,11 +323,8 @@ fn build(
         .unwrap_or(0.0)
         * s;
     let text_x = ui.sc(text_box.rect.x);
-    // Content heights.
-    // `ConversationWindow::Layout`: the content height counts each text line at the style object's (UI-scaled)
-    // `fontSize` (`StyleManager::LoadStyle`), not the font's glyph line height. The body and the faction icon sit
-    // from the name widget's box height (`UITextBox.boxHeight` of `ConversationWindow.nameText`, loader
-    // `UITextBox::Load`: `textBoxYSize` × UI scale, rounded `floor(x + 0.5)`; 30 in `conversationname.dbr`).
+    // `ConversationWindow::Layout`: text lines count at the style's UI-scaled `fontSize`, not the glyph line
+    // height; the body and faction icon sit from the name's `UITextBox.boxHeight` (`floor(x + 0.5)`).
     let name_h = ui.font_px(&name_style);
     let name_lh = ui.sc(name_box.rect.h);
     let text_lines = ui.wrap_lines(
@@ -382,11 +353,9 @@ fn build(
     let inner = (base.h - portrait_y - pad_bottom).max(content);
     let h = (pad_top + inner + pad_bottom).round();
     let r = URect::new(base.x, base.y + base.h - h, base.w, h);
-    // The fading parts (background, border, reply rows, portrait border) in one fade group, built as if
-    // the window were opaque; the group's alpha is the fade. The name, the speech, the faction icon, the
-    // portrait view and the close button are drawn outside it, opaque (module doc).
+    // The fading parts in one fade group; the name, speech, faction icon, portrait view and close button
+    // are drawn outside it, opaque.
     let group = fade_group(&mut ui, root, a);
-    // Background and border.
     let c = |k: &str| rec.f32(k).unwrap_or(0.0) / 255.0;
     ui.solid(
         r,
@@ -412,8 +381,7 @@ fn build(
             y += option_gap;
         }
         let row_r = URect::new(r.x + text_x, y, r.w - text_x, rh);
-        // Every row's hover rect is built; the live pass shows the hovered one (`ConversationReplyRow::Render`: its
-        // alpha is the hover colour's times the fade).
+        // `ConversationReplyRow::Render`: hover alpha is the hover colour's times the fade.
         let he = ui.solid(row_r, hover_color);
         ui.commands.entity(he).insert(if hover == Some(i) {
             Visibility::Inherited
@@ -440,7 +408,6 @@ fn build(
         }
         y += rh;
     }
-    // Portrait: the border fades with the window; the view itself is opaque.
     let node_vis = portrait_visibility(portrait.warm);
     let mut portrait_rect = None;
     if let Some(pr) = ui.record(&field("portrait")) {
@@ -454,8 +421,7 @@ fn build(
             ph,
         );
         let size = UVec2::new(pw as u32, ph as u32);
-        // PORT: the black ragged frame of the real game: the window's border textures
-        // around the portrait rect (the engine's draw of it was not decompiled).
+        // PORT: the window's border textures around the portrait rect (the engine's draw was not decompiled).
         ui.border(rec, "", rect, 1.0);
         if portrait.target.as_ref().is_none_or(|t| t.0 != size) {
             let image = ui.images.add(Image::new_target_texture(
@@ -474,7 +440,6 @@ fn build(
     seal_fade_group(ui.commands, group);
     ui.root = root;
     *live = Some((group, hovers));
-    // Faction icon before the name, centred on the name line (module doc), then the name and the speech.
     let mut name_x = r.x + text_x;
     let mut icon_rect = None;
     if let Some((img, sz)) = faction_icon.and_then(|p| ui.image(&p)) {
@@ -507,7 +472,6 @@ fn build(
             .id();
         ui.commands.entity(ui.root).add_child(e);
     }
-    // Close button: `bitmapPosition` in from the top-right corner.
     if let Some(b) = ui.record(&field("closeButton"))
         && let Some((img, sz)) = b.str("bitmapNameUp").and_then(|p| ui.image(p))
     {
@@ -528,11 +492,8 @@ fn build(
     layout.icon = icon_rect.filter(|_| !closing);
 }
 
-/// The faction icon's rollover lines, `ConversationWindow::GetFactionRollover`: `tagFaction` (the faction's name) in
-/// the record's `rolloverTitleStyle`, `tagFactionStanding` (the player's rank) in `rolloverTextStyle`, and, with a
-/// faction-locked quest, a space and `tagFactionQuestReq` (the missing standing, signed) in the same style. Shown by the
-/// shared rollover window (`rollover.rs`: the record's `rolloverStyle` box, mode 2 at the cursor like the other window
-/// widgets' rollovers, `UIWindow::DrawRollover`).
+/// `ConversationWindow::GetFactionRollover`: `tagFaction` in `rolloverTitleStyle`, `tagFactionStanding` in
+/// `rolloverTextStyle`, plus a space and `tagFactionQuestReq` (signed) with a faction-locked quest.
 pub fn faction_lines(
     ui: &super::Ui,
     rec: &gd_formats::arz::Record,
@@ -565,14 +526,12 @@ pub fn faction_lines(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Clicks on the window: a reply row answers, the close button closes; the
-/// window takes the click (no walking). `GD_DIALOG_CLICK` (hooks.rs).
+/// The window takes the click (no walking).
 pub fn clicks(
     #[cfg(feature = "dev")] (hooks, time, mut opened, mut seen): (
         Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
         Local<Option<(u64, f32)>>,
-        // The conversations the test hook has seen open (`GD_DIALOG_CLICK` rows by conversation).
         Local<(bool, usize)>,
     ),
     buttons: Res<ButtonInput<MouseButton>>,
@@ -593,7 +552,6 @@ pub fn clicks(
     ),
     mut fresh: gd_game_core::session::NewSession,
 ) {
-    // The hook's conversation count and click state describe the last session's conversations.
     if fresh.begun() {
         #[cfg(feature = "dev")]
         {
@@ -602,8 +560,7 @@ pub fn clicks(
         }
         *idle = 0.0;
     }
-    // Idle close: no input for 150 s closes it (`Engine::IsUserIdle(150000)`,
-    // `ConversationWindow::Update`).
+    // `Engine::IsUserIdle(150000)`, `ConversationWindow::Update`.
     if keys.get_pressed().next().is_some()
         || buttons.get_pressed().next().is_some()
         || motion.delta != Vec2::ZERO
@@ -617,7 +574,6 @@ pub fn clicks(
             out.write(ConversationRequest::Close);
         }
     }
-    // The conversations opened so far (the hook's rows go by conversation).
     #[cfg(feature = "dev")]
     {
         let open_now = conv.view.is_some();
@@ -633,7 +589,6 @@ pub fn clicks(
         }
         return;
     };
-    // `GD_DIALOG_CLICK`: a scripted click on a row, once per window state.
     #[cfg(feature = "dev")]
     if let Some((rows, secs)) = &hooks.ui.dialog_click {
         let (secs, nth) = (*secs, seen.1.saturating_sub(1));
@@ -643,7 +598,6 @@ pub fn clicks(
         if since.0 != conv.version {
             *since = (conv.version, time.elapsed_secs());
         } else if time.elapsed_secs() - since.1 >= secs && since.1 >= 0.0 {
-            // A missing row (fewer replies on this page) is retried every frame, not dropped.
             if let Some((_, r)) = layout.rows.get(row) {
                 since.1 = -1.0;
                 info!("dialog test: clicking row {row}");
@@ -657,7 +611,6 @@ pub fn clicks(
         }
     }
     let Ok(win) = window.single() else { return };
-    // The game menu / Options holds the mouse; the quest reward window over this one takes its own presses.
     let Some(p) = super::cursor_px(win).filter(|p| !pause.menu && !popup.covers(*p)) else {
         return;
     };
@@ -686,58 +639,50 @@ fn portrait_visibility(warm: u8) -> Visibility {
     }
 }
 
-/// Shows the portrait nodes once the camera has rendered.
 fn portrait_reveal(p: Res<Portrait>, mut nodes: Query<&mut Visibility, With<PortraitNode>>) {
     for mut v in &mut nodes {
         v.set_if_neq(portrait_visibility(p.warm));
     }
 }
 
-/// The portrait's render layer: the NPC's meshes carry it while the window
-/// is open (module doc).
+/// The NPC's meshes carry it while the window is open.
 pub const PORTRAIT_LAYER: usize = 24;
-/// The portrait's glow view: the tagged meshes that the main glow view draws ([`PortraitGlow`]).
+/// The tagged meshes that the main glow view draws.
 const PORTRAIT_GLOW_LAYER: usize = 25;
-/// The portrait's glow composite triangle (the portrait camera only).
+/// The portrait camera only.
 const PORTRAIT_COMPOSITE_LAYER: usize = 26;
 
-/// The portrait's scene glow (module doc): its glow camera, composite triangle and target.
 struct PortraitGlow {
     camera: Entity,
     composite: Entity,
     size: UVec2,
 }
 
-/// The conversation portrait's offscreen view (module doc).
 #[derive(Resource, Default)]
 pub struct Portrait {
-    /// The NPC shown (entity, story id); its target point is re-evaluated live each frame.
+    /// (entity, story id).
     shot: Option<(Entity, u32)>,
-    /// The render target (its size) and its UI material.
     target: Option<(UVec2, Handle<Image>, Handle<DollMaterial>)>,
     camera: Option<Entity>,
     /// Meshes given [`PORTRAIT_LAYER`].
     tagged: Vec<Entity>,
-    /// The background quad (`worldBackground`) and its gradient image, with the (sky, ground)
-    /// texels it holds.
+    /// The background quad, its gradient image and the (sky, ground) texels it holds.
     background: Option<(Entity, Handle<Image>, [[u8; 4]; 2])>,
-    /// Frames the camera has run for the current NPC; the portrait nodes show
-    /// from the second on (the target image is empty before its first render:
-    /// a grey square for the window's first frames).
+    /// Frames the camera has run for the current NPC; the nodes show from the second on (the target is
+    /// empty before its first render).
     warm: u8,
-    /// The icon shown, kept while the window fades out.
+    /// Kept while the window fades out.
     faction_icon: Option<String>,
     glow: Option<PortraitGlow>,
 }
 
-/// The target point of a `UISceneView` on a character, in its current pose, world space (module doc).
+/// World space, in the NPC's current pose.
 fn portrait_target(
     sv: &SceneView,
     rec: &gd_formats::arz::Record,
     gt: &GlobalTransform,
     ch: &gd_render::character::Character,
 ) -> Vec3 {
-    // The point in the NPC's current pose (module doc).
     let point = rec
         .str("targetPointName")
         .filter(|n| !n.is_empty())
@@ -746,8 +691,7 @@ fn portrait_target(
     gt.transform_point(point)
 }
 
-/// The camera frame of a `UISceneView` on a character, each frame from its target and the NPC's current
-/// facing (module doc).
+/// `UISceneView` camera frame from the target and the NPC's current facing.
 fn portrait_frame(sv: &SceneView, target: Vec3, angle: f32, gt: &GlobalTransform) -> Transform {
     let f = gt.affine().transform_vector3(Vec3::Z);
     let rot = angle + std::f32::consts::FRAC_PI_2 - f.z.atan2(f.x);
@@ -755,7 +699,6 @@ fn portrait_frame(sv: &SceneView, target: Vec3, angle: f32, gt: &GlobalTransform
         .looking_at(target, Vec3::Y)
 }
 
-/// Takes [`PORTRAIT_LAYER`] and [`PORTRAIT_GLOW_LAYER`] off the `tagged` meshes still alive.
 fn untag(
     commands: &mut Commands,
     layers: &Query<Option<&RenderLayers>, With<Mesh3d>>,
@@ -772,8 +715,7 @@ fn untag(
     }
 }
 
-/// Keeps the portrait camera on the conversation's NPC while the window is
-/// open; turns it off and untags the NPC once it closes or the conversation moves to another NPC.
+/// Untags the NPC once the conversation closes or moves to another NPC.
 #[allow(clippy::too_many_arguments)]
 fn portrait(
     mut commands: Commands,
@@ -829,14 +771,12 @@ fn portrait(
     let sv = SceneView::from_record(rec);
     let fresh = p.shot.as_ref().is_none_or(|s| s.0 != e || s.1 != actor.0);
     if fresh {
-        // Another NPC: the previous one's meshes leave the portrait.
         let old = std::mem::take(&mut p.tagged);
         untag(&mut commands, &layers, old);
         p.shot = Some((e, actor.0));
         p.warm = 0;
     }
-    // Tag the NPC's meshes (parts spawned later included) and the emitter meshes of the effects
-    // attached to it (`fx::items`: its gear's; they are top-level entities of their own).
+    // Attached effects' emitters are top-level entities of their own (`fx::items`).
     let tagged = &mut p.tagged;
     let mut tag = |m: Entity| {
         let Ok(l) = layers.get(m) else { return };
@@ -910,11 +850,11 @@ fn portrait(
                         Tonemapping::None,
                         DebandDither::Disabled,
                         Msaa::Off,
-                        // No point lights in the portrait (`shade_doll`): one cluster.
+                        // No point lights in the portrait: one cluster.
                         bevy::light::cluster::ClusterConfig::Single,
                         RenderLayers::layer(PORTRAIT_LAYER).with(PORTRAIT_COMPOSITE_LAYER),
                         proj.clone(),
-                        // Constant per record (Bevy warns on every change).
+                        // Constant per record: Bevy warns on every change.
                         sv.grading(),
                         tf,
                         Name::new("conversation portrait camera"),
@@ -930,14 +870,12 @@ fn portrait(
         (&mut images, &mut meshes, &mut glow_mats),
         &mut cams,
     );
-    // The frame follows the NPC's facing (module doc).
     let glow_cam = p.glow.as_ref().map(|g| g.camera);
     for c in p.camera.into_iter().chain(glow_cam) {
         if let Ok(mut t) = placed.get_mut(c) {
             t.set_if_neq(tf);
         }
     }
-    // `worldBackground`: the sky-to-ground gradient drawn into the target behind the NPC.
     if rec.f32("worldBackground").unwrap_or(0.0) == 0.0 {
         return;
     }
@@ -988,9 +926,8 @@ fn portrait(
     }
 }
 
-/// The portrait's scene glow (module doc): a glow camera like the main one (`render::post`'s, the
-/// materials' glow-only exposure marker) on [`PORTRAIT_GLOW_LAYER`] into a target of the portrait's
-/// size, following the portrait camera, and the same glow composite drawn by the portrait camera.
+/// A glow camera like the main one on [`PORTRAIT_GLOW_LAYER`], following the portrait camera, and the
+/// same glow composite drawn by the portrait camera.
 fn portrait_glow(
     commands: &mut Commands,
     p: &mut Portrait,
@@ -1029,7 +966,6 @@ fn portrait_glow(
                 Tonemapping::None,
                 DebandDither::Disabled,
                 Msaa::Off,
-                // The glow-only marker (`render::post::setup_glow`).
                 Exposure { ev100: 0.0 },
                 bevy::light::cluster::ClusterConfig::Single,
                 RenderLayers::layer(PORTRAIT_GLOW_LAYER),
@@ -1068,10 +1004,9 @@ fn portrait_glow(
     }
 }
 
-/// The portrait background (module doc, `worldBackground`): a 1 × 2 gradient image (sky over
-/// ground, sampled between the texel centres so the blend spans the whole view), a quad `dist` in
-/// front of the camera covering its view, and its material: [`FLAG_UNLIT`] (a doll view draws it
-/// as the texel), opaque, no culling. The material's `base` is the caller's handle of the image.
+/// A 1 × 2 gradient image (sky over ground, sampled between the texel centres so the blend spans the
+/// view), a quad `dist` in front of the camera covering its view, and its unlit, opaque, unculled
+/// material; `base` is the caller's handle of the image.
 fn background_assets(
     sv: &SceneView,
     size: UVec2,

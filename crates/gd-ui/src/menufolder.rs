@@ -46,21 +46,21 @@ impl Plugin for MenuFolderPlugin {
     }
 }
 
-/// The folder flag (`UIPlayerHud.menuFolderOpen`): the folder is open. Pressed by `hud::menu_buttons`.
+/// `UIPlayerHud.menuFolderOpen`.
 #[derive(Resource, Default)]
 pub struct MenuFolder {
     pub open: bool,
 }
 
-/// What the HUD shows of the folder (`HudValues::menu_folder`, `ui::view`): `open` = the background and the down
-/// button; `buttons` = its window buttons (open, and neither the game menu nor the options window is up).
+/// `open` = the background and the down button; `buttons` = its window buttons (open, and neither the game menu
+/// nor the options window is up).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FolderView {
     pub open: bool,
     pub buttons: bool,
 }
 
-/// The folder's window buttons (orb HUD table fields), in the draw's order.
+/// In the draw's order.
 pub const BUTTONS: [&str; 7] = [
     "hudMiniMapButton",
     "hudAchievementsButton",
@@ -71,11 +71,9 @@ pub const BUTTONS: [&str; 7] = [
     "hudPartyButton",
 ];
 
-/// The folder button and background fields.
 pub const BUTTON: &str = "hudMenuFolderButton";
 pub const BACKGROUND: &str = "hudMenuFolderBitmap";
 
-/// The background's record: its bitmap and position.
 fn background(ui: &Ui) -> Option<(String, f32, f32)> {
     let rec = ui.record(ui.hud_master())?.str(BACKGROUND)?.to_string();
     match ui.widget(&rec)? {
@@ -84,8 +82,7 @@ fn background(ui: &Ui) -> Option<(String, f32, f32)> {
     }
 }
 
-/// The folder origin (screen px; module doc): the toolbar origin plus the engine's folder offset; `None` without a
-/// folder (the classic table).
+/// The toolbar origin plus the engine's folder offset; `None` without a folder (the classic table).
 pub fn origin(ui: &mut Ui) -> Option<Vec2> {
     let to = super::hud::toolbar_origin(ui)?;
     let (bitmap, x, y) = background(ui)?;
@@ -100,7 +97,6 @@ pub fn origin(ui: &mut Ui) -> Option<Vec2> {
     ))
 }
 
-/// The background's screen rect at the folder `origin`.
 pub fn background_rect(ui: &mut Ui, origin: Vec2) -> Option<URect> {
     let (bitmap, x, y) = background(ui)?;
     let (_, size) = ui.image(&bitmap)?;
@@ -112,8 +108,7 @@ pub fn background_rect(ui: &mut Ui, origin: Vec2) -> Option<URect> {
     ))
 }
 
-/// Draws the folder button at the toolbar origin `to` (down while open) and, while open, the background (the draw's
-/// order, module doc).
+/// Draws the folder button at `to` (down while open) and, while open, the background.
 pub fn draw_folder(ui: &mut Ui, view: FolderView, to: Vec2) {
     let Some(rec) = ui
         .record(ui.hud_master())
@@ -140,8 +135,7 @@ pub fn draw_folder(ui: &mut Ui, view: FolderView, to: Vec2) {
     }
 }
 
-/// An open folder closes on a left / right press that no window or HUD part took (module doc). After the windows'
-/// input (their capture), before the player's click-to-move.
+/// Runs after the windows' input (their capture), before the player's click-to-move.
 fn close_on_world_press(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,

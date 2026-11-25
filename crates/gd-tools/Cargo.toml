@@ -7,8 +7,6 @@ edition = "2024"
 description = "Command-line tools to list, extract and inspect Grim Dawn archives, records, maps, meshes and saves"
 license = "MIT"
 
-# The CLIs have no tests: `test = false` keeps `cargo test` from building an
-# empty test binary for each.
 [[bin]]
 name = "gd-tools"
 path = "src/main.rs"

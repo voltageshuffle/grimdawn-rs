@@ -1,8 +1,7 @@
 //! Aiming ahead of a moving target (the monster AI's `LeadChance`).
 //!
 //! Game.dll `ControllerMonster::ComputeIntercept` (called by
-//! `ControllerMonsterStateAttack::AttackEnemyOrReturn`):
-//! [`intercept`]. The caller is in `gd_game::lead`.
+//! `ControllerMonsterStateAttack::AttackEnemyOrReturn`): [`intercept`].
 
 /// The point where a projectile launched from `from` at `speed` meets a
 /// target at `target` moving with `velocity`, `delay` seconds of the

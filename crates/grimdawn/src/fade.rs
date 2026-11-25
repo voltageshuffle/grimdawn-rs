@@ -36,7 +36,7 @@ pub fn begin_fade(
     )
 }
 
-/// Sets the copies' fade factor (only where it changed, so unchanged materials are not re-uploaded).
+/// Sets the copies' fade factor where it changed.
 pub fn set_fade(copies: &[Handle<GdMaterial>], factor: f32, materials: &mut Assets<GdMaterial>) {
     for h in copies {
         if materials.get(h).is_some_and(|m| m.params.fade.x != factor)

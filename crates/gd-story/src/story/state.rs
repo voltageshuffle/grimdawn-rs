@@ -20,9 +20,7 @@ pub struct Player {
     /// The Crucible's tributes (Character dword 1458), at most [`MAX_TRIBUTE`].
     pub tribute: u32,
     pub total_devotion: u32,
-    /// Difficulties skipped with the campaign's difficulty unlock items (`PlayStats.difficultySkips`, saved in
-    /// block 12):
-    /// bit 1 Normal, bit 2 Elite ([`super::Story::skip_difficulties`]).
+    /// `PlayStats.difficultySkips` (block 12): bit 1 Normal, bit 2 Elite.
     pub difficulty_skip: u8,
     pub hardcore: bool,
     /// The player is dead (`Game.PlayersDead`; the host mirrors it).
@@ -79,14 +77,9 @@ impl Player {
             .copied()
             .unwrap_or(0)
     }
-    /// `Player::GetItemCountInStashes` (Game.dll) as the `HasItem` condition
-    /// (`ScriptableCondition_HasItem::Evaluate`) and Lua `HasItem` (`LuaPlayer::HasItem`) call it, flags
-    /// (`complete_only`, 0, 1, 0):
-    /// `Character::GetItemCount` with its equipment flag set (the inventory, skipping equipped items:
-    /// `EquipManager::GetItemCount` only without it) + the blacksmith's materials (`GetReagentItemCount`,
-    /// unfiltered) + each personal stash sack + the transfer stash. `complete_only` makes the inventory and
-    /// the sacks skip items whose `Item::IsComplete` is false: an incomplete relic or charm (every
-    /// other stock item class answers true).
+    /// `Player::GetItemCountInStashes` with flags (`complete_only`, 0, 1, 0): inventory (no equipment) +
+    /// blacksmith materials (unfiltered) + personal stash sacks + transfer stash. `complete_only` skips
+    /// incomplete relics and charms in the inventory and sacks.
     pub fn item_count_in_stashes(&self, record: &str, complete_only: bool) -> u32 {
         let key = record.to_ascii_lowercase();
         let get = |m: &HashMap<String, u32>| m.get(&key).copied().unwrap_or(0);
@@ -118,54 +111,41 @@ pub struct GameInfo {
     pub time_ms: u64,
     /// Lua `Server` global; single player is its own server.
     pub server: bool,
-    /// The installed altar formulas' `luaToken` levels
-    /// (`gd_sim::ascendant::Ascendant::tokens`).
+    /// The installed altar formulas' `luaToken` levels.
     pub ascendant_tokens: Vec<(String, u32)>,
-    /// `GameInfo::GetMode() == 1`: a Crucible session (the bindings below are inert
-    /// outside it, like the engine's).
+    /// `GameInfo::GetMode() == 1`: a Crucible session.
     pub survival_mode: bool,
     pub survival: Survival,
 }
 
-/// Shattered Realm state behind the `Game.*Endless*` bindings (see `crate::endless`): the dungeons
-/// generated, the floors used recently (kept across generations), the running dungeon and its flags.
+/// Shattered Realm state behind the `Game.*Endless*` bindings.
 #[derive(Clone, Debug, Default)]
 pub struct Endless {
     /// `GameEngine::dungeonsGenerated`: the `tierDifficulty` of the equations.
     pub generated: u32,
     pub recent: std::collections::VecDeque<String>,
     pub dungeon: Option<crate::endless::Dungeon>,
-    /// What the generator reads of the world map (the host pre-builds it at session load;
-    /// [`super::Story::endless_provider`] is the fallback).
+    /// What the generator reads of the world map (pre-built by the host at session load).
     pub map: Option<std::sync::Arc<crate::endless::EndlessMap>>,
-    /// The next dungeon stamp.
     pub next_id: u32,
-    /// `IsEndlessDungeonBossDead` / `IsEndlessDungeonBonusComplete` (`EndlessDungeon_Generator.bossDead` /
-    /// `EndlessDungeon_Generator.bonusComplete`).
+    /// `EndlessDungeon_Generator.bossDead` / `.bonusComplete`.
     pub boss_dead: bool,
     pub bonus_complete: bool,
-    /// The hub door's object id the script passed to `GenerateEndlessDungeon` (`entranceId`,
-    /// `EndlessDungeon_Generator.entranceId`):
-    /// using that door, once open, teleports to the active floor's entrance.
+    /// The hub door the script passed to `GenerateEndlessDungeon`: once open, it teleports to the active
+    /// floor's entrance.
     pub entrance_door: Option<u32>,
     /// Charges of the soul buff (the essences picked up while it ran).
     pub soul_charges: u32,
-    /// The proxy keys (level, entity index) of the proxies the host activated in the running dungeon, by floor
-    /// index (moved to `stale` when the next dungeon is generated).
+    /// (level, entity index) keys of the proxies activated in the running dungeon, by floor index.
     pub activated: Vec<(usize, (usize, u32))>,
-    /// Keys of proxies activated in an older dungeon whose level state the host still keeps (dropped once
-    /// their level is unloaded: `gd_game::endless::drop_stale_proxies`).
+    /// Keys of proxies activated in an older dungeon whose level state the host still keeps.
     pub stale: Vec<(usize, u32)>,
-    /// The player entered the section's active floor: the timer start was decided
-    /// (`EndlessDungeon_Generator.timerStarted`, cleared at each
-    /// generation).
+    /// `EndlessDungeon_Generator.timerStarted`, cleared at each generation.
     pub timer_started: bool,
-    /// A section's bonus timer ran in this session (`EndlessDungeon_Generator.timerEverRan`, kept across
-    /// generations; `gd_game::endless`).
+    /// `EndlessDungeon_Generator.timerEverRan`, kept across generations.
     pub timer_ever: bool,
-    /// The kill chain: kills in a row and the ms left before the chain pays out.
     pub chain: KillChain,
-    /// Essence items a monster of the dungeon dropped: used at once by the host (`endless::progress`).
+    /// Essence items a monster of the dungeon dropped, consumed by the host at once.
     pub essence_queue: Vec<String>,
     /// Cinematic texts the host shows (`ShowCinematicText` type 9: the bonus time texts), already formatted.
     pub texts: Vec<String>,
@@ -259,12 +239,8 @@ impl Endless {
     }
 }
 
-/// Crucible session state behind the `Game.*Survival*` bindings. (Game.dll
-/// `PlayStats` at `Player.playStats` and `GameEngine`):
-/// wave tier is `PlayStats.waveTier`, the bonus multiplier `PlayStats.bonusMultiplier`, restarts
-/// `PlayStats.restarts`, the bonus timer `PlayStats.bonusTimer` (ms, counts down); the difficulty ramp is
-/// `GameEngine.difficultyRamp`.
-/// None of these but the greatest-difficulty / greatest-wave / greatest-score fields is saved.
+/// Crucible session state behind the `Game.*Survival*` bindings (Game.dll `PlayStats` and `GameEngine`).
+/// Only the greatest-difficulty / greatest-wave / greatest-score fields are saved.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Survival {
     pub wave_tier: u32,
@@ -282,9 +258,8 @@ pub struct Survival {
     pub greatest_difficulty: u8,
     pub greatest_wave: u32,
     pub greatest_score: u32,
-    /// `PlayStats.defensesBuilt` / `PlayStats.powerUps`, saved in `player.gdc` block 12: the grants of
-    /// `SURVIVALMODE_DEFENSEBUILT` /
-    /// `SURVIVALMODE_POWERUPACTIVE` ([`Survival::token_granted`]).
+    /// `PlayStats.defensesBuilt` / `PlayStats.powerUps` (block 12): `SURVIVALMODE_DEFENSEBUILT` /
+    /// `SURVIVALMODE_POWERUPACTIVE` grants.
     pub defenses_built: u32,
     pub power_ups: u32,
     /// Counters of the HUD's events (`UISurvivalHud`): the pane
@@ -303,8 +278,7 @@ pub struct Survival {
     pub event_in_progress: bool,
     /// `EnableRespawn` / `DisableRespawn` (`GameEngine.respawnEnabled`): the player's respawn.
     pub respawn: bool,
-    /// `EnableRespawn` was called: dead players come back (a one-shot request the host consumes;
-    /// `ControllerPlayer.respawnRequested`).
+    /// `EnableRespawn` was called: a one-shot respawn request the host consumes.
     pub respawn_requested: bool,
     /// `AllowNpcTalk` (`GameEngine.npcTalkAllowed`).
     pub npc_talk: bool,
@@ -537,7 +511,6 @@ pub enum ObjClass {
 }
 
 impl ObjClass {
-    /// From a database record's `Class` field.
     pub fn from_record_class(class: &str) -> Self {
         let c = class.to_ascii_lowercase();
         match c.as_str() {
@@ -629,13 +602,10 @@ pub struct Entities {
     pub proxy_limits: BTreeMap<u32, [f32; 3]>,
     /// `Proxy.Create(record, vec, true)`: `CreateAtIgnoreBoss` (byte +1612).
     pub proxy_ignore_boss: HashSet<u32>,
-    /// Host-published world coords of the story characters' mesh attach points (object id → (attach name,
-    /// coords)), for `Entity:GetAttachedCoords(name)`; an object without them falls back to its entity coords.
+    /// World coords of the story characters' mesh attach points, for `Entity:GetAttachedCoords(name)`.
     pub attach_coords: HashMap<u32, Vec<(String, Coords)>>,
-    /// Characters a script created with `Character.Create` / `CreateNearPlayer`: Grim Dawn.exe
-    /// `LuaCharacter::Create` / `LuaCharacter::CreateAtLevel` / `LuaCharacter::CreateNearPlayer` call the new
-    /// object's `Character::EnableSpawnAnimation`, so it starts with its Spawn animation (the host's startup);
-    /// `Entity.Create` does not.
+    /// Characters created with `Character.Create` / `CreateNearPlayer`: they start with their Spawn
+    /// animation (`Character::EnableSpawnAnimation`).
     pub spawn_animation: BTreeSet<u32>,
     next_id: u32,
 }
@@ -720,9 +690,7 @@ pub enum Effect {
     Notify(String),
     /// Centre-screen cinematic text tag (quest action 17).
     CinematicText(String),
-    /// A script placed an object in the world (a proxy: it runs), `record` at `coords`. The host shows the
-    /// world objects from `Story::entities` ([`super::Story::is_present`]: placed, removed and destroyed
-    /// objects alike), so this is only the record of the placement (logs, tests).
+    /// A script placed an object in the world (a proxy: it runs); the host shows `Story::entities`.
     Spawn {
         id: u32,
         record: String,
@@ -797,14 +765,11 @@ pub enum Effect {
         /// `None`: a bare animation play with no controller state (quest action 14).
         quest: Option<bool>,
     },
-    /// Quest action 28 (`ScriptableAction_PlayVideo`, Execute → `GameEngine::PlayVideoRequest(path, flag)`): the
-    /// video at the engine path `video` (`video/GDX1_intro.ogg`) joins the playing queue (`grimdawn::video`). The
-    /// flag is not read in single player.
+    /// Quest action 28 (`GameEngine::PlayVideoRequest`): `video` joins the playing queue.
     PlayVideo {
         video: String,
     },
-    /// Quest action 22 (`ScriptableAction_CastSkill`): `caster` (the action's owner, a conversation's NPC) casts
-    /// `skill` on the main player; None (a quest's action, no owner) does nothing (`gd_game::story::cast_story_skills`).
+    /// Quest action 22 (`ScriptableAction_CastSkill`): `caster` casts `skill` on the player; None does nothing.
     CastSkill {
         skill: String,
         caster: Option<u32>,
@@ -818,9 +783,7 @@ pub enum Effect {
     },
     /// `Character:MoveAction(target, coords, bool)`: the monster walks to
     /// the target object's position (else `coords`), then idles there.
-    /// `interruptible` is the bool, the controller's `AllowQuestInterruptions`
-    /// (`ControllerAI::QuestCommandMove` stores it): the "QuestMove" state
-    /// reacts to enemies and attacks only when it is set.
+    /// `interruptible`: `AllowQuestInterruptions` (the "QuestMove" state fights enemies only when set).
     MoveAction {
         id: u32,
         target: u32,

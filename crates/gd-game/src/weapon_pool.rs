@@ -1,56 +1,28 @@
-//! Weapon-pool attacks and skill-modifier links of the player
-//! (`gd_sim::weapon_pool`, `gd_sim::actor::SkillUse`).
+//! Weapon-pool attacks and skill-modifier links of the player (`gd_sim::weapon_pool`, `gd_sim::actor::SkillUse`).
 //!
-//! [`SkillLinks`] keeps the learned modifiers per skill (their damage adds
-//! to every hit of the skill, `combat::apply_hits`) and the usable pool
-//! skills (`Skill_WPAttack*` with a chance weight, weapon requirements met).
-//! Each weapon-pool attack — a plain swing or shot (the default attack) or a
-//! `Skill_WeaponPool_*` cast (Fire Strike, Cadence, Righteous Fervor) — rolls
-//! [`gd_sim::weapon_pool::select`]; a picked pool skill is fired instead as
-//! a [`gd_game_core::casting::ProcCast`] with the pool attack as its parent.
-//! The roll happens as the action starts (`SkillActivatedWeaponPool::
-//! StartAction`: it asks the skill services for a pool skill
-//! (`SkillManager::SelectWeaponPoolSkill`), keeps its id and
-//! starts that skill's own `StartAction`): [`start_swing`] for a plain
-//! swing (`combat::player_attack`, `casting`'s Shift attack) and
-//! [`pool_cast_starts`] for a pool-skill cast store the outcome in
-//! [`PoolPick`] until the action's hit uses it. The picked skill's
-//! `skillSpecialAnimationName` plays as the swing's clip
-//! ([`pool_swing_specials`], `Character::swing_special`), and the hit point
-//! is that clip's `RightHandHit`.
-//! Shapes per class: [`pool_kind`].
+//! [`SkillLinks`] keeps the learned modifiers per skill (their damage adds to every hit of the skill) and the
+//! usable pool skills (`Skill_WPAttack*` with a chance weight, weapon requirements met). Each weapon-pool attack
+//! (the default attack or a `Skill_WeaponPool_*` cast) rolls [`gd_sim::weapon_pool::select`]; a picked pool skill
+//! fires instead as a [`gd_game_core::casting::ProcCast`] with the pool attack as its parent. The roll happens as
+//! the action starts (`SkillActivatedWeaponPool::StartAction` → `SkillManager::SelectWeaponPoolSkill`):
+//! [`start_swing`] for a plain swing and [`pool_cast_starts`] for a pool-skill cast store it in [`PoolPick`] until
+//! the action's hit uses it. The picked skill's `skillSpecialAnimationName` plays as the swing's clip
+//! ([`pool_swing_specials`]), and the hit point is that clip's `RightHandHit`. Shapes per class: [`pool_kind`].
 //!
-//! Monsters run the same code: `SelectWeaponPoolSkill` walks
-//! whatever skills the manager holds, so a monster's
-//! `Skill_WPAttack*` skills form its pool and its `Skill_WeaponPool_Charged*`
-//! attack (the giants' Cleaving Strikes, a Righteous-Fervor-like scaling
-//! skill) keeps [`PoolCharges`] (`monster_skills`). PORT: the monsters'
-//! pool skills' weapon requirements are not checked.
+//! Monsters run the same code: their `Skill_WPAttack*` skills form their pool and a `Skill_WeaponPool_Charged*`
+//! attack keeps [`PoolCharges`]. PORT: the monsters' pool skills' weapon requirements are not checked.
 //!
-//! Charged pool skills ([`PoolCharges`], from the classes'
-//! `StartAction` / `HitAction` / `WPPostAttackCallback` / `Update` /
-//! `IncrementCharge` / `DecrementCharge`):
-//! - `Skill_WeaponPool_ChargedFinale` (Cadence): an attack with targets gains
-//!   a charge (up to `skillChargeLevel`) unless locked out; the lockout is
-//!   `skillChargeTime` (`…Ranged` with a ranged weapon) / attack speed, the
-//!   charges expire after `skillChargeDuration`. With full charges (and the
-//!   lockout over) the next attack is the finale, decided as it starts
-//!   (`Skill_WeaponPool_ChargedFinale::StartAction`:
-//!   else the plain pool `StartAction` and its roll): the skill's own hit
-//!   (no pool roll); a landed
-//!   finale (or any with `spendChargesOnMiss`) clears the charges. Other
-//!   attacks are plain pool attacks without the skill's damage (its
-//!   constructor clears the parent flag `Skill.isDamageParent`, which the
-//!   `Skill_WPAttack::CollectLocal*` collectors require of a parent).
-//! - `Skill_WeaponPool_ChargedScaling` (Righteous Fervor): an attack with
-//!   targets gains a charge (up to `skillChargeLevel`) before it hits; each
-//!   charge lasts `skillChargeDuration`, then one is lost; the skill's own
-//!   damage and weapon % scale by `skillChargeMultipliers[charges-1]` %
-//!   (none without charges). Lockout = `skillChargeTime` / attack speed
-//!   (`IncrementCharge` sets it from the profile's
-//!   `skillChargeTime`, never the ranged one, divided by the attack speed;
-//!   `WPPreAttackCallback` gains a charge only with targets and the lockout
-//!   over).
+//! Charged pool skills ([`PoolCharges`]):
+//! - `Skill_WeaponPool_ChargedFinale` (Cadence): an attack with targets gains a charge (up to `skillChargeLevel`)
+//!   unless locked out; the lockout is `skillChargeTime` (`…Ranged` with a ranged weapon) / attack speed, the
+//!   charges expire after `skillChargeDuration`. With full charges and the lockout over the next attack is the
+//!   finale, decided as it starts: the skill's own hit, no pool roll; a landed finale (or any with
+//!   `spendChargesOnMiss`) clears the charges. Other attacks are plain pool attacks without the skill's damage
+//!   (`Skill.isDamageParent` cleared).
+//! - `Skill_WeaponPool_ChargedScaling` (Righteous Fervor): an attack with targets and the lockout over gains a
+//!   charge (up to `skillChargeLevel`) before it hits; each charge lasts `skillChargeDuration`, then one is lost;
+//!   the skill's own damage and weapon % scale by `skillChargeMultipliers[charges-1]` % (none without charges).
+//!   Lockout = the profile's `skillChargeTime` (never the ranged one) / attack speed.
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
@@ -83,10 +55,8 @@ impl Plugin for WeaponPoolPlugin {
     }
 }
 
-/// A toggled skill switches off when the worn weapons stop suiting it
-/// (`Skill_BuffSelfToggled::Update`: not `QualifyingWeapon` /
-/// `QualifyingHandState` → deactivate); the auto toggle switches
-/// it on again once they do (`crate::skill_buffs` docs, auto toggles).
+/// A toggled skill switches off when the worn weapons stop suiting it (`Skill_BuffSelfToggled::Update`); the auto
+/// toggle switches it on again once they do.
 fn toggles_need_weapons(
     mut commands: Commands,
     data: Res<GameData>,
@@ -161,11 +131,8 @@ pub fn pick_cast(
     })
 }
 
-/// A weapon-pool action's outcome, decided as it starts
-/// (`SkillActivatedWeaponPool::StartAction` rolls
-/// `SkillManager::SelectWeaponPoolSkill`; `Skill_WeaponPool_ChargedFinale::
-/// StartAction` picks the finale instead when charged) and
-/// used by the action's hits.
+/// A weapon-pool action's outcome, decided as it starts (`SelectWeaponPoolSkill`, or Cadence's finale when charged)
+/// and used by the action's hits.
 #[derive(Component, Clone, Debug, Default)]
 pub struct PoolPick {
     /// The action's skill: [`gd_game_core::casting::DEFAULT_ATTACK`] for a plain
@@ -198,16 +165,9 @@ pub fn start_swing(
     });
 }
 
-/// A weapon-pool proc's swing plays the picked skill's special animation
-/// (`SkillActivatedWeaponPool::StartAction`: it starts
-/// the picked skill's own `StartAction`, which plays its
-/// `skillSpecialAnimationName`): [`Character::swing_special`] names the
-/// reference, `character::drive_characters` plays the `Special` slot at the
-/// attack speed, and the hit point is that clip's `RightHandHit`
-/// (`combat::apply_hits` / `casting::ranged_swings` fire the `ProcCast`
-/// there). Runs as the swing starts (the roll's [`PoolPick`] was just
-/// inserted), before the drive plays its clip; a pick without a special name
-/// keeps the plain clip.
+/// A weapon-pool proc's swing plays the picked skill's `skillSpecialAnimationName` ([`Character::swing_special`]);
+/// the hit point is that clip's `RightHandHit`. Runs as the swing starts, after [`PoolPick`] is inserted and before
+/// the drive plays its clip; a pick without a special name keeps the plain clip.
 fn pool_swing_specials(
     data: Res<GameData>,
     mut q: Query<(&PoolPick, &mut Character), Changed<PoolPick>>,
@@ -270,16 +230,10 @@ fn pool_cast_starts(
     }
 }
 
-/// How a pool skill hits, from each class's own virtuals over
-/// `Skill_WPAttack_BasicAttack`: `…_Radius` overrides `ApplyMeleeDamage` /
-/// `ApplyRangedDamage` to hit the foes around the target
-/// (`skillTargetRadius`), `…_AttackWave` has its own `ActivateNow` /
-/// `RunTargeting` / `Update` (a wave, `waveDistance`), `…_ProjectileBurst`
-/// its own `ExecuteRangedAttack` (`projectileLaunchNumber` projectiles);
-/// `…_BasicAttack` and `…_RadialCrit` keep the weapon hit's targeting
-/// (`RadialCrit` adds its own `OnHitTarget` / damage collectors), here a
-/// weapon hit on the target plus `skillTargetNumber` foes in
-/// `skillTargetAngle` (`casting::fire_casts`).
+/// How a pool skill hits, by class: `…_Radius` hits the foes around the target (`skillTargetRadius`),
+/// `…_AttackWave` sends a wave (`waveDistance`), `…_ProjectileBurst` fires `projectileLaunchNumber` projectiles;
+/// `…_BasicAttack` and `…_RadialCrit` keep the weapon hit's targeting (the target plus `skillTargetNumber` foes in
+/// `skillTargetAngle`).
 pub fn pool_kind(rec: &Record) -> Kind {
     match rec.class.as_str() {
         "Skill_WPAttack_Radius" => Kind::TargetRadius,
@@ -370,10 +324,9 @@ fn tick_charges(
     }
 }
 
-/// The [`SkillLinks`] of a loadout (its learned skills at their effective levels) with the skill modifiers
-/// of the worn items `gear` and the weapon types `hands` (right, left): what [`rebuild_links`] keeps on the player and
-/// what the item tooltip's DPS compare builds for the gear it tries (`Player::CompareItems` equips the
-/// candidate, so the candidate's skill modifiers and bonuses count and the replaced item's do not).
+/// The [`SkillLinks`] of a loadout with the skill modifiers of the worn items `gear` and the weapon types `hands`
+/// (right, left); also built for the tooltip's DPS compare (`Player::CompareItems` equips the candidate, so its
+/// modifiers count and the replaced item's do not).
 pub fn build_links(
     data: &GameData,
     trees: &gd_sim::skills::SkillTrees,
@@ -428,22 +381,12 @@ pub fn build_links(
             }
         }
     }
-    // Gear skill modifiers (`modifiedSkillName{n}` → `modifierSkillName{n}`
-    // on an item's records: legendary / ascended "skill modifiers") join the
-    // learned ones at level index 0 (`ItemEquipment::AttachItem`
-    // and `ItemRelic` / `ItemEnchantment::InstallOnCharacter` hand every
-    // equipped item's modifiers to `SkillManager::AddItemSkillModifiers`,
-    // which sets each modifier skill to level 1). The item (its ascendant affix with it), its
-    // component (relic and completion bonus) and its augment are three such calls.
-    // `AddItemSkillModifiers` / `Skill_Modifier::SetExclusiveItemSkillModifier`
-    // / `IsSkillEnabled`: a modifier of skill S whose call also
-    // modifies a `Skill_Transmuter` of S that S's learned modifiers hold is made
-    // exclusive to it, and is off while that transmuter is enabled (learned: the
-    // links are rebuilt as skills change). An off modifier adds nothing
-    // (`Skill_Modifier::GetSkillModifierData` skips it for its
-    // parent) and has no target effect (`Skill::GetTargetFX`), so it is kept
-    // apart ([`SkillLinks::off_mods`]): only `Skill::CreateWarmUpFx` runs it
-    // (no enabled check there, `casting::warmup`).
+    // Gear skill modifiers (`modifiedSkillName{n}` → `modifierSkillName{n}`) join the learned ones at level index 0
+    // (`SkillManager::AddItemSkillModifiers`, once each for the item, its component and its augment). A modifier of
+    // skill S whose call also modifies a `Skill_Transmuter` of S held by S's learned modifiers is exclusive to it
+    // and off while that transmuter is enabled (`SetExclusiveItemSkillModifier` / `IsSkillEnabled`). An off
+    // modifier adds nothing and has no target effect, so it is kept apart ([`SkillLinks::off_mods`]): only
+    // `Skill::CreateWarmUpFx` runs it.
     for it in gear {
         for names in [
             &[
@@ -567,10 +510,7 @@ fn rebuild_links(
     let Ok((e, loadout)) = players.single() else {
         return;
     };
-    // Only actual mutations wake this: the UI reads `Inventory::info` through
-    // `&self` (its interior cache), so UI reads no longer tick the resource
-    // every frame; equips and loadout changes still do. The signature hash
-    // below is the dedup.
+    // Only actual mutations wake this (UI reads don't tick the resource); the signature hash below dedups.
     if !loadout.is_changed() && !inv.is_changed() {
         return;
     }

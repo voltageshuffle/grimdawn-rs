@@ -65,11 +65,9 @@ pub fn jitter_continuous(v: f32, pct: f32, rng: &mut Rng) -> f32 {
         .min(100.0)
 }
 
-/// `MinJitter` / `MaxJitter` (`max`) of one value: the smallest / largest value
-/// the roll can give. `DefenseAttribute::MinJitter` / `MaxJitter` (exported as
-/// `SkillAttribute::MinJitter` / `MaxJitter`; COMDAT-shared by the damage, retaliation,
-/// defense and skill classes) and `CharAttribute::MinJitter` / `MaxJitter`
-/// (`skip_zero_pct`: a 0 % keeps the value):
+/// The smallest / largest (`max`) value a roll can give: `DefenseAttribute::MinJitter` /
+/// `MaxJitter` (shared by the damage, retaliation, defense and skill classes) and
+/// `CharAttribute::MinJitter` / `MaxJitter` (`skip_zero_pct`: a 0 % keeps the value).
 /// `n = (int)(v * pct * 0.01)` (1 when 0; negative for a negative value, so
 /// the "min" of a negative value is the one nearer 0), `v -/+ n` only when its
 /// magnitude stays >= 1, else `v`; 0 stays 0.
@@ -86,11 +84,9 @@ pub fn jitter_bound(v: f32, pct: f32, max: bool, skip_zero_pct: bool) -> f32 {
     if r.abs() >= 1.0 { r } else { v }
 }
 
-/// What a jitter site of the attribute loaders produces: the seeded roll (the
-/// `_Equipment` stores) or the `_Min` / `_Max` stores' bound
-/// (`ItemEquipment::InitializeItem` loads the same records into
-/// three store sets; the `_Min` / `_Max` loaders call `MinJitter` /
-/// `MaxJitter` where the equipment one draws `Jitter`).
+/// A jitter site's result: the seeded roll (`_Equipment` stores) or the `_Min` /
+/// `_Max` stores' bound (their loaders call `MinJitter` / `MaxJitter` where the
+/// equipment one draws `Jitter`).
 pub enum Roll<'a> {
     Seeded(&'a mut Rng),
     Bound { max: bool },
@@ -106,10 +102,8 @@ impl Roll<'_> {
     }
 
     /// [`jitter_skill`], or the bound with the "at least 1" rule, kept when the
-    /// result drops under 1 (no percentage check): an affix value
-    /// (`SkillAttribute::Jitter` / `SkillAttribute::LoadPrefixTableMin`) and a base value under the
-    /// store's `AddJitter` (`SkillAttribute::AddJitter` / `AddMinJitter` / `AddMaxJitter`; the caller
-    /// clamps `pct`).
+    /// result drops under 1 (`SkillAttribute::Jitter` / `AddJitter` / `AddMinJitter` /
+    /// `AddMaxJitter`; the caller clamps `pct`).
     pub fn skill(&mut self, v: f32, pct: f32) -> f32 {
         match self {
             Roll::Seeded(rng) => jitter_skill(v, pct, rng),
@@ -118,8 +112,7 @@ impl Roll<'_> {
     }
 
     /// [`jitter_continuous`], or `v * (1 -/+ pct/100)` clamped to [0, 100]
-    /// (`ConversionAttribute::MinJitter` / `ConversionAttribute::MaxJitter`, the conversion `_Min` /
-    /// `_Max` stores).
+    /// (`ConversionAttribute::MinJitter` / `MaxJitter`).
     // `max().min()`, not `clamp`: a NaN becomes 0.
     #[allow(clippy::manual_clamp)]
     pub fn continuous(&mut self, v: f32, pct: f32) -> f32 {

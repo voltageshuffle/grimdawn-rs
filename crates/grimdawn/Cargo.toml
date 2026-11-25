@@ -8,18 +8,15 @@ description = "Grim Dawn reimplementation on Bevy: UI, input, audio and world st
 license = "MIT"
 
 [features]
-# `cargo dev --features audit`: component / resource names for the session audit (`GD_CENSUS`, src/dev/audit.rs).
+# Component / resource names for the session audit.
 audit = ["bevy/debug", "dev"]
-# Dev builds (`cargo dev` / `cargo dev-build`): the `GD_*` hooks (gd-game-core `hooks`) are read from the environment
-# and the dev tools (`src/dev/`: screenshots, test scenes, census, exit cycles, frame-time log) and scripted test
-# systems exist. A build without it has no hook type, no hook read and none of them.
+# The `GD_*` hooks, dev tools and scripted test systems.
 dev = ["gd-audio/dev", "gd-game/dev", "gd-render/dev", "gd-ui/dev", "gd-world/dev"]
-# `cargo dev --features profile`: Chrome-trace system spans; `GD_FPS` for frame times (docs/running.md).
+# Chrome-trace system spans.
 profile = ["bevy/trace_chrome", "dev"]
 
 [dependencies]
 anyhow = "1.0.104"
-# The render feature set is gd-render's, the audio one gd-audio's.
 bevy = { version = "0.20", default-features = false, features = ["custom_cursor"] }
 gd-audio = { path = "../gd-audio" }
 gd-formats = { path = "../gd-formats" }
@@ -34,6 +31,5 @@ gd-ui-kit = { path = "../gd-ui-kit" }
 gd-world = { path = "../gd-world" }
 libc = "0.2"
 parking_lot = "0.12"
-# The render adapters the options Video tab lists (`render_devices`) and the launch adapter choice in `main`;
-# features unify with bevy_render's wgpu (already locked 30.0.2).
+# Render adapter list (options Video tab) and launch adapter choice; unifies with bevy_render's wgpu.
 wgpu = { version = "30", default-features = false }

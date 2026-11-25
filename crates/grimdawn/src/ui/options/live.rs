@@ -1,12 +1,9 @@
 use super::*;
 use gd_ui::state::options::OptionsWindow;
 
-/// Per frame, without a rebuild: the hover / drag / enabled looks ([`Look`]),
-/// the knob positions, the dropdown texts ([`DropText`], ellipsised to the box's inner width), the list scrolls
-/// ([`Scroll`]), the dropdown highlight and Apply's sound gate. The draft and
-/// bindings are read by reference; the dropdown texts / highlight recompute
-/// only when the draft's version, the open dropdown, the screen size or the tags generation changes
-/// (a drag bumps the version every frame; the knob still moves every frame).
+/// Per frame, without a rebuild: looks, knob positions, dropdown texts, list scrolls, dropdown highlight and
+/// Apply's sound gate. Dropdown texts / highlight recompute only when the draft's version, the open dropdown,
+/// the screen size or the tags generation changes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn live(
     mut commands: Commands,
@@ -49,7 +46,7 @@ pub(super) fn live(
     for (look, mut img, mut vis, mut node) in &mut looks {
         match look {
             Look::Tab { tab, up, over } => {
-                // The open tab keeps its down bitmap (the tab is in the signature).
+                // The open tab keeps its down bitmap.
                 if win.tab != *tab {
                     let h = if hover == Some(Hit::Tab(*tab)) {
                         over
@@ -134,9 +131,6 @@ pub(super) fn live(
             row
         }
         _ => {
-            // Built only here: `available_languages` walks the mounted paths. The dropdown values' tag table
-            // ([`ChoiceCtx`]) is an Arc clone, so the mutable asset borrows below (`assets.ui`,
-            // `LiveText::set`) do not conflict with the context's borrow.
             let languages = data.available_languages();
             let tags = assets.fonts.tags.clone();
             let ctx = ChoiceCtx::new(
@@ -150,7 +144,7 @@ pub(super) fn live(
             let s = assets.scale(size);
             for (e, t, mut text) in &mut texts {
                 let full = shown_text(t.shown, draft, &ctx);
-                // Ellipsised like the built box; measurement spawns nothing, and its borrow ends before `set`.
+                // Ellipsised like the built box.
                 let shown = {
                     let mut ui =
                         assets.ui(&mut commands, &data, e, s, 1.0 / w.scale_factor(), screen);
@@ -181,7 +175,6 @@ pub(super) fn live(
     for (hl, mut vis) in &mut highlights {
         let shown = match hl {
             Some(DropRowHl(k)) => highlighted == Some(*k),
-            // Apply's sound gate.
             None => apply_enabled,
         };
         vis.set_if_neq(if shown {

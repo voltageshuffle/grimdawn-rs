@@ -1,32 +1,22 @@
 //! The player's inventory and equipment for this session.
 //!
-//! Loaded read-only from the save (or the starting gear), changed by pickups
-//! and the character window; never written back to disk. Grid rules are
-//! `gd_formats::inventory` (32-px cells, footprint = bitmap size, column-major
-//! auto placement). Interaction: left click picks up / places / swaps with
-//! the item on the cursor (the bag and equipment slot handlers,
-//! GrimDawn.exe `BagWidget_HandleMouseEvent` / `EquipSlotWidget::HandleMouseEvent`, hand the item to its
-//! cursor handler, `Item::GetCursorHandler`); right click on a bag item sells it to an open merchant (only with
-//! `quickBuy`, else nothing) or equips it
-//! (`BagWidget_HandleMouseEvent` → `EquipmentCtrl::SmartAutoInsert`, the items
-//! it displaces go back to the inventory), a component or augment is
-//! selected and the next left click uses it on an item (`gd_game::inventory`
-//! docs; confirmation and highlights `ui/apply.rs`). Right click on an equipped item (slot handler
-//! `EquipSlotWidget::HandleMouseEvent`): sold to an open merchant with `quickBuy` (`gd_game::trade::SellEquipped`),
-//! else nothing (no
-//! equipment class has a secondary cursor handler); with an item held a right click is its handler's (bag:
-//! quick sale or put back, slot: quick sale, or as a left click with no merchant; `gd_game::inventory` docs).
-//! Shift + left on an equipped item with the caravan open moves it to the shown stash page
-//! (`gd_game_core::stash::StashRequest::QuickMoveWorn`, `EquipSlotWidget::HandleMouseEvent`). A held item clicked on the
-//! paper doll
-//! goes to its slot ([`doll_slots`]). Equipping checks the level and
-//! attribute requirements and the two-handed rule; any change rebuilds the
-//! player's profile (`gd_game::inventory`) and body ([`rebuild_body`]).
-//! Ctrl + left click on a stack opens the stack quantity window (`ui/stack.rs`), whose clicks are its own.
-//! Shift + left click on a bag item sends it to the open caravan (stash / transfer / material storage,
-//! `gd_game_core::stash::StashRequest::QuickMove`), Inventor or Runekeeper slot (the chain in [`clicks`]); with none
-//! open Shift is ignored. A bag item never goes to the ground from a click (`BagWidget_HandleMouseEvent` has no drop
-//! branch; the drop of the gamepad handler `BagWidget_HandleJoystickEvent` is out of scope).
+//! Loaded read-only from the save (or the starting gear), changed by pickups and the character window; never
+//! written back to disk. Grid rules are `gd_formats::inventory`.
+//! - Left click picks up / places / swaps with the item on the cursor (`BagWidget_HandleMouseEvent` /
+//!   `EquipSlotWidget::HandleMouseEvent` hand the item to its cursor handler, `Item::GetCursorHandler`).
+//! - Right click on a bag item sells it to an open merchant (only with `quickBuy`, else nothing) or equips it
+//!   (`EquipmentCtrl::SmartAutoInsert`, displaced items go back to the inventory); on a component or augment it
+//!   selects it and the next left click uses it on an item.
+//! - Right click on an equipped item: sold to an open merchant with `quickBuy`, else nothing; with an item held a
+//!   right click is its handler's (bag: quick sale or put back, slot: quick sale, or as a left click with no
+//!   merchant).
+//! - Shift + left on an equipped item with the caravan open moves it to the shown stash page.
+//! - A held item clicked on the paper doll goes to its slot. Equipping checks the level and attribute
+//!   requirements and the two-handed rule; any change rebuilds the player's profile and body.
+//! - Ctrl + left click on a stack opens the stack quantity window.
+//! - Shift + left click on a bag item sends it to the open caravan, Inventor or Runekeeper slot; with none open
+//!   Shift is ignored.
+//! - A bag item never goes to the ground from a click (`BagWidget_HandleMouseEvent` has no drop branch).
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::inventory::{Footprint, Sack, overlaps};
@@ -117,7 +107,6 @@ fn clicks(
     ),
 ) {
     capture.0 = false;
-    // `GD_INV_CLICKS` (hooks.rs) clicks the window without a mouse.
     #[cfg(feature = "dev")]
     let scripted = {
         let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
@@ -125,8 +114,7 @@ fn clicks(
     };
     let Some(inv) = inv else { return };
     if !panels.character {
-        // Closing the window ends the apply mode and drops nothing: the held
-        // item goes back to a bag (`InvRequest::Closed`).
+        // Closing the window ends the apply mode; the held item goes back to a bag.
         *bar_hold = None;
         if inv.applying.is_some() || inv.held.is_some() {
             requests.write(InvRequest::Closed);
@@ -154,8 +142,7 @@ fn clicks(
             )
         }
     };
-    // The stack window takes its own clicks (`ui/stack.rs`).
-    // The local map / quest journal draw above this window (`skills::Above`).
+    // The local map / quest journal draw above this window.
     if stack.covers(p) || above.covers(p) {
         return;
     }
@@ -165,8 +152,7 @@ fn clicks(
         return;
     }
     capture.0 = true;
-    // A held sheet-bar part keeps scrolling / dragging without a new press
-    // (`window::bar_held`: arrow repeat, track pages, thumb drag).
+    // A held sheet-bar part keeps scrolling / dragging without a new press.
     if let Some((t, hold)) = bar_hold.as_mut() {
         if buttons.pressed(MouseButton::Left)
             && let Some(sl) = layout.sheet_list.as_ref().filter(|sl| sl.tab == *t)
@@ -190,19 +176,16 @@ fn clicks(
     if !left && !right {
         return;
     }
-    // Apply mode (`gd_game::inventory` docs): the confirmation (`ui/apply.rs`)
-    // takes the clicks; either button on a bag or slot is the mode's click
-    // (`ApplyRequest::Click`). Every other Yes/No question (destroy, tonic/writ use, the trade
-    // prompts, the dismantle warning) takes them too: a click under it must not swap the held item.
+    // Apply mode's confirmation and every other Yes/No question take the clicks: a click under it must not swap
+    // the held item.
     if question_up(&inv, &trade, &confirm) {
         return;
     }
-    // The close button: the window closes as with its key (the held item goes back to a bag next frame).
+    // The close button: the held item goes back to a bag next frame.
     if left && on_close {
         panels.character = false;
         return;
     }
-    // The weapon-swap button: the other set (`gd_game::weapon_sets`).
     if left && layout.swap_button.is_some_and(|r| contains(&r, p)) {
         swap.write(gd_game::weapon_sets::SwapWeapons { from_window: true });
         return;
@@ -213,8 +196,7 @@ fn clicks(
         }
         return;
     }
-    // Page II / III list: section headers fold; the shared bar scrolls (thumb drag,
-    // arrow hold-repeat, track pages — `window::Bar::press`, as every other list).
+    // Page II / III list: section headers fold; the shared bar scrolls.
     if left && let Some(sl) = layout.sheet_list.clone() {
         let t = sl.tab as usize;
         let cur = panels.sheet_scroll[t].clamp(0.0, sl.max);
@@ -234,13 +216,10 @@ fn clicks(
             return;
         }
     }
-    // Move reagents (the window's widget listener `CharacterWindow::OnButtonEvent`:
-    // ignored without a player or while its guard `InventoryWindow.reagentGuard` is set,
-    // PORT: taken as the held item; with option "Reagent Transfer
-    // Confirmation" (`transferConfirmBypass` here, default on) it asks
-    // `tagMoveReagentsConfirm` (`DialogManager::AddDialog` type 35, `ui/apply.rs`),
-    // else `PlayerInventoryCtrl::DepositReagents` at once). The button's
-    // `soundNameDown` plays on the press (`ButtonStatic`).
+    // Move reagents (`CharacterWindow::OnButtonEvent`): ignored without a player or while
+    // `InventoryWindow.reagentGuard` is set (PORT: taken as the held item); with `transferConfirmBypass` off it asks
+    // `tagMoveReagentsConfirm`, else `PlayerInventoryCtrl::DepositReagents` at once. `soundNameDown` plays on the
+    // press.
     if left && layout.reagent_button.is_some_and(|r| contains(&r, p)) {
         if let Some(pak) = data
             .db
@@ -261,9 +240,8 @@ fn clicks(
         }
         return;
     }
-    // Auto-sort (`gd_game_core::inventory::SortBag`: each sort starts one layout further),
-    // at once with option `sortConfirmBypass`, else after `tagCaravanSort`
-    // (`ui/apply.rs`); not while an item is held (`CharacterWindow::OnButtonEvent`).
+    // Auto-sort (each sort starts one layout further), at once with `sortConfirmBypass`, else after
+    // `tagCaravanSort`; not while an item is held (`CharacterWindow::OnButtonEvent`).
     if left && let Some((b, _)) = layout.sort_buttons.iter().find(|(_, r)| contains(r, p)) {
         if inv.held.is_none() && !players.is_empty() {
             if options.flag("sortConfirmBypass") {
@@ -281,7 +259,6 @@ fn clicks(
     if players.single().is_err() {
         return;
     }
-    // Attribute + buttons: one point per click.
     if left
         && let Some((which, _)) = layout.attr_buttons.iter().find(|(_, r)| contains(r, p))
         && progress
@@ -301,10 +278,9 @@ fn clicks(
         }
         let (cx, cy) = (((p.x - r.x) / cell) as u32, ((p.y - r.y) / cell) as u32);
         // Every bag click hides the stack window first; Ctrl + left click on a stack of more than one opens it
-        // there, on anything else does nothing (`BagWidget_HandleMouseEvent`, `ui/stack.rs`).
+        // there, on anything else does nothing.
         stack.hide();
-        // The apply mode's handler takes both buttons first
-        // (`BagWidget_HandleMouseEvent`, `gd_game_core::inventory::ApplyRequest::Click`).
+        // The apply mode's handler takes both buttons first.
         if inv.applying.is_some() && inv.held.is_none() {
             apply.write(gd_game_core::inventory::ApplyRequest::Click(Some(
                 gd_game_core::inventory::ItemLoc::Bag {
@@ -316,16 +292,11 @@ fn clicks(
             return;
         }
         // Shift + left click on a bag item, nothing held: the first open window of the chain takes it
-        // (`BagWidget_HandleMouseEvent`): the caravan (`gd_game_core::stash::StashRequest::QuickMove`),
-        // the Inventor's item slot (`UIInventor::QuickAddItem`: the shown tab's slot (tabs 0-3), refused on any other
-        // tab and while the dismantle tab's guard bytes are set, PORT: taken as its warning prompt), the Runekeeper's
-        // slot (`UIRunekeeper::QuickAddItem`); a refused slot shows `tagTransferStashError` with the error sound
-        // (`gd_game_core::stash::QuickActionError`). PORT: the slot's own test is `Trade::accepts`.
-        // `AscensionItemBox_AddItem` / Inventor `InventorItemBox::AddItem` / `AddItemB` / `AddItemC` / `AddItemD`
-        // (the slot's `ItemBox::AddItem`): an occupied slot refuses too (no swap); accepted ->
-        // `InvRequest::ToWindowSlot`. PORT: its chat link (chat window) and player trade
-        // (`TradeManager`) steps have no port window. With none open, Shift is ignored (Ctrl / pickup below);
-        // there is no merchant step (selling is the right click).
+        // (`BagWidget_HandleMouseEvent`): the caravan, the Inventor's item slot (`UIInventor::QuickAddItem`: tabs
+        // 0-3 only, refused while the dismantle tab's guard bytes are set, PORT: taken as its warning prompt), the
+        // Runekeeper's slot (`UIRunekeeper::QuickAddItem`); a refused or occupied slot shows `tagTransferStashError`
+        // with the error sound. PORT: the slot's own test is `Trade::accepts`; the chat link and player trade steps
+        // have no port window. There is no merchant step.
         if left
             && inv.held.is_none()
             && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
@@ -397,12 +368,9 @@ fn clicks(
             }
             return;
         }
-        // A merchant is open: right click sells (`gd_game::trade` pays) with the
-        // "quick sell" option (`quickBuy`), else does nothing
-        // (inventory slot click handlers `BagWidget_HandleMouseEvent` / `BagWidget_HandleJoystickEvent`:
-        // `GetBool(0)` gates `PlayerSaleRequest` while a market id is set).
-        // With an item held the handler's `SecondaryInventoryActivate` (gd_game::inventory doc): the held item is
-        // sold with `quickBuy`, else put back (`Cancel`, the right `InvRequest::Bag` below).
+        // A merchant is open: right click sells with `quickBuy`, else does nothing (`BagWidget_HandleMouseEvent`:
+        // `GetBool(0)` gates `PlayerSaleRequest`). With an item held (`SecondaryInventoryActivate`): sold with
+        // `quickBuy`, else put back.
         if right && matches!(trade.open, Some(crate::trade::TradeOpen::Vendor { .. })) {
             let quick = options.flag("quickBuy");
             if inv.held.is_some() {
@@ -441,8 +409,7 @@ fn clicks(
         });
         return;
     }
-    // A held item clicked on the paper doll goes to its slot, as a click on that
-    // slot (module doc; `gd_game_core::inventory::InvRequest::Doll`).
+    // A held item clicked on the paper doll goes to its slot, as a click on that slot.
     if left && layout.doll.is_some_and(|r| contains(&r, p)) && inv.held.is_some() {
         requests.write(InvRequest::Doll);
         return;
@@ -451,7 +418,6 @@ fn clicks(
         if !contains(r, p) {
             continue;
         }
-        // An equipment slot click hides the stack window too (`EquipSlotWidget::HandleMouseEvent`).
         stack.hide();
         let i = slot_index(*slot);
         if inv.applying.is_some() && inv.held.is_none() {
@@ -462,8 +428,7 @@ fn clicks(
             return;
         }
         // Shift + left on a worn item with the caravan open (`EquipSlotWidget::HandleMouseEvent`): to the shown
-        // stash page
-        // (`gd_game_core::stash::quick_move_worn`).
+        // stash page.
         if left
             && inv.held.is_none()
             && inv.equipped[i].is_some()
@@ -477,9 +442,8 @@ fn clicks(
             });
             return;
         }
-        // A right press with a merchant open (`EquipSlotWidget::HandleMouseEvent` / `SecondaryEquipActivate`):
-        // `quickBuy`
-        // sells the held item or, with none, the worn one; without it nothing.
+        // A right press with a merchant open (`SecondaryEquipActivate`): `quickBuy` sells the held item or, with
+        // none, the worn one; without it nothing.
         if right && matches!(trade.open, Some(crate::trade::TradeOpen::Vendor { .. })) {
             if options.flag("quickBuy")
                 && let Some(shop) = trade.shop(loaded.as_deref())
@@ -497,13 +461,9 @@ fn clicks(
     }
 }
 
-/// Rebuilds the player's body for its new equipment (the stats follow in
-/// `gd_game::inventory::sync_equipment`; each item drawn with its illusion,
-/// `gd_sim::items::illusion::look_record`); the entity and its gameplay state
-/// stay. The new parts load in the background first (`character::player_body_ready`): the old body stays until every
-/// one is in, a few frames, instead of parsing meshes and decoding textures on the game thread. A player waiting holds
-/// the parts already in (`pending`, dropped with the rebuild, the player, or the session); another change meanwhile
-/// only changes what it waits for (the loadout is read each frame).
+/// Rebuilds the player's body for its new equipment, each item drawn with its illusion; the entity and its
+/// gameplay state stay. The old body stays until every new part has loaded (`pending`); another change meanwhile
+/// only changes what it waits for.
 fn rebuild_body(
     mut commands: Commands,
     mut changed: MessageReader<gd_game_core::inventory::EquipmentChanged>,
@@ -545,9 +505,8 @@ fn rebuild_body(
     });
 }
 
-/// Mouse wheel over a character-sheet list scrolls it 20 × s px a notch (the shared scroll
-/// windows' wheel speed, `ui/window.rs`), over the view or the bar. Not under the game menu / Options
-/// (`GamePause::menu`) or a modal question ([`question_up`]).
+/// Mouse wheel over a character-sheet list scrolls it 20 × s px a notch, over the view or the bar. Not under the
+/// game menu / Options or a modal question.
 #[allow(clippy::too_many_arguments)]
 fn sheet_wheel(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
@@ -602,9 +561,8 @@ fn sheet_wheel(
     }
 }
 
-/// Top-left cell of the footprint of a held item of `size` over a grid at
-/// `r` (cell size `cell`, `grid` cells) with the cursor at `p`
-/// ([`gd_formats::inventory::drop_cell`]).
+/// Top-left cell of the footprint of a held item of `size` over a grid at `r` (cell size `cell`, `grid` cells)
+/// with the cursor at `p`.
 pub fn drop_cell(p: Vec2, r: &URect, cell: f32, grid: (u32, u32), size: Footprint) -> (u32, u32) {
     gd_formats::inventory::drop_cell([(p.x - r.x) / cell, (p.y - r.y) / cell], grid, size)
 }
@@ -612,12 +570,9 @@ pub fn drop_cell(p: Vec2, r: &URect, cell: f32, grid: (u32, u32), size: Footprin
 #[derive(Component)]
 struct HeldOverlay;
 
-/// Placement preview of the held item (`CursorHandlerItemMove::
-/// GetInventoryHighlights`, Game.dll; colours from the
-/// grid widget constructor GrimDawn.exe `BagWidget::BagWidget` and its draw
-/// `BagWidget::Render`): the footprint in green (0, 1, 0, 0.5) while it overlaps
-/// fewer than two items, the one overlapped item in blue (0, 0, 1, 0.5);
-/// with two or more, those items in red (1, 0, 0, 0.5) and no footprint.
+/// Placement preview of the held item (`CursorHandlerItemMove::GetInventoryHighlights`, `BagWidget::Render`): the
+/// footprint in green (0, 1, 0, 0.5) while it overlaps fewer than two items, the one overlapped item in blue
+/// (0, 0, 1, 0.5); with two or more, those items in red (1, 0, 0, 0.5) and no footprint.
 #[allow(clippy::too_many_arguments)]
 fn held_overlay(
     mut commands: Commands,
@@ -634,9 +589,7 @@ fn held_overlay(
         Res<gd_ui::apply::InvConfirm>,
     ),
 ) {
-    // The rects to show (screen px); the nodes are moved / recoloured in
-    // place, spawned only for a new rect and despawned only for a surplus. None under the game menu or a
-    // modal question (the preview's z is above the question box).
+    // None under the game menu or a modal question (the preview's z is above the question box).
     let mut wanted: Vec<(URect, Color)> = Vec::new();
     if let Some(inv) = inv
         && !pause.menu
@@ -759,8 +712,8 @@ fn held_overlay(
 #[derive(Component)]
 struct HeldIcon(Item);
 
-/// The item on the cursor, drawn at the mouse position; the game cursor stays
-/// over it (`CursorHandler::GetGameCursorType` 1, `ui::cursor`).
+/// The item on the cursor, drawn at the mouse position; the game cursor stays over it
+/// (`CursorHandler::GetGameCursorType` 1).
 #[allow(clippy::too_many_arguments)]
 fn held_icon(
     mut commands: Commands,

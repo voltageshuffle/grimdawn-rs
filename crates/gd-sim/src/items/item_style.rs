@@ -22,12 +22,14 @@
 //!
 //! File format ([`StyleRules::parse`] / [`StyleRules::write`]): UTF-8 text, one rule per line, `#` starts a
 //! comment line, blank lines are skipped. A rule is whitespace-separated `key=value` tokens (a value with
-//! spaces in double quotes, `\"` and `\\` escaped) plus the bare word `hide`:
+//! spaces in double quotes, `\"` and `\\` escaped) plus the bare words `hide` and `any`:
 //! `rarity=common,magic,rare,epic,legendary`, `type=weapon,offhand,armor,accessory,component,relic,
 //! blueprint,augment,consumable,material,quest,lore,other`, `set=yes|no`, `mi=yes|no`,
 //! `doublerare=yes|no`, `ascended=yes|no`, `level=MIN-MAX` (`MIN-`, `-MAX` or one number),
 //! `name="text"`, `color=#RRGGBB`, `prefix="text"` or `suffix="text"` (trimmed; one space is put between tag
-//! and name), `hide`. A line with an unknown key or a bad value is skipped with a warning; the others still load.
+//! and name), `hide`; `any` changes nothing and stands alone for a rule with no conditions and no style (an
+//! empty tag's position is not written). A line with an unknown key or a bad value is skipped with a warning;
+//! the others still load.
 //! Saving keeps the user's comment lines and turns a skipped line into a `# skipped: <line>` comment, all gathered
 //! at the top of the file (blank lines are not kept); a file without comments gets a short header.
 use super::illusion::item_type;
@@ -492,7 +494,8 @@ impl StyleRules {
             if r.style.hide {
                 line.push_str(" hide");
             }
-            out.push_str(line.trim_start());
+            let line = line.trim_start();
+            out.push_str(if line.is_empty() { "any" } else { line });
             out.push('\n');
         }
         out
@@ -616,6 +619,9 @@ fn tokens(line: &str) -> Result<Vec<String>, String> {
 fn parse_rule(line: &str) -> Result<Rule, String> {
     let mut r = Rule::default();
     for tok in tokens(line)? {
+        if tok == "any" {
+            continue;
+        }
         if tok == "hide" {
             r.style.hide = true;
             continue;

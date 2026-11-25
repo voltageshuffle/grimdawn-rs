@@ -1,6 +1,4 @@
-//! Headless checks of travel points: the discovered riftgates go into the
-//! save and come back from it; a personal portal opened from the map away
-//! from a gate brings the player back.
+//! Travel points: discovered riftgates round-trip through the save; a personal portal brings the player back.
 use bevy::prelude::*;
 use gd_game::riftgates::{
     GateTravel, IndexedPoint, PersonalPortal, Portal, Rift, RiftgateMap, RiftgateRequest,
@@ -37,8 +35,7 @@ fn waypoint(g: &mut TestGame, kind: WaypointKind, uid: [u32; 4], at: Vec3) -> En
     e.id()
 }
 
-/// A riftgate discovered within its `bindRadius` goes into the save's list of the session difficulty; the
-/// session loaded from that save knows it, and saving again appends a newly discovered one.
+/// A gate discovered within `bindRadius` is saved for the session difficulty, reloaded, and a new one appended.
 #[test]
 fn discovered_riftgates_load_and_save() {
     use gd_formats::save::gdc::Gdc;
@@ -132,8 +129,7 @@ fn portal_entities(g: &mut TestGame) -> Vec<(Entity, u32, bool)> {
         .collect()
 }
 
-/// A gate here at (1, 0, 0) (used: the map is open at it) and a discovered
-/// one far away.
+/// A used gate at (1, 0, 0) and a discovered one far away.
 fn at_gate(g: &mut TestGame) -> ([u32; 4], [u32; 4], [u32; 4], Vec3) {
     let (here, there, unknown) = ([7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9]);
     let e = waypoint(g, WaypointKind::Riftgate, here, Vec3::new(1.0, 0.0, 0.0));

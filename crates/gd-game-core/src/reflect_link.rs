@@ -1,7 +1,4 @@
-//! Reflect-link data: the cast message ([`StartLink`]), one link ([`Link`]),
-//! the caster's link list ([`ReflectLinks`]) and the link constructor
-//! ([`new_link`]). The systems that start, tick and end links are gd-game's
-//! `reflect_link` (its module docs carry the full engine trace).
+//! Reflect-link data; the systems are gd-game's `reflect_link`.
 use bevy::prelude::*;
 
 /// A reflect-link cast fired at `target` (`casting::fire_casts`).
@@ -13,7 +10,6 @@ pub struct StartLink {
     pub level_index: usize,
 }
 
-/// One link (`ActivateNow`'s list entry).
 #[derive(Clone, Debug)]
 pub struct Link {
     pub target: Entity,
@@ -23,9 +19,7 @@ pub struct Link {
     /// `linkDelay` left: the range check starts after it.
     pub delay: f32,
     pub max_range: f32,
-    /// `damageAbsorptionPercent`.
     pub absorb: f32,
-    /// `damageAbsorptionReflectPercent`.
     pub reflect: f32,
 }
 

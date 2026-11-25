@@ -1,7 +1,5 @@
 //! The CPU raster of the minimap / local map: draws the regions'
-//! [`MinimapImage`]s (`gd_formats::map::minimap`) into an RGBA8 buffer.
-//! Lives in gd-sim (optimised in dev builds too) because it is hot pixel code: a full local map image is millions
-//! of texels.
+//! [`MinimapImage`]s into an RGBA8 buffer.
 //!
 //! `Grim Dawn.exe` `DetailMapWidget::DrawMapPass` (the detail-map widget's map pass):
 //! every region's image is drawn as a ground quad over its bounding box
@@ -57,7 +55,7 @@ impl FogMask<'_> {
 
     /// The fog texture's alpha 0..1 (1 = fogged) at region texture
     /// coordinates (u along x, z01 from low to high z), mapped as the
-    /// engine's packed fog coordinates (module doc).
+    /// engine's packed fog coordinates.
     fn alpha(&self, u: f32, z01: f32) -> f32 {
         if self.w < 2 || self.h < 2 || self.cells.len() < (self.w * self.h) as usize {
             return 1.0;
@@ -81,7 +79,7 @@ impl FogMask<'_> {
     }
 }
 
-/// How a region's fog of war enters [`draw_region`] (module doc).
+/// How a region's fog of war enters [`draw_region`].
 pub struct RegionFog<'a> {
     /// The map pass's mask (local map: the session fog; the minimap's is
     /// `invisible.tex`, `None`): ground unexplored this session greyed.
@@ -170,7 +168,6 @@ pub struct RegionDraw<'a> {
     pub fog: Option<RegionFog<'a>>,
 }
 
-/// Rows a thread takes at least: fewer and the spawn costs more than the pixels.
 const ROWS_PER_THREAD: u32 = 48;
 
 /// Fills `clip` (px: x0, y0, x1, y1, the ends exclusive) of `dst` (RGBA8, `dw × dh`) black and draws `regions` over
@@ -219,8 +216,7 @@ pub fn draw_regions(
 }
 
 /// Draws one region's image into `dst` (RGBA8 rows from `row0` on, `dw` px wide, opaque) where it covers the view,
-/// inside `clip` (px: x0, y0, x1, y1, the ends exclusive). The texture coordinates step by a constant along a row
-/// (the view is affine).
+/// inside `clip` (px: x0, y0, x1, y1, the ends exclusive).
 fn draw_region(dst: &mut [u8], row0: u32, dw: u32, clip: [u32; 4], view: &View, r: &RegionDraw) {
     let (min, max) = r.bounds;
     // The region's screen bounding box.

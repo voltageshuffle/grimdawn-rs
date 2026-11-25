@@ -3,12 +3,10 @@
 //! plays through the game's pause ([`PlaysWhilePaused`]); a placed one is held by it.
 //!
 //! 3D sounds: [`Positioned`] holds every mono sound the engine would make a 3D buffer; its voice is mixed to the two
-//! ears with the gains of [`gd_sim::sound3d`], kept current every frame ([`positioned_sounds`], `emitters::emitters`).
-//! DS8Sound.dll `DS8SoundSample::LoadWave`: a sample's buffer is made with `DSBCAPS_CTRL3D`, which DirectSound
-//! refuses for a stereo WAV; it is then made again as a plain buffer and marked not 3D (`SoundBuffer.is3d`), so the
-//! position and min / max distance calls do nothing: a stereo file plays centred at its full volume wherever it is
-//! (`Loaded::mono`; 901 of the 5 955 stock pak entries, many monster vocalisations). The checks of `SoundPak::Play3D`
-//! still apply to it.
+//! ears with the gains of [`gd_sim::sound3d`], kept current every frame.
+//! `DS8SoundSample::LoadWave`: DirectSound refuses `DSBCAPS_CTRL3D` for a stereo WAV, so it is remade as a plain
+//! buffer and the position / distance calls do nothing: a stereo file plays centred at full volume wherever it is.
+//! The checks of `SoundPak::Play3D` still apply to it.
 use super::Sounds;
 use super::cache::Loaded;
 use super::listener::{Listener, SoundClass, VOICES, sound};
@@ -18,26 +16,21 @@ use gd_formats::arz::Record;
 use gd_game_core::data::GameData;
 use std::sync::Arc;
 
-/// The frequency every engine sound buffer is set to unless pitched: `SoundDescriptor::SoundDescriptor`
-/// (`SoundDescriptor.frequency` = 44100).
+/// The frequency every engine sound buffer is set to unless pitched (`SoundDescriptor::SoundDescriptor`).
 pub const ENGINE_HZ: f32 = 44100.0;
 
-/// Playback speed of a sound file at the engine frequency `freq` (Hz). `SoundManager::Play3D` /
-/// `Play2D` set a sound buffer's frequency to the descriptor's (`ENGINE_HZ`, or a [`pitch_hz`]) through
-/// `IDirectSoundBuffer::SetFrequency`, absolute Hz, on a buffer made in the WAV's own format (`gd_formats::wav`): a
-/// 48 kHz WAV plays at 44100 / 48000 = 0.919 speed, a 96 kHz one at half speed. `.ogg` streams (`rate` None,
-/// `StartStream`) get no frequency: their own speed.
+/// Playback speed of a sound file at the engine frequency `freq` (Hz): `IDirectSoundBuffer::SetFrequency` is
+/// absolute on a buffer in the WAV's own format, so a 48 kHz WAV plays at 44100 / 48000 speed. `.ogg` streams
+/// (`rate` None) play at their own speed.
 pub fn playback_speed(freq: f32, rate: Option<u32>) -> f32 {
     rate.filter(|r| *r > 0)
         .map_or(1.0, |r| (freq / r as f32).max(0.05))
 }
 
-/// A `SoundPak` record as `SoundPak::Load` reads it, kept in [`Sounds`] by name until the mod changes, so
-/// a play does no record lookups.
+/// A `SoundPak` record as `SoundPak::Load` reads it.
 pub struct PakInfo {
-    /// `volumeSet` ([`volume_set`]).
     pub(super) class: SoundClass,
-    /// `soundName1..N` (normalized file keys) and their `weightN` (default 25).
+    /// Normalized file keys and their `weightN` (default 25).
     pub names: Vec<String>,
     weights: Vec<u32>,
     pub volume: f32,
@@ -78,14 +71,12 @@ impl PakInfo {
             .map(String::as_str)
     }
 
-    /// [`pitch_hz`] of the pak.
     pub(super) fn pitch(&self, positional: bool, roll: u32) -> f32 {
         pitch_hz(self.pitch_up, self.pitch_step, positional, roll)
     }
 }
 
 impl Sounds {
-    /// The `SoundPak` record `name`, read on first use.
     pub fn pak(&mut self, data: &GameData, name: &str) -> Option<Arc<PakInfo>> {
         if let Some(p) = self.paks.get(name) {
             return p.clone();
@@ -96,25 +87,16 @@ impl Sounds {
     }
 }
 
-/// Plays one variant of a `SoundPak` record (`SoundPak::Play3D` / `Play2D`, Engine.dll). `at`: the sound's world
-/// position, heard from the listener (`listener::ears`); `None` (or no listener yet) plays it 2D. The single place
-/// gameplay one-shots start, so every rule that limits what is heard is here:
+/// Plays one variant of a `SoundPak` record (`SoundPak::Play3D` / `Play2D`). `at`: the sound's world position;
+/// `None` (or no listener yet) plays it 2D. Every rule that limits what is heard is here:
 ///
-/// - `SoundManager::Play3D` / `Play2D`: not started while its volume set's option
-///   gain or the master volume is below 1e-4 ([`audible_gain`]); not started while all [`VOICES`] slots play
-///   (`GetEmptyCurrentPlayingIndex` returns -1: no stealing, no priority); slots free when a sound ends.
-/// - `SoundPak::Play3D`: a `force2d` pak positioned in the world plays 2D only when the spot is
-///   inside the view frustum widened by 20 m (`IsValidPositionInFrustum`); others only if
-///   [`could_possibly_hear`] (`CouldPossiblyHear`, always on).
-/// - `SoundPak::Load`: `volumeSet` picks the volume option ([`volume_set`]); `weightN` default
-///   25, `PickSound` ([`pick_sound`]).
+/// - `SoundManager::Play3D` / `Play2D`: not started while its volume set's option gain or the master volume is
+///   below 1e-4; not started while all [`VOICES`] slots play (no stealing, no priority).
+/// - `SoundPak::Play3D`: a `force2d` pak positioned in the world plays 2D only when the spot is inside the view
+///   frustum widened by 20 m; others only if [`could_possibly_hear`].
 /// - Pitch: [`pitch_hz`], played at the file's [`playback_speed`].
 ///
-/// Footstep / vox / combat requests that fail these are dropped here, at the same point the engine drops them (the
-/// callbacks themselves are not gated: `Actor::UpdateSelf` runs `HandleAnimationCallbacks` for every updated actor).
-///
-/// `SoundPak::GetPlayLocation`: after the hearing check a `spawnAtCameraY` pak (level up, low
-/// health warnings) plays at the ears' height. A mono file heard in 3D stays where it started ([`Positioned`]).
+/// `SoundPak::GetPlayLocation`: a `spawnAtCameraY` pak plays at the ears' height.
 pub fn play_pak(
     commands: &mut Commands,
     data: &GameData,
@@ -139,11 +121,9 @@ fn start_pak(
     start_named(commands, data, sounds, pak, &info, name, at, on, 0)
 }
 
-/// How many frames a one-shot waits for its file's background read ([`replay_pending`], `dialog::npc_voices`) before
-/// it is dropped.
+/// How many frames a one-shot waits for its file's background read before it is dropped.
 pub(super) const PENDING_FRAMES: u8 = 20;
 
-/// A one-shot whose picked file was still being read ([`start_named`]).
 pub(super) struct PendingPlay {
     pak: String,
     name: String,
@@ -152,8 +132,8 @@ pub(super) struct PendingPlay {
     frames: u8,
 }
 
-/// [`start_pak`] once the pak's file `name` is picked: the hearing rules, then the voice; a file not loaded yet is
-/// read in the background and the play waits for it ([`replay_pending`]).
+/// [`start_pak`] once the pak's file `name` is picked; a file not loaded yet is read in the background and the play
+/// waits for it.
 #[allow(clippy::too_many_arguments)]
 fn start_named(
     commands: &mut Commands,
@@ -234,17 +214,15 @@ fn start_named(
         speed,
         place,
     );
-    // A sound with no place in the world is the interface's (a button, an item moved in a window, a spoken refusal:
-    // the engine's `EnablePauseHack` ones): it plays while the game is paused, every other pak sound is held.
+    // A sound with no place in the world is an interface sound (`EnablePauseHack`).
     if at.is_none() && on.is_none() {
         commands.entity(e).insert(PlaysWhilePaused);
     }
     Some(e)
 }
 
-/// Starts the one-shots that waited for their file ([`start_named`]) once `cache::collect_preload` has it: a few
-/// frames late (PORT: the engine streams a sound it did not preload rather than stall the frame on the read). A new
-/// session drops the placed ones still waiting: their spot and entity belong to the world that ended.
+/// Starts the one-shots that waited for their file (PORT: the engine streams it instead). A new session drops the
+/// placed ones still waiting.
 pub(super) fn replay_pending(
     mut commands: Commands,
     data: Res<GameData>,
@@ -274,9 +252,7 @@ pub(super) fn replay_pending(
     }
 }
 
-/// Starts a file, as a 3D voice at `place` or else plain. `volume` is the sound's own
-/// ([`BaseVolume`](super::listener::BaseVolume)); a 3D voice's distance gain and pan are its [`EarGains`]
-/// ([`Listener::gains`]).
+/// Starts a file, as a 3D voice at `place` or else plain. `volume` is the sound's own.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_voice(
     commands: &mut Commands,
@@ -302,8 +278,7 @@ pub(super) fn start_voice(
     e
 }
 
-/// `SoundPak::CouldPossiblyHear`: a 3D sound starts only when the listener is closer than 8 × `fallOff`
-/// (squared distances compared).
+/// `SoundPak::CouldPossiblyHear`: a 3D sound starts only when the listener is closer than 8 × `fallOff`.
 pub fn could_possibly_hear(falloff: f32, d: f32) -> bool {
     d * d < (8.0 * falloff) * (8.0 * falloff)
 }
@@ -372,10 +347,8 @@ pub(super) fn numbered(rec: &Record, key: &str) -> Vec<String> {
     out
 }
 
-/// A mono sound heard in 3D. It has a fixed position, its gain and pan following the listener
-/// (`gd_sim::sound3d` module doc), unless tracked (`SoundPak::Track` → `SoundManager::RegisterMovingObject`):
-/// `SoundManager::Update` moves it to its object every frame and drops the object from the
-/// list once it is gone (the sound plays on where it was).
+/// A mono sound heard in 3D, at a fixed position unless tracked (`SoundManager::RegisterMovingObject`): then it
+/// follows its object every frame and plays on where it was once the object is gone.
 #[derive(Component)]
 pub struct Positioned {
     pub(super) target: Option<Entity>,
@@ -384,8 +357,7 @@ pub struct Positioned {
     pub(super) ears: EarGains,
 }
 
-/// [`Positioned`] sounds' 3D gains (distance and pan, [`Listener::gains`]) for this frame's listener; their own volume
-/// ([`BaseVolume`](super::listener::BaseVolume)) stays as it started.
+/// [`Positioned`] sounds' 3D gains for this frame's listener.
 pub(super) fn positioned_sounds(
     mut q: Query<&mut Positioned>,
     at: Query<&GlobalTransform>,
@@ -404,8 +376,7 @@ pub(super) fn positioned_sounds(
     }
 }
 
-/// Gameplay's sound requests (`gd_game_core::visuals::PlaySound`), heard from the ears; tracked ones (`PlaySoundOn`)
-/// follow their entity ([`Positioned`]).
+/// Gameplay's sound requests; tracked ones (`PlaySoundOn`) follow their entity.
 pub(super) fn play_requests(
     mut commands: Commands,
     mut events: MessageReader<gd_game_core::visuals::PlaySound>,
@@ -480,14 +451,11 @@ pub(super) fn periodic_sounds(
     }
 }
 
-/// Footprints are placed this close to the player at most (PORT: the engine places every character's, into the
-/// region's decal set).
+/// PORT: footprints are placed this close to the player at most (the engine places every character's).
 const FOOTPRINT_RANGE: f32 = 40.0;
 
-/// The sounds and footprints of characters' animation callbacks, picked by `gd_game::char_sounds` (the form's
-/// overrides read from the `Character`): played at the character, footprints placed like a particle's decal
-/// (`fx::DropDecal`: `World::PlaceDecal`, the 256-decal ring, only with `detailObjects`). The paper doll makes none.
-/// Swipe and hit sounds come from gameplay (`gd_game::combat_sounds`, as `PlaySound`).
+/// The sounds and footprints of characters' animation callbacks: played at the character, footprints placed like a
+/// particle's decal (only with `detailObjects`). The paper doll makes none.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn character_callbacks(
     mut commands: Commands,

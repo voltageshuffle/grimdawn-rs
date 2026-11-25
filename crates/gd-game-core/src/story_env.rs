@@ -1,19 +1,9 @@
-//! [`ScriptEnv`] over the layered install (VFS + merged database + EN tags):
-//! the gd-story script host's view of the game data, plus the item-footprint
-//! query that resolves a fresh item through gd-sim's item rules.
+//! [`ScriptEnv`] over the layered install (VFS + merged database + tags): the gd-story script
+//! host's view of the game data. Lives here, not in gd-story, because
+//! [`ScriptEnv::item_footprint`] needs gd-sim's `items::resolve`.
 //!
-//! Lives in gd-game-core (not gd-story) because [`ScriptEnv::item_footprint`] needs
-//! gd-sim's `items::resolve`, which sits above the story crate. The quest /
-//! conversation loaders themselves are [`gd_story::story::load`]; [`DataEnv`]
-//! delegates to them.
-//!
-//! * Text: the tag table of the configured language (Engine.dll
-//!   `LocalizationManager::Load`), passed by the host. Quest / dialog text:
-//!   a non-English session replaces each file's embedded text block with the
-//!   line-ordered `text_<code>/<basename>.txt` override
-//!   ([`gd_formats::text::load_text_override`], `PortableLocalization::Read`).
-//! * Item footprints ([`ScriptEnv::item_footprint`], `Player.IsSpaceAvailable`): a fresh item of the record,
-//!   resolved and sized from its bitmap as the inventory places it.
+//! Non-English quest / dialog text replaces each file's embedded text block with the
+//! line-ordered `text_<code>/<basename>.txt` override (`PortableLocalization::Read`).
 use gd_formats::arz::{RawValue, Record};
 use gd_formats::collections::HashMap;
 use gd_formats::text::TagTable;
@@ -59,12 +49,12 @@ impl DataEnv {
         r
     }
 
-    /// Every `quests/*.qst` of the VFS ([`gd_story::story::load::quest_defs`]).
+    /// Every `quests/*.qst` of the VFS.
     pub fn quest_defs(&self) -> QuestDefs {
         load::quest_defs(&self.vfs, &self.language)
     }
 
-    /// Every `conversations/*.cnv` of the VFS ([`gd_story::story::load::dialogs`]).
+    /// Every `conversations/*.cnv` of the VFS.
     pub fn dialogs(&self) -> Dialogs {
         load::dialogs(&self.vfs, &self.language)
     }
@@ -109,7 +99,7 @@ impl ScriptEnv for DataEnv {
         };
         let r =
             gd_sim::items::resolve::resolve(&gd_sim::items::ItemDb::new(self.db.clone()), &item)?;
-        // As the inventory sizes it (`crate::inventory::Inventory::info`): 1×1 without a readable bitmap.
+        // 1×1 without a readable bitmap, as the inventory sizes it.
         Some(bitmap_footprint(&self.vfs, &r.bitmap).unwrap_or(Footprint { w: 1, h: 1 }))
     }
 }

@@ -1,50 +1,20 @@
-//! The potions window ("Cauldron"): choosing each potion's container and its
-//! two modifiers. This module owns whether the window is open
-//! ([`PotionWindow`]) and applies the player's [`PotionRequest`]s with the
-//! rules in `gd_sim::potions` (lists, slots, choices); the game draws the
-//! window (`gd_ui::potions`) from [`PotionWindow`] and the player's
-//! skill book.
+//! The potions window ("Cauldron"): choosing each potion's container and its two modifiers with
+//! the rules in `gd_sim::potions`.
 //!
-//! * Opening: Game.dll `NpcCauldron::OnPlayerInteract` (the
-//!   cauldrons `records/creatures/npcs/merchants/areah_cauldron*.dbr`, class
-//!   `NpcCauldron`, needs the third expansion): the main player's interaction
-//!   asks the UI to open the window for that cauldron and the cauldron says
-//!   hello (`Npc::SayHello`); the window shows the page last shown (health
-//!   first). Not the HUD potion slots. The interaction is the player's
-//!   `PlayerOrder::Interact` (a click, the Interact key), which walks to it;
-//!   [`reach_cauldron`] opens the window at the NPC use range
-//!   (`DefaultRequestNpcAction`, as `crate::trade`): within player radius +
-//!   cauldron radius + 3 m ([`crate::conversation::in_talk_range`]), else at
-//!   the walk's end (`ControllerPlayerStateMoveToNpc::EndOfPathReached`).
-//! * Placement: no level places a cauldron NPC. Kurn's Hold (Region0K041)
-//!   and the Ugdenbog coven (Region0H032) place the ScriptEntities
-//!   `scriptentitiesgdx3/areah_cauldron{kurnhold,ugdenbog}_transition_01`
-//!   whose `onAddToWorld` (`areahmiscencounters.lua`,
-//!   `TokenStateBasedObjectSwap`) creates the `NpcCauldron` record when the
-//!   player has `POTIONCRAFTING_UNLOCKED` / `..._COVEN` (given there from the
-//!   unlock quest's task state), else `areah_cauldron_placeholder` (a plain
-//!   Npc); the quest events' `cauldron*Transition` swap it later. The port
-//!   runs these through the story (`gd_story::story`, story actors).
-//! * Closing: GrimDawn.exe window update `PotionsWindow::Update`: when the
-//!   3D distance from the player to the cauldron exceeds its
-//!   `GetUICloseDistance` ([`crate::conversation::close_distance`]); the
-//!   close button and Esc (`PotionsWindow::OnKey`: Esc first closes the modifier
-//!   list) close it; closing makes the cauldron say goodbye.
-//! * Choices: a click on a container that is not on chooses it; a click on a
-//!   modifier slot opens the list of the potion's unlocked modifiers and the
-//!   pick goes into that slot (`PotionsWindow::OnButtonPress`, `PotionsWindow::PlaceModifier`). Slots take
-//!   no choice while the potion has no container
-//!   (`gd_sim::potions::slots_enabled`).
-//! * Saving (GrimDawn.exe window show handler `PotionsWindow::Open`):
-//!   showing the window calls `GameEngine::SetSaveEnabled(false)`; hiding it
-//!   (only when it was shown) makes the cauldron say goodbye, then
-//!   `SetSaveEnabled(true)` and `AutoSave`. Here [`save_disabled`] holds the
-//!   timed autosave back (`save.rs`) and [`cauldron_autosave`] sends a
-//!   `SaveRequest` when the window closes. PORT: F5, the menu's save and the
-//!   quit save are the port's own and are not blocked; the cauldron's hello /
-//!   goodbye sounds are not played.
-//!   [`PotionRequest::Open`] with no cauldron (test hook `GD_UI_OPEN=potions`)
-//!   opens it without a distance check.
+//! * Opening (`NpcCauldron::OnPlayerInteract`, third expansion): the player's interaction opens the
+//!   window on the page last shown (health first) and the cauldron says hello. [`reach_cauldron`]
+//!   opens it at the NPC use range (player radius + cauldron radius + 3 m), else at the walk's end.
+//! * Placement: no level places a cauldron NPC; Kurn's Hold and the Ugdenbog coven place
+//!   ScriptEntities whose `onAddToWorld` (`TokenStateBasedObjectSwap`) creates the `NpcCauldron`
+//!   with `POTIONCRAFTING_UNLOCKED` / `..._COVEN`, else a placeholder Npc; quest events swap it later.
+//! * Closing (`PotionsWindow::Update`): past its `GetUICloseDistance` (3D), the close button or Esc
+//!   (which first closes the modifier list); the cauldron says goodbye.
+//! * Choices (`PotionsWindow::OnButtonPress`, `PlaceModifier`): a click chooses a container; a
+//!   modifier slot opens the potion's unlocked modifiers. Slots take no choice without a container.
+//! * Saving (`PotionsWindow::Open`): the open window disables saving (`SetSaveEnabled(false)`);
+//!   closing re-enables it and autosaves.
+//!   PORT: F5, the menu's save and the quit save are not blocked; hello / goodbye sounds are not
+//!   played. [`PotionRequest::Open`] with no cauldron opens it without a distance check.
 use bevy::prelude::*;
 use gd_game_core::character::Character;
 use gd_game_core::data::GameData;
@@ -69,50 +39,42 @@ impl Plugin for CauldronPlugin {
     }
 }
 
-/// The player's requests to the potions window.
+/// `Open(None)`: without a cauldron (test hook). `Page`: 0 health, 1 energy. `slot`: 0 or 1.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub enum PotionRequest {
-    /// Open the window at a cauldron (`None`: without one, a test hook).
     Open(Option<Entity>),
-    /// Close it (close button, Esc).
     Close,
-    /// Show a potion's page: 0 health, 1 energy (the tab buttons).
     Page(usize),
-    /// Choose a container (a click on it).
     Container(String),
-    /// Put a modifier in a slot (0 or 1) of its potion.
     Modifier { skill: String, slot: usize },
 }
 
-/// The open window. `version` changes with every change.
+/// `version` changes with every change.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct PotionWindow {
     pub open: bool,
     pub cauldron: Option<Entity>,
-    /// Shown potion: 0 health, 1 energy.
+    /// 0 health, 1 energy.
     pub page: usize,
     pub version: u64,
 }
 
-/// Whether a record is a cauldron.
 pub fn is_cauldron(rec: &gd_formats::arz::Record) -> bool {
     rec.class == "NpcCauldron"
 }
 
-/// Whether the window is open, which disables saving (`SetSaveEnabled(false)`,
-/// see the module doc).
 pub fn save_disabled(window: &PotionWindow) -> bool {
     window.open
 }
 
-/// Closing the window autosaves (`GameEngine::AutoSave`).
+/// `GameEngine::AutoSave` on close.
 pub fn cauldron_autosave(
     window: Res<PotionWindow>,
     mut was_open: Local<bool>,
     mut fresh: gd_game_core::session::NewSession,
     mut save: MessageWriter<crate::save::SaveRequest>,
 ) {
-    // The window of a finished session is gone with it: no close to autosave.
+    // A finished session's window is gone with it: no close to autosave.
     if fresh.begun() {
         *was_open = false;
     }
@@ -132,8 +94,8 @@ fn close(w: &mut PotionWindow) {
     }
 }
 
-/// The interact order's cauldron target in use range (module doc): takes the target and the walk
-/// and asks for the window ([`PotionRequest::Open`]). No other use system routes a cauldron.
+/// The interact order's cauldron target in use range: takes the target and the walk and opens the
+/// window. No other use system routes a cauldron.
 pub fn reach_cauldron(
     data: Res<GameData>,
     window: Res<PotionWindow>,
@@ -171,8 +133,6 @@ pub fn reach_cauldron(
     out.write(PotionRequest::Open(Some(e)));
 }
 
-/// Applies the requests, then closes the window when the player walked away
-/// from the cauldron (or it is gone).
 pub fn run_window(
     mut commands: Commands,
     data: Res<GameData>,
@@ -267,8 +227,7 @@ pub fn run_window(
     }
 }
 
-/// A potion skill switched out (its level back to 0) loses its running buff (`PotionsWindow::ApplyChoice` →
-/// `PotionsWindow::StopPotionBuff`: the player's buff under that skill's name stops).
+/// A potion skill switched out (level back to 0) stops its running buff (`PotionsWindow::StopPotionBuff`).
 fn wipe_switched_off(
     commands: &mut Commands,
     data: &GameData,

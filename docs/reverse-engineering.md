@@ -43,7 +43,7 @@ update changes the table, never the comments.
 ## Facts that are easy to get wrong
 - Coordinates are Y-up, in metres; characters face +Z; mesh triangles are clockwise; `.anm` quaternions are
   stored conjugated, as deltas on bind-local; lighting is gamma-space.
-- Equations: shunting-yard, `^` left-associative, f32; unresolved variables → 0 (`gd-sim/src/expr.rs`).
+- Equations: shunting-yard, `^` left-associative, f32; unresolved variables → 0 (`gd-rules/src/expr.rs`).
 - Save `lastDifficulty` = `difficulty | ((mode << 2) | challenge) << 4`. Challenge 1 = Veteran (Normal) and
   3 = Ultimate Veteran (Ultimate). Mode 1 = Crucible.
 - Stats pass order: bio → skills → item sets → game balance → mutators → equipment. Game-balance pak

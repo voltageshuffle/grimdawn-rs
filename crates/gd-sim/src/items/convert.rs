@@ -28,14 +28,13 @@
 //!   seed and nothing else (no affixes, component or augment).
 //! - `CreateArtifactConfigCmd::Execute`: money −= cost, the
 //!   slot item is destroyed (`TakeItemFromCharacter`), the reagents taken,
-//!   the new item given (`Player::GiveSetItemToCharacter`: into the shown convert tab's slot,
-//!   gd-game `crafting::convert_item`).
+//!   the new item given (`Player::GiveSetItemToCharacter`: into the shown
+//!   convert tab's slot).
 use super::ItemDb;
 use super::db::Fields;
 use gd_formats::arz::Record;
 use gd_rules::Rng;
 
-/// The tab's record.
 pub const TABLE: &str = "records/ui/inventor/convertpanel/convert_table.dbr";
 
 /// How far (levels) a random target set's `itemLevel` may be from the item's.
@@ -114,14 +113,14 @@ pub fn target_set(
     if formula.random_sets.is_empty() {
         return Some(item_set.to_owned());
     }
-    // (bad data: a level past i32::MAX or within LEVEL_RANGE of it clamps)
+    // A level past i32::MAX or within LEVEL_RANGE of it clamps.
     let level = i32::try_from(item_level).unwrap_or(i32::MAX);
     let (lo, hi) = (
         level.saturating_sub(LEVEL_RANGE),
         level.saturating_add(LEVEL_RANGE),
     );
-    // PORT: the engine shuffles the list with CRT `rand` and takes the first
-    // match, which is a uniform pick among the matches; drawn here from `rng`.
+    // PORT: the engine shuffles with CRT `rand` and takes the first match;
+    // here a uniform pick among the matches from `rng`.
     let fits: Vec<&String> = formula
         .random_sets
         .iter()

@@ -1,7 +1,7 @@
 //! Headless checks of merchants: selling pays and puts the item on the
 //! buyback tab at that price; buying it back costs the same and empties the
-//! slot; restocking; faction tiers. No frames needed: one game runs every
-//! check in turn (each on its own market key).
+//! slot; restocking; faction tiers. One game runs every check in turn (each
+//! on its own market key).
 use bevy::prelude::*;
 use gd_formats::inventory::Sack;
 use gd_formats::save::item::Item;

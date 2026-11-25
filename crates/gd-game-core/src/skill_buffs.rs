@@ -1,22 +1,14 @@
 //! Buff data of a character: the buffs other characters keep on it
-//! ([`ReceivedBuffs`], one [`ReceivedBuff`] entry each: record, level,
-//! modifiers, caster, time left) and its own timed self buffs
-//! ([`TimedBuffs`]). The entry is the raw state: its stats count in the
-//! holder's profile rebuild ([`ReceivedBuffs::stat_records`],
-//! [`TimedBuffs::stat_records`]); the systems that land, tick and run them
-//! are `gd_game::skill_buffs` (its module docs carry the full engine trace).
+//! ([`ReceivedBuffs`]) and its own timed self buffs ([`TimedBuffs`]). Their stats
+//! count in the holder's profile rebuild; the systems are `gd_game::skill_buffs`.
 //!
 //! The landing rule ([`ReceivedBuffs::land`]; `CreateUpdateSkillBuff`,
 //! a list of transfers per character searched by buff name):
 //! - none of that name: appended, the buff created ([`Landed::New`]);
-//! - one equal in every field (`SkillBuffTransfer::Equals`: level, devotion level, modifiers,
-//!   duration, caster, flags, skill, item): `SkillBuff::SetTimeToLive`
-//!   (duration) on the running buff ([`Landed::Refreshed`]);
-//! - same caster, other values: the transfer copied over and the buff made
-//!   anew (`CreateRemoveSkillBuffConfigCmd` → `SkillManager::CreateSkillBuff`
-//!   destroys the old one first, [`Landed::Replaced`]); a transfer with a
-//!   count (`SkillBuffTransfer.addTimeCount`) > 0 would `AddTimeToLive`
-//!   instead (`ApplyBuffOnTarget` always passes 0);
+//! - one equal in every field (`SkillBuffTransfer::Equals`): `SkillBuff::SetTimeToLive`
+//!   on the running buff ([`Landed::Refreshed`]);
+//! - same caster, other values: the buff made anew (`SkillManager::CreateSkillBuff`
+//!   destroys the old one first, [`Landed::Replaced`]);
 //! - another caster, equal values but the caster
 //!   (`SkillBuffTransfer::EqualsButCaster`): ignored
 //!   while the first caster `IsAlive`, else replaced;
@@ -25,65 +17,55 @@
 //!   ([`Landed::Ignored`]).
 //!
 //! A contagious debuff (`SkillBuff_Contageous`) carries its spread state
-//! ([`Contagion`]: `spreadTimer`, `spreadBudget`, `SkillBuff.spreading`)
-//! and gives its holder a plague immunity to its own record
-//! ([`plague_immunity_secs`], [`ReceivedBuffs::immune`]) so a spread never
-//! re-infects a recent holder.
+//! ([`Contagion`]) and gives its holder a plague immunity to its own record
+//! ([`plague_immunity_secs`]) so a spread never re-infects a recent holder.
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
 use gd_formats::vfs::Database;
 use gd_sim::attributes::CombatType;
 
-/// `SkillBuff_Debuf.attackTimer`: ms between a debuff's attacks.
+/// `SkillBuff_Debuf.attackTimer`.
 pub const DEBUFF_TICK_SECS: f32 = 1.0;
 
-/// One buff another character keeps on this one (the engine's
-/// `SkillBuffTransfer` with its running `SkillBuff`).
+/// One buff another character keeps on this one (`SkillBuffTransfer` with its running `SkillBuff`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReceivedBuff {
-    /// The buff record (`buffSkillName`: stats, icon, `hideFromUI`).
+    /// `buffSkillName`: stats, icon, `hideFromUI`.
     pub buff: String,
-    /// The skill that put it here (the aura, the curse; tooltip).
+    /// The skill that put it here (the aura, the curse).
     pub skill: String,
     pub level_index: usize,
-    /// The caster.
     pub from: Entity,
     /// The caster's modifiers of the skill (record, level index).
     pub mods: Vec<(String, usize)>,
-    /// The applying skill's devotion level (the transfer's `devotionLevel`, module
-    /// docs; 0 but for a celestial power).
+    /// The transfer's `devotionLevel` (0 but for a celestial power).
     pub devotion: u32,
-    /// Seconds until it runs out.
     pub left: f32,
-    /// The duration it was given (s; 0 = endless).
+    /// Seconds; 0 = endless.
     pub total: f32,
-    /// A debuff's next attack (s; None: not an attacking debuff).
+    /// Seconds to a debuff's next attack (None: not an attacking debuff).
     pub tick: Option<f32>,
     /// A trap / freeze debuff's hold: its type and next refresh (s).
     pub hold: Option<(CombatType, f32)>,
-    /// A `SkillBuff_Contageous`'s spread (None: another class).
+    /// None for another class.
     pub contagion: Option<Contagion>,
-    /// Seconds to the buff's next own bonus (`SkillBuff::Update`, `SkillBuff.bonusTimer`: 0 when created, then 1 s;
-    /// `gd_game::casting::Bonus::buff_duration`).
+    /// Seconds to the buff's next own bonus (`SkillBuff.bonusTimer`: 0 when created, then 1 s).
     pub heal: f32,
 }
 
-/// A `SkillBuff_Contageous` entry's spread state (module docs: `spreadTimer`,
-/// `spreadBudget`, `SkillBuff.spreading`).
+/// `spreadTimer`, `spreadBudget`, `SkillBuff.spreading`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Contagion {
-    /// Seconds to the next spread.
     pub next: f32,
-    /// Infections left (`contagionMaxSpread` at creation).
+    /// `contagionMaxSpread` at creation.
     pub left: i32,
-    /// Still spreading (cleared once `left` reaches 0 in a spread).
+    /// Cleared once `left` reaches 0 in a spread.
     pub spreading: bool,
 }
 
 impl Contagion {
-    /// `SkillBuff_Contageous::Install`: the first spread after
-    /// `contagionInterval`, `contagionMaxSpread` infections.
+    /// `SkillBuff_Contageous::Install`.
     fn install(rec: &Record, level_index: usize) -> Self {
         let p = contagion_profile(rec, level_index);
         Self {
@@ -94,14 +76,12 @@ impl Contagion {
     }
 }
 
-/// A contagious buff record's `contagion*` values at a level (the
-/// `SkillProfile::GetContagion*` getters: the level's entry, the last one
-/// past the end, defaults without values).
+/// `SkillProfile::GetContagion*`: the level's entry, the last one past the end, defaults without values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContagionProfile {
-    /// `contagionInterval` (s; whole ms, default 1 s).
+    /// `contagionInterval` (s, whole ms; default 1).
     pub interval: f32,
-    /// `contagionRadius` (m; default 2).
+    /// `contagionRadius` (default 2).
     pub radius: f32,
     /// `contagionLimit`: infections per spread (default 1).
     pub limit: i32,
@@ -119,15 +99,13 @@ pub fn contagion_profile(rec: &Record, level_index: usize) -> ContagionProfile {
     }
 }
 
-/// `SkillBuff_Contageous::Install`: the holder's plague immunity to that
-/// buff, (int)(its total ms × 1.5 + 4000) ms.
+/// `SkillBuff_Contageous::Install`: (int)(total ms × 1.5 + 4000) ms.
 pub fn plague_immunity_secs(total: f32) -> f32 {
     ((total * 1000.0).round() * 1.5 + 4000.0) as i32 as f32 / 1000.0
 }
 
 impl ReceivedBuff {
-    /// A buff of `total` seconds, attacking when its record is an attacking
-    /// debuff ([`attacks`]).
+    /// Attacking when its record [`attacks`].
     pub fn new(
         db: &Database,
         buff: &str,
@@ -159,7 +137,7 @@ impl ReceivedBuff {
         }
     }
 
-    /// The level sum the "other caster" rule compares (module docs).
+    /// The level sum the "other caster" rule compares.
     fn strength(&self) -> usize {
         self.level_index
             + 1
@@ -167,7 +145,7 @@ impl ReceivedBuff {
             + self.devotion as usize
     }
 
-    /// Equal but for the caster (`SkillBuffTransfer::EqualsButCaster`).
+    /// `SkillBuffTransfer::EqualsButCaster`.
     fn same_values(&self, o: &ReceivedBuff) -> bool {
         self.level_index == o.level_index
             && self.devotion == o.devotion
@@ -177,10 +155,8 @@ impl ReceivedBuff {
     }
 }
 
-/// A debuff record whose `Update` attacks (module docs): its holder, or
-/// for a `SkillBuff_DebufRadius` the caster's foes around it.
-/// A `SkillBuff_DebufProjectile` launches its projectile from the holder on
-/// that timer instead ([`DEBUF_PROJECTILE`]).
+/// A debuff record whose `Update` attacks its holder (a `SkillBuff_DebufRadius`: the caster's foes around
+/// it; a [`DEBUF_PROJECTILE`]: launches its projectile from the holder).
 pub fn attacks(rec: &Record) -> bool {
     matches!(
         rec.class.as_str(),
@@ -193,16 +169,13 @@ pub fn attacks(rec: &Record) -> bool {
     )
 }
 
-/// The projectile-launching debuff class (module docs).
 pub const DEBUF_PROJECTILE: &str = "SkillBuff_DebufProjectile";
 
-/// The dispelling buff class (module docs).
 pub const DISPEL_MAGIC: &str = "SkillBuff_DispelMagic";
 
-/// The contagious debuff class (module docs).
 pub const CONTAGEOUS: &str = "SkillBuff_Contageous";
 
-/// What a trap / freeze debuff holds its holder in (module docs).
+/// What a trap / freeze debuff holds its holder in.
 pub fn holds(rec: &Record) -> Option<CombatType> {
     match rec.class.as_str() {
         "SkillBuff_DebufTrap" => Some(CombatType::Trap),
@@ -211,54 +184,40 @@ pub fn holds(rec: &Record) -> Option<CombatType> {
     }
 }
 
-/// `SkillBuff_DebufTrap.holdTimer` / `.maxHold`: ms between holds, the longest hold.
+/// `SkillBuff_DebufTrap.holdTimer` / `.maxHold`.
 pub const HOLD_EVERY_SECS: f32 = 0.1;
 pub const HOLD_SECS: f32 = 0.25;
 
-/// A `SkillBuff_Debuf*` record (`SkillBuff_Contageous` is one too: its
-/// constructor runs `SkillBuff_Debuf`'s, module docs).
+/// A `SkillBuff_Debuf*` record (`SkillBuff_Contageous` too: its constructor runs `SkillBuff_Debuf`'s).
 pub fn is_debuff(rec: &Record) -> bool {
     is_debuff_class(&rec.class)
 }
 
-/// A buff record a curse wrapper lands on its targets through
-/// `Character::DebufTarget` rather than hitting them: the debuffs and the
-/// dispelling buff (Nullification's `SkillBuff_DispelMagic`, module docs).
+/// A buff record a curse wrapper lands through `Character::DebufTarget` rather than hitting: the debuffs and
+/// `SkillBuff_DispelMagic`.
 pub fn lands_as_debuff(rec: &Record) -> bool {
     is_debuff(rec) || rec.class == DISPEL_MAGIC
 }
 
-/// [`is_debuff`] by class name.
 pub fn is_debuff_class(class: &str) -> bool {
     class.starts_with("SkillBuff_Debuf") || class == CONTAGEOUS
 }
 
-/// The timed self buffs of one character — the one store the player
-/// (`gd_game::player::Loadout::buffs`), monsters
-/// (`gd_game::monster_skills::MonsterSkills::buffs`) and pets
-/// (`gd_game::pets::Pet::buffs`) share: (skill record, level index, seconds
-/// left), plus the learned modifiers applied with each buff
-/// (`SkillBuff::CollectPassiveCharAttributes` adds the level
-/// stats and `Skill::AddModifierCharAttributes` while active), and each running buff's full duration (the
-/// `SkillBuff`'s total: a duration refresh never takes the time left past it, `gd_game::refresh`).
-/// The engine keeps one `SkillBuff` list per character; the stats it gives
-/// derive from the list at the profile rebuild ([`Self::stat_records`], no
-/// cached copy), and one system ticks and expires every character's list
-/// (`gd_game::casting::expire_buffs`); death stops the timed entries (`gd_game::skill_buffs::stop_buffs_on_death`). A shapeshift form is an
-/// entry with no end (`f32::INFINITY`): it leaves with the form, not by expiry, dispel or death.
+/// The timed self buffs of one character (player, monster or pet): (skill record, level index, seconds left),
+/// with the learned modifiers applied with each buff and each running buff's full duration (a refresh never
+/// takes the time left past it). A shapeshift form is an entry with no end (`f32::INFINITY`): it leaves with
+/// the form, not by expiry, dispel or death.
 #[derive(Component, Clone, Debug, Default)]
 pub struct TimedBuffs {
     pub list: Vec<(String, usize, f32)>,
-    /// Buff → its learned modifiers (record, level index); the player's
-    /// (monsters and pets leave it empty).
+    /// Buff → its learned modifiers (record, level index); empty for monsters and pets.
     pub mods: HashMap<String, Vec<(String, usize)>>,
-    /// Buff → its full duration (s), set when it starts.
+    /// Buff → its full duration (s).
     full: HashMap<String, f32>,
 }
 
 impl TimedBuffs {
-    /// A buff starts (or starts again) under `skill`'s name; the old
-    /// entry's modifiers go with it. Names match ignoring case, as [`Self::running`].
+    /// A buff starts (or starts again) under `skill`'s name; the old entry's modifiers go with it.
     pub fn add(&mut self, skill: &str, li: usize, secs: f32) {
         if let Some(i) = self
             .list
@@ -273,21 +232,17 @@ impl TimedBuffs {
         self.full.insert(skill.to_owned(), secs);
     }
 
-    /// Whether `skill`'s buff runs.
     pub fn running(&self, skill: &str) -> bool {
         self.list.iter().any(|b| b.0.eq_ignore_ascii_case(skill))
     }
 
-    /// The full duration of `skill`'s running buff.
     pub fn full(&self, skill: &str) -> Option<f32> {
         let b = self.list.iter().find(|b| b.0.eq_ignore_ascii_case(skill))?;
         self.full.get(&b.0).copied()
     }
 
-    /// Runs the list down by `dt`, except the entries `held` names (a life monitor waiting for life to come back,
-    /// `gd_game::autocast::Autocasts::holds`); the expired names return (their effects
-    /// and modifiers go, the caller plays the sounds and marks the profile
-    /// dirty). A form entry (`f32::INFINITY`) never expires.
+    /// Runs the list down by `dt`, except the entries `held` names (a life monitor waiting for life); the
+    /// expired names return. A form entry (`f32::INFINITY`) never expires.
     pub fn tick(&mut self, dt: f32, held: impl Fn(&str) -> bool) -> Vec<String> {
         for b in self.list.iter_mut().filter(|b| !held(&b.0)) {
             b.2 -= dt;
@@ -308,8 +263,7 @@ impl TimedBuffs {
         gone
     }
 
-    /// Ends every timed entry at once (death's `StopSkill`, `gd_game::skill_buffs::stop_buffs_on_death`); the ended names return as
-    /// [`Self::tick`]'s do. A form entry (`f32::INFINITY`) stays: it leaves with the form.
+    /// Ends every timed entry at once (death's `StopSkill`); a form entry stays.
     pub fn stop_timed(&mut self) -> Vec<String> {
         for b in self.list.iter_mut().filter(|b| b.2.is_finite()) {
             b.2 = 0.0;
@@ -317,8 +271,7 @@ impl TimedBuffs {
         self.tick(0.0, |_| false)
     }
 
-    /// Ends the entries `pick` names (a potion modifier switched out, `gd_game::cauldron`); the ended names return
-    /// as [`Self::tick`]'s do.
+    /// Ends the entries `pick` names (a potion modifier switched out).
     pub fn stop_where(&mut self, pick: impl Fn(&str) -> bool) -> Vec<String> {
         let gone: Vec<String> = self
             .list
@@ -334,9 +287,8 @@ impl TimedBuffs {
         gone
     }
 
-    /// The stats the list gives: each entry's profile record (a wrapper's
-    /// `buffSkillName`, else the entry itself) and its learned modifiers',
-    /// at their levels — what the profile rebuild sums.
+    /// Each entry's profile record (a wrapper's `buffSkillName`, else the entry itself) and its learned
+    /// modifiers', at their levels.
     pub fn stat_records(&self, db: &Database) -> Vec<(Record, usize)> {
         let mut out = Vec::new();
         for (s, li, _) in &self.list {
@@ -357,21 +309,17 @@ impl TimedBuffs {
     }
 }
 
-/// The buffs other characters keep on this one, newest first (module docs).
+/// Newest first.
 #[derive(Component, Default, Clone, Debug)]
 pub struct ReceivedBuffs {
     pub list: Vec<ReceivedBuff>,
-    /// `Character::SetImmuneToPlagueTime`: contagious buff records this
-    /// character can't catch by spread for the seconds left (module docs).
+    /// `Character::SetImmuneToPlagueTime`: contagious buff records not caught by spread for the seconds left.
     pub immune: Vec<(String, f32)>,
-    /// A buff came or went since the profile was last built.
     pub changed: bool,
 }
 
-/// What landing a buff did ([`ReceivedBuffs::land`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Landed {
-    /// Not on before: created.
     New,
     /// The running one made anew with the new values.
     Replaced,
@@ -389,14 +337,8 @@ impl Landed {
 }
 
 impl ReceivedBuffs {
-    /// The stat records: each buff at its level, then its modifiers,
-    /// without their energy reserve (`characterManaLimitReserve…`), a
-    /// debuff's also without its `offensive*` fields (module docs).
-    /// A `SkillBuff` adds its profile's `CharAttributeStore_Skill`
-    /// (`SkillProfile.charAttributes`), which reads no reserve field; the reserve is the toggle's
-    /// penalty store on the caster (`SkillBook::stat_sources`). A pet under
-    /// the player's Elemental Infusion shows a full energy bar in the real
-    /// game.
+    /// Each buff at its level, then its modifiers, without their energy reserve (`characterManaLimitReserve…`:
+    /// the reserve is the toggle's penalty on the caster), a debuff's also without its `offensive*` fields.
     pub fn stat_records(&self, db: &Database) -> Vec<(Record, usize)> {
         let strip = |mut r: Record, debuff: bool| {
             std::sync::Arc::make_mut(&mut r.fields).retain(|(k, _)| {
@@ -421,7 +363,6 @@ impl ReceivedBuffs {
         out
     }
 
-    /// Whether `buff` (a record name) is on.
     pub fn has(&self, buff: &str) -> bool {
         self.list.iter().any(|b| b.buff.eq_ignore_ascii_case(buff))
     }
@@ -433,7 +374,6 @@ impl ReceivedBuffs {
             .any(|i| i.0.eq_ignore_ascii_case(buff) && i.1 > 0.0)
     }
 
-    /// `Character::SetImmuneToPlagueTime(buff, secs)`: set or replaced.
     pub fn set_immune(&mut self, buff: &str, secs: f32) {
         match self
             .immune
@@ -445,8 +385,7 @@ impl ReceivedBuffs {
         }
     }
 
-    /// `CreateUpdateSkillBuff` (module docs). `alive`: whether a caster is
-    /// still alive.
+    /// `CreateUpdateSkillBuff`. `alive`: whether a caster is still alive.
     pub fn land(&mut self, b: ReceivedBuff, alive: impl Fn(Entity) -> bool) -> Landed {
         let Some(i) = self
             .list
@@ -478,7 +417,6 @@ impl ReceivedBuffs {
         Landed::Replaced
     }
 
-    /// Takes the "changed" flag.
     pub fn take_changed(&mut self) -> bool {
         std::mem::take(&mut self.changed)
     }

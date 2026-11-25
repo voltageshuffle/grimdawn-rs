@@ -89,25 +89,16 @@ impl PatrolGroups {
         out
     }
 
-    /// The groups are the map's (gdx3's `world001.map`: 22 "Patrol Points"
-    /// and 7 "ProxyPatrollers" groups, all of them loaded). The name match is
-    /// exact (`InstanceGroupManager::GetGroup`), so two scripts'
-    /// groups never resolve, in the game as here: the Black Lodge's
-    /// `PatrolPoint_BL_Chase01/02` (`areahblacklodge.lua`) are named
-    /// `GDX3_BlackLodge_Chase01/02` in the map, and the Shattered Realm's
-    /// `PatrolPoint_BR_Chaser01..03` (`areahblackrealm.lua`) exist nowhere:
-    /// `Levels/EndlessDungeon/Special/BlackRealm_01..05.lvl` (regions 1946..
-    /// 1950 of the same map, loaded like any level) hold 41 `PatrolPoint`s
-    /// without a unique id and no instance-group chunk (the base game's
-    /// `world001.map` has 6 groups, none of them these).
-    ///
     /// `Proxy:LinkPatrolPointGroup(name)`: the group must exist and
     /// be of type "Patrol Points" (else nothing changes: `None`). The proxy
     /// joins a "ProxyPatrollers" group if it is in none (a new
     /// `LinkedProxyPatrolGroup %d`), and in every such group the "Patrol
     /// Points" children are removed and the named group added. Returns the
-    /// named group's points, which the caller gives to the proxy's live
-    /// monsters.
+    /// named group's points, for the proxy's live monsters.
+    ///
+    /// The name match is exact (`InstanceGroupManager::GetGroup`): the Black Lodge's
+    /// `PatrolPoint_BL_Chase01/02` and the Shattered Realm's `PatrolPoint_BR_Chaser01..03`
+    /// match no map group, in the game as here.
     pub fn link(&mut self, proxy: Uid, name: &str) -> Option<Vec<Uid>> {
         let pg = self
             .group_by_name(name)

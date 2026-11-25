@@ -1,5 +1,5 @@
 //! The summon block of a skill tooltip: limit, time to live, the pet's summary and skills
-//! (`Skill::CreateUIPetText`, the parent module's docs).
+//! (`Skill::CreateUIPetText`).
 use super::*;
 
 /// `spawnObjects` record of a summon at `level`, a learned
@@ -116,7 +116,6 @@ fn pet_ttl_lines(
     vec![line(class, ctx.fmt(tag, &[Arg::Num(t)]))]
 }
 
-/// The summon block of a skill (module docs).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pet_lines(
     ctx: &SkillTipCtx,
@@ -177,7 +176,7 @@ fn pet_skills(ctx: &SkillTipCtx, pet: &Record, level: i32) -> Vec<(String, u32)>
     crate::skills::pet_skill_levels(pet, level, &mods)
 }
 
-/// `Monster::CreateUI[Next]SummaryText` (module docs). Nothing without the
+/// `Monster::CreateUI[Next]SummaryText`. Nothing without the
 /// player: a summon's level is the player's.
 fn pet_summary(
     ctx: &SkillTipCtx,
@@ -225,7 +224,7 @@ fn pet_summary(
     };
     let tidy = |s: String| if next { strip_colors(&s) } else { s };
     let mut out = Vec::new();
-    // `PetPlayerScaling` summons hide both (`v79`).
+    // `PetPlayerScaling` summons hide both.
     let scaling = pet.class == "PetPlayerScaling";
     if !scaling {
         out.push(line(

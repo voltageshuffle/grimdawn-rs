@@ -1,17 +1,12 @@
 //! The Inventor's reroll tab and the Runekeeper's window, input side: the action button sends the slot
-//! item's reroll / ascension (rules, costs and notes: `gd_game::reroll`; window UI:
-//! `ui/trade.rs`; the slot's clicks and give-back: `crate::trade` `panel_clicks`).
-//! `GD_REROLL` (hooks.rs; `ascend` with `GD_TRADE=ascension`): once the crafter is open, puts the first
-//! bag item into the slot and presses the button.
+//! item's reroll / ascension (rules: `gd_game::reroll`).
 use crate::trade::TradeOpen;
 use bevy::prelude::*;
 pub use gd_game::reroll::Kind;
 use gd_ui::state::trade::{Panel, Trade};
 
-/// Sends the open reroll tab / ascension window's button press for the slot
-/// item (changed in place, `CreateArtifactCmd`);
-/// `gd_game::reroll::apply_reroll` runs it and the item comes back as a
-/// `gd_game::crafting::SlotReturn`.
+/// Sends the open reroll tab / ascension window's button press for the slot item (changed in place,
+/// `CreateArtifactCmd`); it comes back as a `gd_game::crafting::SlotReturn`.
 pub fn reroll(
     mut trade: ResMut<Trade>,
     mut requests: MessageWriter<gd_game::reroll::RerollRequest>,
@@ -25,7 +20,6 @@ pub fn reroll(
     let test = hooks.items.reroll.is_some();
     #[cfg(not(feature = "dev"))]
     let test = false;
-    // `GD_REROLL`: put the first bag item into the slot and press the button.
     #[cfg(feature = "dev")]
     if let Some(k) = &hooks.items.reroll
         && !*tested

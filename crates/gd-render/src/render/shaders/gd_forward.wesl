@@ -1,5 +1,4 @@
-// Forward vertex program of the Grim Dawn materials (render/material.rs
-// `vertex_shader`): Bevy's mesh vertex (no morph targets in the port) with the
+// Forward vertex program of the Grim Dawn materials: Bevy's mesh vertex (no morph targets in the port) with the
 // engine's skinned normal/tangent frame.
 //
 // standardskinned.ssh `deferredVS` (and the skinned `*wiggle*` family,
@@ -7,7 +6,7 @@
 // influences, but the normal / tangent / binormal are turned by the FIRST bone
 // only — the bone paired with weight slot 0 (`joint_indices.x`). The binormal is
 // the negated stored one; the port rebuilds it in the fragment as
-// `-tangent.w · cross(N, T)` (gd_standard.wesl), which is the same vector once N
+// `-tangent.w · cross(N, T)`, which is the same vector once N
 // and T use the first bone. `skin_model` with weights (1,0,0,0) selects that
 // bone's world matrix. The frame is normalised here (Bevy skin_normals /
 // mesh_tangent_local_to_world) so the character's scale cancels in the
@@ -73,7 +72,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(VERTEX_TANGENTS && !SKINNED)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
 @if(VERTEX_NORMALS) {
-    // The snow lift (module doc): world y += s · snowDepth. snowThreshold 1
+    // The snow lift: world y += s · snowDepth. snowThreshold 1
     // (the ssh default) gives s = 0 (the engine's div_sat: 0/0 → 0).
     if (material.flags.y & FLAG_SNOW) != 0u && material.snow.y < 1.0 {
         let s = saturate((out.world_normal.y - material.snow.y) / (1.0 - material.snow.y));

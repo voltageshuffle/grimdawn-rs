@@ -18,8 +18,7 @@
 //! `GetLanguageName` / `GetLanguageTag`; Grim Dawn.exe `OptionsWindow::Load` builds the
 //! options dropdown from it): the `language` option's stored string, the archive code
 //! (`Text_<CODE>.arc`, mounted as `text_<code>/`) and the display name. Which languages
-//! an install offers follows its mounted `Text_*.arc`, not this static list
-//! (`gd_game_core::data::GameData::available_languages`).
+//! an install offers follows its mounted `Text_*.arc`, not this static list.
 //!
 //! Quest / conversation text and the language's paging settings live here too:
 //! non-English quest / dialog text is a line-ordered override file
@@ -42,8 +41,7 @@ pub struct Language {
 }
 
 /// The engine's 13 languages in table order (`tagLanguage01`…`tagLanguage14`, 02 absent).
-/// Availability follows the install's mounted `Text_*.arc`
-/// (`gd_game_core::data::GameData::available_languages`), not this list.
+/// Availability follows the install's mounted `Text_*.arc`, not this list.
 pub const LANGUAGES: &[Language] = &[
     Language {
         option: "English",
@@ -116,9 +114,8 @@ pub const LANGUAGES: &[Language] = &[
 /// (`LocalizationManager::InitializeLanguage`): keys match case-insensitively,
 /// a non-empty `separators` replaces the default `.?!` wholesale (zh ships
 /// `。` only; ja/ko ship none, so the default applies), `wordmode=false`
-/// clears [`Self::word_mode`]. The port reads `separators` for dialog paging
-/// (`gd_story::story::Story::separators`); `word_mode` (CJK font word-wrap) is
-/// out of scope (PORT).
+/// clears [`Self::word_mode`]. PORT: `word_mode` (CJK font word-wrap) is not
+/// applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageDef {
     pub separators: String,

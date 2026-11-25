@@ -1,11 +1,8 @@
-//! Skill-effect data and pure resolvers: a character's weapon enchantments
-//! ([`WeaponEnchantments`]), the toggle-effect marker ([`ToggleFx`]) and the
-//! modifier visual-override resolvers below. The sync system and the engine
-//! (Game.dll) notes are `gd_game::skill_fx`.
+//! Skill-effect data and pure resolvers: weapon enchantments ([`WeaponEnchantments`]), the toggle-effect marker
+//! ([`ToggleFx`]) and the modifier visual-override resolvers.
 //!
-//! Modifier visual overrides ([`override_mods`] and the resolvers below):
-//! every getter takes the last *learned* modifier (only those `IsSkillEnabled`) that sets
-//! the field, and only when none does, the last such *gear* modifier (`GetItemSkillModifiers`), else the
+//! Modifier visual overrides: every getter takes the last *learned* modifier (only those `IsSkillEnabled`) that
+//! sets the field, and only when none does, the last such *gear* modifier (`GetItemSkillModifiers`), else the
 //! skill's own field. Per-level lists are indexed by the skill's level (clamped to the list).
 use crate::options::GameOptions;
 use crate::visuals::BuffFx;
@@ -14,8 +11,8 @@ use bevy::prelude::*;
 use gd_formats::arz::{RawValue, Record};
 use gd_formats::vfs::Database;
 
-/// The weapon enchantments of the buffs on a character: (skill or buff
-/// record, `WeaponEnchantmentPak` record), oldest first (`gd_game::skill_fx` module docs).
+/// The weapon enchantments of the buffs on a character: (skill or buff record, `WeaponEnchantmentPak` record),
+/// oldest first.
 #[derive(Component, Default, Debug)]
 pub struct WeaponEnchantments {
     pub list: Vec<(String, String)>,
@@ -23,20 +20,17 @@ pub struct WeaponEnchantments {
 }
 
 impl WeaponEnchantments {
-    /// The pak its weapons wear: the newest (`RemoveWeaponEnchantment`
-    /// hands over the list's last).
+    /// The pak its weapons wear: the newest (`RemoveWeaponEnchantment` hands over the list's last).
     pub fn shown(&self) -> Option<&str> {
         self.list.last().map(|(_, p)| p.as_str())
     }
 }
 
-/// On a [`BuffFx`] that `gd_game::skill_fx` spawned for a toggle's character effects: the paks
-/// it was started from.
+/// On a [`BuffFx`] spawned for a toggle's character effects: the paks it was started from.
 #[derive(Component)]
 pub struct ToggleFx(pub Vec<String>);
 
-/// A per-level string field at level index `li` (clamped to the list;
-/// empty = none), as `SkillProfile`'s level tables.
+/// A per-level string field at level index `li` (clamped to the list; empty = none).
 pub fn level_str(rec: &Record, key: &str, li: usize) -> Option<String> {
     let v = rec.get(key)?;
     match v.get(li.min(v.len().checked_sub(1)?))? {
@@ -45,12 +39,9 @@ pub fn level_str(rec: &Record, key: &str, li: usize) -> Option<String> {
     }
 }
 
-/// A skill's target effect pak (`Skill::GetTargetFX`): the last learned
-/// modifier whose `targetFxPakOverride` (a per-level list, indexed by the skill's level) is set, else the last such
-/// gear modifier (`GetItemSkillModifiers`; stock has them, e.g. the Execution / Doom Bolt item modifiers'
-/// `wpattack_*_impact_fxpak`), replaces the skill's own `targetFxPakName` (per-level, clamped). `mods`: the enabled
-/// gear modifiers, then the learned ones (`Skill_Modifier::IsSkillEnabled`: a gear modifier made exclusive to a
-/// learned transmuter is off, `gd_game::weapon_pool::build_links` leaves it out).
+/// A skill's target effect pak (`Skill::GetTargetFX`): the modifiers' `targetFxPakOverride` (per level, module-doc
+/// order), else the skill's own `targetFxPakName` (per level, clamped). `mods`: the enabled gear modifiers, then the
+/// learned ones.
 pub fn target_fx(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<String> {
     mods.iter()
         .rev()
@@ -58,9 +49,8 @@ pub fn target_fx(rec: &Record, li: usize, mods: &[(Record, usize)]) -> Option<St
         .or_else(|| level_str(rec, "targetFxPakName", li))
 }
 
-/// The modifiers whose visual overrides apply to `skill` (module doc), in the order the resolvers take
-/// them: the gear ones, then the learned ones (a caster with a skill book has the learned; one without has
-/// no gear). Gear modifiers that are off (`IsSkillEnabled`) are not in the links (`gd_game::weapon_pool::build_links`).
+/// The modifiers whose visual overrides apply to `skill`, in the order the resolvers take them: the gear ones (only
+/// the enabled), then the learned ones.
 pub fn override_mods(
     db: &Database,
     links: Option<&SkillLinks>,
@@ -76,7 +66,7 @@ pub fn override_mods(
         .collect()
 }
 
-/// A plain string override `key` of `mods` (the last that sets it, module doc).
+/// A plain string override `key` of `mods` (the last that sets it).
 fn override_str(mods: &[(Record, usize)], key: &str) -> Option<String> {
     mods.iter()
         .rev()
@@ -87,7 +77,7 @@ fn own_str(rec: &Record, key: &str) -> Option<String> {
     rec.str(key).filter(|s| !s.is_empty()).map(str::to_owned)
 }
 
-/// `Skill::AddModifierFXChanges`: the `fxChanges` list of the last modifier that has one (module doc).
+/// `Skill::AddModifierFXChanges`: the `fxChanges` list of the last modifier that has one.
 pub fn fx_changes(mods: &[(Record, usize)]) -> Option<Vec<String>> {
     mods.iter().rev().find_map(|(m, _)| {
         let v: Vec<String> = m.strs_iter("fxChanges").map(|s| s.to_string()).collect();
@@ -218,7 +208,7 @@ pub fn chaos_beam(rec: &Record, mods: &[(Record, usize)]) -> Option<String> {
     }
 }
 
-/// The looping aura of a timed self buff (the skill record), `None` for any other record (an aura buff's, a toggle's).
+/// The looping aura of a timed self buff (the skill record), `None` for any other record.
 pub fn timed_aura(rec: &Record) -> Option<String> {
     (rec.class == "Skill_BuffSelfDuration")
         .then(|| rec.str("skillActivatedAuraName"))
@@ -227,11 +217,8 @@ pub fn timed_aura(rec: &Record) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The projectile a ranged weapon (`base`: its `basicProjectileName`)
-/// fires: the shown weapon enchantment's `projectileName` if it has one
-/// (`Weapon::GetProjectileName`; the pak reads it only for a `Ranged1h` /
-/// `Ranged2h` weapon, its loader `WeaponEnchantmentPak::Load`), else `base`. The player's
-/// enchantment counts only while `toggledWeaponEffects` is on.
+/// The projectile a ranged weapon (`base`: its `basicProjectileName`) fires: the shown weapon enchantment's
+/// `projectileName` if it has one (`Weapon::GetProjectileName`; read only for `Ranged1h` / `Ranged2h`), else `base`.
 pub fn weapon_projectile(
     db: &Database,
     base: &str,
@@ -246,15 +233,12 @@ pub fn weapon_projectile(
         .unwrap_or_else(|| base.to_owned())
 }
 
-/// Whether the player's weapon enchantment shows (`toggledWeaponEffects`,
-/// only the main player's is cleared, `gd_game::skill_fx` module docs).
+/// Whether the weapon enchantment shows: only the main player's is cleared by `toggledWeaponEffects`.
 pub fn enchantment_visible(options: &GameOptions, player: bool) -> bool {
     !player || options.flag("toggledWeaponEffects")
 }
 
-/// Whether a toggled skill's character effect on a character shows
-/// (`toggledAurasSelf`, on the player; never hidden on others in
-/// single player, `gd_game::skill_fx` module docs).
+/// Whether a toggled skill's character effect shows: `toggledAurasSelf` hides only the player's.
 pub fn toggle_fx_visible(options: &GameOptions, fx: &BuffFx, owner_is_player: bool) -> bool {
     !fx.toggled || !owner_is_player || options.flag("toggledAurasSelf")
 }

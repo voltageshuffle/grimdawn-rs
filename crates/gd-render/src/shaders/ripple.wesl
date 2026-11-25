@@ -52,7 +52,7 @@ fn vertex(vin: Vertex) -> Out {
 
 @fragment
 fn fragment(in: Out) -> @location(0) vec4<f32> {
-    // Not part of the G-buffer glow: skip the port's glow camera (see fx/particle.wesl).
+    // Not part of the G-buffer glow: skip the port's glow camera.
     if view.exposure > 0.1 {
         discard;
     }

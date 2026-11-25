@@ -1,9 +1,7 @@
 //! `.tex` → Bevy `Image`, cached by path. BC blocks are uploaded as-is.
 //!
-//! The engine creates every texture UNORM and lights in gamma space; until the
-//! port has its own shaders, colour maps use the `_srgb` view so Bevy's linear
-//! PBR shows them at the intended brightness. UI shaders encode the decoded
-//! texel back to its stored value (`render/post.rs`, "UI").
+//! The engine creates every texture UNORM and lights in gamma space; colour maps use the `_srgb` view. UI shaders
+//! encode the decoded texel back to its stored value (`render/post.rs`, "UI").
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
@@ -19,10 +17,9 @@ use gd_game_core::data::GameData;
 const PRUNE_MIN: usize = 64;
 
 /// Asset handles by normalized path, held weakly (as `AssetId`s): a hit recovers a strong handle while the asset
-/// lives (`Assets::get_strong_handle`), so an asset goes when its last user drops it (PORT: no timed unload,
-/// `gd_game_core::weak_cache`) — unless it is one of the last [`gd_game_core::weak_cache::RECENT`] handed out, which stay
-/// loaded (an effect's flipbook is not decoded again on every cast). `X`: facts kept with the asset (a flipbook's
-/// frame count). A file that failed to load stays failed until [`WeakHandles::clear`].
+/// lives, so an asset goes when its last user drops it (PORT: no timed unload) — unless it is one of the last
+/// [`gd_game_core::weak_cache::RECENT`] handed out. `X`: facts kept with the asset (a flipbook's frame count). A file
+/// that failed to load stays failed until [`WeakHandles::clear`].
 pub struct WeakHandles<A: Asset, X: Copy = ()> {
     map: HashMap<String, Option<(AssetId<A>, X)>>,
     /// The size at which the next insert drops the dead entries.
@@ -57,7 +54,7 @@ impl<A: Asset, X: Copy> Default for WeakHandles<A, X> {
 }
 
 impl<A: Asset, X: Copy> WeakHandles<A, X> {
-    /// The entries whose asset still exists (the memory audit).
+    /// The entries whose asset still exists.
     pub fn live(&self, assets: &Assets<A>) -> usize {
         self.map
             .values()
@@ -72,7 +69,6 @@ impl<A: Asset, X: Copy> WeakHandles<A, X> {
     }
 
     /// `Some(handle)` for a live entry (kept warm), `Some(None)` for a failed load, `None` when never loaded or gone.
-    /// Does not allocate.
     pub fn get(&mut self, key: &str, assets: &mut Assets<A>) -> Option<Option<(Handle<A>, X)>> {
         match *self.map.get(key)? {
             None => Some(None),
@@ -128,12 +124,12 @@ pub struct Textures {
 pub struct TexturePlugin;
 
 impl Textures {
-    /// Cached textures still loaded (the memory audit).
+    /// Cached textures still loaded.
     pub fn count(&self, images: &Assets<Image>) -> usize {
         self.cache.iter().map(|c| c.live(images)).sum()
     }
 
-    /// Drops every loaded texture and pending decode (the mounted mod changed: `model::drop_on_mod_change`).
+    /// Drops every loaded texture and pending decode (the mounted mod changed).
     pub fn clear(&mut self) {
         self.cache.iter_mut().for_each(WeakHandles::clear);
         self.loading.clear();
@@ -142,8 +138,7 @@ impl Textures {
     }
 
     /// Whether [`Textures::get`] of `path` costs nothing (loaded, or failed before). Otherwise its decode starts in
-    /// the background ([`collect_texture_loads`] files it) and this is false: the caller uses it on a later frame
-    /// instead of decoding on the game thread.
+    /// the background and this is false.
     pub fn ready(
         &mut self,
         data: &GameData,
@@ -154,9 +149,8 @@ impl Textures {
         self.load(data, path, srgb, images).is_some()
     }
 
-    /// [`Self::ready`] that also hands out a decoded texture's strong handle into `held`: a caller waiting on several
-    /// textures holds the ones already in, so the [`WeakHandles`] recent set cannot drop them (and their decode start
-    /// over) before the last one arrives.
+    /// [`Self::ready`] that also hands out a decoded texture's strong handle into `held`, so a caller waiting on
+    /// several textures keeps the ones already in from being dropped before the last one arrives.
     pub fn ready_held(
         &mut self,
         data: &GameData,
@@ -299,8 +293,7 @@ fn collect_texture_loads(mut textures: ResMut<Textures>, mut images: ResMut<Asse
     }
 }
 
-/// Decodes the texture at `key` (normalized; first flipbook frame), on any thread: [`Textures::get`]'s load, and a
-/// background model load's ([`crate::model::ModelCache::model_ready`]).
+/// Decodes the texture at `key` (normalized; first flipbook frame), on any thread.
 pub fn decode(data: &GameData, key: &str, srgb: bool) -> anyhow::Result<Image> {
     data.vfs
         .read(key)
@@ -403,12 +396,10 @@ impl Textures {
     }
 }
 
-/// The `anisotropicFiltering` option (`GraphicsEngine::UpdateFromOptions`: the literal
-/// level, 1 to 16) applied to the mipmapped textures loaded from now on. PORT: a display setting read at load; textures
-/// already loaded keep theirs; 8 until [`set_anisotropy`].
+/// The `anisotropicFiltering` option (`GraphicsEngine::UpdateFromOptions`: the literal level, 1 to 16). PORT: read at
+/// load, so textures already loaded keep theirs.
 static ANISOTROPY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(8);
 
-/// The current anisotropy level (the test reads it back; [`set_anisotropy`]).
 pub fn anisotropy() -> u32 {
     ANISOTROPY.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -420,11 +411,9 @@ pub fn set_anisotropy(level: i32) {
     );
 }
 
-/// The `textureQuality` option (`GraphicsEngine::UpdateFromOptions`:
-/// `GraphicsEngine.textureReduction`, read by `GetTextureReduction` and `GraphicsTexture::GetDataLength` /
-/// `Initialize`): the number of top mips a mipmapped texture skips. PORT: read at load, so textures already loaded keep
-/// theirs (the engine unloads all resources on a change; the port applies it to textures loaded from now on and at the
-/// next start); the per-directory reduction (`SetDirectoryTextureReduction`) is not ported; 0 until [`set_texture_quality`].
+/// The `textureQuality` option (`GraphicsEngine::UpdateFromOptions`: `GraphicsEngine.textureReduction`): the number of
+/// top mips a mipmapped texture skips. PORT: read at load, so textures already loaded keep theirs (the engine unloads
+/// all resources on a change); the per-directory reduction (`SetDirectoryTextureReduction`) is not ported.
 static TEXTURE_REDUCTION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Mips dropped for a `textureQuality` text (UpdateFromOptions: low 2, medium 1, high and above 0; the option

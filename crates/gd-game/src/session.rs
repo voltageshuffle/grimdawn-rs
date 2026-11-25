@@ -1,6 +1,6 @@
 //! The session lifecycle systems: [`begin`] starts a session, [`end_session_state`]
 //! tears it down, `load_save` (dev builds) starts one from `GD_SAVE`, [`set_mod_data`] mounts the
-//! session's mod (the session resources are [`gd_game_core::session`]).
+//! session's mod.
 use bevy::prelude::*;
 use gd_formats::save::gdc::Gdc;
 use gd_game_core::session::{Choice, GameMode, LoadedCharacter, SessionReady, last_difficulty};
@@ -8,8 +8,7 @@ use gd_game_core::session::{Choice, GameMode, LoadedCharacter, SessionReady, las
 use gd_game_core::session::{CustomMap, SessionEpoch, arena_map, mode_for};
 use std::sync::Arc;
 
-/// The session state the rules read beyond the database: the mode and the
-/// altar's formulas.
+/// The session state the rules read beyond the database.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Session<'w> {
     pub mode: Res<'w, GameMode>,
@@ -33,11 +32,9 @@ impl Session<'_> {
     }
 }
 
-/// Mounts the session's mod (`GameData::set_mod`: `Engine::InitializeMod`, or `None`:
-/// `RemoveModDirectory`) and drops the caches built from the other data: monster profiles, creature
-/// bodies and animations (a mod overrides records and files), and the render caches in the same call
-/// (gd-render's registered drop, [`gd_game_core::data::ModCacheDrop`]), so no frame serves the old
-/// mod's assets. Nothing is dropped when that mod is already mounted.
+/// Mounts the session's mod (`Engine::InitializeMod`, or `None`: `RemoveModDirectory`) and drops the caches
+/// built from the other data, render caches included ([`gd_game_core::data::ModCacheDrop`]). No-op when that
+/// mod is already mounted.
 pub fn set_mod_data(world: &mut World, name: Option<&str>) -> anyhow::Result<()> {
     let data = world.resource::<gd_game_core::data::GameData>().clone();
     if data.active_mod() == name {
@@ -60,8 +57,7 @@ pub fn set_mod_data(world: &mut World, name: Option<&str>) -> anyhow::Result<()>
     mounted
 }
 
-/// Starts the session: `difficulty` (0..=2) becomes the character's last
-/// played difficulty (`CharacterInfo::difficulty`).
+/// Starts the session: `difficulty` (0..=2) becomes the character's last played difficulty.
 pub fn begin(
     commands: &mut Commands,
     mut choice: Choice,
@@ -69,21 +65,16 @@ pub fn begin(
     difficulty: usize,
     veteran: bool,
 ) {
-    // No challenge in the Crucible (the game type window's Accept `GameModeWindow::Accept`
-    // and the difficulty window's click `DifficultyWindow::ApplySelection` set `GameInfo::SetChallenge(0)` in mode 1),
-    // whatever the
-    // character last played (a `GD_SAVE` of a Veteran character).
+    // No challenge in the Crucible (`GameModeWindow::Accept` / `DifficultyWindow::ApplySelection` set
+    // `GameInfo::SetChallenge(0)` in mode 1), whatever the character last played.
     let veteran = veteran && choice.survival.is_none();
     let mode = gd_rules::mode::Mode::new(difficulty, veteran);
     let (veteran, ultimate_veteran) = (mode.veteran(), mode.ultimate_veteran());
-    // The session's mod is mounted before anything of the session reads it (a Crucible or custom game
-    // started from the menu mounted it already, `gd_world::open_session_map`). A mod that does
-    // not mount aborts the start: the menu stays as it was; a headless start (`skip_menu`) ends the
-    // process instead of running a mod-labelled session on install data.
+    // The mod is mounted before anything of the session reads it. A mod that does not mount aborts the
+    // start; a headless start (`skip_menu`) exits the process.
     let mod_name = (!choice.mod_name().is_empty()).then(|| choice.mod_name().to_owned());
     commands.queue(move |world: &mut World| {
-        // Same save/mod refusal as the menu (`Choice::mod_mismatch`), for starts that bypass it
-        // (`GD_MOD` / `GD_SAVE` hooks): never run a mod-labelled session over another mod's save.
+        // The menu's save/mod refusal (`Choice::mod_mismatch`), for starts that bypass it.
         if let Some(msg) = choice.mod_mismatch(difficulty) {
             error!("session: {} does not start: {msg}", choice.name);
             #[cfg(feature = "dev")]
@@ -135,22 +126,20 @@ pub fn begin(
                 if choice.female { " (female)" } else { "" }
             );
             world.insert_resource(crate::save::NewCharacter::roll(&choice));
-            // The engine writes a new character at creation (`save::AutoSave::created`).
+            // The engine writes a new character at creation.
             world.insert_resource(crate::save::AutoSave::created());
         }
         world.insert_resource(choice);
-        // The exit's baseline, in this step: nothing of the session exists yet (`SessionBaseline`).
+        // The exit's baseline: nothing of the session exists yet.
         let alive = world.iter_entities().map(|e| e.id()).collect();
         world.insert_resource(gd_game_core::session::SessionBaseline(alive));
         world.insert_resource(SessionReady);
     });
 }
 
-/// Ends the session's gameplay state (gd-game's part of Exit to Main Menu; `grimdawn::exit` adds the
-/// entities, the render / UI side and the reopening of the world): session-created resources are removed
-/// (the `init_*` systems create them again), startup resources that hold session state go back to `Default`.
-/// That includes the monster profiles: a profile is built from the session's `CombatRules` (difficulty
-/// balance, Veteran), so a (record, level) entry of one session is wrong in the next.
+/// Ends the session's gameplay state (gd-game's part of Exit to Main Menu): session-created resources are
+/// removed, startup resources that hold session state go back to `Default` — monster profiles included, as
+/// they are built from the session's `CombatRules`.
 pub fn end_session_state(world: &mut World) {
     if let Err(e) = set_mod_data(world, None) {
         error!("session: {e:#}");
@@ -228,7 +217,7 @@ pub fn end_session_state(world: &mut World) {
     world.insert_resource(gd_game_core::pause::GamePause::default());
 }
 
-/// The session the hooks describe starts without the menu (`skip_menu`: no `GD_MENU`, hooks.rs).
+/// Starts the session the hooks describe without the menu (`skip_menu`).
 #[cfg(feature = "dev")]
 pub fn load_save(
     mut commands: Commands,
@@ -244,8 +233,7 @@ pub fn load_save(
         name: hooks.name.clone().unwrap_or_else(|| "Player".into()),
         female: hooks.female,
         hardcore: hooks.hardcore,
-        // `GD_SURVIVAL` starts the first session of the process in the Crucible (a restart after an exit
-        // is the campaign: `GD_EXIT_CYCLES`).
+        // Only the process's first session (a restart after an exit is the campaign).
         survival: hooks
             .survival
             .as_deref()

@@ -45,7 +45,7 @@ impl WeaponType {
             _ => return None,
         })
     }
-    /// Axe, sword, mace, dagger or scepter: the weapons two hands can hold at once (dual wield).
+    /// The weapons two hands can hold at once (dual wield).
     pub fn one_handed_melee(self) -> bool {
         matches!(
             self,
@@ -77,13 +77,11 @@ pub enum HandState {
 }
 
 impl HandState {
-    /// The number of hand states: the last variant's discriminant + 1 (an appended variant must become
-    /// the anchor here).
+    /// An appended variant must become the anchor here.
     pub const COUNT: usize = HandState::Ranged1hOffhand as usize + 1;
 
-    /// The engine's rules: the left hand is checked first (1h melee → dual
-    /// wield, staff, 1h ranged → dual ranged), then the right weapon combined
-    /// with a shield/off-hand in the left.
+    /// The left hand is checked first (1h melee → dual wield, staff, 1h ranged → dual ranged), then
+    /// the right weapon combined with a shield/off-hand in the left.
     pub fn from_weapons(right: Option<WeaponType>, left: Option<WeaponType>) -> Self {
         use WeaponType as W;
         if let Some(l) = left {
@@ -126,8 +124,7 @@ impl HandState {
         }
     }
 
-    /// Record-key prefix of the animation set the engine uses for this hand
-    /// state (`Character::GetHandStateAnimation` → set loaders).
+    /// Record-key prefix of the hand state's animation set (`Character::GetHandStateAnimation`).
     pub fn prefix(self) -> &'static str {
         match self {
             Self::Unarmed => "unarmed",
@@ -145,8 +142,7 @@ impl HandState {
         }
     }
 
-    /// Menu idle variant: the shield/off-hand sets read `<p>Shield…` /
-    /// `<p>Offhand…` menu keys ([`crate::anim::AnimSet`]'s loaders).
+    /// Menu idle variant: the shield/off-hand sets read `<p>Shield…` / `<p>Offhand…` menu keys.
     pub(crate) fn menu_infix(self) -> &'static str {
         match self {
             Self::OneHandedShield | Self::Ranged1hShield => "Shield",

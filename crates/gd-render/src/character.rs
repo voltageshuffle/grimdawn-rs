@@ -9,7 +9,7 @@
 //!   `monsterMesh`/`monsterBaseTexture`/`monsterBumpTexture` picked by
 //!   object id).
 //! - armour: every equipped (or default) piece is its own skinned mesh posed
-//!   with the character's skeletal pose through cached bone maps, its root
+//!   with the character's skeletal pose, its root
 //!   bone on the wearer's (`anim::pose_abs_attached_into`); the gendered mesh
 //!   (`armorMaleMesh`/`armorFemaleMesh` + textures) replaces the item's own
 //!   `mesh` when set.
@@ -22,7 +22,7 @@
 //!   bone's posed abs * the point): no grip or per-weapon-type correction, and
 //!   the hero's mirrored "R Hand" basis (x, -y, z) is kept; it cancels the
 //!   mirrored bind of `Weapon_R_Parent_Fix`, so the right weapon frame is a
-//!   proper rotation, the left one's mirror image (`AttachPoint::coords_in`, tests).
+//!   proper rotation, the left one's mirror image (`AttachPoint::coords_in`).
 //!   The parent bone's posed abs is `GraphicsMesh::GetAbsCoords`
 //!   (`local * key` per bone up to the root, the skinning chain of
 //!   `GraphicsMesh::GetSkinningCoords`: `parent * local * key`; the key `SkeletalPose::CacheCoords`
@@ -32,14 +32,13 @@
 //!   scale is the item's base scale times the wearer's `weaponScale`
 //!   (Game.dll `Weapon::AttachItem`,
 //!   `Character::GetWeaponScale`, `Character.weaponScale`), the attach offset the identity
-//!   (`Weapon::GetAttachOffset`, static `Coords` in .data).
+//!   (`Weapon::GetAttachOffset`).
 //! - animation: `gd_sim::anim` sets by hand state, one channel with 200 ms
 //!   cross-fades, root motion, callback points.
 //! - hidden (`gd_game_core::visuals::Hidden`, a blink's warm-up): the root and its
 //!   weapons are not drawn, with everything attached to them (armour, the
 //!   effects on the body and on the weapons) and their shadows ([`hide_actors`]).
-//! - shapeshift form (`gd_game_core::character::Character::form_mesh`, worn by
-//!   `gd_game::shapeshift::wear_form`): [`wear_forms`] draws the form mesh
+//! - shapeshift form (`gd_game_core::character::Character::form_mesh`): [`wear_forms`] draws the form mesh
 //!   (its own materials, under the root so the character's scale applies)
 //!   instead of the body; armour and weapons are not drawn while it is on
 //!   (`Character::SetHideEquipment`, `Character::AddAttachedEntitiesToScene`:
@@ -48,7 +47,7 @@
 //!   The form mesh's own `CreateEntity` effects are made on its bones
 //!   (`Character::SetOverrideMesh`: the old mesh's attachments removed, the
 //!   new one's made). The paper doll wears the form too, and keeps its armour,
-//!   default pieces and weapons drawn (`doll::doll_forms`). PORT: the form
+//!   default pieces and weapons drawn. PORT: the form
 //!   mesh loads in the background, so the old look stays a few frames until
 //!   it is in (the engine's `SetOverrideMesh` swaps at once).
 //! - equipment change: the player's body is rebuilt once every new part is
@@ -100,12 +99,10 @@ impl Plugin for CharacterPlugin {
     }
 }
 
-/// `gd_game_core::visuals::Hidden` on a character: its root and weapon roots are
-/// hidden while it is on (kept every frame: a re-dressed body's new weapons,
-/// a `ShowRightHand` callback), shown again when it goes, except a weapon
-/// whose hand the animation hid ([`AttachedWeapon::hand_hidden`]): the actor's
-/// visibility only decides whether its attached entities are drawn, each
-/// keeps its own (`Actor::AddToScene`, `gd_game_core::visuals::Hidden`).
+/// `gd_game_core::visuals::Hidden` on a character: its root and weapon roots are hidden while it is on (every frame:
+/// a re-dressed body's new weapons, a `ShowRightHand` callback), shown again when it goes, except a weapon whose hand
+/// the animation hid ([`AttachedWeapon::hand_hidden`]): the actor's visibility only decides whether its attached
+/// entities are drawn, each keeps its own (`Actor::AddToScene`).
 fn hide_actors(
     hidden: Query<(Entity, &Body), With<gd_game_core::visuals::Hidden>>,
     mut shown: RemovedComponents<gd_game_core::visuals::Hidden>,
@@ -159,13 +156,20 @@ pub struct HeldWeapons(Vec<Entity>);
 pub enum DollView {
     Character,
     Illusionist,
-    /// The main menu's selected character: not a view but a body standing in
-    /// the menu's 3D scene (`render::menu`: the record's place, scale and
-    /// rotation; the world's layers, lights and shadows).
+    /// The main menu's selected character: not a view but a body standing in the menu's 3D scene (the record's
+    /// place, scale and rotation; the world's layers, lights and shadows).
     Menu,
 }
 
 impl DollView {
+    pub fn name(self) -> &'static str {
+        match self {
+            DollView::Character => "Character",
+            DollView::Illusionist => "Illusionist",
+            DollView::Menu => "Menu",
+        }
+    }
+
     /// The doll's own render layer, if it is drawn by its own camera.
     pub fn own_layer(self) -> Option<RenderLayers> {
         (self != DollView::Menu).then(|| RenderLayers::layer(self.layer()))
@@ -180,7 +184,7 @@ impl DollView {
         }
     }
 
-    /// Where the doll stands, far from every level (like `GD_CHARS`).
+    /// Where the doll stands, far from every level.
     pub fn origin(self) -> Vec3 {
         match self {
             DollView::Character => Vec3::new(-20000.0, 3000.0, -20000.0),
@@ -214,8 +218,7 @@ pub struct FormPart {
     pub part: Entity,
     /// The body's own parts, hidden (not posed) while the form is on.
     pub hidden: Vec<Entity>,
-    /// A doll's armour pieces whose slot name is an attach point of the form
-    /// mesh, with that point (`doll::doll_forms`).
+    /// A doll's armour pieces whose slot name is an attach point of the form mesh, with that point.
     pub attached: Vec<(Entity, AttachPoint)>,
 }
 
@@ -239,7 +242,7 @@ fn slot_point(slot: Slot) -> &'static str {
 /// Draws the form mesh of a shapeshifted character (`Character::form_mesh`)
 /// in place of its body and hides its armour and weapons; puts the body back
 /// when the form goes (module doc). A doll hides only its own mesh and moves
-/// its weapons to the current mesh's hands (`doll::doll_forms`).
+/// its weapons to the current mesh's hands.
 pub(crate) fn wear_forms(
     mut commands: Commands,
     mut a: CharAssets,
@@ -249,13 +252,11 @@ pub(crate) fn wear_forms(
 ) {
     for (root, c, mut body, doll) in &mut chars {
         let wanted = c.form_mesh();
-        // Shared borrow first: only DerefMut `Body` when the form actually
-        // changes, so `tag_meshes`' change filter is not defeated every frame.
+        // Shared borrow first: only DerefMut `Body` when the form changes (`tag_meshes` filters on change).
         if body.form.as_ref().map(|f| f.mesh.as_str()) == wanted {
             continue;
         }
-        // The form mesh is built in the background ([`CharAssets::model_ready`]): the character keeps what it wears
-        // until it is in, a few frames, instead of parsing it and decoding its textures on the game thread.
+        // The form mesh is built in the background: the character keeps what it wears until it is in.
         let form = match wanted {
             Some(m) => match a.model_ready(m) {
                 crate::model::Ready::Loading => continue,
@@ -443,11 +444,8 @@ impl CharAssets<'_> {
     /// Spawns an object record's `mesh` under `root` the way `Actor::Load`
     /// (Engine.dll) sets it up: the texture overrides
     /// ([`TexOverride`]: `baseTexture` / `bumpTexture` for every material,
-    /// else `baseTextures[i]` / `bumpTextures[i]`; e.g. a chest's colour
-    /// variant, or `system/textures/invisible.tex`, fully transparent, for a
-    /// mesh that only carries attach points), `castsShadows` (default
-    /// true) and the mesh's `CreateEntity` effects
-    /// ([`crate::fx::spawn_mesh_attachments`]). Returns the part entities (None without a model).
+    /// else `baseTextures[i]` / `bumpTextures[i]`), `castsShadows` (default
+    /// true) and the mesh's `CreateEntity` effects. Returns the part entities (None without a model).
     pub fn spawn_record_model(
         &mut self,
         commands: &mut Commands,
@@ -669,8 +667,7 @@ pub fn spawn_player(
 }
 
 /// Gives the existing player entity `root` a new body for `equipment` (after
-/// [`despawn_body`]); its gameplay components stay. A caller in game waits for [`player_body_ready`] first, so the
-/// rebuild builds and decodes nothing on the game thread.
+/// [`despawn_body`]); its gameplay components stay. A caller in game waits for [`player_body_ready`] first.
 pub fn rebuild_player_body(
     commands: &mut Commands,
     a: &mut CharAssets,
@@ -718,11 +715,10 @@ pub fn despawn_body(
     }
 }
 
-/// Whether [`rebuild_player_body`] of `equipment` builds and decodes nothing on the game thread, as [`dress_bodies`]
-/// waits for a creature: the body, armour and weapon models, the override textures and the record shaders are in (or
-/// failed); the ones that are not start loading in the background. `held` takes what is already in (the last call's
-/// holds go only once this call's are taken): the caller keeps it while it waits, so the warm sets cannot drop an
-/// early part before the last one arrives ([`Waiting`]).
+/// Whether [`rebuild_player_body`] of `equipment` builds and decodes nothing on the game thread: the body, armour and
+/// weapon models, the override textures and the record shaders are in (or failed); the ones that are not start
+/// loading in the background. `held` takes what is already in; the caller keeps it while it waits, so the warm sets
+/// cannot drop an early part before the last one arrives ([`Waiting`]).
 pub fn player_body_ready(
     a: &mut CharAssets,
     female: bool,
@@ -746,8 +742,7 @@ pub fn player_body_ready(
     {
         match a.model_ready(mesh) {
             crate::model::Ready::Done(m) => {
-                // A record shader override is analysed in the background too (a `reshade` would parse it on the
-                // spot).
+                // A record shader override is analysed in the background too.
                 if let Some(sh) = tex.shader.as_deref().filter(|s| !s.trim().is_empty()) {
                     ready &= a.mats.cache.shader_ready(&data, sh, m.mesh.skinned);
                 }
@@ -845,14 +840,11 @@ fn player_body(
     )
 }
 
-/// Dresses new creatures (`gd_game_core::creature::BodyRequest`) with their
-/// body, armour and weapon meshes, once every one of them and every override texture they name is loaded: what is
-/// not yet loads in the background ([`CharAssets::model_ready`], [`crate::textures::Textures::ready_held`]) and the
-/// creature is dressed on a later frame (it is drawn a few frames after it appears instead of stalling the frame).
-/// While it waits the creature holds what is already in ([`Waiting`]): the caches only keep their last
-/// [`gd_game_core::weak_cache::RECENT`] values warm, and a crowd (the Conclave of the Three: ~40 NPCs with a dozen parts
-/// each, beside level streaming) would otherwise evict one creature's early parts before its last one arrives and
-/// load them again, so it never had everything at once and stayed bodiless.
+/// Dresses new creatures (`gd_game_core::creature::BodyRequest`) with their body, armour and weapon meshes once every
+/// one of them and every override texture they name is loaded; what is not yet loads in the background and the
+/// creature is dressed on a later frame. While it waits the creature holds what is already in ([`Waiting`]): the
+/// caches only keep their last [`gd_game_core::weak_cache::RECENT`] values warm, so in a crowd an early part could
+/// otherwise be evicted before the last one arrives, and the creature would never be dressed.
 fn dress_bodies(
     mut commands: Commands,
     mut a: CharAssets,
@@ -906,7 +898,7 @@ fn dress_bodies(
         std::mem::swap(&mut w.textures, &mut taken.textures);
         taken.models.clear();
         taken.textures.clear();
-        // A record shader override is analysed in the background too (a `reshade` would parse it on the spot).
+        // A record shader override is analysed in the background too.
         let looks = std::iter::once((req.look.mesh.as_str(), &tex))
             .chain(items.iter().map(|(m, t)| (m.as_str(), t)));
         let mut shaders = true;
@@ -1053,15 +1045,14 @@ fn dress(
     let mut armour = Vec::new();
     let (e, _) = a.spawn_textured(commands, root, &body, &tex);
     commands.entity(e).insert(ExternalPose);
-    // The body mesh's own `CreateEntity` effects (`Actor::CreateAttachmentsFromMesh`, every actor), on its bones:
-    // the whole look of a wisp or an Aetherial phantom (a discarded sphere + `FX_AetherialPhantom01` at
-    // `FXCentered`), the flames of a fire zombie. They go with the part (a shapeshift form hides them).
+    // The body mesh's own `CreateEntity` effects (`Actor::CreateAttachmentsFromMesh`, every actor), on its bones
+    // (the whole look of a wisp). They go with the part (a shapeshift form hides them).
     crate::fx::items::attach_armour(commands, &body, &body.msh, root, e);
     parts.push(e);
     let weapon_scale = rec.f32("weaponScale").filter(|s| *s > 0.0).unwrap_or(1.0);
     let mut weapons = Vec::new();
     let mut slots: Vec<_> = items.iter().collect();
-    slots.sort_by_cached_key(|(s, _)| format!("{s:?}"));
+    slots.sort_by_key(|(s, _)| s.name());
     // The database by its own handle: a record stays borrowed while `a` spawns.
     let db = a.data.db.clone();
     for (slot, item) in slots {
@@ -1122,14 +1113,10 @@ fn dress(
     })
 }
 
-/// PORT: radius (m) around a character, or beyond an animated object model's bounds, that must touch an active camera's
-/// frustum for `pose_bodies` (characters) and `model::animate_skeletons` (object models) to pose it ([`near_view`]). A model
-/// further out is invisible and casts no shadow into the view (the engine's casters lie in the camera volume extruded toward
-/// the sun; a 10 m tall character's shadow is under 40 m for a sun above ~14 degrees), and nothing on screen reads its joints
-/// (the skinned-mesh AABB, item FX, trails and weapon dressing all belong to the same character; an object's bone effects
-/// and lights hold still out there). It resumes with the current pose the frame it comes back; the animation clock never
-/// stops (`advance_animations` for characters, gameplay; an object's channel with its callbacks and entity events). Paper
-/// dolls and the player are always posed. The engine's own rule for off-screen animation was not decompiled.
+/// PORT: radius (m) around a character, or beyond an animated object model's bounds, that must touch an active
+/// camera's frustum for it to be posed ([`near_view`]); further out it is invisible and casts no shadow into the
+/// view. It resumes with the current pose the frame it comes back; the animation clock never stops. Paper dolls and
+/// the player are always posed. The engine's own rule for off-screen animation is not traced.
 const POSE_MARGIN: f32 = 40.0;
 
 /// The frusta of the active cameras, refilled into `out` (the views [`near_view`] tests).
@@ -1149,8 +1136,7 @@ pub(crate) fn near_view(frusta: &[Frustum], center: Vec3A, extent: f32) -> bool 
 }
 
 /// Writes joints of every part and places weapons from the character's posed bones
-/// (`Character::posed`), shows and hides hands on their callbacks. Runs after transform
-/// propagation like `animate_skeletons`. The characters are posed in parallel: each one
+/// (`Character::posed`). Runs after transform propagation. The characters are posed in parallel: each one
 /// writes only its own parts' joints and its own weapons (see the SAFETY notes).
 pub(crate) fn pose_bodies(
     mut chars: Query<(
@@ -1205,8 +1191,7 @@ pub(crate) fn pose_bodies(
             if !doll && !player && !near_view(frusta, root.translation + Vec3A::Y * 1.5, 0.0) {
                 return;
             }
-            // The root as `Coords`: `Coords::mul` (gd-formats, opt 3 in dev builds) does the per-joint
-            // `root * joint`, faster than glam's generic `Affine3A` maths in an unoptimised dev build.
+            // The root as `Coords`, for `Coords::mul` per joint.
             let root_c = Coords {
                 x: root.matrix3.x_axis.to_array(),
                 y: root.matrix3.y_axis.to_array(),
@@ -1223,7 +1208,7 @@ pub(crate) fn pose_bodies(
                     anim::pose_abs_attached_into(&skel.msh, &c.pose, &c.body, body_abs, part_abs);
                     &part_abs[..]
                 };
-                // A doll's piece on a form's attach point (`doll::doll_forms`).
+                // A doll's piece on a form's attach point.
                 let frame = body
                     .form
                     .iter()

@@ -17,10 +17,6 @@
 //!   `GetLoadValueMinTag`, `GetLoadValueMaxTag`, `GetLoadChanceTag`, ... e.g.
 //!   `DamageAttributeAbs_Fire`'s).
 //!
-//! The table was extracted once with an IDA script that is not kept; to
-//! extend or re-check it, walk the `*Attribute*` constructors and tag
-//! virtuals the same way (`docs/reverse-engineering.md`).
-//!
 //! # `ty`: three id spaces
 //!
 //! `ty` is read in the space of the entry's [`AttrFamily`]:

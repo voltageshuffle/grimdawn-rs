@@ -1,6 +1,6 @@
 use super::*;
 
-/// The owner's pet bonus records with their level index (see the module docs).
+/// The owner's pet bonus records with their level index.
 pub fn pet_bonuses(
     data: &gd_game_core::data::GameData,
     loadout: &Loadout,
@@ -8,8 +8,7 @@ pub fn pet_bonuses(
     pet_bonuses_with(data, loadout, None)
 }
 
-/// [`pet_bonuses`] plus the bonuses of the buffs other sources keep on the
-/// owner (`owner_buffs`: a Crucible power-up's buff).
+/// `owner_buffs`: buffs other sources keep on the owner (a Crucible power-up's).
 pub fn pet_bonuses_with(
     data: &gd_game_core::data::GameData,
     loadout: &Loadout,
@@ -21,8 +20,7 @@ pub fn pet_bonuses_with(
         .collect()
 }
 
-/// [`pet_bonuses`] with the skill or buff record each comes from (`None`:
-/// an item's, which the engine installs with skill id 0).
+/// With each bonus's skill or buff record (`None`: an item's, installed with skill id 0).
 pub(super) fn pet_bonus_sources(
     data: &gd_game_core::data::GameData,
     loadout: &Loadout,
@@ -30,12 +28,9 @@ pub(super) fn pet_bonus_sources(
 ) -> Vec<(Option<String>, gd_formats::arz::Record, usize)> {
     let db = &data.db;
     let mut out = Vec::new();
-    // Which learned skills have their bonus installed (`Skill::InstallPetBonus`):
-    // a `Skill_Passive` on every
-    // level change, a toggle (`Skill_BuffSelfToggled::SkillLevelChange` /
-    // `InitializeBuff`) while it is on (`Skill.active`); the skill's modifiers install
-    // with it. The level is `GetCurrentLevel` (the learned level with the
-    // gear's bonus). Duration buffs: from the running buffs below.
+    // Learned skills with their bonus installed (`Skill::InstallPetBonus`): a `Skill_Passive` always, a
+    // toggle while on (`Skill.active`), modifiers with their skill; at `GetCurrentLevel`. Duration buffs:
+    // from the running buffs below.
     let trees = data.skill_trees();
     let eff = loadout.effective_skills(db, &trees);
     let base_of = |name: &str| trees.parent(name, false);
@@ -67,23 +62,10 @@ pub(super) fn pet_bonus_sources(
             out.push((Some(name.clone()), b, level as usize - 1));
         }
     }
-    // Running buffs: a `Skill_BuffSelfDuration` is a
-    // `Skill_BuffSelfToggled` whose `ActivateNow` sends the
-    // active state for `skillActiveDuration` and whose `Update`
-    // sends the inactive one when it runs out; `ReceiveActiveUpdate`
-    // → `InitializeBuff` installs the pet bonus
-    // while on (`Skill.active`) and removes it (`Skill::RemovePetBonus`)
-    // when off. A buff record on a character (`SkillBuff::Install`
-    // / `UnInstall`: a secondary's or celestial
-    // power's buff, a radius buff on the caster) installs its own
-    // `petBonusName` for the character it is on and removes it with the
-    // buff. The bonus goes to the owner's list (`GameEngine::SetPetBonus`),
-    // which every pet reads live: all its pets while the buff runs, those
-    // summoned during it too; a pet's death removes nothing. So: the
-    // `Loadout::buffs` entries (their level index from the cast; their
-    // learned modifiers are entries too) and the buff records of the
-    // switched-on radius toggles, which the engine puts on the caster too
-    // (`auras.rs`; PORT: the port keeps those off the player's buff list).
+    // Running buffs: a `Skill_BuffSelfDuration` (`InitializeBuff`) or a buff record on a character
+    // (`SkillBuff::Install` / `UnInstall`) installs its `petBonusName` while it runs, into the owner's
+    // list (`GameEngine::SetPetBonus`) which every pet reads live; a pet's death removes nothing. Switched-on
+    // radius toggles put their buff on the caster too (PORT: kept off the player's buff list).
     let buff_class = |r: &gd_formats::arz::Record| {
         r.class.ends_with("BuffSelfDuration") || r.class.starts_with("SkillBuff")
     };
@@ -100,9 +82,7 @@ pub(super) fn pet_bonus_sources(
         })
         .map(|(r, li)| (r.name.clone(), li))
         .collect();
-    // `SkillBuff::Install` (above): a buff another character keeps on
-    // the owner installs its `petBonusName` for the owner too (a Crucible
-    // power-up's buff, `story::cast_story_skills`).
+    // A buff another character keeps on the owner installs its `petBonusName` for the owner too.
     running.extend(
         owner_buffs
             .into_iter()
@@ -153,9 +133,8 @@ pub(super) fn pet_bonus_sources(
             }
         }
     }
-    // Item sets (`ItemSet::PetBonusInstall`): the set's
-    // `petBonusName` (level 0) with n pieces worn when `petBonusLevel[n - 1]`
-    // (clamped to the last) is non-zero, or always when that list is empty.
+    // `ItemSet::PetBonusInstall`: the set's `petBonusName` (level 0) with n pieces worn when
+    // `petBonusLevel[n - 1]` (clamped to the last) is non-zero, or always when that list is empty.
     let mut worn: gd_formats::collections::HashMap<String, usize> =
         gd_formats::collections::HashMap::default();
     for it in &loadout.items {
@@ -187,28 +166,21 @@ pub(super) fn pet_bonus_sources(
     out
 }
 
-/// Whether a pet bonus record reaches a pet with these `petTypeNames`.
 pub(super) fn bonus_applies(bonus: &gd_formats::arz::Record, pet_types: &[String]) -> bool {
     gd_sim::skills::pet_bonus_applies(bonus, pet_types)
 }
 
-/// The pet bonus character effects a pet wears: (the skill or buff record
-/// whose bonus it is, its `charFxPakPetNames` pak), in bonus order (module
-/// docs). Derived from [`pet_bonuses`]' sources by [`sync_pet_bonus_fx`],
-/// which also starts their [`gd_game_core::visuals::BuffFx`] effects.
+/// The pet bonus character effects a pet wears: (source skill or buff record, its `charFxPakPetNames`
+/// pak), in bonus order. Kept by [`sync_pet_bonus_fx`].
 #[derive(Component, Default, Debug, PartialEq)]
 pub struct PetBonusFx(pub Vec<(String, String)>);
 
-/// The [`gd_game_core::visuals::BuffFx::skill`] key of a pet bonus effect: the
-/// engine keys it by the source skill's object id, apart from the buffs and
-/// toggles on the pet itself.
+/// The engine keys a pet bonus effect by the source skill's object id, apart from the pet's own buffs.
 pub fn pet_bonus_fx_key(source: &str) -> String {
     format!("petbonus:{source}")
 }
 
-/// The pet bonus effects a pet with these `petTypeNames` wears (module
-/// docs): every skill-installed bonus that reaches it with a
-/// `charFxPakPetNames` entry at its level.
+/// Every skill-installed bonus that reaches the pet with a `charFxPakPetNames` entry at its level.
 pub(super) fn bonus_fx(
     bonuses: &[(Option<String>, gd_formats::arz::Record, usize)],
     pet_types: &[String],
@@ -228,9 +200,8 @@ pub(super) fn bonus_fx(
     out
 }
 
-/// Keeps every pet's [`PetBonusFx`] and their effects in step with its
-/// owner's pet bonuses: re-read when the owner's loadout changes and for a
-/// new pet (`Player::PostPetSpawn`); a dead pet wears none.
+/// Re-read when the owner's loadout changes and for a new pet (`Player::PostPetSpawn`); a dead pet wears
+/// none.
 pub(super) fn sync_pet_bonus_fx(
     mut commands: Commands,
     data: Res<GameData>,

@@ -37,8 +37,7 @@
 //! reads array index 0 (level 1), never base + bonus + 1. The numbers of the
 //! damage and retaliation lines then pass through the main player's profile
 //! (`DamageAttributeStore::ProcessText` runs the skill's damage
-//! through a `CombatDisplayAccumulator` with `GetMainPlayer`): Reckless Power
-//! shows 75-188 Aether, not the record's 6-15 ([`scale_attr`]).
+//! through a `CombatDisplayAccumulator` with `GetMainPlayer`, [`scale_attr`]).
 //!
 //! Energy cost, cooldown, duration, radius, targets... are the
 //! `SkillProfile_Modifiers` lines of `SkillProfile_Modifiers::CreateUIText` (current level, every
@@ -83,25 +82,17 @@
 //! (`CreateUINextSpecializedText2`). Without a pet record the limit and time
 //! still show (a `Skill_Modifier`'s with their `...Mod` tags).
 //!
-//! Attribute lines are formatted with the item attribute tags
-//! (`items::tooltip::attribute_line`), learned modifiers' included ([`section_of`]);
-//! the potion, item-skill and reclaim variants are the lines above. The alternate pet text of
-//! `Skill_AttackSpellChaosSpawnPet` is the plain one (`CreateUIAlternatePetText` is a
-//! stub that falls through to `Skill::CreateUIPetText`). PORT: the `Skill.uiVariant` and
-//! `GameEngine.uiVariant` flags are taken as clear. The weapon line's
-//! "(a - b)" numbers are [`weapon_numbers`] (`Skill::CollectWeaponDamage`,
-//! the character sheet's per-skill damage with the weapon %), the
-//! retaliation line's `actor::display_retaliation`; both show only with
-//! [`SkillTipCtx::player`] (else the plain `SkillWeaponDamageFormat` /
-//! `SkillRetaliationDamageFormat`). The retaliation line is engine-gated on
-//! Expansion 2 being loaded (taken as loaded). A summon's numbers need
-//! [`SkillTipCtx::player`]; its level is the player's (the preloaded pet is
-//! `Skill::PreLoadPet`, which sets no level: `Skill_SpawnPet::
-//! SpawnPet` copies the caster's), its life takes the flat bonuses too (the
-//! engine only the `characterLifeModifier` of the pet bonuses); its skills'
-//! levels take the learned and the gear pet modifiers (`SkillBook::gear_pet_mods`,
-//! as the summon gets them). Only the mastery window passes the pet
-//! bonuses so far.
+//! Attribute lines are formatted with the item attribute tags, learned modifiers' included
+//! ([`section_of`]). The alternate pet text of `Skill_AttackSpellChaosSpawnPet` is the plain one
+//! (`CreateUIAlternatePetText` falls through to `Skill::CreateUIPetText`). PORT: the
+//! `Skill.uiVariant` and `GameEngine.uiVariant` flags are taken as clear. The weapon line's
+//! "(a - b)" numbers are [`weapon_numbers`] (`Skill::CollectWeaponDamage`), the retaliation
+//! line's `actor::display_retaliation`; both show only with [`SkillTipCtx::player`] (else the
+//! plain `SkillWeaponDamageFormat` / `SkillRetaliationDamageFormat`). The retaliation line is
+//! engine-gated on Expansion 2 being loaded (taken as loaded). A summon's numbers need
+//! [`SkillTipCtx::player`]; its level is the player's (`Skill_SpawnPet::SpawnPet` copies the
+//! caster's). PORT: a summon's life takes the flat pet bonuses too (the engine only
+//! `characterLifeModifier`); its skills' levels take the learned and the gear pet modifiers.
 //! The devotion window's text is [`devotion_lines`]; the HUD hot slot's [`hot_slot_lines`] (its status by
 //! [`hot_state`]; the evade and potion slots: [`default_hot_slot_lines`]) and the skill pick list's
 //! [`pick_list_lines`] (`HotSlotOptionSkill::GetRolloverText`).
@@ -260,7 +251,7 @@ pub fn format(fmt: &str, args: &[Arg]) -> String {
                         p.push(*d);
                         b.next();
                     }
-                    // (bad data: a huge `%.N` would allocate N digits; stock tags use 0-2.)
+                    // A huge `%.N` would allocate N digits.
                     prec = p.parse::<usize>().ok().map(|p| p.min(9));
                 }
                 let conv = b.next().unwrap_or('t');
@@ -312,9 +303,9 @@ pub struct SkillTipCtx<'a> {
     /// lines are scaled by it like the engine does (`DamageAttributeStore::
     /// ProcessText`); `None` shows the record's raw values.
     pub player: Option<(&'a crate::actor::Rules, &'a crate::actor::Profile)>,
-    /// The class and potion trees (`gd_game::data::GameData::skill_trees`).
+    /// The class and potion trees.
     pub trees: &'a crate::skills::SkillTrees,
-    /// The player's pet bonuses (`gd_game::pets::pet_bonuses`): a summon's
+    /// The player's pet bonuses: a summon's
     /// health and its skills' damage take them, nothing else does; may be
     /// empty for a read-only text.
     pub pet_bonuses: &'a [(Record, usize)],
@@ -353,12 +344,8 @@ fn levels(ctx: &SkillTipCtx, skill: &str, disp: &Record) -> (u32, u32, u32, u32)
         .or(disp.i32("skillMaxLevel"))
         .unwrap_or(1)
         .max(0) as u32;
-    // PORT: the real window shows no "+ n" for a skill whose ultimate level
-    // equals its max level (Consecrated Blade 3/3, Wrath of Agrivix 0/1 stay
-    // plain while 16-max skills read "16 + 2"); where the engine drops the
-    // augment from the text is not located (`Skill::SetAugmentedSkillLevel`
-    // stores it). Only the "+ n" goes: the current level keeps the bonus
-    // levels, as `Skill::GetCurrentLevel` does for the cast.
+    // PORT: no "+ n" for a skill whose ultimate level equals its max level (where the engine
+    // drops it is not located); the current level keeps the bonus levels.
     let augment = ctx
         .book
         .bonus
@@ -546,7 +533,7 @@ fn combo_lines(
         .get("records/game/gameengine.dbr")
         .map(|r| r.f32s("skillComboChargeMultipliers"))
         .unwrap_or_default();
-    // (bad data: a record-driven count; stock combos have a handful of levels.)
+    // The count is record-driven: bounded.
     for n in 0..(levels as usize).min(64) {
         let mult = table
             .get(n.min(table.len().saturating_sub(1)))
@@ -587,8 +574,8 @@ fn reserve_line(
     shown.then(|| line(class, ctx.fmt("tagCharManaLimitReserve", &[Arg::Num(v)])))
 }
 
-/// `Skill::CreateUISpecializedText1` (expansion 3
-/// moved its chance and life monitor lines to [`param_lines`]), next level
+/// `Skill::CreateUISpecializedText1` (its chance and life monitor lines are
+/// [`param_lines`]'), next level
 /// `CreateUINextSpecializedText1`: the activation chance
 /// (`onHitActivationChance`, `SkillSecondary_OnHitBuffRadius`'s own record
 /// holds it), `FilterCaster`, and the refresh skills' [`refresh_lines`].
@@ -685,8 +672,7 @@ fn weapon_numbers(
 /// eight restore values (`skillLifeBonus` .. `skillManaPercentSlow` of `SkillProfile_Modifiers`)
 /// are multiplied by it; any other skill: 1. The parent is the class tree's base skill
 /// ([`crate::skills::SkillTrees::parents`]) or, for the potion modifiers, the player record's
-/// `customPotionTree1/2` potion (the tree's first non-modifier entry, `Player::Load`). Stock: the gdx3
-/// vials (`modifierPotency`) and transfusions (`potionTransfusion`) raise the other potion modifiers' text.
+/// `customPotionTree1/2` potion (the tree's first non-modifier entry, `Player::Load`).
 fn modifier_potency(ctx: &SkillTipCtx, skill: &str, rec: &Record) -> f32 {
     let kin =
         rec.class == "Skill_PotionContainer" || crate::skills::is_skill_modifier_class(&rec.class);
@@ -838,12 +824,9 @@ fn special_lines(
     let own = |f: &str, l: u32| level_f(prof, f, l);
     let sum = |f: &str, l: u32| total_f(prof, mods, f, l);
     let num = |tag: &str, v: f32| line(class, ctx.fmt(tag, &[Arg::Num(v)]));
-    // `Skill_BuffAttackRadiusLightning::CreateUI[Next]SpecializedText2`
-    // (its vtable `Skill_BuffAttackRadiusLightning::vftable`): before the base lines, `SkillSecondFormat`
-    // of the profile's `skillTargetInterval` labelled
-    // `Interval`; the next level only when it differs. PORT: Devastation's
-    // `Skill_BuffAttackRadiusDrop` (no RTTI name; its `Skill_BuffAttackRadiusDrop::CreateUISpecializedText2` /
-    // `CreateUINextSpecializedText2` pair has the same body) takes the same line.
+    // `Skill_BuffAttackRadiusLightning::CreateUI[Next]SpecializedText2`: before the base lines,
+    // `SkillSecondFormat` of the profile's `skillTargetInterval` labelled `Interval`; the next
+    // level only when it differs. `Skill_BuffAttackRadiusDrop` (Devastation) has the same body.
     if matches!(
         prof.class.as_str(),
         "Skill_BuffAttackRadiusLightning" | "Skill_BuffAttackRadiusDrop"
@@ -1051,7 +1034,7 @@ fn special_lines(
 /// `grantedSkills` entry's short summary (the next level's with blanks around
 /// each). `Skill::CreateUIShortSummaryText` at the form skill's `level` (`prev`: the
 /// next-level text): a granted skill's level follows the form skill's
-/// (`SkillManager::UpdateSubSkillLevels`, gd-game `shapeshift` docs).
+/// (`SkillManager::UpdateSubSkillLevels`).
 fn shapeshift_lines(
     ctx: &SkillTipCtx,
     prof: &Record,
@@ -1276,7 +1259,7 @@ fn learned_mods(ctx: &SkillTipCtx, skill: &str, rec: &Record) -> Vec<(Record, us
 /// `petBonusName` record lines under a title: by the bonus's `petTypeNames` count `tagPetBonusNameAllPets`,
 /// `...OnePet`, `...TwoPets`, else `...ManyPets` and a line per name. The current level is
 /// `Skill::CreateUIPetBonusText` (from `CreateUIParameterText`): the caller's text class picks the classes
-/// (26, 28, 19 / 33 / 41 and 81 / 82 remap them, `items::tooltip_item::pet_bonus_block`; any other, as the
+/// (26, 28, 19 / 33 / 41 and 81 / 82 remap them; any other, as the
 /// skill classes 46-56, gives 70 / 71); the next level (`next`) is its sibling `Skill::CreateUINextPetBonusText`
 /// (from `CreateUINextParameterText`, the skill and devotion windows' next level), which
 /// always uses 72 / 73 (`PetBonusNextTitle` / `PetBonusNext`) and drops the title again when no line follows.
@@ -1389,9 +1372,8 @@ fn scale_attr(
             }
         }
         (StoreKind::Retaliation, F::Retaliation) => {
-            // PORT: the engine's tooltip is not traced for
-            // `retaliationDamageMultModifier`; it is applied as the sheet and
-            // combat do, through the one `actor::modify_retaliation`.
+            // PORT: the engine's tooltip is not traced for `retaliationDamageMultModifier`; it
+            // is applied as the sheet and combat do (`actor::modify_retaliation`).
             use crate::combat::{AttackerScaling, Damage, DamageScale, HitDamage, ReductionInfo};
             let (lo, hi) = (
                 a.get(fmin).unwrap_or(0.0),
@@ -1458,11 +1440,11 @@ fn refresh_lines(
     vec![line(class, text)]
 }
 
-/// Deepest [`section_of`] nesting (bad data guard, see there).
+/// Deepest [`section_of`] nesting.
 const MAX_NESTING: u8 = 4;
 
 /// One level's section of the text (`CreateUI[Next]ParameterText` without
-/// the header, module docs), `prev` the level the next-level text compares
+/// the header), `prev` the level the next-level text compares
 /// with. `scaled`: the numbers go through the player's (or for an
 /// `isPetBonusScaling` skill the pet bonuses') modifiers; a pet's own skills
 /// without that flag list the record's. `depth`: how many granted / summoned
@@ -1480,8 +1462,7 @@ fn section_of(
     reduce: bool,
     depth: u8,
 ) -> Vec<TextLine> {
-    // (bad data: a `grantedSkills` / `spawnObjects` cycle would recurse forever;
-    // stock nests a summon's or a form's skills one level deep.)
+    // A `grantedSkills` / `spawnObjects` cycle would recurse forever.
     if depth > MAX_NESTING {
         return Vec::new();
     }
@@ -1528,13 +1509,13 @@ fn section(
     section_of(ctx, skill, rec, &prof, &mods, level, prev, class, reduce, 0)
 }
 
-/// Attribute lines of a skill at `level` (1-based), PORT (module docs).
+/// Attribute lines of a skill at `level` (1-based).
 pub fn stat_lines(ctx: &SkillTipCtx, skill: &str, level: u32, class: u8) -> Vec<TextLine> {
     section(ctx, skill, level, None, class, true)
 }
 
 /// [`stat_lines`]; `reduce`: the player's cooldown / energy cost reduction
-/// applies (see [`param_lines`]).
+/// applies.
 fn stat_lines_with(
     ctx: &SkillTipCtx,
     skill: &str,
@@ -1586,9 +1567,7 @@ fn pet_bonus_profile(ctx: &SkillTipCtx, player: &crate::actor::Profile) -> crate
         }
     }
     // The player's own totals, global groups and conversions are never
-    // copied (a new field must be decided on here); `..` drops the DoT
-    // sources too (the display reads the summed totals) and skips the
-    // crate-private combat cache (fresh per profile, rebuilt lazily).
+    // copied (a new field must be decided on here).
     let crate::actor::Profile {
         level,
         sheet,
@@ -1673,8 +1652,7 @@ fn stat_lines_of(
             .map(|(_, p)| pet_bonus_profile(ctx, p));
         let dmg = ctx.player.filter(|_| player_scaled).map(|(rules, prof)| {
             // The learned modifiers' % modifiers and conversions join the
-            // skill's, their flat damage does not (`ProcessText`, see
-            // `actor::skill_tooltip_damage`).
+            // skill's, their flat damage does not (`ProcessText`).
             let mut su = crate::actor::SkillUse::new(r, li);
             su.mods = mods.iter().map(|(m, ml)| (m, *ml)).collect();
             crate::actor::skill_tooltip_damage(rules, pet_scaled.as_ref().unwrap_or(prof), su)
@@ -1768,8 +1746,7 @@ fn stat_lines_of(
 /// `absorbShieldPercentHealth` % × potency × max life, `ModifyDamage` takes each absorbed hit
 /// off `shieldLeft`). With some absorption the name is the first learned modifier's (`mods`: the potion's
 /// `Skill.modifiers` list, `Skill::AddModifier` order; record, level index) whose own skill data
-/// (`GetSkillData`) has `absorbShieldPercentHealth` > 0 (stock: the gdx3 absorbing potion
-/// modifiers), else the potion's.
+/// (`GetSkillData`) has `absorbShieldPercentHealth` > 0, else the potion's.
 pub fn potion_tracker_lines(
     ctx: &SkillTipCtx,
     skill: &str,
@@ -1810,8 +1787,7 @@ pub fn potion_tracker_lines(
 /// 75 (its name only: the description is skipped for that class), a blank, then the child's
 /// `CreateUIParameterText`: the child has `isAutoCastChild` and `suppressLevelTitles`, so
 /// its stat lines are class 77 and its header is only `tagDevotionSkillRank` when its profile has more
-/// than one `skillExperienceLevels` entry. Stock: only monster / shrine skills and
-/// three totem auras have `autoCastSkill` (devotion powers use `templateAutoCast`, [`devotion_lines`]).
+/// than one `skillExperienceLevels` entry.
 /// PORT: the child's level is the parent's current one (`SkillManager::UpdateSubSkillLevels`).
 fn celestial_power_lines(
     ctx: &SkillTipCtx,
@@ -1901,8 +1877,7 @@ fn current_block(
     // `Skill_Evade` constructor sets it, the `Skill_ChargePotion` one `Skill.isPotion` and it, and
     // `Skill_ChargePotion::CreateUIParameterText` prints none either); a potion (`Skill.isPotion`) has
     // no cooldown / cost reduction (`Skill::CreateUIModifierText`). Item and granted skills set it too
-    // (`headless`, [`hot_slot_lines`]). PORT: autocast and static skills' flag is not passed (their texts are
-    // not hot slot texts here).
+    // (`headless`, [`hot_slot_lines`]). PORT: autocast and static skills' flag is not passed.
     let headless = headless || matches!(rec.class.as_str(), "Skill_Evade" | "Skill_ChargePotion");
     if cur > 0 && headless {
         let reduce = rec.class != "Skill_ChargePotion";
@@ -1932,7 +1907,6 @@ fn current_block(
         };
         out.push(line(class::SKILL_LEVEL_TITLES, header));
         out.extend(stat_lines(ctx, skill, cur, class::SKILL_STATS_CURRENT));
-        // A blank line sits before the pet block (real window, Consecrated Blade).
         let pets = pet_bonus_lines(ctx, &prof, cur, false);
         if !pets.is_empty() {
             out.push(line(0, ""));
@@ -2037,7 +2011,6 @@ fn skill_lines_with(
         out.push(line(cls, text));
         return collapse_blanks(out);
     }
-    // Next level.
     if !maxed {
         let next = base + 1;
         let header = if bonus == 0 {
@@ -2067,7 +2040,6 @@ fn skill_lines_with(
         }
         out.extend(pets);
     }
-    // Warnings.
     if let Some(r) = reasons
         && !maxed
     {

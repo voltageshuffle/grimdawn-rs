@@ -20,7 +20,7 @@
 //! (`castsShadows` set, `Actor::AddToScene`; `AddRegionToScene` only sets the
 //! region's coordinates) and `ExecutePrepareShadow` collects their `shadow`
 //! technique passes, which the terrain*.ssh shaders do not have. It receives
-//! them (deferred directional pass, gd_terrain.wesl).
+//! them (deferred directional pass).
 //!
 //! PORT: the engine draws one batch of the blocks in the view frustum (`Terrain::AddToScene`, 9×9 cells each,
 //! `TerrainRT::BuildBlockIndices`); the port builds one mesh per 4 × 4 blocks (36 cells, [`TerrainChunk`], the grass
@@ -41,22 +41,15 @@
 //! normal from coarse screen derivatives of the position rebuilt from that depth (`screenToCameraMatrix`); else 1.
 //! The cover left over (Π(1 − α)) keeps the cleared G-buffer (0).
 //! Which depth: `TerrainRenderInterfaceRT::RenderGround` binds `depthTexture` at quality 3 only: the
-//! canvas's primary surface's depth texture (`GraphicsCanvas.primarySurface`, the virtual
-//! `RenderSurface::GetDepthTexture` = `Direct3DSurface.depthTexture`, the texture's virtual `Copy`
-//! copies). The canvas's primary surface is the device's swap-chain surface:
-//! `GraphicsEngine::PostDeviceReset` / `CreateDevice` store `Direct3DDevice11::CreatePrimarySurface`
-//! (Direct3D11.dll `Direct3DDevice11.primarySurface`) in `GraphicsEngine.primarySurface` and the canvas's
-//! `primarySurface` / `target` / `depthTarget`, and
-//! `GraphicsDeferredRenderer::RenderFinalScene` never touches `primarySurface`: it points the canvas target / depth
-//! at the G-buffer (`GraphicsDeferredRenderer.gBuffer`), then the scene surfaces (`sceneTarget` / `hdrTarget`,
-//! depth `sceneDepth`). So the deferred scene
-//! never writes the depth the terrain reads (no terrain, no meshes in it): |dz| > 0.35 m and `soft` = 1 everywhere,
-//! i.e. quality 3 looks like quality 2. Port: the material keeps [`GdDefaults::depth`] (depth 0, reverse-Z far), for
-//! which `ultra_soft` returns 1. (Binding the previous frame's scene depth instead blacked out every facet more than
-//! ~25° off its smooth vertex normal: report R1.) PORT: the face normal is turned to face the camera.
+//! canvas's primary surface's depth texture, i.e. the swap-chain surface's (`GraphicsEngine.primarySurface`).
+//! `GraphicsDeferredRenderer::RenderFinalScene` points the canvas target / depth at the G-buffer and the scene
+//! surfaces and never touches `primarySurface`, so the deferred scene never writes the depth the terrain reads:
+//! |dz| > 0.35 m and `soft` = 1 everywhere, i.e. quality 3 looks like quality 2. Port: the material keeps
+//! [`GdDefaults::depth`] (depth 0, reverse-Z far), for which `ultra_soft` returns 1. PORT: the face normal is
+//! turned to face the camera.
 //!
 //! Terrain patches: a `TerrainDecoration` (the `*_paintable` floors, bridges, platforms) carries terrain paint in its
-//! level data (`gd_formats::map::level::Entity::terrain_patch`), drawn over its own upward faces. Engine.dll
+//! level data, drawn over its own upward faces. Engine.dll
 //! `TerrainPatch::CreateGeometry`: the mesh's vertices with the triangles whose mean vertex normal,
 //! turned by the placement's rotation, has up ≥ cos(`maxPaintableAngle`) (`TerrainDecoration::Load`, default 88°);
 //! base / bump UV world.xz·0.1 as the terrain; opacity UV (x − cx) / width + ½ (z alike), c = floor(position + ½)
@@ -68,7 +61,7 @@
 //! alpha = 1 − sat(4(base.a − opacity)), SrcAlpha / InvSrcAlpha, no depth write, DepthFunc LessEqual: the layers
 //! composited bottom first over the mesh. Here: one [`GdTerrainMaterial`] per patch in patch mode (`grid.w` = 1:
 //! its opacities, the level terrain's layer textures and parameters, `layers[i].z` = painted) on the patch triangles,
-//! drawn with the G-buffer blends (render/gbuffer_blend.rs) on the same vertices and transform as the decoration's
+//! drawn with the G-buffer blends on the same vertices and transform as the decoration's
 //! parts, so the depth matches (LessEqual). PORT: the vertices within 0.5 m of the terrain do not take the
 //! terrain's normal frame (`CreateGeometry` does), and the patch grass (`RenderGrass`) is not drawn.
 use super::GdDefaults;
@@ -98,7 +91,7 @@ pub const MAX_LAYERS: usize = 16;
 pub struct TerrainParams {
     /// xyz level origin, w layer count.
     pub origin: Vec4,
-    /// x: w−1, y: h−1, z: 1 at terrain quality 3 (module doc).
+    /// x: w−1, y: h−1, z: 1 at terrain quality 3.
     pub grid: Vec4,
     /// Per layer: x kind (0 terrain, 1 snow), y specular power.
     pub layers: [Vec4; MAX_LAYERS],
@@ -119,7 +112,7 @@ pub struct GdTerrainMaterial {
     pub opacity: Handle<Image>,
     #[storage(7, read_only)]
     pub env: Handle<ShaderBuffer>,
-    /// Quality 3's `depthTexture`: the swap-chain surface's depth, which holds no scene (module doc).
+    /// Quality 3's `depthTexture`: the swap-chain surface's depth, which holds no scene.
     #[texture(8, sample_type = "depth")]
     pub depth: Handle<Image>,
 }
@@ -128,7 +121,7 @@ impl Material for GdTerrainMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://gd_render/render/shaders/gd_terrain.wesl".into()
     }
-    /// A terrain patch blends over its decoration (module doc); the terrain is opaque.
+    /// A terrain patch blends over its decoration; the terrain is opaque.
     fn alpha_mode(&self) -> AlphaMode {
         if self.params.grid.w > 0.5 {
             AlphaMode::Blend
@@ -142,9 +135,9 @@ impl Material for GdTerrainMaterial {
 /// the record's value, else 88).
 pub const MAX_PAINTABLE_ANGLE: f32 = 88.0;
 
-/// A terrain patch's triangles (module doc): the mesh's faces whose mean vertex normal, turned by `rotation`
+/// A terrain patch's triangles: the mesh's faces whose mean vertex normal, turned by `rotation`
 /// (the placement without its scale), has an up component of at least cos(`max_angle_deg`). Same vertices as
-/// the decoration's own parts (`model.rs`, winding reversed the same way). `None` when no face qualifies.
+/// the decoration's own parts (winding reversed the same way). `None` when no face qualifies.
 pub fn patch_mesh(msh: &gd_formats::msh::Mesh, rotation: Mat3, max_angle_deg: f32) -> Option<Mesh> {
     let v = &msh.vertices;
     let n = msh.num_vertices as usize;
@@ -229,11 +222,9 @@ pub fn patch_material(
     })
 }
 
-/// Terrain quality 3 from `detailLevel` (module doc), read every frame as the engine reads
-/// `GraphicsEngine.terrainQuality`:
-/// sets each terrain material's quality flag (its `depthTexture` stays [`GdDefaults::depth`], module doc). PORT: the
-/// engine also needs its deferred flag (`GraphicsEngineOptions.flags` bit 0x80000, generation 7 / 8); the port is
-/// always deferred-like.
+/// Terrain quality 3 from `detailLevel`, read every frame as the engine reads `GraphicsEngine.terrainQuality`:
+/// sets each terrain material's quality flag. PORT: the engine also needs its deferred flag
+/// (`GraphicsEngineOptions.flags` bit 0x80000, generation 7 / 8); the port is always deferred-like.
 pub fn sync_terrain_quality(
     options: Res<gd_game_core::options::GameOptions>,
     mut mats: ResMut<Assets<GdTerrainMaterial>>,
@@ -251,14 +242,14 @@ pub fn sync_terrain_quality(
     }
 }
 
-/// `detailLevel` ultra: terrain quality 3 (module doc).
+/// `detailLevel` ultra: terrain quality 3.
 pub fn is_ultra(options: &gd_game_core::options::GameOptions) -> bool {
     matches!(options.get("detailLevel"), Some(gd_formats::options::Value::Quality(q)) if q == "ultra")
 }
 
 /// Cells per side of the engine's terrain block (`TerrainBase::ConstructBlocks`).
 const BLOCK: usize = 9;
-/// Blocks per side of a terrain mesh chunk (module doc), 36 cells: the grass chunks' size (render/grass.rs).
+/// Blocks per side of a terrain mesh chunk, 36 cells: the grass chunks' size.
 const CHUNK: usize = 4;
 
 /// The terrain's blocks of 9×9 cells as the engine culls them, local AABBs
@@ -270,8 +261,7 @@ const CHUNK: usize = 4;
 /// `Terrain::AddToScene` adds the blocks in the view frustum as
 /// one render batch whose box is their union
 /// (`TerrainRenderInterfaceBase::AddToScene`): that, not the
-/// level's whole terrain, is what the scene bounds see (render/shadow.rs
-/// [`SceneBlocks`], read per visible chunk).
+/// level's whole terrain, is what the scene bounds see.
 fn terrain_blocks(t: &Terrain, xs: Range<usize>, zs: Range<usize>) -> SceneBlocks {
     let w = t.width as usize;
     let mut out = Vec::new();
@@ -296,7 +286,7 @@ fn terrain_blocks(t: &Terrain, xs: Range<usize>, zs: Range<usize>) -> SceneBlock
     SceneBlocks(out)
 }
 
-/// One mesh chunk of a level's terrain: [`CHUNK`] × [`CHUNK`] blocks in terrain-local coordinates (module doc).
+/// One mesh chunk of a level's terrain: [`CHUNK`] × [`CHUNK`] blocks in terrain-local coordinates.
 pub struct TerrainChunk {
     pub mesh: Mesh,
     /// Its blocks, for the scene bounds.
@@ -307,7 +297,6 @@ pub struct TerrainChunk {
 pub struct TerrainCpu {
     /// The mesh chunks with a cell drawn; all share the level's material.
     pub chunks: Vec<TerrainChunk>,
-    /// The layers' grass blades (render/grass.rs).
     pub grass: super::grass::TerrainGrass,
     colors: Image,
     normals: Image,
@@ -373,7 +362,7 @@ pub fn build(
             .get((z * w + x) * bpv)
             .is_none_or(|m| m & 1 != 0)
     };
-    // Mesh chunks of CHUNK × CHUNK blocks (module doc), terrain-local like the single grid; at most 37 × 37
+    // Mesh chunks of CHUNK × CHUNK blocks, terrain-local like the single grid; at most 37 × 37
     // vertices, so 16-bit indices.
     let span = CHUNK * BLOCK;
     let mut chunks = Vec::new();
@@ -533,7 +522,7 @@ fn array_image(
     img
 }
 
-/// `TerrainType`'s `specularPower` when the record has none (module doc).
+/// `TerrainType`'s `specularPower` when the record has none.
 const TERRAIN_SPECULAR_POWER: f32 = 10.0;
 
 /// Decoded, resampled layer textures with full mip chains, shared by levels.
@@ -555,17 +544,15 @@ impl LayerTex {
     }
 }
 
-/// The decoded layer textures by `TerrainType` record, shared by the level builds (background tasks hold a clone)
-/// and held weakly (`gd_game_core::weak_cache`): a loaded level's terrain holds its layers ([`HeldLayers`]), and the last
-/// [`LAYERS_WARM`] layers used stay decoded after their last level unloads, so walking out of a level and back does
-/// not decode, resample and mip them again. `model::drop_on_mod_change` clears it when the mounted mod changes.
+/// The decoded layer textures by `TerrainType` record, shared by the level builds and held weakly: a loaded
+/// level's terrain holds its layers ([`HeldLayers`]), and the last [`LAYERS_WARM`] layers used stay decoded
+/// after their last level unloads.
 ///
 /// PORT: the engine frees a released resource 5 s after its last use; this keeps a count-bounded recent set instead.
 #[derive(Resource, Clone)]
 pub struct TerrainLayers(Arc<Mutex<gd_game_core::weak_cache::WeakCache<LayerTex>>>);
 
-/// How many terrain layers [`TerrainLayers`] keeps decoded past their last level (~2.8 MB each with mips: ~135 MB;
-/// a level uses a handful, so this covers the levels around the player).
+/// How many terrain layers [`TerrainLayers`] keeps decoded past their last level.
 const LAYERS_WARM: usize = 48;
 
 impl Default for TerrainLayers {
@@ -582,7 +569,7 @@ impl TerrainLayers {
         self.0.lock().clear();
     }
 
-    /// Cached layers still in use (the memory audit).
+    /// Cached layers still in use.
     pub fn count(&self) -> usize {
         self.0.lock().live()
     }

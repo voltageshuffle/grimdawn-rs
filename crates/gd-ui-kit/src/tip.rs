@@ -1,25 +1,18 @@
-//! The skill-style hover tooltip, in one place: the text-line box of `gd_sim::skill_tooltip` lines (skill buttons, devotion
-//! stars, buff icons, hot slots, the potion and hot-slot pick lists), drawn by [`draw_wrapped`] and put on screen by [`TipCanvas`].
-//! A window system only decides what is hovered and which lines it shows; it never builds the overlay itself.
+//! The skill-style hover tooltip: the text-line box of `gd_sim::skill_tooltip` lines (skill buttons,
+//! devotion stars, buff icons, hot slots, pick lists), drawn by [`draw_wrapped`] and put on screen by
+//! [`TipCanvas`].
 //!
-//! PORT: the game's tooltip window is drawn by the engine, not a database record; the box is a plain translucent panel
-//! placed by each caller's rule. Record-styled rollovers (HUD buttons, sheet rows, shrine,
-//! loot filter, ...) are a different window: `rollover.rs`; item tooltips: `tooltip.rs`.
+//! PORT: the game's tooltip window is drawn by the engine, not a database record; the box is a plain
+//! translucent panel placed by each caller's rule.
 //!
-//! Delay, Grim Dawn.exe (the rollover window): setting a rollover object (`RolloverWindow::SetRollover`) restarts its
-//! counter (`RolloverWindow.delayCounter`, zeroed by the layout `RolloverWindow::Layout`) only when the object differs
-//! from the shown one; the window's update (`RolloverWindow::Tick`) adds the frame's ms, and its draw
-//! (`RolloverWindow::Update`) shows it once the counter reaches the request style's `delay` (`RolloverStyleUIHelp`,
-//! loader `RolloverStyleUIHelp::Load`, default 0), or at once while game time is paused. The style is the request's:
-//! `style_hotslotbuttons` (600 ms) for a hot slot (`HotSlotButton::GetRollover`), else the request's default
-//! `style_default` (150 ms, `RolloverRequest::RolloverRequest`) for skills, devotion stars and buff icons
-//! ([`TipOwner::style`]). PORT: the object is told by the tooltip's first line (the skill or effect name), so a changed
-//! text for the same object (cooldown state, time left) keeps its counter. While the game menu holds the game
-//! (`gamemenu.rs`), the HUD's mouse handler (`UIPlayerHud::HandleMouseEvent`) tests nothing under the exit window and
-//! hides the rollover: no tooltip shows and the counter starts over once the menu is gone. [`TipDelay`] is the one
-//! counter: [`delay_tips`] drives the [`TipCanvas`] roots and the menu manager's box roots (`rollover.rs::menu_tip`,
-//! the options window — [`TipDelay::menu`], which the game menu does not hide, its window being the menu's child);
-//! `tooltip.rs` ticks its own [`TipDelay`] for the item box it draws itself.
+//! Delay (`RolloverWindow`): `SetRollover` restarts the counter only when the object differs from the
+//! shown one; `Tick` adds the frame's ms, and `Update` shows it once the counter reaches the request
+//! style's `delay` (`RolloverStyleUIHelp`, default 0), or at once while game time is paused. Styles:
+//! `style_hotslotbuttons` (600 ms) for a hot slot (`HotSlotButton::GetRollover`), else `style_default`
+//! (150 ms, `RolloverRequest::RolloverRequest`). While the game menu holds the game, the HUD's mouse
+//! handler (`UIPlayerHud::HandleMouseEvent`) hides the rollover: the counter starts over once the
+//! menu is gone. PORT: the object is told by the tooltip's first line, so a changed text for the
+//! same object keeps its counter.
 use super::Ui;
 use super::text::LoadedFont;
 use bevy::ecs::system::SystemParam;
@@ -28,30 +21,24 @@ use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Rect as URect, TextBox};
 use gd_game_core::data::GameData;
 
-/// Width of the text column, in UI units.
 const TIP_WIDTH: f32 = 300.0;
 
-/// Which window's tooltip an overlay belongs to (one is shown per owner).
+/// One tooltip is shown per owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TipOwner {
     Skills,
     Devotion,
     Buff,
     Hotbar,
-    /// The Ascendant Altar's row / box rollovers (`altar.rs`).
     Altar,
-    /// The potions window's skill rollovers (`potions.rs`).
     Potions,
-    /// The hot-slot pick list's rows (`hotbar_pick.rs`).
     HotbarPick,
 }
 
-/// The overlay root of an owner's tooltip (not part of any rebuilt window tree).
 #[derive(Component)]
 pub struct TipRoot(pub TipOwner);
 
 impl TipOwner {
-    /// The rollover style its request carries (module doc).
     fn style(self) -> &'static str {
         match self {
             TipOwner::Hotbar => "records/ui/styles/rollover/style_hotslotbuttons.dbr",
@@ -65,9 +52,7 @@ impl TipOwner {
     }
 }
 
-/// A tooltip's show delay (module doc): its object, the ms it has been up and the style's delay.
-/// [`Self::skill`] is hidden while the game menu holds the game; [`Self::menu`] (the menu manager's own
-/// rollover box, `rollover.rs`) is not — the options window is the menu's child.
+/// A tooltip's show delay: its object, the ms it has been up and the style's delay.
 #[derive(Component)]
 pub struct TipDelay {
     object: String,
@@ -77,7 +62,7 @@ pub struct TipDelay {
 }
 
 impl TipDelay {
-    /// A skill-style tip's delay: the game menu hides it and restarts its counter (module doc).
+    /// The game menu hides it and restarts its counter.
     pub fn skill(object: String, delay: f32) -> Self {
         Self {
             object,
@@ -88,7 +73,7 @@ impl TipDelay {
     }
 
     /// The menu manager's rollover box delay (500 ms, `MenuRolloverBox::Draw`): the game menu does not
-    /// hide it. The object names what is shown; a changed object restarts the counter.
+    /// hide it.
     pub fn menu(object: String, delay: f32) -> Self {
         Self {
             object,
@@ -98,29 +83,24 @@ impl TipDelay {
         }
     }
 
-    /// Seeds the counted ms (the menu box's one-shot timer: a new root keeps the manager's elapsed time).
+    /// Seeds the counted ms (a new root keeps the menu manager's elapsed time).
     pub fn with_ms(mut self, ms: f32) -> Self {
         self.ms = ms;
         self
     }
 
-    /// One frame of `dt` ms of the delay: whether the tip shows after it (the module doc's rules).
-    /// For a tooltip system that draws its own box (`tooltip.rs`) and drives the counter itself.
+    /// One frame of `dt` ms of the delay: whether the tip shows after it.
     pub fn tick(&mut self, dt_ms: f32, pause: &gd_game_core::pause::GamePause) -> bool {
         matches!(advance(self, dt_ms, pause), Visibility::Inherited)
     }
 }
 
 impl Default for TipDelay {
-    /// A skill-style counter with no object and no delay (the `Local` initial state).
     fn default() -> Self {
         Self::skill(String::new(), 0.0)
     }
 }
 
-/// Shows a tooltip once its delay has passed, or at once while the game is paused; hides the skill-style
-/// ones while the game menu holds the game, their counter starting over (module doc). Drives every
-/// [`TipDelay`] (the skill-style [`TipRoot`]s and the menu manager's box roots alike).
 pub fn delay_tips(
     time: Res<Time<Real>>,
     pause: Res<gd_game_core::pause::GamePause>,
@@ -131,7 +111,6 @@ pub fn delay_tips(
     }
 }
 
-/// One frame of `dt` ms of a tooltip's delay: its visibility after it.
 fn advance(d: &mut TipDelay, dt: f32, pause: &gd_game_core::pause::GamePause) -> Visibility {
     if pause.menu && d.menu_hidden {
         d.ms = 0.0;
@@ -149,9 +128,8 @@ fn shown(d: &TipDelay, pause: &gd_game_core::pause::GamePause) -> Visibility {
     }
 }
 
-/// How tall a blank line is. `GameTextLines::AddBlankLine` adds an empty line of class 0; what that measures to differs
-/// per window (PORT): the default style's line (skills, buffs, hot slots), or the last description line's (the devotion
-/// map).
+/// How tall a blank line (`GameTextLines::AddBlankLine`, class 0) is. PORT: the default style's
+/// line, or the last description line's (the devotion map).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Blank {
     #[default]
@@ -159,22 +137,18 @@ pub enum Blank {
     DescriptionLine,
 }
 
-/// How wide the text column is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Wrap {
-    /// [`TIP_WIDTH`] (PORT), the box always that wide.
+    /// [`TIP_WIDTH`] (PORT).
     #[default]
     Fixed,
-    /// `RolloverWindow::Layout` (the rollover window's layout, `RolloverRequest.wrapMode` = 1): lines wrap at the width
-    /// of [`SAMPLE_TEXT`] in the description style (class 47; the request's style, `RolloverRequest.style`), and the
-    /// box is as wide as the widest laid-out line (the request's own width, `RolloverRequest.width`, is only used by
-    /// mode 3).
+    /// `RolloverWindow::Layout`, `wrapMode` = 1: lines wrap at the width of [`SAMPLE_TEXT`] in the
+    /// description style (class 47); the box is as wide as the widest line.
     Sample,
 }
 
-/// The rollover window's placement mode 4 (`RolloverWindow::Place`, `RolloverRequest.placement` = 4): centred below the
-/// anchor rect (x = centre − w / 2, y = bottom), the centre clamped so the box stays on screen horizontally, and the
-/// box moved up to end at the screen's bottom edge when it would pass it.
+/// The rollover window's placement mode 4 (`RolloverWindow::Place`): centred below the anchor rect,
+/// clamped on screen horizontally, and moved up to end at the screen's bottom edge.
 pub fn place_below(anchor: URect, w: f32, h: f32, screen: Vec2) -> (f32, f32) {
     let mut cx = anchor.x + anchor.w * 0.5;
     if cx - w * 0.5 < 0.0 {
@@ -190,12 +164,11 @@ pub fn place_below(anchor: URect, w: f32, h: f32, screen: Vec2) -> (f32, f32) {
     (cx - w * 0.5, y)
 }
 
-/// The sample line a mode 1 request measures its wrap width with (`PlayerStatusIcons::GetRolloverText`,
-/// `RolloverRequest.sampleText`).
+/// The sample line a mode 1 request measures its wrap width with (`PlayerStatusIcons::GetRolloverText`).
 pub const SAMPLE_TEXT: &str = "The quick brown fox jumped over the lazy dog";
 
-/// Draws a tooltip box of text lines (blank lines are spacers, `icon` lines get the affinity icon before the text);
-/// `place(w, h, screen, gap)` gives the box's top-left corner; [`Wrap`] sets the wrapping rule.
+/// Draws a tooltip box of text lines (blank lines are spacers, `icon` lines get the affinity icon);
+/// `place(w, h, screen, gap)` gives the box's top-left corner.
 pub fn draw_wrapped(
     ui: &mut Ui,
     lines: &[gd_sim::skill_tooltip::TextLine],
@@ -232,14 +205,14 @@ pub fn draw_wrapped(
         }
     };
     let mut widest = 0.0f32;
-    // (style path, text, height, icon, indent) per drawn row.
+    // (style path, text, height, icon, indent).
     type Row = (Option<std::sync::Arc<str>>, String, f32, Option<usize>, f32);
     let mut rows: Vec<Row> = Vec::new();
     let mut description_h = 0.0f32;
     let data = ui.data;
     let engine = data.db.get("records/game/gameengine.dbr");
     for l in lines {
-        // `GameEngine::GetGameTextStyleIndent` (the pet bonus lines sit 10 in).
+        // `GameEngine::GetGameTextStyleIndent`.
         let (style_path, indent) = ui.fonts.class_style(ui.data, l.class);
         let indent = indent * s;
         let style = style_path.as_ref().and_then(|p| ui.fonts.style(ui.data, p));
@@ -261,7 +234,6 @@ pub fn draw_wrapped(
             }
         };
         if l.text.is_empty() {
-            // A blank spacer line (module doc of [`Blank`]).
             let h = match blank {
                 Blank::DefaultLine => measure("A").1,
                 Blank::DescriptionLine => description_h.max(measure("A").1),
@@ -322,8 +294,7 @@ pub fn draw_wrapped(
     }
 }
 
-/// Everything a tooltip system needs to put a tooltip on screen: the window, the data and font caches, and the overlay roots.
-/// `clear` removes an owner's tooltip, `show` draws one (clearing the owner's old one first).
+/// Everything a tooltip system needs to put a tooltip on screen.
 #[derive(SystemParam)]
 pub struct TipCanvas<'w, 's> {
     commands: Commands<'w, 's>,
@@ -335,14 +306,12 @@ pub struct TipCanvas<'w, 's> {
 }
 
 impl<'w, 's> TipCanvas<'w, 's> {
-    /// The window's physical size, `None` when there is no window or it has no area.
     pub fn size(&self) -> Option<UVec2> {
         let win = self.window.single().ok()?;
         let size = UVec2::new(win.physical_width(), win.physical_height());
         (size.x > 0 && size.y > 0).then_some(size)
     }
 
-    /// Removes `owner`'s tooltip.
     pub fn clear(&mut self, owner: TipOwner) {
         for (e, r, _) in &self.roots {
             if r.0 == owner {
@@ -351,7 +320,6 @@ impl<'w, 's> TipCanvas<'w, 's> {
         }
     }
 
-    /// Replaces `owner`'s tooltip with `lines` placed by `place` (see [`draw_wrapped`]).
     pub fn show(
         &mut self,
         owner: TipOwner,
@@ -362,7 +330,6 @@ impl<'w, 's> TipCanvas<'w, 's> {
         self.show_wrapped(owner, lines, blank, Wrap::Fixed, place);
     }
 
-    /// [`Self::show`] with a [`Wrap`] rule.
     pub fn show_wrapped(
         &mut self,
         owner: TipOwner,
@@ -371,7 +338,7 @@ impl<'w, 's> TipCanvas<'w, 's> {
         wrap: Wrap,
         place: impl FnOnce(f32, f32, Vec2, f32) -> (f32, f32),
     ) {
-        // The same object keeps its counter (module doc); the old root is still there until the commands apply.
+        // The old root is still there until the commands apply.
         let object = lines.first().map(|l| l.text.clone()).unwrap_or_default();
         let ms = self
             .roots

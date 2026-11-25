@@ -1,4 +1,4 @@
-//! Merchant and stash windows (logic: `trade.rs`). Vendor: the market window
+//! Merchant and stash windows. Vendor: the market window
 //! record's background, close button and item grid; stash: the caravan
 //! window's background, the stash grid of `caravan_stashwindow` and one tab
 //! button per page (`privateScrollWindow` position, `tabSpacingY`); with the
@@ -16,7 +16,7 @@
 //! button's disabled flags `ButtonStatic.disabled` / `ButtonStatic.dimmed` while its sack is empty; `ButtonStatic`
 //! draw `ButtonStatic::Render`: disabled + dim with no disabled bitmap → the up
 //! bitmap in colour 0.6, 0.6, 0.6, 1; PORT: the down bitmap's case, flag
-//! `ButtonStatic.downDisabled`, is not read). Search (`trade.rs` [`crate::state::trade::TradeSearch`];
+//! `ButtonStatic.downDisabled`, is not read). Search ([`crate::state::trade::TradeSearch`];
 //! draw `MarketWindow::Draw`, grid draw `VendorGrid::Draw`): the edit box
 //! (`vendor_searchbox.dbr`: its `Style` text left-aligned, vertically
 //! centred, a 1 px white caret after it while focused, blinking every 600
@@ -27,16 +27,14 @@
 //! at 0.75 over the rest; every other tab with a match gets a rect 1 px
 //! inside its button in 0.73, 0.68, 0.43 whose alpha runs 0.05 → 0.325 → 0.05
 //! every 2 s (`t = (ms % 2000) × 0.0005 × 0.55 + 0.05`, mirrored above
-//! 0.325; [`animate_search`], on the real clock: the pulse and the caret keep
-//! going while the game is paused).
+//! 0.325; on the real clock: the pulse and the caret keep going while the game is paused).
 //! The caravan window's `searchBox` / `clearSearchButton`
 //! (`caravan_searchbox.dbr`) search the shown stash's pages the same way
 //! (`CaravanWindow::DrawSearch` draw, `CaravanWindow::SplitGrid` grid split); the crafting
 //! panel's (`crafting_table.dbr`, `crafting_searchbox.dbr`) filters its recipe
-//! list instead (`crafting.rs`, draw `CraftList::Draw`).
+//! list instead (`CraftList::Draw`).
 //!
-//! Sounds: every clickable button and tab (market / stash / reagent / inventor tabs, buy tab, toggle, sort, clear
-//! search, action buttons, illusionist pages / swap / close) registers its `soundNameDown` (`ui/widgets.rs`).
+//! Sounds: every clickable button and tab registers its `soundNameDown`.
 use super::Ui;
 use crate::state::crafting::CraftList;
 use crate::state::trade::{Button, Panel, Trade, TradeLayout};
@@ -123,12 +121,11 @@ pub fn build(
                 illusionist_window(ui, trade, (gold, level), afford, inv, &mut layout)
             }
         }
-        // The window takes every click over it: no HUD button behind it sounds or presses there.
+        // The window takes every click over it.
         if let Some(w) = layout.window {
             ui.sound_blocker(w);
         }
-        // The dialog box over the window (`crate::state::trade::Prompt`): drawn under its own `Z_MODAL` node (a child of
-        // the group root, so it is shown / retired with it) so that its full-screen blocker (`confirm::frame`)
+        // The prompt sits under its own `Z_MODAL` node (a child of the group root) so its full-screen blocker
         // outranks every window below in `widgets::frontmost`.
         if let Some(prompt) = trade.prompt {
             let (tag, arg) = prompt.text();
@@ -164,12 +161,8 @@ pub fn build(
     ui.commands.insert_resource(layout);
 }
 
-/// The open window's gold-derived looks (PERF-24): `(cost affordable, action enabled)` — whether the
-/// shown cost takes its normal (not the red `tooExpensive*`) colour, and whether the gold-gated
-/// action button is enabled. One source: the panels read these same decisions and `TradeSig`
-/// (`lib.rs`) keys on them instead of gold, so a pickup that flips neither rebuilds nothing. The
-/// crafter's per-row craftable counts and the Illusionist's gold total are not here: they animate in
-/// place ([`live_gold`]).
+/// The open window's gold-derived looks: `(cost affordable, action enabled)`. `TradeSig` keys on these instead
+/// of gold; the crafter's craftable counts and the Illusionist's gold total update in place ([`live_gold`]).
 pub fn afford(
     data: &gd_game_core::data::GameData,
     trade: &Trade,
@@ -257,8 +250,7 @@ pub fn afford(
     }
 }
 
-/// A reroll / convert / ascension plan's gold looks: the cost's colour and the action's readiness
-/// (money and every reagent, [`gd_game::reroll::shortfall`]).
+/// (cost affordable, action ready: money and every reagent).
 fn plan_afford(
     plan: Option<&gd_game::reroll::Plan>,
     gold: u64,
@@ -274,19 +266,20 @@ fn plan_afford(
     }
 }
 
-/// A trade-window text that tracks gold in place (PERF-24): the Illusionist's gold total, or a
-/// crafting row's `[craftable]` count prefix. [`live_gold`] redraws it when the gold changes.
+/// A trade-window text that tracks gold in place: the Illusionist's gold total, or a crafting row's
+/// `[craftable]` count prefix.
 #[derive(Component)]
 pub enum TradeLive {
-    /// The Illusionist's `totalGoldNumber`.
     Gold,
-    /// A crafting list row: the recipe index and its resolved name (the count is recomputed).
-    CraftCount { recipe: usize, name: String },
+    /// The recipe index and its resolved name (the count is recomputed).
+    CraftCount {
+        recipe: usize,
+        name: String,
+    },
 }
 
-/// Redraws the gold-tracking trade texts ([`TradeLive`]) when the gold changes (PERF-24): the
-/// Illusionist's total and the crafter's per-row craftable counts, so a pickup rebuilds no window.
-/// Runs after the rebuild (`HudSet`) and the window clicks (`TradeInputSet`).
+/// Redraws the [`TradeLive`] texts when the gold changes. Runs after the rebuild (`HudSet`) and the window
+/// clicks (`TradeInputSet`).
 #[allow(clippy::too_many_arguments)]
 pub fn live_gold(
     mut commands: Commands,
@@ -327,8 +320,7 @@ pub fn live_gold(
     }
 }
 
-/// A [`text_field`] whose text tracks a live source ([`TradeLive`]): a [`super::LiveText`] in the
-/// record's text box, redrawn in place by [`live_gold`] (PERF-24).
+/// A [`super::LiveText`] in the record's text box, redrawn by [`live_gold`].
 fn live_field(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -352,7 +344,6 @@ fn window(ui: &Ui, rec: &gd_formats::arz::Record) -> URect {
     w
 }
 
-/// The open NPC window's record.
 pub fn window_record(trade: &Trade) -> Option<&'static str> {
     Some(match trade.open.as_ref()? {
         TradeOpen::Vendor { .. } if trade.faction.is_some() => FACTION_VENDOR,
@@ -379,8 +370,7 @@ fn draw_field(ui: &mut Ui, rec: &gd_formats::arz::Record, field: &str, o: Vec2) 
     }
 }
 
-/// The window's close button (a `field` button widget): drawn up, hit-tested as [`Button::Close`]
-/// (`trade_clicks` sends `ServiceRequest::Close`).
+/// Drawn up, hit-tested as [`Button::Close`].
 fn close_field(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -438,8 +428,7 @@ fn vendor(
     draw_field(ui, &m, "marketBaseBitmap", o);
     close_field(ui, &m, "marketCloseButton", o, layout);
     npc_headings(ui, &m, npc, ("marketHeading1Text", "marketHeading2Text"), o);
-    // The merchant's faction icon (`factionIcon` position, the faction
-    // pack's `factionIcon` bitmap).
+    // The merchant's faction icon: the faction pack's `factionIcon` at the `factionIcon` position.
     if let Some(p) = m.str("factionIcon").and_then(|p| ui.record(p))
         && let Some(icon) = ui
             .data
@@ -458,7 +447,6 @@ fn vendor(
     }
     let search = &trade.search;
     let searching = !search.query().is_empty();
-    // Category tabs (melee, ranged, armour, accessories, buyback).
     let mut tab_rects = Vec::new();
     for i in 0..gd_sim::items::market::VENDOR_TABS {
         let Some(b) = m
@@ -467,7 +455,6 @@ fn vendor(
         else {
             continue;
         };
-        // An empty tab: dimmed up bitmap, no clicks (module doc).
         let enabled = gd_sim::items::market::tab_enabled(pages, i);
         let key = if i == tab && enabled {
             "bitmapNameDown"
@@ -498,12 +485,8 @@ fn vendor(
             ui.record_button_sound(r, &b);
         }
         tab_rects.push((i, r));
-        // Tiers the player's rank has not unlocked: the red lock plate over
-        // the button, blended additively in white, so the button shows through
-        // tinted red (market window draw `MarketWindow::Draw`: in faction
-        // mode the `marketTab<n>Bitmap` widgets are drawn with the "additive"
-        // style, colour 1,1,1,1). The tab still opens: a locked tier is
-        // browsed, its purchases refused (`gd_game::trade::BuyRequest`).
+        // Tiers the player's rank has not unlocked: the lock plate drawn additively in white (`MarketWindow::Draw`).
+        // The tab still opens: a locked tier is browsed, its purchases refused.
         if faction.is_some_and(|f| i < 4 && !f.open[i])
             && let Some(lock) = m
                 .str(&format!("marketTab{}Bitmap", i + 1))
@@ -538,7 +521,6 @@ fn vendor(
     layout.grid = Some((r, cell));
     if let Some(sack) = pages.get(tab) {
         grid_items(ui, inv, sack, r, cell);
-        // The search marks over the shown page (module doc).
         if searching {
             search_marks(
                 ui,
@@ -549,28 +531,21 @@ fn vendor(
             );
         }
     }
-    // Other tabs with matches pulse (module doc).
     if searching {
         search_pulse(ui, &tab_rects, tab, &search.hits);
     }
 }
 
-/// A vendor tab with search matches (its alpha pulses, [`animate_search`]).
 #[derive(Component)]
 pub struct SearchPulse;
 
-/// The search pulse's colour (its alpha animates).
+/// Its alpha animates.
 const PULSE: Color = Color::srgb(0.73, 0.68, 0.43);
 
-/// The focused search box's caret (blinks, [`animate_search`]).
 #[derive(Component)]
 pub struct SearchCaret;
 
-/// The search box's text, caret and clear button (module doc). `box_field` /
-/// `clear_field` name the window record's edit box and clear button
-/// (`marketSearchBox` / `marketClearSearchButton` for the market windows,
-/// `searchBox` / `clearSearchButton` for the caravan window and the crafting
-/// panel).
+/// `box_field` / `clear_field` name the window record's edit box and clear button.
 fn search_box(
     ui: &mut Ui,
     m: &gd_formats::arz::Record,
@@ -621,8 +596,7 @@ fn search_box(
     }
 }
 
-/// The search marks over a shown grid page (module doc): the border over each
-/// match, black over the rest.
+/// The border over each match, black over the rest.
 fn search_marks(
     ui: &mut Ui,
     sack: &gd_formats::inventory::Sack<Item>,
@@ -652,7 +626,6 @@ fn search_marks(
     }
 }
 
-/// Every tab but the shown one whose page has a search match pulses (module doc).
 fn search_pulse(ui: &mut Ui, tabs: &[(usize, URect)], shown: usize, hits: &[Vec<(u32, u32)>]) {
     for (i, tr) in tabs {
         if *i != shown && hits.get(*i).is_some_and(|h| !h.is_empty()) {
@@ -666,7 +639,6 @@ fn search_pulse(ui: &mut Ui, tabs: &[(usize, URect)], shown: usize, hits: &[Vec<
     }
 }
 
-/// The search pulse alpha and the caret blink (module doc), every frame, on real time.
 pub fn animate_search(
     time: Res<Time<Real>>,
     mut pulses: Query<&mut BackgroundColor, With<SearchPulse>>,
@@ -734,7 +706,6 @@ fn stash_window(
             ui.record_button_sound(r, &t);
         }
     }
-    // Auto-sort (`StashSortButton` / `TransferStashSortButton`).
     if let Some(b) = m
         .str(if transfer {
             "TransferStashSortButton"
@@ -748,8 +719,6 @@ fn stash_window(
         layout.sort = Some(r);
         ui.record_button_sound(r, &b);
     }
-    // The search box (module doc): the caravan window searches the shown
-    // stash's pages like the vendor window (`trade.rs` `search_hits`).
     search_box(
         ui,
         &m,
@@ -788,18 +757,15 @@ fn stash_window(
     layout.grid = Some((r, cell));
     let Some(stash) = stash else { return };
     let pages = stash.view(transfer);
-    // One tab per page, down the left side.
     let (tx, ty0) = m
         .str(scroll_key)
         .and_then(|s| ui.record(s))
         .map_or((39.0, 225.0), |s| (f(&s, "positionX"), f(&s, "positionY")));
     let dy = m.f32("tabSpacingY").unwrap_or(38.0);
-    // Transfer view: the Components (`relicButton`) and Materials
-    // (`materialButton`) tabs come first, in that order, then the pages
-    // (caravan tab builder GrimDawn.exe `CaravanWindow::BuildTab`).
+    // Transfer view: the Components (`relicButton`) and Materials (`materialButton`) tabs come first, in that
+    // order (`CaravanWindow::BuildTab`).
     let reagent_view = if transfer { reagents } else { None };
-    // The Materials / Components plate (it includes the tab column's art,
-    // so it goes under the tabs).
+    // The Materials / Components plate includes the tab column's art, so it goes under the tabs.
     let reagent_rec = reagent_view.and_then(|k| {
         m.str(if k == 0 {
             "MaterialWindow"
@@ -843,8 +809,7 @@ fn stash_window(
             ui.record_button_sound(tr, &b);
         }
     }
-    // A tab: its background, then its `defaultBorder` and `defaultSymbol`
-    // layers; the selected one uses the down bitmaps.
+    // A tab: its background, then its `defaultBorder` and `defaultSymbol` layers.
     let layers: Vec<gd_formats::arz::Record> = m
         .str(tab_key)
         .and_then(|t| ui.record(t))
@@ -881,8 +846,8 @@ fn stash_window(
             }
         }
     }
-    // After the pages: the buy tab while a page can be bought, then locks
-    // (the buy tab's disabled bitmap) filling the scroll window's slots.
+    // After the pages: the buy tab while a page can be bought, then locks (the buy tab's disabled bitmap)
+    // filling the scroll window's slots.
     let buy_rec = m
         .str(if transfer {
             "buyTransferTabButton"
@@ -928,7 +893,6 @@ fn stash_window(
     let shown = tab.min(pages.len().saturating_sub(1));
     if let Some(page) = pages.get(shown) {
         grid_items(ui, inv, page, r, cell);
-        // The search marks and the other pages' pulses (module doc).
         if !search.query().is_empty() {
             search_marks(
                 ui,
@@ -946,15 +910,10 @@ fn stash_window(
     }
 }
 
-/// The transfer view's Materials (`MaterialWindow`) / Components
-/// (`RelicWindow`) tab: its plate (`TransferPlate`) at `WindowLocation`, and
-/// one box per `reagentBoxes` entry (`reagentName` at `itemBoxX/Y` on the
-/// plate) with the stored count from `reagents.gst`. Empty boxes are drawn
-/// like the others (caravan draw GrimDawn.exe `CaravanWindow::Draw`: the
-/// only overlay is the blue highlight, colour 0.4, 0.6, 1, 0.3, of boxes
-/// flagged as usable on the held item). Entries not stored are drawn grey
-/// with a `0`, stored ones on their rarity frame with the count (the box
-/// draw is `ItemGraphic::Draw`, `GetItemBackground`).
+/// The transfer view's Materials (`MaterialWindow`) / Components (`RelicWindow`) tab: its `TransferPlate` and
+/// one box per `reagentBoxes` entry with the stored count. Not stored: grey with a `0`; stored: on their rarity
+/// frame (`ItemGraphic::Draw`). `CaravanWindow::Draw`'s only overlay is the blue highlight (0.4, 0.6, 1, 0.3)
+/// of boxes usable on the held item.
 fn reagent_boxes(
     ui: &mut Ui,
     w: &gd_formats::arz::Record,
@@ -978,8 +937,7 @@ fn reagent_boxes(
             .iter()
             .find(|e| e.record.eq_ignore_ascii_case(&record))
             .map_or(0, |e| e.count);
-        // Shown as a single item; the count is drawn below (the box shows it
-        // for every entry, `0` included).
+        // Shown as a single item; the count is drawn below, `0` included.
         let item = gd_formats::save::item::Item {
             base_name: record.clone(),
             stack_count: 1,
@@ -995,11 +953,10 @@ fn reagent_boxes(
             ui.sc(32.0 * size.h as f32),
         );
         if count > 0 {
-            // Owned: the rarity frame behind the icon (`GetItemBackground`).
+            // `GetItemBackground`.
             super::character::item_cell(ui, inv, &item, r);
         } else {
-            // Unowned: the icon alone, desaturated (`ItemGraphic::Draw` renders
-            // it with the `desaturate` style); PORT: luma, `Ui::image_gray`.
+            // Unowned: the icon desaturated (`ItemGraphic::Draw`); PORT: luma.
             if let Some(info) = inv.info(&item)
                 && let Some((h, isz)) = ui.image_gray(&info.resolved.bitmap)
             {
@@ -1052,10 +1009,8 @@ fn button_rect(
     Some((h, r))
 }
 
-/// [`button_rect`] with the width grown to fit the record's `textTag`
-/// ([`super::widgets::button_width`]), the bitmap stretched and the rect re-centred on
-/// the texture's centre so a centred panel button stays centred. PORT: the stock button
-/// is fixed at its bitmap's width and a long localised label overflows it (UX over parity).
+/// [`button_rect`] with the width grown to fit the record's `textTag`, the bitmap stretched and re-centred.
+/// PORT: the stock button is fixed at its bitmap's width and a long localised label overflows it.
 fn sized_button(ui: &mut Ui, rec: &gd_formats::arz::Record, key: &str, o: Vec2) -> Option<URect> {
     let (h, mut r) = button_rect(ui, rec, key, o)?;
     let text = rec.str("textTag").map(|t| ui.fonts.tag(t).to_string());
@@ -1070,7 +1025,7 @@ fn sized_button(ui: &mut Ui, rec: &gd_formats::arz::Record, key: &str, o: Vec2) 
     Some(r)
 }
 
-/// An item box record's rect (`itemX` / `itemY`, `itemXSize` / `itemYSize`), scaled and placed at `o`.
+/// `itemX` / `itemY`, `itemXSize` / `itemYSize`, scaled and placed at `o`.
 fn item_box(ui: &Ui, rec: &gd_formats::arz::Record, o: Vec2) -> URect {
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
     URect::new(
@@ -1087,11 +1042,8 @@ fn text_field(ui: &mut Ui, rec: &gd_formats::arz::Record, field: &str, o: Vec2, 
     }
 }
 
-/// The Inventor's window (`InventorWindow::Load` loader, `InventorWindow::SetVisible`
-/// open handler): the four tabs salvage (`enchanterRecoverTab`), dismantle,
-/// convert and reroll (`*TabButton` records); salvage is always open, the
-/// others need their story token (greyed otherwise). The name and the
-/// `enchanterHeadingText` title are the NPC's.
+/// The Inventor's window (`InventorWindow::Load`, `InventorWindow::SetVisible`): salvage is always open, the
+/// other tabs need their story token (greyed otherwise). The name and `enchanterHeadingText` are the NPC's.
 #[allow(clippy::too_many_arguments)]
 fn inventor_window(
     ui: &mut Ui,
@@ -1174,11 +1126,8 @@ fn inventor_window(
     }
 }
 
-/// The convert tab (`UIEnchanterConvertTab::Load` loader / `UIEnchanterConvertTab::Update`
-/// update / `UIEnchanterConvertTab::IsReady` ready test): item slot (`reagentBaseBox`), the
-/// `sameSetButton` / `randomSetButton` radio pair (the picked one down), the
-/// formula's reagent boxes, the cost and `createItemButton` (item, every
-/// reagent, money). The table's `productBox` is not read by the loader.
+/// The convert tab (`UIEnchanterConvertTab::Load` / `Update` / `IsReady`): `createItemButton` needs the item,
+/// every reagent and money. The table's `productBox` is not read by the loader.
 #[allow(clippy::too_many_arguments)]
 fn convert_panel(
     ui: &mut Ui,
@@ -1245,9 +1194,7 @@ fn convert_panel(
     }
 }
 
-/// The salvage tab (`UISalvagePanel::Load` loader / `UISalvagePanel::Update`
-/// update): item slot (`recoveryBox`), cost label and number (red when
-/// short) and the three buttons, enabled per `crafting::salvage`.
+/// The salvage tab (`UISalvagePanel::Load` / `Update`).
 #[allow(clippy::too_many_arguments)]
 fn recover_panel(
     ui: &mut Ui,
@@ -1299,10 +1246,10 @@ fn recover_panel(
     }
 }
 
-/// The selected recipe row's frame, 1 px larger than the row each way (as the altar's and the factions' lists).
+/// 1 px larger than the row each way.
 const ROW_HIGHLIGHT: &str = "ui/inventor/crafting_recipeselectionhighlight.tex";
 
-/// A crafting count as the window prints it: "99+" over 99 (as the altar list, `altar.rs` module doc).
+/// "99+" over 99.
 fn count_text(n: u32) -> String {
     if n > 99 {
         "99+".to_owned()
@@ -1335,7 +1282,6 @@ fn crafter_window(
     text_field(ui, &m, "enchanterNameText", o, &name);
     let title = ui.fonts.tag(&list.title_tag).to_string();
     text_field(ui, &m, "crafterHeadingText", o, &title);
-    // Category buttons: relics, then tabs 1-4.
     let keys = [
         "craftingTabArtifactButton",
         "craftingTab1Button",
@@ -1366,8 +1312,7 @@ fn crafter_window(
     let Some(tab) = m.str("enchanterArtifactTab").and_then(|t| ui.record(t)) else {
         return;
     };
-    // The search box (module doc): the crafting panel filters its recipe list
-    // with the query (`crafting.rs` `CraftList::rows`).
+    // The crafting panel's search filters its recipe list.
     search_box(
         ui,
         &tab,
@@ -1376,7 +1321,6 @@ fn crafter_window(
         layout,
         ("searchBox", "clearSearchButton"),
     );
-    // The recipe list: group headers, then "[craftable] item name" rows.
     let rows = list.rows(trade.tab, &trade.search.query());
     let item_rec = tab.str("craftingListBoxItem").and_then(|r| ui.record(r));
     if let Some(lw) = tab.str("craftingListBox").and_then(|r| ui.record(r)) {
@@ -1412,9 +1356,8 @@ fn crafter_window(
         );
         let lp = ui.sc(line);
         let scroll_px = trade.scroll as f32 * lp;
-        // All rows into a clipped pane (PERF-23): `crafting::craft_scroll` moves it and the bar's
-        // thumb on scroll, so a scroll step rebuilds nothing. Rows keep content coordinates (scroll
-        // 0); `craft_clicks` hit-tests them with the scroll-shifted point.
+        // Rows keep content coordinates (scroll 0) in a clipped pane; `craft_clicks` hit-tests them with the
+        // scroll-shifted point.
         let inner = super::window::pane(ui, lr, scroll_px);
         ui.commands
             .entity(inner)
@@ -1441,8 +1384,7 @@ fn crafter_window(
             };
             match *row {
                 crate::state::crafting::Row::Header(g) => {
-                    // The group's open state: `listboxuncollapsedicon` before its name (the groups never
-                    // collapse here, PORT).
+                    // PORT: the groups never collapse; `listboxuncollapsedicon` before the name.
                     let mut indent = 2.0;
                     if let Some((h, size)) = ui.image("ui/generic/listboxuncollapsedicon.tex") {
                         let (w, hh) = (size.x as f32, size.y as f32);
@@ -1486,7 +1428,6 @@ fn crafter_window(
                             &rec.item_tag
                         })
                         .to_string();
-                    // The `[craftable]` count tracks gold in place (`live_gold`, PERF-24).
                     let text = format!("[{}]{name}", count_text(n));
                     let e = ui.live_text(
                         super::TextAt::Colored {
@@ -1505,9 +1446,8 @@ fn crafter_window(
             }
         }
         ui.root = outer;
-        // The scroll bar along the list's right edge (`verticalScrollbar`, its length adjusted by
-        // `scrollbarSizeAdjust`), shown while the rows overflow. Its thumb moves with the scroll
-        // (`crafting::craft_scroll`), so the bar is live, not rebuilt per step.
+        // `verticalScrollbar` along the list's right edge (length adjusted by `scrollbarSizeAdjust`), shown while
+        // the rows overflow.
         if rows.len() > visible
             && let Some(sb) = lw.str("verticalScrollbar")
         {
@@ -1523,7 +1463,6 @@ fn crafter_window(
             );
         }
     }
-    // The selected blueprint.
     let selected = trade.recipe.and_then(|i| list.recipes.get(i));
     if let Some(rec) = selected {
         let bp = &rec.bp;
@@ -1540,7 +1479,6 @@ fn crafter_window(
             stack_count: bp.quantity,
             ..Default::default()
         };
-        // The name in the product's name colour (`name_color`: a relic's cyan), as the list row.
         let name_color = inv
             .info(&product)
             .map(|i| super::character::name_color(&ui.data.db, i.resolved.display_color_index()));
@@ -1550,15 +1488,13 @@ fn crafter_window(
                 ui.text_colored(&tb, &style, o, &text, name_color);
             }
         }
-        // The product and the base reagent (the two large boxes) in item cells: their class background
-        // (`item_cell`), as the bags draw them; the small reagent boxes show the bare icon (as the real window).
+        // The product and the base reagent sit in item cells; the small reagent boxes show the bare icon.
         if let Some(b) = tab.str("artifactBox").and_then(|b| ui.record(b)) {
             let r = item_box(ui, &b, o);
             super::character::item_cell(ui, inv, &product, r);
             layout.boxes.push((product, r));
         }
         let slots = ["Base", "1", "2", "3", "4", "5", "6"];
-        // A short reagent's count takes `insufficientMaterialColor` (as the altar's quantities).
         let red = [
             tab.f32("insufficientMaterialColor.r").unwrap_or(0.75),
             tab.f32("insufficientMaterialColor.g").unwrap_or(0.0),
@@ -1601,8 +1537,7 @@ fn crafter_window(
             }
         }
     }
-    // Cost and the craft button are always shown (empty / disabled without
-    // a selection); the crafter's emblem sits in the button's circle.
+    // Cost and the craft button are always shown (empty / disabled without a selection).
     let label = tab
         .str("costText")
         .and_then(|t| ui.record(t))
@@ -1624,8 +1559,7 @@ fn crafter_window(
             &super::character::money_text(cost),
         );
     }
-    // The craft button's re-centring shift, applied to the crafter's emblem so it
-    // stays in the button's circle when the button grows.
+    // The craft button's re-centring shift keeps the crafter's emblem in the button's circle.
     let mut craft_dx = 0.0;
     if let Some(b) = tab.str("createArtifactButton").and_then(|b| ui.record(b)) {
         let ok = afford.1;
@@ -1659,8 +1593,7 @@ fn crafter_window(
                     glow: None,
                 };
                 let text = ui.fonts.tag(t).to_string();
-                // Disabled: the label dimmed as a dim disabled button's bitmap (0.6, module doc). PORT: the
-                // engine's disabled text colour is not decompiled.
+                // Disabled: the label dimmed to 0.6. PORT: the engine's disabled text colour is not decompiled.
                 let dim = (!ok)
                     .then(|| ui.fonts.style(ui.data, style))
                     .flatten()
@@ -1708,8 +1641,7 @@ fn npc_headings(
     text_field(ui, m, title_field, o, &title);
 }
 
-/// Faction merchant: the faction's name and the reputation bar (the
-/// positive / negative bar filled within the current level, labelled with it).
+/// Faction merchant: the faction's name and the reputation bar filled within the current level.
 fn faction_header(
     ui: &mut Ui,
     m: &gd_formats::arz::Record,
@@ -1768,15 +1700,13 @@ fn faction_header(
             glow: None,
         };
         let text = ui.fonts.tag(&f.levels.tag(f.value)).to_string();
-        // A long standing name truncates to the bar instead of overflowing it (PORT).
+        // PORT: a long standing name truncates to the bar.
         let text = ui.truncate_line(&style, r.w, &text);
         ui.text_with_style(&tb, &style, o, &text);
     }
 }
 
-/// An action button (`bitmapNameUp` / `Disabled`, its `textTag` centred
-/// with the record's `style`), auto-sized to its label ([`sized_button`]);
-/// enabled ones are clickable.
+/// `bitmapNameUp` / `Disabled`, its `textTag` centred with the record's `style`; enabled ones are clickable.
 fn action_button(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -1804,8 +1734,7 @@ fn action_button(
     if let (Some(style), Some(t)) = (rec.str("style"), rec.str("textTag")) {
         let text = ui.fonts.tag(t).to_string();
         let e = super::widgets::label(ui, r, style, gd_formats::ui::TextAlign::Center, &text);
-        // PORT: the button record has no disabled text style; the label is
-        // drawn at 40% brightness when the button is off (reference shot).
+        // PORT: the button record has no disabled text style; the label is drawn at 40% brightness.
         if let (false, Some(e)) = (enabled, e) {
             ui.commands.entity(e).queue(|mut em: EntityWorldMut| {
                 let dim = Color::srgba(0.4, 0.4, 0.4, 1.0);
@@ -1820,8 +1749,7 @@ fn action_button(
     }
 }
 
-/// An item slot: a faint plate over `r` and the item's icon (the slot is
-/// clickable, `layout.slot`).
+/// A faint plate over `r` and the item's icon.
 fn item_slot(
     ui: &mut Ui,
     r: URect,
@@ -1829,8 +1757,7 @@ fn item_slot(
     inv: &Inventory,
     layout: &mut TradeLayout,
 ) {
-    // The slot plate is drawn dark; the item box's highlight colour
-    // (`HighlightColor*`) shows while an item is carried (PORT).
+    // PORT: the item box's highlight colour (`HighlightColor*`) shows while an item is carried.
     if inv.held.is_some() {
         ui.solid(r, Color::srgba(0.4, 0.63, 0.7, 0.2));
     }
@@ -1840,8 +1767,7 @@ fn item_slot(
     }
 }
 
-/// The item on its rarity frame, one grid cell per 32 px, centred in the box (`item_cell` is the inventory's
-/// `GetItemBackground` draw).
+/// The item on its rarity frame, one grid cell per 32 px, centred in the box.
 fn slot_item(ui: &mut Ui, r: URect, it: &Item, inv: &Inventory) {
     let size = inv.info(it).map_or((2, 2), |i| (i.size.w, i.size.h));
     let (w, h) = (ui.sc(32.0 * size.0 as f32), ui.sc(32.0 * size.1 as f32));
@@ -1854,8 +1780,7 @@ fn slot_item(ui: &mut Ui, r: URect, it: &Item, inv: &Inventory) {
     super::character::item_cell(ui, inv, it, cell);
 }
 
-/// The reagent boxes of a reroll / ascension plan: icon, red plate when
-/// short, "have/need".
+/// The reagent boxes of a reroll / ascension plan: icon, red plate when short, "have/need".
 fn reagent_boxes_plan(
     ui: &mut Ui,
     tab: &gd_formats::arz::Record,
@@ -1900,7 +1825,7 @@ fn reagent_boxes_plan(
     }
 }
 
-/// The cost label and number (the red `short_field` when `ok` says the gold falls short).
+/// The red `short_field` when `ok` is false.
 #[allow(clippy::too_many_arguments)]
 fn cost_texts(
     ui: &mut Ui,
@@ -1930,13 +1855,11 @@ fn cost_texts(
     }
 }
 
-/// The dismantle tab (loader `DismantleTab::Load`, update `DismantleTab::Update`, render `DismantleTab::Render`, mouse
-/// `DismantleTab::HandleMouseEvent`). Render order: the boxes, `dynamiteNumberBoxBitmap` (the Dynamite icon), the
-/// button, the cost (`dismantleCostNumber`, `tooExpensiveCostNumber` when short), the Dynamite total
-/// (`dynamiteNotEnoughNumber` at 0), the two texts, `dynamiteBitmap` (no texture in the stock record). The boxes: while
-/// a result box holds an item the two take-only result boxes are drawn and take the mouse in the item box's place (they
-/// share its area), else the item box alone. The warning is a Yes / No dialog of the dialog manager
-/// (`DismantleTab::OnButton`: `DialogManager::AddDialog` with the warning tag), drawn by `ui/confirm.rs`.
+/// The dismantle tab (`DismantleTab::Load` / `Update` / `Render` / `HandleMouseEvent`). Render order: the boxes,
+/// `dynamiteNumberBoxBitmap`, the button, the cost, the Dynamite total (`dynamiteNotEnoughNumber` at 0), the two
+/// texts, `dynamiteBitmap` (no texture in the stock record). While a result box holds an item the two take-only
+/// result boxes replace the item box (they share its area). The warning is a Yes / No dialog
+/// (`DismantleTab::OnButton`: `DialogManager::AddDialog`).
 #[allow(clippy::too_many_arguments)]
 fn dismantle_panel(
     ui: &mut Ui,
@@ -1951,7 +1874,7 @@ fn dismantle_panel(
     let Some(tab) = m.str("enchanterDismantleTab").and_then(|t| ui.record(t)) else {
         return;
     };
-    // Clicks in `trade.rs` `panel_clicks`: only the boxes pushed here take any.
+    // Only the boxes pushed here take clicks.
     if trade.results.iter().any(Option::is_some) {
         for (i, key) in ["dismantleBox1", "dismantleBox2"].into_iter().enumerate() {
             if let Some(b) = tab.str(key).and_then(|b| ui.record(b)) {
@@ -2038,11 +1961,8 @@ fn dismantle_panel(
     }
 }
 
-/// The reroll tab (`UIEnchanterRerollTab::Load` / `UIEnchanterRerollTab::Update` /
-/// `UIEnchanterRerollTab::UpdateButtonStates`): item slot (`reagentBaseBox`), the four kind buttons
-/// (the picked one down, off without the affix), the reagent box, the reroll
-/// count, the cost and `rerollNowButton`. The count is
-/// `Localize("tagRerollQuantity", n)` set on `rerollQuantityNumber` (`UIEnchanterRerollTab::Update`).
+/// The reroll tab (`UIEnchanterRerollTab::Load` / `Update` / `UpdateButtonStates`): the kind buttons are off
+/// without the affix; the count is `Localize("tagRerollQuantity", n)` on `rerollQuantityNumber`.
 #[allow(clippy::too_many_arguments)]
 fn reroll_panel(
     ui: &mut Ui,
@@ -2129,10 +2049,8 @@ fn reroll_panel(
     }
 }
 
-/// The Runekeeper's item-ascension window (`itemascension_table.dbr`,
-/// `UIItemAscensionWindow::Update` recipe pick / `UIItemAscensionWindow::IsReady` ready test): item slot
-/// (`reagentBaseBox`), up to five reagent boxes, the cost and the ascend
-/// button (item without an ascendant affix, money, every reagent).
+/// The Runekeeper's item-ascension window (`UIItemAscensionWindow::Update` / `IsReady`): the ascend button needs
+/// an item without an ascendant affix, money and every reagent.
 fn ascension_window(
     ui: &mut Ui,
     trade: &Trade,
@@ -2192,16 +2110,9 @@ fn ascension_window(
     }
 }
 
-/// The Illusionist's window (`transmuter_mastertable.dbr`, logic
-/// `crate::illusion`): background, title, close button, the 6 × 3 look boxes
-/// (`displayBox` at `displayBoxSpacingX/Y`; dark plate, the look's icon,
-/// `selectionBorder` on the shown look, the window's `transmutedBitmap` on a
-/// pending pick), the page buttons and "n / m" (`tagTransmutePageFormat`),
-/// the nine equipment boxes (worn icon or silhouette, `selectionBorder` on the
-/// selected one), the iron totals and the
-/// Apply Illusion button (enabled with an affordable pick). PORT: the box
-/// plate shade (`backgroundShadeColor*`) as a plain overlay. The character
-/// view shows the paper doll with the pending picks (`crate::doll`).
+/// The Illusionist's window (`transmuter_mastertable.dbr`): look boxes with `selectionBorder` on the shown look and
+/// `transmutedBitmap` on a pending pick; Apply Illusion is enabled with an affordable pick. PORT: the box plate
+/// shade (`backgroundShadeColor*`) as a plain overlay.
 fn illusionist_window(
     ui: &mut Ui,
     trade: &Trade,
@@ -2219,7 +2130,6 @@ fn illusionist_window(
     layout.window = Some(w);
     let v = &trade.illusion;
     draw_field(ui, &m, "backgroundBitmap", o);
-    // The paper doll with the pending picks (`crate::doll`).
     if let Some(path) = m.str("characterView")
         && let Some(Widget::SceneView { rect, .. }) = ui.widget(path)
     {
@@ -2239,8 +2149,7 @@ fn illusionist_window(
     for f in ["totalGoldBoxBitmap", "costBoxBitmap"] {
         draw_field(ui, &m, f, o);
     }
-    // The weapon-swap button (the loader reads only `equipSwap1LeftButton`):
-    // down while set II is worn (`crate::illusion`).
+    // The loader reads only `equipSwap1LeftButton`; down while set II is worn.
     if let Some(Widget::Button {
         up: Some(up),
         down,
@@ -2273,7 +2182,6 @@ fn illusionist_window(
         ui.text(&gd_formats::ui::TextBox::from_record(&t), o, &text);
     }
     let shown = v.shown_look(inv);
-    // The look boxes.
     if let Some(b) = m.str("displayBox").and_then(|b| ui.record(b)) {
         let base = item_box(ui, &b, o);
         let cols = m.i32("displayBoxColumns").unwrap_or(6).max(1) as usize;
@@ -2344,7 +2252,6 @@ fn illusionist_window(
         ],
     );
     text_field(ui, &m, "pageText", o, &page);
-    // The equipment boxes.
     for (field, slot) in EQUIP_BOXES {
         let Some(b) = m.str(field).and_then(|b| ui.record(b)) else {
             continue;
@@ -2385,7 +2292,6 @@ fn illusionist_window(
             ui.quad_stretch(h, r, Color::WHITE);
         }
     }
-    // Iron.
     let cost = gd_game::illusion::picks_cost(&ui.data.db, inv, &v.picks, level);
     for (label, number) in [
         ("totalGoldText", Some(("totalGoldNumber", gold))),
@@ -2432,8 +2338,7 @@ fn illusionist_window(
     }
 }
 
-/// The crafting list pane's scrolled inner node ([`crate::window::pane`]): `craft_scroll`
-/// moves it by `Trade::scroll`, so scrolling does not rebuild the window (PERF-23).
+/// The crafting list pane's scrolled inner node; `craft_scroll` moves it by `Trade::scroll`.
 #[derive(Component)]
 pub struct CraftScrolled {
     pub clip_y: f32,

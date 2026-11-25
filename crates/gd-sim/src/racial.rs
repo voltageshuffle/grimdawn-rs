@@ -33,8 +33,7 @@
 //!   the shield block the % (`racialBonusPercentDefense`) cuts every damage
 //!   (`ReduceAbsoluteDamage`, [`crate::combat::Defender::racial_reduction`]);
 //!   the absolute (`CombatManager.racialBonusAbsoluteDefense`) is a pool for that attack that
-//!   `CombatManager::ApplyDamage` soaks before the damage-absorbing buffs (no stock record has
-//!   one: not ported).
+//!   `CombatManager::ApplyDamage` soaks before the damage-absorbing buffs (not ported).
 //! - Items (`ItemEquipment::InitializeItem` → `CreateItemRacialBonus`): the
 //!   prefix, suffix, modifier and base records, one entry per race
 //!   (`RacialBonus::SplitRaces` splits a record's race list, `RacialBonus::Merge` merges an entry
@@ -46,11 +45,9 @@
 //!
 //! PORT: the attack's weapons are the worn weapons (the ids `CollectCombatParameters`
 //! is handed are not traced); the ascendant affix counts with the item (the
-//! third contributor `ItemEquipment.thirdRacialBonus` is not traced; the tooltip shows its
-//! racial lines); components and augments at their first value (no stock
-//! component / augment has more than one). `PetPlayerScaling` pets attack with
-//! their owner's bonuses (`gd_game::pets` docs). The absolute damage / defense
-//! values deal nothing (see above), so they are not kept.
+//! third contributor `ItemEquipment.thirdRacialBonus` is not traced); components and
+//! augments at their first value. `PetPlayerScaling` pets attack with their owner's
+//! bonuses. The absolute damage / defense values are not kept.
 use crate::stats::level_value;
 use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
@@ -113,8 +110,7 @@ impl RacialBonus {
 }
 
 /// A skill record's `racialBonusPercentDamage` at a level index against
-/// `target` (0 when none of its races is one of the target's): the attacking
-/// skill's own part of the attack's bonus, without building the entry.
+/// `target` (0 when none of its races is one of the target's).
 pub fn record_damage_against(rec: &Record, level_index: usize, target: &[String]) -> f32 {
     let hit = rec
         .strs_iter("racialBonusRace")

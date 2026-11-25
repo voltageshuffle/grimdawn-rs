@@ -11,7 +11,6 @@ pub struct HoveredLabel(pub Option<Entity>);
 #[derive(Component)]
 pub struct FilteredOut;
 
-/// "Toggle Hide All Items" is on (module doc; the engine's HUD flag `UIPlayerHud.itemsShown`
-/// is the opposite, items shown).
+/// "Toggle Hide All Items" is on (the engine's HUD flag `UIPlayerHud.itemsShown` is the opposite).
 #[derive(Resource, Default)]
 pub struct ItemsHidden(pub bool);

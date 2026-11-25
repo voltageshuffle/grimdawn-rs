@@ -2,7 +2,7 @@
 //! dispatcher answers it.
 use bevy::prelude::*;
 
-/// The Game Over dialog's state (the `ui/reclamation.rs` message-box pattern).
+/// The Game Over dialog's state.
 #[derive(Resource, Default)]
 pub struct GameOverBox {
     pub open: bool,

@@ -8,14 +8,9 @@ description = "Grim Dawn's in-game UI windows and HUD over gd-ui-kit, gd-game an
 license = "MIT"
 
 [features]
-# Dev builds: the `GD_*` hook systems the windows carry (the hooks resource is gd-game-core's, which this
-# forwards to). grimdawn's `dev` forwards here.
 dev = ["gd-game-core/dev"]
 
 [dependencies]
-# The UI records / fonts / text layout (gd-formats), the gameplay the windows read and send requests to
-# (gd-game, gd-game-core), the models / textures the paper doll and tooltips draw (gd-render), the sheet
-# maths (gd-sim), the quest / faction rules (gd-story, gd-rules) and the shared widget kit (gd-ui-kit).
 bevy = {
   version = "0.20",
   default-features = false,

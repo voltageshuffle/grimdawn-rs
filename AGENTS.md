@@ -23,6 +23,10 @@ original install's data. Not wanted: gamepad, multiplayer, voice chat, Steam ach
   globals. A session ends in process (`grimdawn/src/exit/mod.rs`): new session state needs its reset there. A
   `Local` that caches session data takes `NewSession`. Test hooks come from `Res<Hooks>`, never `std::env`, and
   exist only with the `dev` feature: gate every hook read with `#[cfg(feature = "dev")]`.
+- **Logging and `{:?}`.** Logging (`info!`, `warn!`, `error!`, ...) exists only in dev builds: a release compiles
+  every log macro out, so nothing the player needs may go only to the log. `{:?}` / `{:#?}` only in log, panic and
+  assert text, never in game logic, UI text, keys, sort keys, entity names or error messages: use Display or an
+  explicit `name()`, so the code works under `-Zfmt-debug=none` too.
 - **Build and run** with `cargo dev-build` / `cargo dev` (they enable the `dev` feature), never plain
   `cargo build -p grimdawn`.
 - **`cargo clippy --workspace --all-targets` stays clean.**

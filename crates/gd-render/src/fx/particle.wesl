@@ -11,7 +11,7 @@
 // matrix is the identity (Emitter::RenderPass); a local emitter's billboards
 // roll (and velocity-aligned ones stretch) by the inverse of its frame.
 // PS: texture · vertex colour, blended on the gamma-space target.
-// particledistort* (GD_DISTORT; render/distort.rs draws them after the scene):
+// particledistort* (GD_DISTORT; drawn after the scene):
 // psDistort: t = tex(uv), a = t.a·c.a, discard a < 0.01;
 // k = 1 + a·(2·c.b² − ½); p = (corner − centre)/k + centre (clip xyw);
 // suv = (p.x/p.w, −p.y/p.w)·½ + ½ + (2·c.rg − 1)·a·screenTextureScale·16;
@@ -118,8 +118,7 @@ fn shade(v: PVertex) -> Out {
 @fragment
 fn fragment(in: Out) -> @location(0) vec4<f32> {
     // Particles are forward-drawn after the deferred passes and are not part
-    // of the G-buffer glow: skip the port's glow camera (marked by exposure,
-    // see render/post.rs).
+    // of the G-buffer glow: skip the port's glow camera (marked by exposure).
     if view.exposure > 0.1 {
         discard;
     }
@@ -140,8 +139,7 @@ fn fragment(in: Out) -> @location(0) vec4<f32> {
     return vec4(mix(vec3(1.0), t.rgb, a) * screen, a);
 }
     // Both blends weigh the colour by its alpha (SrcAlpha/One, SrcAlpha/InvSrcAlpha): a fragment below
-    // 1/1024 changes no 8-bit channel, so it is dropped before the blend (the soft sprites' empty corners
-    // and fringes: most of a dense effect's fill).
+    // 1/1024 changes no 8-bit channel, so it is dropped before the blend.
     let c = t * in.color;
     if c.a < 1.0 / 1024.0 {
         discard;

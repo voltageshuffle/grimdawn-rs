@@ -1,6 +1,6 @@
-//! The first-entry marker; `gd-game` adds the entry systems.
+//! The first-entry marker.
 use bevy::prelude::*;
 
-/// The session's player has entered the game (`gd_game::entry::first_entry` ran; removed by `end_session_state`).
+/// The session's player has entered the game (removed by `end_session_state`).
 #[derive(Resource)]
 pub struct EnteredGame;

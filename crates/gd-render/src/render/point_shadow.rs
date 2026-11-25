@@ -1,7 +1,6 @@
 //! Point-light shadows the way the engine picks and builds them: which scene
 //! lights get a map, of which size, and the per-light tap spread the
-//! materials read (`point_shadow` in gd_standard.wesl / gd_terrain.wesl /
-//! decal.wesl, called from their point-light loop), and the shadow views.
+//! materials read, and the shadow views.
 //!
 //! Engine.dll:
 //! - A light record's `shadowPriority` (`Light::Load`, also
@@ -12,10 +11,10 @@
 //!   very high / ultra ([`priority_casts`]). Stock values: 1-4 (campfires 4,
 //!   `light_firecauldron01` 1), the `_noshadow` lights 8-9999 (never). Not for
 //!   a light in simple mode (`Light.simpleMode`), and with `GraphicsEngine::UseLowQualityLighting`
-//!   (`lightingQuality` low, `render/light_rig.rs`) only for a light with `Light.forceShadows`
+//!   (`lightingQuality` low) only for a light with `Light.forceShadows`
 //!   set (`Light::SetForceShadows`, called by none of Engine.dll /
-//!   Game.dll / Grim Dawn.exe), so then none ([`lights_cast`]). Effect lights
-//!   (`fx/mod.rs`): priority 1 with the emitter's bools[7].
+//!   Game.dll / Grim Dawn.exe), so then none ([`lights_cast`]). Effect lights:
+//!   priority 1 with the emitter's bools[7].
 //! - Map pools (`GraphicsEngine::GetShadowMapSizes` → `GraphicsMTRenderer::RecreateRenderTargets` /
 //!   `CreateRenderTargets`): `full` maps of the point size
 //!   256 / 384 / 512 / 1024 / 2048 (`GraphicsMTRenderer.pointShadowSize`, `fullShadowCount` 1 / 2 / 3 / 3 / 4)
@@ -66,16 +65,13 @@
 //! triangle crossing the light's horizon is clipped per vertex (z < 0) where
 //! the engine interpolates the alpha factor; casters are the meshes without
 //! `NotShadowCaster` in the spot's cone and range (0.1 m slab under the light
-//! culled, the cone ≤ 0.9° short of the horizon); every layer costs S² × 4
-//! bytes (64 MB at ultra). Non-Grim Dawn materials would draw with the spot's
+//! culled, the cone ≤ 0.9° short of the horizon). Non-Grim Dawn materials would draw with the spot's
 //! own projection (trails, beams, FX, weather and water are `NotShadowCaster`). The player light's priority (4 at
-//! `lightingQuality` 3, `env.rs`) is a [`ShadowPriority`] like the others.
+//! `lightingQuality` 3) is a [`ShadowPriority`] like the others.
 //!
-//! PORT (performance): a half map costs a shadow view and a whole S² layer clear,
-//! as a full one does, so below ultra [`pools`] hands out half the engine's half
-//! maps (rounded up: 2 / 2 / 3 / 4 at low / medium / high / very high, so 3 / 4 /
-//! 6 / 7 maps in all instead of 4 / 6 / 9 / 11); the lights of least screen area
-//! past them get no map, as past the engine's pools. Ultra keeps the engine's 4 + 12.
+//! PORT: below ultra [`pools`] hands out half the engine's half maps (rounded up: 2 / 2 / 3 / 4 at low /
+//! medium / high / very high); the lights of least screen area past them get no map, as past the engine's
+//! pools. Ultra keeps the engine's 4 + 12.
 use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::light::{DirectionalLightShadowMap, SimulationLightSystems};
@@ -86,7 +82,7 @@ use bevy::prelude::*;
 pub struct ShadowPriority(pub i32);
 
 /// The engine map this frame gave the light (its width in texels; none when
-/// it has no map). Written by [`assign_point_shadows`] only.
+/// it has no map).
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct PointShadowMap(pub Option<u32>);
 
@@ -106,9 +102,8 @@ impl Plugin for PointShadowPlugin {
             PostUpdate,
             assign_point_shadows
                 .after(TransformSystems::Propagate)
-                // Bevy's bounding-sphere systems queue `insert(Sphere)` on every light whose transform changed
-                // (a new shadow spot's first frame); one of ours despawning that spot ahead of them makes the
-                // insert panic on a despawned entity. After them (an auto sync point applies theirs first).
+                // Bevy's bounding-sphere systems queue `insert(Sphere)` on a new shadow spot; despawning that
+                // spot ahead of them makes the insert panic.
                 .after(SimulationLightSystems::UpdateBounds)
                 .before(super::env::EnvSystems)
                 .before(SimulationLightSystems::UpdateLightFrusta)
@@ -140,7 +135,7 @@ pub fn lights_cast(options: Option<&gd_game_core::options::GameOptions>) -> bool
 }
 
 /// (full map size, full count, half count) of a quality (`GraphicsEngine::GetShadowMapSizes`; half
-/// the half maps below ultra, module doc PORT).
+/// the half maps below ultra).
 pub fn pools(quality: u32) -> (u32, usize, usize) {
     match quality {
         0 => (256, 1, 2),
@@ -211,7 +206,6 @@ pub fn spot_code(w: u32, s: u32) -> f32 {
     (1.0 / ((n + 64.0 * k) * 1e-4)).atan() as f32
 }
 
-/// Frame scratch of [`assign_point_shadows`], kept to reuse its allocations.
 #[derive(Default)]
 struct AssignScratch {
     areas: Vec<(i64, usize)>,
@@ -222,7 +216,7 @@ struct AssignScratch {
 }
 
 /// `Light::AddToScene`'s frustum test: the light's sphere (position, radius)
-/// meets the camera frustum (also render/env.rs's shaded-light pick).
+/// meets the camera frustum.
 pub fn in_view(frustum: &Frustum, pos: Vec3, range: f32) -> bool {
     frustum.intersects_sphere(
         &Sphere {

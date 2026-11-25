@@ -149,7 +149,7 @@ fn key(r: &mut Reader, key: &str) -> Result<()> {
         .with_context(|| format!("map.dat: truncated key at {at:#x}"))?;
     ensure!(
         k == key.as_bytes(),
-        "map.dat: expected {key}, found {:?}",
+        "map.dat: expected {key}, found \"{}\"",
         bytes_to_string(k)
     );
     Ok(())

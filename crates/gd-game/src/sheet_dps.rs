@@ -1,16 +1,9 @@
-//! The character sheet's Damage Per Second and its tooltip lines: the weapon
-//! attack's DPS, the left-mouse and right-mouse skills' DPS
-//! (`GrimDawn.exe` `CharacterWindow::UpdatePage1` → `Player::CalculateSkillDps`:
-//! the number shown is the left-mouse skill's, rounded; the rollover lists
-//! the weapon attack and both skills, `tagCharStatsDPSWeapon`). The formulas
-//! are `gd_sim::dps`.
-// The sheet's accumulator counts a global-chance "one of" group (Elemental
-// Infusion's 34/33/33 % cold / fire / lightning burn) as its first attribute
-// only (`gd_sim::actor::GlobalGroup`, `DamageAttributeStore::
-// AddDamageToAccumulator`), and a min-only flat next to a ranged one sums to
-// a range (`fill_max`). The Elemental modifier raises cold / fire / lightning
-// (the Elemental thirds too), and the skill's own modifiers travel with
-// converted damage scaled by its share (`gd_sim::combat::convert_damage`).
+//! The character sheet's Damage Per Second and its tooltip lines (`CharacterWindow::UpdatePage1` →
+//! `Player::CalculateSkillDps`): the number is the left-mouse skill's, rounded; the rollover lists
+//! the weapon attack and both mouse skills. The formulas are `gd_sim::dps`.
+// The accumulator counts a global-chance "one of" group (Elemental Infusion's cold / fire /
+// lightning burn) as its first attribute only (`DamageAttributeStore::AddDamageToAccumulator`),
+// and a min-only flat next to a ranged one sums to a range (`fill_max`).
 use bevy::ecs::change_detection::DetectChanges;
 use gd_formats::arz::Record;
 use gd_game_core::casting::{Caster, DEFAULT_ATTACK, SLOT_LEFT, SLOT_RIGHT};
@@ -25,36 +18,28 @@ use gd_sim::dps::{Info, finish, spell_dps, spell_rate, weapon_dps, weapon_rate};
 use gd_sim::equip::WeaponType;
 use gd_sim::stats::level_value;
 
-/// What the sheet shows: DPS values plus the display-name tags of the two
-/// mouse skills.
+/// DPS values plus the display-name tags of the two mouse skills.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SheetDps {
     pub weapon: f32,
-    /// Damage per hit (min, max) of the weapon attack: the "Weapon Damage"
-    /// row of the Damage Per Hit block.
+    /// The "Weapon Damage" row of the Damage Per Hit block.
     pub weapon_hit: (f32, f32),
-    /// The weapon attack's main-hand and off-hand damage per hit (the two
-    /// accumulators of `CalculateSkillDps`, `GetMinMaxDamage`; the off-hand
-    /// zero without a dual wield): the Weapon Damage rollover
-    /// (`gd_sim::sheet::numbers_and_rollovers`, `CharacterWindow::UpdatePage2`).
+    /// Main-hand and off-hand damage per hit (`CalculateSkillDps`'s two accumulators; off-hand zero
+    /// without dual wield): the Weapon Damage rollover.
     pub weapon_hands: [(f32, f32); 2],
-    /// The sheet's "Attacks per Second" (`CharacterWindow::UpdatePage2`, see [`attacks_per_second`]).
+    /// See [`attacks_per_second`].
     pub attacks_per_second: f32,
     pub left: Option<(String, f32)>,
     pub right: Option<(String, f32)>,
     /// Damage per hit (min, max) of the left / right mouse skill.
     pub hits: [(f32, f32); 2],
-    /// The left / right mouse skill's damage lines (duration, type, min,
-    /// max): the page II LMB / RMB rollovers, the skill's learned secondary
-    /// skills merged in (`gd_sim::actor::display_breakdown_with_secondaries`).
+    /// (duration, type, min, max) lines of the LMB / RMB rollovers, learned secondaries merged in.
     pub breakdown: [Vec<(bool, gd_sim::attributes::CombatType, f32, f32)>; 2],
 }
 
 impl SheetDps {
-    /// The Damage Per Hit text of a (min, max) pair (`CharacterWindow::UpdatePage2`
-    /// @ the skill rows: both rounded `(int)(x + 0.5)` (the max pulled down
-    /// by one when the rounding overshoots a negative), `tagFormatDash`,
-    /// replaced by `IntFormat` of the minimum when min equals max or is 0).
+    /// `CharacterWindow::UpdatePage2`'s skill rows: both rounded `(int)(x + 0.5)`,
+    /// `tagFormatDash`, or just the minimum when min equals max or is 0.
     pub fn hit_text((min, max): (f32, f32)) -> String {
         let (a, b) = ((min + 0.5).floor() as i64, (max + 0.5).floor() as i64);
         if a == b || a == 0 {
@@ -64,8 +49,7 @@ impl SheetDps {
         }
     }
 
-    /// The sheet number: the left-mouse skill's DPS (the weapon attack's when
-    /// the slot is empty), rounded like the engine (`floor(x + 0.5)`).
+    /// The left-mouse skill's DPS (the weapon attack's when the slot is empty), `floor(x + 0.5)`.
     pub fn number(&self) -> String {
         format!(
             "{:.0}",
@@ -73,9 +57,8 @@ impl SheetDps {
         )
     }
 
-    /// The DPS rollover window's numbers (`charinfo_statsdpsrolloverstyle.dbr`, a `rolloverline5.tpl`): line 2 the weapon
-    /// attack's DPS, 3 / 4 the left / right mouse skill's with their names, each rounded like the engine's `IntFormat`
-    /// (`floor(x + 0.5)`); line 1 (title) and 5 (description) carry no number.
+    /// The DPS rollover's lines (`rolloverline5.tpl`): 2 the weapon attack's DPS, 3 / 4 the left /
+    /// right mouse skill's with their names, each `floor(x + 0.5)`; 1 and 5 carry no number.
     pub fn roll_values(&self) -> gd_sim::sheet::RollValues {
         let round = |v: f32| (v + 0.5).floor();
         let mut r = gd_sim::sheet::RollValues::default();
@@ -90,13 +73,12 @@ impl SheetDps {
     }
 }
 
-/// Everything [`calculate`] reads.
 pub struct Inputs<'a> {
     pub data: &'a GameData,
     pub rules: &'a Rules,
     pub profile: &'a Profile,
     pub loadout: &'a Loadout,
-    /// The player's effective skills ([`gd_game_core::player::EffectiveSkills`]) for `loadout`.
+    /// The player's effective skills for `loadout`.
     pub effective: &'a gd_sim::skills::SkillBook,
     pub caster: &'a Caster,
     pub links: Option<&'a SkillLinks>,
@@ -105,8 +87,7 @@ pub struct Inputs<'a> {
     pub anims: &'a gd_sim::anim::AnimSet,
 }
 
-/// Frame count and frame rate of an animation file, read through the shared `.anm` store
-/// ([`gd_game_core::character::AnimCache`], which gd-render's model cache shares: one parse per file).
+/// Frame count and frame rate of an animation file, through the shared `.anm` store.
 fn frames(
     data: &GameData,
     cache: &gd_game_core::character::SharedAnims,
@@ -116,10 +97,7 @@ fn frames(
     Some((a.num_frames, a.frame_rate))
 }
 
-/// `Player::CalculateAttackSpeed(1)` / the weapon set's attack animation
-/// duration (`CalculateSkillDps`, `CharacterWindow::UpdatePage2`): [`weapon_rate`] of
-/// the capped attack speed, the character's base attack speed and the mean
-/// duration of the worn set's Attack animations.
+/// `Player::CalculateAttackSpeed(1)` / the worn set's mean Attack animation duration.
 fn weapon_attack_rate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> f32 {
     let pc = i.data.db.get(i.record);
     let base = pc.as_ref().map_or(1.0, |r| {
@@ -130,8 +108,7 @@ fn weapon_attack_rate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) 
     weapon_rate(i.profile.speeds[1], base, dur)
 }
 
-/// The mean duration of the weapon set's Attack animations (frames / fps /
-/// record speed, the variants' mean; [`weapon_rate`]).
+/// Frames / fps / record speed, averaged over the variants.
 fn attack_anim_duration(
     data: &GameData,
     set: &gd_sim::anim::AnimSet,
@@ -141,13 +118,9 @@ fn attack_anim_duration(
         .mean_duration(|p| frames(data, cache, p))
 }
 
-/// The weapon animation's rate for the item tooltip's base attack speed line
-/// (`CharAttributeVal_BaseAttackSpeed::CreateText`
-/// multiplies by the weapon animation's `GetFrameRate / GetLength`, both
-/// virtuals of the `Item.animationSet` subobject): the reciprocal of the
-/// Attack slot's mean duration. PORT: the mean of the variants with the record
-/// speed folded in ([`weapon_attack_rate`]'s duration), the engine the selected
-/// variant's raw rate; 1 without an animation (the engine leaves the factor).
+/// The item tooltip's base attack speed factor (`CharAttributeVal_BaseAttackSpeed::CreateText`):
+/// the reciprocal of the Attack slot's duration. PORT: the variants' mean with the record speed
+/// folded in, where the engine uses the selected variant's raw rate; 1 without an animation.
 pub fn weapon_anim_rate(
     data: &GameData,
     anims: &gd_sim::anim::AnimSet,
@@ -157,17 +130,14 @@ pub fn weapon_anim_rate(
     if dur > 0.0 { 1.0 / dur } else { 1.0 }
 }
 
-/// The sheet's "Attacks per Second" (`CharacterWindow::UpdatePage2`):
-/// `CalculateAttackSpeed(1) × 0.01 / UnarmedAnimSpeed`, then −5 %. With a
-/// weapon equipped `CalculateAttackSpeed` multiplies in
-/// unarmed / weapon animation duration, which is [`weapon_attack_rate`].
+/// `CharacterWindow::UpdatePage2`: `CalculateAttackSpeed(1) × 0.01 / UnarmedAnimSpeed`, then −5 %;
+/// with a weapon this is [`weapon_attack_rate`].
 pub fn attacks_per_second(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> f32 {
     let r = weapon_attack_rate(i, cache);
     r + r * -0.05
 }
 
-/// [`skill_dps`]'s values: the skill's display-name tag, its DPS, its damage per hit (min, max), the two hands' damage
-/// per hit and its damage lines.
+/// Display-name tag, DPS, damage per hit (min, max), the two hands' damage per hit, damage lines.
 type SkillValues = (
     String,
     f32,
@@ -176,8 +146,8 @@ type SkillValues = (
     Vec<(bool, gd_sim::attributes::CombatType, f32, f32)>,
 );
 
-/// `Player::CalculateSkillDps` for one hotbar skill (the default attack when
-/// it cannot be used with the worn weapons or is unknown).
+/// `Player::CalculateSkillDps` for one hotbar skill (the default attack when it cannot be used with
+/// the worn weapons or is unknown).
 fn skill_dps(
     i: &Inputs,
     cache: &gd_game_core::character::SharedAnims,
@@ -189,10 +159,8 @@ fn skill_dps(
             .get(s)
             .filter(|r| i.links.is_none_or(|l| l.weapons_allow(&data.db, r, s)))
     };
-    // The rollover's secondaries are the hotbar skill's own, even when its
-    // damage falls back to the default attack (`CharacterWindow::BuildSkillDamageRollover`:
-    // `GetSecondarySkills` of the slot's skill object; the learned list only,
-    // `SkillLinks::secondaries`).
+    // The rollover's secondaries are the hotbar skill's own learned ones, even when its damage
+    // falls back to the default attack (`CharacterWindow::BuildSkillDamageRollover`).
     let secondary_recs: Vec<(Record, usize)> = i
         .links
         .and_then(|l| l.secondaries.get(&skill.to_ascii_lowercase()))
@@ -242,9 +210,8 @@ fn skill_dps(
                 .sum::<f32>()
     };
     let cooldown = sum("skillCooldownTime");
-    // `GetTotalSkillAttribute(skillCooldownReduction)`: the skill's own
-    // (record + modifiers: value + |value| × modifier %) plus the
-    // character's.
+    // `GetTotalSkillAttribute(skillCooldownReduction)`: the skill's own (record + modifiers) plus
+    // the character's.
     let (own, own_pct) = (
         sum("skillCooldownReduction"),
         sum("skillCooldownReductionModifier"),
@@ -339,7 +306,6 @@ fn skill_dps(
     ))
 }
 
-/// The sheet's DPS values for the player.
 pub fn calculate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> SheetDps {
     let w = skill_dps(i, cache, DEFAULT_ATTACK);
     let (weapon, weapon_hit, weapon_hands) =
@@ -364,26 +330,21 @@ pub fn calculate(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> Sh
     }
 }
 
-/// The values the sheet and its rollover read: a deliberate throttled cache
-/// of derived values ([`update`] refreshes it at most twice a second, the
-/// engine's character window rate).
+/// Refreshed by [`update`] at most twice a second, the engine's character window rate.
 #[derive(bevy::prelude::Resource, Default)]
 pub struct SheetDpsValues(pub SheetDps);
 
-/// [`update`]'s throttle and the inputs it last computed from.
 #[derive(Default)]
 pub struct UpdateState {
-    /// Seconds until the next recompute is allowed.
     wait: f32,
-    /// The profile `Arc` last seen (its address).
+    /// The profile `Arc`'s address last seen.
     profile: usize,
     slots: Vec<Option<String>>,
     dirty: bool,
 }
 
-/// Recomputes the values when the profile, hotbar, skills or gear changed
-/// (at most twice a second, the rate the character window refreshes its
-/// numbers at, `CharacterWindow::UpdatePage2`), once the combat rules are loaded.
+/// Recomputes when the profile, hotbar, skills or gear changed, at most twice a second, once the
+/// combat rules are loaded.
 #[allow(clippy::too_many_arguments)]
 pub fn update(
     mut fresh: gd_game_core::session::NewSession,
@@ -469,8 +430,7 @@ impl bevy::prelude::Plugin for SheetDpsPlugin {
     }
 }
 
-/// The primary (left-mouse) skill's DPS, or the weapon attack's without one:
-/// `Player::CalculateDps(skill)` of the primary hot slot.
+/// `Player::CalculateDps` of the primary hot slot, or the weapon attack's without one.
 pub fn primary_dps(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> f32 {
     i.caster.slots[SLOT_LEFT]
         .as_deref()
@@ -480,15 +440,10 @@ pub fn primary_dps(i: &Inputs, cache: &gd_game_core::character::SharedAnims) -> 
         .map_or(0.0, |v| v.1)
 }
 
-/// The DPS change shown by `GetUIDisplayText_DPS`
-/// (`Player::CompareItems`: the hovered weapon is equipped into the
-/// main hand, `Player::CalculateDps` of the primary hot slot's skill runs
-/// before / after, each rounded half up and subtracted; the no-Ctrl value
-/// (`Player.compareDpsNoCtrl`) is taken with the components and augments of the compared items
-/// removed, the Ctrl value (`Player.compareDpsCtrl`) with them, so `with_components` is the
-/// Ctrl state). The profile, the animation set and the skill links
-/// ([`crate::weapon_pool::build_links`]: modifiers, weapon pool, overrides)
-/// are rebuilt from the tried gear, as the engine's equipped probe has them.
+/// `GetUIDisplayText_DPS` (`Player::CompareItems`): the hovered weapon equipped into the main hand,
+/// `Player::CalculateDps` of the primary skill before / after, each rounded half up, subtracted.
+/// `with_components`: the Ctrl state (no Ctrl strips the compared items' components and augments).
+/// Profile, animation set and skill links are rebuilt from the tried gear.
 pub fn compare_dps(
     i: &Inputs,
     cache: &gd_game_core::character::SharedAnims,

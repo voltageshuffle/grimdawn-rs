@@ -64,7 +64,7 @@ pub struct Step {
     /// Bit 0: only available while unused (`IsAvailable`); bit 1 ("merge"):
     /// when an earlier sibling speech is shown, this one's actions run too
     /// and its responses are listed after the earlier one's
-    /// (`ConversationWindow::UpdateStep`, see gd-sim `story/dialog.rs`). No stock
+    /// (`ConversationWindow::UpdateStep`). No stock
     /// conversation sets bit 0 or bit 1; speeches use 4, 8, 16 and 32;
     /// bit 2: an unused available speech with it clear makes
     /// `Conversation::GetPunctuation` return 6 instead of 5

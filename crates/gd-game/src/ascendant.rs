@@ -1,16 +1,11 @@
-//! The ascendant altar as gameplay: using it, activating it with formula
-//! reagents (the session's formulas, [`AltarState::formulas`]) and the Dread
-//! spawns it enables. The game shows the altar and its offering menu.
+//! The ascendant altar as gameplay: using it, activating it with formula reagents
+//! ([`AltarState::formulas`]) and the Dread spawns it enables.
 //!
-//! Using the altar ([`Altar`], level object `AscendantAltar`): a click on it is the player's interact order
-//! (`player_orders::InteractTarget`), which walks beside it; [`use_altar`] uses it once the player is within
-//! the use range (`player_orders::usable_range`). It needs the `ascendantToken`
-//! ([`may_use_altar`]) and opens the altar window ([`AltarOpen`]) only while
-//! the altar is dormant (`AscendantAltar::RequestToUse`: the window
-//! opens only in the dormant states; the activation lasts the session,
-//! the installed formulas are cleared only by
-//! `GameEngine::ClearAltarFormulas`, called from `ExitPlayingMode` and the
-//! engine's destructor, and `AscendantAltar::UpdateSelf` has no timer).
+//! [`use_altar`] uses the interacted [`Altar`] (level object `AscendantAltar`) within the use range. It
+//! needs the `ascendantToken` ([`may_use_altar`]) and opens the window ([`AltarOpen`]) only while the
+//! altar is dormant (`AscendantAltar::RequestToUse`). The activation lasts the session
+//! (`GameEngine::ClearAltarFormulas` runs only from `ExitPlayingMode`; `AscendantAltar::UpdateSelf` has no
+//! timer).
 use crate::combat::{MonsterAi, MonsterKilled};
 use crate::nav::Nav;
 use bevy::prelude::*;
@@ -21,7 +16,6 @@ use gd_game_core::player::Player;
 #[derive(Resource, Default)]
 pub struct DreadCount(pub u32, pub Option<Entity>);
 
-/// The Dread (see the module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn dread(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -60,7 +54,6 @@ pub fn dread(
     }
     count.0 += kills;
     let need = gd_sim::ascendant::super_boss_kills(&db, st);
-    // `GD_DREAD_KILLS` (hooks.rs): that many kills summon it for sure.
     #[cfg(feature = "dev")]
     let (need, forced) = (
         hooks.gameplay.dread_kills.unwrap_or(need),
@@ -99,7 +92,7 @@ pub fn dread(
         rec.i32("minLevel").unwrap_or(1).max(1),
         rec.i32("maxLevel").unwrap_or(i32::MAX).max(1),
     );
-    // Facing the player: +Z forward (`character::facing`), `looking_to` aims −Z.
+    // +Z forward (`character::facing`); `looking_to` aims −Z.
     let tf = Transform::from_translation(at).looking_to(
         at - Vec3::new(ptf.translation.x, at.y, ptf.translation.z),
         Vec3::Y,
@@ -137,12 +130,9 @@ pub fn dread(
     );
 }
 
-/// Activates the altar with the reagents `placed` in its boxes (the centre
-/// first): each box needs its formula's `reagentBaseQuantity` in the bags,
-/// which are taken; each formula installs at the level of the boxes holding
-/// its reagent (at the session's `mode`). `Ok`: the formulas and levels;
-/// `Err`: why not. [`apply_altar`] hands the formulas to the monster rules
-/// and the story.
+/// Activates the altar with the reagents `placed` in its boxes (the centre first): each box takes its
+/// formula's `reagentBaseQuantity` from the bags; each formula installs at the level of the boxes holding
+/// its reagent. `Ok`: the formulas and levels; `Err`: why not.
 pub fn activate_altar(
     db: &gd_formats::vfs::Database,
     mode: gd_rules::mode::Mode,
@@ -230,17 +220,14 @@ impl Plugin for AscendantPlugin {
     }
 }
 
-/// The altar window's activate button (`SendAltarOfferCmd`): activate with the reagents `placed`
-/// ([`activate_altar`]). [`offer_to_altar`] applies it and answers with an
-/// [`AltarAnswer`].
+/// The altar window's activate button (`SendAltarOfferCmd`).
 #[derive(Message, Clone, Debug)]
 pub struct AltarOffer {
     pub placed: Vec<String>,
-    /// The `GD_ALTAR_OFFER` hook: these reagents are added to the bags first.
+    /// `GD_ALTAR_OFFER`: these reagents are added to the bags first.
     pub provide: Vec<String>,
 }
 
-/// The result of an [`AltarOffer`]: the installed levels or why not.
 #[derive(Message, Clone, Debug)]
 pub struct AltarAnswer(pub Result<Vec<(String, u32)>, String>);
 
@@ -253,7 +240,7 @@ fn offer_to_altar(
     mut altar: ResMut<AltarState>,
 ) {
     for m in msgs.read() {
-        // Activated once per session: a second press must not re-take reagents nor stack the bonuses.
+        // Once per session: a second press must not re-take reagents nor stack the bonuses.
         if altar.activated {
             answers.write(AltarAnswer(Err("the altar is already activated".into())));
             continue;
@@ -272,16 +259,14 @@ fn offer_to_altar(
     }
 }
 
-/// An Ascendant Altar in the world (module doc).
 #[derive(Component, Clone, Debug)]
 pub struct Altar {
     pub record: String,
-    /// `Actor::GetRadius` (`combat::get_radius`): the use range's and the hover pick's.
+    /// `Actor::GetRadius`.
     pub radius: f32,
 }
 
-/// Spawns the altar's gameplay component (the dressing seam: grimdawn adds its model on `Added<Altar>`). The
-/// radius is its `Actor::GetRadius` (`combat::get_radius`, the engine's `actorRadius` default when absent).
+/// Spawns the altar's gameplay component (grimdawn adds its model on `Added<Altar>`).
 pub fn spawn_altar(
     commands: &mut Commands,
     db: &gd_formats::vfs::Database,
@@ -306,19 +291,17 @@ pub fn spawn_altar(
     )
 }
 
-/// The answer to a use of the dormant altar: the game opens its window at that altar.
+/// A use of the dormant altar: the game opens its window at that altar.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct AltarOpen(pub Entity);
 
-/// How far the open altar window stays open (`AltarWindow::CloseIfFar`: the window hides itself once
-/// the player is farther from its altar than the altar's use distance): the use range at the walk's end
-/// (`player_orders::usable_range`).
+/// How far the open altar window stays open (`AltarWindow::CloseIfFar`): the use range at the walk's end.
 pub fn altar_reach(db: &gd_formats::vfs::Database, a: &Altar, player_radius: f32) -> f32 {
     let usable = gd_game_core::combat::fixed_usable_range(db.get(&a.record));
     gd_game_core::player_orders::usable_range(player_radius, a.radius, usable, true)
 }
 
-/// Within reach of the interacted altar (`player_orders::InteractTarget`): stop and use it (module doc).
+/// Within reach of the interacted altar: stop and use it.
 #[allow(clippy::too_many_arguments)]
 pub fn use_altar(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -343,7 +326,6 @@ pub fn use_altar(
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_ALTAR` (hooks.rs): use the nearest altar within 40 m once.
     #[cfg(feature = "dev")]
     if hooks.gameplay.use_altar && !*tested && interact.0.is_none() {
         let near = altars
@@ -387,7 +369,6 @@ pub fn use_altar(
     let offer = hooks.items.altar_offer.is_some();
     #[cfg(not(feature = "dev"))]
     let offer = false;
-    // `GD_ALTAR_OFFER` (hooks.rs) allows it.
     if !(offer || may_use_altar(&data.db, rt.as_deref())) {
         return;
     }
@@ -398,8 +379,8 @@ pub fn use_altar(
     open.write(AltarOpen(e));
 }
 
-/// `MainPlayerCanUseAscendantAltar`: the `ascendantToken` (no token in the game engine
-/// record, or the main player holds it).
+/// `MainPlayerCanUseAscendantAltar`: no `ascendantToken` in the game engine record, or the main player
+/// holds it.
 pub fn may_use_altar(
     db: &gd_formats::vfs::Database,
     rt: Option<&gd_game_core::story::StoryRuntime>,
@@ -416,24 +397,20 @@ pub fn may_use_altar(
     allowed
 }
 
-/// The installed formulas reach monster profiles (their attribute paks,
-/// `CombatRules`) and Lua (`Game.GetAscendantTokenModifier`).
+/// The installed formulas reach monster profiles and Lua (`Game.GetAscendantTokenModifier`).
 ///
-/// `Monster::ContributeGameBalance*Attributes`: a monster of
-/// the Shattered Realm's dungeon gets no Ascendant bonus; the ruleset's `difficultyAdjustment*` pak (a
-/// `GameAdjustment`, by game difficulty) is read in its place at the index `dungeonsGenerated` (the tier). PORT: it
-/// replaces the Ascendant paks for every monster while a dungeon exists (outside it nothing fights).
-/// `CharAttributeVal::AddToAccumulator`: the index is 1-based (`gd_sim::ascendant::adjustment_column`:
-/// tier 0 adds nothing), and one past the table's end takes its last row (`stats::level_value`).
+/// `Monster::ContributeGameBalance*Attributes`: a Shattered Realm monster gets no Ascendant bonus; the
+/// ruleset's `difficultyAdjustment*` pak is read instead at the index `dungeonsGenerated` (1-based, tier 0
+/// adds nothing; past the table's end takes its last row). PORT: it replaces the Ascendant paks for every
+/// monster while a dungeon exists.
 pub fn apply_altar(
-    // The mode (the dungeon ruleset's slot) and the altar's formulas.
     session: crate::session::Session,
     // Option: the story half still runs without rules.
     rules: Option<ResMut<gd_game_core::rules::CombatRules>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     data: Res<gd_game_core::data::GameData>,
     mut profiles: ResMut<crate::monsters::ProfileCache>,
-    // (dungeon stamp, ruleset slot) -> the adjustment pak of its ruleset.
+    // (dungeon stamp, ruleset slot) -> its adjustment pak.
     mut pak: Local<Option<((u32, u32), Option<String>)>>,
     mut fresh: gd_game_core::session::NewSession,
 ) {
@@ -479,7 +456,7 @@ pub fn apply_altar(
     }
 }
 
-/// The ascendant altar: `Use` uses the clicked altar ([`use_altar`]), `Altar` applies its offerings.
+/// `Use` uses the clicked altar, `Altar` applies its offerings.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AscendantStage {
     Use,

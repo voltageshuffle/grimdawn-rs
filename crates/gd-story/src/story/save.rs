@@ -9,23 +9,19 @@
 //! current runtime state (`Quest2Task.state`); its counters are skipped, but the
 //! finished / rewarded bytes are always imported.
 //!
-//! Every difficulty's `quests.gdd` is loaded (the per-difficulty state, finished and rewarded arrays,
-//! `Quest2Task.difficultyStates` / `Quest2Task.finished` / `Quest2Task.rewarded`, are what reward catch-up
-//! and difficulty skips read), the current one last; only
-//! the current one sets the runtime state, the counters, the tokens and the active list. PORT: the counters
-//! are kept for the current difficulty only, so another difficulty's file is written back
-//! ([`Story::save_quests`]) by patching the state / finished / rewarded of the tasks it has and keeping the
-//! rest of it (hashes, counters, tokens) as it is. Quests and tasks the data defines but a file lacks (added
-//! by an expansion or mod after the save) are appended, as [`Story::save_conversations`] does.
+//! Every difficulty's `quests.gdd` is loaded (state / finished / rewarded per difficulty), the current one
+//! last; only the current one sets the runtime state, the counters, the tokens and the active list. PORT: the
+//! counters are kept for the current difficulty only, so another difficulty's file is written back by
+//! patching its tasks' state / finished / rewarded and keeping the rest. Quests and tasks a file lacks are
+//! appended.
 use super::Story;
 use super::quest::{STATE_AVAILABLE, STATE_COMPLETE, STATE_IN_PROGRESS};
 use gd_formats::collections::HashSet;
 use gd_formats::save::gdd;
 
 impl Story {
-    /// Loads the quest state of `difficulty` (and, if it is the current one,
-    /// the runtime state, the counters, the token list and the active task list — in-progress tasks are
-    /// re-begun with force, which runs no incentives). Load the current difficulty last (module doc).
+    /// Loads the quest state of `difficulty` (and, if current, the runtime state, counters, tokens and active
+    /// list; in-progress tasks are re-begun with force, running no incentives). Load the current difficulty last.
     pub fn load_quests(&mut self, save: &gdd::Quests, difficulty: usize) {
         let defs = self.quests.defs.clone();
         let current = difficulty == self.difficulty();
@@ -86,10 +82,8 @@ impl Story {
         }
     }
 
-    /// Writes the quest state of `difficulty`. With a `template` (the file
-    /// that was loaded) its quest/task order, seed and header are kept, so an
-    /// unchanged state re-encodes byte-identically; for another difficulty than the current one only its
-    /// tasks' state bytes change (module doc). Quests and tasks the template lacks are appended.
+    /// Writes the quest state of `difficulty`. With a `template` (the loaded file) its quest/task order, seed and
+    /// header are kept, so an unchanged state re-encodes byte-identically.
     pub fn save_quests(&self, difficulty: usize, template: Option<&gdd::Quests>) -> gdd::Quests {
         let defs = &self.quests.defs;
         let current = difficulty == self.difficulty();
@@ -100,7 +94,6 @@ impl Story {
             for (oi, o) in tdef.objectives.iter().enumerate() {
                 for (ci, c) in o.conditions.iter().flat_map(|c| c.list.iter().enumerate()) {
                     if c.saved_words() == 1 {
-                        // The counters are the current difficulty's (module doc).
                         let n = if current {
                             rt.objectives[oi].counters[ci]
                         } else {
@@ -219,8 +212,7 @@ impl Story {
         }
     }
 
-    /// Whether any task holds quest state of `difficulty` (not available, finished or rewarded): a difficulty
-    /// without a file needs one only then.
+    /// Whether any task holds quest state of `difficulty` (not available, finished or rewarded).
     pub fn has_quest_state(&self, difficulty: usize) -> bool {
         self.quests.rt.iter().flat_map(|q| &q.tasks).any(|t| {
             t.per_difficulty[difficulty] != STATE_AVAILABLE

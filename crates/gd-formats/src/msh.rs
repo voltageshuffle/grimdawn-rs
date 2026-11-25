@@ -11,7 +11,7 @@
 //! The physics mesh is the chunk 2 blob ([`PhysicsMesh`]; `PhysicsMesh::Initialize`):
 //! `i32 version (1|2)`, `u32 faces`, `u32 vertices`, [v2: `u32 nodes`], faces as 4 × u32 (3 vertex indices + the
 //! face's `PhysicsSurface`), vertices as 3 × f32, then the 40-byte tree nodes (not read).
-use crate::util::{Reader, latin1};
+use crate::util::{Reader, byte_list, latin1};
 use anyhow::{Context, Result, bail, ensure};
 
 /// A 4x3 affine transform as the engine stores it: three basis vectors and an
@@ -227,13 +227,11 @@ pub struct Bone {
     pub abs: Coords,
 }
 
-/// The deepest bone chain accepted (root = depth 0). Stock skeletons are a few dozen
-/// deep; the cap keeps the recursive pose walks ([`crate::anm`]) off the stack-overflow
-/// path on corrupt or crafted meshes (a 10 MB bone chunk can encode a 100k-deep chain).
+/// The deepest bone chain accepted (root = depth 0): keeps the recursive pose walks
+/// ([`crate::anm`]) from overflowing the stack on a corrupt mesh.
 const MAX_BONE_DEPTH: u32 = 1024;
 
-/// A set of bone indices for posing a skeleton without allocating: a stack bitset up to 512 bones, the heap past
-/// that.
+/// A set of bone indices for posing a skeleton: a stack bitset up to 512 bones, the heap past that.
 pub struct BoneSet {
     small: [u64; 8],
     big: Vec<u64>,
@@ -347,7 +345,7 @@ pub struct ContourPoint {
     pub normal: [f32; 3],
 }
 
-/// Named attach point from the MIF text block (chunk 3), parsed once with the mesh ([`Mesh::attach`]). Per
+/// Named attach point from the MIF text block (chunk 3) ([`Mesh::attach`]). Per
 /// `GraphicsMesh::ReadMif` (the MIF reader of `GraphicsMesh::Initialize`): a missing axis is the identity's, a given
 /// `xAxis` / `yAxis` / `zAxis` is normalised as read (no orthonormalisation: a mirrored point such as `hero_00.msh`'s
 /// "R Hand", basis (x, -y, z), stays mirrored), the origin is kept as is.
@@ -375,7 +373,7 @@ impl AttachPoint {
 /// A `RigidBodyDescription` block of the MIF text (chunk 3): one body of the mesh's ragdoll, laid between the
 /// `parentName` and `childName` bones (`Character::PhysicsSetup` builds a Bullet body per block
 /// from the two bones' frames × `parentOrigin` / `childOrigin`; the reader is `GraphicsMesh::ReadMif`). Only the
-/// fields the port's ragdoll reads (`gd_game::ragdoll`): no stock mesh sets `playFallSound`.
+/// fields the port's ragdoll reads; no stock mesh sets `playFallSound`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RigidBody {
     pub parent: String,
@@ -521,7 +519,7 @@ pub struct Mesh {
     pub hit_boxes: Vec<HitBox>,
     /// The hit boxes' bind-pose frames ([`Self::hit_boxes`] order), resolved at load: the bone's
     /// bind frame × the box frame (a bone index), the named bone's bind frame alone (bone −1),
-    /// else the box frame. gd-sim `bounds::Aabb::object` reads them.
+    /// else the box frame.
     pub hit_box_bind: Vec<Coords>,
     /// Chunk 9: closed outlines (point + outward normal).
     pub contours: Vec<Vec<ContourPoint>>,
@@ -760,7 +758,10 @@ impl Mesh {
             }
         }
         if uv_sets.iter().enumerate().any(|(i, &s)| i != s as usize) {
-            bail!("non-contiguous texcoord sets {uv_sets:?}");
+            bail!(
+                "non-contiguous texcoord sets {}",
+                byte_list(&uv_sets, false)
+            );
         }
         Ok(())
     }
@@ -966,8 +967,8 @@ impl Mesh {
             .find(|p| p.name.eq_ignore_ascii_case(name))
     }
 
-    /// The mesh's ragdoll bodies ([`RigidBody`], read from [`Self::mif`] on each call: a death or a knockdown
-    /// asks once). `Actor::HasRigidBodyData` is "any". The numbers are quoted in the text
+    /// The mesh's ragdoll bodies ([`RigidBody`], parsed from [`Self::mif`] on each call).
+    /// `Actor::HasRigidBodyData` is "any". The numbers are quoted in the text
     /// (`mass = "1.000000"`); a missing one reads 1.
     pub fn rigid_bodies(&self) -> impl Iterator<Item = RigidBody> + '_ {
         self.mif
@@ -1035,8 +1036,6 @@ impl Mesh {
     }
 }
 
-// MIF text.
-
 #[derive(Debug, Clone, PartialEq)]
 enum Tok<'a> {
     Word(&'a str),
@@ -1070,7 +1069,7 @@ fn tokenize(s: &str) -> Result<Vec<Tok<'_>>> {
                     .map(|t| {
                         t.trim()
                             .parse::<f32>()
-                            .with_context(|| format!("bad number {t:?}"))
+                            .with_context(|| format!("bad number \"{t}\""))
                     })
                     .collect::<Result<_>>()?;
                 out.push(Tok::Tuple(vals));

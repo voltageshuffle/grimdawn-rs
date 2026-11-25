@@ -4,7 +4,7 @@
 //! Engine.dll `GraphicsDeferredRenderer::RenderFinalScene`: the `deferred` technique of
 //! every shader is drawn into the G-buffer before the lights and `ApplySSAO`, so its pixels are lit and occluded like
 //! the ground under them. Blended ones among them: terrainpatch*.ssh `deferred` (sort 1050, a `TerrainDecoration`'s
-//! painted terrain over its mesh, render/terrain.rs; SrcAlpha / OneMinusSrcAlpha, DepthWrite false, DepthFunc
+//! painted terrain over its mesh; SrcAlpha / OneMinusSrcAlpha, DepthWrite false, DepthFunc
 //! LessEqual), decal_*.ssh `deferred` (sort 2000; SrcAlpha / OneMinusSrcAlpha,
 //! DepthWrite false, DepthFunc LessEqual: blended over the terrain's albedo before lighting)
 //! and grass.ssh `deferred` (sort 3001, after the opaque `deferredBase` 3000;
@@ -16,15 +16,11 @@
 //! takes them out of the main views' phases after batching (each kind keeps its back-to-front order; patches, decals,
 //! then the fringe, as their sort values), [`draw_gbuffer_blend`] draws them after Bevy's opaque pass and before
 //! `post::apply_ssao`, with their own pipelines (blend and depth states unchanged), and [`restore_gbuffer_blend`] puts
-//! them back for the next frame's queue. So SSAO darkens them, and its depth input holds the fringe (it writes depth,
-//! `material.rs` `depth_write_of`) but not the patches or decals (no depth write), as in the engine. The glow view
+//! them back for the next frame's queue. So SSAO darkens them, and its depth input holds the fringe (it writes depth)
+//! but not the patches or decals (no depth write), as in the engine. The glow view
 //! keeps them in its transparent pass (no SSAO there). PORT: the port lights each patch / decal / fringe pixel itself
 //! and blends the lit colour (linear, equivalent to blending the albedo for the same light; a patch's own normals
 //! are lit before the blend instead of blended).
-//!
-//! The hold / restore reuses its scratch (the taken item map, the picked `Vec` and each held phase's map) across
-//! frames. It moves Bevy's queued items rather than queueing a phase of its own, which would re-implement Bevy's
-//! transparent mesh queue and have to keep these entities out of it.
 use super::post::{GammaOut, SsaoSet};
 use bevy::camera::{MainPassResolutionOverride, Viewport};
 use bevy::core_pipeline::core_3d::{Transparent3d, main_opaque_pass_3d};
@@ -39,7 +35,7 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilText
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use gd_formats::collections::HashMap;
 
-/// A blended mesh drawn with the G-buffer (module doc), in this order.
+/// A blended mesh drawn with the G-buffer, in this order.
 #[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum GBufferBlend {
     /// terrainpatch*.ssh `deferred` (sort 1050): a `TerrainDecoration`'s painted terrain.
@@ -78,7 +74,6 @@ impl Plugin for GBufferBlendPlugin {
     }
 }
 
-/// The main-world entities with [`GBufferBlend`], rebuilt only when the marked set changed.
 #[derive(Resource, Default)]
 struct GBufferBlendEntities(EntityHashMap<GBufferBlend>);
 
@@ -118,8 +113,6 @@ fn hold_gbuffer_blend(
             continue;
         }
         // One pass: the rest goes back in its order, the held ones leave in theirs.
-        // The taken map, the picked scratch and the held phase's map are reused across frames: swap the
-        // phase's items out, then drain them back in place.
         let out = held.0.entry(view.retained_view_entity).or_default();
         out.items.clear();
         std::mem::swap(&mut phase.items, &mut take.items);
@@ -145,8 +138,7 @@ fn restore_gbuffer_blend(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldGBufferBlend>,
 ) {
-    // Put the held items back for the next frame's queue and batching; keep the now-empty
-    // maps for reuse, dropping only views that are gone.
+    // Drops only views that are gone.
     held.0.retain(|view, out| {
         let Some(p) = phases.get_mut(view) else {
             return false;

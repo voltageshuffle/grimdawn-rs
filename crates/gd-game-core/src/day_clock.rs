@@ -1,22 +1,17 @@
-//! The day / night clock (`AmbianceManager.time`, Engine.dll): the hour the `dayNightCycle` option shows.
+//! The day / night clock (`AmbianceManager.time`, Engine.dll), hours in 0..24.
 //!
-//! Engine.dll: `AmbianceManager::Reset` sets the clock to 9.0; `SetTime`
-//! clamps its argument to 0..24 and sets it; `GetTime` returns it while the `dayNightCycle` option
-//! is on, else the fixed 12.0 (`AmbianceManager.fixedTime`, set by the constructor). The clock runs at 30 times
-//! real time (24 game hours in 48 minutes; `AmbianceManager::ComputeShadowIntensity`).
-//! Game.dll / Grim Dawn.exe: a character's first entry into the game (`entry::first_entry`, the
-//! client's world load `Game::LoadModMap`) calls `SetTime(GameEngine::GetNewCharacterTimeOfDay)`: `newCharacterTime`
-//! of `records/game/gameengine.dbr` (`GameEngine::LoadFromDatabase`; 9.0 when the field is absent,
-//! the `GameEngine` constructor's), 2.0 in the stock data. A new character starts at 2:00 at night.
+//! `AmbianceManager::Reset` sets 9.0; `SetTime` clamps to 0..24; `GetTime` returns it while the
+//! `dayNightCycle` option is on, else the fixed 12.0. It runs at 30x real time
+//! (`AmbianceManager::ComputeShadowIntensity`). A character's first entry (`Game::LoadModMap`) calls
+//! `SetTime(GameEngine::GetNewCharacterTimeOfDay)`: `newCharacterTime` of `gameengine.dbr` (9.0 when
+//! absent, 2.0 in the stock data).
 //!
-//! PORT: the clock is reset to 9.0 per session (the port's stand-in for the engine's `Reset` calls, not traced).
-//! The grimdawn side (`render::env::TimeOfDay`) shows it, or 12.0 with the option off.
+//! PORT: the clock is reset to 9.0 per session (the engine's `Reset` calls not traced).
 use bevy::prelude::*;
 
-/// The clock's start (`AmbianceManager::Reset`).
+/// `AmbianceManager::Reset`.
 pub const RESET_HOUR: f32 = 9.0;
 
-/// The running clock, hours in 0..24.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct DayClock(pub f32);
 

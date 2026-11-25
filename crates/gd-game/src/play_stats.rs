@@ -1,6 +1,5 @@
-//! This session's play stats: [`PlayCounts`], added to the loaded save's `PlayStats` (block 16) when the game
-//! saves ([`PlayCounts::apply`]), when the character window shows them and when the `Stat` achievements read
-//! them (Game.dll `PlayStats`).
+//! This session's play stats ([`PlayCounts`]), added to the loaded save's `PlayStats` (block 16)
+//! when the game saves, the character window shows them or the `Stat` achievements read them.
 //! - Play time: whole seconds of the virtual clock (a paused game adds nothing).
 //! - Kills (the player's or his pet's, [`crate::combat::KillCredit`]): every kill; Hero..SuperBoss as champion
 //!   kills, Hero also a hero kill; the monster's experience reward at its level (no damage share, no ascendant
@@ -38,7 +37,7 @@ impl Plugin for PlayStatsPlugin {
     }
 }
 
-/// A counted event another module reports (the module doc's callers).
+/// A counted event another module reports.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub enum PlayStat {
     /// The crafting command made items; the first one's record.
@@ -56,20 +55,18 @@ pub enum PlayStat {
 /// The greatest monster killed on a difficulty (`Set/GetGreatestMonsterKilled*`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Greatest {
-    /// Its description tag.
     pub name: String,
     pub level: u32,
     pub life_and_mana: u32,
 }
 
-/// This session's counts (module doc), added to the loaded stats by [`PlayCounts::apply`].
+/// This session's counts, added to the loaded stats by [`PlayCounts::apply`].
 #[derive(Resource, Default, Debug)]
 pub struct PlayCounts {
     pub deaths: u32,
     pub kills: u32,
     pub champion_kills: u32,
     pub hero_kills: u32,
-    /// Whole seconds played.
     pub play_seconds: u32,
     /// Milliseconds not yet a whole second.
     play_ms: f32,
@@ -86,7 +83,6 @@ pub struct PlayCounts {
     pub hits_inflicted: u32,
     pub hits_received: u32,
     pub crits_inflicted: u32,
-    /// Levels gained (`max_level`).
     pub levels: u32,
     pub health_potions_used: u32,
     pub mana_potions_used: u32,
@@ -105,8 +101,7 @@ pub struct PlayCounts {
 }
 
 impl PlayCounts {
-    /// The character's play stats now: the loaded `stats` plus this session's counts (what a save writes, and
-    /// what the character sheet shows).
+    /// The character's play stats now: the loaded `stats` plus this session's counts.
     pub fn apply(&self, stats: &mut PlayStats) {
         let add = |a: &mut u32, b: u32| *a = a.wrapping_add(b);
         add(&mut stats.deaths, self.deaths);
@@ -193,8 +188,8 @@ impl PlayCounts {
             .unwrap_or_default()
     }
 
-    /// The character window's last foes of `difficulty`: this session's, else the loaded stats' (as
-    /// [`PlayCounts::apply`] leaves them; the value is kept once for all difficulties).
+    /// The character window's last foes of `difficulty`: this session's, else the loaded stats'
+    /// (the value is kept once for all difficulties).
     pub fn last_foes<'a>(
         &'a self,
         loaded: Option<&'a PlayStats>,
@@ -233,8 +228,8 @@ impl PlayCounts {
     }
 }
 
-/// [`PlayCounts::last_foes`]: the last foes' names and values borrowed from the counts / the loaded stats (the
-/// character window reads it every frame; [`gd_sim::sheet::LastFoes`] is its owned form).
+/// [`PlayCounts::last_foes`]: the last foes' names and values, borrowed (the owned form is
+/// [`gd_sim::sheet::LastFoes`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LastFoesRef<'a> {
     pub hit: (&'a str, f32),
@@ -242,7 +237,6 @@ pub struct LastFoesRef<'a> {
 }
 
 impl LastFoesRef<'_> {
-    /// The owned copy (the sheet cache keeps it).
     pub fn owned(self) -> gd_sim::sheet::LastFoes {
         gd_sim::sheet::LastFoes {
             hit: (self.hit.0.to_owned(), self.hit.1),
@@ -250,15 +244,13 @@ impl LastFoesRef<'_> {
         }
     }
 
-    /// Whether `foes` holds these names and values.
     pub fn is(self, foes: &gd_sim::sheet::LastFoes) -> bool {
         (foes.hit.0.as_str(), foes.hit.1) == self.hit
             && (foes.hit_by.0.as_str(), foes.hit_by.1) == self.hit_by
     }
 }
 
-/// A monster's count of attacks taken (`Character::TakeAttack`'s `PlayStats.attacksTaken`), inserted on its first
-/// hit and read when it dies.
+/// A monster's count of attacks taken (`PlayStats.attacksTaken`), read when it dies.
 #[derive(Component, Default)]
 pub struct AttacksTaken(u32);
 
@@ -284,8 +276,8 @@ fn count_play_time(
     }
 }
 
-/// The attacks' counters: `Character::TakeAttack` / `CombatManager::TakeAttack` (hits, crits, `RecordHit`'s last
-/// foes, `TallyDamageInflicted`) and `TallyDamageReceived` from the life subtractions (module doc).
+/// The attacks' counters (`CombatManager::TakeAttack`: hits, crits, `RecordHit`'s last foes,
+/// `TallyDamageInflicted`) and `TallyDamageReceived` from the life subtractions.
 #[allow(clippy::too_many_arguments)]
 fn count_attacks(
     mut made: MessageReader<AttackMade>,
@@ -299,7 +291,6 @@ fn count_attacks(
 ) {
     use gd_sim::combat::MissReason as M;
     let difficulty = mode.0.difficulty;
-    // Keeps the stored tag when it is unchanged: no allocation per hit on the same foe.
     let set_tag = |slot: &mut Option<(usize, String, f32)>, rec: &str, v: f32| {
         let r = data.db.get(rec);
         let tag = r.as_ref().and_then(|r| r.str("description")).unwrap_or("");
@@ -352,7 +343,7 @@ fn count_attacks(
     }
 }
 
-/// `IncrementKills` and the greatest monster (module doc).
+/// `IncrementKills` and the greatest monster.
 #[allow(clippy::too_many_arguments)]
 fn count_kills(
     mut killed: MessageReader<MonsterKilled>,
@@ -443,7 +434,7 @@ fn count_levels(
     }
 }
 
-/// The reported events (module doc).
+/// The reported events.
 fn count_events(
     mut events: MessageReader<PlayStat>,
     mut counts: ResMut<PlayCounts>,

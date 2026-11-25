@@ -26,11 +26,10 @@
 //! 1;10, one step per level-up in `SkillManager::UpdateMasteriesAllowed`
 //! from `Character::ReceiveExperience`). Stats: [`SkillBook::stat_sources`]
 //! (masteries, passives, switched-on toggles with their buff records, and
-//! their modifiers); every other skill acts when cast (`gd_game::casting`).
+//! their modifiers); every other skill acts when cast.
 //!
 //! [`SkillTrees`] holds the class trees and what is derived from them (bases,
-//! modifier parents, potion parents, enumerations, tier levels), built once per
-//! database (`gd_game::data::GameData::skill_trees`); every rule that needs a
+//! modifier parents, potion parents, enumerations, tier levels); every rule that needs a
 //! tree takes it. A skill class's constructor facts are one table ([`class_info`]).
 use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
@@ -48,7 +47,7 @@ pub fn class_trees(db: &Database) -> Vec<(u32, String)> {
         .collect()
 }
 
-/// `skillName1..=64` keys (a static table, no per-call `format!`).
+/// `skillName1..=64` keys.
 static SKILL_NAME_KEYS: LazyLock<[String; 64]> =
     LazyLock::new(|| std::array::from_fn(|i| format!("skillName{}", i + 1)));
 
@@ -168,8 +167,7 @@ pub fn skill_dependencies(db: &Database, skill: &str) -> (Vec<String>, bool) {
 }
 
 /// A skill attribute summed over the skill's record and its modifiers
-/// (`Skill::GetSkillModifierData`, the same fill `fire_casts` reads every
-/// other attribute through): `key` at the skill's level plus each modifier's
+/// (`Skill::GetSkillModifierData`): `key` at the skill's level plus each modifier's
 /// at its own. No % part (`GetTotalSkillAttribute` covers only the 5
 /// skill-wide stats).
 pub fn summed_attribute(rec: &Record, li: usize, mods: &[(Record, usize)], key: &str) -> f32 {
@@ -179,15 +177,13 @@ pub fn summed_attribute(rec: &Record, li: usize, mods: &[(Record, usize)], key: 
 
 /// `Skill::GetPetLimit`: the modifier-summed
 /// `petLimit` (0 = unlimited); `petBurstSpawn` sums the same way
-/// (`SkillProfile_Modifiers.petBurstSpawn`). The summon spawn and the HUD's count
-/// share it.
+/// (`SkillProfile_Modifiers.petBurstSpawn`).
 pub fn pet_limit(rec: &Record, li: usize, mods: &[(Record, usize)]) -> f32 {
     summed_attribute(rec, li, mods, "petLimit")
 }
 
 /// Seconds a summon of `skill` at `level_index` lives, None = forever
-/// (`Skill::GetSpawnObjectTimeToLive`; `gd_game::pets`
-/// docs): the skill's `spawnObjectsTimeToLive` at its level plus that of each
+/// (`Skill::GetSpawnObjectTimeToLive`): the skill's `spawnObjectsTimeToLive` at its level plus that of each
 /// of its modifiers at theirs (`mods`: record, level index, learned; the
 /// learned list `Skill.modifiers` and the gear's `Skill.itemModifiers`, both summed by
 /// `GetSkillModifierData`), in whole ms; then each learned
@@ -315,7 +311,7 @@ pub fn spawn_object(
     pick
 }
 
-/// A pet's skills with their levels (`gd_game::pets` docs): `skillName{n}` of
+/// A pet's skills with their levels: `skillName{n}` of
 /// its record at `skillLevel{n}` (a number or an equation of `charLevel`),
 /// `mods` (lower-case skill, level) naming the owner's pet modifiers' pet
 /// skills overriding it.
@@ -350,8 +346,7 @@ pub fn pet_skill_level(
 
 /// One slot's `skillLevel{slot}` at `char_level`: a number or an equation in
 /// `charLevel` (`SkillManager::LoadSkills`); 0 when absent or unparsable.
-/// Shared by monster ([`crate::actor::monster_skill_levels`]) and pet
-/// ([`pet_skill_level`]) skill loading; the caller truncates.
+/// The caller truncates.
 pub fn skill_level_eq(rec: &Record, slot: usize, char_level: f32) -> f32 {
     let read = |key: &str| match rec.get(key).and_then(|v| v.first()) {
         Some(gd_formats::arz::RawValue::Str(s)) => {
@@ -378,8 +373,8 @@ pub fn skill_level_eq(rec: &Record, slot: usize, char_level: f32) -> f32 {
     }
 }
 
-/// A record's `skillLevelN` parsed once ([`Record::derived`] slot 3): a number, an equation in
-/// `charLevel`, or absent. Monster / pet skill loading otherwise re-parses per spawn.
+/// A record's `skillLevelN` ([`Record::derived`] slot 3): a number, an equation in
+/// `charLevel`, or absent.
 enum SkillLevel {
     Absent,
     Num(f32),
@@ -387,7 +382,7 @@ enum SkillLevel {
     Eq(Option<gd_rules::expr::Expr>),
 }
 
-/// `skillLevel1..=64` keys (a static table, no per-call `format!`).
+/// `skillLevel1..=64` keys.
 static SKILL_LEVEL_KEYS: LazyLock<[String; 64]> =
     LazyLock::new(|| std::array::from_fn(|i| format!("skillLevel{}", i + 1)));
 
@@ -403,8 +398,7 @@ fn skill_levels(rec: &Record) -> [SkillLevel; 64] {
     )
 }
 
-/// Whether a pet bonus record reaches a pet of `pet_types` (`petTypeNames` of
-/// both; `gd_game::pets` docs).
+/// Whether a pet bonus record reaches a pet of `pet_types` (`petTypeNames` of both).
 pub fn pet_bonus_applies(bonus: &Record, pet_types: &[String]) -> bool {
     let mut want = bonus.strs_iter("petTypeNames").peekable();
     want.peek().is_none()
@@ -429,7 +423,7 @@ pub fn is_modifier_class(class: &str) -> bool {
 }
 
 /// `SkillSecondary` and its subclasses (`SkillSecondary_*`): a base skill's
-/// separate effects (`Skill.secondarySkills`, see the module docs), not damage
+/// separate effects (`Skill.secondarySkills`), not damage
 /// modifiers.
 pub fn is_secondary_class(class: &str) -> bool {
     class.starts_with("SkillSecondary")
@@ -450,7 +444,7 @@ pub fn is_tooltip_modifier_class(class: &str) -> bool {
 }
 
 /// Base skills of every tree entry, in tree order
-/// (`SkillManager::CreateAndLoadSkill`, see the module docs). Also the rule
+/// (`SkillManager::CreateAndLoadSkill`). Also the rule
 /// for a monster's `skillName1..N` (`SkillManager::LoadSkills`
 /// calls `CreateAndLoadSkill` in that order: a `SkillSecondary`
 /// joins the last ordinary skill's `Skill.secondarySkills`).
@@ -621,7 +615,7 @@ pub fn gamepad_range_profile(class: &str) -> Option<&'static str> {
 /// Game.dll `SkillProfile::LoadProfile` (`SkillProfile::LoadTargetingMode`) and
 /// `ResolveEnum_TargetingMode`: the exact strings `Default` 0, `Point` 1,
 /// `Object` 2, `Target` 3; anything else (a missing key, the templates'
-/// list `Default;Point;Object;Target` that ~900 modifiers / passives carry)
+/// list `Default;Point;Object;Target`)
 /// is `Default`. Readers (every one checks 1 or 3 only, so `Object` acts as
 /// `Default`; no Grim Dawn.exe reader):
 /// - the player's request ([`request_aim`]) and its out-of-range check
@@ -637,7 +631,7 @@ pub fn gamepad_range_profile(class: &str) -> Option<&'static str> {
 /// - `Skill_TargetedSpawnPet::ActivateNow`, its secondary's
 ///   (`SkillSecondary_TargetedSpawnPet::ActivateNow`) and `Skill_AttackProjectileSpawnPet::TargetInformation`:
 ///   any mode but `Point` with a target blocks the target's
-///   footprint before picking spawn spots (`gd_game::pets::placement`);
+///   footprint before picking spawn spots;
 /// - `Skill_AttackProjectileBurst::ActivateNow` and
 ///   `Skill_WPAttack_ProjectileBurst::ExecuteRangedAttack`:
 ///   `Target` aims at the target's `Target` attach point, else its feet.
@@ -682,9 +676,8 @@ pub enum RequestAim {
 /// `Skill::GetValidRangedTarget` with radius 0 passes only for
 /// a target `Skill::ValidateEnemy` accepts (a `Destructible`,
 /// or a foe by faction). So a `Default` / `Target` spell needs a foe under
-/// the cursor (Bloody Pox, Lightning Net, Aegis of Menhir); a `Point` one
-/// (Doom Bolt, Arcane Missile, the summons) goes to the ground point even
-/// over a foe. Monsters and pets never ask.
+/// the cursor; a `Point` one goes to the ground point even over a foe. Monsters and pets
+/// never ask.
 pub fn request_aim(class: &str, profile: &Record) -> RequestAim {
     if !class_info(class).spell {
         return RequestAim::AsAimed;
@@ -765,9 +758,7 @@ pub fn chains_at_end(class: &str) -> bool {
     class_info(class).chains_at_end
 }
 
-/// What the rules read of a skill class, set by its constructor (a subclass keeping its base's): one
-/// table lookup ([`class_info`]) instead of a scan per list. Resolve it once per skill where a system
-/// reads it often.
+/// What the rules read of a skill class, set by its constructor (a subclass keeping its base's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClassInfo {
     /// [`hot_slot_flags`]: `IsPrimary`.
@@ -1266,15 +1257,14 @@ impl ClassTree {
     }
 }
 
-/// Every class tree ([`class_trees`] order) and what is derived from them, built once per database
-/// (`gd_game::data::GameData::skill_trees`) instead of per rule check.
+/// Every class tree ([`class_trees`] order) and what is derived from them.
 #[derive(Debug, Clone)]
 pub struct SkillTrees {
     pub trees: Vec<ClassTree>,
     /// [`tier_levels`].
     pub tiers: Vec<u32>,
     /// Parent skill of every modifier in the class trees (lower-case modifier path → parent path): its
-    /// first base skill in tree order (module docs).
+    /// first base skill in tree order.
     pub parents: HashMap<String, String>,
     /// [`potion_parents`].
     pub potion_parents: HashMap<String, String>,
@@ -1449,8 +1439,6 @@ impl ExclusiveRank {
 /// The player's out-of-range use of one goes to "ChargeToUseSkill" instead
 /// of "MoveToUseSkill" (`ControllerPlayerState::DefaultRequestSkillAction`
 /// tests `IsKindOf(Skill_AttackWeaponCharge)`).
-/// Players' records: Blitz, Shadow Strike, the Blitz / Shadow Strike runes,
-/// Blazing Charge, Chaos Strike, Alkamos' Shadow Strike.
 pub fn is_weapon_charge(class: &str) -> bool {
     matches!(
         class,
@@ -1475,11 +1463,11 @@ pub struct SkillBook {
     pub skills: Vec<(String, u32)>,
     /// Toggled skills that are off (lower-case; save: `skill_active` 0):
     /// newly learned, stopped by weapons, death or a use; the player's auto
-    /// toggle switches them on again (`gd_game::skill_buffs` docs).
+    /// toggle switches them on again.
     pub inactive: gd_formats::collections::HashSet<String>,
     /// Toggled skills a dispel stopped (lower-case; not saved): off like
     /// [`Self::inactive`] until the character's auto toggle turns them on
-    /// again (`gd_game::skill_buffs` docs, Dispels).
+    /// again.
     pub dispelled: gd_formats::collections::HashSet<String>,
     /// Bonus levels from equipment, per skill record (lower-case).
     pub bonus: gd_formats::collections::HashMap<String, u32>,
@@ -1513,8 +1501,8 @@ fn item_records(it: &gd_formats::save::item::Item) -> [&String; 8] {
 
 /// The pet skills the worn gear's `SkillSecondary_PetModifier`s raise: (lower-case `petSkillName`, 1)
 /// per `modifierSkillName{n}` of an item's records ([`item_records`]; stock: legendaries and ascendant
-/// affixes). (`gd_game::pets` spawn docs): `SkillManager::AddItemSkillModifiers` gives an item's
-/// modifier skills level 1 and `UpdatePetSkill` then sets the pet skill to that level, like a learned one's.
+/// affixes): `SkillManager::AddItemSkillModifiers` gives an item's modifier skills level 1 and
+/// `UpdatePetSkill` then sets the pet skill to that level, like a learned one's.
 pub fn gear_pet_modifiers(
     db: &Database,
     items: &[gd_formats::save::item::Item],
@@ -1541,7 +1529,7 @@ pub fn gear_pet_modifiers(
 pub type SkillBonuses = (Vec<(String, u32)>, Vec<(String, u32)>, u32);
 
 /// `augmentSkillName{n}`, `augmentSkillLevel{n}`, `augmentMasteryName{n}`, `augmentMasteryLevel{n}`
-/// for n = 1..=5 (a static table, no per-call `format!`).
+/// for n = 1..=5.
 static AUGMENT_KEYS: LazyLock<[[String; 4]; 5]> = LazyLock::new(|| {
     std::array::from_fn(|i| {
         let n = i + 1;
@@ -1868,11 +1856,8 @@ impl SkillBook {
     }
 
     /// Why one more point cannot go into `skill` of `tree`, if it cannot: the skill window's flags f1..f6
-    /// (`UISkillPane::GetRequirementFlags`; f0, no points left, is the caller's). `UISkillPane::Update`:
-    /// outside reclamation any of f0..f6 sets the skill button's disabled byte (`UIButton.disabled`), and the button
-    /// group (`UIPushButtonGroup::HandleMouseEvent`) sends a disabled button's listeners nothing, so the click callback
-    /// (`UISkillPane::OnButtonClick`, which itself tests only the points left
-    /// and the maximum level) never runs. So an exclusive conflict refuses the point like an unmet dependency.
+    /// (`UISkillPane::GetRequirementFlags`; f0, no points left, is the caller's). Any of them disables the
+    /// skill button, so an exclusive conflict refuses the point like an unmet dependency.
     /// `tree` is one of `trees`.
     pub fn cannot_raise(
         &self,
@@ -1975,7 +1960,7 @@ impl SkillBook {
     /// `SkillBuff` the aura puts on them (`SkillBuff::
     /// CollectPassiveCharAttributes`: the skill store and the modifiers'
     /// skill stores, never the reserve), the caster included only for a non-debuff
-    /// aura (`gd_game::auras`). So a debuff aura (`debufSkill` buff record)
+    /// aura. So a debuff aura (`debufSkill` buff record)
     /// costs its caster the reserve and nothing else; a buff aura's caster
     /// gets both halves = the whole record. `Skill_BuffSelfToggled`
     /// adds both stores and its modifiers' both: the whole
@@ -2007,7 +1992,7 @@ impl SkillBook {
                     || pr.as_ref().is_some_and(|pr| {
                         p.is_some_and(|p| self.level(p) > 0) && STAT.contains(&pr.class.as_str())
                     });
-                // A debuff aura's modifier: only its penalty store (docs).
+                // A debuff aura's modifier: only its penalty store.
                 let r = if pr.as_ref().is_some_and(|pr| is_debuff_aura(db, pr)) {
                     penalty_only(r)
                 } else {

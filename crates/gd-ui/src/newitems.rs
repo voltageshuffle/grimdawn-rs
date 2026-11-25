@@ -17,14 +17,12 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::Rect as URect;
 
-/// A glowing cell: the item's key and its screen rect.
 #[derive(Component)]
 pub struct NewItemGlow {
     pub key: (String, u32),
     pub rect: URect,
 }
 
-/// The glow's `GetItemHighlightColor`, looked up once per glow node.
 #[derive(Component)]
 struct GlowColor(LinearRgba);
 
@@ -36,7 +34,7 @@ impl Plugin for NewItemsPlugin {
     }
 }
 
-/// `GameEngine::GetItemHighlightColor` of the bag item `key` (module doc).
+/// `GameEngine::GetItemHighlightColor` of the bag item `key`.
 fn highlight_color(
     data: &gd_game_core::data::GameData,
     inv: &gd_game_core::inventory::Inventory,
@@ -70,7 +68,6 @@ fn highlight_color(
     Color::srgba(c("r"), c("g"), c("b"), c("a")).to_linear()
 }
 
-/// The class colours, the triangle wave and the cursor's clearing.
 #[allow(clippy::too_many_arguments)]
 fn animate_new_items(
     clock: Res<Time<Real>>,

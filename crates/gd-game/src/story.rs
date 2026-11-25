@@ -1,6 +1,4 @@
-//! The story runtime (quests, conversations, Lua scripts) and its effects for
-//! gameplay. The game streams story objects in from the map, shows the
-//! actors and dialogs, and sends the player's choices.
+//! The story runtime (quests, conversations, Lua scripts) and its effects for gameplay.
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
 use gd_formats::text::LanguageDef;
@@ -70,10 +68,9 @@ impl Plugin for StoryPlugin {
     }
 }
 
-/// Every monster death goes to the quest kill counters (`gd_story::story::Kill`, types 10 / 16 / 28 / 29): the
-/// killer's credit is [`crate::combat::KillCredit`] (the player or his pet, the death handlers' `GetLeader` rule),
-/// and a monster of the Shattered Realm's running dungeon (`InEndlessDungeon`) never counts. PORT: the dungeon
-/// test is the monster's proxy being one the running dungeon activated (like `progress::kill_experience`); the
+/// Every monster death goes to the quest kill counters (`gd_story::story::Kill`), credited by
+/// [`crate::combat::KillCredit`]; a monster of the Shattered Realm's running dungeon never counts.
+/// PORT: the dungeon test is the monster's proxy being one the running dungeon activated; the
 /// engine tests the monster's region when it enters the world.
 pub fn count_story_kills(
     rt: Option<NonSend<StoryRuntime>>,
@@ -103,35 +100,28 @@ pub fn count_story_kills(
     }
 }
 
-/// A quest action `CastSkill` (`ScriptableAction_CastSkill`: the Crucible's blessings and power-ups, the
-/// devotion purchase, the Shattered Realm's rift openings) activates the skill record at once, without animation or
-/// energy, like an item skill.
+/// A quest action `CastSkill` (`ScriptableAction_CastSkill::Execute`): the action's owner (a
+/// conversation's NPC) casts the skill from its own skill list ([`owner_skill_level`]) on the
+/// main player, at once, without animation or energy. A skill the owner lacks, or no `Character`
+/// owner, does nothing. `Skill_BuffOther::ActivateNow`: the targets are the live non-`Npc`
+/// friends of the caster within the buff's `skillTargetRadius`, plus the player; each gets the
+/// buff for its `skillActiveDuration`.
+/// PORT: the buffs fire at once (no use state or animation on the NPC); the `Skill_PetAttack`
+/// type check is not made (no stock NPC lists one).
 ///
-/// `ScriptableAction_CastSkill::Execute`: the action's owner (a conversation's NPC) casts the
-/// skill, found in its own skill list ([`owner_skill_level`]), on the main player, at the owner's level. A skill the
-/// owner lacks, or an owner that is no `Character` (a quest's events, objectives and tasks run their actions with
-/// no owner), does nothing. `Skill_BuffOther::ActivateNow`: the targets are the live non-`Npc`
-/// characters around the caster within the buff's `skillTargetRadius` that are friends of the caster by faction
-/// (the player, the pets, every monster whose pack is not hostile to the NPC's), plus the player; each gets the
-/// buff record for its `skillActiveDuration` (pets add their owner's `petBonusName`, `pets::pet_bonuses_with`).
-/// PORT: the buffs fire at once (no use state or animation on the NPC); the `Skill_PetAttack` type check is not
-/// made (no stock NPC lists one).
+/// A `Skill_AttackRadius` is the NPC's own cast ([`NpcCast`], [`fire_npc_casts`]). PORT: its hits
+/// are not dealt (both stock skills deal nothing). [`PlayerSkillCast`] is the player's own cast
+/// (the buff shrines), with the same rules.
 ///
-/// A `Skill_AttackRadius` (the Shattered Realm NPCs' `endlessdungeonactivate.dbr` / `endlessdungeondeactivate.dbr`)
-/// is the NPC's own cast ([`NpcCast`], [`fire_npc_casts`]): it plays the skill's animation and at the hit point
-/// (else the clip's "End") the level's radius effect starts at the NPC. PORT: its hits are not dealt (both stock
-/// skills deal nothing). [`PlayerSkillCast`] is the player's own cast (the buff shrines), with the same rules.
-///
-/// Ordering (`ScriptableActionCollection::Execute`): a step's actions run in order,
-/// synchronously; in single player a `LuaScript` event dispatches at once, so a script that destroys the owner
-/// (the Shattered Realm keeper's `swapDungeonNPCs`) leaves a later `CastSkill` without an owner: nothing happens.
+/// A step's actions run in order, synchronously, so a script that destroys the owner leaves a
+/// later `CastSkill` without an owner: nothing happens.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn cast_story_skills(
     mut commands: Commands,
     mut events: MessageReader<StoryEffect>,
     data: Res<GameData>,
     rt: Option<NonSend<StoryRuntime>>,
-    // Option: factions are optional input (the friendly check, `monsters::is_friendly`).
+    // Option: factions are optional input to the friendly check.
     factions: Option<Res<crate::factions::PlayerFactions>>,
     actors: Query<(Entity, &StoryActor, &Transform)>,
     mut targets: Query<
@@ -176,7 +166,6 @@ pub fn cast_story_skills(
         let Some(rec) = data.db.get(skill) else {
             continue;
         };
-        // The caster: the owner's character holding the skill (`None`: the player's own cast).
         let npc = match caster {
             Some(id) => {
                 let found = rt.as_ref().and_then(|rt| {
@@ -226,7 +215,6 @@ pub fn cast_story_skills(
             for (t, ttf, cb, buffs, is_player, tsd) in &mut targets {
                 let near = radius > 0.0 && (ttf.translation - at).length() <= radius + cb.radius;
                 let friend = !side.foe(tsd.side_ref());
-                // The player is the cast's target: always buffed.
                 if !is_player && !(near && friend) {
                     continue;
                 }
@@ -318,8 +306,8 @@ pub fn cast_story_skills(
     }
 }
 
-/// An [`NpcCast`] fires at its animation's hit point, else at its "End" (as `casting::fire_casts`): the radius
-/// effect starts at the NPC.
+/// An [`NpcCast`] fires at its animation's hit point, else at its "End": the radius effect
+/// starts at the NPC.
 pub fn fire_npc_casts(
     mut commands: Commands,
     data: Res<GameData>,
@@ -350,8 +338,7 @@ pub fn fire_npc_casts(
     }
 }
 
-/// `Shrine:IsRestored` reads the devotion shrines restored on this
-/// difficulty (`StaticShrine::IsCleansed`).
+/// `Shrine:IsRestored` reads the devotion shrines restored on this difficulty.
 pub fn publish_shrines(story: &mut Story, devotion: Option<&crate::devotion::DevotionState>) {
     if let Some(d) = devotion
         && story.host_facts.restored_shrines.len() != d.restored.len()
@@ -379,20 +366,16 @@ pub fn setup_story(world: &mut World) {
         player.record = "records/creatures/pc/femalepc01.dbr".into();
     }
     let mut story = Story::new(Arc::new(defs), dialogs, player.clone());
-    // The language's dialog paging separators (`language.def`; English keeps
-    // the default, its archive ships none).
+    // The language's dialog paging separators (English ships none: the default).
     story.separators = LanguageDef::load(&data.vfs, &lang).separators;
-    // The session's `GameInfo` difficulty (0..2) and challenge (1 Veteran on Normal, 3 Ultimate Veteran on Ultimate):
-    // `Game.GetGameDifficulty` / `GetGameChallenge` (`LuaGame::GetGameDifficulty` / `LuaGame::GetGameChallenge`
-    // read `GameInfo::GetDifficulty` / `GetChallenge`), the quests' current difficulty (set before the saved quests
-    // load).
+    // `GameInfo::GetDifficulty` / `GetChallenge` (1 Veteran, 3 Ultimate Veteran), set before the
+    // saved quests load.
     if let Some(m) = world.get_resource::<gd_game_core::session::GameMode>() {
         story.game.difficulty = m.0.difficulty.min(2) as u32;
         story.game.challenge = m.0.challenge;
     }
-    // The map files load under the save guard (`stash::read_guarded`): one the load cannot read is set
-    // aside and never rewritten from the empty runtime. `SharedFiles` is keyed by the write target, so the
-    // guard needs the session's save folder beside the loaded character.
+    // The map files load under the save guard (`stash::read_guarded`): one the load cannot read is
+    // set aside and never rewritten from the empty runtime.
     world.init_resource::<gd_game_core::stash::SharedFiles>();
     world.resource_scope(|world, mut shared: Mut<gd_game_core::stash::SharedFiles>| {
         let Some(ch) = world.get_resource::<gd_game_core::session::LoadedCharacter>() else {
@@ -403,8 +386,7 @@ pub fn setup_story(world: &mut World) {
         player.level = gdc.bio.level;
         player.experience = gdc.bio.experience;
         player.hardcore = gdc.header.hardcore != 0;
-        // Header byte is `GetGender() == 1`, 1 = male
-        // (`Character::Load`: "Male" → 1, "Female" → 2).
+        // Header byte is `GetGender() == 1`, 1 = male.
         if gdc.header.sex == 0 {
             player.record = "records/creatures/pc/femalepc01.dbr".into();
         }
@@ -417,7 +399,6 @@ pub fn setup_story(world: &mut World) {
             world.resource::<gd_game_core::session::SaveDir>(),
         );
     });
-    // `GD_TOKENS` (hooks.rs).
     #[cfg(feature = "dev")]
     for t in &world
         .resource::<gd_game_core::hooks::Hooks>()
@@ -438,7 +419,7 @@ pub fn setup_story(world: &mut World) {
         story.player.difficulty_skip = ch.0.stats.difficulty_skip;
     }
     story.game.survival_mode = choice.survival.is_some();
-    // The session's random stream (`Story::rng`): from the gameplay generator, so a seeded game repeats.
+    // From the gameplay generator, so a seeded game repeats.
     story.rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let story = Rc::new(RefCell::new(story));
     let host = match ScriptHost::new(story.clone(), env.clone() as Rc<dyn ScriptEnv>) {
@@ -463,17 +444,14 @@ pub fn setup_story(world: &mut World) {
     });
 }
 
-/// The story's item counts (`HasItem` conditions, Lua `HasItem`, both `Player::GetItemCountInStashes`, see
-/// [`gd_story::story::Player::item_count_in_stashes`]) follow the player's items: the bags and the held item, not
-/// the worn gear (`Inventory::GetItemCount` skips what `EquipmentCtrl::GetEquippedLocation`
-/// finds), stacks counted; the stash sacks, the transfer stash and the blacksmith's materials go to
-/// `stored_items`; the incomplete relics and charms of the bags and sacks (not the materials) to
-/// `incomplete_items`. PORT: the held item counts as the inventory's (the engine's cursor item placement is not
-/// traced). The bags themselves go to `bags` (`Player.IsSpaceAvailable`): each item's record, cell and footprint,
-/// and whether its stack has room for one more (`gd_game_core::stack::max_of`).
+/// The story's item counts (`Player::GetItemCountInStashes`) follow the player's items: the bags
+/// and the held item, not the worn gear, stacks counted; the stash sacks, the transfer stash and
+/// the blacksmith's materials go to `stored_items`; incomplete relics and charms of the bags and
+/// sacks to `incomplete_items`; the bags' layout to `bags` (`Player.IsSpaceAvailable`).
+/// PORT: the held item counts as the inventory's (cursor item placement not traced).
 pub fn sync_items(
     inv: Res<gd_game_core::inventory::Inventory>,
-    // Option: the stash is optional input (before `init_stash`).
+    // Option: the stash is absent before `init_stash`.
     stash: Option<Res<gd_game_core::stash::Stash>>,
     data: Res<GameData>,
     rt: Option<NonSend<StoryRuntime>>,
@@ -566,11 +544,10 @@ pub fn sync_items(
         .collect();
 }
 
-/// The loaded character's `quests.gdd` of every difficulty (the current one last: `gd_story::story::save`) and
-/// `conversations.gdd` of this difficulty in the session's per-map folder
-/// (`Choice::map_folder`: the campaign's or the Crucible arena's), read-only here; `save.rs` writes them back.
-/// A Crucible arena without a file starts with no quest state; its tokens are the character's survival tokens of
-/// this difficulty from `player.gdc` (shared by the arenas, [`crate::survival::load_tokens`]), not the arena file's.
+/// The loaded character's `quests.gdd` of every difficulty (the current one last) and
+/// `conversations.gdd` of this difficulty in the session's per-map folder, read-only here. A
+/// Crucible arena's tokens are the character's survival tokens of this difficulty from
+/// `player.gdc`, not the arena file's.
 fn load_save_state(
     story: &mut Story,
     choice: &gd_game_core::session::Choice,
@@ -595,8 +572,8 @@ fn load_map_folder(
         return;
     };
     let difficulty = gdc.info.difficulty();
-    // The write target of each map file (`save.rs`): the port's save folder, which may differ from the
-    // loaded character's (`root`). The guard sets the target aside / blocks it, never `root`.
+    // The write target of each map file: the port's save folder, which may differ from the loaded
+    // character's (`root`). The guard sets the target aside / blocks it, never `root`.
     let target_root = choice
         .player_folder(save_dir, &gdc.header.name, gdc.info.is_in_main_quest != 0)
         .join(choice.map_folder());
@@ -605,7 +582,7 @@ fn load_map_folder(
         let dir = crate::fog::FogOfWar::dir_name(d);
         let path = root.join(dir).join("quests.gdd");
         let target = target_root.join(dir).join("quests.gdd");
-        // A difficulty never played has no file (`read_guarded`: absent → a new empty one, no guard).
+        // A difficulty never played has no file.
         let Some(q) = gd_game_core::stash::read_guarded(shared, &path, &target, |b| {
             gd_formats::save::gdd::Quests::parse(b)
         }) else {
@@ -647,7 +624,6 @@ pub fn tick_story(
     mut out: MessageWriter<StoryEffect>,
     mut cinematic: MessageWriter<CinematicText>,
 ) {
-    // The `GD_LUA` hook runs once per session.
     #[cfg(feature = "dev")]
     if fresh.begun() {
         *lua_ran = false;
@@ -657,24 +633,22 @@ pub fn tick_story(
     publish_shrines(&mut rt.story.borrow_mut(), devotion.as_deref());
     if let Ok((t, dead)) = players.single() {
         let mut s = rt.story.borrow_mut();
-        // The scripts mutate the player facts mid-frame (`gd_story::story`): they are restored every tick.
-        // `dead` also tracks the respawn (Dead removed).
+        // The scripts mutate the player facts mid-frame: they are restored every tick.
         s.player.position = t.translation.to_array();
         s.player.dead = dead;
-        // The game's player is the source of truth for level/xp/money.
         if let Some(p) = &progress {
             s.player.level = p.progress.level.max(1) as u32;
             s.player.experience = p.progress.experience.min(u32::MAX as u64) as u32;
             s.player.money = p.gold.min(u32::MAX as u64) as u32;
         }
-        // The `TotalDevotion` condition (the Crucible's devotion purchase prices) reads the points ever earned.
+        // `TotalDevotion` reads the points ever earned.
         if let Some(d) = &devotion {
             s.player.total_devotion = d.total;
         }
     } else {
         return; // Wait for the player before triggers can fire.
     }
-    // `GD_LUA` (hooks.rs): `[@secs:]code`, parsed until it ran.
+    // `[@secs:]code`, parsed until it ran.
     #[cfg(feature = "dev")]
     if !*lua_ran && let Some(hook) = hooks.gameplay.lua.as_deref() {
         let (after, code) = hook
@@ -704,9 +678,7 @@ pub fn tick_story(
                 let head = rt.env.localize(tag).unwrap_or(tag.to_owned());
                 cinematic.write(CinematicText::plain(head, 2));
             }
-            // The scripts' `ShowCinematicText` action: type 9 ("quest-script texts").
-            // Lua `UI.Notify(tag)` (`LuaUi::Notify` → `GameEngine::QuestCommandUiNotify`): the same, no
-            // subline.
+            // `ShowCinematicText` and Lua `UI.Notify(tag)`: type 9, no subline.
             Effect::CinematicText(tag) | Effect::Notify(tag) => {
                 let head = rt.env.localize(tag).unwrap_or(tag.clone());
                 cinematic.write(CinematicText::plain(head, 9));
@@ -715,11 +687,10 @@ pub fn tick_story(
             | Effect::QuestTaskCompleted { .. }
             | Effect::ObjectiveSatisfied { .. } => {
                 info!("story: {e:?}");
-                // The quest reward window reads the task starts / completions (`crate::quest_reward`).
+                // The quest reward window reads the task starts / completions.
                 out.write(StoryEffect(e.clone()));
             }
-            // `ScriptableAction_ScriptEvent` / `Script.Event` (`GameEngine::ScriptEvent`): it only
-            // unlocks achievements (`crate::achievements::script_event_unlocks`).
+            // `GameEngine::ScriptEvent`: it only unlocks achievements.
             Effect::ScriptEvent(name) => {
                 debug!("story: script event {name}");
                 out.write(StoryEffect(e.clone()));
@@ -777,9 +748,8 @@ pub fn tick_story(
 }
 
 /// Quest `ControllerState` actions and `Character.PlayAnimation`: the character plays the
-/// `AnimationSet_Type` slot ([`gd_game_core::character::Character::play_scripted_with`]); the latter also puts
-/// it in the "QuestPlayAnimation" state ([`crate::combat::QuestMove`] with `anim`), which keeps the
-/// monster AI off it unless the call allows quest interruptions.
+/// `AnimationSet_Type` slot; the latter also puts it in the "QuestPlayAnimation" state, which keeps
+/// the monster AI off it unless the call allows quest interruptions.
 pub fn play_story_animations(
     mut commands: Commands,
     mut events: MessageReader<StoryEffect>,
@@ -813,15 +783,11 @@ pub fn play_story_animations(
     }
 }
 
-/// The armed story monsters as the scripts see them: their position (`Entity::GetCoords` of the live character:
-/// the coords a `Monsters` area trigger tests, `gd_story::story::trigger`) and, once dead, `Character::IsAlive` false
-/// (the Shattered Realm's Loghorrean room counts its three bosses dead by `Character.IsAlive`).
+/// The armed story monsters as the scripts see them: their position (what a `Monsters` area
+/// trigger tests) and, once dead, `Character::IsAlive` false.
 pub fn mirror_story_monsters(
     rt: Option<NonSend<StoryRuntime>>,
-    // PERF: only moved / newly dead / newly armed actors are rewritten; an idle monster's coords and
-    // alive flag do not change. The later of `Added<StoryActor>` / `Added<Monster>` covers the frame it is
-    // armed (a hooked character has its `Monster` first, a story character gets it from
-    // `arm_story_characters`), before it first moves.
+    // Moved, newly dead or newly armed (`Added<StoryActor>` / `Added<Monster>`, whichever is later).
     monsters: Query<
         (
             &StoryActor,
@@ -840,8 +806,7 @@ pub fn mirror_story_monsters(
     let Some(rt) = rt else { return };
     let mut s = rt.story.borrow_mut();
     for (&StoryActor(id), tf, dead, m) in &monsters {
-        // `Character.GetLevel` reads the placed level (the engine's `charLevel` dword,
-        // `ExperienceLevelControl`): the host mirrors what the spawn armed.
+        // `Character.GetLevel` reads the placed level the spawn armed.
         s.entities.levels.insert(id, m.level.max(0) as u32);
         if let Some(o) = s.entities.get_mut(id) {
             o.coords.origin = tf.translation.to_array();
@@ -852,10 +817,8 @@ pub fn mirror_story_monsters(
     }
 }
 
-/// A Shattered Realm essence a script placed (`Entity.Create` + `SetCoords`: the Loghorrean room's
-/// `endlessdungeon_essence_special`) is picked up when the player comes within 4 m and used at once, like a dropped
-/// one (`PlayerInventoryCtrl::OneShotFilter`, the 4 m auto-pickup;
-/// `endless::progress` applies its progress and soul charge).
+/// A Shattered Realm essence a script placed is picked up when the player comes within 4 m and
+/// used at once, like a dropped one (`PlayerInventoryCtrl::OneShotFilter`).
 pub fn pick_up_story_essences(
     rt: Option<NonSend<StoryRuntime>>,
     data: Res<GameData>,
@@ -864,7 +827,6 @@ pub fn pick_up_story_essences(
     let (Some(rt), Ok(p)) = (rt, players.single()) else {
         return;
     };
-    // Only the running dungeon's scripts place them.
     if rt.story.borrow().endless.dungeon.is_none() {
         return;
     }
@@ -890,12 +852,10 @@ pub fn pick_up_story_essences(
     }
 }
 
-/// A new story `Character` the player is a foe of
-/// ([`crate::monsters::is_friendly`]) fights as a monster: at the script's
-/// `Character.Create(record, level)` level (bounty targets), else its record's
-/// level at the player's, its AI homed at the object's placed origin. A story
-/// proxy's monster ([`StoryProxyChild`]) or a hooked monster another spawn armed (`crate::story_world::
-/// hooked_characters`: it already has its [`gd_game_core::monsters::Monster`]) keeps what its spawn gave it.
+/// A new story `Character` the player is a foe of fights as a monster: at the script's
+/// `Character.Create(record, level)` level (bounty targets), else its record's level at the
+/// player's, its AI homed at the placed origin. A story proxy's monster ([`StoryProxyChild`]) or a
+/// hooked monster another spawn armed keeps what its spawn gave it.
 #[allow(clippy::too_many_arguments)]
 pub fn arm_story_characters(
     mut commands: Commands,
@@ -928,18 +888,15 @@ pub fn arm_story_characters(
         else {
             continue;
         };
-        // A friendly creature of class Monster with a controller that fights (a Crucible defense turret) is an
-        // ally of the player (`combat::Allied`); the other friendly ones and every `Npc` stand as NPCs
-        // (`monsters::stands_as_npc`).
+        // Friendly fighters are allies (`combat::Allied`); other friendlies and `Npc`s stand as NPCs.
         let friendly = crate::monsters::is_friendly(&data.db, factions.as_deref(), &o.record);
         if crate::monsters::stands_as_npc(&data.db, factions.as_deref(), &o.record) {
             continue;
         }
         let player = progress.as_ref().map_or(1, |p| p.progress.level);
-        // `Character.Create(record, level, origin)` (`LuaCharacter::CreateAtLevel`): the origin's area limits
-        // (`GetLevelLimits`, sector layer 9): level≠0 → clamp(level+offset, min, max); level 0 →
-        // roll within them; nil origin → (level, level, 0), the level as given. PORT: the binding
-        // stores only non-zero levels, so an origin with no stored level is the 3-arg form's level 0.
+        // `LuaCharacter::CreateAtLevel`: the origin's area limits (sector layer 9): level≠0 →
+        // clamp(level+offset, min, max); level 0 → roll within them; nil origin → the level as
+        // given. PORT: only non-zero levels are stored, so a stored-less origin is level 0.
         let limits_at = story
             .entities
             .origins
@@ -961,8 +918,7 @@ pub fn arm_story_characters(
                 } else {
                     None
                 };
-                // No script level (or level 0 without limits): `Character::Load`'s own level at the
-                // player's (`monsters::placed_char_level`).
+                // No script level (or level 0 without limits): [`crate::monsters::placed_char_level`].
                 roll.unwrap_or_else(|| {
                     crate::monsters::placed_char_level(&data.db, &o.record, player)
                 })
@@ -987,7 +943,6 @@ pub fn arm_story_characters(
         }
         let mut ai =
             crate::combat::MonsterAi::from_record(&data, &o.record, Vec3::from(o.coords.origin));
-        // `Character.Create` enables the spawn animation (`Entities::spawn_animation`).
         if story.entities.spawn_animation.contains(&id) {
             ai.enable_spawn_animation();
         }
@@ -1003,9 +958,8 @@ pub fn arm_story_characters(
     }
 }
 
-/// `Game.UnlockNextDifficulty` → `GameEngine::GameWon`: beating the game on a
-/// difficulty at least the unlocked one (and below Ultimate) unlocks both Elite
-/// and Ultimate (see `grimdawn/src/menu.rs`).
+/// `Game.UnlockNextDifficulty` → `GameEngine::GameWon`: beating the game on a difficulty at least
+/// the unlocked one (and below Ultimate) unlocks both Elite and Ultimate.
 pub fn game_won(
     mut commands: Commands,
     mut events: MessageReader<StoryEffect>,
@@ -1034,23 +988,20 @@ pub fn game_won(
         if d >= unlock.0 && d != 2 {
             unlock.0 = 2;
             info!("difficulty: Elite and Ultimate unlocked");
-            // Cinematic text type 7 (difficulty unlocked).
             notify.write(CinematicText::plain("tagDifficultyUnlocked".to_owned(), 7));
         }
     }
 }
 
-/// `Quest2Objective::OnChanged`: when a kill or item
-/// count of an objective of a task in progress changes, `tagQuestUpdate` over the objective's line (type 6),
-/// at most once per 4 s per objective. The first sight of an objective only records its count, and the first
-/// 5 s of a session only record (the counts settle while the inventory arrives after the story).
-/// PORT: sent here, not by the quest window's collect, so the notice shows with the window closed; the window
-/// walks the quests in repository order, this in definition order (only same-frame notice order differs).
+/// `Quest2Objective::OnChanged`: when a kill or item count of an objective of a task in progress
+/// changes, `tagQuestUpdate` over the objective's line (type 6), at most once per 4 s per
+/// objective. The first sight of an objective and the first 5 s of a session only record.
+/// PORT: sent here, not by the quest window's collect, so the notice shows with the window closed.
 #[allow(clippy::too_many_arguments)]
 pub fn quest_updates(
     mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<StoryRuntime>>,
-    // Option: the item counts' sources are optional input (an objective's count reads what is there).
+    // Option: the item counts' sources are optional input.
     inv: Option<Res<gd_game_core::inventory::Inventory>>,
     stash: Option<Res<gd_game_core::stash::Stash>>,
     clock: Res<Time<Real>>,
@@ -1067,12 +1018,11 @@ pub fn quest_updates(
         *inputs = None;
     }
     let Some(rt) = rt else { return };
-    // The grace period starts with the session's story, not the app (the system runs in the menu too).
+    // The grace period starts with the session's story (the system runs in the menu too).
     let started = *since.get_or_insert(clock.elapsed_secs());
     let story = rt.story.borrow();
     let log = &story.quests;
-    // Nothing an objective counts changes without one of these moving: the log's revision, the item counts'
-    // sources (the bags and the stash), the difficulty.
+    // Nothing an objective counts changes without one of these moving.
     let key = (
         log.revision,
         inv.as_ref().map_or(0, |i| i.version),
@@ -1122,25 +1072,23 @@ pub fn quest_updates(
     }
 }
 
-/// `Character:Say(tag)` (the engine's speech-bubble UI vcall): presentational. The UI draws the
-/// localized tag over the entity until `until` (session seconds); headless nothing reads it.
+/// `Character:Say(tag)`: the UI draws the localized tag over the entity until `until` (session
+/// seconds).
 #[derive(Component, Debug, Clone)]
 pub struct SayBubble {
     pub tag: String,
     pub until: f32,
 }
 
-/// `Game.ScreenShake(vec, secs, amplitude)` (engine GameEvent type 7): presentational camera shake.
-/// The render camera decays `secs_left` and offsets by `amplitude`; headless nothing reads it.
+/// `Game.ScreenShake(vec, secs, amplitude)`: the render camera decays `secs_left` and offsets by
+/// `amplitude`.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ScreenShake {
     pub amplitude: f32,
     pub secs_left: f32,
 }
 
-/// `Character:Say(tag)` (`LuaCharacter::Say`: the localized tag goes to the UI speech-bubble vcall; no
-/// sound, no gameplay): a [`SayBubble`] over the entity for ~3 s. The expiry is the host's (the UI only
-/// reads); headless nothing draws it.
+/// `LuaCharacter::Say`: a [`SayBubble`] over the entity for ~3 s (no sound, no gameplay).
 pub fn say_bubbles(
     mut commands: Commands,
     mut events: MessageReader<StoryEffect>,
@@ -1168,8 +1116,7 @@ pub fn say_bubbles(
     }
 }
 
-/// `Game.ScreenShake(vec, secs, amplitude)` (engine GameEvent type 7, ms): sets the presentational
-/// [`ScreenShake`] the render camera reads; headless nothing does.
+/// `Game.ScreenShake` (GameEvent type 7, ms): sets [`ScreenShake`].
 pub fn screen_shake(mut events: MessageReader<StoryEffect>, mut shake: ResMut<ScreenShake>) {
     for ev in events.read() {
         if let Effect::ScreenShake { ms, amplitude, .. } = &ev.0 {
@@ -1179,12 +1126,9 @@ pub fn screen_shake(mut events: MessageReader<StoryEffect>, mut shake: ResMut<Sc
     }
 }
 
-/// `Entity:GetAttachedCoords(name)`'s host facts (LUA-18): every frame, the world coords of each story
-/// character's mesh attach points (`Actor::GetAttachedCoords`: the entity coords × the point in its posed
-/// parent bone's frame, `Character::posed`, scaled by the actor scale). Names as the mesh spells them.
-/// The names are rebuilt when the body mesh changes (a form) or the story's list lost them (`Entities::remove`
-/// drops it); the coords are refreshed in place. A character no longer in the world publishes nothing (the
-/// binding falls back to the entity coords).
+/// `Entity:GetAttachedCoords(name)`'s host facts: every frame, the world coords of each story
+/// character's mesh attach points (`Actor::GetAttachedCoords`). The names are rebuilt when the body
+/// mesh changes or the story's list lost them; a character no longer in the world publishes nothing.
 pub fn publish_attach_coords(
     rt: Option<NonSend<StoryRuntime>>,
     chars: Query<(&StoryActor, &gd_game_core::character::Character, &Transform)>,

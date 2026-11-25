@@ -73,7 +73,7 @@ impl SectorEntry {
 /// `GetGroundAmbientColor`), `depthFogDensity` / `heightFogDensity`,
 /// then the depth fog start / end and height fog start / end (ints,
 /// metres; the constructor defaults 10, 50, 10, 0). Fog: `AmbianceManager::UpdateModifierSlot` and
-/// `GraphicsDeferredRenderer::RenderFog` (gd-render `render/post.rs`).
+/// `GraphicsDeferredRenderer::RenderFog`.
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentFields {
     pub fog_color: [f32; 4],
@@ -110,7 +110,7 @@ pub struct SectorDataSet {
     pub layer_count: i32,
     /// Decoded layers 0..=3 (fog, name, ambient, boss): (layer version, entries).
     pub layers: Vec<(u32, Vec<SectorEntry>)>,
-    /// Layers 4..=13 (day/night onwards), decoded once at load.
+    /// Layers 4..=13 (day/night onwards).
     tail: TailLayers,
     /// Why the tail failed to decode (the rest of the map stays usable).
     tail_error: Option<String>,
@@ -576,7 +576,7 @@ pub fn read_later_layers(r: &mut Reader, layer_count: i32) -> Result<LaterLayers
 /// Engine.dll): "DNC" + version (2 or 3), sunset, sunrise,
 /// v3: night start / end, sun azimuth, sun min angle, moon azimuth, moon min
 /// angle, then the keys (time + light, sky, ground rgb). Zero azimuths and the
-/// v2 night times keep the engine defaults (gd-render `render::env`).
+/// v2 night times keep the engine defaults.
 #[derive(Debug, Clone)]
 pub struct DayNightData {
     pub version: u8,

@@ -1,11 +1,10 @@
-//! A failed event and its restart at a checkpoint (`eventRestart`): `events/survivalevent.lua`
-//! (`SurvivalEvent_Update`'s failure branch) and `survival/eventcontrol.lua` (`restartEvent`), run on arena A's
-//! script objects.
+//! A failed event and its restart at a checkpoint (`eventRestart`): `events/survivalevent.lua` and
+//! `survival/eventcontrol.lua` on arena A's script objects.
 use super::*;
 use gd_story::story::Effect;
 use gd_story::story::state::Survival;
 
-/// The story effects the host forwarded (`StoryEffect` messages), collected by the test.
+/// The forwarded `StoryEffect` messages.
 #[derive(Resource, Default)]
 struct Seen(Vec<Effect>);
 
@@ -23,8 +22,7 @@ fn survival(g: &TestGame) -> Survival {
     rt.story.borrow().game.survival.clone()
 }
 
-/// The event NPC in the world (`npc_event_01` / `02` / `03`): its body (the story's,
-/// `gd_game::story_world::sync_actors`) is moved next to the player to talk to.
+/// The event NPC (`npc_event_01` / `02` / `03`), moved next to the player to talk to.
 fn event_npc(g: &mut TestGame) -> (u32, String) {
     let (id, rec) = {
         let rt = g.app.world().non_send::<StoryRuntime>();
@@ -37,8 +35,7 @@ fn event_npc(g: &mut TestGame) -> (u32, String) {
             .expect("an event NPC");
         (o.id, o.record.clone())
     };
-    // A body that appeared this update spawns on the next; its mesh is read in the background, so under load
-    // (the whole suite in parallel) it may take a few more frames: wait for it, giving the reader time.
+    // A new body spawns next update and its mesh loads in the background: wait a few frames.
     for i in 0..60 {
         let world = g.app.world_mut();
         let mut moved = false;
@@ -85,12 +82,10 @@ fn talk(g: &mut TestGame, rows: &[&str]) {
     }
 }
 
-/// Wave 51 (the Wave 50 start), the player dies: respawn is held while the wave runs, the event's next update
-/// fails it (`Game.PlayersDead`): the failure sound, the compensation chests, the end NPC (`npc_event_03`), the
-/// score saved, the timer reset, respawn enabled (the player comes back) with `KillAllMonstersOnNextRespawn`.
-/// Then "Restart at Checkpoint" (5 tributes, the first of three): `restartEvent` restarts at
-/// `floor(wave / 10) * 10 - 20` (wave 30, the ramp too), one restart counted, the start NPC back, the player
-/// teleported to the spawn point; the next event start runs tier 4 from wave 31.
+/// Wave 51, the player dies: respawn is held while the wave runs, then the event fails (`Game.PlayersDead`):
+/// failure sound, compensation chests, end NPC, score saved, timer reset, respawn with
+/// `KillAllMonstersOnNextRespawn`. "Restart at Checkpoint" restarts at `floor(wave / 10) * 10 - 20` (wave 30),
+/// counts one restart, brings back the start NPC and teleports the player; the next start runs tier 4 from wave 31.
 #[test]
 fn a_failed_event_restarts_at_the_checkpoint() {
     let Some((mut g, p, _)) = setup() else {
@@ -121,7 +116,7 @@ fn a_failed_event_restarts_at_the_checkpoint() {
         .world_mut()
         .entity_mut(p)
         .insert(gd_game_core::combat::Dead { timer: 4.0 });
-    // Dead past the corpse time: held down (`RespawnHeld`), until the event's next update (once a second).
+    // Held down (`RespawnHeld`) until the event's next update (once a second).
     for _ in 0..90 {
         g.step();
         let rt = g.app.world().non_send::<StoryRuntime>();

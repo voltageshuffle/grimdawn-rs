@@ -1,51 +1,48 @@
-//! Key bindings: the engine's key actions (`keybindings.txt`, parsed and written by `gd_formats::options`) with
-//! the defaults of `KeyMap::SetDefaultBindings` ([`DEFAULT_KEYS`]), edited in the options window's Key Bindings
-//! page and stored in the port's own `keybindings.txt` (`crate::state::settings`; never the game's file).
+//! Key bindings: the engine's key actions (`keybindings.txt`, `gd_formats::options`) with the
+//! defaults of `KeyMap::SetDefaultBindings` ([`DEFAULT_KEYS`]), stored in the port's own file.
 //!
 //! Key codes are DirectInput scan codes (1 Escape … 88 F12, 107 / 118 right Ctrl / Alt), 145 to 152 the mouse
-//! ([`mouse_codes`]) and 153+ the gamepad (PORT: not honoured). Each action the port reads has a constant
-//! below; its consumer reads it through [`KeyBindings::just_pressed`] / [`KeyBindings::pressed`]. Not handled
+//! ([`mouse_codes`]) and 153+ the gamepad (PORT: not honoured). Not handled
 //! (`UIPlayerHud::HandleKeyAction` / `UIPlayerHud::HandleKey`): 5 Chat, 6 Group, 58 Push to Talk (multiplayer); 41 / 42
 //! only flip HUD bytes nothing reads; 67 Skill Reclamation Mode has no handler.
 use bevy::prelude::*;
 use gd_formats::options::{KeyMap, parse_keybindings, write_keybindings};
 
-/// Actions the port reads (`KeyBindings::GetActionTag`'s tags).
 pub const CHARACTER: u32 = 1;
 pub const SKILLS: u32 = 2;
 pub const CODEX: u32 = 3;
 pub const MAP: u32 = 4;
-/// "Help" (default H): the journal on its Help tab (`quests::toggle`).
+/// Default H: the journal on its Help tab.
 pub const HELP: u32 = 8;
-/// "Center Map (Map Window)" (`tagKeybind30`, default Numpad 0; `localmap::center_map_key`).
+/// `tagKeybind30`, default Numpad 0.
 pub const CENTER_MAP: u32 = 31;
-/// "Factions Window" (`tagKeybind47`, default J; `factions.rs`).
+/// `tagKeybind47`, default J.
 pub const FACTIONS: u32 = 52;
-/// "Achievements Window" (`tagKeybind48`, default V; `achievements.rs`).
+/// `tagKeybind48`, default V.
 pub const ACHIEVEMENTS: u32 = 53;
 pub const GAME_MENU: u32 = 7;
 pub const DROP_ITEM: u32 = 32;
 pub const WEAPON_SWAP: u32 = 34;
 pub const TARGET_PET: u32 = 38;
 pub const PAUSE: u32 = 40;
-/// "Stationary Attack" (`tagKeybind36`, default Shift): held, `gd_ui::state::casting::ClickKeys`.
+/// `tagKeybind36`, default Shift; held.
 pub const STATIONARY_ATTACK: u32 = 39;
-/// "Force Move" (`tagForceMove`, default F): held, `gd_ui::state::casting::ClickKeys`.
+/// `tagForceMove`, default F; held.
 pub const FORCE_MOVE: u32 = 50;
-/// "Altar Window" (`tagAltarWindow`, no default key; `grimdawn::ascendant`).
+/// `tagAltarWindow`, no default key.
 pub const ALTAR_WINDOW: u32 = 61;
-/// "Toggle UI" (`tagToggleUI`, default `]`; `hud::toggle_ui`).
+/// `tagToggleUI`, default `]`.
 pub const TOGGLE_UI: u32 = 60;
-/// Move (`tagMove`): held, walks to the cursor (`grimdawn::casting::MoveKeyHeld`).
+/// `tagMove`: held, walks to the cursor.
 pub const MOVE: u32 = 51;
 /// Hot slot `i` (0..10, keys 1 to 0) is action `HOT_SLOT_FIRST + i`.
 pub const HOT_SLOT_FIRST: u32 = 9;
 pub const DRINK_ENERGY: u32 = 29;
-/// "Personal Riftgate" (`tagKeybind31`, default L): presses the HUD teleport button shown (`ui/riftmap.rs`).
+/// `tagKeybind31`, default L: presses the HUD teleport button shown.
 pub const PERSONAL_RIFTGATE: u32 = 33;
-/// "Quickbar Switch" (`tagKeybind40`, default Y): the other hotbar row (`hud::buttons`).
+/// `tagKeybind40`, default Y: the other hotbar row.
 pub const QUICKBAR_SWITCH: u32 = 43;
-/// "Show Alternate Hot Slot Set" (`tagToggleHotslotSet`, default T): another skill set's hotbar page (`hud::buttons`).
+/// `tagToggleHotslotSet`, default T: another skill set's hotbar page.
 pub const SHOW_ALTERNATE_SET: u32 = 62;
 pub const DRINK_HEALTH: u32 = 30;
 pub const SHOW_ALL_ITEMS: u32 = 35;
@@ -63,8 +60,7 @@ pub const PICKUP: u32 = 55;
 pub const LOOT_FILTER: u32 = 56;
 pub const HIDE_ALL_ITEMS: u32 = 57;
 
-/// The default bindings, classic movement (`KeyMap::SetDefaultBindings`): (action,
-/// primary, secondary key code).
+/// The default bindings, classic movement (`KeyMap::SetDefaultBindings`): (action, primary, secondary).
 pub const DEFAULT_KEYS: [(u32, u32, u32); 57] = [
     (1, 46, 23),
     (2, 31, 0),
@@ -126,24 +122,21 @@ pub const DEFAULT_KEYS: [(u32, u32, u32); 57] = [
 ];
 
 /// Action → [primary, secondary] key code (0 = none): the classic-movement map (`keys`) and the keyboard-movement map
-/// (`alt`, used while `movementType` is 1 or 2: `mode`). `KeyMap::SetDefaultBindings`: one default table,
-/// whose last entries depend on the movement type: the keyboard map has Move_Forward / Backward / Left / Right (63 to 66)
-/// on W / S / A / D, the skills window (2) on N, action 32 on B, the weapon swap's primary key (34) and Move (51)
-/// unbound. Two files hold them (`keybindings.txt`, `alternate_keybindings.txt`).
+/// (`alt`, used while `movementType` is 1 or 2). `KeyMap::SetDefaultBindings`: the keyboard map has Move_Forward /
+/// Backward / Left / Right (63 to 66) on W / S / A / D, the skills window (2) on N, action 32 on B, the weapon swap's
+/// primary key (34) and Move (51) unbound.
 #[derive(Resource, Clone, PartialEq, Debug)]
 pub struct KeyBindings {
     pub keys: KeyMap,
     pub alt: KeyMap,
-    /// The `movementType` option: which map is in use (0 classic, else `alt`).
+    /// The `movementType` option (0 classic, else `alt`).
     pub mode: i32,
-    /// This frame's mouse codes ([`mouse_codes`]).
     mouse: MouseCodes,
 }
 
-/// The mouse's key codes 145 to 152 this frame (Wheel Up, Wheel Down, Middle Mouse, Mouse 4 to 8, the order of the
-/// key names, [`key_name`]): bit `code − 145` of `pressed`, `+ 8` just pressed, `+ 16` just released. Written
-/// by [`mouse_codes`] through a shared cell so that a frame's input does not mark the bindings changed; equal and
-/// cloned as part of the bindings regardless of the frame.
+/// The mouse's key codes 145 to 152 this frame (Wheel Up, Wheel Down, Middle Mouse, Mouse 4 to 8): bit `code − 145`
+/// of `pressed`, `+ 8` just pressed, `+ 16` just released. Held in a shared cell so a frame's input does not mark the
+/// bindings changed.
 #[derive(Clone, Default, Debug)]
 struct MouseCodes(std::sync::Arc<std::sync::atomic::AtomicU32>);
 
@@ -154,7 +147,6 @@ impl PartialEq for MouseCodes {
 }
 
 impl MouseCodes {
-    /// `code`'s (pressed, just pressed, just released).
     fn state(&self, code: u32) -> (bool, bool, bool) {
         let Some(bit) = code.checked_sub(MOUSE_FIRST).filter(|b| *b < 8) else {
             return (false, false, false);
@@ -168,11 +160,10 @@ impl MouseCodes {
     }
 }
 
-/// Wheel Up: the first mouse code.
 const MOUSE_FIRST: u32 = 145;
 
-/// The bits of [`MouseCodes`] for a frame: the held buttons and those pressed / released (`buttons`, in code order
-/// from Middle Mouse), the wheel's notches up / down (each a press and release in the frame, held for it).
+/// The bits of [`MouseCodes`] for a frame (`buttons` in code order from Middle Mouse); each wheel notch is a press
+/// and release in the frame.
 fn mouse_bits(held: u8, pressed: u8, released: u8, wheel_up: bool, wheel_down: bool) -> u32 {
     let wheel = wheel_up as u32 | (wheel_down as u32) << 1;
     let b = |m: u8| (m as u32) << 2;
@@ -190,9 +181,7 @@ const MOUSE_BUTTONS: [MouseButton; 6] = [
     MouseButton::Other(8),
 ];
 
-/// Resets every key's state except Escape's: the menu / options / edit-box input systems swallow the
-/// keyboard while they hold it (PreUpdate), but Escape belongs to the one dispatcher
-/// (`gd_ui::esc_dispatcher`, Update), which closes the frontmost window or opens the game menu.
+/// Resets every key's state except Escape's, which belongs to the one dispatcher (`gd_ui::esc_dispatcher`).
 pub fn reset_but_escape(keys: &mut ButtonInput<KeyCode>) {
     let ks: Vec<KeyCode> = keys
         .get_pressed()
@@ -205,10 +194,8 @@ pub fn reset_but_escape(keys: &mut ButtonInput<KeyCode>) {
     }
 }
 
-/// Records this frame's mouse codes for the bindings (PreUpdate, after the input and before any window consumes
-/// a click). While the game menu, its confirm or Options is up (`GamePause::menu`) the buttons and the wheel
-/// count as neither held nor pressed (the menus' `mouse.reset_all()` runs after this), so actions bound to the
-/// middle button, Mouse 4-8 or the wheel do nothing under them; releases still pass so a held action stops.
+/// Records this frame's mouse codes (PreUpdate, before any window consumes a click). While `GamePause::menu` the
+/// buttons and the wheel count as neither held nor pressed; releases still pass so a held action stops.
 pub fn mouse_codes(
     bindings: Res<KeyBindings>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -266,7 +253,6 @@ impl Default for KeyBindings {
 }
 
 impl KeyBindings {
-    /// The map in use.
     fn map(&self) -> &KeyMap {
         if self.mode > 0 { &self.alt } else { &self.keys }
     }
@@ -283,9 +269,8 @@ impl KeyBindings {
         self.map().get(&action).copied().unwrap_or([0, 0])
     }
 
-    /// Binds `code` to `action`'s slot (0 primary, 1 secondary); the code
-    /// leaves any other binding (PORT: the engine's duplicate rule is not
-    /// decompiled).
+    /// Binds `code` to `action`'s slot (0 primary, 1 secondary); the code leaves any other binding
+    /// (PORT: the engine's duplicate rule is not decompiled).
     pub fn bind(&mut self, action: u32, slot: usize, code: u32) {
         for v in self.map_mut().values_mut() {
             for c in v.iter_mut() {
@@ -297,23 +282,19 @@ impl KeyBindings {
         self.map_mut().entry(action).or_insert([0, 0])[slot.min(1)] = code;
     }
 
-    /// True when a key or mouse code bound to `action` was pressed this frame.
     pub fn just_pressed(&self, action: u32, keys: &ButtonInput<KeyCode>) -> bool {
         self.any(action, |k| keys.just_pressed(k), |m| m.1)
     }
 
-    /// True when a key or mouse code bound to `action` was released this frame.
     pub fn just_released(&self, action: u32, keys: &ButtonInput<KeyCode>) -> bool {
         self.any(action, |k| keys.just_released(k), |m| m.2)
     }
 
-    /// True while a key or mouse code bound to `action` is held.
     pub fn pressed(&self, action: u32, keys: &ButtonInput<KeyCode>) -> bool {
         self.any(action, |k| keys.pressed(k), |m| m.0)
     }
 
-    /// [`Self::just_pressed`] without the wheel's codes (for a reader that takes the wheel's notches itself, the
-    /// camera).
+    /// [`Self::just_pressed`] without the wheel's codes.
     pub fn just_pressed_no_wheel(&self, action: u32, keys: &ButtonInput<KeyCode>) -> bool {
         let wheel = MOUSE_FIRST..MOUSE_FIRST + 2;
         self.get(action)
@@ -363,12 +344,11 @@ impl KeyBindings {
     }
 }
 
-/// The port's bindings file, beside its `options.txt`.
 pub fn path() -> std::path::PathBuf {
     crate::state::settings::path().with_file_name("keybindings.txt")
 }
 
-/// The keyboard map's file (`alternate_keybindings.txt` in the engine).
+/// `alternate_keybindings.txt` in the engine.
 pub fn alt_path() -> std::path::PathBuf {
     path().with_file_name("alternate_keybindings.txt")
 }
@@ -383,7 +363,6 @@ pub fn load(mut commands: Commands) {
     commands.insert_resource(b);
 }
 
-/// The map in use follows the `movementType` option.
 pub fn sync_mode(options: Res<gd_game_core::options::GameOptions>, mut b: ResMut<KeyBindings>) {
     let mode = options.int("movementType");
     if b.mode != mode {
@@ -391,7 +370,6 @@ pub fn sync_mode(options: Res<gd_game_core::options::GameOptions>, mut b: ResMut
     }
 }
 
-/// Writes both maps to the port's files (never into the game's folders).
 pub fn store(b: &KeyBindings) {
     gd_game_core::session::write_user_file("key bindings", &path(), b.write());
     gd_game_core::session::write_user_file("alternate key bindings", &alt_path(), b.write_alt());
@@ -490,17 +468,15 @@ const KEYS: &[(u32, KeyCode)] = &{
     ]
 };
 
-/// A keyboard key code's Bevy key (module doc).
 pub fn keycode(code: u32) -> Option<KeyCode> {
     KEYS.iter().find(|(c, _)| *c == code).map(|(_, k)| *k)
 }
 
-/// A Bevy key's engine key code.
 pub fn code_of(key: KeyCode) -> Option<u32> {
     KEYS.iter().find(|(_, k)| *k == key).map(|(c, _)| *c)
 }
 
-/// An action's function tag (`tagKeybindNN`, the options list's names; `KeyBindings::GetActionTag`).
+/// An action's function tag (`tagKeybindNN`; `KeyBindings::GetActionTag`).
 pub fn action_tag(a: u32) -> &'static str {
     const T: [&str; 68] = [
         "",
@@ -575,7 +551,7 @@ pub fn action_tag(a: u32) -> &'static str {
     T.get(a as usize).copied().unwrap_or("")
 }
 
-/// A key code's name (the options list and the tooltips; DirectInput names).
+/// A key code's DirectInput name.
 pub fn key_name(code: u32) -> String {
     const GAME: [&str; 28] = [
         "Wheel Up",

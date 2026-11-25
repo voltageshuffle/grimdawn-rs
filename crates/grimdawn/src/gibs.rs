@@ -2,14 +2,13 @@
 //!
 //! `GibEffectEntity::Load` / `InitialUpdate`: `minGibs`..`maxGibs` gib meshes (random `gibNames`, each
 //! name once unless `multipleGibs`; scale `minGibScale`..`maxGibScale`), launched `launchDistance` m from the
-//! effect's position in the upper hemisphere at `minGibSpeed`..`maxGibSpeed` m/s. Two makers: an overkill death
-//! (`monsters::gib_deaths`, the `gibEffect` at the `Target` point, gated by `gore` in the death handler) and an
-//! animation's `CreateEntity` event of a `GibEffectEntity` record (`gd_render::model::AnimGibs`, at the event's
-//! attach point; no option gate: the gate is in the death path only). A gib whose model is built is dressed with
-//! it and given its world frame as it launches, so it draws the frame the body it bursts from is hidden, and an
-//! animation's gibs the frame the event fires (`anim_gibs` runs after the PostUpdate event systems, before bounds
-//! and visibility read the new parts). PORT: a gib whose model is still loading in the background
-//! (`ModelCache::model_ready`) flies bare and is dressed once it is built ([`dress_gibs`]).
+//! effect's position in the upper hemisphere at `minGibSpeed`..`maxGibSpeed` m/s. Made by an overkill death
+//! (`monsters::gib_deaths`, the `gibEffect` at the `Target` point, gated by `gore`) and by an animation's
+//! `CreateEntity` event of a `GibEffectEntity` record (`gd_render::model::AnimGibs`, at the event's attach
+//! point; no option gate). A gib whose model is built is dressed and given its world frame as it launches, so
+//! it draws the frame the body is hidden (`anim_gibs` runs after the PostUpdate event systems, before bounds
+//! and visibility). PORT: a gib whose model is still loading flies bare and is dressed once it is built
+//! ([`dress_gibs`]).
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 
@@ -35,35 +34,29 @@ impl Plugin for GibsPlugin {
 /// Each floor contact plays `impactGroundSound` and drops the gib's `ragdollDecal` (`Gib::CollisionCallback`
 /// / `Actor::CollisionCallback`: world contact only, `impactCooldown` and the decal's per-body cooldown
 /// both 1000 ms; the sound only while `lifetime > 0`; `World::PlaceDecal` is gated by the `decals` option, here
-/// `detailObjects` in `casting::drop_decals`, which also keeps the 256-decal ring; the decal grows in, flag 0x40000).
+/// `detailObjects` in `casting::drop_decals`; the decal grows in, flag 0x40000).
 /// PORT: ballistic motion with a bounce off the floor (no rigid-body physics: a contact is a descending hit on the
-/// physics floor below, `gd_game::ragdoll::floor`, and a rising gib stops under what it meets; the water material 7
-/// exclusion is not applied, the port has no per-contact material).
-/// `Gib::UpdateSelf`: the fade is `GraphicsMeshInstance::BeginFade(255, 255, 255, 3 s)` —
-/// the instance opacity 1→0 (`blendedGlobalFadeFactor`), which the `standardblended*` shaders draw
-/// as `base.a · factor` (render/material.rs `FLAG_BLENDED_FADE`, `fade.x` here). The harpy gibs
-/// (`bonefadeskinned`) and the albedo / glow ones do not read the factor: they stay opaque until
-/// removed, as in the engine.
+/// physics floor below, and a rising gib stops under what it meets; the water material 7 exclusion is not applied).
+/// The fade is `GraphicsMeshInstance::BeginFade(255, 255, 255, 3 s)`: `blendedGlobalFadeFactor` 1→0, read only by
+/// the `standardblended*` shaders; other gibs stay opaque until removed.
 #[derive(Component)]
 struct GibBody {
     vel: Vec3,
     spin: Vec3,
     life: f32,
-    /// The record's `ragdollDecal` and `impactGroundSound`.
+    /// `ragdollDecal` and `impactGroundSound`.
     decal: Option<String>,
     sound: Option<String>,
-    /// Seconds until the next contact may place a decal / play the sound ([`contact_ready`]).
     cooldown: f32,
-    /// The fade materials ([`crate::fade::begin_fade`] of the model's `standardblended*` materials), made once
-    /// when the 3 s fade starts; `Some([])` when the mesh has none (it stays opaque, engine parity).
+    /// Made when the 3 s fade starts; `Some([])` when the mesh has no `standardblended*` material.
     faded: Option<Vec<Handle<gd_render::render::material::GdMaterial>>>,
 }
 
-/// A launched gib's mesh, still loading in the background ([`dress_gibs`]).
+/// A launched gib's mesh, still loading ([`dress_gibs`]).
 #[derive(Component)]
 struct GibMesh(String);
 
-/// Dresses the gibs whose model was still loading at launch, once it is built; one that cannot load stays bare.
+/// Dresses the gibs whose model has loaded; one that cannot load stays bare.
 fn dress_gibs(
     mut commands: Commands,
     pending: Query<(Entity, &GibMesh)>,
@@ -81,8 +74,8 @@ fn dress_gibs(
     }
 }
 
-/// Launches the gib meshes of the `GibEffectEntity` record `gib` from `at` (module doc), each dressed at once
-/// when its model is built (else by [`dress_gibs`]); its `effectFile` particles are the caller's.
+/// Launches the gib meshes of the `GibEffectEntity` record `gib` from `at`; its `effectFile` particles are the
+/// caller's.
 pub fn launch(
     commands: &mut Commands,
     assets: &mut gd_render::character::CharAssets,
@@ -90,7 +83,6 @@ pub fn launch(
     at: Vec3,
 ) {
     use gd_game_core::rng;
-    // `GibEffectEntity::Load`: the count and the names.
     let mut names: Vec<String> = gib.strs("gibNames").iter().map(|s| s.to_string()).collect();
     let (lo, hi) = (
         gib.i32("minGibs").unwrap_or(0).max(0),
@@ -130,7 +122,7 @@ pub fn launch(
         let speed = vmin + rng::f32() * (vmax - vmin);
         let tau = std::f32::consts::TAU;
         let tf = Transform::from_translation(at + d * dist).with_scale(Vec3::splat(scale));
-        // The world frame now: an animation's gibs spawn after this frame's propagation (`anim_gibs`).
+        // An animation's gibs spawn after this frame's propagation (`anim_gibs`).
         let world = GlobalTransform::from(tf);
         let e = commands
             .spawn((
@@ -160,8 +152,7 @@ pub fn launch(
     }
 }
 
-/// An animation event's `GibEffectEntity` (`gd_render::model::AnimGibs`): its gibs fly from the attach point,
-/// drawn this frame (module doc).
+/// An animation event's `GibEffectEntity` (`gd_render::model::AnimGibs`): its gibs fly from the attach point.
 fn anim_gibs(
     mut commands: Commands,
     mut assets: gd_render::character::CharAssets,
@@ -175,7 +166,7 @@ fn anim_gibs(
     }
 }
 
-/// The contact cooldown (`impactCooldown`, 1000 ms): true, and re-armed, when a contact may act.
+/// `impactCooldown` (1000 ms): true, and re-armed, when a contact may act.
 fn contact_ready(cooldown: &mut f32) -> bool {
     if *cooldown > 0.0 {
         return false;
@@ -184,13 +175,12 @@ fn contact_ready(cooldown: &mut f32) -> bool {
     true
 }
 
-/// Where a landed gib's decal goes: on the ground under it (`World::PlaceDecal` then lifts it 0.01 m along the normal).
+/// `World::PlaceDecal` then lifts it 0.01 m along the normal.
 fn decal_spot(p: Vec3, floor: f32) -> Vec3 {
     Vec3::new(p.x, floor, p.z)
 }
 
-/// Moves the gibs: gravity, a bounce off the floor, spin; at the end of its life a gib fades out over 3 s
-/// (the `BeginFade` opacity, module doc).
+/// Gravity, a bounce off the floor, spin; at the end of its life a gib fades out over 3 s.
 #[allow(clippy::too_many_arguments)]
 fn move_gibs(
     mut commands: Commands,
@@ -214,7 +204,6 @@ fn move_gibs(
         g.vel.y -= GRAVITY * dt;
         let pos = tf.translation;
         let mut p = pos + g.vel * dt;
-        // Rising into a ceiling (a mesh's underside): it stops there and falls back.
         if g.vel.y > 0.0
             && let Some((hit, _)) = coll.segment_hit(pos, p)
         {
@@ -236,7 +225,6 @@ fn move_gibs(
                 if let Some(d) = g.decal.clone() {
                     commands.spawn((
                         gd_render::fx::DropDecal(d.into()),
-                        // `Actor::CollisionCallback`'s flag 0x40000: it grows in.
                         gd_render::decal::GrowIn::default(),
                         Transform::from_translation(decal_spot(p, floor)).with_rotation(yaw),
                     ));
@@ -245,8 +233,7 @@ fn move_gibs(
                     commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(p) });
                 }
             }
-            // Floor friction is per-contact in the engine; scale it by dt so
-            // it is framerate-independent (0.7 per 1/60 s).
+            // 0.7 per 1/60 s, framerate-independent.
             let f = 0.7f32.powf(dt * 60.0);
             g.vel.x *= f;
             g.vel.z *= f;

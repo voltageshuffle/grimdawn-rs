@@ -15,33 +15,25 @@
 //!   `gemButtonRolloverSound` (none in stock) and `gemButtonClickSound`;
 //! - sounds play while the game is paused (`SoundPak::EnablePauseHack`).
 //!
-//! The button classes' one activation rule ([`button_pressed`]): a left press activates, in game
-//! and menu alike (`UIButton::Press` / `MenuButton::HandleMouseEvent`; the level-up indicator's release is the
-//! engine's own exception).
+//! The button classes' one activation rule ([`button_pressed`]): a left press activates.
 //!
-//! A window registers each button that sounds while it builds (`Ui::button_sound`, `Ui::record_button_sound`; a window
-//! whose own click handler plays the sound registers nothing) and a modal window its rect (`Ui::sound_blocker`; the
-//! game menu and the options window the whole screen, so the HUD under them stays silent). PORT: the
-//! engine routes the mouse through the widget tree; here the frontmost root ([`RootZ`]: its `GlobalZIndex`,
-//! then a HUD group root's local `ZIndex`) with a registered rect under the cursor takes the press and
-//! the hover, a window's buttons before its blocker.
+//! PORT: the engine routes the mouse through the widget tree; here the frontmost root ([`RootZ`])
+//! with a registered [`ButtonSound`] rect under the cursor takes the press and the hover.
 use super::Ui;
 use bevy::prelude::*;
 use gd_formats::ui::{Rect as URect, TextAlign};
 
-/// A button's sounds (or, with none, a window rect that keeps the mouse from the windows behind it), registered while
-/// its window builds: a hidden node under the window's root, so it lives and dies with it.
+/// A button's sounds (or, with none, a modal window's blocking rect): a hidden node under the
+/// window's root.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ButtonSound {
     pub rect: URect,
-    /// `soundNameOver`: the cursor enters the button.
     pub over: Option<String>,
-    /// `soundNameDown`: a left press on it.
     pub down: Option<String>,
 }
 
 impl Ui<'_, '_, '_> {
-    /// Registers a sounding button at `rect` (physical px); a disabled button registers nothing.
+    /// Registers a sounding button at `rect` (physical px).
     pub fn button_sound(&mut self, rect: URect, over: Option<&str>, down: Option<&str>) {
         let s = |v: Option<&str>| v.filter(|s| !s.is_empty()).map(str::to_owned);
         self.spawn_sound(ButtonSound {
@@ -51,12 +43,10 @@ impl Ui<'_, '_, '_> {
         });
     }
 
-    /// [`Self::button_sound`] with a button record's `soundNameOver` / `soundNameDown`.
     pub fn record_button_sound(&mut self, rect: URect, rec: &gd_formats::arz::Record) {
         self.button_sound(rect, rec.str("soundNameOver"), rec.str("soundNameDown"));
     }
 
-    /// [`Self::record_button_sound`] with the button record at path `rec` (nothing when it is missing).
     pub fn record_path_button_sound(&mut self, rect: URect, rec: &str) {
         if let Some(b) = self.record(rec) {
             self.record_button_sound(rect, &b);
@@ -73,7 +63,6 @@ impl Ui<'_, '_, '_> {
     }
 
     fn spawn_sound(&mut self, b: ButtonSound) {
-        // A probe (rects only, no root) registers nothing.
         if self.root == Entity::PLACEHOLDER {
             return;
         }
@@ -88,8 +77,8 @@ impl Ui<'_, '_, '_> {
     }
 }
 
-/// The sounds this frame: the button under the cursor (`hovered`, the frontmost) plays `over` when it was not the
-/// hovered one last frame (`last`, its rect) and `down` on a left press.
+/// The hovered button plays `over` when it was not the hovered one last frame (`last`) and `down`
+/// on a left press.
 pub fn button_sounds(
     hovered: Option<&ButtonSound>,
     last: &mut Option<URect>,
@@ -109,15 +98,11 @@ pub fn button_sounds(
     out
 }
 
-/// The roots' stacking keys read by [`frontmost`]: overlays carry a `GlobalZIndex`, the HUD groups
-/// (`ui::Group`, all at global 0) a local `ZIndex` in their stacking order.
+/// The roots' stacking keys: overlays carry a `GlobalZIndex`, the HUD groups a local `ZIndex`.
 pub type RootZ<'w, 's> = Query<'w, 's, (Option<&'static GlobalZIndex>, Option<&'static ZIndex>)>;
 
-/// The frontmost registered button / blocker under `p`: the highest root `GlobalZIndex`, then the
-/// HUD groups' local `ZIndex` (a Character / Skills / Devotion window over the HUD group), and within
-/// one window its sounding buttons before its blocker — the one that takes the press and the hover
-/// (a modal window's blocker silences and blocks the buttons behind it). Shared by
-/// [`play_button_sounds`] and the HUD's button system (`hud.rs`).
+/// The frontmost registered button / blocker under `p`; within one window its buttons come before
+/// its blocker.
 pub fn frontmost<'a>(
     p: Vec2,
     buttons: &'a Query<'_, '_, (&ButtonSound, &ChildOf, &InheritedVisibility)>,
@@ -130,13 +115,12 @@ pub fn frontmost<'a>(
             let (g, l) = roots.get(c.parent()).map_or((0, 0), |(g, l)| {
                 (g.map_or(0, |g| g.0), l.map_or(0, |l| l.0))
             });
-            // In one window its buttons are in front of its blocker.
             (g, l, b.over.is_some() || b.down.is_some())
         })
         .map(|(b, ..)| b)
 }
 
-/// Plays the registered buttons' hover and press sounds (module doc). Runs before the windows that take the mouse.
+/// Runs before the windows that take the mouse.
 pub fn play_button_sounds(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
@@ -152,20 +136,15 @@ pub fn play_button_sounds(
     }
 }
 
-/// The button classes' one activation rule: a left PRESS activates. Grim Dawn.exe: `UIButton` (`UIButton::Press`) sets
-/// the down flag and plays `soundNameDown` on a press, and the window listeners act on event 0 (the character window
-/// `CharacterWindow::OnButtonEvent` `if (a2 != 0) return;`, the HUD toolbar `UIPlayerHud::OnToolbarButton`); the menu's
-/// `menubutton` mouse handler `MenuButton::HandleMouseEvent` is the same: mouse event 1 (left press) dispatches
-/// listener event 0, event 9 (release) only event 1 / 2 (the up look, inside / outside). The HUD level-up indicator is
-/// the engine's own release exception (`UIPlayerHud::OnToolbarButton` event 1). A release never activates a button.
+/// A left press activates (`UIButton::Press`, `MenuButton::HandleMouseEvent`); a release never
+/// does. The HUD level-up indicator is the engine's own release exception
+/// (`UIPlayerHud::OnToolbarButton` event 1).
 pub fn button_pressed(buttons: &ButtonInput<MouseButton>) -> bool {
     buttons.just_pressed(MouseButton::Left)
 }
 
-/// The edit boxes' shared key routing over [`gd_sim::edit`] (the stack amount and the devotion
-/// search): Ctrl+A / C / V and the caret / delete keys. `None`: a key the shared routing
-/// does not take — the caller applies its own text and Enter rules (Esc is the dispatcher's,
-/// `gd_ui::esc_dispatcher`).
+/// The edit boxes' shared key routing over [`gd_sim::edit`]: Ctrl+A / C / V and the caret / delete
+/// keys. `None`: a key the caller handles itself.
 pub fn edit_key(
     logical: &bevy::input::keyboard::Key,
     code: KeyCode,
@@ -188,17 +167,14 @@ pub fn edit_key(
     })
 }
 
-/// What a [`static_button`] writes on itself.
 #[derive(Clone, Copy)]
 pub enum Label<'a> {
     None,
-    /// The record's own `textTag`.
     Record,
-    /// This text (already localised).
+    /// Already localised.
     Text(&'a str),
 }
 
-/// A text in `r` (pixels), drawn with a style from the text styles.
 pub fn label(ui: &mut Ui, r: URect, style: &str, align: TextAlign, text: &str) -> Option<Entity> {
     let tb = gd_formats::ui::TextBox {
         style: None,
@@ -211,11 +187,8 @@ pub fn label(ui: &mut Ui, r: URect, style: &str, align: TextAlign, text: &str) -
     ui.text_with_style(&tb, style, Vec2::ZERO, text)
 }
 
-/// The auto-sized width of a `ButtonStaticText`: its texture width, grown to fit the label plus
-/// `2 * sc(10)` padding when the label is wider (never shrunk below the texture). PORT: the stock
-/// button is fixed at its bitmap's pixel width and a long localised label overflows it; here the
-/// button grows so the label always fits (UX over parity). The caller stretches the bitmap when the
-/// width grows ([`static_button`]); the height stays the texture's.
+/// The width of a `ButtonStaticText`: its texture width, grown to fit the label plus `2 * sc(10)`.
+/// PORT: the stock button is fixed at its bitmap's width; a long label overflows it.
 pub fn button_width(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -230,9 +203,7 @@ pub fn button_width(
 }
 
 /// Draws a `ButtonStaticText` record at its `bitmapPosition` from `o`; returns its rect (physical px).
-/// The width auto-grows to fit the label ([`button_width`]), stretching the bitmap; the left edge stays
-/// at `bitmapPosition` so a caller that centres on a point can re-centre from the returned rect.
-/// PORT: a disabled button's label is dimmed like the trade windows' buttons.
+/// PORT: a disabled button's label is dimmed.
 pub fn static_button(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,

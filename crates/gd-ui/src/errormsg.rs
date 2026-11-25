@@ -51,7 +51,6 @@ fn show_error(
         *shown = None;
     }
     let pressed = requests.read().count() > 0;
-    // `GD_NOT_READY` (hooks.rs): raised once at that time.
     #[cfg(feature = "dev")]
     let pressed = hooks.gameplay.not_ready.is_some_and(|t| {
         let hit = !*fired && clock.elapsed_secs() >= t;

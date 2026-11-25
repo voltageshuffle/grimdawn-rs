@@ -1,5 +1,4 @@
-//! The creature spawning systems (the creature data — [`BodyCache`],
-//! [`BodyRequest`], the look resolvers — is [`gd_game_core::creature`]).
+//! The creature spawning systems (the creature data is [`gd_game_core::creature`]).
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gd_game_core::character::{Character, character_for};
@@ -10,7 +9,7 @@ use gd_game_core::creature::{
 use gd_game_core::data::GameData;
 use std::sync::Arc;
 
-/// Files the meshes [`BodyCache::ready`] parsed in the background, kept warm until their spawns take them.
+/// Files the meshes [`BodyCache::ready`] parsed in the background.
 pub fn collect_body_loads(mut bodies: ResMut<BodyCache>) {
     use bevy::tasks::{block_on, futures_lite::future};
     let bodies = &mut *bodies;
@@ -29,10 +28,8 @@ pub fn collect_body_loads(mut bodies: ResMut<BodyCache>) {
     }
 }
 
-/// Spawns a creature of `record` (`variant`, see [`creature_look`]) at
-/// `transform` with its animation state, scaled by `placed` (a level
-/// placement's scale, module doc) else by the record's; returns the entity
-/// and its look.
+/// Spawns a creature of `record` (`variant`, see [`creature_look`]) at `transform`, scaled by
+/// `placed` (a level placement's scale) else by the record's.
 pub fn spawn_creature(
     commands: &mut Commands,
     data: &GameData,
@@ -84,7 +81,6 @@ pub fn spawn_creature(
     if rec.str("description") == Some(gd_game_core::world::DUMMY_TAG) {
         commands.entity(e).insert(gd_game_core::world::Dummy);
     }
-    // A ranged weapon in the right hand: the creature shoots.
     if let Some(r) = look
         .items
         .get(&Slot::RightHand)
@@ -95,28 +91,25 @@ pub fn spawn_creature(
     Some((e, look))
 }
 
-/// What spawning creatures needs.
 #[derive(SystemParam)]
 pub struct Spawner<'w> {
     pub data: Res<'w, GameData>,
     pub bodies: ResMut<'w, BodyCache>,
 }
 
-/// How many monsters a deferred spawner ([`ready_to_spawn`]'s callers) spawns a frame at most.
+/// How many monsters a deferred spawner spawns a frame at most.
 pub const SPAWNS_PER_FRAME: usize = 8;
 
-/// How long a deferred spawner works out new records' clip lists a frame ([`ready_to_spawn`]).
+/// How long a deferred spawner works out new records' clip lists a frame.
 pub const CLIPS_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
 
-/// Each record's clip paths by variant ([`gd_game_core::character::creature_clips`]): a deferred spawner's, worked out once a
-/// session.
+/// Each record's clip paths by variant ([`gd_game_core::character::creature_clips`]).
 pub type ClipLists =
     gd_formats::collections::HashMap<String, gd_formats::collections::HashMap<u32, Arc<[String]>>>;
 
-/// Whether a creature of `record` / `variant` spawns without loading on the game thread: its mesh and its animation
-/// clips are parsed ([`BodyCache::ready`], [`gd_game_core::character::AnimCache::ready`]; each starts its background load
-/// otherwise). Working out a record's clip list reads its animation table: past `deadline` a record whose list is
-/// not known yet waits for a later frame.
+/// Whether a creature of `record` / `variant` spawns without loading on the game thread (each
+/// `ready` starts its background load otherwise). Past `deadline` a record whose clip list is not
+/// known yet waits for a later frame.
 pub fn ready_to_spawn(
     s: &mut Spawner,
     anims: &mut gd_game_core::character::AnimCache,
@@ -148,7 +141,6 @@ pub fn ready_to_spawn(
     ready
 }
 
-/// [`spawn_creature`] through a [`Spawner`] at the record's scale; the entity only.
 pub fn spawn(
     commands: &mut Commands,
     s: &mut Spawner,
@@ -159,7 +151,7 @@ pub fn spawn(
     spawn_placed(commands, s, transform, record, variant, None)
 }
 
-/// [`spawn`] of a creature placed in a level at the placement's scale `placed` (module doc).
+/// [`spawn`] at a level placement's scale `placed`.
 pub fn spawn_placed(
     commands: &mut Commands,
     s: &mut Spawner,

@@ -1,5 +1,4 @@
-//! The sound records of FX paks, resolved from the database (the combat
-//! sounds themselves are gd-game's `combat_sounds` systems).
+//! The sound records of FX paks.
 
 /// The sound an FX pak record plays as it starts: an `FxPak`'s
 /// `activateSound`, a class-less `charfxpak.tpl` record's `startSound`.

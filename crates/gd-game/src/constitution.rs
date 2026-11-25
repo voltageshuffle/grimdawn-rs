@@ -1,32 +1,26 @@
 //! Constitution: the pool behind accelerated out-of-combat life regeneration (`CharacterBio::Update`,
 //! `CharacterBio::TakeBonus`, `GetConstitutionLimit`).
-//! The HUD's `hudConstitutionBar` shows it (`ui::view::collect`); nothing else reads it.
-//! - Limit = `characterConstitution` attribute 10 through the accumulator (`CharacterSheet::constitution`; stock
-//!   300, `characterConstitutionModifier` percent on top). Current is refilled to the limit when the player
-//!   spawns / loads or respawns (the bio's re-init branch; not saved: `WriteProperties` keeps only life and mana).
-//! - A limit change (gear swap, buff) keeps the ratio `cur / limit` (1.0 when the old limit is ~0).
-//! - Food adds `min(limit, cur + limit * bonusConstitutionPercent / 100)` then `min(limit, cur + bonusConstitutionPoints)`
-//!   ([`Constitution::take_bonus`], called by `consumables`).
+//! - Limit = `characterConstitution` through the accumulator (`CharacterSheet::constitution`; stock 300).
+//!   Refilled to the limit on spawn / load / respawn (not saved).
+//! - A limit change keeps the ratio `cur / limit` (1.0 when the old limit is ~0).
+//! - Food adds `min(limit, cur + limit * bonusConstitutionPercent / 100)` then `min(limit, cur + bonusConstitutionPoints)`.
 //! - Drain, per tick while life > 0, not in combat, no damage taken this tick, `cur > 0` and life < max life:
-//!   `heal = acceleratedLifeRegenPercent * 0.01 * maxLife * dt` (player record, stock 25), `heal = min(heal, cur)`,
+//!   `heal = acceleratedLifeRegenPercent * 0.01 * maxLife * dt` (stock 25), `heal = min(heal, cur)`,
 //!   `cur -= 100 / maxLife * heal`, `life = min(life + heal, maxLife)` on top of the normal regen.
-//! - PORT: the engine's not-in-combat flag (`Player::UpdateSelf`: `CombatManager` under-attack flag clear) is
-//!   `combat_left`: set to `gameengine.dbr` `combatIdleTime` (stock 1.2 s) by the player's own attack on a
-//!   non-breakable ([`crate::combat::AttackMade`], `Player::OnAttack`) and by any life loss since the last tick
-//!   (`TakeAttack` / `OnDurationDamage` / terrain damage stand-in), and counted down per tick (the engine's countdown in
-//!   `CombatManager::Update` is not decompiled). `Player::CancelAcceleratedLifeRegen` has no caller here.
+//! - PORT: out of combat is `combat_left`: set to `gameengine.dbr` `combatIdleTime` (stock 1.2 s) by the
+//!   player's own attack on a non-breakable and by any life loss since the last tick, counted down per tick
+//!   (`CombatManager::Update`'s countdown is not decompiled).
 use crate::combat::AttackMade;
 use bevy::prelude::*;
 use gd_game_core::combat::{CombatSet, Combatant, Dead};
 use gd_game_core::data::GameData;
 use gd_game_core::player::{Loadout, Player, player_record};
 
-/// The player's constitution (engine `CharacterBio.constitution`) and the bookkeeping the drain needs.
+/// The player's constitution (engine `CharacterBio.constitution`).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Constitution {
-    /// Current constitution, in the sheet limit's units.
     pub current: f32,
-    /// The limit `current` was last scaled to (the bio's cached limit, for the ratio on a limit change).
+    /// The limit `current` was last scaled to.
     limit_seen: f32,
     /// Seconds until the player counts as out of combat.
     combat_left: f32,
@@ -37,7 +31,6 @@ pub struct Constitution {
 }
 
 impl Constitution {
-    /// A full bar for a limit and the player's current life.
     pub fn full(limit: f32, life: f32) -> Self {
         Self {
             current: limit.max(0.0),
@@ -48,13 +41,13 @@ impl Constitution {
         }
     }
 
-    /// Food: `CharacterBio::TakeBonus` (percent of the limit first, then points, each capped).
+    /// Food: `CharacterBio::TakeBonus`.
     pub fn take_bonus(&mut self, limit: f32, percent: f32, points: f32) {
         let c = (self.current + limit * percent / 100.0).min(limit);
         self.current = (c + points).min(limit);
     }
 
-    /// Whether the player is out of combat (`CharacterBio.outOfCombat`).
+    /// `CharacterBio.outOfCombat`.
     pub fn out_of_combat(&self) -> bool {
         self.combat_left <= 0.0
     }
@@ -142,7 +135,7 @@ fn constitution_tick(
         }
         let sheet = &cb.profile.sheet;
         let (limit, max_life) = (sheet.constitution, sheet.life);
-        // CharacterBio::Update: revival re-inits to the limit; a limit change keeps cur / limit.
+        // CharacterBio::Update: revival re-inits to the limit.
         if c.restore {
             c.current = limit;
             c.restore = false;

@@ -860,7 +860,7 @@ fn world(path: &Path, out: &Path, width: u32) -> Result<()> {
 fn minimap(path: &Path, sel: &str, out: &Path) -> Result<()> {
     let m = open_map(path)?;
     let i = pick(&m, sel)?;
-    // Rows in file order, as the engine uploads them (`gd_formats::map::minimap`).
+    // Rows in file order, as the engine uploads them.
     let img = m.minimap_image(i)?.context("no minimap")?;
     let mut c = Canvas::new(0.0, 0.0, img.w as f32, img.h as f32, 1.0);
     for y in 0..img.h {

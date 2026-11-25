@@ -1,58 +1,25 @@
-//! Character sounds and footprints: which sound pak / footprint decal a
-//! character's animation callbacks and swipes pick, with a shapeshift
-//! form's overrides (the one source of the form is the [`Character`]'s form
-//! slot, `Character::form_records`). The renderer plays them
-//! (`gd_audio::pak::character_callbacks`).
+//! Character sounds and footprints: which sound pak / footprint decal a character's animation
+//! callbacks and swipes pick, with a shapeshift form's overrides (`Character::form_records`).
 //!
-//! Game.dll: a `Character` keeps two `CharacterSounds` tables, its
-//! own (loaded from its record by `Character::Load`) and an override one
-//! (`Character.overrideSounds`, `SetOverrideSounds` loads `replacementSounds` into
-//! it, an empty path clears it). Both are read by the table loader
-//! `CharacterSounds::Load`: `footGrass`, `footDirt`, `footSand`, `footSnow`,
-//! `footStone`, `footWood`, `footWater`, `footMud`, `loopingRunningSound`,
-//! `attackSound`, `swipeSound`, `stunSound`, `criticalHitSound`,
-//! `impactSound`, the locked / cooldown / low-health / not-enough-mana UI
-//! sounds, `deathSound1..3`, `voxSound`, `specialAttackSound1..4`. Every
-//! use takes the override entry when it has one, else the own one, entry
-//! by entry ([`sound`]; e.g. `GetSwipeSound`,
-//! `PlayAttackSound`). The chances (`voxSoundChance`,
-//! `specialAttackSound1..4Chance`) are the character's own record's.
-//! Footprints the same way (`SetOverrideFootsteps`, loader
-//! `CharacterFootprints::Load`): `footPrintGrass` … `footPrintMud`, each falling back to
-//! `footPrint` of the same record (`CharacterFootprints::GetFallback`), then the override set's
-//! entry before the own one ([`footprint`]).
+//! A `Character` keeps two `CharacterSounds` tables: its own and an override one
+//! (`SetOverrideSounds` loads `replacementSounds`). Every use takes the override entry when it has
+//! one, else the own one, entry by entry ([`sound`]). The chances (`voxSoundChance`,
+//! `specialAttackSound1..4Chance`) are the own record's. Footprints likewise
+//! (`SetOverrideFootsteps`): `footPrint<Surface>`, falling back to `footPrint` of the same record,
+//! the override set before the own one ([`footprint`]).
 //!
-//! `Character::AnimationCallback` ([`callback`]): the current
-//! action sees the callback first (it may consume it); then `voxSound`,
-//! `deathSound1..3`, `specialAttackSound1..4` play that sound at the
-//! character (`PlayOverridableSound3d`: with a chance > 0 only
-//! when `rand() × 0.0030488 + 0.1` (0.1 .. 100) ≤ it; death sounds always);
-//! `Character::Load` also keeps `genericSound1..4`, `bodyFallSound`
-//! and `voiceSound1..3` of its own record in a map by callback name
-//! (`LoadAnimationSound`); a callback found there plays that
-//! sound at the character when the same roll ≤ its `<name>Chance`, a chance
-//! of 0 never (`Character::PlayAnimationSound`, no form override: a Familiar's wing flaps);
-//! `L Footstep` / `R Footstep` play the foot sound of the surface below
-//! (`World::GetSurfaceTypeBelow`, [`crate::collision::WorldCollision::surface_below`],
-//! the rules of the terrain and water in [`gd_sim::surface`]; a surface
-//! without foot sounds, or none, plays and places nothing), tracked on the
-//! character (`SoundPak::Track`), and place that surface's footprint (`GetFootCoords`: the
-//! `BN_LToe` / `BN_RToe` bone (none in the stock meshes: the actor's own
-//! coords), moved to the floor and 0.05 m up; `World::PlaceDecal`).
+//! `Character::AnimationCallback` ([`callback`]): `voxSound`, `deathSound1..3`,
+//! `specialAttackSound1..4` play at the character (with a chance > 0 only when
+//! `rand() × 0.0030488 + 0.1` ≤ it; death sounds always); the own record's `genericSound1..4`,
+//! `bodyFallSound` and `voiceSound1..3` play when the same roll ≤ its `<name>Chance` (0 never; no
+//! form override); `L Footstep` / `R Footstep` play the foot sound of the surface below (none or
+//! no foot sounds: nothing), tracked on the character, and place that surface's footprint at the
+//! actor's coords on the floor, 0.05 m up (the stock meshes lack `BN_LToe` / `BN_RToe`).
 //!
-//! Swipes, hits and attack sounds: `crate::combat_sounds` (reading
-//! [`sound`] for the character's entries).
-//!
-//! The error lines (`notEnoughManaSound`, `skillCooldownSound`, `itemCooldownSound`, `inventoryFullSound`):
-//! [`crate::error_vox`].
-//!
-//! The low-health warning ([`low_health_vox`], `Character::PlayLowHealthSoundIfNeeded`):
-//! a latch per character — at life ≤ `lowHealthTriggerLevel`% of max it plays
-//! `lowHealthSound` once and re-arms only at life ≥ `lowHealthResetLevel`% (malepc01 / femalepc01
-//! 28 / 30; the levels are the own record's, the sound the override table's). The locked-object
-//! voices ([`locked_vox`]: `lockedChestSound` / `lockedDoorSound` / `lockedShrineSound` /
-//! `lockedQuestObjectSound`, `Player::PlayLockedChestVox`) are picked here;
-//! the refusal paths play them.
+//! Low-health warning ([`low_health_vox`], `Character::PlayLowHealthSoundIfNeeded`): a latch per
+//! character — at life ≤ `lowHealthTriggerLevel`% of max it plays `lowHealthSound` once and
+//! re-arms at life ≥ `lowHealthResetLevel`% (levels from the own record, sound from the override
+//! table). Locked-object voices ([`locked_vox`], `Player::PlayLockedChestVox`) are picked here.
 //!
 //! PORT: the action's own callback handling is not consulted; the running sounds are not played.
 use bevy::prelude::*;
@@ -63,8 +30,7 @@ use gd_game_core::visuals::PlaySound;
 
 pub use gd_sim::surface::Surface;
 
-/// The `CharacterSounds` entry `slot` of `c`: the form's `replacementSounds`
-/// entry when it has one, else the character record's.
+/// The form's `replacementSounds` entry when it has one, else the character record's.
 pub fn sound(data: &GameData, c: &Character, slot: &str) -> Option<String> {
     let entry = |rec: &str| {
         data.db
@@ -77,8 +43,7 @@ pub fn sound(data: &GameData, c: &Character, slot: &str) -> Option<String> {
         .or_else(|| entry(&c.record))
 }
 
-/// The footprint decal of `c` on `surface`: the form's
-/// `replacementFootsteps` set, else the character record's; in each
+/// The form's `replacementFootsteps` set, else the character record's; in each
 /// `footPrint<Surface>`, else `footPrint`.
 pub fn footprint(data: &GameData, c: &Character, surface: Surface) -> Option<String> {
     let key = format!("footPrint{}", surface.name());
@@ -93,30 +58,26 @@ pub fn footprint(data: &GameData, c: &Character, surface: Surface) -> Option<Str
         .or_else(|| entry(&c.record))
 }
 
-/// What an animation callback makes the character do ([`callback`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Heard {
-    /// A sound pak played at the character.
     pub sound: Option<String>,
-    /// A footprint decal (`L Footstep`: the left foot).
+    /// `true`: the left foot.
     pub footprint: Option<(String, bool)>,
-    /// The sound moves with the character (footsteps).
+    /// Moves with the character (footsteps).
     pub tracked: bool,
 }
 
-/// Whether the callback `name` needs the surface below the character.
 pub fn is_footstep(name: &str) -> bool {
     matches!(name, "L Footstep" | "R Footstep")
 }
 
-/// The engine's sound roll (`rand() × 0.0030488 + 0.1`, 0.1 .. 100).
+/// `rand() × 0.0030488 + 0.1`, 0.1 .. 100.
 pub fn roll() -> f32 {
     gd_game_core::rng::f32() * 99.9 + 0.1
 }
 
-/// `Character::AnimationCallback` for the callback `name` (module doc), the
-/// ground being `surface` (none: no foot sound); `roll` is drawn only for a
-/// sound with a chance.
+/// `Character::AnimationCallback`; `surface` none: no foot sound; `roll` is drawn only for a sound
+/// with a chance.
 pub fn callback(
     data: &GameData,
     c: &Character,
@@ -176,7 +137,7 @@ pub fn callback(
     }
 }
 
-/// A locked object's refusal voice (`Player::PlayLocked*Vox`, module doc).
+/// `Player::PlayLocked*Vox`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LockedKind {
     Chest,
@@ -186,7 +147,6 @@ pub enum LockedKind {
 }
 
 impl LockedKind {
-    /// The kind's `CharacterSounds` slot.
     pub fn slot(self) -> &'static str {
         match self {
             LockedKind::Chest => "lockedChestSound",
@@ -197,13 +157,12 @@ impl LockedKind {
     }
 }
 
-/// The locked-object voice pak of `c` for `kind` (override else own, [`sound`]);
-/// the chest / door / shrine / quest-object refusal paths play it.
+/// Override else own ([`sound`]).
 pub fn locked_vox(data: &GameData, c: &Character, kind: LockedKind) -> Option<String> {
     sound(data, c, kind.slot())
 }
 
-/// A character's low-health latch with its record's levels (fractions of max life), read once.
+/// The record's levels as fractions of max life.
 #[derive(Component)]
 pub struct LowHealth {
     trigger: f32,
@@ -211,13 +170,8 @@ pub struct LowHealth {
     latched: bool,
 }
 
-/// The low-health warning of the living characters (module doc,
-/// `Character::PlayLowHealthSoundIfNeeded`): a latch per character
-/// — at life ≤ `lowHealthTriggerLevel`% of max it plays `lowHealthSound` at the
-/// character once, and re-arms only at life ≥ `lowHealthResetLevel`%. The levels
-/// are the character record's (0 when unset: never triggers); the sound is the
-/// override table's ([`sound`]). Registered by `CombatSoundsPlugin`. Only characters
-/// whose life changed are visited; [`LowHealth`] is added at the first wound.
+/// `Character::PlayLowHealthSoundIfNeeded` for living characters whose life changed (levels 0 when
+/// unset: never triggers). [`LowHealth`] is added at the first wound.
 #[allow(clippy::type_complexity)]
 pub fn low_health_vox(
     mut commands: Commands,
@@ -265,7 +219,6 @@ pub fn low_health_vox(
 }
 
 impl LowHealth {
-    /// Updates the latch at `life` of `max`; true when it just triggered.
     fn step(&mut self, life: f32, max: f32) -> bool {
         if self.latched {
             if life >= self.reset * max {

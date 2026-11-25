@@ -1,7 +1,6 @@
 //! Conversation window flow (`ConversationWindow::UpdateStep`): the first speech
 //! whose conditions hold is shown, later ones with flag bit 1 are merged in
-//! (actions run, responses appended, not recorded as used). No stock
-//! conversation sets that bit, so the test uses a hand-built conversation.
+//! (actions run, responses appended, not recorded as used).
 use gd_formats::cnv::{Conversation, Step, StepType};
 use gd_formats::qst::{Action, Texts};
 use gd_story::story::{Coords, Dialogs, ObjClass, Player, QuestDefs, Story, WorldObject};

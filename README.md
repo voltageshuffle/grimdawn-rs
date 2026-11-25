@@ -23,36 +23,22 @@ out of scope. Visuals read as the same game rather than matching it pixel for pi
 
 Known approximations and open questions (e.g. attach-point rotation, the `PlayAnimation` flag, `Item.HasAffix`'s
 record→instance bridge, mod database enumeration, Crucible DLC gating) are tracked in
-[`PLAN.md`](PLAN.md), which also lists the remaining optional work. Every deliberate rule difference is
-documented in its module's doc comment (`PORT:` notes).
+[`PLAN.md`](PLAN.md), which also lists the remaining optional work.
 
 Save files use the original encodings (`.gdc`, `.gdd`, `.fow`, `.gst`, `map.dat`), so characters move between
 the port and the real game. Two exceptions: the Crucible leaderboard (`leaderboard.brd`) is the port's own
 plain encoding, and `playmenu.cpn` is partially inferred.
-
-### Deliberate differences from the engine
-Highlights; the module doc comments are the reference:
-- **Structure:** eleven crates from formats to binary, headless gameplay ECS, signature-based UI rebuilds,
-  weak asset caches with no timed eviction, backgrounded world streaming.
-- **Mods:** one mod at a time, only `resources/*.arc` mounted, mod indexes kept for the process, Crucible packs
-  always mounted; a start whose save names a different mod is refused instead of remounting it.
-- **Lua:** lenient overload dispatch and sandbox budgets; engine quirks preserved on purpose
-  (`Character.Turn` no-ops, `GetPlayerName` returns "").
-- **UI:** content-sized adaptive layout instead of the engine's fixed texture-sized columns and rows;
-  the FPS toggle lives with the other interface options.
 
 ### Added beyond the engine
 - `showFPS` overlay and `maxFPS` frame limiter — the engine has neither.
 - Dev-only verification: `GD_*` hooks (only in `dev` builds), the headless `TestGame` harness
 - `gd-tools`: mod-aware record/story inspection (`--mod`, `--diff`) and `<arc>:<entry>` map reading,
   without extracting archives.
-- Item styles: user rules (Grim Raynbow-like) that recolour and tag item names on ground labels and tooltips, or
-  hide labels; edited on the loot filter window's Item Styles page, stored in `Settings/itemstyles.txt`.
+- [Item styles](#item-styles): user rules (Grim Raynbow-like) that recolour, tag or hide item names.
 
 ## Playing
 You need Grim Dawn **1.3.1.2** installed (Steam or GOG, with whichever expansions you own) and a GPU with
-Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the game's folder; it warns (log and
-main menu) when the install is another version.
+Vulkan (Linux) or Vulkan / DirectX 12 (Windows). The port never writes into the game's folder.
 
 ### From a GitHub release
 1. Download `grimdawn-rs-windows-x86_64.zip` or `grimdawn-rs-linux-x86_64.tar.gz` from the
@@ -94,7 +80,7 @@ The loot filter window (O) has an **Item Styles** page: rules that recolour item
 (for example `[BP]` on blueprints), on ground labels and in tooltips, so valuable drops stand out; a rule can also
 hide a label. The first rule that matches an item wins; **Load Preset** gives a ready-made colour scheme. The rules
 are global (all characters) and live in `Settings/itemstyles.txt` in the port's folder, one rule per line, which
-you can also edit by hand (a bad line is skipped with a warning in the log; no file means the stock look; saving
+you can also edit by hand (a bad line is skipped; no file means the stock look; saving
 from the window keeps your `#` comment lines, moved to the top, and turns a skipped line into a `# skipped:` comment):
 ```
 # conditions: rarity= type= set= mi= doublerare= ascended= level=MIN-MAX name="..."
@@ -105,7 +91,8 @@ rarity=common type=weapon,armor level=-40 hide
 name="aether" color=#00ffff
 ```
 Types: `weapon offhand armor accessory component relic blueprint augment consumable material quest lore other`;
-rarities: `common magic rare epic legendary`. A hide rule only hides more than the loot filter's checkboxes, and
+rarities: `common magic rare epic legendary`. The word `any` alone is a rule that matches everything and changes
+nothing. A hide rule only hides more than the loot filter's checkboxes, and
 holding "Show Items (No Filter)" still shows everything.
 
 ### Building it yourself
@@ -133,7 +120,7 @@ Tests: `scripts/with-env cargo test --workspace` (`GD_SKIP_DATA_TESTS=1` skips t
 install). Hooks, recipes and headless runs: [`docs/running.md`](docs/running.md).
 
 ## Layout
-Thirteen crates, layered `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core →
+Twelve crates, layered `gd-formats → gd-rules → {gd-sim ∥ gd-story} → gd-game-core →
 {gd-game ∥ gd-render ∥ gd-ui-kit} → {gd-ui ∥ gd-world ∥ gd-audio} → grimdawn`, plus `gd-tools`. What each
 holds and how the systems are structured: [`docs/architecture.md`](docs/architecture.md).
 

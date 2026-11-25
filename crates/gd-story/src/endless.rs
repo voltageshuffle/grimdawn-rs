@@ -2,24 +2,22 @@
 //! records (`records/endlessdungeon/rulesets/dungeonsetNN.dbr`, one per shard range) and the floor
 //! picking. Bevy-free; the host (`gd-game`) owns the running dungeon.
 //!
-//! (Game.dll): `EndlessDungeon_Generator::
-//! LoadFromDatabase` reads the fields of [`Ruleset`] (the difficulty picks the
+//! `EndlessDungeon_Generator::LoadFromDatabase` reads the fields of [`Ruleset`] (the difficulty picks the
 //! Normal / Elite / Ultimate triple of the equations; the timer and floor total always use `*Ultimate`);
 //! `PickFloors` shuffles `floorList`, skips the last [`RECENT_FLOORS`] floors used
 //! (a queue that survives generations), takes `floors` of them, then the first of the shuffled
-//! `bossFloorList` as the boss floor (no queue). `specialFloors` is not read by it (the special
+//! `bossFloorList` as the boss floor (no queue). `specialFloors` is not read (the special
 //! floors are inside `floorList`). `PickProxies`: a nemesis / shrine count is a
 //! weighted index of its weight list (shrines capped by the shared `maxShrines`).
 //! `ResolveEquationVariable`: `tierDifficulty` = dungeons generated, `commonProxies` / `heroProxies` = the
 //! proxies `LoadProxies` placed on the floor being totalled (not the ruleset's counts), `killCounter`.
 //!
 //! PORT: the shuffle is the port's Park–Miller [`Rng`] (the engine uses C `rand()` through
-//! `std::shuffle`, so the order is not reproducible either way); when exactly the recent queue is
-//! filled is not traced (the picked floors are pushed when they are picked).
+//! `std::shuffle`); when exactly the recent queue is filled is not traced (the picked floors are pushed when
+//! they are picked).
 //!
-//! PORT test hook `GD_ENDLESS_FLOOR` (host: `gd_game::endless::force_floor`): [`EndlessMap::forced_floor`]
-//! names a floor record that takes floor 0's slot in every generated section ([`pick_floors`]), bypassing
-//! the recent queue; the rest of the pick is unchanged. The engine has no such override.
+//! PORT test hook: [`EndlessMap::forced_floor`] names a floor record that takes floor 0's slot in every
+//! generated section, bypassing the recent queue.
 use gd_formats::vfs::Database;
 use gd_rules::Rng;
 use gd_rules::expr::Expr;
@@ -31,11 +29,9 @@ pub const RECENT_FLOORS: usize = 5;
 /// What an essence / classification pays: index 0 common, 1 champion, 2 hero, 3 quest boss.
 pub const CLASSES: usize = 4;
 
-/// One generator ruleset at a game difficulty.
 #[derive(Debug, Clone)]
 pub struct Ruleset {
     pub name: String,
-    /// Normal floors per section.
     pub floors: usize,
     pub floor_list: Vec<String>,
     pub boss_floor_list: Vec<String>,
@@ -80,11 +76,9 @@ impl Ruleset {
     }
 
     /// Loads `record` for a ruleset slot ([`Self::slot`]: 0 Normal, 1 Elite, 2 Ultimate, 3 Ultimate Veteran).
-    /// `EndlessDungeon_Generator::LoadFromDatabase`: `GameInfo::GetDifficulty` picks the
-    /// `timer*` / `floorTotal*` / `difficultyAdjustment*` field triple; on Ultimate the timer and floor total are
-    /// always `*Ultimate`, the adjustment is `difficultyAdjustmentUltimateVeteran` while the engine's difficulty ramp
-    /// is on (`GameEngine::GetDifficultyRamp`, `+0x36D1C`: the Veteran challenge, i.e. Ultimate Veteran) and
-    /// `difficultyAdjustmentUltimate` otherwise; a missing field is an empty name (no adjustment, no fallback).
+    /// `EndlessDungeon_Generator::LoadFromDatabase`: on Ultimate the timer and floor total are always
+    /// `*Ultimate`; the adjustment is `difficultyAdjustmentUltimateVeteran` while `GameEngine::GetDifficultyRamp`
+    /// is on; a missing field is an empty name (no adjustment, no fallback).
     pub fn load(db: &Database, record: &str, slot: usize) -> Option<Self> {
         let r = db.get(record)?;
         let pick = |base: &str| -> Option<&str> {
@@ -148,9 +142,8 @@ impl Ruleset {
         })
     }
 
-    /// `ResolveEquationVariable`. `proxies`: the common / hero proxies the last `LoadProxies` placed
-    /// (`PickProxies` keeps them per floor for the floor's total); the timer and kill-chain equations, which no
-    /// stock ruleset writes with them, get 0.
+    /// `ResolveEquationVariable`. `proxies`: the common / hero proxies the last `LoadProxies` placed; the timer and
+    /// kill-chain equations get 0.
     fn vars(
         &self,
         tier: u32,
@@ -167,9 +160,7 @@ impl Ruleset {
     }
 
     /// A floor's progress total (`PickProxies`): a normal floor's is the `floorTotal*` equation with the common /
-    /// hero proxies actually placed on it (`proxies`, not the ruleset's counts: a small floor holds fewer), stored
-    /// as an integer (truncated: `133.4` needs 133) since progress counts whole units (`IncrementProgress`); a
-    /// boss floor's is 100.
+    /// hero proxies actually placed on it, truncated to an integer; a boss floor's is 100.
     pub fn floor_total(&self, tier: u32, boss: bool, proxies: [usize; 2]) -> f32 {
         if boss {
             return 100.0;
@@ -181,15 +172,13 @@ impl Ruleset {
         })
     }
 
-    /// The starting bonus timer (ms): the `timer*` equation.
     pub fn timer_ms(&self, tier: u32) -> i32 {
         self.timer
             .as_ref()
             .map_or(0, |e| finite(e.eval(&self.vars(tier, 0, [0; 2]))) as i32)
     }
 
-    /// Bonus time (ms) a kill of this `monsterClassification` adds to the timer (`OnCreatureDeath`: hero, boss and
-    /// quest boss; nemesis shares the boss entry).
+    /// Bonus time (ms) a kill of this `monsterClassification` adds (`OnCreatureDeath`).
     pub fn bonus_for_class(&self, class: &str) -> i32 {
         match class {
             "Hero" => self.bonus_time_ms[0],
@@ -198,7 +187,6 @@ impl Ruleset {
         }
     }
 
-    /// The essence tables' index of a classification (common, champion, hero, boss).
     pub fn essence_index(class: &str) -> usize {
         match class {
             "Champion" => 1,
@@ -208,9 +196,8 @@ impl Ruleset {
         }
     }
 
-    /// The kill chain's bonus (ms) once it pauses with `kill_counter >= killCountMinimum` kills.
-    /// `EndlessDungeon_Generator::Update`: the equation's seconds are truncated to an integer before the
-    /// ×1000 (`3.5 + ...` at 25 kills pays 3 s).
+    /// The kill chain's bonus (ms) once it pauses with `kill_counter >= killCountMinimum` kills; the equation's
+    /// seconds are truncated before the ×1000 (`EndlessDungeon_Generator::Update`).
     pub fn kill_chain_bonus_ms(&self, kill_counter: u32) -> Option<i32> {
         (kill_counter >= self.kill_count_minimum).then(|| {
             self.kill_count_bonus.as_ref().map_or(0, |e| {
@@ -220,12 +207,9 @@ impl Ruleset {
     }
 }
 
-/// `GameEngine::SetEndlessTimerInbound`'s text for added bonus time: `tagEndlessDungeonBonusTime`
-/// ("Carnage: {%d0} enemies slain!^n^n+{%.0f1} seconds to the clock!") with the kill chain's kills, or, for a
-/// kill without a chain (`kills` None), `tagEndlessDungeonHeroBonusTime` ("Powerful foe slain!^n^n+{%.0f0}
-/// seconds to the clock!"): the arguments are the kills (int) and the seconds (float, 0 decimals). `template` is
-/// the localised tag. `AddTagToMap`: the loaded tags have their braces stripped (`%.0f0`), so both forms
-/// are substituted.
+/// `GameEngine::SetEndlessTimerInbound`'s text for added bonus time: `tagEndlessDungeonBonusTime` with the kill
+/// chain's kills, or, without a chain, `tagEndlessDungeonHeroBonusTime`. `AddTagToMap` strips the loaded tags'
+/// braces (`%.0f0`), so both forms are substituted.
 pub fn bonus_text(template: &str, kills: Option<u32>, ms: i32) -> String {
     let secs = format!("{:.0}", ms as f32 * 0.001);
     let mut t = template.to_owned();
@@ -250,7 +234,6 @@ pub struct Floor {
     pub boss: bool,
 }
 
-/// Fisher–Yates with the port's generator.
 pub fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
     for i in (1..v.len()).rev() {
         let j = rng.next() as usize % (i + 1);
@@ -260,8 +243,7 @@ pub fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
 
 /// `weights` index by a roll over their sum (`PickProxies`' nemesis / shrine count).
 pub fn weighted_index(weights: &[u32], rng: &mut Rng) -> usize {
-    // (bad data: summed in u64 so huge weights don't overflow; the same roll
-    // whenever the sum fits u32.)
+    // Summed in u64 so huge weights don't overflow.
     let sum: u64 = weights.iter().map(|&w| w as u64).sum();
     if sum == 0 {
         return 0;
@@ -278,9 +260,8 @@ pub fn weighted_index(weights: &[u32], rng: &mut Rng) -> usize {
 }
 
 /// `PickFloors`: `floors` normal floors of the shuffled `floorList` that are not in `recent`, then the
-/// first of the shuffled boss list. The picked normal floors join `recent` (capped at
-/// [`RECENT_FLOORS`]). `forced` (the `GD_ENDLESS_FLOOR` test hook, [`EndlessMap::forced_floor`]) takes the
-/// first slot even when recent; an unknown record is ignored.
+/// first of the shuffled boss list. The picked normal floors join `recent` (capped at [`RECENT_FLOORS`]).
+/// `forced` ([`EndlessMap::forced_floor`]) takes the first slot even when recent; an unknown record is ignored.
 pub fn pick_floors(
     rs: &Ruleset,
     db: &Database,
@@ -336,7 +317,6 @@ pub struct Entity {
     pub pos: [f32; 3],
 }
 
-/// The proxy groups' types (`Endless Dungeon Proxies <X>`, `GameEngine::Initialize`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProxyKind {
     Common,
@@ -348,7 +328,6 @@ pub enum ProxyKind {
 }
 
 impl ProxyKind {
-    /// The instance-group kind string.
     pub fn group_kind(self) -> &'static str {
         match self {
             Self::Common => "Endless Dungeon Proxies Common",
@@ -374,28 +353,23 @@ impl ProxyKind {
     }
 }
 
-/// What the generator reads of the world map: region names, their neighbour lists
-/// (`gd_formats::map::links`), the "Endless Dungeon Entrances" entities and the proxy groups by kind.
+/// What the generator reads of the world map: region names, their neighbour lists, the "Endless Dungeon
+/// Entrances" entities and the proxy groups by kind.
 #[derive(Debug, Clone, Default)]
 pub struct EndlessMap {
     /// Level file names (lower case, `/` separators), by region index.
     pub region_names: Vec<String>,
     pub neighbours: Vec<Vec<usize>>,
     pub entrances: Vec<Entity>,
-    /// The proxy groups: (kind, members).
     pub proxy_groups: Vec<(ProxyKind, Vec<Entity>)>,
-    /// PORT test hook (`GD_ENDLESS_FLOOR`, `gd_game::endless::force_floor`): the floor record forced into
-    /// floor 0's slot of every generation ([`pick_floors`]); `None` in the engine and without the hook.
+    /// PORT test hook: the floor record forced into floor 0's slot of every generation.
     pub forced_floor: Option<String>,
 }
 
 impl EndlessMap {
-    /// Reads what the generator needs from the world map: the region names and their neighbours
-    /// ([`gd_formats::map::links`]), the entrances and the proxy groups (instance groups of the
-    /// `Endless Dungeon ...` kinds) with each member's region and world position, found by scanning
-    /// the levels of the `endlessdungeon` regions for the members' uids (about 500 levels). PORT: the
-    /// engine keeps the entities loaded with the world; the scan is the stand-in for a map without it,
-    /// run at session load (`gd_game::endless::sync_endless`), not inside the first generation.
+    /// Reads what the generator needs from the world map: region names and neighbours, the entrances and the
+    /// proxy groups with each member's region and world position, found by scanning the `endlessdungeon` regions'
+    /// levels for the members' uids. PORT: the engine keeps the entities loaded with the world.
     pub fn from_world(map: &gd_formats::map::MapFile) -> Self {
         use gd_formats::collections::{HashMap, HashSet};
         let mut wanted: HashSet<[u32; 4]> = HashSet::default();
@@ -453,7 +427,6 @@ impl EndlessMap {
     }
 }
 
-/// A proxy chosen for a floor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProxyInfo {
     pub kind: ProxyKind,
@@ -462,7 +435,6 @@ pub struct ProxyInfo {
     pub activated: bool,
 }
 
-/// A floor of the running dungeon.
 #[derive(Debug, Clone)]
 pub struct FloorState {
     pub floor: Floor,
@@ -478,21 +450,18 @@ pub struct FloorState {
 #[derive(Debug, Clone)]
 pub struct Dungeon {
     pub ruleset: String,
-    /// Dungeons generated, this one included; also the `tierDifficulty` the equations were evaluated with.
+    /// Dungeons generated, this one included (`tierDifficulty`).
     pub tier: u32,
     pub floors: Vec<FloorState>,
-    /// The active floor (`activeFloor`).
+    /// `activeFloor`.
     pub active: usize,
-    /// The stamp that makes objects of an older dungeon stale (`dungeonId`).
+    /// `dungeonId`: makes objects of an older dungeon stale.
     pub id: u32,
 }
 
 impl Dungeon {
-    /// `GetRevealMonsters` (`EndlessDungeon_Generator.revealMonsters`, set by `Update`, cleared by
-    /// `IncrementProgress` when a floor
-    /// ends): the active floor is the boss floor or its progress reached 80 % of its total. While it holds,
-    /// `Monster::AppendDetailMapData` marks every live foe of the dungeon on the maps (a star, the boss icon for
-    /// a boss) instead of its own icon.
+    /// `GetRevealMonsters`: the active floor is the boss floor or its progress reached 80 % of its total. While it
+    /// holds, `Monster::AppendDetailMapData` marks every live foe of the dungeon on the maps instead of its own icon.
     pub fn reveal_monsters(&self) -> bool {
         self.floors
             .get(self.active)
@@ -529,8 +498,7 @@ fn norm(p: &str) -> String {
     p.replace('\\', "/").to_ascii_lowercase()
 }
 
-/// An equation result, 0 when not finite (bad data: a NaN floor total never
-/// completes a proxy-less floor, an infinite timer saturates).
+/// An equation result, 0 when not finite.
 fn finite(v: f32) -> f32 {
     if v.is_finite() { v } else { 0.0 }
 }
@@ -541,7 +509,7 @@ fn finite(v: f32) -> f32 {
 pub fn pick_exits(floors: &mut [FloorState], map: &EndlessMap, rng: &mut Rng) {
     let mut entrances = map.entrances.clone();
     shuffle(&mut entrances, rng);
-    // `region_names` are normalised by `EndlessMap::from_world`; the floor paths once here.
+    // `region_names` are already normalised by `EndlessMap::from_world`.
     let paths: Vec<Vec<String>> = floors
         .iter()
         .map(|f| f.floor.regions.iter().map(|p| norm(p)).collect())
@@ -564,12 +532,9 @@ pub fn pick_exits(floors: &mut [FloorState], map: &EndlessMap, rng: &mut Rng) {
     }
 }
 
-/// `LoadProxies`: up to `count` entities of the groups of `kind` that lie in the floor's
-/// regions, each group's members shuffled; returns how many it placed.
-/// PORT: the engine shuffles every group (`EndlessDungeon_Generator::ShuffleGroup`, `std::random_shuffle` on the
-/// CRT `rand()`) and
-/// only breaks the take loop at `count`; that generator is separate from the one modelled here, so returning early
-/// (skipping the later groups' shuffles) picks the same proxies.
+/// `LoadProxies`: up to `count` entities of the groups of `kind` that lie in the floor's regions, each group's
+/// members shuffled; returns how many it placed. PORT: the engine shuffles every group on a separate `rand()`, so
+/// returning early picks the same proxies.
 fn load_proxies(
     floor: &mut FloorState,
     map: &EndlessMap,
@@ -601,10 +566,9 @@ fn load_proxies(
     taken
 }
 
-/// `PickProxies`: every floor (the boss floor and a floor without an entrance too) rolls a nemesis count from
-/// `nemesisProxyWeights` and a shrine count from `shrineProxyWeights` under the `maxShrines` budget shared by the
-/// floors, then loads the common, hero, trap, nemesis, shrine and boss (`bossProxies`) groups lying in its regions,
-/// and sets its total ([`Ruleset::floor_total`] with the common / hero proxies placed).
+/// `PickProxies`: every floor (boss and entrance-less ones too) rolls a nemesis count and a shrine count under the
+/// shared `maxShrines` budget, then loads the common, hero, trap, nemesis, shrine and boss groups lying in its
+/// regions, and sets its total.
 pub fn pick_proxies(
     floors: &mut [FloorState],
     rs: &Ruleset,
@@ -627,9 +591,8 @@ pub fn pick_proxies(
     }
 }
 
-/// `GameEngine::GenerateEndlessDungeon`: the floors, their exits (entrances) and proxies,
-/// floor 0 active. `tier` is the dungeons generated count including this one (`tierDifficulty`); `id` the
-/// new stamp.
+/// `GameEngine::GenerateEndlessDungeon`: floor 0 active. `tier` is the dungeons generated count including this
+/// one; `id` the new stamp.
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
     rs: &Ruleset,

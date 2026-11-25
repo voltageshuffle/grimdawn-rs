@@ -1,5 +1,5 @@
-//! Begin, tear down, begin again in one headless app: what `grimdawn::exit` does for the gameplay half
-//! (`session::end_session_state`) leaves a world a new session can start in.
+//! Begin, tear down, begin again in one headless app: `session::end_session_state` leaves a world a new
+//! session can start in.
 use std::path::{Path, PathBuf};
 
 use gd_formats::save::gdc::Gdc;
@@ -9,7 +9,7 @@ use gd_game_core::inventory::Inventory;
 use gd_game_core::progress::PlayerProgress;
 use gd_game_core::session::{Choice, SessionReady};
 
-/// A port-written save of a new character raised to level 7, in `tmp`.
+/// A port-written save of a new level-7 character, in `tmp`.
 fn saved_character(tmp: &TempDir) -> Option<PathBuf> {
     let mut g = TestGame::new_character("Cycler", false, false)?;
     g.spawn_player();
@@ -21,8 +21,7 @@ fn saved_character(tmp: &TempDir) -> Option<PathBuf> {
     Some(path)
 }
 
-/// Ends the session the way `grimdawn::exit` does for the gameplay half: the session's entities go, the state
-/// resets, the epoch moves.
+/// Ends the session the way `grimdawn::exit` does for the gameplay half.
 fn end_session(g: &mut TestGame, entities: &[bevy::prelude::Entity]) {
     let world = g.app.world_mut();
     for e in entities {
@@ -35,7 +34,6 @@ fn end_session(g: &mut TestGame, entities: &[bevy::prelude::Entity]) {
     g.steps(3);
 }
 
-/// Begins a session with the character saved at `path` at `difficulty`.
 fn begin_saved(g: &mut TestGame, path: &Path, difficulty: usize) {
     let gdc = Gdc::parse(&std::fs::read(path).unwrap()).unwrap();
     let choice = Choice {
@@ -71,7 +69,6 @@ fn begin_end_begin() {
     assert_eq!(level, 7);
     assert!(g.app.world().get_resource::<Inventory>().is_some());
 
-    // End: the player goes (the game despawns the session's entities), the state resets.
     let world = g.app.world_mut();
     world.entity_mut(p).despawn();
     session::end_session_state(world);
@@ -83,7 +80,6 @@ fn begin_end_begin() {
     assert!(world.get_resource::<Inventory>().is_none());
     g.steps(3);
 
-    // Begin again with the same character.
     begin_saved(&mut g, &path, 0);
     g.spawn_player();
     g.steps(5);
@@ -91,8 +87,7 @@ fn begin_end_begin() {
     assert_eq!(g.progress().progress.level, level);
 }
 
-/// Exit in the middle of a fight, then Create a new character: nothing of the first session survives
-/// (the monster and the player are the game's entities, which `grimdawn::exit` despawns).
+/// Exit in the middle of a fight, then Create a new character: nothing of the first session survives.
 #[test]
 fn exit_in_a_fight_then_create() {
     let tmp = TempDir::new("session_cycle_fight");
@@ -133,8 +128,8 @@ fn exit_in_a_fight_then_create() {
     );
 }
 
-/// Monster profiles are built from the session's rules (difficulty balance), so the cache does not outlive the
-/// session: a Normal session followed by an Ultimate one spawns the Ultimate monster, not the cached Normal one.
+/// The monster profile cache does not outlive the session: a Normal session followed by an Ultimate one spawns
+/// the Ultimate monster.
 #[test]
 fn second_session_builds_its_own_monster_profiles() {
     use gd_game::monsters::ProfileCache;

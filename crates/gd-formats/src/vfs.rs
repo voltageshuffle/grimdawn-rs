@@ -2,14 +2,12 @@
 //! override earlier ones, both for archive entries and database records.
 //!
 //! A mod (`Engine::InitializeMod`) is mounted over the install while a session runs: the Crucible
-//! (`survivalmode`, [`SURVIVAL_LAYERS`]: its records and scripts replace stock ones, 1,448 of 1,479
-//! same-named records differ, and `game/questevents.lua` / `main.lua` exist in both) or a user mod
+//! (`survivalmode`, [`SURVIVAL_LAYERS`]: its records and scripts replace stock ones) or a user mod
 //! of a custom game (`mods/<name>/`). [`Vfs::initialize_mod`] / [`Database::initialize_mod`] mount
 //! one, [`Vfs::remove_mod`] / [`Database::remove_mod`] go back to the install
-//! (`Engine::RemoveModDirectory`), so the shared `GameData` needs no swap.
+//! (`Engine::RemoveModDirectory`).
 //! PORT: the engine drops the mod's sources when it is removed; here a mod's index is built on its
-//! first mount and kept (inactive) for the process, so a later session of the same mod mounts it at
-//! once and a record borrowed from it stays valid.
+//! first mount and kept (inactive) for the process, so a record borrowed from it stays valid.
 //!
 //! Mount order (exe `Game::Initialize`, Engine.dll `Engine::InitializeMod` and
 //! `LoadMainDatabase`, `FileSystem::AddSource` / `AddSourceArchive` /
@@ -70,7 +68,7 @@ pub fn mod_layers(name: &str) -> Vec<String> {
 }
 
 /// `path` as the indexes key it: `/` separators, no leading `/`, ASCII lower case. Borrowed
-/// (no allocation) when it already has that form, as most names in the data and the code do.
+/// when it already has that form.
 pub fn normalized(path: &str) -> Cow<'_, str> {
     let is_key = |b: u8| b != b'\\' && !b.is_ascii_uppercase();
     if !path.starts_with('/') && path.bytes().all(is_key) {
@@ -348,9 +346,7 @@ struct Records {
     dbs: Vec<Arz>,
     index: HashMap<String, (u32, u32)>,
     /// Decoded records, kept: one slot per record of each database, filled on first use
-    /// (`None`: the record does not decode). `get` is called every frame by UI / AI systems
-    /// and a decode is an LZ4 block plus a few hundred small allocations; a filled slot is
-    /// read without a lock.
+    /// (`None`: the record does not decode). A filled slot is read without a lock.
     cache: Vec<RecordSlots>,
 }
 
@@ -449,8 +445,7 @@ impl Database {
         self.mods.active().map(|m| m.name.as_str())
     }
 
-    /// The record `name`, decoded on first use and kept. A later call is an index lookup:
-    /// no lock, and no allocation when `name` is already normalised ([`normalized`]).
+    /// The record `name`, decoded on first use and kept.
     pub fn get(&self, name: &str) -> Option<&Record> {
         let key = normalized(name);
         self.mods

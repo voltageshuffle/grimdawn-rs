@@ -8,8 +8,6 @@ description = "Grim Dawn world streaming on Bevy: levels parsed in the backgroun
 license = "MIT"
 
 [features]
-# Dev builds: the `GD_*` hook reads of the streaming (the hooks resource is gd-game-core's, which this forwards to).
-# grimdawn's `dev` forwards here.
 dev = ["gd-game-core/dev"]
 
 [dependencies]

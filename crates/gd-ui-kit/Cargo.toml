@@ -8,9 +8,7 @@ description = "Grim Dawn's shared UI kit: the record-driven widget builder, font
 license = "MIT"
 
 [dependencies]
-# The UI's own records, fonts and text layout (gd-formats), the gameplay data the builder reads
-# (gd-game-core: GameData / GameOptions / Requirements), the UI scale's sheet maths (gd-sim)
-# and the texture cache (gd-render). No gd-game: the kit compiles in parallel with the gameplay systems.
+# No gd-game: the kit compiles in parallel with the gameplay systems.
 bevy = {
   version = "0.20",
   default-features = false,
@@ -37,6 +35,5 @@ gd-formats = { path = "../gd-formats" }
 gd-game-core = { path = "../gd-game-core" }
 gd-render = { path = "../gd-render" }
 gd-sim = { path = "../gd-sim" }
-# TrueType metrics for the FNTD (ja/ko/zh/vi) fonts so layout measures what Bevy renders
-# (already in the tree via Bevy text; no extra compile cost).
+# TrueType metrics for the FNTD (ja/ko/zh/vi) fonts, so layout measures what Bevy renders.
 owned_ttf_parser = "0.25"

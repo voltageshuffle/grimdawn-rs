@@ -1,29 +1,22 @@
-//! The player's experience and gold this session (the level-up / experience
-//! systems are gd-game's `progress`).
+//! The player's experience and gold this session.
 use bevy::prelude::*;
 use gd_sim::progress::Progress;
 
-/// The player gained levels (its profile is rebuilt at `level` with full
-/// life; the game refills energy).
+/// The player gained levels (profile rebuilt at `level` with full life; the game refills energy).
 #[derive(Message, Clone, Debug)]
 pub struct LeveledUp {
     pub player: Entity,
     pub level: i32,
-    /// Levels gained by this rise (`gd_game::play_stats`: one `max_level` each).
     pub gained: u32,
 }
 
-/// The player was granted unspent points by a source that tells the HUD (module doc: events 49 / 50; several events of
-/// one frame / one level-up batch are one message).
+/// The player was granted unspent points (events 49 / 50); several grants of one frame / level-up are one message.
 #[derive(Message, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PointsGained {
-    /// Event 49 (skill points) was sent.
     pub skill: bool,
-    /// Event 50 (attribute points) was sent.
     pub attribute: bool,
 }
 
-/// The player's experience and gold this session (items: `gd_game::inventory`).
 #[derive(Resource)]
 pub struct PlayerProgress {
     pub progress: Progress,

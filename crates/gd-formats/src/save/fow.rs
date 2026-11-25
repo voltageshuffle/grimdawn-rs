@@ -147,9 +147,8 @@ pub struct FogGrid {
     pub cells: Vec<u8>,
 }
 
-/// The largest fog grid [`FogGrid::parse`] accepts: 4096 × 4096 cells cover
-/// 32 km × 32 km at [`CELL`] metres per cell, far beyond any level region;
-/// the cap only stops a corrupt width / height from allocating gigabytes.
+/// The largest fog grid [`FogGrid::parse`] accepts (32 km square at [`CELL`] metres per cell):
+/// stops a corrupt width / height from allocating gigabytes.
 pub const MAX_CELLS: usize = 4096 * 4096;
 
 impl FogGrid {

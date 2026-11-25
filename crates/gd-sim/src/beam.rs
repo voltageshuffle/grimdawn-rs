@@ -13,9 +13,7 @@
 //! effects stop and remove themselves). The ground effect emits while the ray meets a surface (the caller's test).
 //!
 //! The fan (`UpdateBeams`): the ray count and spread are the skill profile's `beamNumber` (0 = 1) and `beamAngle`
-//! (degrees), each plus the learned modifiers' (`Skill::GetSkillModifierData`; the profile loader
-//! `SkillProfile_Modifiers::Load` reads both per level; stock: Aether Ray's 1 ray, the gdx `*_aetherray` item modifiers
-//! +1 ray, +25 degrees). Ray
+//! (degrees), each plus the learned modifiers' (`Skill::GetSkillModifierData`, `SkillProfile_Modifiers::Load`). Ray
 //! k turns about the up axis by `-spread / 2 + k * step`, `step = spread / (n - 1)` (`spread / n` from 360 degrees
 //! on), so the fan is symmetric about the heading and a lone ray points straight ([`fan_angles`]).
 //!

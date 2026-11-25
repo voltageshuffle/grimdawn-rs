@@ -1,8 +1,8 @@
-//! `GD_EXIT_CYCLES` (hooks.rs) plays `n + 1` sessions in a row, each
+//! `GD_EXIT_CYCLES` plays `n + 1` sessions in a row, each
 //! `GD_EXIT_SECS` seconds in game, exiting to the menu ([`crate::exit`]) and starting the same character again
-//! in between; logs the resident memory and the entity count at each stop (`exit-cycle:`), so memory kept across
-//! exits shows as growth, and with the `audit` feature, at each menu stop the biggest archetypes (component names
-//! are `DebugName`s, compiled out without `bevy/debug`). Quits at the end of the last session.
+//! in between; logs the resident memory and the entity count at each stop (`exit-cycle:`), and with the `audit`
+//! feature, at each menu stop the biggest archetypes (component names need `bevy/debug`). Quits at the end of the
+//! last session.
 use bevy::prelude::*;
 use gd_game_core::hooks::Hooks;
 use gd_ui::state::exit::ExitToMenu;
@@ -12,8 +12,7 @@ pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, exit_cycles);
 }
 
-/// What the entities are, by archetype (the biggest groups, with their components): `exit_cycles` runs it at
-/// each menu stop; a group that grows from one menu stop to the next is a leak.
+/// What the entities are, by archetype (the biggest groups, with their components).
 #[cfg(feature = "audit")]
 fn dump_archetypes(world: &mut World) {
     let mut groups: Vec<(usize, String)> = world
@@ -92,8 +91,7 @@ fn exit_cycles(
                 stop("menu", local.done);
                 #[cfg(feature = "audit")]
                 commands.run_system_cached(dump_archetypes);
-                // Leave the menu as `menu::start` does: without it `menu_scene::close_scene` never runs and
-                // the menu camera keeps the stream focus on the menu scene's target.
+                // Leave the menu as `menu::start` does: without it `menu_scene::close_scene` never runs.
                 commands.remove_resource::<crate::menu::MainMenu>();
                 commands.run_system_cached(gd_game::session::load_save);
             }

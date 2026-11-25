@@ -34,10 +34,9 @@
 //! `Item::CreateItem`, no `SetWeaponEnchantment`), so it shows no
 //! enchantment; it gets no trails either.
 //!
-//! The tint is drawn by [`tint_weapons`]. A trail switched mid-swing finishes it ([`dress_weapons`]). PORT:
-//! `weaponActiveEffect` and the swipe / hit sounds are not loaded; the trail stops when the animation the swipe
-//! started in stops playing (the attack action's end); swipes count in the Attack slot and in a weapon skill's cast
-//! (`gd_game_core::char_sounds::weapon_swipe`).
+//! PORT: `weaponActiveEffect` and the swipe / hit sounds are not loaded; the trail stops when the animation the
+//! swipe started in stops playing (the attack action's end); swipes count in the Attack slot and in a weapon skill's
+//! cast.
 use super::items::{Anchor, ItemFx};
 use super::{Effect, StopEmitting, spawn_effect_record};
 use crate::character::Body;
@@ -142,7 +141,6 @@ fn dress_weapons(
             let Ok(dress) = weapons.get_mut(w.root) else {
                 continue;
             };
-            // Unchanged: compared with no record lookup or allocation.
             if dress
                 .as_ref()
                 .is_some_and(|d| d.pak.as_deref() == shown.filter(|_| d.takes_pak))
@@ -343,8 +341,7 @@ fn follow_points(
         };
         let frame = match &b.point {
             Some(point) => {
-                // The point resolved on the body mesh once (no per-frame name
-                // scan); a form swap that replaces the mesh re-resolves it.
+                // The point resolved on the body mesh once; a form swap that replaces the mesh re-resolves it.
                 let fresh;
                 let ap = match cached {
                     Some(f) if Arc::ptr_eq(&f.body, &c.body) => f.point.as_ref(),
@@ -368,7 +365,7 @@ fn follow_points(
         };
         let world = attach_frame(root.affine(), frame, stationary.then_some(root));
         *g = GlobalTransform::from(world);
-        // A mesh effect's parts (`fx/mesh.rs`) were placed by the transform propagation before: move them along.
+        // A mesh effect's parts were placed by the transform propagation before: move them along.
         for c in children.into_iter().flat_map(|c| c.iter()) {
             if let Ok((tf, mut pg)) = parts.get_mut(c) {
                 *pg = g.mul_transform(*tf);
@@ -377,9 +374,8 @@ fn follow_points(
     }
 }
 
-/// A [`BuffFx`]'s attach point resolved on its owner's body mesh (its parent
-/// bone resolved at load, the cached-[`AttachPoint`] convention); re-resolved
-/// when a form swap replaces the mesh. `None`: the mesh lacks the name.
+/// A [`BuffFx`]'s attach point resolved on its owner's body mesh; re-resolved when a form swap replaces the mesh.
+/// `None`: the mesh lacks the name.
 #[derive(Component)]
 struct FollowPoint {
     body: Arc<gd_formats::msh::Mesh>,
@@ -418,7 +414,7 @@ fn form_trails(
             continue;
         }
         for t in cur.into_iter().flat_map(|u| [u.right, u.left]).flatten() {
-            // Let go (`StopEmitting`): its segments fade out, then it goes (`trails::ended`).
+            // Let go (`StopEmitting`): its segments fade out, then it goes.
             if let Ok(mut tr) = trails.get_mut(t) {
                 tr.stop();
                 commands.entity(t).try_insert(StopEmitting);
@@ -529,7 +525,6 @@ fn swipe_trails(
                 continue;
             };
             if let Ok(mut t) = trails.get_mut(t) {
-                // `GD_SHOT_ON=<trail record>` shoots a swing.
                 gd_game_core::visuals::notify(&mut commands, &rec);
                 debug!(
                     "{}: trail {} starts",
@@ -577,7 +572,7 @@ fn swipe_trails(
 }
 
 /// `CharFxPak::UpdateVisibility` / `Skill::UpdateFxVisibility`: the player's
-/// toggled-skill effects follow `toggledAurasSelf` (`gd_game::skill_fx`).
+/// toggled-skill effects follow `toggledAurasSelf`.
 fn toggle_fx_visibility(
     options: Res<GameOptions>,
     players: Query<(), With<Player>>,

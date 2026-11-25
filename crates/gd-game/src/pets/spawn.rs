@@ -20,8 +20,7 @@ pub(super) fn modifier_levels(data: &GameData, loadout: &Loadout) -> Vec<(String
             }
             Some((r.str("petSkillName")?.to_ascii_lowercase(), lvl))
         })
-        // Gear pet modifiers (`modifierSkillName{n}` on worn items' records, the ascendant affix
-        // included) at level 1 ([`gd_sim::skills::gear_pet_modifiers`]).
+        // Gear pet modifiers (`modifierSkillName{n}` on worn items' records) at level 1.
         .chain(book.gear_pet_mods.iter().cloned())
         .collect()
 }
@@ -31,7 +30,7 @@ pub(super) fn spawn_pets(
     mut commands: Commands,
     mut events: MessageReader<SpawnPet>,
     rules: Res<CombatRules>,
-    // Option: optional input (the pet level falls back without progress).
+    // Option: the pet level falls back without progress.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     owners: Query<(
         &Transform,
@@ -62,8 +61,7 @@ pub(super) fn spawn_pets(
         let Ok((otf, loadout, stances, links, owner_buffs)) = owners.get(ev.owner) else {
             continue;
         };
-        // The pet object placement measures (`Skill::PreLoadPet`): the
-        // level's `spawnObjects`; each summon's own record is picked below.
+        // The pet object placement measures (`Skill::PreLoadPet`): the level's `spawnObjects`.
         let Some(base_rec) = rec
             .strs_iter("spawnObjects")
             .nth(ev.level_index)
@@ -72,19 +70,13 @@ pub(super) fn spawn_pets(
         else {
             continue;
         };
-        // `KillExtraPets`: after the new pet joined
-        // the pen, `GetPetLimit` 0 = unlimited, else the oldest live pets of
-        // this skill beyond the limit die through `KillMe(overkillOnDismiss)`
-        // (dying skill runs). The new pet is not spawned yet, so the count
-        // here is one short: kill while `old + 1 > limit`.
-        // `Skill_SpawnQuestPet::SpawnPet`: before the
-        // base spawn, with `SkillProfile.questPetVector` empty (PORT: the
-        // default; no stock skill sets it, only the base template exists),
-        // every unreleased pet of the owner's quest pen, of any skill, is
-        // released alive (`UnJoinLeader(false)`): a new quest pet replaces the old.
+        // `KillExtraPets`: after the new pet joins, the oldest live pets of this skill beyond `GetPetLimit`
+        // (0 = unlimited) die through `KillMe(overkillOnDismiss)`. The new pet is not spawned yet: kill while
+        // `old + 1 > limit`.
+        // `Skill_SpawnQuestPet::SpawnPet`: every unreleased pet of the owner's quest pen is released alive first
+        // (`UnJoinLeader(false)`). PORT: `questPetVector` is taken empty (no stock skill sets it).
         let quest = rec.class == "Skill_SpawnQuestPet";
-        // `Skill::GetPetLimit`: the modifier-summed
-        // `petLimit` / `petBurstSpawn` (the tooltip sums them too).
+        // `Skill::GetPetLimit`: the modifier-summed `petLimit` / `petBurstSpawn`.
         let summon_mods: Vec<(gd_formats::arz::Record, usize)> = links
             .map(|l| {
                 l.mods_of(&ev.skill)
@@ -98,14 +90,12 @@ pub(super) fn spawn_pets(
             gd_sim::skills::summed_attribute(rec, ev.level_index, &summon_mods, "petBurstSpawn");
         let mut mine: Vec<(Entity, f32)> = pets
             .iter()
-            // (A quest pet's are all released before it spawns.)
+            // A quest pet's are all released before it spawns.
             .filter(|(_, p, ..)| p.owner == ev.owner && p.summon == ev.skill && !p.quest && !quest)
             .map(|(e, p, ..)| (e, p.spawned_at))
             .collect();
-        // Where and how many (`pets::placement`): a `Skill_TargetedSpawnPet`
-        // packs its `petBurstSpawn` summons around the target / point, the
-        // hit spawners (Reap Spirit) around what they hit, the
-        // `Skill_SpawnPet` classes theirs around the owner.
+        // Where and how many: a `Skill_TargetedSpawnPet` packs its summons around the target / point, hit spawners
+        // around what they hit, `Skill_SpawnPet` around the owner.
         let target = ev
             .target
             .and_then(|t| targets.get(t).ok())
@@ -145,8 +135,7 @@ pub(super) fn spawn_pets(
             // The player's `GetExtents`: its record's `pathingSize` (Small).
             let radii = super::placement::spawn_pet_radii(&rec.class, 0.5, base);
             let mut set = super::placement::spawn_pet_set(&nav, otf.translation, radii, count);
-            // `GetNewCasterCoords`: the caster keeps its place, the first
-            // point is dropped.
+            // `GetNewCasterCoords`: the caster keeps its place, the first point is dropped.
             if !set.is_empty() {
                 set.remove(0);
             }
@@ -168,8 +157,7 @@ pub(super) fn spawn_pets(
             }
         }
         mine.sort_by(|a, b| a.1.total_cmp(&b.1));
-        // The skill's learned and gear secondaries (`petChanges`,
-        // [`gd_sim::skills::spawn_object`]).
+        // The skill's learned and gear secondaries (`petChanges`).
         let key = ev.skill.to_ascii_lowercase();
         let names = |m: Option<&gd_formats::collections::HashMap<String, Vec<(String, usize)>>>| {
             m.and_then(|m| m.get(&key))
@@ -182,7 +170,7 @@ pub(super) fn spawn_pets(
         // owner's pet modifier levels.
         let level = progress.as_ref().map_or(1, |p| p.progress.level).max(1);
         let owner_bonuses = pet_bonuses_with(&assets.data, loadout, owner_buffs);
-        // `Skill_SpawnPet::SpawnPet` → `Monster::SetLifetime` (module docs).
+        // `Skill_SpawnPet::SpawnPet` → `Monster::SetLifetime`.
         let ttl_mods: Vec<(String, usize, bool)> = links
             .map(|l| {
                 l.mods_of(&ev.skill)
@@ -229,8 +217,7 @@ pub(super) fn spawn_pets(
                 }
                 gone.push(old);
             }
-            // Mini pets: also at most `miniPetLimit` of the owner's mini pets
-            // over all mini summons, the oldest go (module docs).
+            // Mini pets: at most `miniPetLimit` over all mini summons, the oldest go.
             let mini = rec.class == "Skill_SpawnMiniPet";
             let mini_limit = assets.data.engine().mini_pet_limit;
             if mini && mini_limit > 0 {
@@ -337,13 +324,12 @@ pub(super) fn spawn_pets(
                     .entity(e)
                     .insert(gd_game_core::casting::DamageAuras(auras));
             }
-            // Its skills' autocast children (`crate::autocast`, skill-level autocasts: the Wendigo Totem's heal).
+            // Its skills' autocast children (skill-level autocasts).
             if let Some(a) = crate::autocast::SkillAutocasts::of(&assets.data.db, &levels) {
                 commands.entity(e).insert(a);
             }
-            // Self buffs (`Monster::InitSkillsInController`): those among
-            // `buffSelf{,2,3}SkillName` that it has, toggles and timed buffs;
-            // its AI uses them ([`pet_ai`]). No stock pet has a timed one.
+            // Self buffs (`Monster::InitSkillsInController`): those among `buffSelf{,2,3}SkillName` it has; its AI
+            // uses them. No stock pet has a timed one.
             let has_level = |name: &str| {
                 let idx = (1..=40)
                     .find(|i| {
@@ -372,9 +358,8 @@ pub(super) fn spawn_pets(
                     buff_self.push((name.to_owned(), (l - 1) as usize, false));
                 }
             }
-            // Initial toggles go on at once (`ControllerMonsterStateStartup::
-            // UseInitialSkillIfSet`, the monster's startup state, which
-            // `ControllerPet` registers too); damaging ones are on above.
+            // Initial toggles go on at once (`ControllerMonsterStateStartup::UseInitialSkillIfSet`); damaging ones
+            // are on above.
             let mut toggled = Vec::new();
             let mut initial_casts = Vec::new();
             for k in ["initialSkillName", "initial2SkillName"] {
@@ -391,7 +376,7 @@ pub(super) fn spawn_pets(
                     initial_casts.push((name.to_owned(), (l - 1) as usize));
                 }
             }
-            // Buff other: only `buffOtherSkillName` (`monster_skills` module docs).
+            // Buff other: only `buffOtherSkillName`.
             let buff_other = prec.str("buffOtherSkillName").and_then(|name| {
                 let l = has_level(name);
                 let r = assets.data.db.get(name).filter(|_| l > 0)?;
@@ -404,7 +389,7 @@ pub(super) fn spawn_pets(
                 });
                 (secs > 0.0).then(|| (name.to_owned(), li, inner, secs))
             });
-            // `dyingSkillName` (`StartDyingSkill`, module docs).
+            // `dyingSkillName` (`StartDyingSkill`).
             let dying = prec
                 .str("dyingSkillName")
                 .filter(|n| !n.is_empty())
@@ -439,9 +424,8 @@ pub(super) fn spawn_pets(
                     level_index: (l - 1) as usize,
                     kind: k,
                     range: crate::casting::skill_range(&assets.data, r),
-                    // `Monster::InitSkillsInController`: chance, delay and
-                    // timeout from the pet record (0 when missing); the delay
-                    // left starts at 0, the timeout left at the timeout.
+                    // `Monster::InitSkillsInController`: chance, delay and timeout from the pet record (0 when
+                    // missing); the delay left starts at 0, the timeout left at the timeout.
                     chance: prec
                         .f32(&format!("specialAttack{suffix}Chance"))
                         .unwrap_or(0.0),
@@ -457,9 +441,8 @@ pub(super) fn spawn_pets(
                             _ => None,
                         }
                     },
-                    // The record's delay, no floor: `ChooseBestSkill` rolls
-                    // at the engine's moments (a foe found, an attack's end,
-                    // every 200 ms pursuing), not every frame (`pet_ai`).
+                    // The record's delay, no floor: `ChooseBestSkill` rolls only at the engine's moments
+                    // (`pet_ai`), not every frame.
                     delay: prec
                         .f32(&format!("specialAttack{suffix}Delay"))
                         .unwrap_or(0.0),
@@ -570,12 +553,9 @@ pub(super) fn spawn_pets(
     }
 }
 
-/// Pet bonuses are read live by the game (module docs): when an owner's
-/// loadout changes, its pets' profiles are rebuilt with the current bonuses,
-/// keeping their life fraction; also when a self toggle goes on or an aura
-/// buff (`auras.rs`) comes or goes. The profile = the record + pet bonuses +
-/// the switched-on self toggles' records ([`Pet::self_stats`]) + the aura
-/// buffs on it (its own radius auras' buffs come back to it as those).
+/// Pet bonuses are read live: when an owner's loadout changes, a self toggle goes on or an aura buff comes or goes,
+/// its pets' profiles are rebuilt keeping their life fraction. The profile = the record + pet bonuses + the
+/// switched-on self toggles' records ([`Pet::self_stats`]) + the aura buffs on it.
 pub(super) fn refresh_profiles(
     data: Res<GameData>,
     rules: Res<CombatRules>,
@@ -599,8 +579,7 @@ pub(super) fn refresh_profiles(
     >,
 ) {
     for (owner, loadout, owner_buffs) in &owners {
-        // The owner's buffs that carry a pet bonus (a power-up's), their
-        // coming or going rebuilds its pets' profiles like a loadout change.
+        // The owner's buffs that carry a pet bonus; their coming or going rebuilds its pets' profiles.
         let buff_bonus: Vec<(String, usize)> = owner_buffs
             .into_iter()
             .flat_map(|a| &a.list)

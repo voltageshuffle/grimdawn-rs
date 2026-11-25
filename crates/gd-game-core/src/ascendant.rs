@@ -1,6 +1,4 @@
-//! The ascendant altar's data: the offering boxes, the session's altar state
-//! and the formula / reagent record reads. The gameplay (use, activation,
-//! Dread spawns) is `gd_game::ascendant`.
+//! Ascendant altar data: offering boxes, session altar state, formula / reagent reads.
 use bevy::prelude::*;
 
 /// Reagent → (formula record, exclusive).
@@ -26,8 +24,7 @@ pub fn formula_of(db: &gd_formats::vfs::Database, reagent: &str) -> Option<(Stri
     None
 }
 
-/// The formula reagents the altar takes: the exclusive (centre) formulas'
-/// then the inclusive ones (`altarExclusiveRecipes`, `altarInclusiveRecipes`).
+/// Exclusive (centre) formulas' reagents first, then inclusive ones.
 pub fn formula_reagents(db: &gd_formats::vfs::Database) -> Vec<String> {
     let Some(g) = db.get(gd_sim::ascendant::GAME_ASCENDANT) else {
         return Vec::new();
@@ -42,8 +39,7 @@ pub fn formula_reagents(db: &gd_formats::vfs::Database) -> Vec<String> {
         .collect()
 }
 
-/// The altar's boxes: the centre (an exclusive formula's reagent) and five
-/// boxes (inclusive formulas' reagents).
+/// The centre takes an exclusive formula's reagent, the five boxes inclusive ones.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Offering {
     pub center: Option<String>,
@@ -51,9 +47,8 @@ pub struct Offering {
 }
 
 impl Offering {
-    /// Puts `reagent` in its box: an exclusive formula's in the free centre,
-    /// an inclusive one's in the first free box. False when it is no
-    /// formula's reagent or its box is taken.
+    /// Exclusive reagents go in the free centre, inclusive in the first free box.
+    /// False when not a formula reagent or its box is taken.
     pub fn place(&mut self, db: &gd_formats::vfs::Database, reagent: &str) -> bool {
         let Some((_, excl)) = formula_of(db, reagent) else {
             return false;
@@ -71,7 +66,7 @@ impl Offering {
         false
     }
 
-    /// The placed reagents, the centre first (`gd_game::ascendant::activate_altar`'s order).
+    /// Centre first.
     pub fn placed(&self) -> Vec<String> {
         self.center
             .iter()
@@ -81,8 +76,7 @@ impl Offering {
     }
 }
 
-/// The formulas the `placed` reagents install and their levels (the number of boxes holding the formula's reagent),
-/// in first-placed order: the altar window's bonus lists and `gd_game::ascendant::activate_altar`.
+/// Each formula with its level (boxes holding its reagent), in first-placed order.
 pub fn formula_levels(db: &gd_formats::vfs::Database, placed: &[String]) -> Vec<(String, u32)> {
     let mut levels: Vec<(String, u32)> = Vec::new();
     for r in placed {
@@ -97,8 +91,7 @@ pub fn formula_levels(db: &gd_formats::vfs::Database, placed: &[String]) -> Vec<
     levels
 }
 
-/// The reagents one box of `reagent`'s formula takes (`reagentBaseQuantity`, at least 1;
-/// `ItemArtifactFormula::GetReagentBaseQuantityForFormula`).
+/// Reagents per box (`reagentBaseQuantity`, min 1; `ItemArtifactFormula::GetReagentBaseQuantityForFormula`).
 pub fn reagent_quantity(db: &gd_formats::vfs::Database, reagent: &str) -> u32 {
     formula_of(db, reagent)
         .and_then(|(f, _)| db.get(&f))
@@ -107,14 +100,10 @@ pub fn reagent_quantity(db: &gd_formats::vfs::Database, reagent: &str) -> u32 {
         .max(1) as u32
 }
 
-/// The altar this session: whether it was activated, the reagents it was
-/// activated with and the formulas installed (session state).
 #[derive(Resource, Default)]
 pub struct AltarState {
     pub activated: bool,
-    /// The boxes as activated (`GameEngine::GetActivatedAltarReagents`, an
-    /// `AltarOfferConfigInfo`: the centre and the five boxes; the altar
-    /// window's show `AltarWindow::Show` fills its boxes from it).
+    /// The boxes as activated (`GameEngine::GetActivatedAltarReagents`).
     pub reagents: Offering,
     pub formulas: gd_sim::ascendant::Ascendant,
 }

@@ -1,30 +1,21 @@
-//! The stack split of the stack quantity window (`gd_ui` `stack.rs`
-//! draws it); the stack-size and merging rules are `gd_game_core::stack`.
-//!
-//! The split ([`SplitRequest`], GrimDawn.exe `StackWindow` OK
-//! `StackWindow::OnOk`): `n = min(amount, stack − 1)`; nothing when 0; else a copy of
-//! the item with `n` goes on the cursor (its item-move handler, the open
-//! market's id set, so it can be sold on the merchant window,
-//! [`crate::trade::SellHeld`]) and the source keeps `stack − n`. The window's
-//! amount rules are [`gd_game_core::stack::split_max`], [`gd_game_core::stack::typed_amount`],
-//! [`gd_game_core::stack::increase`], [`gd_game_core::stack::decrease`]. PORT: a request while an item is held is refused (the engine
-//! hides the window on every bag / stash click, so its OK never meets a held
-//! item from the mouse).
+//! The stack split of the stack quantity window (`StackWindow::OnOk`):
+//! `n = min(amount, stack − 1)`; nothing when 0; else a copy of the item with `n` goes on
+//! the cursor and the source keeps `stack − n`.
+//! PORT: a request while an item is held is refused (the engine hides the window on every
+//! bag / stash click, so its OK never meets a held item).
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game_core::inventory::{Inventory, ItemLoc};
 use gd_game_core::stack::count;
 use gd_game_core::stash::Stash;
 
-/// The stack window's OK (module doc): `amount` of the stack at `from` (a
-/// bag or stash cell of it) goes on the cursor.
+/// `amount` of the stack at `from` (a bag or stash cell of it) goes on the cursor.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct SplitRequest {
     pub from: ItemLoc,
     pub amount: u32,
 }
 
-/// The stack at `loc` (bags or the stash).
 fn stack_mut<'a>(
     inv: &'a mut Inventory,
     stash: Option<&'a mut Stash>,
@@ -46,11 +37,10 @@ fn stack_mut<'a>(
         .map(|p| &mut p.item)
 }
 
-/// Applies [`SplitRequest`]s.
 fn apply_splits(
     mut msgs: MessageReader<SplitRequest>,
     mut inv: ResMut<Inventory>,
-    // Optional: a bag split needs no stash (it exists once `init_stash` ran).
+    // Option: a bag split needs no stash.
     mut stash: Option<ResMut<Stash>>,
     mut done: MessageWriter<crate::trade::TradeDone>,
 ) {

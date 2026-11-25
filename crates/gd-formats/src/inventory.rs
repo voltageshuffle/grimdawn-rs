@@ -26,9 +26,7 @@
 //! down the columns / along the rows. `Sort` writes the positions only when the solve fits every item, and
 //! returns true only when an item moved; the item order (the sack's id map) never changes. Its callers retry
 //! a layout that moved nothing or did not fit with the next one, at most four more times
-//! (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack`, the caravan's `StashTab::SortSelectedSack`);
-//! what picks the first layout is the caller's (`gd_game_core::inventory::SortBag`,
-//! `gd_game_core::stash::StashRequest::Sort`).
+//! (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack`, the caravan's `StashTab::SortSelectedSack`).
 use crate::collections::HashMap;
 use crate::save::item::Item;
 use crate::tex::Tex;
@@ -60,10 +58,8 @@ impl Footprint {
 
 type FootprintCache = LazyLock<Mutex<HashMap<PathBuf, HashMap<String, Option<Footprint>>>>>;
 
-/// Footprints by install root, then by bitmap path (mod-prefixed while a mod is mounted):
-/// the install's bitmaps are immutable, so each footprint is read once per process (the
-/// `vfs` `Records::cache` pattern). `None` is kept too: a missing or broken bitmap stays
-/// 1×1 without re-reading.
+/// Footprints by install root, then by bitmap path (mod-prefixed while a mod is mounted).
+/// `None` is cached too: a missing or broken bitmap stays 1×1.
 static FOOTPRINTS: FootprintCache = LazyLock::new(Default::default);
 
 /// Reads an item bitmap (`.tex`) header to get its footprint, memoised ([`FOOTPRINTS`]).
@@ -438,7 +434,7 @@ pub enum EquipSlot {
 /// tests the hands against the class's right/left hand type
 /// masks: two-handers, staves and the hunting spear have no left-hand type,
 /// shields/off-hands no right-hand type, other one-handers both, the left
-/// gated by dual wielding, see the client's `allowed_slots`). The chest piece
+/// gated by dual wielding). The chest piece
 /// also fits the unused "Clothing" location, which the port has no slot for.
 pub fn slots_for_class(class: &str) -> &'static [EquipSlot] {
     use EquipSlot::*;

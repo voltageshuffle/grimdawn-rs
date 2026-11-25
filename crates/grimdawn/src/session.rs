@@ -8,7 +8,6 @@ use gd_ui::state::session::AppState;
 use gd_world::StreamedMap;
 
 /// `AppState` follows the session resources (PreUpdate, so the transition applies the same frame).
-// The area-ready gate reads StreamedMap/Levels/PlayerStart alongside the state mirrors.
 #[allow(clippy::too_many_arguments)]
 fn sync_state(
     playing: In<bool>,
@@ -21,10 +20,8 @@ fn sync_state(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let want = if playing.0 {
-        // Lift the cover only once the spawn area is fully streamed in, like a
-        // teleport (`StreamedMap::area_ready`); once playing, stay playing. The test
-        // arena replaces the streamed levels, so it does not wait.
-        // (Tested only while still loading: the area test is not free.)
+        // Lift the cover only once the spawn area is fully streamed in, like a teleport; once playing,
+        // stay playing. The test arena replaces the streamed levels, so it does not wait.
         let area_ready = || match (&world, &levels, &start) {
             (Some(w), Some(l), Some(sp)) => w.area_ready(l, sp.0),
             _ => true,
@@ -59,8 +56,10 @@ impl Plugin for SessionPlugin {
                     save_input.before(gd_game::save::SaveStage::Save),
                 ),
             );
+        // In the first frame, after the startup schedules: the session's baseline (`begin`) must hold what they
+        // spawn (cameras, lights), or Exit to Main Menu despawns it as the session's.
         #[cfg(feature = "dev")]
-        app.add_systems(Startup, load_save);
+        app.add_systems(First, load_save.run_if(run_once));
     }
 }
 
@@ -77,7 +76,6 @@ fn resolve_start(
         return;
     }
     let Some(world) = world else { return };
-    // `GD_START` (hooks.rs).
     #[cfg(feature = "dev")]
     let hooked = hooks
         .session

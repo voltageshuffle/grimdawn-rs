@@ -1,20 +1,13 @@
-//! Damage sectors: the cells of the map's damage layer (sector layer 7, `DamageSectorData`,
-//! [`gd_formats::map::sector::DamageSector`]) hurt a player standing in them. Stock: 18 entries in `world001.map`
-//! (aether, poison, fire, chaos, cold, physical; 1 % to 30 %), such as the aether fields north of Homestead, which the
-//! Shattered Realm's floors reuse.
+//! Damage sectors: the cells of the map's damage layer (sector layer 7, `DamageSectorData`) hurt a
+//! player standing in them.
 //!
-//! Game.dll `TickManager` (engine-wide, ctor: 1000 ms period, factor 1.0; `Update`
-//! counts the frame time down and runs `Tick` every 1000 ms, not while the engine is
-//! paused): for each player, the layer-7 id of its cell in its own region's level (`SectorLayers::GetTargetId`);
-//! with an entry whose damage × factor is above 0, a player that is not invincible (`Player::IsInvincible`) and
-//! without an active purity skill (`SkillManager::IsPurityActive`: one of `gameengine.dbr` `puritySkillCheck`
-//! toggled or running; stock lists none, so never):
-//! - the controlled player takes `CombatManager::ApplyDamage(max life × damage, type)`: the combat filters
-//!   (absorbs) but no `TakeAttack`, so no resistance ([`crate::afflictions::Afflictions::apply_damage`]), and
-//!   `CancelAcceleratedLifeRegen` (the life loss stops the constitution regen, `crate::constitution`);
-//! - the entry's effect record (stock: `records/fx/damagedefault/dmgabs_*_fx01.dbr`, `EffectEntity`) starts
-//!   emitting at the player's centre of mass (placed, not attached). PORT: the `FxPak` branch of a record that is
-//!   no `EffectEntity` is not ported (no stock use).
+//! Game.dll `TickManager` (1000 ms period, factor 1.0; not while paused): for each player, the layer-7
+//! id of its cell in its own region's level; with an entry whose damage × factor is above 0, a player
+//! not invincible and without an active purity skill (`SkillManager::IsPurityActive`; stock lists none):
+//! - takes `CombatManager::ApplyDamage(max life × damage, type)`: absorbs but no `TakeAttack`, so no
+//!   resistance, and `CancelAcceleratedLifeRegen`;
+//! - the entry's effect record starts emitting at the player's centre of mass (placed, not attached).
+//!   PORT: the `FxPak` branch of a record that is no `EffectEntity` is not ported (no stock use).
 use crate::afflictions::Afflictions;
 use crate::combat::Invincible;
 use bevy::prelude::*;
@@ -23,10 +16,9 @@ use gd_game_core::data::GameData;
 use gd_game_core::levels::Levels;
 use gd_game_core::player::Player;
 
-/// The sector layer of the damage sectors.
 const DAMAGE_LAYER: usize = 7;
 
-/// `TickManager` +0: ms to the next tick (module doc).
+/// `TickManager` +0: ms to the next tick.
 #[derive(Resource)]
 pub struct TickManager(pub i32);
 
@@ -50,7 +42,6 @@ impl Plugin for DamageSectorsPlugin {
     }
 }
 
-/// `TickManager::Update` / `Tick` (module doc).
 fn damage_tick(
     mut commands: Commands,
     (time, mut carry): (Res<Time>, Local<f32>),
@@ -111,8 +102,7 @@ fn damage_tick(
     }
 }
 
-/// The damage sector at `pos`: the layer-7 entry of the cell in `region`'s level (else whichever loaded level
-/// covers `pos`).
+/// The layer-7 entry of the cell in `region`'s level (else whichever loaded level covers `pos`).
 fn sector_at(
     levels: &Levels,
     region: Option<usize>,

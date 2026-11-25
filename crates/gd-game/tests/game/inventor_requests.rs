@@ -1,7 +1,5 @@
-//! The Inventor's windows only write requests (`CraftRequest`,
-//! `RerollRequest`, ...); `gd_game::crafting` / `reroll` systems apply them.
-//! Same rules as `crafting.rs` checks by calling the functions; here the
-//! messages go through the schedule.
+//! The Inventor's windows only write requests (`CraftRequest`, `RerollRequest`, ...); here the messages go
+//! through the schedule.
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game::crafting::{CraftRequest, SlotReturn};
@@ -19,7 +17,6 @@ fn item(rec: &str) -> Item {
     }
 }
 
-/// The `SlotReturn`s written since the last call.
 fn returns(g: &mut TestGame) -> Vec<SlotReturn> {
     g.app
         .world_mut()
@@ -44,7 +41,7 @@ fn craft_request_pays_and_takes_reagents() {
         .progress
         .level
         .max(1) as u32;
-    // Provide the money and the reagents (and none of the others' leftovers).
+    // Only the money and reagents, none of the others' leftovers.
     let w = g.app.world_mut();
     w.resource_scope(|w, mut inv: Mut<Inventory>| {
         let stash = w.resource::<Stash>();

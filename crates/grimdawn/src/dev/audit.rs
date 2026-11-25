@@ -1,8 +1,7 @@
-//! Session audit: `GD_CENSUS` (hooks.rs) writes, `GD_CENSUS_SECS` (default
-//! 25) seconds after the session began (`SessionReady` added), what the session added to the world since then:
-//! resources created, resources that existed before and were mutated, and the entity kinds spawned
-//! (archetype census). It is the checklist for an in-process session teardown. Component and resource
-//! names need Bevy's `debug` feature: `cargo dev-build --features audit`.
+//! Session audit: `GD_CENSUS` writes, `GD_CENSUS_SECS` (default 25) seconds after the session began, what the
+//! session added to the world since then: resources created, resources that existed before and were mutated,
+//! and the entity kinds spawned (archetype census). Component and resource names need Bevy's `debug` feature:
+//! `cargo dev-build --features audit`.
 use bevy::ecs::component::ComponentId;
 use bevy::prelude::*;
 use gd_formats::collections::HashSet;
@@ -13,7 +12,7 @@ pub struct AuditPlugin;
 
 impl Plugin for AuditPlugin {
     fn build(&self, app: &mut App) {
-        // A plugin `build` decides which systems exist (`main` inserts the hooks before the plugins).
+        // `main` inserts the hooks before the plugins.
         if app
             .world()
             .resource::<gd_game_core::hooks::Hooks>()

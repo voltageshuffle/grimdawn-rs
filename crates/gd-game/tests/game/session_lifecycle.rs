@@ -1,5 +1,5 @@
-//! What a second session in the same process relies on (`grimdawn::exit`): `NewSession` fires once per
-//! teardown, and systems gated on session resources run before any session exists.
+//! What a second session in the same process relies on: `NewSession` fires once per teardown, and
+//! systems gated on session resources run before any session exists.
 use bevy::prelude::*;
 use gd_game::testing::{data, headless_app};
 use gd_game_core::session::{NewSession, SessionEpoch};
@@ -35,8 +35,8 @@ fn new_session_fires_once_per_epoch() {
     assert_eq!(app.world().resource::<Begun>().0, 2);
 }
 
-/// Before a session starts (the main menu) the headless systems must run without the session's resources:
-/// the gated ones are skipped, none fails parameter validation.
+/// Before a session starts the headless systems run without the session's resources: the gated
+/// ones are skipped, none fails parameter validation.
 #[test]
 fn systems_run_before_a_session_starts() {
     let Some(data) = data() else { return };

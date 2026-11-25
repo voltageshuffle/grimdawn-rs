@@ -21,11 +21,9 @@ pub struct Recipe {
     pub search_lines: Vec<String>,
 }
 
-/// The list's groups: (tab, header tag), in the window's order.
-/// (exe `CraftList::BuildGroups` builds the table): each group names the item-type
-/// ranks it takes (`Item::GetSortRank`, `gd_formats::inventory::sort_rank`) and, for weapon
-/// groups, the weapon types (`Item::GetWeaponType`); relic groups by tier; see
-/// [`group_of`].
+/// The list's groups: (tab, header tag), in the window's order (exe `CraftList::BuildGroups`): each group names the
+/// item-type ranks it takes (`Item::GetSortRank`) and, for weapon groups, the weapon types (`Item::GetWeaponType`);
+/// relic groups by tier; see [`group_of`].
 pub const GROUPS: [(usize, &str); 26] = [
     (0, "tagCraftingRelicsTier01"),
     (0, "tagCraftingRelicsTier02"),
@@ -55,7 +53,6 @@ pub const GROUPS: [(usize, &str); 26] = [
     (4, "tagCraftingMaterials"),
 ];
 
-/// A list row: a group header or a recipe.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Row {
     Header(usize),
@@ -133,7 +130,7 @@ impl CraftList {
             });
         }
         let tag = |k: &str| crafter.str(k).unwrap_or("").to_string();
-        // Within a group: by shown name (as the real list).
+        // Within a group: by shown name.
         recipes.sort_by_cached_key(|r| {
             (
                 r.group,
@@ -201,9 +198,8 @@ impl CraftList {
             && (query.is_empty() || gd_sim::items::market::search_matches(&r.search_lines, query))
     }
 
-    /// Fills every recipe's search lines: the product item's search text
-    /// (`gd_sim::items::tooltip_item::item_search_text`) as search lines
-    /// (module doc). Called once per list (`trade.rs` `search_hits`).
+    /// Fills every recipe's search lines from the product item's search text
+    /// (`gd_sim::items::tooltip_item::item_search_text`).
     pub fn fill_search_lines(&mut self, ctx: &gd_sim::items::tooltip_item::TipCtx) {
         for r in &mut self.recipes {
             let item = gd_formats::save::item::Item {

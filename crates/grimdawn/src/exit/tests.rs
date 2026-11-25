@@ -1,6 +1,5 @@
 //! Every resource of the two game crates is either reset / removed when the session ends or listed in
-//! [`super::KEEP`]: a new resource has to be classified, or the next Exit to Main Menu leaves its state behind (a
-//! paused clock, a frozen preview, a cache built for the other difficulty).
+//! [`super::KEEP`].
 //!
 //! The resources are the types that derive `Resource` plus whatever a plugin registers by type (the
 //! `init_resource` / `insert_resource` families and the non-send forms; Bevy's generic ones are skipped). A
@@ -15,27 +14,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// The teardown functions: (module, signature start).
 const HANDLERS: &[(&str, &str)] = &[
     ("grimdawn::exit", "fn end_session("),
     ("gd_game::session", "fn end_session_state("),
     ("grimdawn::ui", "fn reset_session("),
     ("gd_ui", "fn reset_session("),
-    // `OnExit(AppState::InGame)`.
     ("gd_ui::loading", "fn teardown_hud("),
-    // Run by `end_session` (through `open_world`): the map's resources.
+    // Run by `end_session` (through `open_world`).
     ("gd_world", "fn install_world("),
 ];
 
-/// One source file: its module path (`grimdawn::ui::loading`) and its text.
+/// One source file: its module path and its text.
 struct Src {
     module: String,
     text: String,
 }
 
-/// The sources below `dir` (the `src` of crate `krate`), without their unit tests (the
-/// `#[cfg(test)] mod` at the end of a file, a `tests.rs` file) and gd-game's test harness (`testing.rs`, the
-/// `testing` feature): what runs in the game.
+/// The sources below `dir`, without unit tests and gd-game's test harness (`testing.rs`).
 fn sources(krate: &str, root: &Path, dir: &Path, out: &mut Vec<Src>) {
     for e in std::fs::read_dir(dir).unwrap().flatten() {
         let p = e.path();
@@ -167,7 +162,6 @@ fn uses(src: &str) -> BTreeMap<String, String> {
     out
 }
 
-/// The crates a path may start with as written.
 const CRATES: &[&str] = &[
     "gd_formats",
     "gd_sim",
@@ -185,9 +179,7 @@ const CRATES: &[&str] = &[
     "std",
 ];
 
-/// What resolving a written path needs: each module's types and `use` items, and the resources.
 struct Ctx {
-    /// Every `struct` / `enum` of each module, by name.
     defs: BTreeMap<String, BTreeSet<String>>,
     uses: BTreeMap<String, BTreeMap<String, String>>,
     derived: BTreeSet<String>,
@@ -221,7 +213,6 @@ impl Ctx {
         self.defs.get(module).is_some_and(|d| d.contains(name))
     }
 
-    /// The module path `segs` names, written in `module`.
     fn module_path(&self, module: &str, segs: &[&str], depth: u32) -> Vec<String> {
         let mut base: Vec<String> = module.split("::").map(String::from).collect();
         let Some((&first, rest)) = segs.split_first() else {
@@ -250,8 +241,8 @@ impl Ctx {
         path
     }
 
-    /// The full path of the type `written` names in the file of `module`. A name that only an outside
-    /// glob brings in (`bevy::prelude::*`) stays as written unless exactly one resource has that name.
+    /// The full path of the type `written` names in `module`. A name only an outside glob brings in
+    /// (`bevy::prelude::*`) stays as written unless exactly one resource has that name.
     fn resolve(&self, module: &str, written: &str) -> String {
         self.resolve_at(module, written, 0)
     }
@@ -262,7 +253,7 @@ impl Ctx {
         if !prefix.is_empty() {
             let parent = self.module_path(module, prefix, depth).join("::");
             if depth < 8 && self.uses.contains_key(&parent) {
-                // Through the parent's own items and re-exports (`pub use gd_game::teleport::PendingTravel`).
+                // Through the parent's own items and re-exports.
                 let full = self.resolve_at(&parent, name, depth + 1);
                 if full.contains("::") {
                     return full;
@@ -282,7 +273,6 @@ impl Ctx {
             let parent = self.module_path(module, prefix, depth).join("::");
             return self.resolve_at(&parent, &format!("self::{}", last(u)), depth + 1);
         }
-        // The module's globs (`pub use gd_game::session::*`, `pub use self::leaps::*`).
         for (k, glob) in used.into_iter().flatten() {
             if !k.starts_with('*') || depth >= 8 {
                 continue;
@@ -307,7 +297,6 @@ impl Ctx {
     }
 }
 
-/// The types `src` derives `Resource` for, by full path.
 fn derived(src: &Src, out: &mut BTreeSet<String>) {
     let text = &src.text;
     for (i, _) in text.match_indices("#[derive(") {
@@ -319,7 +308,6 @@ fn derived(src: &Src, out: &mut BTreeSet<String>) {
         {
             continue;
         }
-        // The item under the derive, past further attributes and comments.
         let item = rest[end + 2..]
             .lines()
             .map(str::trim)
@@ -335,7 +323,6 @@ fn derived(src: &Src, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The types `src` registers by name.
 fn registered(ctx: &Ctx, src: &Src, out: &mut BTreeSet<String>) {
     for pat in [
         "init_resource::<",
@@ -351,7 +338,6 @@ fn registered(ctx: &Ctx, src: &Src, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The body of the function whose signature starts with `sig`.
 fn body<'a>(src: &'a str, sig: &str) -> &'a str {
     let at = src
         .find(sig)
@@ -373,7 +359,6 @@ fn body<'a>(src: &'a str, sig: &str) -> &'a str {
     panic!("unbalanced braces after `{sig}`");
 }
 
-/// The types the teardown function `sig` of `src` removes or replaces, by full path.
 fn resets(ctx: &Ctx, src: &Src, sig: &str, out: &mut BTreeSet<String>) {
     let body = body(&src.text, sig);
     for pat in [
@@ -399,7 +384,7 @@ fn resets(ctx: &Ctx, src: &Src, sig: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-/// (every resource, the ones the teardown functions `handlers` (module, signature) reset), by full path.
+/// (every resource, the ones `handlers` reset), by full path.
 fn scan(files: &[Src], handlers: &[(&str, &str)]) -> (BTreeSet<String>, BTreeSet<String>) {
     let ctx = Ctx::new(files);
     let mut all = ctx.derived.clone();

@@ -25,53 +25,36 @@
 //!   click toggles the pet's selection, a right click opens the menu at the
 //!   cursor; with a hotbar slot armed (`PlayerHotSlotCtrl::IsAnySlotActive`,
 //!   hot slots not disabled) a left or right press on the frame's rect
-//!   instead casts the slot's skill on the pet ([`CastOnAlly`], whose docs
-//!   give the engine's rule), one on the stance bitmap only is not the
-//!   portrait's (the engine lets it through to the world);
+//!   instead casts the slot's skill on the pet ([`CastOnAlly`]), one on the
+//!   stance bitmap only goes through to the world;
 //! - the menu (class at `PopupMenu::PopupMenu`, layout `PopupMenu::Layout`, draw
 //!   `PopupMenu::Draw`, mouse `PopupMenu::HandleMouseEvent`) lists `tagPortraitAggressive`,
 //!   `tagPortraitNormal`, `tagPortraitDefensive`, `tagPortraitDisband`; width =
 //!   max(60, widest label) + 10, rows `Test String` line height + 3 apart,
 //!   labels centred, the hovered row in `style_defaultwhite_sizen_bright`
 //!   (others `style_defaultwhite_sizen`), over `records/ui/generic/
-//!   basicbackground.dbr` (the rect grown by `Padding`: the corners / edges
-//!   around its inner rect — the shared [`Ui::border_paths`] frame — then
-//!   the filler stretched over the inner rect, all tinted white,
-//!   `BasicBackground::Draw`; black pieces whose alpha shades: the filler is 65 %
-//!   black, blended in gamma space, see `background`). A click on a row runs it and closes the
-//!   menu; a click elsewhere closes it and goes on to the world.
+//!   basicbackground.dbr` (the rect grown by `Padding`, its frame around the
+//!   inner rect, then the filler stretched over it, all tinted white,
+//!   `BasicBackground::Draw`; the filler is 65 % black, blended in gamma
+//!   space). A click on a row runs it and closes the menu; a click elsewhere
+//!   closes it and goes on to the world.
 //! - after the stance bitmap, the pet's buff icons (`Character::
 //!   GetActiveStatusSkills`, `gd_game::buff_bar::pet_icons`; each skill's up
 //!   bitmap, those with a texture only) at 0.4 of their size, white, at
 //!   (`PetBuffIconLocationX` + n·`PetBuffIconSeparation`, `PetBuffIconLocationY`)·s
 //!   (party members use `BuffIconLocation*`); no timer or tooltip. One row, no
 //!   wrapping. PORT: the engine's fixed `panelDistance` step lets the next portrait
-//!   cover icons reaching past it (stock 40 + 12.8 > 48); here that portrait moves
-//!   down by the excess (`build`, from the drawn icons); hit areas follow.
+//!   cover icons reaching past it; here that portrait moves down by the excess.
 //!
-//! The icon size is the bitmap's texture size × the UI scale (`UIBitmap::SetTexture`
-//! sets the bitmap rect when it loads) × 0.4: 32 × 32 skill icons
-//! come out 13 px at 1920 × 1080 (scale 1), 15 px apart. The stance icon
-//! (the red sword: Aggressive, `PetStances::portrait`) is drawn right of
-//! the bars in the real game too.
+//! The icon size is the bitmap's texture size × the UI scale × 0.4
+//! (`UIBitmap::SetTexture`).
 //!
-//! The armed slot is `gd_game::hotbar::ArmedSlot` (a hot slot button clicked
-//! with a skill that wants a target); with one armed, a press on the stance
-//! bitmap only is the world's: it uses the armed slot at the cursor
-//! (`casting::armed_click`).
-//!
-//! PORT: the menu constants (60, 10, 3, padding) are scaled by the UI scale
-//! like every other size; the portrait's
+//! PORT: the menu constants (60, 10, 3, padding) are scaled by the UI scale;
 //! key actions 13 / 15 (stance back / forward) and 14 (disband) of
 //! `PlayerPortrait::HandleKeyEvent` are not bound; a portrait shows its summon skill's current
 //! stance ([`PetStances::portrait`]; vanilla keeps the value each portrait
-//! was created with until its own menu changes it). The bar fills follow the
-//! shared `BarGraph` fill rule (`hud::animate_bars`): ratio-driven, no pixel
-//! quantise; the damage flash runs down on real time (the UI animates while
-//! the game is paused).
-//!
-//! `GD_PET_SELECT` / `GD_PET_MENU` (hooks.rs): toggle the first portrait's
-//! selection / open its menu.
+//! was created with until its own menu changes it). The bar fills are ratio-driven, no pixel
+//! quantise; the damage flash runs down on real time.
 use super::Ui;
 use super::contains;
 use super::window::despawn_all;
@@ -92,7 +75,7 @@ const BACKGROUND: &str = "records/ui/generic/basicbackground.dbr";
 const MENU_STYLE: &str = "records/ui/styles/text/style_defaultwhite_sizen.dbr";
 const MENU_STYLE_HOVER: &str = "records/ui/styles/text/style_defaultwhite_sizen_bright.dbr";
 
-/// The menu rows (`PlayerPortrait::OpenPetMenu`, pet portraits).
+/// `PlayerPortrait::OpenPetMenu`.
 const MENU: [(&str, Option<Stance>); 4] = [
     ("tagPortraitAggressive", Some(Stance::Aggressive)),
     ("tagPortraitNormal", Some(Stance::Normal)),
@@ -131,16 +114,14 @@ impl Plugin for PetPortraitPlugin {
 #[derive(Resource, Default, Clone, Copy, PartialEq)]
 pub struct PetMenu(pub Option<(Entity, Vec2)>);
 
-/// The built portraits (physical px), from the drawing pass (`build`), and
-/// the menu's rect and rows.
+/// Physical px.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct PortraitLayout {
     pub portraits: Vec<PortraitHit>,
     pub menu: Option<(URect, f32)>,
 }
 
-/// One portrait's hit areas: the frame (`BackgroundImagePet`, the rect a
-/// cast with an armed slot needs) and the stance bitmap.
+/// The frame (`BackgroundImagePet`, the rect a cast with an armed slot needs) and the stance bitmap.
 #[derive(Clone, PartialEq)]
 pub struct PortraitHit {
     pub pet: Entity,
@@ -168,21 +149,17 @@ fn stance_record(s: Stance) -> &'static str {
     }
 }
 
-/// One portrait's state, as drawn. The bars' widths are not here: [`animate_bars`] moves the fills in
-/// place, so a changing life / energy does not rebuild the portraits.
+/// One portrait's state, as drawn; the bar widths are animated in place by [`animate_bars`].
 #[derive(Clone, PartialEq)]
 struct Shown {
     pet: Entity,
     icon: String,
     stance: Stance,
     selected: bool,
-    /// Its buff icons (`HudValues::pet_buffs`).
     buffs: Vec<String>,
 }
 
-/// A portrait's bar fill ([`build`]), animated in place by [`animate_bars`]: the pet, which bar, the
-/// fill rule (a solid bar: the default horizontal [`BarGraph`]), the bar's rect (physical px) and the
-/// window's inverse scale factor.
+/// A portrait's bar fill: the bar's rect (physical px) and the window's inverse scale factor.
 #[derive(Component)]
 struct PetBarFill {
     pet: Entity,
@@ -213,8 +190,7 @@ fn build(
     roots: Query<Entity, With<PortraitRoot>>,
     mut layout: ResMut<PortraitLayout>,
     mut flashes: Query<&mut PortraitFlash>,
-    // The pet records' (StatusIcon, StatusIconRed), cached (no DB lookup per pet per frame); cleared with a
-    // new session (the mounted mod may have changed the records).
+    // The pet records' (StatusIcon, StatusIconRed); cleared with a new session.
     mut icons: Local<HashMap<String, (String, String)>>,
     mut built: Local<Option<(UVec3, Vec<Shown>, PetMenu, Option<usize>)>>,
     values: Res<super::HudValues>,
@@ -231,7 +207,6 @@ fn build(
     };
     let s = assets.scale(size);
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
-    // Which pets, and how each looks this frame.
     let (owner, stances) = players
         .single()
         .map(|(e, s)| (Some(e), s))
@@ -247,8 +222,6 @@ fn build(
         })
         .unwrap_or_default();
     let dt = time.delta_secs();
-    // The pet records' status icons, cached (no DB lookup per pet per frame). Populated before the
-    // drawn state borrows them.
     for &e in &order {
         let Ok((_, pet, _, _)) = pets.get(e) else {
             continue;
@@ -262,7 +235,6 @@ fn build(
             );
         }
     }
-    // The drawn state, borrowed (the signature is compared by reference; only a rebuild clones).
     let mut shown: Vec<(Entity, &str, Stance, bool, &[String])> = Vec::new();
     for &e in &order {
         let Ok((_, pet, cb, dead)) = pets.get(e) else {
@@ -308,7 +280,6 @@ fn build(
         (Some((r, row_h)), Some(p)) if contains(&r, p) => Some(((p.y - r.y) / row_h) as usize),
         _ => None,
     };
-    // The size carries the UI scale (an applied UI Scale rebuilds).
     let sk = size.extend(assets.scale(size).to_bits());
     let same = built.as_ref().is_some_and(|(s, sh, m, h)| {
         *s == sk
@@ -354,7 +325,6 @@ fn build(
         1.0 / win.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
     );
-    // Column origin (`PlayerStatusPanel::Load`).
     let x0 = (f("initialPanelPositionX") * s).round();
     let y_off = f("initialPanelPositionY") * s;
     let bottom = rec.str("windowScreenAlignmentY") == Some("Bottom");
@@ -370,11 +340,8 @@ fn build(
     };
     let field = |k: &str| rec.str(k).unwrap_or("").to_string();
     // PORT: the engine steps `panelDistance` per portrait whatever the buffs
-    // (`PlayerStatusPanel::LayoutPortraits`), so the next portrait's bars cover the icons
-    // that reach past that step (stock: icons 40..52.8 vs step 48). Here a
-    // portrait whose icon row ends below the step pushes the next one down by
-    // the excess, from the same textured icons the row draws.
-    // The fills are solid rects: the shared bar rule, horizontal, no animation.
+    // (`PlayerStatusPanel::LayoutPortraits`); here an icon row ending below the step pushes the
+    // next portrait down by the excess.
     let bar = BarGraph::default();
     let mut next_y = y0;
     for p in shown.iter() {
@@ -382,7 +349,6 @@ fn build(
         let (hr, mr) = (rect(&ui, pos, "PetHealthBar"), rect(&ui, pos, "PetManaBar"));
         ui.solid(hr, Color::BLACK);
         ui.solid(mr, Color::BLACK);
-        // The fills start at the current width; `animate_bars` moves them in place.
         let Ok((_, pet, cb, _)) = pets.get(p.pet) else {
             continue;
         };
@@ -441,8 +407,6 @@ fn build(
                 )
                 .map(|(_, r)| r);
         }
-        // Buff icons: textured ones only, 0.4 of their size, a row from
-        // `PetBuffIconLocation{X,Y}` `PetBuffIconSeparation` apart.
         let (bx, by, step) = (
             ui.sc(f("PetBuffIconLocationX")),
             ui.sc(f("PetBuffIconLocationY")),
@@ -466,7 +430,6 @@ fn build(
         next_y += dist + (by + row_h - dist).max(0.0);
         layout.portraits.push(hit);
     }
-    // The menu.
     if let PetMenu(Some((_, at))) = *menu {
         let labels: Vec<String> = MENU
             .iter()
@@ -504,9 +467,7 @@ fn build(
     }
 }
 
-/// The portrait bar fills in place, the shared bar rule (`hud::animate_bars`): the fill rect from the
-/// pet's current life / energy ratio through [`BarGraph::fill_dst`], only changed values written. The
-/// bars are solid colour (no bitmap): no source rect or animation frames.
+/// The portrait bar fills in place, from the pet's current life / energy ratio.
 fn animate_bars(
     pets: Query<(&Pet, &Combatant)>,
     mut fills: Query<(&PetBarFill, &mut Node, &mut Visibility)>,
@@ -533,9 +494,8 @@ fn animate_bars(
     }
 }
 
-/// `basicbackground.dbr` (`BasicBackground::Draw`): the rect grown by `Padding`, the shared
-/// [`Ui::border_paths`] frame around its inner rect, then the filler stretched over that inner rect.
-/// The pieces are black with the shade in alpha (filler 166 / 255), white-tinted.
+/// `basicbackground.dbr` (`BasicBackground::Draw`): the rect grown by `Padding`, the frame around its
+/// inner rect, then the filler over it. Black pieces, shade in alpha (filler 166 / 255), white-tinted.
 fn background(ui: &mut Ui, r: URect) {
     let Some(rec) = ui.record(BACKGROUND) else {
         return;
@@ -567,7 +527,6 @@ fn background(ui: &mut Ui, r: URect) {
         outer.h - ul.y - bl.y,
     );
     ui.border_paths(&paths, inner, 1.0);
-    // The filler last (`BasicBackground::Draw`).
     if let Some((h, _)) = ui.image(path("FillerBitmap"))
         && inner.w > 0.0
         && inner.h > 0.0
@@ -576,8 +535,6 @@ fn background(ui: &mut Ui, r: URect) {
     }
 }
 
-/// `GD_PET_SELECT` / `GD_PET_MENU` (hooks.rs): after their seconds, select the first portrait's pet / open its
-/// menu, ahead of [`clicks`].
 #[cfg(feature = "dev")]
 fn test_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -605,7 +562,7 @@ fn test_hooks(
     }
 }
 
-/// Portrait and menu clicks (module docs); the UI takes the click.
+/// Portrait and menu clicks; the UI takes the click.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -619,7 +576,6 @@ fn clicks(
     mut disband: MessageWriter<DisbandPet>,
     mut cast: MessageWriter<CastOnAlly>,
 ) {
-    // The menu's pet is gone: close it.
     if let Some((pet, _)) = menu.0
         && !layout.portraits.iter().any(|h| h.pet == pet)
     {
@@ -631,7 +587,6 @@ fn clicks(
     };
     let pressed =
         buttons.just_pressed(MouseButton::Left) || buttons.just_pressed(MouseButton::Right);
-    // The menu first (`PopupMenu::HandleMouseEvent`).
     if let (Some((pet, _)), Some((r, row_h))) = (menu.0, layout.menu) {
         if contains(&r, p) {
             capture.0 = true;
@@ -654,7 +609,6 @@ fn clicks(
             menu.0 = None;
         }
     }
-    // A window drawn over the portraits (`window::WindowClicks`, ordered before) took the pointer.
     if capture.0 {
         return;
     }
@@ -662,8 +616,7 @@ fn clicks(
         return;
     };
     // A slot armed: a press on the frame casts its skill on the pet
-    // (`PlayerPortrait::HandleMouseEvent`; the rule is `gd_game_core::casting::CastOnAlly`); one on
-    // the stance bitmap only goes on to the world (`casting::armed_click`).
+    // (`PlayerPortrait::HandleMouseEvent`); one on the stance bitmap only goes on to the world.
     if pressed && armed.0.is_some() {
         if hit.frame.is_some_and(|r| contains(&r, p)) {
             capture.0 = true;

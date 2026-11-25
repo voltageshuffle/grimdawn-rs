@@ -1,14 +1,11 @@
 //! The C runtime's `rand()` (MSVC: `x = x * 214013 + 2531011`, returns `(x >> 16) & 0x7fff`; `srand` default 1).
-//! The engine calls it, not its own generators, for the water ripple set (`weather::Ripples`), the fire lights'
-//! flicker and pulse (`gd_render::render::lights::Flicker` / `Pulse`) and the SSAO rotation texture
-//! (`GraphicsCanvas::CreateSsaoRotationTexture`, grimdawn `render/post.rs`).
+//! The engine calls it, not its own generators, for the water ripple set, the fire lights' flicker and pulse and the
+//! SSAO rotation texture (`GraphicsCanvas::CreateSsaoRotationTexture`).
 
-/// One `rand()` stream.
 #[derive(Clone, Debug)]
 pub struct CrtRand(pub u32);
 
 impl Default for CrtRand {
-    /// The CRT's start seed.
     fn default() -> Self {
         Self(1)
     }
@@ -32,7 +29,6 @@ mod tests {
 
     #[test]
     fn rand_matches_msvc() {
-        // MSVC rand() from the default seed 1.
         let mut r = CrtRand::default();
         assert_eq!(
             [(); 10].map(|_| r.rand()),

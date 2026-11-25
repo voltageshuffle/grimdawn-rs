@@ -1,7 +1,6 @@
-//! Headless check of saving: a save request writes the character, and with
-//! nothing changed it equals the loaded one except for the potion skills
-//! every character gets (`gd_sim::potions::ensure_skills`), and two saves
-//! are byte-identical.
+//! Headless check of saving: with nothing changed a save equals the loaded one except for the
+//! potion skills every character gets (`gd_sim::potions::ensure_skills`), and two saves are
+//! byte-identical.
 use gd_formats::save::gdc::Gdc;
 use gd_game::testing::{TempDir, TestGame};
 use gd_game_core::save::DIFFICULTY_DIRS;
@@ -32,7 +31,7 @@ fn unchanged_character_round_trips() {
     g.steps(3);
     let out = g.save_now();
     let written = std::fs::read(&out).expect("player.gdc written");
-    // Saving again writes the same bytes (no run-to-run variation).
+    // Saving again writes the same bytes.
     let again = std::fs::read(g.save_now()).unwrap();
     assert!(written == again, "two saves differ");
     let original = Gdc::parse(&std::fs::read(&path).unwrap()).unwrap();
@@ -58,8 +57,8 @@ fn unchanged_character_round_trips() {
     assert_eq!(saved.header.name, original.header.name);
 }
 
-/// A Crucible session saves its tokens into the `player.gdc` survival vector of the difficulty (shared by the
-/// arenas), keeps the arena's `quests.gdd` token-free, and a campaign session leaves the vectors alone.
+/// A Crucible session saves its tokens into the `player.gdc` survival vector of the difficulty,
+/// keeps the arena's `quests.gdd` token-free, and a campaign session leaves the vectors alone.
 #[test]
 fn crucible_tokens_go_to_the_character() {
     use gd_game_core::session::{Choice, LoadedCharacter};
@@ -106,8 +105,8 @@ fn crucible_tokens_go_to_the_character() {
     assert!(q.tokens.is_empty());
 }
 
-/// `map.dat` (`gd_game::save::write_map_dat`): every save writes the map path and mod beside the
-/// quests (the Crucible's arena folder with `survivalmode`); headless (no map layout) without spawn.
+/// `map.dat`: every save writes the map path and mod beside the quests (the Crucible's arena
+/// folder with `survivalmode`).
 #[test]
 fn saves_write_map_dat() {
     use gd_formats::save::map_dat::MapDat;
@@ -151,10 +150,8 @@ fn saves_write_map_dat() {
     );
 }
 
-/// A `quests.gdd` / `map.fow` the load cannot read is set aside to `.bak` and never rewritten from the
-/// empty runtime. The session's save folder IS the loaded character's here, so an unguarded save
-/// would overwrite the corrupt files in place; the guard keeps their bytes in `.bak` and writes fresh,
-/// parseable files beside them.
+/// A `quests.gdd` / `map.fow` the load cannot read is set aside to `.bak` and never rewritten from
+/// the empty runtime, even when the session's save folder is the loaded character's.
 #[test]
 fn unreadable_map_files_are_set_aside_not_overwritten() {
     use gd_game::session;
@@ -173,7 +170,7 @@ fn unreadable_map_files_are_set_aside_not_overwritten() {
         .join("Normal");
     let quests = map_dir.join("quests.gdd");
     let fow = map_dir.join("map.fow");
-    // Truncate both so the load's parse fails (the formats are fail-closed).
+    // Truncate both so the load's parse fails.
     let corrupt = |p: &std::path::Path| {
         let b = std::fs::read(p).expect("map file written");
         let cut = b[..b.len() / 2].to_vec();
@@ -182,7 +179,6 @@ fn unreadable_map_files_are_set_aside_not_overwritten() {
     };
     let bad_q = corrupt(&quests);
     let bad_f = corrupt(&fow);
-    // A session whose save folder is this one: the map files' read path and write target coincide.
     let gdc = Gdc::parse(&std::fs::read(&src).unwrap()).unwrap();
     let choice = Choice {
         save: Some(src.clone()),
@@ -198,10 +194,9 @@ fn unreadable_map_files_are_set_aside_not_overwritten() {
     session::begin(&mut app.world_mut().commands(), choice, Some(gdc), 0, false);
     app.world_mut().flush();
     let mut g2 = TestGame { app };
-    g2.step(); // the story / fog load runs here, under the guard
+    g2.step(); // the story / fog load runs here
     g2.spawn_player();
     g2.steps(2);
-    // The corrupt bytes survive in `.bak`; nothing overwrote them in place.
     assert_eq!(
         std::fs::read(map_dir.join("quests.gdd.bak")).unwrap(),
         bad_q,
@@ -212,7 +207,6 @@ fn unreadable_map_files_are_set_aside_not_overwritten() {
         bad_f,
         "map.fow kept as .bak"
     );
-    // The save writes fresh, parseable files beside the kept `.bak`s.
     g2.save_now();
     gd_formats::save::gdd::Quests::parse(&std::fs::read(&quests).unwrap()).unwrap();
     gd_formats::save::fow::Fow::parse(&std::fs::read(&fow).unwrap()).unwrap();

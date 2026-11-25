@@ -15,7 +15,7 @@
 //! skill `itemSkillName` with `itemSkillLevel` (per count) and
 //! `itemSkillAutoController`, and `itemSkillLevelEq` (the granted level;
 //! evaluated once at load with the owner's variables, a parse failure or an
-//! empty one = 1; stock sets: the constants 1, 2 or 3).
+//! empty one = 1).
 //! `ItemEquipment::AttachItem` / `DetachItem` run `ItemSet::
 //! SkillAugmentInstall` / `SkillAugmentRemove`
 //! with the new piece count: the previous count's skill bonuses come off
@@ -25,10 +25,7 @@
 //! (`ItemSkillAugment::ApplyAugments`) and `ItemSkillAugment::GrantItemSkills` grants the skill when
 //! `itemSkillLevel[min(count − 1, len − 1)]` ≠ 0 (or the array is empty):
 //! `SkillManager::AddItemSkills` with the set's id, so the skill is an item
-//! skill like a worn item's (`gd_game::player` docs, item toggles). So
-//! Mogdrogen's Tranquility (`itemset_c027`: `itemSkillLevel 0;0;0;1`) is
-//! granted with all four pieces worn, at level 1, and goes when one comes
-//! off. [`set_skills`], [`set_skill_bonuses`].
+//! skill like a worn item's.
 //! PORT: an equation with variables takes the set record's `itemLevel` as
 //! `itemLevel` (the set's variable table, `ItemSet.variableTable`, is not traced; no stock
 //! set uses one).
@@ -67,7 +64,7 @@ fn member_counts<'a>(pairs: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<(St
         .collect()
 }
 
-/// A skill a worn set grants (module docs).
+/// A skill a worn set grants.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetSkill {
     pub set: String,
@@ -77,7 +74,7 @@ pub struct SetSkill {
     pub level: u32,
 }
 
-/// The skills the worn sets grant at their piece counts (module docs).
+/// The skills the worn sets grant at their piece counts.
 pub fn set_skills(db: &Database, items: &[Item]) -> Vec<SetSkill> {
     let mut out = Vec::new();
     for (set, n) in worn_sets(db, items) {
@@ -110,14 +107,10 @@ pub fn set_skills(db: &Database, items: &[Item]) -> Vec<SetSkill> {
     out
 }
 
-/// The set skills granted again on a piece-count change (module docs:
-/// `SkillAugmentInstall` / `SkillAugmentRemove` remove the set's item skills
-/// on every count change from a non-zero one, `ItemSkillAugment::GrantItemSkills` grants them
-/// anew): the `granted` skills (now, [`set_skills`]) whose set was
-/// worn `before` with another count. A set's skill that is granted at both
-/// counts is a new item skill: an active one's cooldown started, then off
-/// until its auto toggle (`gd_game::player` docs). Dormant in stock: every
-/// stock set grants its skill only at its full count.
+/// The `granted` skills ([`set_skills`]) whose set was worn `before` with another
+/// count: `SkillAugmentInstall` / `SkillAugmentRemove` remove the set's item skills on
+/// every count change from a non-zero one and `GrantItemSkills` grants them anew, so
+/// an active one's cooldown starts and it stays off until its auto toggle.
 pub fn regranted_set_skills(
     before: &[(String, u32)],
     after: &[(String, u32)],
@@ -134,11 +127,9 @@ pub fn regranted_set_skills(
         .collect()
 }
 
-/// The worn sets' skill bonuses at their piece counts (module docs:
-/// `augmentSkillLevel{n}` / `augmentMasteryLevel{n}` per count, index
-/// `min(count − 1, len − 1)`): (skill bonuses, mastery bonuses), records
-/// lower-case. E.g. Mogdrogen's Tranquility: +3 Briarthorn and Primal Bond
-/// from 3 pieces, +1 Shaman from 4.
+/// The worn sets' skill bonuses at their piece counts (`augmentSkillLevel{n}` /
+/// `augmentMasteryLevel{n}`, index `min(count − 1, len − 1)`): (skill bonuses,
+/// mastery bonuses), records lower-case.
 pub fn set_skill_bonuses(db: &Database, items: &[Item]) -> crate::skills::SkillBonuses {
     let (mut skills, mut masteries, mut all) = (Vec::new(), Vec::new(), 0);
     for (set, n) in worn_sets(db, items) {
@@ -168,11 +159,9 @@ pub fn set_skill_bonuses(db: &Database, items: &[Item]) -> crate::skills::SkillB
 }
 
 /// Number of bonus tiers a set's tooltip lists: `setSize`, or the
-/// `setMembers` count when it is 0 (`ItemSet::LoadFromDatabase` reads it,
-/// `ItemSet::GetUIDisplayText` falls back). Not the distinct piece count:
-/// `setMembers` may list variants of one piece (Dagallon's Destruction,
-/// `itemset_d116`: 6 entries, the two guns each with a `b` copy, `setSize`
-/// 4); every entry gets its own member line, as in the game.
+/// `setMembers` count when it is 0 (`ItemSet::GetUIDisplayText`). Not the distinct
+/// piece count: `setMembers` may list variants of one piece, each with its own
+/// member line.
 pub fn set_size(rec: &Record) -> usize {
     match rec.i32("setSize").unwrap_or(0) {
         n if n > 0 => n as usize,

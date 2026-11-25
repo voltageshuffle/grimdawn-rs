@@ -1,61 +1,39 @@
-//! Saving: `F5` writes the current character to the port's own save folder,
-//! never the game's (`GD_SAVE_DIR`, default `save` in `gd_game_core::session::data_dir`,
-//! laid out like the game's: `main/_<name>/player.gdc` (`user/_<name>/` for a character created in a custom
-//! game: `Choice::player_folder`) and
-//! `<map folder>/<Difficulty>/{quests,conversations}.gdd`, `map.fow` and `map.dat` (map path, mod, spawn:
-//! [`write_map_dat`]), the map folder being
-//! `levels_world001.map`, a Crucible arena's `maps_survivalworld_a.map` or a custom game's map:
-//! `Choice::map_folder`). Load it
-//! back with `GD_SAVE=<that player.gdc>`.
+//! Saving the current character to the port's own save folder, laid out like the game's:
+//! `main/_<name>/player.gdc` (`Choice::player_folder`) and `<map folder>/<Difficulty>/{quests,conversations}.gdd`,
+//! `map.fow` and `map.dat` ([`write_map_dat`]; `Choice::map_folder`).
 //!
-//! The template is the loaded `player.gdc`, or for a new character
-//! [`new_character`] (named by `GD_NAME`, default "Player"; [`NewCharacter`], rolled once per session, so
-//! every save keeps its UID and seed); level,
-//! experience, points, attributes (`Loadout::bio` plus every spent point, `Loadout::allocated`, baked in
-//! like `BioStore::allocate`; the load splits them off again, `player::split_bio`), money, the loot filter options, equipment (both weapon sets and the active one), bags, the personal stash, skill levels, the mastery slot count (`gd_sim::skills::masteries_allowed` of the level, never lowered) and the skill refund count (`crate::reclamation`), discovered riftgates and respawn points, the lore codex (`lore.rs`), the unlocked tutorial pages (`tutorials.rs`),
-//! the devotions, factions, play stats, the header's class name tag (`gd_sim::progress::class_tag`) and
-//! the story state are replaced; the rest of the template is written back unchanged. The transfer stash goes to
-//! `transfer.gst` in the session's shared folder (the save folder root; `<mod>/` in a custom game:
-//! `Choice::shared_save_dir`), with the blacksmith's materials
-//! (`reagents.gst`), the learned blueprints (`formulas.gst`, unchanged) and
-//! the unlocked illusions (`transmutes.gst`, `illusion.rs`); a hardcore character's are the `.gsh` twins
-//! (`Choice::shared_file`, `gd_formats::save::Shared`), so hardcore and softcore never share them.
+//! The template is the loaded `player.gdc`, or for a new character [`new_character`] ([`NewCharacter`], rolled
+//! once per session, so every save keeps its UID and seed). The session's state replaces level, experience,
+//! points, attributes (the bio plus every spent point, baked in like `BioStore::allocate`), money, the loot
+//! filter options, equipment (both weapon sets and the active one), bags, the personal stash, skills, the
+//! mastery slot count (never lowered), the skill refund count, riftgates and respawn points, the lore codex,
+//! the tutorial pages, devotions, factions, play stats, the class name tag and the story state; the rest of the
+//! template is written back unchanged. The account-wide files (`transfer.gst`, `reagents.gst`, `formulas.gst`,
+//! `transmutes.gst`) go to the session's shared folder (`Choice::shared_file`; `.gsh` twins for hardcore).
 //! When: F5, the menu's Exit / Quit, closing the window, a hardcore death, the shrine / potion / reclamation
-//! windows, and the engine's autosave ([`AutoSave`]: 60 s of play after the inventory, riftgates, shrines, quests
-//! or tokens changed; a new character at once). `GD_AUTOSAVE_SECS=<n>` (test hook) also saves every n seconds.
+//! windows, and the engine's autosave ([`AutoSave`]).
 //!
-//! Items outside every grid: the cursor item (`Inventory::held`) and the items in a window's item boxes
-//! ([`BoxedItems`]: Inventor / Runekeeper slot, dismantle results). An item on the cursor or in a box
-//! is in no sack (`CursorHandlerItemMove::Cancel` puts it back at its source cell of the bag /
-//! stash / transfer page, else `GiveItemToPlayer`; the handler's destructor
-//! `CursorHandlerItemMove::~CursorHandlerItemMove` gives nothing back);
-//! Grim Dawn.exe `UIPlayerHud::CloseAllWindows` (the HUD's close-everything) calls the cursor handler's `Escape`
-//! (-> `Cancel`) and hides every window, whose boxes go back through `ItemBox_ReturnItemToPlayer`. PORT: the
-//! engine's quit / autosave path is not traced past that; here every save writes those items into the file
-//! where the give-back's bag step would put them (main bag, selected bag, the others; then a personal stash
-//! page), and the session's own state is left alone, so a save in mid-drag takes nothing off the cursor. An
-//! item no grid has room for is written into the main bag's sack at cell 0,0 on top of what is there: the
-//! next load finds it a cell or keeps it (`inventory::place_saved`, `Inventory::unplaced`, which is written
-//! back the same way), so no save path loses an item.
+//! Items outside every grid: the cursor item (`Inventory::held`) and the window item boxes ([`BoxedItems`]).
+//! The engine's `UIPlayerHud::CloseAllWindows` cancels the cursor handler (`CursorHandlerItemMove::Cancel`: back
+//! to its source cell, else `GiveItemToPlayer`) and returns the boxes (`ItemBox_ReturnItemToPlayer`). PORT: the
+//! quit / autosave path is not traced past that; every save writes those items where the give-back's bag step
+//! would put them (main bag, selected bag, the others; then a personal stash page) without touching the
+//! session's state. An item no grid has room for is written into the main bag's sack at cell 0,0; the next
+//! load places or keeps it (`Inventory::unplaced`), so no save path loses an item.
 //!
-//! Shared files: one that could not be read is never written over (`stash::read_shared`, [`write_shared`]),
-//! and its store takes no deposits that session (`stash` module doc).
-//! The per-character map files (`quests.gdd`, `conversations.gdd`, `map.fow`) are guarded the same way
-//! (`stash::read_guarded`): one the load could not read is set aside to `.bak` and skipped here, never
-//! rewritten from the empty runtime.
+//! A shared file that could not be read is never written over ([`write_shared`]), and its store takes no
+//! deposits that session. A per-character map file (`quests.gdd`, `conversations.gdd`, `map.fow`) the load
+//! could not read is set aside to `.bak` and skipped, never rewritten from the empty runtime.
 //!
-//! Order and failures: the shared files are written first, then `player.gdc`, `map.dat`, `map.fow` and the story
-//! files. Each file is written on its own (write then rename): a failure is logged, the remaining files are still
-//! written, and the save reports every file it could not write. The files an item moves between, the item stores
-//! (transfer stash, reagents, and the blueprints a read blueprint item becomes) and `player.gdc`, are all written
-//! to their temp files first and renamed in (stores first) only when every one was written; else none is, nor
-//! the character's other files: the disk keeps the last save's character beside the last save's stores, so an
-//! item moved either way between the bags and a store is never in neither file. Only a failed rename can still
-//! split them (the character's after the stores': an item moved into a store is in both, one taken out in
-//! neither). PORT: the engine has no such rule; the next save tries again. The story
-//! files are the current difficulty's `quests.gdd` / `conversations.gdd` and, when they changed, the other
-//! difficulties' `quests.gdd` (their rewarded flags, set by a completion on a higher difficulty:
-//! `gd_story::story::save`); a difficulty with no file gets one only when the story holds quest state of it.
+//! Order and failures: the shared files first, then `player.gdc`, `map.dat`, `map.fow` and the story files.
+//! Each file is written on its own (write then rename): a failure is logged, the rest are still written, and
+//! the save reports every failed file. The files an item moves between (transfer stash, reagents, blueprints,
+//! `player.gdc`) are all staged first and renamed in (stores first) only when every one was written, else none
+//! is, nor the character's other files: an item moved between the bags and a store is never in neither file.
+//! Only a failed rename can still split them. PORT: the engine has no such rule. The story files are the
+//! current difficulty's `quests.gdd` / `conversations.gdd` and, when they changed, the other difficulties'
+//! `quests.gdd` (rewarded flags set by a completion on a higher difficulty); a difficulty with no file gets one
+//! only when the story holds quest state of it.
 use bevy::prelude::*;
 use gd_formats::inventory::{Placed, Sack};
 use gd_formats::save::Shared;
@@ -80,8 +58,7 @@ impl Plugin for SavePlugin {
             .init_resource::<BoxedItems>()
             .init_resource::<gd_game_core::stash::SharedFiles>()
             .add_systems(Update, save_game.in_set(SaveStage::Save))
-            // After the frame's gameplay, so it sees the frame's changes together (its request is saved the
-            // next frame).
+            // After the frame's gameplay, so it sees the frame's changes together.
             .add_systems(
                 PostUpdate,
                 autosave
@@ -91,8 +68,7 @@ impl Plugin for SavePlugin {
     }
 }
 
-/// The player's items that sit in a window's item boxes (module doc), kept by the one system that owns
-/// those boxes (grimdawn `trade::boxed_items`); empty without such a window.
+/// The player's items that sit in a window's item boxes; empty without such a window.
 #[derive(Resource, Default)]
 pub struct BoxedItems(pub Vec<Item>);
 
@@ -107,7 +83,6 @@ fn free_cell(
         .find_map(|b| sacks[b].find_position(size).map(|c| (b, c)))
 }
 
-/// Builds the character file from the template and the session state.
 #[allow(clippy::too_many_arguments)]
 fn build_gdc(
     template: &Gdc,
@@ -127,7 +102,7 @@ fn build_gdc(
     if let Some(f) = factions {
         g.factions.factions = f.list.clone();
     }
-    // The items outside every grid (module doc) find a cell in a copy of the bags, else of the stash pages.
+    // The items outside every grid find a cell in a copy of the bags, else of the stash pages.
     let mut bags = Cow::Borrowed(&inv.bags[..]);
     let mut pages = stash.map(|s| Cow::Borrowed(&s.pages[..]));
     let mut homeless: Vec<&Item> = Vec::new();
@@ -181,13 +156,13 @@ fn build_gdc(
     g.bio.attribute_points = p.attribute_points.max(0) as u32;
     g.bio.skill_points = p.skill_points.max(0) as u32;
     g.header.level = g.bio.level;
-    // `SkillManager::UpdateMasteriesAllowed` (on every experience gain) opens the mastery slots of the level.
+    // `SkillManager::UpdateMasteriesAllowed` opens the mastery slots of the level.
     g.skills.masteries_allowed = g
         .skills
         .masteries_allowed
         .max(gd_sim::skills::masteries_allowed(p.level) as u32);
-    // Every spent attribute point goes into the bio (`BioStore::allocate`) on the base without them
-    // (`Loadout::bio`, `player::split_bio`; a new character's is the template's).
+    // Every spent attribute point goes into the bio (`BioStore::allocate`) on the base without them (a new
+    // character's is the template's).
     let l = &rules.levels;
     let a = loadout.allocated;
     let [physique, cunning, spirit, life, energy] = loadout.bio.unwrap_or([
@@ -218,9 +193,8 @@ fn build_gdc(
             slot.item = inv.equipped[i].clone().unwrap_or_default();
             slot.attached = inv.is_attached(i) as u8;
         }
-        // Both weapon sets (`crate::weapon_sets`): the inactive one flagged
-        // and detached (`EquipmentCtrl::SetAlternateEquipment`);
-        // a worn item failing its requirements is detached too (`inventory`).
+        // The inactive weapon set is flagged and detached (`EquipmentCtrl::SetAlternateEquipment`); a worn item
+        // failing its requirements is detached too.
         d.use_alternate = inv.alternate as u8;
         for (set, w) in d.weapons.iter_mut().enumerate() {
             let active = (set == 1) == inv.alternate;
@@ -236,8 +210,8 @@ fn build_gdc(
                 s.attached = (active && inv.is_attached(12 + k)) as u8;
             }
         }
-        // An extra bag the template lacks is a new sack with block id 0. Empty bags too: the load takes
-        // the bag count from the sacks.
+        // An extra bag the template lacks is a new sack with block id 0. Empty bags too: the load takes the bag
+        // count from the sacks.
         while d.sacks.len() < bags.len() {
             d.sacks.push(InventorySack {
                 block_id: 0,
@@ -258,8 +232,7 @@ fn build_gdc(
                     .collect();
             }
         }
-        // What no grid holds (module doc): the load's unplaced items at their saved sack and cell, the
-        // homeless ones on the main bag's first cell.
+        // The load's unplaced items at their saved sack and cell, the homeless ones on the main bag's first cell.
         let last = d.sacks.len().saturating_sub(1);
         let extra = inv
             .unplaced
@@ -291,7 +264,6 @@ fn build_gdc(
                 if let Some(u) = loadout.skills.unlock.get(&low) {
                     s.sublevel = *u;
                 }
-                // Toggles: on / off (`skill_active`).
                 if db
                     .get(name)
                     .is_some_and(|r| gd_sim::skills::is_toggle(&r.class))
@@ -369,8 +341,7 @@ fn write_devotion(g: &mut Gdc, d: &crate::devotion::DevotionState, loadout: &Loa
             }
         }
     }
-    // An item skill instance's binding: the save's item skill list (`player::bound_item_skills`); a learned
-    // skill's is on its entry above.
+    // An item skill instance's binding is on the save's item skill list; a learned skill's is on its entry above.
     let items = gd_game_core::player::bound_item_skills(
         g,
         &loadout.worn_item_skills,
@@ -385,15 +356,13 @@ fn write_devotion(g: &mut Gdc, d: &crate::devotion::DevotionState, loadout: &Loa
     g.skills.item_skills = items;
 }
 
-/// The hotbar's slots go into the first bar (`PlayerHotSlotCtrl`): skills,
-/// potion / evade / scroll options (`hotbar`); an unchanged skill or scroll
-/// keeps its fields. A skill put on the bar is a plain skill slot
-/// (`is_item_skill` 0, no item, location 0).
+/// The hotbar's slots go into their set's bar (`PlayerHotSlotCtrl`); an unchanged skill or scroll keeps its
+/// fields. A skill put on the bar is a plain skill slot (`is_item_skill` 0, no item, location 0).
 fn write_hotbar(g: &mut Gdc, db: &gd_formats::vfs::Database, set: i32, slots: &[Option<String>]) {
     use gd_formats::save::gdc::{HotSlot, HotSlotBar};
     let per = g.ui.slots_per_bar.max(slots.len() as u32) as usize;
-    // One bar per skill set (`PlayerHotSlotCtrl::WriteProperties` writes
-    // every page, keyed by its set id); the default set is the first bar.
+    // One bar per skill set, keyed by its set id (`PlayerHotSlotCtrl::WriteProperties`); the default set is the
+    // first bar.
     let i = match g.ui.bars.iter().position(|b| b.id == set as u32) {
         Some(i) => i,
         None if set == 0 && !g.ui.bars.is_empty() => 0,
@@ -415,7 +384,6 @@ fn write_hotbar(g: &mut Gdc, db: &gd_formats::vfs::Database, set: i32, slots: &[
             *cur = HotSlot::Empty;
             continue;
         };
-        // The potion / evade / scroll options (`hotbar` module docs).
         let new = match crate::hotbar::option_kind(db, w) {
             crate::hotbar::OptionKind::HealthPotion => HotSlot::Plain(2),
             crate::hotbar::OptionKind::EnergyPotion => HotSlot::Plain(3),
@@ -449,10 +417,9 @@ fn write_hotbar(g: &mut Gdc, db: &gd_formats::vfs::Database, set: i32, slots: &[
     }
 }
 
-/// `map.dat`'s `spawnCoords` (`Player::GetClosestRespawnPoint`): the
-/// player's rotation, at the current respawn point (`respawn`, its world position) when it is
-/// known, else at the player's own position; with the region it is in (None: no region, the
-/// engine's `streamSpawnCoords` false).
+/// `map.dat`'s `spawnCoords` (`Player::GetClosestRespawnPoint`): the player's rotation, at the current respawn
+/// point when it is known, else at the player's own position; None outside every region (the engine's
+/// `streamSpawnCoords` false).
 pub fn spawn_coords(
     map: &gd_formats::map::MapFile,
     player: &Transform,
@@ -462,23 +429,22 @@ pub fn spawn_coords(
     let i = region_at(map, at)?;
     let r = &map.regions[i];
     Some(WorldCoords {
-        // Mat3 rows of the engine = bevy columns (as level entities, `map::level::Entity`).
+        // The engine's Mat3 rows = bevy columns.
         rotation: Mat3::from_quat(player.rotation).to_cols_array(),
         position: (at - region_origin(r)).to_array(),
         region: r.id,
     })
 }
 
-/// Where a `map.dat` spawn is in the world (`Game::LoadModMap`: used only when its region
-/// is in the map, else the map's spawn point).
+/// Where a `map.dat` spawn is in the world; None when its region is not in the map.
 pub fn spawn_position(map: &gd_formats::map::MapFile, dat: &MapDat) -> Option<Vec3> {
     let s = dat.spawn.as_ref()?;
     let r = map.regions.iter().find(|r| r.id == s.region)?;
     Some(region_origin(r) + Vec3::from(s.position))
 }
 
-/// `GD_START` (`hooks.rs`), taken before [`player_start`]: with x,z the y is taken from the ground once loaded;
-/// with x,y,z the ground below y + 2 (undergrounds). Other lengths: no start.
+/// `GD_START`, taken before [`player_start`]: with x,z the y is taken from the ground once loaded; with x,y,z
+/// the ground below y + 2. Other lengths: no start.
 #[cfg(feature = "dev")]
 pub fn start_hook(hook: &[f32]) -> Option<Vec3> {
     match *hook {
@@ -488,18 +454,15 @@ pub fn start_hook(hook: &[f32]) -> Option<Vec3> {
     }
 }
 
-/// Where the player starts a session (None: a new character on a map without a spawn point, so no start yet).
-/// `map_spawn` is the map's spawn point.
+/// Where the player starts a session (None: a new character on a map without a spawn point).
 pub fn player_start(
     map: &gd_formats::map::MapFile,
     map_spawn: Option<Vec3>,
     loaded: Option<&Gdc>,
     choice: &gd_game_core::session::Choice,
 ) -> Option<Vec3> {
-    // New character: the map's spawn point.
     let Some(ch) = loaded else { return map_spawn };
-    // `Game::LoadModMap`: the start is `map.dat`'s spawn when its region is in the map,
-    // else the map's spawn point ([`spawn_position`]).
+    // `Game::LoadModMap`: `map.dat`'s spawn when its region is in the map, else the map's spawn point.
     let diff = ch.info.difficulty();
     if let Some(dat) = choice.read_map_dat(diff) {
         let p = spawn_position(map, &dat)
@@ -508,10 +471,8 @@ pub fn player_start(
         info!("player start {p:?} (map.dat)");
         return Some(p);
     }
-    // PORT: a save without `map.dat` (the engine fails such a load; the port's saves before it
-    // wrote one) starts at its current respawn point, else the map's spawn point. Game.dll
-    // `Player::GetClosestRespawnPoint`: the point is the uid's instance-group entity data
-    // (`InstanceGroups::entity_data`: its region's origin + its position), not a level entity.
+    // PORT: a save without `map.dat` (the engine fails such a load) starts at its current respawn point
+    // (`Player::GetClosestRespawnPoint`: the uid's instance-group entity data), else the map's spawn point.
     let want = gd_formats::map::uid_words(&ch.respawns.current[diff]);
     let found = map
         .instance_groups
@@ -530,9 +491,8 @@ pub fn player_start(
     Some(p)
 }
 
-/// The session's `map.dat` (Grim Dawn.exe `Game::SaveCharacter`, every save: the map path, the
-/// mod name and [`spawn_coords`]). PORT: without the map layout (headless) or a region the
-/// spawn is left out, as the engine does for a position outside every region.
+/// The session's `map.dat` (`Game::SaveCharacter`). PORT: without the map layout (headless) the spawn is left
+/// out, as the engine does for a position outside every region.
 pub fn write_map_dat(
     choice: &gd_game_core::session::Choice,
     layout: Option<&MapLayout>,
@@ -546,7 +506,7 @@ pub fn write_map_dat(
 }
 
 pub(crate) fn write(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
-    // Write then rename, so a crash never leaves half a save.
+    // Write then rename: a crash never leaves half a save.
     let tmp = stage(path, bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
@@ -567,9 +527,8 @@ fn stage(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<std::path::Path
     Ok(tmp)
 }
 
-/// Writes the account-wide `file` into the session's shared folder (`Choice::shared_file`), unless it
-/// holds a file this session could not read and could not set aside (`stash::SharedFiles`): that one is
-/// left as it is.
+/// Writes the account-wide `file` into the session's shared folder, unless this session could not read it and
+/// could not set it aside (`stash::SharedFiles`).
 pub(crate) fn write_shared(
     shared: &gd_game_core::stash::SharedFiles,
     choice: &gd_game_core::session::Choice,
@@ -601,14 +560,13 @@ fn shared_target(
     Some(path)
 }
 
-/// Save now (the game sends it for F5 and when the window closes).
+/// Save now (F5, and when the window closes).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct SaveRequest;
 
-/// A new character's file before anything of the session is in it ([`new_character`] with a UID and
-/// seed rolled once by `session::begin`): every save of the session builds on it like a loaded
-/// character's ([`LoadedCharacter`]), so the character keeps one identity. The engine creates the
-/// player object once (`Game::CreatePlayer`, Grim Dawn.exe) and saves that same object every time.
+/// A new character's file before anything of the session is in it, rolled once by `session::begin`: every save
+/// of the session builds on it, so the character keeps one identity (the engine creates the player object once,
+/// `Game::CreatePlayer`).
 #[derive(Resource)]
 pub struct NewCharacter(pub Gdc);
 
@@ -623,19 +581,15 @@ impl NewCharacter {
             uid,
             gd_game_core::rng::u32(..),
         );
-        // A new character is in the main quest unless the session has a mod (`Game::CreatePlayer`:
-        // `Player::SetIsInMainQuest(modName empty)`): a custom game's or a Crucible's character is not.
+        // `Game::CreatePlayer`: `Player::SetIsInMainQuest(modName empty)`.
         g.info.is_in_main_quest = choice.mod_name().is_empty() as u8;
         Self(g)
     }
 }
 
-/// The menu's Create Character Accept (the Accept branch of the difficulty window's `DifficultyWindow::HandleButton`):
-/// rolls the character ([`NewCharacter::roll`]), sets its difficulty byte exactly as [`crate::session::begin`]
-/// does for a session, and writes `player.gdc` into the character's folder ([`gd_game_core::session::Choice::player_folder`])
-/// with the same atomic [`write`] as every save. The player then starts it like any saved character.
-/// An existing folder is refused: the menu's name check only sees characters whose file parses, so a
-/// folder the scan missed must not be written over. Returns the written file's path and the character.
+/// The menu's Create Character Accept (`DifficultyWindow::HandleButton`): rolls the character, sets its
+/// difficulty byte as [`crate::session::begin`] does, and writes `player.gdc` into the character's folder. An
+/// existing folder is refused: the menu's name check only sees characters whose file parses.
 pub fn create_character(
     save_dir: &SaveDir,
     choice: &gd_game_core::session::Choice,
@@ -643,11 +597,11 @@ pub fn create_character(
     veteran: bool,
 ) -> anyhow::Result<(std::path::PathBuf, Gdc)> {
     let mut g = NewCharacter::roll(choice).0;
-    // The session's difficulty, as `session::begin` and `save_game` set it; no challenge in the Crucible.
+    // No challenge in the Crucible.
     let mode = gd_rules::mode::Mode::new(difficulty, veteran && choice.survival.is_none());
     g.info.last_difficulty = gd_game_core::session::last_difficulty(mode, choice);
-    // Not in the game yet (`Player::GetHasBeenInGame`): its first entry gets the intro, the new-character time of
-    // day and tutorial page 7 (`crate::entry`); the session's saves set the flag.
+    // `Player::GetHasBeenInGame`: its first entry gets the intro, the new-character time of day and tutorial
+    // page 7; the session's saves set the flag.
     g.info.has_been_in_game = 0;
     let dir = choice.player_folder(save_dir, &g.header.name, g.info.is_in_main_quest != 0);
     anyhow::ensure!(!dir.exists(), "{} already exists", dir.display());
@@ -656,27 +610,23 @@ pub fn create_character(
     Ok((path, g))
 }
 
-/// `Player::kAutoSavePeriod` (60000 ms, the `Player` constructor's countdown and `Player::AutoSave`'s
-/// reset).
+/// `Player::kAutoSavePeriod` (60000 ms).
 pub const AUTOSAVE_PERIOD: f32 = 60.0;
 
-/// The player's autosave (`Player::UpdateSelf` / `Player::AutoSave`): a dirty flag and
-/// a countdown ([`AUTOSAVE_PERIOD`]). The countdown runs only while the flag is set; at 0 it saves if autosave
-/// is on, saving is enabled (`devotion::save_disabled` / `cauldron::save_disabled`) and the player is the main
-/// one, then resets the countdown and clears the flag, saved or not. A manual save leaves both alone.
+/// The player's autosave (`Player::UpdateSelf` / `Player::AutoSave`): a dirty flag and a countdown
+/// ([`AUTOSAVE_PERIOD`]) that runs only while the flag is set; at 0 it saves if autosave is on, saving is enabled
+/// (`devotion::save_disabled` / `cauldron::save_disabled`) and the player is the main one, then resets the
+/// countdown and clears the flag, saved or not. A manual save leaves both alone.
 ///
 /// The flag's setters: an item given to or leaving the character, a riftgate / respawn point found, a devotion
 /// shrine restored or discovered, a quest update or token, a dye, a rename or death reset. [`autosave`] watches
-/// the port's state for those: the inventory contents (bags, worn items, both weapon sets and the cursor item,
-/// hashed when `Inventory::version` moves; an item picked up and put back is no change), the riftgate / respawn
-/// lists growing, the restored / discovered shrine lists growing, the story's token count growing and the
-/// story's `ObjectiveSatisfied` / `QuestTaskCompleted` effects (`OnQuestUpdated`, game events 42 / 40). A dye
-/// is used up, so the inventory change covers it. Map markers: no stock record is a `StaticMarker`, so none is
-/// ever added.
+/// for those: the inventory contents (an item picked up and put back is no change; a dye is used up), the
+/// riftgate / respawn and shrine lists growing, the story's token count growing and its `ObjectiveSatisfied` /
+/// `QuestTaskCompleted` effects (`OnQuestUpdated`). No stock record is a `StaticMarker`, so map markers never
+/// set it.
 ///
-/// A new character: the engine writes it at creation, and so does the port's menu ([`create_character`]).
-/// PORT: a hook-started session (`GD_NAME` / `GD_SAVE`, `session::load_save`) still writes it on its first
-/// frame with a player (`Player::ForceSave`: flag set, countdown 1 ms, [`AutoSave::created`]).
+/// PORT: a hook-started session (`GD_NAME` / `GD_SAVE`) writes a new character on its first frame with a player
+/// (`Player::ForceSave`: flag set, countdown 1 ms, [`AutoSave::created`]); the menu writes it at creation.
 #[derive(Resource)]
 pub struct AutoSave {
     pub dirty: bool,
@@ -715,7 +665,6 @@ impl AutoSave {
     }
 }
 
-/// The inventory's contents (module doc of [`AutoSave`]).
 fn contents_hash(inv: &Inventory) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::hash::DefaultHasher::new();
@@ -730,7 +679,7 @@ fn contents_hash(inv: &Inventory) -> u64 {
     h.finish()
 }
 
-/// [`AutoSave`]'s per-frame part of `Player::UpdateSelf`; runs while the player is in the game.
+/// [`AutoSave`]'s per-frame part of `Player::UpdateSelf`.
 #[allow(clippy::too_many_arguments)]
 pub fn autosave(
     time: Res<Time>,
@@ -804,7 +753,6 @@ pub fn autosave(
 #[allow(clippy::too_many_arguments)]
 pub fn save_game(
     mut requests: MessageReader<SaveRequest>,
-    // `GD_AUTOSAVE_SECS`: the timer and the windows that hold it.
     #[cfg(feature = "dev")] (hooks, time, mut since, shrine, potions): (
         Res<gd_game_core::hooks::Hooks>,
         Res<Time>,
@@ -812,8 +760,8 @@ pub fn save_game(
         Res<crate::devotion::ShrineWindow>,
         Res<crate::cauldron::PotionWindow>,
     ),
-    // Option: the save runs on a timer / request and writes whatever exists; the player-state ones are
-    // checked together ("no player yet"), the others (stash, factions, fog, ...) are written only when present.
+    // Option: the save writes whatever exists; the player-state ones are checked together, the others (stash,
+    // factions, fog, ...) are written only when present.
     loaded: Option<Res<LoadedCharacter>>,
     progress: Option<Res<PlayerProgress>>,
     inv: Option<Res<Inventory>>,
@@ -874,7 +822,6 @@ pub fn save_game(
         Res<gd_game_core::stash::SharedFiles>,
     ),
 ) {
-    // `GD_AUTOSAVE_SECS` (hooks.rs): a timed save, which waits while a shrine or potions window has saving disabled.
     #[cfg(feature = "dev")]
     let auto = {
         *since += time.delta_secs();
@@ -885,9 +832,7 @@ pub fn save_game(
     #[cfg(not(feature = "dev"))]
     let auto = false;
 
-    // F5, and closing the window (the game saves on quit).
     let requested = requests.read().count() > 0;
-    // A hardcore death is written at once.
     let hardcore_death =
         !died.is_empty() && gd_game_core::session::is_hardcore(loaded.as_deref(), &choice);
     if !requested && !auto && !hardcore_death {
@@ -903,7 +848,6 @@ pub fn save_game(
         warn!("save: no player yet");
         return;
     };
-    // The session's character: the loaded file or the new one (`NewCharacter`, one UID / seed per session).
     let template = match (&loaded, &new_character) {
         (Some(l), _) => l.0.as_ref(),
         (None, Some(n)) => &n.0,
@@ -926,12 +870,10 @@ pub fn save_game(
         &data.db,
         &boxed.0,
     );
-    // The session's difficulty, challenge and game mode, for a new character as for a loaded one.
     g.info.last_difficulty = gd_game_core::session::last_difficulty(game_mode.0, &choice);
-    // Saved from inside the game: the character has been in it (`Player::SetHasBeenInGame` on its first entry).
+    // `Player::SetHasBeenInGame`.
     g.info.has_been_in_game = 1;
     if let Some(c) = caster {
-        // Mouse slots back in set order (`weapon_sets::save_order`).
         for (set, page) in c.pages() {
             write_hotbar(
                 &mut g,
@@ -951,8 +893,7 @@ pub fn save_game(
         g.tutorials.pages = t.pages.clone();
     }
     counts.apply(&mut g.stats);
-    // The Crucible's records: greatest difficulty completed, greatest wave tier and score, defenses built and
-    // power-ups activated.
+    // The Crucible's records.
     if let Some(rt) = &story {
         let mut st = rt.story.borrow_mut();
         st.game.survival.merge_records();
@@ -978,7 +919,6 @@ pub fn save_game(
         g.info.compass_state = c.0;
     }
     let dir = choice.player_folder(&save_dir, &g.header.name, g.info.is_in_main_quest != 0);
-    // Each file is written on its own (module doc): a failure is logged and the others still go out.
     let mut failed: Vec<String> = Vec::new();
     let mut attempt = |what: &str, r: anyhow::Result<()>| match r {
         Ok(()) => true,
@@ -996,8 +936,7 @@ pub fn save_game(
                 .and_then(|b| write_shared(&shared, &choice, &save_dir, Shared::Transmutes, &b)),
         );
     }
-    // The files an item moves between: the stores, then the character, all staged before any is renamed in
-    // (module doc).
+    // The files an item moves between: the stores, then the character, all staged before any is renamed in.
     let mut items: Vec<(&str, std::path::PathBuf, anyhow::Result<Vec<u8>>)> = Vec::new();
     if let Some(s) = &stash {
         let mut t = s.transfer_file.clone();
@@ -1006,8 +945,8 @@ pub fn save_game(
             &s.transfer,
             s.unplaced.iter().filter(|(t, _)| *t).map(|(_, u)| u),
         );
-        // `GameEngine::WritePlayerTransfer`: every write names the session's mod
-        // (none in the Crucible, mode 1) and the loaded expansions.
+        // `GameEngine::WritePlayerTransfer`: every write names the session's mod (none in the Crucible) and the
+        // loaded expansions.
         t.mod_name = match choice.game_mode() {
             1 => String::new(),
             _ => choice.mod_name().to_owned(),
@@ -1049,9 +988,8 @@ pub fn save_game(
         attempt(what, std::fs::rename(&tmp, &path).map_err(Into::into));
     }
     let map_folder = dir.join(choice.map_folder());
-    // `map.dat` beside the quests, for the current difficulty. PORT: the current respawn
-    // point's position comes from the map-wide waypoint index (the player's own position
-    // until that index is built).
+    // PORT: the current respawn point's position comes from the map-wide waypoint index (the player's own
+    // position until that index is built).
     let respawn = travel
         .as_ref()
         .and_then(|t| t.current)
@@ -1095,7 +1033,7 @@ pub fn save_game(
             };
             let q_tpl =
                 read("quests.gdd").and_then(|b| gd_formats::save::gdd::Quests::parse(&b).ok());
-            // Another difficulty's file (module doc): only where the character has one or holds state of it.
+            // Another difficulty's file: only where the character has one or holds state of it.
             if d != current && q_tpl.is_none() && !s.has_quest_state(d) {
                 continue;
             }
@@ -1110,7 +1048,6 @@ pub fn save_game(
                 attempt(
                     &format!("{name}/quests.gdd"),
                     quests.encode().and_then(|b| {
-                        // Another difficulty's file is rewritten only when it changed.
                         if d != current && std::fs::read(&path).is_ok_and(|old| old == b) {
                             return Ok(());
                         }
@@ -1150,7 +1087,6 @@ pub fn save_game(
     }
 }
 
-/// The save write: what must be in the file orders before `Save`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SaveStage {
     Save,
@@ -1160,8 +1096,7 @@ pub enum SaveStage {
 /// otherwise a `HotSlot::Plain` type (2/3 health/mana potion, 5 evade).
 const NEW_HOTBAR: [(usize, u32); 6] = [(10, 0), (11, 0), (24, 2), (25, 3), (26, 0), (46, 5)];
 
-/// Hotbar 0 of a new character ([`NEW_HOTBAR`]): the default weapon attack
-/// on both weapon sets' left mouse slots (10, 11) and slot 26.
+/// Hotbar 0 of a new character ([`NEW_HOTBAR`]).
 pub fn new_hotbar() -> Vec<gd_formats::save::gdc::HotSlot> {
     use gd_formats::save::gdc::HotSlot;
     let mut hotbar = vec![HotSlot::Empty; 47];
@@ -1180,14 +1115,12 @@ pub fn new_hotbar() -> Vec<gd_formats::save::gdc::HotSlot> {
     hotbar
 }
 
-/// A level-1 character as the game writes it after creating it and loading it once (reference: a real character
-/// created, entered and quit without moving; field-for-field test in `tests/game/new_character.rs`). Differences:
-/// - The starting armour/weapon are rolled at random on first load (the reference's differ from those of another
-///   fresh character); the port's inventory replaces them when saving. Item seeds here derive from `seed`.
-/// - The starting necklace is given by the story on first load (`GiveItem`), so it is not part of this.
+/// A level-1 character as the game writes it after creating it and loading it once. Differences:
+/// - The starting armour/weapon are rolled on first load; the port's inventory replaces them when saving. Item
+///   seeds here derive from `seed`.
+/// - The starting necklace is given by the story on first load (`GiveItem`).
 /// - `sex` is 1 for male, 0 for female. `texture` is the record's `playerTextures` entry
-///   (`Player::PickNewTexture`); `femalepc01.dbr` has none, so a female keeps the constructor's empty string
-///   (`Player::Player` / `PickNewTexture`).
+///   (`Player::PickNewTexture`); `femalepc01.dbr` has none, so a female keeps the empty string.
 pub fn new_character(
     name: &str,
     female: bool,

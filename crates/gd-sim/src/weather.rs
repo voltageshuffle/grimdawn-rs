@@ -1,7 +1,7 @@
 //! Weather: the rules of Engine.dll's `WeatherManager`: climate records, the region's climate
 //! set, the weighted day / night pick with its 30 to 90 s re-roll, intensities, wind, the ambience adjustments and
-//! the particle systems' spawn rules. Pure maths with a seedable generator; the port's renderer (`grimdawn::weather`)
-//! only draws [`ParticleSystem::particles`] and flashes the [`Lightning`] light.
+//! the particle systems' spawn rules. Pure maths with a seedable generator; the renderer only draws
+//! [`ParticleSystem::particles`] and flashes the [`Lightning`] light.
 //!
 //! Records (`records/game/weathermanager.dbr` `systems`, `weathersystem*.dbr`, `records/fx/climate/<set>.dbr`,
 //! `records/fx/climate_weather/<n>.dbr`) load through [`Templates::load`], [`ClimateSet::load`]. All weather random
@@ -9,10 +9,9 @@
 //! mod 2^31-1, `rnd * 4.656613e-10` the unit float).
 //!
 //! PORT stand-ins: the intensity ramp (`WeatherSystem.intensityRamp`, set at once), the rain gust calm length and
-//! noise, the fog burst line placement (an exact copy of `FogSystem::SpawnParticle`'s was not transcribed),
-//! particle fades (engine: fog 500 ms in, wind
-//! particles 500 ms in and out; here every type fades), the flat ground (the focus height) for ground fog, the
-//! direction of the fog distance adjustment.
+//! noise, the fog burst line placement (`FogSystem::SpawnParticle`'s not transcribed), particle fades (engine: fog
+//! 500 ms in, wind particles 500 ms in and out; here every type fades), the flat ground (the focus height) for
+//! ground fog, the direction of the fog distance adjustment.
 use crate::crt::CrtRand;
 use gd_formats::vfs::Database;
 
@@ -199,8 +198,7 @@ impl When {
 }
 
 /// A `climate_weather` record (loader `ClimateWeather::Load`): up to three systems with their intensity range (0..1)
-/// and the
-/// ambience adjustments.
+/// and the ambience adjustments.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Climate {
     /// (system name, min, max intensity).
@@ -274,7 +272,7 @@ impl ClimateSet {
 }
 
 impl ClimateSet {
-    /// A set of the one climate record `record` (test hook: weather forced to a climate).
+    /// A set of the one climate record `record`.
     pub fn single(db: &Database, record: &str) -> Option<Self> {
         let c = db.get(record)?;
         Some(Self {
@@ -540,8 +538,7 @@ impl ParticleSystem {
 
     /// The rain gust state, counted down once per update. Gusts exist only while
     /// `(windFactor - 1) / 2 >= 0.5`; a gust lasts `100 + rnd % 401` ms and tilts the base by `0.3 * (1 + noise)` on x / z.
-    /// PORT: the calm phase is `1000 + rnd % 9001` ms (the note gives "1000 .. 10000-ish"), the noise a signed unit
-    /// float per axis.
+    /// PORT: the calm phase is `1000 + rnd % 9001` ms, the noise a signed unit float per axis.
     fn update_gust(&mut self, f: &Frame<'_>, rng: &mut Rng) {
         if (f.wind_factor - 1.0) / 2.0 < 0.5 {
             self.gusting = false;
@@ -563,8 +560,7 @@ impl ParticleSystem {
     }
 
     /// The rain tilt vector (`RainWeatherSystem::GetTilt`): base `(0.3 wx, -1, 0.3 wz)` normalised, plus the gust
-    /// offset while
-    /// [`Self::update_gust`] has a gust blowing.
+    /// offset while [`Self::update_gust`] has a gust blowing.
     fn rain_tilt(&self, f: &Frame<'_>) -> [f32; 3] {
         let [wx, wz] = f.wind_dir;
         let [ox, oz] = if self.gusting {
@@ -665,7 +661,7 @@ impl ParticleSystem {
         p.clamp(lo, hi)
     }
 
-    /// One new particle (the spawn rules of the notes, per type).
+    /// One new particle, by the type's spawn rules.
     fn spawn(&mut self, f: &Frame<'_>, rng: &mut Rng) -> Particle {
         let Template {
             kind,
@@ -702,10 +698,9 @@ impl ParticleSystem {
                     d[1] * speed * rng.range(0.8, 1.2),
                     d[2] * speed * rng.range(0.8, 1.2),
                 ];
-                // RainSystem::SpawnParticle (notes "Rain splash"): at weatherQuality 3 a ground ray of length
-                // 2 * spawnRadius cuts
-                // the life to `hit distance / particleSpeed` ms, so the drop (and its ripple) ends at the ground, under a
-                // roof or tree at its surface. The ray runs from the spawn point along the drop's direction.
+                // `RainSystem::SpawnParticle`: at weatherQuality 3 a ray of length 2 * spawnRadius from the spawn
+                // point along the drop's direction cuts the life to `hit distance / particleSpeed` ms, so the drop
+                // (and its ripple) ends at the ground, or a roof or tree.
                 if self.quality >= 3
                     && let Some(dist) = f.ground.and_then(|g| g.ray(p.pos, d, 2.0 * r))
                 {
@@ -773,8 +768,7 @@ impl ParticleSystem {
     }
 }
 
-/// The lightning flash (class 0x40 B, update `LightningWeatherSystem::Update`): a white point light (range 100) near
-/// the camera.
+/// The lightning flash (update `LightningWeatherSystem::Update`): a white point light (range 100) near the camera.
 /// Strikes come after `100 + rnd % (14901 - 13000 * i)` ms, the first one too (counted from the frame lightning
 /// becomes active); a strike is 2 or 3 flashes, each on `(1 + u) * 40` ms and off `(1 + u) * 35` ms. There is no
 /// thunder and no bolt in the weather path.
@@ -833,7 +827,7 @@ impl Lightning {
     }
 }
 
-/// One slot of a [`Ripples`] set (24 bytes in the engine).
+/// One slot of a [`Ripples`] set.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ripple {
     /// Centre on the water surface (+0.01 m).
@@ -848,8 +842,7 @@ pub struct Ripple {
 }
 
 /// A water's ripple set (`Water.ripples`; ctor `WaterRipples::Construct`, add `WaterRipples::Add`, update
-/// `WaterRipples::Update`):
-/// [`Ripples::SLOTS`] slots, a new ripple takes the first free one (none free: dropped).
+/// `WaterRipples::Update`): [`Ripples::SLOTS`] slots, a new ripple takes the first free one (none free: dropped).
 #[derive(Clone, Debug)]
 pub struct Ripples {
     pub slots: [Ripple; Ripples::SLOTS],
@@ -888,8 +881,7 @@ impl Ripples {
     }
 
     /// `WaterRipples::Add`: the first free slot; size 0.3..0.7, max `s +- 0.2`, centre jittered +-0.2 m on x / z and
-    /// 0.01 m
-    /// above the surface (`rand() / 32767` per draw, in this order: size, max, x, z).
+    /// 0.01 m above the surface (`rand() / 32767` per draw, in this order: size, max, x, z).
     pub fn add(&mut self, at: [f32; 3], s: f32) -> bool {
         let Some(i) = self.slots.iter().position(|r| !r.active) else {
             return false;
@@ -911,8 +903,8 @@ impl Ripples {
     }
 
     /// `WaterRipples::Update` (`Water::Update`): a slot that reached its max goes; the others grow by `dt * RATE`
-    /// (capped at the
-    /// max) and are drawn with the triangle alpha of the NEW size: up to 1 at half the max, back to 0 at the max.
+    /// (capped at the max) and are drawn with the triangle alpha of the NEW size: up to 1 at half the max, back to 0
+    /// at the max.
     pub fn update(&mut self, dt_ms: f32) {
         let step = dt_ms * Self::RATE * 0.001;
         for r in &mut self.slots {
@@ -1061,8 +1053,7 @@ impl Weather {
     }
 
     /// `WeatherManager::ChangeClimate`: a different set name reloads and picks at once; the same name is a no-op;
-    /// `None`
-    /// is "no sector data": no choice, no re-roll until a set appears.
+    /// `None` is "no sector data": no choice, no re-roll until a set appears.
     pub fn change_climate(
         &mut self,
         name: &str,
@@ -1231,10 +1222,8 @@ impl Weather {
     /// (PORT: the terrain height, `ground`). While the factor is above 1.25 and fewer than 3 blow, a new one comes after
     /// `lo + rnd % (hi - lo + 1)` ms (lo = int(4000 - 3000 s), hi = int(8000 - 6000 s)): 20 m upwind of the camera,
     /// `rnd * 40 - 20` m across, speed `5 + 6 rnd + 12 s` m/s, radius `3 + 4 rnd + 5 s` m, life
-    /// `(rnd + 1) * 30000 / speed` ms, envelope `rnd & 1`. The particle modifier it then registers is dead
-    /// (type 1; `RegisterParticleModifier` keeps it only at quality 3 and the handlers, Fog
-    /// `FogWeatherSystem::ApplyModifier` and Leaves / WindParticle `WindParticleWeatherSystem::ApplyModifier`, act on
-    /// type 0 only), so weather particles are not pushed.
+    /// `(rnd + 1) * 30000 / speed` ms, envelope `rnd & 1`. The particle modifier it registers is dead (type 1; the
+    /// `ApplyModifier` handlers act on type 0 only), so weather particles are not pushed.
     fn update_gusts(&mut self, cam: [f32; 3], dt: i32, ground: Option<&dyn Ground>) {
         let winds = &mut self.winds;
         self.gusts.retain_mut(|g| {

@@ -1,4 +1,4 @@
-//! Memory audit (hooks.rs `GD_MEM_*`): what holds the process' memory, and a scripted session that moves it.
+//! Memory audit (`GD_MEM_*`): what holds the process' memory, and a scripted session that moves it.
 //! - `GD_MEM_LOG=<secs>` logs `mem:` every `secs`: the resident set, glibc's heap (bytes in use, free bytes the
 //!   allocator keeps, mmapped blocks), the Bevy asset counts (images with their CPU bytes and an estimate of their GPU
 //!   bytes), the loaded levels and the caches' live entries (textures, models, meshes, animations, sounds, effects,

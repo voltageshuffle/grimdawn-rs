@@ -8,10 +8,7 @@
 //! `nSamplesPerSec` copied), whose playback frequency is then set absolute
 //! (`DS8SoundSample::SetFrequency` → `IDirectSoundBuffer::SetFrequency`).
 //!
-//! Stock data (2026-11-03 scan of the four `Sound.arc`s): 7 191 WAVs at
-//! 44.1 kHz, 1 414 at 48 kHz (quest dialog, monster vocalisations, Ashes /
-//! Forgotten Gods ambience), 62 at 96 kHz (Ugdenbog / Darkwood ambience), 2 at
-//! 24 kHz, 6 at 22.05 kHz, 1 at 11.025 kHz; 134 OGGs at 44.1 kHz, 32 at 48 kHz.
+//! Stock WAVs run 11.025–96 kHz (mostly 44.1 and 48 kHz); OGGs 44.1 and 48 kHz.
 
 /// The sample rate of a RIFF WAVE (`fmt ` chunk `nSamplesPerSec`); `None`
 /// for anything else.
@@ -22,8 +19,7 @@ pub fn wav_rate(bytes: &[u8]) -> Option<u32> {
 }
 
 /// The channel count of a RIFF WAVE (`fmt ` chunk `nChannels`); `None` for
-/// anything else. A multi-channel file cannot be a 3D buffer
-/// (`gd_audio::cache::Loaded::mono`). Stock pak entries: 5 054 mono, 901 stereo.
+/// anything else. A multi-channel file cannot be a 3D buffer.
 pub fn wav_channels(bytes: &[u8]) -> Option<u16> {
     fmt_chunk(bytes)?
         .get(2..4)

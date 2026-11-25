@@ -49,8 +49,8 @@ pub(super) fn move_to_use_skill(
         dead,
     ) in &mut players
     {
-        // Stunned: the state is left; dead target: Idle. A cancelled walk drops its warm-up marker
-        // ([`WarmPaid`]; the charge keeps what it paid).
+        // Stunned: the state is left; dead target: Idle. A cancelled walk drops its [`WarmPaid`]
+        // (the charge keeps what it paid).
         let foe = mv.target.map(|t| foes.get(t).ok());
         if stunned || dead || matches!(foe, Some(None)) {
             commands
@@ -69,7 +69,6 @@ pub(super) fn move_to_use_skill(
             continue;
         };
         let d = (goal - tf.translation).with_y(0.0).length();
-        // Another move request replaced the path.
         if let Some(dest) = mv.dest
             && !path.points.is_empty()
             && path.points.last() != Some(&dest)
@@ -95,7 +94,6 @@ pub(super) fn move_to_use_skill(
             mv.dest = path.points.last().copied();
             !ok
         };
-        // A followed target that moved on: path again.
         if let (Some(dest), Some(_)) = (mv.dest, foe)
             && (goal - dest).with_y(0.0).length() > 1.5
             && let Some(p) = nav.0.find_path(
@@ -151,9 +149,8 @@ pub(super) fn move_to_use_skill(
     }
 }
 
-/// Left-click spells: the clicked monster is attacked by casting the left skill when in range (else the player
-/// walks closer), once per armed [`crate::player_orders::PrimaryUse`] (`combat::player_attack`'s rule: a skill
-/// waiting in the pending-action slot goes first; the spent use's target is dropped once no cast runs).
+/// Left-click spells: casts the left skill at the clicked monster when in range, else walks closer,
+/// once per armed [`crate::player_orders::PrimaryUse`]; a pending-action skill goes first.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spell_attack_target(
     mut commands: Commands,
@@ -240,9 +237,7 @@ pub(super) fn spell_attack_target(
     let Some(skill) = caster.slots[SLOT_LEFT].clone() else {
         return;
     };
-    // The kick rule (`crate::hotbar::kicks_breakable`): a "Kick" breakable is kicked
-    // whatever the left slot holds (`SelectPrimaryAction`) —
-    // a projectile skill would shoot over it forever.
+    // A "Kick" breakable is kicked whatever the left slot holds (`SelectPrimaryAction`).
     let kick = brk.is_some_and(|b| {
         data.db
             .get(&b.record)
@@ -250,9 +245,8 @@ pub(super) fn spell_attack_target(
     });
     let skill = if kick { DEFAULT_KICK.to_owned() } else { skill };
     let d = (ttf.translation - tf.translation).with_y(0.0).length();
-    // Weapon skills need weapon reach (a ranged weapon's for shooters); the kick is
-    // melee whatever the weapon (`Skill_Kick::GetValidTarget` →
-    // `Skill::GetValidMeleeTarget`).
+    // Weapon skills need weapon reach (a ranged weapon's for shooters); the kick is always melee
+    // (`Skill_Kick::GetValidTarget` → `Skill::GetValidMeleeTarget`).
     let rec = data.db.get(&skill);
     let kind = rec.map(kind_of);
     let reach = if kick {
@@ -268,16 +262,11 @@ pub(super) fn spell_attack_target(
             }
         }
     };
-    // A weapon charge charges from afar (ChargeToUseSkill, `try_cast`).
+    // A weapon charge charges from afar (ChargeToUseSkill).
     let charge = rec.is_some_and(|r| gd_sim::skills::is_weapon_charge(&r.class));
-    // Line of sight (`ControllerAIStateT<ControllerPlayer, Player>::UseSkill`):
-    // a skill that requires LOS (`Skill::GetRequiresLOS`)
-    // is used only when `Skill::IsTargetInLOS` (both overloads) is clear,
-    // else the player moves to a spot that sees the target (the UseSkill search,
-    // `ControllerAIStateT<ControllerMonster, Monster>::UseSkill`, `monster_skills::los_spot`).
-    // PORT: also for a character target of
-    // a projectile / beam / ranged-weapon attack — playtest: a shot blocked by an
-    // obstacle repositions instead of firing into it forever.
+    // A skill that `Skill::GetRequiresLOS` is used only when `Skill::IsTargetInLOS` is clear, else
+    // the player moves to a spot that sees the target (`ControllerAIStateT<..>::UseSkill`).
+    // PORT: also for a character target of a projectile / beam / ranged-weapon attack.
     let shot = matches!(kind, Some(Kind::Projectile | Kind::Beam))
         || (kind == Some(Kind::Weapon) && ranged.is_some());
     let blocked =
@@ -338,10 +327,8 @@ pub(super) fn spell_attack_target(
     }
 }
 
-/// Kinds whose secondaries wait for the attack to resolve on its targets
-/// (`TargetResult`, `secondary.rs`): at the hit point for what it struck
-/// (swings, radii, chains, waves, dispels), else later (projectile impacts,
-/// area ticks, path charges, channel pulses).
+/// Kinds whose secondaries wait for `TargetResult`: at the hit point for what it struck (swings,
+/// radii, chains, waves, dispels), else later (impacts, area ticks, path charges, channel pulses).
 pub(super) fn resolves_on_hits(kind: Kind) -> bool {
     matches!(
         kind,
@@ -366,14 +353,9 @@ pub(super) fn resolves_on_hits(kind: Kind) -> bool {
 }
 
 /// Spells that hit only their target foe (no radius).
-/// `Skill_AttackSpellTeleport` (Valdaran's swap; `TargetResult`,
-/// the class's only override of `Skill_AttackSpell`): with a
-/// target in the list, the target is put where the caster stands and the
-/// caster where the target stood (`Character::TeleportToLocation`:
-/// through its controller, else on the floor, the nav object
-/// reset), the hit sound and target effect play at the caster's new place,
-/// then the ordinary `Skill_AttackSpell::TargetResult` hit and the
-/// secondaries. Both stop walking.
+/// `Skill_AttackSpellTeleport::TargetResult` (Valdaran's swap): caster and target trade places
+/// (`Character::TeleportToLocation`), the hit sound and target effect play at the caster's new
+/// place, then the ordinary hit and secondaries. Both stop walking.
 pub(super) fn swap_places(commands: &mut Commands, caster: Entity, target: Entity) {
     commands.queue(move |w: &mut World| {
         let (Some(a), Some(b)) = (
@@ -403,12 +385,9 @@ pub(super) fn single_target(class: &str) -> bool {
     )
 }
 
-/// `Skill_AttackProjectileChain::ActivateNow`: the
-/// spark list at launch — the primary target, then up to `sparkMaxNumber`
-/// jumps, each rolling `sparkChance` (a miss spends the jump) and picking a
-/// random unhit foe within `sparkGap` of the last, LOS-tested
-/// (`Skill::IsTargetInLOS`; the jump roll is `Kind::Chain`'s). The projectile
-/// carries the list; its impact attacks every entry (`TargetResult`).
+/// `Skill_AttackProjectileChain::ActivateNow`: the spark list at launch — the primary target, then
+/// up to `sparkMaxNumber` jumps, each rolling `sparkChance` (a miss spends the jump) and picking a
+/// random unhit foe within `sparkGap` of the last, LOS-tested. The impact attacks every entry.
 #[allow(clippy::too_many_arguments)]
 fn chain_sparks(
     data: &GameData,
@@ -458,9 +437,7 @@ fn chain_sparks(
     list
 }
 
-/// The fire pass's world access: `fire_casts` (animation callbacks and the
-/// procs written before it) and `fire_late_procs` (the procs the combat /
-/// trigger writers send after it) run the same activation through it.
+/// World access shared by `fire_casts` and `fire_late_procs`.
 #[derive(SystemParam)]
 pub(super) struct FireCtx<'w, 's> {
     commands: Commands<'w, 's>,
@@ -522,7 +499,7 @@ pub(super) struct FireCtx<'w, 's> {
     holdings: crate::combat_sounds::Holdings<'w, 's>,
     chars: Query<'w, 's, &'static gd_game_core::character::Character>,
     debufs: MessageWriter<'w, crate::skill_buffs::DebufTarget>,
-    // Option: devotion is optional input.
+    // Option: devotion is optional.
     devotion: Option<Res<'w, crate::devotion::DevotionState>>,
     world_coll: Res<'w, crate::collision::WorldCollision>,
     line_fans: MessageWriter<'w, crate::line_fan::Launch>,
@@ -531,9 +508,7 @@ pub(super) struct FireCtx<'w, 's> {
     sides: Query<'w, 's, crate::combat::SideData>,
     wrappers: Query<'w, 's, &'static CastCooldownKey>,
 }
-/// Fires casts on the animation's hit callback, and the procs written
-/// before it (the shared [`ProcCursor`]; [`fire_late_procs`] fires the rest
-/// the same frame).
+/// Fires casts on the animation's hit callback, and the procs written before it.
 pub(super) fn fire_casts(
     mut events: MessageReader<AnimCallback>,
     procs: Res<Messages<ProcCast>>,
@@ -543,8 +518,7 @@ pub(super) fn fire_casts(
     // `Casting` is removed with deferred commands: a hit and the `End` of
     // the same frame must not both fire it.
     let mut fired = gd_formats::collections::HashSet::default();
-    // Casts to fire: animation hit points of a pending `Casting`, then
-    // autocast procs (`autocast.rs`; no animation, no `Casting`).
+    // Animation hit points of a pending `Casting`, then autocast procs (no `Casting`).
     let mut work: Vec<(Entity, Casting, String)> = Vec::new();
     for ev in events.read() {
         let fire = matches!(ev.name.as_str(), "RightHandHit" | "LeftHandHit");
@@ -555,8 +529,8 @@ pub(super) fn fire_casts(
         let Ok((_, Some(cast), ..)) = ctx.casters.get(ev.entity) else {
             continue;
         };
-        // Only the cast's own clip fires it: the ended action's "End" may cross the frame a requester starts a new
-        // cast on the idle character (`Character::callbacks_after_cast`).
+        // Only the cast's own clip fires it: the ended action's "End" may arrive the frame a new
+        // cast starts on the idle character.
         if ctx
             .chars
             .get(ev.entity)
@@ -586,11 +560,8 @@ pub(super) fn fire_casts(
     ctx.fire(work);
 }
 
-/// The procs the frame's combat / trigger writers sent after `fire_casts`
-/// (autocast triggers, secondaries, monster casts, weapon-pool special
-/// clips): the same activation, the same frame
-/// (`SkillAutoCastController::AppraiseAndExecute` fires inside
-/// the hit).
+/// Procs sent after `fire_casts`, fired the same frame (`SkillAutoCastController::AppraiseAndExecute`
+/// fires inside the hit).
 pub(super) fn fire_late_procs(
     procs: Res<Messages<ProcCast>>,
     mut cursor: ResMut<ProcCursor>,
@@ -607,7 +578,6 @@ pub(super) fn fire_late_procs(
 }
 
 impl<'w, 's> FireCtx<'w, 's> {
-    /// One activation per work entry: a cast's effect at its fire moment.
     fn fire(&mut self, mut work: Vec<(Entity, Casting, String)>) {
         let Self {
             commands,
@@ -636,7 +606,6 @@ impl<'w, 's> FireCtx<'w, 's> {
             sides,
             wrappers,
         } = self;
-        // The helpers take `&mut Commands`: an owned reborrow to borrow from.
         let mut commands = commands.reborrow();
         // Pool skills picked by weapon-pool casts are appended and fired too.
         let mut wi = 0;
@@ -659,8 +628,7 @@ impl<'w, 's> FireCtx<'w, 's> {
             else {
                 continue;
             };
-            // A spell's `ActivateNow` plays its activation sounds at the caster
-            // (`crate::combat_sounds::activate`; PORT: every non-weapon cast).
+            // `ActivateNow` plays its activation sounds at the caster (PORT: every non-weapon cast).
             if cast.kind != Kind::Weapon
                 && let Ok(c) = chars.get(entity)
             {
@@ -674,8 +642,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                         at: Some(tf.translation),
                     });
                 }
-                // Radius attacks, summons, bursts: `skillHitSound` once at the
-                // caster (`crate::combat_sounds::HitAt::Caster`).
+                // Radius attacks, summons, bursts: `skillHitSound` once at the caster.
                 if let Some(pak) = crate::combat_sounds::spell_hit(
                     data,
                     &cast.skill,
@@ -700,13 +667,10 @@ impl<'w, 's> FireCtx<'w, 's> {
                     commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
                 }
             }
-            // Secondary skills this action runs (`secondary.rs`): the pool
-            // parent's for a pool pick, else the skill's own.
+            // The pool parent's secondaries for a pool pick, else the skill's own.
             let mut secondaries = Some(crate::secondary::Mode::Normal);
-            // A weapon-pool skill's attack (`weapon_pool.rs`): the finale or the
-            // pool skill decided as the action started (`PoolPick`; an autocast
-            // proc starts and hits at once), then the charges; a picked pool
-            // skill fires instead (appended to `work`).
+            // A weapon-pool attack: the finale or the pool skill decided as the action started
+            // (`PoolPick`; a proc decides at once), then the charges; a picked pool skill fires instead.
             if cast.kind == Kind::Weapon
                 && cast.parent.is_none()
                 && let Some(prec) = data
@@ -762,14 +726,9 @@ impl<'w, 's> FireCtx<'w, 's> {
                         )
                     }) {
                         if parent.is_none() {
-                            // Cadence's ordinary attacks run no secondaries
-                            // (`Skill_WeaponPool_ChargedFinale`'s vtable leaves
-                            // `ActivateSecondarySkills` empty; only the finale
-                            // runs them via `AlternateActivateSecondarySkills`);
-                            // a picked pool skill would
-                            // run only its own attached secondaries
-                            // (`Skill_WPAttack_AttackWave::TargetResult`)
-                            // and the data gives them none.
+                            // Cadence's ordinary attacks run no secondaries (only the finale runs
+                            // them, `AlternateActivateSecondarySkills`); the data gives picked pool
+                            // skills none.
                             let mut c = c;
                             c.parent = Some((String::new(), 0));
                             work.push((entity, c, name));
@@ -786,9 +745,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                     }
                 }
             }
-            // The caster's foes (`combat::Side`: `FactionManager::IsFoe(caster, it)`).
+            // `FactionManager::IsFoe(caster, it)`.
             let side = crate::combat::Side::lookup(sides, entity, cast.hostile);
-            // Built only by the kinds that scan the foes.
             let monsters = std::cell::LazyCell::new(|| {
                 all.iter()
                     .filter(|(e, _, _, v)| side.hits(v) && *e != entity)
@@ -806,24 +764,16 @@ impl<'w, 's> FireCtx<'w, 's> {
                 .target
                 .and_then(|t| all.get(t).ok())
                 .map(|(_, t, c, _)| c.body_box(&t.compute_affine()));
-            // What the hit point struck and where (`AttackInfo` coordinates: the
-            // attacker's for a swing).
+            // What the hit point struck and where (a swing's: the attacker's coordinates).
             let mut struck: Vec<Entity> = Vec::new();
             let mut centre = tf.translation;
-            // (`End` with the cast still pending: the animation had no hit point.)
             let Some(rec) = data.db.get(&cast.skill) else {
                 continue;
             };
-            // A wrapper (curses `Skill_AttackBuff` / `…Radius`, projectile
-            // debuffs, `Skill_BuffRadius`, `Skill_BuffOther`) loads its profile
-            // from its `buffSkillName` record (`gd_sim::skills::profile_name`):
-            // duration, radius, values and sounds are that record's
-            // whichever way it was cast (a hot slot cast already runs as that
-            // record; procs, items, monsters and pets run the wrapper). A
-            // `SkillBuff_Debuf*` record lands on its targets as a debuff rather
-            // than hitting them (`crate::skill_buffs`: `Skill_AttackBuff::
-            // TargetResult`); a projectile debuff's projectile stays the
-            // wrapper's (`projectileNames`, [`projectile_debuf_wrapper`]).
+            // A wrapper (curses, projectile debuffs, `Skill_BuffRadius`, `Skill_BuffOther`) loads its
+            // profile from its `buffSkillName` record however it was cast. A `SkillBuff_Debuf*` record
+            // lands as a debuff rather than a hit (`Skill_AttackBuff::TargetResult`); a projectile
+            // debuff's projectile stays the wrapper's ([`projectile_debuf_wrapper`]).
             let wrapper = projectile_debuf_wrapper(&data.db, rec, loadout.as_deref());
             let wrapped = gd_sim::skills::profile_name(rec).map(str::to_owned);
             let rec = match wrapped.as_deref().and_then(|b| data.db.get(b)) {
@@ -832,19 +782,15 @@ impl<'w, 's> FireCtx<'w, 's> {
             };
             let debuff = gd_game_core::skill_buffs::lands_as_debuff(rec)
                 .then(|| wrapped.clone().unwrap_or_else(|| cast.skill.clone()));
-            // The skill's devotion level (`Skill::GetDevotionLevel`): the
-            // player's celestial powers'.
+            // `Skill::GetDevotionLevel`.
             let devotion_level = devotion
                 .as_deref()
                 .filter(|_| enchanted.get(entity).is_ok_and(|e| e.1))
                 .map_or(0, |d| d.devotion_level(&cast.skill));
             debug!("fire {} ({:?}) on {}", cast.skill, cast.kind, name);
             let li = cast.level_index;
-            // Skill attributes (radius, counts, durations…) are the skill's
-            // profile values plus its learned modifiers' (`Skill::
-            // GetSkillModifierData` sums the modifiers' `SkillProfile_Modifiers`,
-            // whose loader holds these fields); no % part
-            // (`GetTotalSkillAttribute` only covers the 5 skill-wide stats).
+            // Skill attributes are the profile values plus the learned modifiers'
+            // (`Skill::GetSkillModifierData`); no % part.
             let mod_recs: Vec<(&Record, usize)> = links
                 .get(entity)
                 .map(|l| {
@@ -854,7 +800,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                         .collect()
                 })
                 .unwrap_or_default();
-            // The modifiers whose visual overrides apply ([`gd_game_core::skill_fx::override_mods`]).
             let fx_mods = gd_game_core::skill_fx::override_mods(
                 &data.db,
                 links.get(entity).ok().map(|l| l.0),
@@ -864,17 +809,10 @@ impl<'w, 's> FireCtx<'w, 's> {
             let lf = |k: &str| {
                 level_f(rec, k, li) + mod_recs.iter().map(|(r, l)| level_f(r, k, *l)).sum::<f32>()
             };
-            // Cost and cooldown are paid at the cast's fire — the engine's
-            // `SkillManager::SkillTargetResult` / `CreateProjectile`
-            // / `Skill_AttackRadius::ReceiveActiveUpdate`
-            // / `SkillActivatedBuffSelf::ApplyCost`
-            // moment: `GetManaCost` → `SubtractMana` →
-            // `StartCooldown`, then the effect; a wind-up cut short (stun,
-            // death) pays nothing. Only the player's own cast pays here: a proc
-            // fires without energy (its trigger started its cooldown), a pool
-            // pick runs under its parent's payment, a monster's / pet's
-            // cooldown starts at its AI's use, and a charge's warm-up already
-            // paid ([`WarmPaid`]).
+            // Cost and cooldown are paid at the fire (`GetManaCost` → `SubtractMana` →
+            // `StartCooldown`, then the effect); a wind-up cut short pays nothing. Only the player's
+            // own cast pays here: procs, pool picks, monsters / pets and warmed charges ([`WarmPaid`])
+            // paid elsewhere or not at all.
             if name != "proc"
                 && cast.parent.is_none()
                 && let Some(c) = caster.as_deref_mut()
@@ -920,8 +858,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                             "skillCooldownReduction",
                         ),
                     );
-                    // A hot slot wrapper's cast runs as its `buffSkillName` record, but the cooldown is the
-                    // wrapper's (the skill the slot names, which `try_cast` checks and the hotbar shows).
+                    // A hot slot wrapper's cast runs as its `buffSkillName` record, but the cooldown
+                    // is the wrapper's.
                     let key = wrappers
                         .get(entity)
                         .ok()
@@ -931,16 +869,12 @@ impl<'w, 's> FireCtx<'w, 's> {
                         .start(key, cd, lf("cooldownCharges").max(1.0) as u32);
                 }
             }
-            // The parent's secondaries (`secondary.rs`): attacks run the ordinary
-            // ones when they resolve on their targets (`TargetResult`):
-            // below for the hit point's struck list, at the
-            // impact / tick / arrival for projectiles, areas, path charges and
-            // charges; the rest (buffs, toggles, pets) and Cadence's finale here.
+            // Attacks run the ordinary secondaries at `TargetResult` (below for the struck list,
+            // later for impacts / ticks / arrivals); the rest and Cadence's finale here.
             let on_hits =
                 secondaries == Some(crate::secondary::Mode::Normal) && resolves_on_hits(cast.kind);
-            // The Primary pair runs at the cast of the buff / radius / wave
-            // parents (`ActivateNow` → `PrimaryActivateSecondarySkills`); a
-            // `Skill_BuffSelfDuration` runs nothing else (`secondary.rs`).
+            // The Primary pair runs at the cast of buff / radius / wave parents
+            // (`PrimaryActivateSecondarySkills`); a `Skill_BuffSelfDuration` runs nothing else.
             let parent_class = data.db.get(&cast.skill).map_or("", |r| r.class.as_str());
             if cast.parent.is_none() && crate::secondary::primary_activates(parent_class) {
                 activations.write(crate::secondary::Activate::primary(
@@ -976,9 +910,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                     });
                 }
             }
-            // A `Skill_AttackRadius` / `SkillSecondary_AttackRadius` with an
-            // `expansionTime` hits as its radius grows (`ExpandingRadius`, which
-            // also runs its secondaries; no other class does).
+            // An `expansionTime` radius hits as it grows (`ExpandingRadius`, which also runs its
+            // secondaries).
             let expanding = debuff.is_none()
                 && matches!(
                     (cast.kind, rec.class.as_str()),
@@ -1006,11 +939,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     .map(|m| m.0)
                     .collect()
             };
-            // `SkillActivated::CameraShake` (a virtual; its only callers are
-            // `Skill_AttackRadiusLightning::OnLightningComplete`, `Skill_AttackRadiusLightning2::
-            // OnLightningComplete` and `Skill_BuffAttackRadiusLightning::Update`, per bolt: [`DamageAura`]):
-            // the record's duration and amplitude through `Character::SendCameraShakeEvent`: the player's own
-            // shake (`Player` override), a monster's / pet's `Actor` event shakes a camera that sees it.
+            // `SkillActivated::CameraShake` (per bolt: `Skill_AttackRadiusLightning*::OnLightningComplete`).
             if rec.class.starts_with("Skill_AttackRadiusLightning") {
                 let (secs, amp) = (lf("cameraShakeDurationSecs"), lf("cameraShakeAmplitude"));
                 if secs > 0.0001 {
@@ -1023,9 +952,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                 }
             }
             match cast.kind {
-                // A weapon skill with a ranged weapon shoots the weapon's projectile;
-                // the kick stays melee whatever the weapon (`Skill_Kick::GetValidTarget`
-                // → `Skill::GetValidMeleeTarget`).
+                // A weapon skill with a ranged weapon shoots the weapon's projectile; the kick stays melee.
                 Kind::Weapon if ranged.is_some() && rec.class != "Skill_Kick" => {
                     let (ench, player) = enchanted.get(entity).unwrap_or((None, false));
                     let Some(prec) = ranged.and_then(|r| {
@@ -1040,7 +967,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                         continue;
                     };
                     let mut c = cast.clone();
-                    // A led shot (`lead.rs`) keeps its aim point; else re-aim.
+                    // A led shot keeps its aim point; else re-aim.
                     if let Ok(a) = aims.get(entity) {
                         c.point = a.0;
                         commands.entity(entity).try_remove::<AimPoint>();
@@ -1089,9 +1016,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                     if let Some(t) = target
                         && let Some((_, mt, mcb)) = foe(t)
                     {
-                        // The hit-frame re-check: 3-D distance minus both radii within
-                        // `meleeTargetDistance` (`Skill::IsTargetInRange`,
-                        // `ExecuteMeleeAttack`).
+                        // Hit-frame re-check: 3-D distance minus both radii within
+                        // `meleeTargetDistance` (`Skill::IsTargetInRange`).
                         let mtd = data.engine().melee_target_distance;
                         let in_reach = crate::combat::in_melee_reach(
                             tf.translation,
@@ -1099,9 +1025,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                             cb.radius + mcb.radius,
                             mtd,
                         );
-                        // Out of reach: the skill's cone at radius + meleeAutoTargetDistance
-                        // (4.0) may still catch a foe who stepped in (`GetTargetsInCone`);
-                        // the most centred one becomes the hit's target.
+                        // Out of reach: the cone at radius + meleeAutoTargetDistance (4.0) may still
+                        // catch a foe who stepped in; the most centred one becomes the target.
                         let mut t = t;
                         let mut caught = in_reach;
                         if !in_reach {
@@ -1123,19 +1048,10 @@ impl<'w, 's> FireCtx<'w, 's> {
                         }
                         if caught {
                             hit(&mut *hits, &mut struck, t);
-                            // `skillTargetAngle` (full width, 0–360; 0 = the
-                            // target alone) cone of the facing, the target first,
-                            // cut to `skillTargetNumber` (0 = no cap)
-                            // (`SkillActivated::ExecuteMeleeAttack` →
-                            // `GameEngine::GetTargetsInCone`). Extras
-                            // past the cap: the cone query's order, kept by
-                            // `GetTargetsInCone`'s filtering —
-                            // `World::GetEntitiesInCone` (Engine.dll)
-                            // std::sorts its hits by descending
-                            // `forward · direction`, the facing (y taken as 0)
-                            // against the unit 3-D vector to the entity
-                            // (comparator `World::CompareConeHits`: `a.dot > b.dot`), so the
-                            // most centred foes win.
+                            // `skillTargetAngle` (full width, 0–360; 0 = the target alone) cone of the
+                            // facing, the target first, cut to `skillTargetNumber` (0 = no cap)
+                            // (`GameEngine::GetTargetsInCone`). Extras past the cap: most centred first
+                            // (`World::CompareConeHits`: descending flat facing · unit 3-D direction).
                             let n = lf("skillTargetNumber") as usize;
                             let angle = lf("skillTargetAngle").clamp(0.0, 360.0);
                             if angle > 0.0 && n != 1 {
@@ -1167,11 +1083,9 @@ impl<'w, 's> FireCtx<'w, 's> {
                                     hit(&mut *hits, &mut struck, m);
                                 }
                             }
-                            // `Skill_AttackWeaponRadius::OnHitTarget`: each first-level
-                            // hit splashes a separate result (`AttackInfo.noSecondaries` set: no secondaries, no second
-                            // splash) on the foes within the profile's `skillTargetRadius` (with its modifiers')
-                            // of the hit one, that one excluded (another primary target may be splashed).
-                            // "Within": `GetTargetsInRadius` (`Combatant::in_radius`).
+                            // `Skill_AttackWeaponRadius::OnHitTarget`: each first-level hit splashes a
+                            // separate result (no secondaries, no second splash) on the foes within
+                            // `skillTargetRadius` of the hit one, that one excluded.
                             let splash = lf("skillTargetRadius");
                             if rec.class == "Skill_AttackWeaponRadius" && splash > 0.0 {
                                 let primaries: Vec<(Entity, Vec3)> = struck
@@ -1199,10 +1113,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                         } else if rec.class == "Skill_AttackWeaponCharge"
                             || rec.class == "Skill_AttackWeaponBlink"
                         {
-                            // Charges and blinks (Shadow Strike) run to the
-                            // target at the warmed-up run speed and hit on arrival
-                            // (`Skill_AttackWeaponBlink` derives from the charge,
-                            // same `WarmUpStart` push-through move).
+                            // Charges and blinks (Shadow Strike) run to the target at the warmed-up
+                            // run speed and hit on arrival.
                             if warms_up(rec) {
                                 start_warm_up(
                                     &mut commands,
@@ -1288,24 +1200,15 @@ impl<'w, 's> FireCtx<'w, 's> {
                     }
                 }
                 Kind::PathCharge => {
-                    // A teleport has no move: `Skill_AttackRadiusTeleport::
-                    // ActivateNow` builds its attack at the target point, and its
-                    // `WarmUpStart` sets no push-through move. Leaps
-                    // and disengages have already moved by their hit point: the
-                    // jump runs between the animation's `StartJump` and
-                    // `StopJump` callbacks ([`Leap`], `leaps`), and their
-                    // `ActivateNow` (`Skill_AttackRadiusLeap`,
-                    // `Skill_AttackRadiusDisengage`) hits around
-                    // the caster's coordinates at the hit callback, so
-                    // they land here with no route left. Path charges run at the
+                    // A teleport has no move (`Skill_AttackRadiusTeleport::ActivateNow` attacks at the
+                    // target point). Leaps and disengages already moved between `StartJump` and
+                    // `StopJump` ([`Leap`]) and hit around the caster. Path charges run at the
                     // warm-up run speed.
                     let leap = is_leap(&rec.class);
                     let teleport = rec.class.contains("Teleport");
                     let speed = if teleport { Some(f32::INFINITY) } else { None };
-                    // `Skill_AttackSpellTeleportSelf` with `targetingMode`
-                    // `Target` lands short of its target, by both radii
-                    // (`gd_sim::skills::TargetingMode`; PORT: on the straight
-                    // line, not along the path).
+                    // `Skill_AttackSpellTeleportSelf` with `targetingMode` `Target` lands short of its
+                    // target by both radii (PORT: on the straight line, not along the path).
                     let mut to = cast.point;
                     if rec.class == "Skill_AttackSpellTeleportSelf"
                         && gd_sim::skills::targeting_mode(rec)
@@ -1346,8 +1249,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                         ),
                         _ => (0.0, 1.0, 0.0, Vec::new()),
                     };
-                    // `Skill_AttackPathCharge::WarmUpStart` ends in the weapon
-                    // warm-up ([`WarmUp`]); the run stands for its move.
+                    // `Skill_AttackPathCharge::WarmUpStart` ends in the weapon warm-up; the run
+                    // stands for its move.
                     let warm =
                         rec.class == "Skill_AttackPathCharge" && rec.bool("skillAllowsWarmUp");
                     if warm {
@@ -1409,9 +1312,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                     };
                     centre = c;
                     if let Some(buff) = &debuff {
-                        // `ApplyBuffOnTarget` on each: the buff record at the
-                        // level with the skill's modifiers for its
-                        // `skillActiveDuration` (whole ms).
+                        // `ApplyBuffOnTarget`: the buff record at the level with the skill's
+                        // modifiers for its `skillActiveDuration` (whole ms).
                         let secs = (lf("skillActiveDuration") * 1000.0) as i32 as f32 / 1000.0;
                         let mods = links
                             .get(entity)
@@ -1435,8 +1337,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                             if rec.class == "Skill_AttackSpellTeleport" {
                                 swap_places(&mut commands, entity, t.0);
                             }
-                            // `Skill_AttackSpellChaos::ActivateNow`: a new beam to the target that hits when its head
-                            // arrives (`chaos.rs`); a beam record that does not load never hits.
+                            // `Skill_AttackSpellChaos::ActivateNow`: a beam that hits when its head
+                            // arrives; a beam record that does not load never hits.
                             if rec.class.starts_with("Skill_AttackSpellChaos") {
                                 if let Some(beam) =
                                     gd_game_core::skill_fx::chaos_beam(rec, &fx_mods)
@@ -1456,7 +1358,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                             }
                         }
                     } else if expanding {
-                        // An expanding radius hits as it grows (`ExpandingRadius`).
                         commands.spawn(ExpandingRadius {
                             cast: cast.clone(),
                             caster: entity,
@@ -1497,9 +1398,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     let Some(prec) = prec.and_then(|p| data.db.get(&p)) else {
                         continue;
                     };
-                    // A projectile debuff lands its buff on what it hits
-                    // ([`ProjectileDebuf`]: modifiers, devotion level and
-                    // duration are read at the impact).
+                    // Modifiers, devotion level and duration are read at the impact.
                     let landing = wrapper
                         .as_ref()
                         .and(debuff.as_ref())
@@ -1509,7 +1408,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                         .as_ref()
                         .map(|l| ProjMods::of(&data.db, &trees.parents, &l.skills, &cast.skill))
                         .unwrap_or_default();
-                    // The skill's own pierce chance (rings, fans, bursts).
                     mods.pierce += lf("projectilePiercingChance");
                     mods.fragments_name = gd_game_core::skill_fx::fragments_name(rec, &fx_mods);
                     mods.effects = gd_game_core::skill_fx::projectile_effects(
@@ -1520,16 +1418,11 @@ impl<'w, 's> FireCtx<'w, 's> {
                         &fx_mods,
                         cast.parent.as_ref().map(|p| p.0.as_str()),
                     );
-                    // Rings / fans / bursts launch `projectileLaunchNumber` evenly
-                    // over `projectileLaunchRotation` degrees, centred on the aim
-                    // (360 = all around; `Skill_AttackProjectileRing::ActivateNow`).
-                    // Others fire `skillProjectileNumber`: the first at
-                    // the target, the rest at a random sideways offset of the aim
-                    // point within ± tan(`skillProjectileAngle` / 2) × distance
-                    // (default 45°; `SkillActivated::ExecuteRangedAttack`;
-                    // the extras first aim at other foes within 1 m of
-                    // the target, then fall back to the random offset). Range falloff:
-                    // `gd_sim::actor::range_scale` at impact.
+                    // Rings / fans / bursts launch `projectileLaunchNumber` evenly over
+                    // `projectileLaunchRotation` degrees centred on the aim. Others fire
+                    // `skillProjectileNumber`: the first at the target, the rest at other foes within
+                    // 1 m of it, then at a random sideways offset within ± tan(`skillProjectileAngle`
+                    // / 2) × distance (default 45°; `SkillActivated::ExecuteRangedAttack`).
                     let launch = lf("projectileLaunchNumber");
                     let rot = lf("projectileLaunchRotation");
                     let spread = rec
@@ -1551,13 +1444,9 @@ impl<'w, 's> FireCtx<'w, 's> {
                         "R Hand"
                     };
                     let start = launch_coords(data, tf, chars.get(entity).ok(), rec, hand);
-                    // `Skill_AttackProjectileBurst::ActivateNow` / `Skill_WPAttack_ProjectileBurst::
-                    // ExecuteRangedAttack`: `targetingMode` `Target` with a target aims at
-                    // its `Target` attach point (PORT: bind pose). Else the request point itself
-                    // (`SkillActivated::ExecuteRangedAttack`: direction = point −
-                    // launch coords; the point is the clicked object's `Entity::GetCoords`,
-                    // `InGameUI::HandleMouseEvent`, no height lift): the shot descends
-                    // onto low breakables instead of flying over them.
+                    // `Skill_AttackProjectileBurst::ActivateNow`: `targetingMode` `Target` with a
+                    // target aims at its `Target` attach point (PORT: bind pose). Else the request
+                    // point itself, no height lift: the shot descends onto low breakables.
                     let burst_point = (matches!(
                         rec.class.as_str(),
                         "Skill_AttackProjectileBurst" | "Skill_WPAttack_ProjectileBurst"
@@ -1574,17 +1463,13 @@ impl<'w, 's> FireCtx<'w, 's> {
                         super::projectiles::aim_point(cast.point, target_body.as_ref())
                     }) - start)
                         .normalize_or(gd_game_core::character::facing(tf));
-                    // `ProjectileHoming::ProjectileGo`:
-                    // no valid target, no launch at all.
+                    // `ProjectileHoming::ProjectileGo`: no valid target, no launch.
                     if prec.class == "ProjectileHoming"
                         && cast.target.is_none_or(|t| all.get(t).is_err())
                     {
                         continue;
                     }
-                    // The extra shots' nearby foes (`ExecuteRangedAttack`):
-                    // within 1 m of the target, the
-                    // target itself excluded; one per extra shot, then the random
-                    // offset.
+                    // The extra shots' foes within 1 m of the target (itself excluded).
                     let extra_aims: Vec<Vec3> = if n > 1 && rot <= 0.0 {
                         let at = cast
                             .target
@@ -1606,9 +1491,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     } else {
                         Vec::new()
                     };
-                    // `Skill_AttackProjectileOrbiting` /
-                    // `SkillSecondary_AttackProjectileOrbiting` launch their
-                    // projectiles one by one ([`crate::orbit`]).
+                    // Orbiting projectiles launch one by one ([`crate::orbit`]).
                     if let Some(spec) = crate::orbit::BurstSpec::of(
                         rec,
                         li,
@@ -1641,10 +1524,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                             let a = ((gd_game_core::rng::f32() * 2.0 - 1.0) * half).atan();
                             Quat::from_rotation_y(a) * aim
                         };
-                        // A ring of `ProjectileOrbiting` (Gaze of Korvaak, devotion
-                        // rings): each starts out along its ring heading, clockwise
-                        // (`Skill_AttackProjectileRing::ActivateNow` passes
-                        // direction 0; [`crate::orbit`]).
+                        // A ring of `ProjectileOrbiting` (Gaze of Korvaak): each starts along its ring
+                        // heading, clockwise.
                         if prec.class == crate::orbit::PROJECTILE_CLASS {
                             orbits.write(crate::orbit::Launch {
                                 caster: entity,
@@ -1683,8 +1564,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                                 }
                             });
                         }
-                        // The chain projectile carries its spark list; the impact
-                        // attacks every entry ([`chain_sparks`]).
                         if (rec.class == "Skill_AttackProjectileChain"
                             || prec.class == "ProjectileChain")
                             && let Some(first) = cast.target.and_then(foe)
@@ -1746,7 +1625,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                         lf("projectileExplosionRadius"),
                     );
                 }
-                // Spots that go off later (`crate::patterns`).
                 Kind::Pattern => {
                     let target = cast.target.or(cb.target);
                     commands.write_message(crate::patterns::Fire {
@@ -1757,7 +1635,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                         target,
                     });
                 }
-                // Orders to the turrets around (`crate::turrets`).
                 Kind::TurretFire => {
                     let target = cast.target.or(cb.target);
                     commands.write_message(crate::turrets::Command {
@@ -1767,7 +1644,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                         target,
                     });
                 }
-                // Areas at the level's geyser markers (`crate::geysers`).
                 Kind::Geysers => {
                     commands.write_message(crate::geysers::Fire {
                         caster: entity,
@@ -1782,14 +1658,11 @@ impl<'w, 's> FireCtx<'w, 's> {
                     else {
                         continue;
                     };
-                    // `Skill_AttackProjectileDrop::ActivateNow` /
-                    // `GetLaunchPointAbove`: `numProjectiles`
-                    // + `projectileLaunchNumber` land at a random angle and a
-                    // uniform random distance up to `skillTargetRadius` from the
-                    // target; each launches above its landing spot
-                    // (`launchAboveTarget`, else from the caster), moved sideways
-                    // up to `dropRadius` at `dropHeight` ± `dropVariation`, and
-                    // flies there at its own `projectileVelocity`.
+                    // `Skill_AttackProjectileDrop::ActivateNow`: `numProjectiles` +
+                    // `projectileLaunchNumber` land at a random angle and uniform distance up to
+                    // `skillTargetRadius` from the target; each launches above its spot
+                    // (`launchAboveTarget`, else from the caster), offset up to `dropRadius` at
+                    // `dropHeight` ± `dropVariation`, at its own `projectileVelocity`.
                     let n = (lf("numProjectiles") + lf("projectileLaunchNumber")).max(1.0) as usize;
                     let h = rec.f32("dropHeight").unwrap_or(12.0);
                     let var = rec.f32("dropVariation").unwrap_or(0.0);
@@ -1838,15 +1711,13 @@ impl<'w, 's> FireCtx<'w, 's> {
                     }
                 }
                 Kind::Buff => {
-                    // A timed damaging aura: 1 s ticks, the toggled class's
-                    // (`Skill_BuffAttackRadiusDuration` derives from it).
-                    // Blade Barrier: no moving while it runs ([`ImmobilizeRefresh`]).
                     if rec.class == "Skill_BuffSelfColossus" {
                         commands.write_message(crate::colossus::Grow {
                             caster: entity,
                             skill: cast.skill.clone(),
                         });
                     }
+                    // Blade Barrier: no moving while it runs.
                     if rec.class == "Skill_BuffSelfImmobilize" {
                         commands
                             .entity(entity)
@@ -1855,8 +1726,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                                 timer: 0.0,
                             });
                     }
-                    // Damage absorption of self buffs (`Skill_BuffSelfToggled::
-                    // ModifyDamage`): see [`Shield`].
+                    // `Skill_BuffSelfToggled::ModifyDamage`: see [`Shield`].
                     let (pct, flat) = (
                         level_f(rec, "damageAbsorptionPercent", li),
                         level_f(rec, "damageAbsorption", li),
@@ -1884,6 +1754,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                             }
                         });
                     }
+                    // A timed damaging aura: 1 s ticks.
                     if rec.class.ends_with("BuffAttackRadiusDuration")
                         || rec.class == "Skill_BuffAttackRadiusLightning"
                     {
@@ -1910,12 +1781,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                         });
                     }
                     // The buff going on gives its caster the profile's [`Bonus`]
-                    // (`Skill_BuffSelfToggled::ReceiveActiveUpdate`; a `Skill_BuffRadius`'s
-                    // activation pass finds the caster among its friends, `ActivateNow`),
-                    // e.g. Blood of Dreeg's `skillLifePercent`; a radius buff's is that pass's
-                    // (`crate::auras::Activated`, the caster included).
-                    // (A player's hot slot cast runs as the buff record: its wrapper is the
-                    // learned `Skill_BuffRadius` naming it, as `auras::player_emissions` finds it.)
+                    // (`Skill_BuffSelfToggled::ReceiveActiveUpdate`), e.g. Blood of Dreeg's
+                    // `skillLifePercent`; a radius buff's comes from its activation pass instead.
                     let is_radius = |s: &str| {
                         data.db
                             .get(s)
@@ -1953,10 +1820,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                     } else {
                         Bonus::of(lf).queue(&mut commands, entity);
                     }
-                    // `skillActiveDuration` of the profile record (`rec`, above):
-                    // a wrapper's runs under the wrapper's name for the buff's
-                    // duration. A `Skill_BuffRadius` reaches the caster's allies
-                    // through its aura passes while it runs (`auras.rs`).
+                    // A wrapper's buff runs under the wrapper's name for the profile record's
+                    // `skillActiveDuration`.
                     let dur = lf("skillActiveDuration");
                     if let Some(mut ms) = mskills {
                         ms.add_buff(&cast.skill, li, dur);
@@ -1977,10 +1842,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                         }
                         continue;
                     }
-                    // The player: the running buff under the cast's name (a
-                    // proc's wrapper keeps its aura passes, devotion level and
-                    // buff bar entry); its stats (the profile record and the
-                    // learned modifiers') derive from the one store at the
+                    // The player: the running buff under the cast's name; its stats derive at the
                     // profile rebuild ([`gd_game_core::skill_buffs::TimedBuffs`]).
                     let Some(mut loadout) = loadout else {
                         continue;
@@ -2017,8 +1879,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                         );
                     }
                 }
-                // A travelling wave (`waves.rs`): its hits and secondaries land
-                // as its front reaches each foe.
+                // Hits and secondaries land as the wave's front reaches each foe.
                 Kind::Wave => {
                     let target = cast
                         .target
@@ -2042,9 +1903,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                         None => debug!("wave {}: no target to start from", cast.skill),
                     }
                 }
-                // A fan of travelling lines (`line_fan.rs`): its hits, bursts and
-                // secondaries land as its lines reach the foes. Number and angle
-                // with the learned modifiers' (`GetSkillModifierData`).
+                // Hits, bursts and secondaries land as the lines reach the foes; number and angle
+                // include the learned modifiers'.
                 Kind::LineFan => {
                     let target = cast
                         .target
@@ -2063,9 +1923,8 @@ impl<'w, 's> FireCtx<'w, 's> {
                         target,
                     });
                 }
-                // A travelling line (`attack_line.rs`): its hits and secondaries land every period.
+                // Hits and secondaries land every period.
                 Kind::Line => start_attack_line(&mut commands, data, rec, &cast, entity, tf),
-                // A link to the target (`reflect_link.rs`).
                 Kind::ReflectLink => {
                     let target = cast.target.or(cb.target).and_then(foe).map(|t| t.0);
                     commands.write_message(gd_game_core::reflect_link::StartLink {
@@ -2077,21 +1936,13 @@ impl<'w, 's> FireCtx<'w, 's> {
                 }
                 Kind::Instant => {
                     if rec.class == "SkillActivated_Suicide" {
-                        // The user dies (`combat::Suicide`).
                         commands.entity(entity).try_insert(crate::combat::Suicide);
                     } else if rec.class == "Skill_RefreshCooldown" {
                         // Every skill's cooldown shortens by `refreshTime` s
-                        // (`Skill_RefreshCooldown::ActivateNow` →
-                        // `SkillManager::RefreshCooldown`, no black list); its own
-                        // excepted (`Skill_RefreshCooldown`'s vtable leaves
-                        // `EndCooldown` empty).
+                        // (`SkillManager::RefreshCooldown`), its own excepted.
                         let t = level_f(rec, "refreshTime", li);
-                        // The active, item and sub-skill lists (`SkillManager::
-                        // RefreshCooldown` walks all three):
-                        // the hotbar store (its potion keys skipped, as the item
-                        // list does), the autocast procs (item / celestial /
-                        // passive) and the skill-level children. Each finished
-                        // cooldown returns its charge (`EndCooldown`).
+                        // The active, item and sub-skill lists: hotbar (potion keys skipped),
+                        // autocast procs and skill-level children. A finished cooldown returns its charge.
                         let except = [
                             cast.skill.clone(),
                             HEALTH_POTION.to_owned(),
@@ -2107,20 +1958,11 @@ impl<'w, 's> FireCtx<'w, 's> {
                             sa.refresh_cooldowns(t, &except);
                         }
                     } else {
-                        // The profile's [`Bonus`] (with its modifiers'), at once
-                        // (`Skill_GiveBonus::TargetResult` → `CharacterBio::TakeBonus`).
-                        // A `Skill_GiveBonus`
-                        // is ally-targeted (`gd_sim::skills::TargetType::Ally`): the
-                        // player's casts always have a friend target ([`CastRequest`]),
-                        // which takes it, with its own healing bonuses, when still in
-                        // reach: `ControllerPlayerStateUseSkill::OnBegin`
-                        // drops a ranged skill's target past its range, and
-                        // `Skill_GiveBonus::ActivateNow` gives the bonus
-                        // only to a resolved target within 20 m (edge to edge,
-                        // `Skill::IsTargetInRange`), else to nobody (the
-                        // cast is paid). PORT: both checks are made here, when the
-                        // bonus lands. Other casters (procs without a target, pets,
-                        // monsters) give it to their friend target or themselves.
+                        // The profile's [`Bonus`], at once (`Skill_GiveBonus::TargetResult`). The
+                        // player's friend target takes it only within 20 m edge to edge
+                        // (`Skill_GiveBonus::ActivateNow`), else nobody (the cast is paid). PORT: the
+                        // range is checked when the bonus lands. Other casters give it to their
+                        // friend target or themselves.
                         let bonus = Bonus::of(lf);
                         let ally = cast.target.filter(|t| *t != entity);
                         let reach = (skill_range(data, rec) + MOVE_TOLERANCE).min(GIVE_BONUS_REACH);
@@ -2152,7 +1994,6 @@ impl<'w, 's> FireCtx<'w, 's> {
                                 return;
                             };
                             bonus.apply_to(w, who);
-                            // The target effect on whoever took it.
                             if let (Some(fx), Some(at)) =
                                 (fx, w.get::<Transform>(who).map(|t| t.translation))
                             {
@@ -2192,21 +2033,12 @@ impl<'w, 's> FireCtx<'w, 's> {
                         );
                     }
                 }
-                // Toggles cast like any buff (the skill's special animation, else
-                // the buff cast, at cast speed: `SkillActivatedBuffSelf::
-                // StartAction`) and switch on / off on its hit callback, paying
-                // the cost either way; switching on plays the activate effect
-                // (`Skill_BuffSelfToggled::ActivateNow` /
-                // `ReceiveActiveUpdate`). The player's
-                // hot slots never hold one (`HotSlotOptionSkill::Validate`
-                // refuses auto toggles) and one switched off comes on again at
-                // the next update (`crate::skill_buffs` docs, auto toggles).
+                // Toggles cast like any buff and switch on / off on the hit callback, paying the
+                // cost either way; switching on plays the activate effect.
                 Kind::Toggle => {
                     let Some(mut loadout) = loadout else { continue };
                     let low = cast.skill.to_ascii_lowercase();
-                    // A toggle a dispel stopped is off: the use switches it on
-                    // (`ActivateNow` flips the active flag), the user's choice
-                    // (`inactive`) untouched.
+                    // A toggle a dispel stopped is off: the use switches it on, `inactive` untouched.
                     let on = loadout.skills.dispelled.remove(&low)
                         || loadout.skills.inactive.remove(&low);
                     if !on {
@@ -2241,8 +2073,8 @@ impl<'w, 's> FireCtx<'w, 's> {
             {
                 activations.write(a);
             }
-            // `Skill_AttackRadius::TargetResult` runs the special pair after the
-            // ordinary one, whatever the radius held (`secondary.rs`).
+            // `Skill_AttackRadius::TargetResult` runs the special pair after the ordinary one,
+            // whatever the radius held.
             if on_hits
                 && rec.class == "Skill_AttackRadius"
                 && !expanding

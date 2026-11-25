@@ -10,11 +10,10 @@
 //! `GameEngine::GetTargetsInRadius` (`World::GetEntitiesInSphere`: [`Aabb::meets_sphere`]) and
 //! `GameEngine::GetTargetsAroundRay` (`World::GetEntitiesAroundRay`: [`Aabb::around_ray`]) test.
 //! The hit boxes take the actor's current pose ([`Aabb::posed`], `GetHitBox(i, pose)`: the bones'
-//! `GetAbsCoords(pose, bone)`; gd-game `combat::posed_bounds` per frame); [`Aabb::object`] is the bind pose.
+//! `GetAbsCoords(pose, bone)`); [`Aabb::object`] is the bind pose.
 //!
-//! The port's cursor picks (grimdawn `hover`, `loot`, `riftgates`, `death`) use the same maths: [`Aabb::ray_entry`]
-//! into a mesh or model box (the ray taken into the box's frame), [`ray_sphere`] for the objects picked by a sphere
-//! (PORT stand-ins for the engine's mesh hit tests; each caller names its sphere).
+//! PORT: cursor picks use [`Aabb::ray_entry`] into a mesh or model box, or [`ray_sphere`], as stand-ins for the
+//! engine's mesh hit tests.
 use gd_formats::msh::{Coords, Mesh};
 
 /// An axis-aligned box: centre and half extents.
@@ -47,8 +46,7 @@ impl Aabb {
         half: [0.0; 3],
     };
 
-    /// `GraphicsMeshInstance::GetObjectSpaceBoundingBox` of `mesh` at `scale` (module doc), the hit boxes in the
-    /// bind pose (their frames cached on the mesh at load).
+    /// `GraphicsMeshInstance::GetObjectSpaceBoundingBox` of `mesh` at `scale`, the hit boxes in the bind pose.
     pub fn object(mesh: &Mesh, scale: f32) -> Aabb {
         let b = if !mesh.bones.is_empty() && !mesh.hit_boxes.is_empty() {
             Self::around_hit_boxes(mesh, mesh.hit_box_bind.iter().copied())
@@ -58,14 +56,13 @@ impl Aabb {
         Self::scaled(b, scale)
     }
 
-    /// [`Self::object`] with the bones posed by `abs` (mesh-space bone frames, `gd_sim::anim::pose_abs`);
-    /// each box's bone was resolved at load (`gd_formats::msh::HitBox::bone_index`).
+    /// [`Self::object`] with the bones posed by `abs` (mesh-space bone frames).
     pub fn posed(mesh: &Mesh, scale: f32, abs: &[Coords]) -> Aabb {
         let b = if !mesh.bones.is_empty() && !mesh.hit_boxes.is_empty() {
             Self::around_hit_boxes(
                 mesh,
                 mesh.hit_boxes.iter().map(|hb| {
-                    // `GraphicsMesh::GetHitBox` (crate `gd_game::obstacles` doc): a bone index takes
+                    // `GraphicsMesh::GetHitBox`: a bone index takes
                     // the bone's frame × the box frame, bone −1 the named bone's frame alone,
                     // no bone the box frame.
                     match hb.bone_index {

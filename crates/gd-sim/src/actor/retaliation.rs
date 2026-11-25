@@ -3,32 +3,14 @@
 //! ([`retaliate`]).
 use super::*;
 
-/// A retaliation type's total % modifier: its own `retaliation<X>Modifier`
-/// (hits) or `retaliationSlow<X>Modifier` (DoTs, `dot`) plus
-/// `retaliationTotalDamageModifier`, which adds its % to the modifier of
-/// every hit type 2, 4–11, 20 and DoT type 2, 5–11, 15
-/// (`RetaliationAttributeAbsMod_TotalDamageModifier::AddModifierToAccumulator`;
-/// additive like the offensive total).
-/// The sheet's retaliation modifier rows (`Player::CollectRetaliationModifiers`
-/// = `GetTotalDamageModifierType(type, abs / dur)`: the
-/// modifiers of exactly that type; the sheet asks hit types 2, 4–11
-/// and DoT types 2, 5–11, 15, never 58 Grim Dawn.exe
-/// `CharacterWindow::UpdatePage3`).
+/// A retaliation type's total % modifier: its own `retaliation<X>Modifier` (hits) or `retaliationSlow<X>Modifier`
+/// (DoTs, `dot`) plus `retaliationTotalDamageModifier` for hit types 2, 4–11, 20 and DoT types 2, 5–11, 15
+/// (`RetaliationAttributeAbsMod_TotalDamageModifier::AddModifierToAccumulator`). The sheet's retaliation modifier
+/// rows read it per type (`Player::CollectRetaliationModifiers`, never type 58).
 ///
-/// `retaliationElementalModifier` never counts: unlike the offensive one
-/// (`DamageAttributeAbsMod_Elemental` adds cold, fire and lightning
-/// modifiers), `RetaliationAttributeAbsMod_Elemental` has no override and
-/// adds one modifier of type 58 (`DamageAttributeAbsMod::
-/// AddModifierToAccumulator`, `GetType` 58),
-/// and a modifier only raises damage of its exact type
-/// (`CombatAttributeAbsDamage::ModifyAbsoluteDamage`),
-/// while no damage of type 58 exists: elemental damage is split
-/// into cold / fire / lightning thirds when it is created
-/// (`RetaliationAttributeAbs_ElementalDamage::AddDamageToAccumulator`,
-/// `DamageAttributeAbs_ElementalDamage`, conversions to
-/// elemental in `ConvertCombatAttributes`). The
-/// crowd-control modifiers (`retaliationStun/Knockdown/SleepModifier`, types
-/// 42 / 48 / 43) work the same way on their reflex.
+/// `retaliationElementalModifier` never counts: `RetaliationAttributeAbsMod_Elemental` adds one type-58 modifier
+/// (unlike the offensive one) and no damage of type 58 exists, elemental damage being split into thirds when
+/// created. The crowd-control modifiers (`retaliationStun/Knockdown/SleepModifier`) work the same way on their reflex.
 pub fn retaliation_modifier(holder: &Profile, ty: CombatType, dot: bool) -> f32 {
     let t = |k: &str| holder.totals.get(k).copied().unwrap_or(0.0);
     retaliation_modifier_of(&t, ty, dot)
@@ -79,26 +61,13 @@ fn retaliation_modifier_of(get: &dyn Fn(&str) -> f32, ty: CombatType, dot: bool)
     }
 }
 
-/// `CombatAttributeAccumulator::ModifyDamage` of
-/// retaliation damage with one source's retaliation modifiers (`get`): each
-/// part's type gets its [`retaliation_modifier_of`] added (a DoT also its
-/// `retaliationSlow<X>DurationModifier`; crowd control: its seconds
-/// lengthened), then `retaliationDamageMultModifier` (type 61, applied after
-/// the others) scales the damage of types 1, 2, 4–11 and 15 by
-/// max(1 + %, 0) (`RetaliationAttributeAbsMod_DamageMultiplier::
-/// AddModifierToAccumulator` stores % / 100,
-/// `CombatAttribute_DamageMultiplier::Execute` calls
-/// `ScaleDamage(max((1 + m) × 100, 0))` for type mask 0x8FF6).
-/// The function skips the multiplier while the accumulator's
-/// `CombatAttributeAccumulator.ignoreDamageMultiplier` byte is set; its only writer is
-/// `Skill_WeaponPool_ChargedScaling::CollectPassiveOffensiveModifierAttributes`,
-/// around its modifiers' offensive modifier attributes (an
-/// offensive accumulator; the setter is never called, per a byte
-/// scan of every `ignoreDamageMultiplier` store), so retaliation always takes it.
-/// Not on the sheet's % rows (those read one type). PORT: one source = one
-/// call (the engine adds one multiplier per attribute record; the profile's
-/// summed total counts as one); a crowd control's modifier multiplies its
-/// seconds per call instead of adding to one modifier.
+/// `CombatAttributeAccumulator::ModifyDamage` of retaliation damage with one source's retaliation modifiers (`get`):
+/// each part's type gets its [`retaliation_modifier_of`] added (a DoT also its `retaliationSlow<X>DurationModifier`;
+/// crowd control: its seconds lengthened), then `retaliationDamageMultModifier` scales the damage of types 1, 2,
+/// 4–11 and 15 by max(1 + %, 0) (`CombatAttribute_DamageMultiplier::Execute`, type mask 0x8FF6). The accumulator's
+/// `ignoreDamageMultiplier` byte is never set for retaliation. PORT: one source = one call (the engine adds one
+/// multiplier per attribute record); a crowd control's modifier multiplies its seconds per call instead of adding
+/// to one modifier.
 pub fn modify_retaliation(damage: &mut [combat::Damage], get: &dyn Fn(&str) -> f32) {
     use CombatType as T;
     let m = (1.0 + get("retaliationDamageMultModifier") * PCT).max(0.0);
@@ -243,8 +212,6 @@ fn retaliation_parts(
                     min,
                     max,
                 }),
-                // Fear / confusion / convert (`combat::Influence`) as in the
-                // offense loop.
                 T::Fear | T::Confusion | T::Convert => damage.push(combat::Damage::Reflex {
                     ty,
                     secs: min + (max - min) * rng.unit(),
@@ -342,16 +309,10 @@ pub(super) fn process_retaliation(
     }
 }
 
-/// `CombatManager::Retaliation`: after a landed melee
-/// hit (`TakeAttack`: style 1, multiplier > 0) the defender (`holder`) hits
-/// back with its `retaliation*` attributes as a style-3 attack (always
-/// lands, no retaliation of its own), physical merged into base physical
-/// (so armor applies) and, unlike offense, not scaled by attributes
-/// (`RetaliationAttributeAbs` creates its damage with the flag off).
-/// The character's conversions, then its retaliation modifiers on the
-/// converted types ([`retaliation_damage`]).
-/// `None` when the holder has no retaliation (the profile's
-/// [`CombatCache`] gates the scan: no retaliation attribute ⇒ no rolls).
+/// `CombatManager::Retaliation`: after a landed melee hit (`TakeAttack`: style 1, multiplier > 0) the defender
+/// (`holder`) hits back with its `retaliation*` attributes as a style-3 attack (always lands, no retaliation of its
+/// own), physical as base physical (armor applies), not scaled by attributes; the character's conversions, then its
+/// retaliation modifiers ([`retaliation_damage`]). `None` when the holder has no retaliation.
 #[allow(clippy::too_many_arguments)]
 pub fn retaliate(
     rules: &Rules,

@@ -1,35 +1,14 @@
-//! `Skill_CharonGeysers` (the Aetherial Abomination's and Ellena's geysers,
-//! the clone's fire geysers, the Messenger's magma, the Malmouth enclave's
-//! aether): a `Skill_AttackProjectileAreaEffect` that does not go off at its
-//! target but at the `CharonGeyserMarker` objects the level designers placed
-//! around the boss's arena.
+//! `Skill_CharonGeysers`: a `Skill_AttackProjectileAreaEffect` that goes off not at its target
+//! but at the `CharonGeyserMarker` objects placed around the boss's arena.
 //!
-//! Game.dll:
-//! - `LoadResources`: `numGeysersToFire` (int, default 0) and
-//!   `findClosest` (default false) on top of `Skill::LoadResources`.
-//! - `ActivateNow`: the skill's projectile launcher (none:
-//!   nothing happens); `World::GetEntitiesInSphere` of 45 m around the
-//!   caster, keeping the `CharonGeyserMarker`s (RTTI); `numGeysersToFire`
-//!   < 0 fires them all, else min(n, found): with `findClosest` the n nearest
-//!   to the caster (sorted, `Game::FindClosestEntities`), else n drawn at random without
-//!   replacement (`rand() % left`, `Game::DrawWithoutReplacement`). Each one launches the
-//!   skill's area-effect projectile at the marker's coordinates
-//!   (`ClearHitIteration` between them, so each area hits on its own): an
-//!   ordinary `ProjectileAreaEffect` for `skillActiveDuration`, radius
-//!   `projectileExplosionRadius` (`casting::spawn_area`).
-//! - So `numGeysersToFire` missing (0) fires none, and a boss away from its
-//!   markers fires none.
+//! `ActivateNow`: with a projectile launcher, the markers within 45 m of the caster;
+//! `numGeysersToFire` (default 0) < 0 fires them all, else min(n, found): with `findClosest` the
+//! n nearest, else n drawn without replacement (`rand() % left`). Each launches the skill's area
+//! effect at the marker (`ClearHitIteration` between them, so each area hits on its own) for
+//! `skillActiveDuration`, radius `projectileExplosionRadius`.
 //!
-//! The markers are level entities (`CharonGeyserMarker` class records, e.g.
-//! `ellena_geysers_marker.dbr`), streamed in with their level as
-//! [`GeyserMarker`]s (`monsters::populate`). In the game the marker
-//! draws nothing: its constructor (an `Actor`) calls
-//! `SetVisibility(false)` unless `Engine::IsEditorMode` (Engine.dll, `Engine.editorMode`),
-//! and `Load` only forces the editor's default mesh
-//! (`System/Meshes/Sphere.msh`) before `Actor::Load` (the record's `mesh`,
-//! `aethercrystals01_summon.msh`, and `baseTexture` are the editor's look), so
-//! the dressing has nothing to draw. PORT: the draw for the random pick uses
-//! the port's RNG.
+//! The markers ([`GeyserMarker`]) stream in with their level; outside the editor they draw
+//! nothing. PORT: the random draw uses the port's RNG.
 use bevy::prelude::*;
 use gd_game_core::casting::Casting;
 use gd_game_core::data::GameData;
@@ -49,11 +28,10 @@ impl Plugin for GeysersPlugin {
 /// `ActivateNow`'s search radius around the caster (m).
 pub const SEARCH_RADIUS: f32 = 45.0;
 
-/// A `CharonGeyserMarker` level object.
 #[derive(Component, Clone, Debug)]
 pub struct GeyserMarker;
 
-/// A `Skill_CharonGeysers` cast went off (`casting::fire_casts`).
+/// A `Skill_CharonGeysers` cast went off.
 #[derive(Message, Clone)]
 pub struct Fire {
     pub caster: Entity,
@@ -63,8 +41,8 @@ pub struct Fire {
     pub radius: f32,
 }
 
-/// Which of `found` (distance to the caster, position) fire: all for a
-/// negative `n`, else the `n` nearest (`closest`) or `n` drawn at random.
+/// Which of `found` (distance to the caster, position) fire: all for a negative `n`, else the
+/// `n` nearest (`closest`) or `n` drawn at random.
 pub fn pick(
     mut found: Vec<(f32, Vec3)>,
     n: i32,

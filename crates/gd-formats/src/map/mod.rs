@@ -148,7 +148,6 @@ pub struct MapFile {
     pub quests: Vec<String>,
     pub regions: Vec<RegionInfo>,
     pub spawn_points: Vec<SpawnPoint>,
-    /// Shared with the game's group rules (`gd_game::unique`).
     pub instance_groups: std::sync::Arc<sector::InstanceGroups>,
     pub sector_data: sector::SectorDataSet,
     /// Header chunks not decoded here (location only).

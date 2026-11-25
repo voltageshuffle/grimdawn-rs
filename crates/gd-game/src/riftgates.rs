@@ -1,128 +1,58 @@
 //! Riftgates (`StaticTeleporter`) and respawn points (`StaticRespawner`).
 //!
-//! * Respawn points bind by proximity (`BindingInteractable::UpdateSelf`:
-//!   characters within `bindRadius`): `Player::AddRespawnUID`
-//!   adds the uid to the difficulty's list and makes it the
-//!   current one, where the player comes back after dying.
-//! * Riftgates bind by proximity too ([`bind_riftgates`]),
-//!   `BindingInteractable::UpdateSelf` with `StaticTeleporter::
-//!   IsBindingEnabled` (the gate is inactive and not locked)
-//!   and `BindToCharacter` (a player: tutorial page 9 (`crate::tutorials`), the gate
-//!   turns active, `Player::AddTeleportUID` adds it to the
-//!   difficulty's discovered list; the only caller besides the difficulty
-//!   unlock item). `bindRadius` is 8 m in 73 of the 86 gate records
-//!   (`BindingInteractable::Load`). Using a gate does not discover it.
-//! * Lock (`StaticTeleporter.locked`): the record's `locked` (10 gates), then
-//!   the scripts' `SetLocked` ([`RiftgateLock`]). A locked gate
-//!   is not of interest (`IsOfInterest`), doesn't bind and
-//!   ignores use (`RequestToUse` sends nothing). The lock is not
-//!   in the save: `SaveState` / `RestoreState` stream it only
-//!   for the in-session entity restoration (no entity state in the
-//!   character's files); a load gets it back from the gate's `onAddToWorld`
-//!   script, which unlocks it when the player has the quest token (e.g.
-//!   `devilscrossingwightmireriftgate.lua`, `WIGHTMIRE_RIFTGATE_SECURED`).
-//!   Look (`SetActive`): `lockedEffect` / `lockedSound` while
-//!   locked, else `activeEffect` / `activeSound` once discovered (also
-//!   `InitialUpdate`: `IsActiveForMainPlayer` = in the difficulty's list),
-//!   else `dormantEffect` / `dormatSound`.
-//! * Using a gate opens the riftgate map ([`RiftgateMap`]; the game sends
-//!   event 28 to the exe, whose handler `RiftgateMap::HandleOpenEvent` stores the gate's object
-//!   id in the map widget and shows the map window in its world-map mode).
-//! * Discovered gates/respawn points come from the save (`player.gdc` blocks
-//!   6 / 5, per difficulty) and go back into it
-//!   (`save.rs`). Their places come from the map's instance groups, not the
-//!   levels: `Grim Dawn.exe` riftgate map `RiftgateMap::BuildDestinations` (each
-//!   discovered gate and shrine uid → `InstanceGroupManager::GetEntityData`
-//!   → `World::GetRegionById`: the region's offset + the member's position,
-//!   the region's zone / shrine record) and `Player::GetClosestRespawnPoint`
-//!   (the current respawn uid the same way). The map-wide
-//!   [`WaypointIndex`] holds those members (every gate, respawn point and
-//!   shrine of the stock world is one; a uid in no group has no place). A
-//!   shrine's group position may differ from its placed entity (one stock
-//!   shrine by 3 m); the map shows the group's.
+//! * Respawn points bind within `bindRadius` (`BindingInteractable::UpdateSelf`):
+//!   `Player::AddRespawnUID` adds the uid to the difficulty's list and makes it current.
+//! * Riftgates bind the same way ([`bind_riftgates`]) when inactive and not locked
+//!   (`IsBindingEnabled`); `BindToCharacter` shows tutorial page 9, activates the gate and adds it
+//!   to the difficulty's discovered list (`Player::AddTeleportUID`). Using a gate does not discover it.
+//! * Lock: the record's `locked`, then the scripts' `SetLocked` ([`RiftgateLock`]). A locked gate
+//!   is not of interest, doesn't bind and ignores use. The lock is not saved; a load gets it back
+//!   from the gate's `onAddToWorld` script (which unlocks it given the quest token).
+//!   Look (`SetActive`): `lockedEffect` / `lockedSound` while locked, else `activeEffect` /
+//!   `activeSound` once discovered, else `dormantEffect` / `dormatSound`.
+//! * Using a gate opens the riftgate map ([`RiftgateMap`], `RiftgateMap::HandleOpenEvent`).
+//! * Discovered gates / respawn points round-trip through the save (`player.gdc` blocks 6 / 5, per
+//!   difficulty). Their places come from the map's instance groups, not the levels
+//!   (`RiftgateMap::BuildDestinations`, `Player::GetClosestRespawnPoint`: region offset + member
+//!   position): [`WaypointIndex`]. A uid in no group has no place; the map shows a shrine's group
+//!   position even where its placed entity differs.
 //!
-//! A gate is used like every fixed actor (`combat::fixed_use_range`: the player's radius + its
-//! `Actor::GetRadius` + its `usableRange`, +1 m at the walk's end). `StaticTeleporter::Load` reads
-//! `usableRange` (default 1; 2 m in 75 of the 86 gate records), `bindRadius` (default 5) and `radius`
-//! (default 5: [`Waypoint::radius`], not the actor's radius); no gate record has an `actorRadius`, so
-//! `Actor::Load`'s default 1 gives it a radius of sqrt(3) m. Its name is its `description`
-//! tag (the map label, `StaticTeleporter::AppendDetailMapData` →
-//! `GetGameDescription`); the travel target is the chosen gate's position,
-//! refused within 4 m of the player (GrimDawn.exe map teleport
-//! `RiftgateMap::Teleport` → `GameEngine::InitiatePlayerTeleport`; the list here
-//! leaves out the gate in use). The engine's teleport activity
-//! (`InstallTeleportActivity`) puts the player on the floor at that point
-//! ([`crate::nav::teleport_landing`], run by [`crate::doors::run_teleport`]).
+//! A gate is used like every fixed actor (player radius + its radius + `usableRange`, +1 m at the
+//! walk's end). `StaticTeleporter::Load`: `usableRange` (default 1), `bindRadius` (default 5),
+//! `radius` (default 5: [`Waypoint::radius`], not the actor's radius, which is sqrt(3) m with
+//! `Actor::Load`'s default). Its map label is its `description` tag. Travel to a gate within 4 m of
+//! the player is refused (`RiftgateMap::Teleport`); the teleport lands the player on the floor at
+//! the gate ([`crate::nav::teleport_landing`]).
 //!
-//! Travel from the map, `Grim Dawn.exe` riftgate map mouse handler
-//! `RiftgateMap::HandleMouseEvent` (release on a gate / portal icon) and `RiftgateMap::Travel`:
-//! - (checked first) away from the gate or portal in use (the one that opened
-//!   the map; farther than 8 m, or it is gone) the player's own portal is no
-//!   destination, and travel needs `MainPlayerCanUsePersonalTeleport`
-//!   ([`can_use_portal`]), else `tagRiftgateError03`; when it can, a personal
-//!   portal opens where the player stands (`CreateFixedItemTeleport`, see
-//!   below) and the travel goes on;
-//! - the gate / portal in use as a destination is refused with
-//!   `tagRiftgateError02`;
-//! - otherwise a gate destination becomes the last used gate
-//!   (`GameEngine::SetLastUsedTeleportId`; a portal has no uid) and the
-//!   player teleports to it (refused within 4 m, see above). No cost.
-//! - PORT: the map closes on travel (the real one closes with the teleport's
-//!   loading); it doesn't close by walking away (no range check found in the
-//!   map's update `RiftgateMap::Update`).
+//! Travel from the map (`RiftgateMap::HandleMouseEvent`, `RiftgateMap::Travel`):
+//! - (first) away from the gate / portal in use (farther than 8 m, or gone) the player's own portal
+//!   is no destination, and travel needs [`can_use_portal`], else `tagRiftgateError03`; when it
+//!   can, a personal portal opens where the player stands and the travel goes on;
+//! - the gate / portal in use as a destination: `tagRiftgateError02`;
+//! - else a gate destination becomes the last used gate (`GameEngine::SetLastUsedTeleportId`) and
+//!   the player teleports to it. No cost.
+//! - PORT: the map closes on travel (the engine's with the teleport's loading); walking away does
+//!   not close it.
 //!
-//! Personal portals ([`PersonalPortal`], `FixedItemTeleport` with
-//! `staticPortal` false), Game.dll:
-//! - `MainPlayerCanUsePersonalTeleport`: refused where the
-//!   player stands in a sector of the riftgate sector layer (10), when the
-//!   `gameengine.dbr` `personalTeleportToken` is set and the player lacks it
-//!   ([`portal_unlocked`]; empty in stock data), and without a discovered
-//!   riftgate in the difficulty;
-//! - `CreateFixedItemTeleport` → `CreateFixedItemTeleportNetHook`:
-//!   the engine's TeleportInfo list holds (object id, owner,
-//!   coords, area name tag `Engine::GetAreaNameTag`) per portal; a new
-//!   portal of a player replaces the player's old one (one per player), and
-//!   `records/level art/riftgates/riftgate_personal.dbr` ([`PORTAL_RECORD`])
-//!   is spawned at the coords if that level is loaded. The coords are
-//!   `Player::GetNearSpawnCoords` ([`near_spawn`]):
-//!   `NavManager::FillPointSet(player, 16 m, five spots of radius 2)`
-//!   (Engine.dll, `RequestAndBlockNearPoint` per spot,
-//!   [`gd_sim::pattern::fill_point_set`]): each spot starts at a random angle
-//!   (`rand()`) on rings 0, 4.1, 8.2, ... m out and takes the first walkable
-//!   one clear of the spots before it, so spot 0 is the player's own and
-//!   spots 1..4 lie on the 4.1 m ring (farther where it is blocked). The
-//!   portal goes to the first of spots 1..4 the player can walk to
-//!   (`Player::CanMoveTo`, a path); no set (a spot found no
-//!   place) or none reachable: the player's spot. So it opens about 4 m from
-//!   the player in a random direction;
-//! - using the portal (`FixedItemTeleport::RequestToUse`) opens
-//!   the riftgate map with the portal in use (event 28, like a gate); someone
-//!   else's portal says `tagRiftgateError01` (no other players here). On the
-//!   map the portal is an icon of its region's zone (see `ui::riftmap`)
-//!   whose travel goes back to the portal's spot;
-//! - it stays until the player opens another one or leaves the game
-//!   (`GameEngine::ExitPlayingMode` clears the list; it is not saved: no
-//!   stream of it; nothing destroys it on use or zone change). An entity no
-//!   longer in the list closes and is removed once 250 ms have passed
-//!   (`FixedItemTeleport::UpdateSelf`, frames counted 1..100 ms).
-//!   PORT: the entity is kept while its level is unloaded (the engine spawns
-//!   it only into a loaded level).
-//! - the HUD teleport button (`Grim Dawn.exe` `UIPlayerHud::OnToolbarButton`, update
-//!   `UIPlayerHud::Update`): `hudTeleportButton` shows while the player can use a
-//!   portal and has none, `hudActiveTeleportButton` while the player has
-//!   one, neither otherwise ([`portal_button`]); pressing it (when
-//!   [`can_use_portal`]) opens a portal ([`OpenPortal`]); then both are
-//!   disabled for 1000 ms. It does not open the map: the player uses the
-//!   portal for that. While the game menu / options windows are open
-//!   (the update's `UIPlayerHud.gameMenuWindow` / `UIPlayerHud.optionsWindow`, the windows that pause the
-//!   game; the map and other windows don't count), the open-portal button is
-//!   hidden and the no-portal one stays drawn but takes no press or key
-//!   (`UIPlayerHud::Update`; applied in `ui::view` and
-//!   `ui::riftmap`). PORT: the tutorial
-//!   page (10) isn't unlocked.
-//!
-//! The game shows the gates (`grimdawn::riftgates`: effects, clicks) and the
-//! map (`grimdawn::ui::riftmap`), and builds the map-wide [`WaypointIndex`].
+//! Personal portals ([`PersonalPortal`], `FixedItemTeleport` with `staticPortal` false):
+//! - `MainPlayerCanUsePersonalTeleport`: refused in a sector of the riftgate sector layer (10),
+//!   when `personalTeleportToken` is set and the player lacks it ([`portal_unlocked`]), and without
+//!   a discovered riftgate in the difficulty;
+//! - `CreateFixedItemTeleport`: one portal per player, a new one replacing the old;
+//!   [`PORTAL_RECORD`] spawns at `Player::GetNearSpawnCoords` ([`near_spawn`]):
+//!   `NavManager::FillPointSet(player, 16 m, five spots of radius 2)`, the portal at the first of
+//!   spots 1..4 (the 4.1 m ring, farther where blocked) the player can walk to, else the player's
+//!   spot;
+//! - using it opens the map with the portal in use; on the map it is an icon whose travel goes back
+//!   to its spot;
+//! - it stays until the player opens another or leaves the game (not saved). An entity no longer
+//!   listed is removed after 250 ms (`FixedItemTeleport::UpdateSelf`).
+//!   PORT: the entity is kept while its level is unloaded.
+//! - HUD button (`UIPlayerHud::Update`): `hudTeleportButton` while the player can use a portal and
+//!   has none, `hudActiveTeleportButton` while it has one ([`portal_button`]); pressing it opens a
+//!   portal ([`OpenPortal`]), then both are disabled for 1000 ms. While the game menu / options
+//!   windows are open the active button is hidden and the other takes no press or key.
+//!   PORT: tutorial page 10 isn't unlocked.
 use crate::movement::MovePath;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
@@ -143,10 +73,9 @@ pub struct Waypoint {
     pub uid: Uid,
     pub record: String,
     pub radius: f32,
-    /// The record's `bindRadius` (`StaticTeleporter::Load`'s default 5 when absent).
+    /// `bindRadius`, default 5.
     pub bind_radius: f32,
-    /// `StaticTeleporter.locked`: the record's `locked`, then the scripts'
-    /// `SetLocked` ([`RiftgateLock`]).
+    /// The record's `locked`, then the scripts' `SetLocked`.
     pub locked: bool,
 }
 
@@ -157,8 +86,7 @@ impl Waypoint {
     }
 }
 
-/// A script's `riftgate:SetLocked` on the gate of `record` at `at` (the
-/// game resolves the story object, as for shrines).
+/// A script's `riftgate:SetLocked` on the gate of `record` at `at`.
 #[derive(Message, Clone, Debug)]
 pub struct RiftgateLock {
     pub record: String,
@@ -166,8 +94,7 @@ pub struct RiftgateLock {
     pub locked: bool,
 }
 
-/// Applies [`RiftgateLock`]s, remembered for gates streamed in later. Runs its scan only when a lock
-/// arrives or a gate streams in.
+/// Applies [`RiftgateLock`]s, remembered for gates streamed in later.
 pub fn riftgate_locks(
     mut fresh: gd_game_core::session::NewSession,
     mut ev: MessageReader<RiftgateLock>,
@@ -204,57 +131,48 @@ pub struct TravelState {
     pub teleports: Vec<Uid>,
     pub respawns: Vec<Uid>,
     pub current: Option<Uid>,
-    /// The last riftgate travelled to (`GameEngine::SetLastUsedTeleportId`;
-    /// the map centres on it when no discovered gate is near).
+    /// `GameEngine::SetLastUsedTeleportId`; the map centres on it when no discovered gate is near.
     pub last_used: Option<Uid>,
-    /// Riftgates discovered on other difficulties this session (the campaign's difficulty unlock item,
-    /// `crate::consumables`): (difficulty, uid), merged into the save's lists.
+    /// Riftgates discovered on other difficulties this session (difficulty unlock item):
+    /// (difficulty, uid), merged into the save's lists.
     pub unlocked: Vec<(usize, Uid)>,
 }
 
-/// The world map's riftgates: the entries of its `Riftgates` instance groups (`InstanceGroupManager::
-/// GetGroupsOfType("Riftgates")`, the stock map's "World Riftgates", 72 gates), set by the game with the map.
+/// The world map's `Riftgates` instance groups' entries (`GetGroupsOfType("Riftgates")`).
 #[derive(Resource, Default)]
 pub struct RiftgateGroup(pub Vec<Uid>);
 
-/// One riftgate, respawn point or devotion shrine of the map.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedPoint {
     pub pos: Vec3,
-    /// Its record (lower case).
+    /// Lower case.
     pub record: String,
-    /// Its region's map record: the zone record (`Region::GetZoneRecord`) for
-    /// gates, the shrine icon record (`Region::GetShrineRecord`) for shrines.
+    /// The region's zone record for gates (`Region::GetZoneRecord`), its shrine icon record for
+    /// shrines (`Region::GetShrineRecord`).
     pub map_record: String,
 }
 
-/// Every riftgate / respawn point / devotion shrine of the map by uid: the
-/// map's instance-group members with such a record (module doc).
+/// The map's instance-group members that are riftgates, respawn points or devotion shrines, by uid.
 #[derive(Resource, Default)]
 pub struct WaypointIndex(pub HashMap<Uid, IndexedPoint>);
 
-/// Within this distance of the gate in use the map travels straight from it
-/// (`RiftgateMap::Travel`: `<= 8`).
+/// Within this distance of the gate in use the map travels straight from it (`RiftgateMap::Travel`).
 pub const AT_GATE: f32 = 8.0;
 
-/// The personal portal's record (`CreateFixedItemTeleportNetHook`).
+/// `CreateFixedItemTeleportNetHook`.
 pub const PORTAL_RECORD: &str = "records/level art/riftgates/riftgate_personal.dbr";
 
-/// The HUD teleport buttons are disabled this long after opening a portal
-/// (`Grim Dawn.exe` `UIPlayerHud::OnToolbarButton` / `UIPlayerHud::Update`: 1000 ms).
+/// HUD teleport buttons' disable time after opening a portal (`UIPlayerHud::Update`).
 pub const BUTTON_WAIT: f32 = 1.0;
 
-/// A riftgate or the personal portal (by its object id): what opened the map,
-/// or a travel destination.
+/// What opened the map, or a travel destination; a portal by its object id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rift {
     Gate(Uid),
     Portal(u32),
 }
 
-/// The riftgate map window: open, the gate / portal that opened it, and
-/// whether the player is still at it (within [`AT_GATE`]; kept by
-/// [`travel_requests`]).
+/// `at_gate`: still within [`AT_GATE`] of the gate / portal that opened it.
 #[derive(Resource, Default, Clone, PartialEq, Debug)]
 pub struct RiftgateMap {
     pub open: bool,
@@ -262,31 +180,27 @@ pub struct RiftgateMap {
     pub at_gate: bool,
 }
 
-/// The player's personal portal: the engine's TeleportInfo entry (module doc).
+/// The engine's TeleportInfo entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortalInfo {
-    /// Its object id (a new one per portal).
+    /// A new one per portal.
     pub id: u32,
     pub pos: Vec3,
-    /// The region it opened in (the player's: the sector lookups of its area
-    /// name read that region's level, not whichever level covers `pos`).
+    /// The player's region when opened: its area name's sector lookups read that region's level.
     pub region: Option<usize>,
-    /// The area name tag where it was opened (`Engine::GetAreaNameTag`); set
-    /// by the game, which has the map's sector names (`None` until then).
+    /// `Engine::GetAreaNameTag`; set by the game (`None` until then).
     pub area_tag: Option<String>,
 }
 
-/// The personal portal of the session (none at the start: not saved).
+/// Not saved.
 #[derive(Resource, Default, Debug)]
 pub struct PersonalPortal {
     pub portal: Option<PortalInfo>,
-    /// Seconds the HUD teleport buttons stay disabled ([`BUTTON_WAIT`]).
     pub button_wait: f32,
     last_id: u32,
 }
 
 impl PersonalPortal {
-    /// Opens a portal at `pos`, replacing the player's old one.
     pub fn open(&mut self, pos: Vec3, region: Option<usize>) -> u32 {
         self.last_id += 1;
         self.portal = Some(PortalInfo {
@@ -299,44 +213,38 @@ impl PersonalPortal {
         self.last_id
     }
 
-    /// The portal's position if `id` is the current one.
     pub fn pos(&self, id: u32) -> Option<Vec3> {
         self.portal.as_ref().filter(|p| p.id == id).map(|p| p.pos)
     }
 }
 
-/// A personal portal entity (`riftgate_personal.dbr`; the game dresses it).
+/// A personal portal entity; the game dresses it.
 #[derive(Component, Debug)]
 pub struct Portal {
     pub id: u32,
-    /// Milliseconds since it left the list (it closes, then goes at 250).
+    /// Milliseconds since it left the list (it goes at 250).
     pub closing: Option<u32>,
 }
 
 impl Portal {
-    /// `FixedItemTeleport::IsOfInterest`: `FixedItemTeleport.closing` clear or `FixedItemTeleport.closed` set
-    /// (PORT: read as not closing).
+    /// `FixedItemTeleport::IsOfInterest` (PORT: read as not closing).
     pub fn is_of_interest(&self) -> bool {
         self.closing.is_none()
     }
 }
 
-/// The HUD teleport button was pressed.
 #[derive(Message, Clone, Copy, Debug, Default)]
 pub struct OpenPortal;
 
-/// The HUD teleport button shown: `active` = `hudActiveTeleportButton` (the
-/// player has a portal), else `hudTeleportButton`.
+/// `active`: `hudActiveTeleportButton` (the player has a portal), else `hudTeleportButton`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortalButton {
     pub active: bool,
     pub disabled: bool,
 }
 
-/// `MainPlayerCanUsePersonalTeleport` (module doc) for a player at `pos` in
-/// `region` (the no-portal sector is read from that region's level,
-/// `Player::UpdateSelf`; `None`: whichever level covers `pos`); `unlocked` is
-/// [`portal_unlocked`].
+/// `MainPlayerCanUsePersonalTeleport` for a player at `pos`; the no-portal sector is read from
+/// `region`'s level (`None`: whichever level covers `pos`).
 pub fn can_use_portal(
     pos: Vec3,
     region: Option<usize>,
@@ -353,10 +261,7 @@ pub fn can_use_portal(
     !no_portal_sector && unlocked && !state.teleports.is_empty()
 }
 
-/// The `gameengine.dbr` `personalTeleportToken` check of
-/// `MainPlayerCanUsePersonalTeleport` (when the field
-/// is set, the player needs that story token; empty in stock data, and
-/// unlocked without a story).
+/// `personalTeleportToken`: when set, the player needs that story token (empty in stock data).
 pub fn portal_unlocked(
     data: &gd_game_core::data::GameData,
     rt: Option<&gd_game_core::story::StoryRuntime>,
@@ -377,7 +282,7 @@ pub fn portal_unlocked(
         })
 }
 
-/// Which HUD teleport button shows (module doc); `None`: neither.
+/// `None`: neither shows.
 pub fn portal_button(
     pos: Vec3,
     region: Option<usize>,
@@ -392,7 +297,7 @@ pub fn portal_button(
     })
 }
 
-/// Where a portal opens for a player at `tf`: `Player::GetNearSpawnCoords` (module doc).
+/// `Player::GetNearSpawnCoords`.
 pub fn near_spawn(
     nav: &crate::nav::Nav,
     scratch: &mut gd_sim::nav::PathScratch,
@@ -418,18 +323,17 @@ pub fn near_spawn(
         .unwrap_or(p)
 }
 
-/// `GetNearSpawnCoords`' spot radius (its five-float vector of 2.0) and `FillPointSet` distance (16.0).
+/// `GetNearSpawnCoords`' spot radius and `FillPointSet` distance.
 const NEAR_SPAWN_RADIUS: f32 = 2.0;
 const NEAR_SPAWN_DIST: f32 = 16.0;
 
-/// What the map window asks for.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub enum RiftgateRequest {
     Travel(Rift),
     Close,
 }
 
-/// A travel to `0` was granted (the game moves the player there).
+/// The game moves the player to `0`.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct GateTravel(pub Vec3);
 
@@ -443,7 +347,7 @@ pub fn waypoint_kind(class: &str) -> Option<WaypointKind> {
 
 pub fn init_travel(
     mut commands: Commands,
-    // Option: `state` is the existence check (this system creates it); `loaded` is absent for a new character.
+    // Option: `state` is the existence check (created here); `loaded` is absent for a new character.
     state: Option<Res<TravelState>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     players: Query<(), With<Player>>,
@@ -467,8 +371,7 @@ pub fn init_travel(
     commands.insert_resource(s);
 }
 
-/// The first respawn point within the player's reach (`radius`: the respawner's `bindRadius`,
-/// default 8) becomes current.
+/// The first respawn point within its `bindRadius` (default 8) of the player becomes current.
 pub fn bind_respawners(
     mut commands: Commands,
     mut state: ResMut<TravelState>,
@@ -495,8 +398,7 @@ pub fn bind_respawners(
     }
 }
 
-/// Riftgates bind (are discovered) while the player is within their
-/// `bindRadius`, unless locked (module doc).
+/// Unlocked riftgates bind while the player is within their `bindRadius`.
 pub fn bind_riftgates(
     mut state: ResMut<TravelState>,
     q: Query<(&GlobalTransform, &Waypoint)>,
@@ -520,9 +422,8 @@ pub fn bind_riftgates(
     }
 }
 
-/// Within reach of the clicked gate or personal portal: open the map with it
-/// in use (a locked gate ignores the use, module doc). Other targets (a Chthonic rift, the Shattered Realm's exit
-/// gate or buff shrine) are their own systems' and stay set while the player walks to them.
+/// Within reach of the clicked gate or personal portal: open the map with it in use. Other targets
+/// (Chthonic rifts, Shattered Realm gates and shrines) stay set for their own systems.
 #[allow(clippy::too_many_arguments)]
 pub fn use_gate(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -550,7 +451,7 @@ pub fn use_gate(
     };
     let (at, reach, rift) = match (gates.get(e), portals.get(e)) {
         (Ok((gt, w)), _) if !w.locked => (gt.translation(), reach_of(&w.record), Rift::Gate(w.uid)),
-        // The portal (`FixedItemTeleport`: `actorRadius` 0, no `usableRange`, so 1 m beyond the player's radius).
+        // `FixedItemTeleport`: `actorRadius` 0, no `usableRange`: 1 m beyond the player's radius.
         (_, Ok((gt, p))) if p.closing.is_none() => (
             gt.translation(),
             reach_of(PORTAL_RECORD),
@@ -565,7 +466,6 @@ pub fn use_gate(
     if ptf.translation.distance(at) > reach {
         return;
     }
-    // `GD_USE_RIFTGATE` (hooks.rs): the gate stays targeted (used again).
     #[cfg(feature = "dev")]
     let keep = hooks.gameplay.use_riftgate;
     #[cfg(not(feature = "dev"))]
@@ -593,13 +493,13 @@ fn gate_pos(
         .or_else(|| index.and_then(|i| i.0.get(uid)).map(|p| p.pos))
 }
 
-/// The map's requests (rules in the module doc) and its "at the gate" flag.
+/// The map's requests and its "at the gate" flag.
 #[allow(clippy::too_many_arguments)]
 pub fn travel_requests(
     mut reqs: MessageReader<RiftgateRequest>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut map: ResMut<RiftgateMap>,
-    // Option: the map flag and the open map's close requests are handled without travel state.
+    // Option: the map flag and close requests work without travel state.
     state: Option<ResMut<TravelState>>,
     mut portal: ResMut<PersonalPortal>,
     index: Option<Res<WaypointIndex>>,
@@ -691,14 +591,13 @@ pub fn travel_requests(
     }
 }
 
-/// The HUD teleport button: opens a portal where the player stands when
-/// allowed and the button isn't waiting (module doc).
+/// Opens a portal where the player stands when allowed and the button isn't waiting.
 #[allow(clippy::too_many_arguments)]
 pub fn hud_portal(
     mut reqs: MessageReader<OpenPortal>,
     mut scratch: Local<gd_sim::nav::PathScratch>,
     mut portal: ResMut<PersonalPortal>,
-    // Option: the button timer runs and the requests are drained without travel state.
+    // Option: the timer runs and requests drain without travel state.
     state: Option<Res<TravelState>>,
     players: Query<&Transform, With<Player>>,
     levels: Res<gd_game_core::levels::Levels>,
@@ -731,8 +630,7 @@ pub fn hud_portal(
     }
 }
 
-/// Keeps the portal entity in step with [`PersonalPortal`]: spawns the
-/// current one, closes and removes the others (module doc).
+/// Spawns the current [`PersonalPortal`], closes and removes the others.
 pub fn sync_portals(
     mut commands: Commands,
     portal: Res<PersonalPortal>,
@@ -800,7 +698,6 @@ impl Plugin for RiftgatesPlugin {
     }
 }
 
-/// The riftgate pipeline: `Bind` ties gates to the player, `Travel` handles travel requests, `Portals` syncs portals.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RiftgateStage {
     Bind,
@@ -808,41 +705,30 @@ pub enum RiftgateStage {
     Portals,
 }
 
-/// A Chthonic rift (`DynamicTeleporter`, `level art/riftgates/dynrift_*`: the rifts of the Void, Ashen Waste,
-/// Bastion of Chaos and Malmouth outskirts). Game.dll:
+/// A Chthonic rift (`DynamicTeleporter`, `level art/riftgates/dynrift_*`).
 /// - `DynamicTeleporter::Load`: `activeEffect` / `activeSound` / `dormantEffect` / `dormatSound`
-///   (spelled so; stock records name it `dormantSound`, so a dormant rift is silent), `radius`,
-///   `active` (state 4, else 2: every stock record is active), `showOnMinimap` (unset in stock: no icon,
-///   `AppendDetailMapData`), `activationTime`, `resetTargetLevel`. A rift in an instance group
-///   that `GameEngine::IsUniqueEntitySelected(rift, 1)` does not select is state 1: no effect
-///   (`InitialUpdate` starts the active / dormant look only for states 4 / 2), not of interest
-///   (`IsOfInterest`: state 4) and unusable.
-/// - The choice (`crate::unique`) falls on a rift's `Any Entity` group (each stock rift is in one; the last
-///   group holding it when none is a unique group): one random member per group name and session, leaving
-///   out the members a rift sent the player to ([`crate::unique::UniqueSelection::arrivals`]), so the rift
-///   the player arrives at is not the active one.
-/// - `UpdateBoundingBox`: the pick box is a cube of half size `radius` around the rift (15 m for
-///   `dynrift_02`); it has no mesh, only its effect.
-/// - `RequestToUse` (state 4, the controlling player): the first group containing the rift, a
-///   random one of its child groups (the links: `Rift_..._toX` ↔ `Rift_..._fromX` pairs), a random member of
-///   that group (selected or not) is remembered as an arrival (`GameEngine.riftArrivals`) and the player teleports
-///   to its position (`InitiatePlayerTeleport`). An ungrouped rift logs "Player used ungrouped
-///   DynamicTeleporter!".
+///   (sic; stock records name it `dormantSound`, so a dormant rift is silent), `radius`, `active`
+///   (state 4, else 2), `showOnMinimap`, `activationTime`, `resetTargetLevel`. A grouped rift that
+///   `GameEngine::IsUniqueEntitySelected(rift, 1)` does not select is state 1: no effect, not of
+///   interest, unusable.
+/// - The choice (`crate::unique`): one random member of the rift's `Any Entity` group per session,
+///   leaving out the rifts the player arrived at.
+/// - `UpdateBoundingBox`: the pick box is a cube of half size `radius`; no mesh, only its effect.
+/// - `RequestToUse` (state 4): a random child group of the first group containing the rift, a random
+///   member of it (remembered as an arrival); the player teleports there.
 ///
-/// PORT: the picks use the port's RNG; `activationTime` (0 in stock data) is not modelled. A rift is used like
-/// every fixed actor (`DynamicTeleporter::Load` → `FixedItem::Load`; `combat::fixed_use_range`).
+/// PORT: the picks use the port's RNG; `activationTime` (0 in stock data) is not modelled.
 #[derive(Component, Clone, Debug)]
 pub struct DynamicRift {
     pub record: String,
     pub uid: Uid,
-    /// The pick box's half size (`radius`).
+    /// The pick box's half size.
     pub radius: f32,
-    /// `None` until [`select_rifts`] has decided; `Some(true)`: state 4 (usable, active look).
+    /// `None` until [`select_rifts`] decided; `Some(true)`: state 4.
     pub active: Option<bool>,
 }
 
-/// `DynamicTeleporter::RequestToUse`'s destination for the rift `uid` (struct doc), remembered as an
-/// arrival in the unique-entity choice ([`crate::unique::UniqueSelection::arrivals`]).
+/// `DynamicTeleporter::RequestToUse`'s destination for the rift `uid`, remembered as an arrival.
 pub fn rift_destination(unique: &mut crate::unique::UniqueEntities, uid: &Uid) -> Option<Vec3> {
     let groups = unique.groups.0.clone();
     let Some(g) = groups.containing(uid).next() else {
@@ -863,7 +749,7 @@ pub fn rift_destination(unique: &mut crate::unique::UniqueEntities, uid: &Uid) -
     to.world.map(Vec3::from)
 }
 
-/// Spawns a rift at `pos` (its look and clicks: the game).
+/// Spawns a rift at `pos`; the game adds its look and clicks.
 pub fn spawn_dynamic_rift(
     commands: &mut Commands,
     rec: &gd_formats::arz::Record,
@@ -888,8 +774,7 @@ pub fn spawn_dynamic_rift(
         .id()
 }
 
-/// New rifts take their state (`DynamicTeleporter::Load`, [`DynamicRift`]): a grouped rift is active only
-/// when chosen (`IsUniqueEntitySelected(rift, true)`, `crate::unique`).
+/// A grouped rift is active only when chosen (`IsUniqueEntitySelected(rift, true)`).
 pub fn select_rifts(
     mut unique: crate::unique::UniqueEntities,
     data: Res<gd_game_core::data::GameData>,
@@ -907,7 +792,6 @@ pub fn select_rifts(
     }
 }
 
-/// The clicked active rift in reach sends the player on ([`rift_destination`], [`GateTravel`]).
 pub fn use_dynamic_rift(
     rifts: Query<(&GlobalTransform, &DynamicRift)>,
     mut players: Query<
@@ -932,8 +816,8 @@ pub fn use_dynamic_rift(
         interact.0 = None;
         return;
     }
-    // A `DynamicTeleporter` is a `FixedItem`: the fixed actors' use range, with the engine's defaults for its
-    // missing `actorRadius` and `usableRange`.
+    // The fixed actors' use range, with the engine's defaults for the missing `actorRadius` and
+    // `usableRange`.
     let reach = gd_game_core::combat::fixed_use_range(
         data.db.get(&rift.record),
         cb.map_or(0.5, |c| c.radius),

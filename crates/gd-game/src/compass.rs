@@ -1,31 +1,20 @@
-//! The HUD minimap's mode (`UIPlayerHud::ToggleCompass`, `Grim Dawn.exe`), kept on the player and in its
-//! character file (`CharacterInfo::compass_state`, `Player::GetCurrentCompassState`; `Player.compassState`).
+//! The HUD minimap's mode (`UIPlayerHud::ToggleCompass`), kept on the player and in its character file
+//! (`CharacterInfo::compass_state`).
 //!
-//! There: a press of the HUD's compass button (`hudCompassButton`) steps the mode 3 → 4, 2 → 3, anything
-//! else (4, the older 0 / 1) → 2, and stores it on the player (and the HUD's minimap widget,
-//! `UIPlayerHud.compassState`). Modes: 2 the
-//! minimap closed (size 0), 3 the floating minimap (160 px × UI scale, `hud_compassfloating.tex`), 4 the large one
-//! (246 px, `hud_compassfloatinglarge.tex`); the HUD panes beside it shift with the mode (`grimdawn::ui::survival`
-//! `hud_shift`), the drawing is `grimdawn::ui::localmap`. A new character starts in mode 3 (the save writer's
-//! default).
-//!
-//! The button sends [`ToggleCompass`]; [`CompassMode`] is created from the loaded character (or 3) and written back
-//! by `save.rs`.
+//! A compass-button press steps the mode 3 → 4, 2 → 3, anything else → 2. Modes: 2 closed, 3 the floating minimap
+//! (160 px × UI scale), 4 the large one (246 px). A new character starts in mode 3.
 use bevy::prelude::*;
 use gd_game_core::player::Player;
 
-/// The minimap mode (module doc).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompassMode(pub u8);
 
 /// A new character's mode.
 pub const NEW_CHARACTER_MODE: u8 = 3;
 
-/// A press of the compass button.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct ToggleCompass;
 
-/// `ToggleCompass`'s step (module doc).
 pub fn next_mode(mode: u8) -> u8 {
     match mode {
         3 => 4,
@@ -36,7 +25,7 @@ pub fn next_mode(mode: u8) -> u8 {
 
 pub fn init_compass(
     mut commands: Commands,
-    // Option: `have` is the existence check (this system creates the mode); `loaded` is absent for a new character.
+    // Option: `have` is the existence check; `loaded` is absent for a new character.
     have: Option<Res<CompassMode>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     players: Query<(), With<Player>>,

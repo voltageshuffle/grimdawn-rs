@@ -23,12 +23,12 @@
 //!   1 at its lower right − 10 px in `gameengine.dbr`'s `itemOverlayFontName`.
 //!
 //! - the icons' rollovers (`rollover_lines`): text icons in their `rolloverStyleName` window at the cursor
-//!   (placement mode 2), items their own tooltip (`tooltip.rs`, [`QuestPopup::hovered_item`]).
+//!   (placement mode 2), items their own tooltip.
 //!
-//! PORT: an item's class is read from its record's `Class` (the engine's item type codes); the window does not
-//! ease with the HUD shift; the rollover shows at once (no style `delay`). A GiveRandomItem shows the items the
-//! action rolled, one icon each with its own tooltip (`gd_game::quest_reward`); a GiveItem icon is its record
-//! with seed 1 (the engine shows its first rolled info item).
+//! PORT: an item's class is read from its record's `Class`; the window does not ease with the HUD shift;
+//! the rollover shows at once (no style `delay`) and keeps the screen-edge placement of its first frame.
+//! A GiveRandomItem shows the items the action rolled, one icon each; a GiveItem icon is its record with
+//! seed 1 (the engine shows its first rolled info item).
 use super::{UiAssets, widgets};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -53,9 +53,6 @@ impl Plugin for QuestPopupPlugin {
     }
 }
 
-/// `GD_QUEST_REWARD=<secs>` (hooks.rs): a sample reward, and a HUD notification (`tagTransferStashError`), every
-/// that many seconds of game time (the window auto-accepts after 10). The item icons are a GiveItem preview and
-/// a GiveRandomItem roll (a fixed seed, so the shot is stable).
 #[cfg(feature = "dev")]
 fn sample(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -121,7 +118,6 @@ struct Popup {
     alpha: f32,
     closing: bool,
     timer: f32,
-    /// The accept button's rect as drawn.
     accept: Option<URect>,
     window: Option<URect>,
     /// The icons' rects as drawn (in `shown.icons` order, those with a bitmap).
@@ -143,7 +139,6 @@ fn play(data: &GameData, field: &str, sound: &mut MessageWriter<gd_game_core::vi
     }
 }
 
-/// A reward opens (or rebuilds) the window.
 fn open(
     mut fresh: gd_game_core::session::NewSession,
     mut shown: MessageReader<QuestRewardShown>,
@@ -166,14 +161,11 @@ fn open(
     }
 }
 
-/// The window's state, shared by its systems.
 #[derive(Resource, Default)]
 pub struct QuestPopup(Popup);
 
 impl QuestPopup {
-    /// The hovered item icon's item and the cursor (`tooltip.rs` shows its tooltip,
-    /// `QuestRewardItemIcon::GetRolloverText`: the item's own tooltip lines). The engine's info item is the action's
-    /// rolled item (`GetInfoItem`); a GiveRandomItem icon carries it, a GiveItem icon is the record with seed 1 (PORT).
+    /// The hovered item icon's item and the cursor (`QuestRewardItemIcon::GetRolloverText`).
     pub fn hovered_item(&self) -> Option<(gd_formats::save::item::Item, Vec2)> {
         let (i, at) = self.0.hover?;
         match self.0.shown.as_ref()?.icons.get(i)? {
@@ -181,16 +173,14 @@ impl QuestPopup {
             _ => None,
         }
     }
-    /// The shown window's rect contains `p` (physical px): the windows under it (the conversation) leave the
-    /// cursor to it.
+    /// The shown window's rect contains `p` (physical px).
     pub fn covers(&self, p: Vec2) -> bool {
         self.0.shown.is_some() && self.0.window.is_some_and(|w| super::contains(&w, p))
     }
 }
 
-/// Accept clicks — the click half, in [`super::UiInputSet`] before the player's world click: the
-/// window takes the cursor over itself, a left press on Accept closes it (the timer / fades are
-/// [`input`]'s).
+/// Accept clicks, before the player's world click: the window takes the cursor over itself, a left press
+/// on Accept closes it.
 fn clicks(
     mut popup: ResMut<QuestPopup>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -217,8 +207,7 @@ fn clicks(
     }
 }
 
-/// The auto-accept timer and the fades (the fade alpha drives the [`crate::fade::FadeGroup`] in
-/// [`draw`], not a rebuild).
+/// The auto-accept timer and the fades.
 fn input(
     mut popup: ResMut<QuestPopup>,
     time: Res<Time>,
@@ -248,7 +237,6 @@ fn input(
     }
 }
 
-/// The record of the icon for `icon`.
 fn icon_field(data: &GameData, icon: &RewardIcon) -> &'static str {
     match icon {
         RewardIcon::Money(_) => "moneyIcon",
@@ -283,8 +271,8 @@ fn item_icon(class: &str) -> &'static str {
     }
 }
 
-/// `QuestRewardWindow::LayoutIcons`'s spacing for icon widths `w` in a box `box_w` wide (`space`, `min`: the record's,
-/// scaled).
+/// `QuestRewardWindow::LayoutIcons`'s spacing for icon widths `w` in a box `box_w` wide (`space`, `min`:
+/// the record's, scaled).
 fn icon_spacing(w: &[f32], box_w: f32, space: f32, min: f32) -> f32 {
     let sum: f32 = w.iter().sum();
     let total = sum + space * (w.len().max(1) - 1) as f32;
@@ -296,10 +284,8 @@ fn icon_spacing(w: &[f32], box_w: f32, space: f32, min: f32) -> f32 {
     }
 }
 
-/// Builds the window while it shows, once per (screen, reward, hover, hovered icon); the fade alpha moves the
-/// [`crate::fade::FadeGroup`] in place ([`crate::fade::Fader`]), not by a rebuild. The hovered icon's
-/// rollover is its own fade group, built at the cursor once per icon and moved with the cursor in place (PORT:
-/// its screen-edge placement is the one at the build's cursor).
+/// Builds the window while it shows; the hovered icon's rollover is its own fade group that follows the
+/// cursor.
 #[allow(clippy::too_many_arguments)]
 fn draw(
     mut commands: Commands,
@@ -311,7 +297,6 @@ fn draw(
     #[allow(clippy::type_complexity)] mut drawn: Local<
         Option<(UVec2, Option<QuestRewardShown>, bool, Option<usize>)>,
     >,
-    // The window's fade group, and the rollover's with the cursor it was built at.
     (mut group, mut tip): (Local<Option<Entity>>, Local<Option<(Entity, Vec2)>>),
     mut fader: crate::fade::Fader,
     mut shift: Query<&mut Node, With<RolloverShift>>,
@@ -326,7 +311,6 @@ fn draw(
         && cursor
             .zip(p.accept)
             .is_some_and(|(c, a)| super::contains(&a, c));
-    // The icon under the cursor (the icons as last drawn), while the window shows.
     p.hover = cursor
         .filter(|_| p.shown.is_some() && !p.closing)
         .and_then(|c| {
@@ -336,7 +320,6 @@ fn draw(
                 .map(|(i, _)| (*i, c))
         });
     let hover_icon = p.hover.map(|(i, _)| i);
-    // Compared in place: the reward is cloned only when the window rebuilds.
     if drawn.as_ref().is_some_and(|(s, r, h, i)| {
         *s == size && *r == p.shown && *h == hovered && *i == hover_icon
     }) {
@@ -380,14 +363,13 @@ fn draw(
         screen,
     );
     let g = crate::fade::fade_group(&mut ui, root, p.alpha.clamp(0.0, 1.0));
-    // Built opaque; the group fades it (the alpha is not a rebuild reason).
+    // Built opaque; the group fades it.
     let a = 1.0;
     let tint = Color::WHITE;
     let child = |k: &str| rec.str(k).and_then(|p| data.db.get(p));
     let bitmap_of = |k: &str| child(k).and_then(|r| r.str("bitmapName").map(str::to_owned));
     let o = Vec2::new(base.x, base.y);
     let has_xp = shown.xp > 0;
-    // The backgrounds, stacked.
     let mut y = o.y;
     for (k, on) in [
         ("backgroundTop", true),
@@ -405,7 +387,6 @@ fn draw(
     }
     let height = y - o.y;
     p.window = Some(URect::new(o.x, o.y, base.w, height));
-    // A text box record's scaled rect and style.
     let text_box = |ui: &super::Ui, k: &str| {
         let tb = TextBox::from_record(child(k)?);
         let r = tb.rect;
@@ -460,7 +441,6 @@ fn draw(
         }
         text_in(&mut ui, "XPValue", &xp);
     }
-    // The icon row.
     let f = |k: &str, d: f32| rec.f32(k).unwrap_or(d);
     let icons: Vec<(usize, Handle<Image>, Vec2, &RewardIcon)> = shown
         .icons
@@ -514,7 +494,6 @@ fn draw(
         }
         x = (x + sz.x + space).round();
     }
-    // Accept, `acceptButtonTopEdge` above the bottom.
     p.accept = child("acceptButton").and_then(|b| {
         let by = ui.sc(b.f32("bitmapPositionY").unwrap_or(0.0));
         let edge = ui.sc(f("acceptButtonTopEdge", 90.0));
@@ -529,8 +508,7 @@ fn draw(
     });
     crate::fade::seal_fade_group(ui.commands, g);
     *group = Some(g);
-    // The hovered icon's rollover (items: `tooltip.rs`, [`QuestPopup::hovered_item`]), in its own group that
-    // follows the cursor in place (see the doc above).
+    // The hovered icon's rollover, in its own group that follows the cursor.
     if let Some((n, at)) = p.hover
         && let Some(icon) = shown.icons.get(n)
         && let Some(ir) = child(icon_field(&data, icon))
@@ -568,7 +546,7 @@ fn draw(
     }
 }
 
-/// The hovered icon's rollover group, moved by the cursor since its build ([`draw`]).
+/// The hovered icon's rollover group, moved by the cursor since its build.
 #[derive(Component)]
 struct RolloverShift;
 

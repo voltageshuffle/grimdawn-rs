@@ -1,44 +1,33 @@
-//! The base visuals of the channelled cone / spin / grow skills and the charged-scaling charge effect (their records:
-//! [`crate::skill_fx`]'s `cone_effect` / `spin_aura` / `grow_effect` / `charge_aura`, which apply the modifiers'
-//! `fxChanges`). Game.dll:
-//! - Cone (`Skill_AttackSpellCone::ActivateNow`, `Update`, `StopEmitting`,
-//!   `GetValidTarget`, `GetMaxConeLength`, `Load`): the cone effect is created
-//!   at the activation and starts emitting after `coneDelay` s (the main player's; others' at once). Every update
-//!   while it runs it is set in the world (`World::SetCoords`, not attached) at the caster's `emitPointName` (default
-//!   `L Hand`, `GetAttachPointCoords`), with the caster's coords whose forward (Z) row is `(fwd.x, slope, fwd.z)`:
-//!   `slope` the y of the normalised aim point - emit point ([`cone_slope`]); the aim point is the target's `Target`
-//!   point while it lives, else the used point raised by half the caster's height (`Actor::GetHeight`); each
-//!   re-request retargets it (`GetValidTarget`, [`super::Channel::target`]). Its length grows `travelSpeed` m/s up
-//!   to `GetMaxConeLength` ([`super::max_beam_length`]). The channel's stop puts it in state 3, then retracting
-//!   (state 4): the placement stops (it stays where it was, still emitting) while the retract grows
-//!   `travelSpeed * 0.002` m per ms until it reaches the length; then `StopEmitting` + `SetSelfRemove` ([`ConeFx`]).
-//!   Strikes (`Update` / `GetTargets`): the entry's timer (`timeBetweenAttacks` / cast speed, armed by
-//!   `ActivateNow`, which also pays the energy once) runs while it emits and while it retracts; each
-//!   strike hits the foes in the frustum from the retract to the grown length ([`ConeFx`]) with no secondaries; the
-//!   current (not retracting) entry pays each strike and stops the channel when the energy left is under the cost.
-//! - Spin (`Skill_AttackRadiusSpin::ApplyCastVisualEffects`, from `ActivateNow` / off from
-//!   `StopSpinning`): `Character::AddParticleEffect(aura, "")` once (attached at the character's
-//!   origin), `StartParticleEffect` while spinning, `RemoveParticleEffect` at the stop.
-//! - Grow (`Skill_AttackRadiusGrow::ApplyCastVisualEffects`, after the activation and each growth in
-//!   `Update`, off from `StopEmitting`): when the radius reaches another
-//!   `radiusEffectSize` step the old effect stops emitting (self-removing) and the step's effect is added to the
-//!   world at the caster's coords, rotation cleared (not attached); off stops it.
-//! - Charge (`Skill_WeaponPool_ChargedScaling::SetChargeEffect`, from `ReceiveActiveUpdate`
-//!   with the charge level): the effect shown stops (`StopParticleEffect`); with charges the level's
-//!   effect is added once per name (`AddParticleEffect(name, "")`, cached) and started.
+//! Base visuals of the channelled cone / spin / grow skills and the charged-scaling charge effect
+//! (records: [`crate::skill_fx`]'s `cone_effect` / `spin_aura` / `grow_effect` / `charge_aura`).
+//! - Cone (`Skill_AttackSpellCone::ActivateNow`, `Update`, `StopEmitting`, `GetValidTarget`,
+//!   `GetMaxConeLength`): created at activation, emitting after `coneDelay` s (the main player's;
+//!   others' at once). Each update it is placed in the world (not attached) at the caster's
+//!   `emitPointName` (default `L Hand`) with forward `(fwd.x, slope, fwd.z)`, `slope` the y of the
+//!   normalised aim - emit point ([`cone_slope`]); the aim is the living target's `Target` point,
+//!   else the used point raised by half the caster's height; each re-request retargets it. Its
+//!   length grows `travelSpeed` m/s up to `GetMaxConeLength`. The stop retracts it (state 3, 4): it
+//!   stays put, still emitting, while the retract grows `travelSpeed * 0.002` m/ms up to the length;
+//!   then `StopEmitting` + `SetSelfRemove`.
+//!   Strikes: the entry's timer (`timeBetweenAttacks` / cast speed; `ActivateNow` pays the energy
+//!   once) runs while emitting and retracting; each strike hits the foes in the frustum from the
+//!   retract to the length, no secondaries; the current (not retracting) entry pays each strike and
+//!   stops the channel when the energy left is under the cost.
+//! - Spin (`Skill_AttackRadiusSpin::ApplyCastVisualEffects`): the aura attached once at the
+//!   character's origin, started while spinning, removed at the stop.
+//! - Grow (`Skill_AttackRadiusGrow::ApplyCastVisualEffects`): at each `radiusEffectSize` step the old
+//!   effect stops emitting and the step's effect is added in the world at the caster's coords,
+//!   rotation cleared (not attached).
+//! - Charge (`Skill_WeaponPool_ChargedScaling::SetChargeEffect`): the shown effect stops; with
+//!   charges the level's effect is added and started.
 //!
-//! The chaos skills' beams: `super::chaos`.
-//!
-//! PORT: channels are the player's ([`super::Channel`]); a charge effect is spawned anew at each change instead of
+//! PORT: channels are the player's; a charge effect is spawned anew at each change instead of
 //! restarting a cached one. The cone's forward is the caster's rotation pitched by `atan(slope)`
-//! ([`cone_rotation`]): the engine writes the unnormalised `(fwd.x, slope, fwd.z)` into the matrix, a shear a
-//! `Transform` cannot hold (the same direction; the engine's axis is `sqrt(1 + slope²)` long and its up row stays the
-//! caster's).
+//! ([`cone_rotation`]): the engine's unnormalised forward row is a shear a `Transform` cannot hold.
 use super::*;
 use gd_game_core::visuals::{EffectSpec, StopEmitting};
 
-/// The channel's visual ends: a cone entry retracts ([`ConeFx`]; one not emitting yet goes), the others stop
-/// emitting.
+/// A cone entry retracts (one not emitting yet goes); the others stop emitting.
 fn stop(commands: &mut Commands, cones: &mut Cones, fx: Option<Entity>) {
     let Some(f) = fx else { return };
     match cones.get_mut(f) {
@@ -51,8 +40,6 @@ fn stop(commands: &mut Commands, cones: &mut Cones, fx: Option<Entity>) {
 
 type Cones<'w, 's> = Query<'w, 's, (Entity, &'static mut ConeFx)>;
 
-/// The caster side of a cone's placement: its transform, character, emit point name, channel and the living
-/// target's `Target` point.
 struct ConeCaster<'a> {
     tf: &'a Transform,
     character: &'a Character,
@@ -61,8 +48,7 @@ struct ConeCaster<'a> {
     target: Option<Vec3>,
 }
 
-/// The cone's placement this update (module doc): the emit point, the aim point, the effect's rotation and
-/// `GetMaxConeLength`.
+/// Returns the emit point, aim point, effect rotation and `GetMaxConeLength`.
 fn cone_frame(
     data: &GameData,
     coll: &crate::collision::WorldCollision,
@@ -97,7 +83,6 @@ fn cone_frame(
     (emit, aim, rotation, max)
 }
 
-/// The cone / spin / grow visual of the player's channel and the cone entries' strikes (module doc).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn channel_fx(
     mut commands: Commands,
@@ -117,7 +102,7 @@ pub(super) fn channel_fx(
     targets: Query<(&Transform, &Character), Without<Dead>>,
     mut cones: Cones,
     mut placed: Query<&mut Transform, (With<EffectSpec>, Without<Character>)>,
-    // `FilterInvalidTargets`: the owner's foes ([`crate::combat::Side::hits`]).
+    // `FilterInvalidTargets`: the owner's foes.
     foes: Query<
         (
             Entity,
@@ -179,8 +164,7 @@ pub(super) fn channel_fx(
                 {
                     new.fx = Some(spawn_on(&mut commands, e, &ch.skill, &aura, Vec3::ZERO));
                 }
-                // `Skill_AttackSpellCone::ActivateNow`: pays the energy once and adds the cone entry (none without
-                // a cone effect record).
+                // `ActivateNow`: pays the energy once; no entry without a cone effect record.
                 if rec.class == "Skill_AttackSpellCone"
                     && let Some(record) =
                         gd_game_core::skill_fx::cone_effect(rec, ch.level_index, &mods)
@@ -274,7 +258,6 @@ pub(super) fn channel_fx(
             _ => {}
         }
     }
-    // The cone entries (`Update`'s list walk).
     for (f, mut c) in &mut cones {
         let owner = q.get_mut(c.owner).ok();
         if owner.is_none() {
@@ -329,8 +312,7 @@ pub(super) fn channel_fx(
                 *t = placement;
             }
         }
-        // The strike timer runs in states 2 and 4; the current entry pays each strike and stops the channel when
-        // the energy left is under the cost.
+        // The timer runs in states 2 and 4.
         c.tick -= dt;
         if c.tick > 0.0 {
             continue;
@@ -371,7 +353,7 @@ pub(super) fn channel_fx(
     }
 }
 
-/// The charged-scaling skills' charge effects (`SetChargeEffect`, module doc).
+/// `SetChargeEffect`.
 pub(super) fn charge_fx(
     mut commands: Commands,
     data: Res<GameData>,

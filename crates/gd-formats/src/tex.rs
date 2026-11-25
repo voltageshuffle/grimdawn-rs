@@ -6,7 +6,7 @@
 //! Loader: `GraphicsTexture::Initialize` (Engine.dll) splits
 //! frames; `Direct3DTexture` ctor (Direct3D11.dll) maps the pixel
 //! format. All formats are created as UNORM/SNORM, never `_SRGB`.
-use crate::util::Reader;
+use crate::util::{Reader, byte_list};
 use anyhow::{Result, bail, ensure};
 
 /// Pixel formats the D3D11 renderer accepts (anything else is rejected).
@@ -129,9 +129,8 @@ impl Dds {
         Ok(dds)
     }
 
-    /// [`parse`](Self::parse) on an owned buffer: when the payload is already
-    /// the upload data (not `DDSR`, no 24-bit expansion), the header is dropped
-    /// in place instead of copying the pixels into a new allocation.
+    /// [`parse`](Self::parse) on an owned buffer, reused as the upload data when
+    /// the payload already is it (not `DDSR`, no 24-bit expansion).
     pub fn parse_owned(b: Vec<u8>) -> Result<Self> {
         Self::parse_owned_at(b, 0)
     }
@@ -161,7 +160,7 @@ impl Dds {
         let reversed = match &b[..4] {
             b"DDS " => false,
             b"DDSR" => true,
-            m => bail!("bad DDS magic {m:?}"),
+            m => bail!("bad DDS magic {}", byte_list(m, false)),
         };
         let mut r = Reader::at(b, 8);
         let flags = r.u32()?;
@@ -266,7 +265,7 @@ impl Dds {
                 b"DXT1" => PixelFormat::Bc1,
                 b"DXT3" => PixelFormat::Bc2,
                 b"DXT5" => PixelFormat::Bc3,
-                f => bail!("unsupported FourCC {f:?}"),
+                f => bail!("unsupported FourCC {}", byte_list(f, false)),
             }
         } else if pf_flags & 0x80000 != 0 {
             match bits {
@@ -382,10 +381,7 @@ impl Dds {
 pub(crate) type BlockDecoder = fn(&[u8], &mut [u32]);
 
 /// Decode one BC level to straight RGBA8 into `out` (`w * h * 4` bytes, rows top to
-/// bottom): each 4×4 block is decoded into a stack buffer and swizzled BGRA→RGBA straight
-/// into the output — one heap buffer, one pass, where the bulk decoders write a `u32`
-/// image that needs a second buffer and pass to swizzle. Same block decoders and edge
-/// clipping as `texture2ddecoder`'s bulk calls, so the bytes are identical.
+/// bottom), byte-identical to `texture2ddecoder`'s bulk calls.
 pub(crate) fn bc_rgba8_into(
     src: &[u8],
     w: usize,
@@ -462,8 +458,7 @@ impl Tex {
     }
 
     /// [`parse`](Self::parse) on an owned buffer: a single-frame file hands its
-    /// buffer to the frame parser, which drops the headers in place instead of
-    /// copying the pixels ([`Dds::parse_owned`]).
+    /// buffer to [`Dds::parse_owned`].
     pub fn parse_owned(b: Vec<u8>) -> Result<Self> {
         if b.starts_with(b"DDS ") {
             return Ok(Self {

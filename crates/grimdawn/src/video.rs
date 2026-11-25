@@ -16,13 +16,11 @@
 //! centred, the newest line 50 px above the bottom. PORT: two lines at most show together, the older above
 //! (the engine's list scrolls them with an animated offset).
 //!
-//! PORT: the decoder runs on its own thread (a 1080p frame is 12 ms of work against the 41 ms a frame lasts) and
-//! stays at most [`AHEAD`] pictures in front of the clock; the file's sound is queued into the mixer as it is
-//! decoded ([`gd_audio::LiveAudio`], a voice the pause does not hold) and the game's pause (`GamePause::video`, set
-//! while a video plays) holds the world. A mixer that does not move (no sound device) lets the clock follow the wall
-//! time instead. The engine's
-//! `PlayVideo` flag is not read in single player. A session that skips the menu (the test hooks) plays no intro;
-//! `GD_VIDEO=<path>` plays that video at the player's entry whatever the character.
+//! PORT: the decoder runs on its own thread and stays at most [`AHEAD`] pictures in front of the clock; the
+//! file's sound is queued into the mixer as it is decoded ([`gd_audio::LiveAudio`], a voice the pause does not
+//! hold) and `GamePause::video` holds the world. A mixer that does not move (no sound device) lets the clock
+//! follow the wall time instead. The engine's `PlayVideo` flag is not read in single player. A session that
+//! skips the menu plays no intro; `GD_VIDEO=<path>` plays that video at the player's entry.
 use bevy::asset::RenderAssetUsages;
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -47,12 +45,11 @@ const INTRO: &str = "video/intro.ogg";
 const STYLE: &str = "records/ui/styles/text/style_videosubtitle.dbr";
 /// Above the HUD, the windows and the loading cover; the cursor stays on top.
 const Z: i32 = 500;
-/// Decoded pictures the thread holds in front of the clock (8 MB each at 1080p).
+/// Decoded pictures the thread holds in front of the clock.
 const AHEAD: usize = 4;
 /// A subtitle line's hold before it fades out, and the fades' rate per second (`TheoraVideoPlayer::Update`).
 const SUB_HOLD: f32 = 5.0;
 const SUB_FADE: f32 = 2.0;
-/// Subtitle lines shown together.
 const SUB_LINES: usize = 2;
 /// Seconds the sound stream may stand still before the clock follows the wall time.
 const STALL: f32 = 0.25;
@@ -82,7 +79,6 @@ impl Plugin for VideoPlugin {
 #[derive(Resource, Default)]
 pub struct VideoQueue(VecDeque<String>);
 
-/// What the decoder thread sends.
 enum Msg {
     /// The picture size and the sound's rate (none: no sound track), before anything else.
     Header {
@@ -102,7 +98,7 @@ enum Msg {
 /// The video on screen.
 #[derive(Resource)]
 pub struct Playing {
-    /// Behind a mutex only to make the resource `Sync` (the pump alone reads it).
+    /// Behind a mutex only to make the resource `Sync`.
     rx: Mutex<mpsc::Receiver<Msg>>,
     stop: Arc<AtomicBool>,
     /// Pictures sent and not yet shown or dropped.
@@ -116,7 +112,6 @@ pub struct Playing {
     stall: f32,
     ended: bool,
     subs: Vec<(f32, String)>,
-    /// The subtitle lines on screen: the line's index, its node.
     shown: Vec<(usize, Entity)>,
     skipped: bool,
 }
@@ -134,8 +129,7 @@ fn queue_intro(
     data: Res<GameData>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
 ) {
-    // `GD_VIDEO` (hooks.rs): that video instead; a session that skips the menu (`GD_*` test sessions) plays no
-    // intro.
+    // A session that skips the menu plays no intro.
     #[cfg(feature = "dev")]
     if let Some(video) = &hooks.session.video {
         queue.0.push_back(video.clone());
@@ -157,7 +151,7 @@ fn queue_story(mut effects: MessageReader<StoryEffect>, mut queue: ResMut<VideoQ
     }
 }
 
-/// Any key press or click ends the video and is not seen by the game (module doc).
+/// Any key press or click ends the video and is not seen by the game.
 fn skip(
     playing: Option<ResMut<Playing>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -172,8 +166,7 @@ fn skip(
 }
 
 /// The subtitle file's text for the video at the engine path `video`: `text_<language>/<name>.txt` of the archives
-/// when the language is not the default and has one, else `<video>.txt` beside it (found ignoring case, like the
-/// video: the install has `video/Intro.ogg` and `video/intro.txt`).
+/// when the language is not the default and has one, else `<video>.txt` beside it (found ignoring case).
 fn subtitle_text(data: &GameData, video: &str) -> String {
     let txt = std::path::Path::new(video).with_extension("txt");
     let txt = txt.to_string_lossy().replace('\\', "/");
@@ -189,7 +182,7 @@ fn subtitle_text(data: &GameData, video: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Starts the next queued video when none plays (a path that is not there is skipped with a warning).
+/// Starts the next queued video when none plays (a missing path is skipped with a warning).
 fn start(
     mut commands: Commands,
     mut queue: ResMut<VideoQueue>,
@@ -252,7 +245,7 @@ fn start(
         pause.video = true;
         return;
     }
-    // `pause.video` is read first: a write marks the resource changed.
+    // Read first: a write marks the resource changed.
     if pause.video {
         pause.video = false;
     }
@@ -328,7 +321,7 @@ fn decode(file: &std::path::Path, tx: &mpsc::Sender<Msg>, ahead: &AtomicUsize, s
     }
 }
 
-/// The frame's work: takes what the thread sent, moves the clock, shows the picture and the subtitles, ends the video.
+/// Takes what the thread sent, moves the clock, shows the picture and the subtitles, ends the video.
 #[allow(clippy::too_many_arguments)]
 fn pump(
     mut commands: Commands,
@@ -400,7 +393,7 @@ fn pump(
             }
         }
     }
-    // The clock (module doc): the sound's played time while it moves, the wall time once it stands still.
+    // The sound's played time while it moves, the wall time once it stands still.
     let dt = real.delta_secs();
     match &p.live {
         Some(l) => {
@@ -419,7 +412,7 @@ fn pump(
         None if p.image.is_some() => p.clock += dt,
         None => {}
     }
-    // The picture: the newest due one; the node fits the window, centred.
+    // The newest due picture; the node fits the window, centred.
     let Some((handle, node, size)) = p.image.clone() else {
         return;
     };
@@ -447,7 +440,6 @@ fn pump(
             (n.left, n.top, n.width, n.height) = (left, top, width, height);
         }
     }
-    // The subtitles: the newest lines still alive, each at its alpha.
     let alive = |t: f32| p.clock >= t && p.clock < t + SUB_HOLD + 1.0 / SUB_FADE;
     let mut want: Vec<usize> = (0..p.subs.len()).filter(|&i| alive(p.subs[i].0)).collect();
     if want.len() > SUB_LINES {

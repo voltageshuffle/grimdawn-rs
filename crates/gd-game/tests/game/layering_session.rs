@@ -15,7 +15,6 @@ fn game() -> Option<TestGame> {
 #[test]
 fn fog_reveals_after_a_one_metre_move() {
     let Some(mut g) = game() else { return };
-    // The campaign's world map from the install.
     let map = std::sync::Arc::new(
         gd_formats::map::MapFile::open_resource(&g.data().vfs, "levels/world001.map").unwrap(),
     );

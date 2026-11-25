@@ -28,12 +28,6 @@
 //! `BoxTrigger::CollectEntities`): candidates come from a sphere of radius |extents|, then the
 //! entity's position must lie within ±extents along each of the trigger's
 //! axes (OBB test `OBBox::ContainsPoint`).
-//!
-//! Collection is allocation-free per frame: the candidates come from the story's reused frame
-//! scratch ([`super::Story::update_triggers`]), each trigger fills a reused inside buffer ([`Self::collect`],
-//! [`Self::fire`] swaps it into `inside` and hands the old one back), and an armed, empty trigger
-//! whose last collection under the same candidate snapshot found nobody is skipped entirely
-//! ([`Self::last_gen`] / [`Self::last_empty`]) — its step would be a no-op.
 use super::state::Coords;
 use std::rc::Rc;
 
@@ -44,10 +38,8 @@ pub struct AreaTrigger {
     pub coords: Coords,
     pub half_extents: [f32; 3],
     pub detectable: Vec<String>,
-    /// `detects` (`AreaTrigger::ResolveEnum_Detection`): 0 `AnyEntity`, 1 `Monsters` (the collect
-    /// `BoxTrigger::CollectEntities` keeps the entities of class `Monster` in the sphere), 2 `Players`, else 3
-    /// `LocalPlayer` (the
-    /// default: no stock trigger names `Players` / `LocalPlayer`).
+    /// `detects` (`AreaTrigger::ResolveEnum_Detection`): 0 `AnyEntity`, 1 `Monsters` (class `Monster`), 2
+    /// `Players`, else 3 `LocalPlayer` (the default).
     pub detects: u8,
     pub on_enter: Option<Rc<str>>,
     pub on_leave: Option<Rc<str>>,
@@ -60,10 +52,9 @@ pub struct AreaTrigger {
     pub timer: i32,
     pub inside: Vec<u32>,
     pub destroyed: bool,
-    /// The candidate-snapshot generation of the last collection (`Story::update_triggers`);
-    /// `u64::MAX` until the first.
+    /// The candidate-snapshot generation of the last collection; `u64::MAX` until the first.
     pub last_gen: u64,
-    /// Whether the last collection found nobody inside (the skip's other half, module doc).
+    /// The last collection found nobody: an armed trigger with an unchanged `last_gen` skips its step.
     pub last_empty: bool,
 }
 
@@ -162,8 +153,8 @@ impl AreaTrigger {
                 .any(|d| d.eq_ignore_ascii_case(record))
     }
 
-    /// The `shouldTrigger` function the collected entities must pass (module doc): asked only by a
-    /// trigger that names `detectableNames`.
+    /// The `shouldTrigger` function the collected entities must pass: asked only by a trigger that names
+    /// `detectableNames`.
     pub fn hook(&self) -> Option<&Rc<str>> {
         self.should_trigger
             .as_ref()

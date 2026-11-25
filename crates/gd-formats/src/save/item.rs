@@ -29,8 +29,7 @@ pub struct Item {
     pub unk_augment: u32,
     pub augment_seed: u32,
     /// The ascendant affix (container version >= 7: `ItemReplicaInfo` +288 →
-    /// `ItemEquipment` +1624, read by `AddAscendantBonus`; was
-    /// taken for a second component slot). The game reader discards
+    /// `ItemEquipment` +1624, read by `AddAscendantBonus`). The game reader discards
     /// `ascendant_unused` but the writer emits it.
     pub ascendant_name: String,
     pub ascendant_unused: String,

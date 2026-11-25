@@ -28,7 +28,7 @@ pub const LEGEND: [&str; 12] = [
 #[derive(Resource)]
 pub struct MapWindow {
     pub open: bool,
-    /// The local (aerial) map shows; else the world map (`riftmap.rs`).
+    /// The local (aerial) map shows; else the world map.
     pub local: bool,
     pub zoom: f32,
     pub zoom_to: f32,
@@ -87,7 +87,7 @@ impl MapWindow {
     pub fn covers(&self, rift: &RiftgateMap, p: Vec2) -> bool {
         self.local_shown(rift) && self.layout.window.is_some_and(|r| contains(&r, p))
     }
-    /// The hovered legend button and its rollover record (`ui/rollover.rs`).
+    /// The hovered legend button and its rollover record.
     pub fn legend_rollover(&self, rift: &RiftgateMap) -> Option<(URect, String)> {
         let i = self.legend_hover.filter(|_| self.local_shown(rift))?;
         let r = self.layout.legend.iter().find(|(k, _)| *k == i)?.1;

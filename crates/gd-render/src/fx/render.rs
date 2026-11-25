@@ -1,10 +1,6 @@
-//! Particle billboards: per emitter one storage buffer ([`fill_buffer`]) updated
-//! in place every frame (same size: one `write_buffer`, no bind group change;
-//! grow-only power-of-two capacity) and a shared static quad mesh ([`quad_mesh`]),
-//! expanded on the GPU by a port of the `particle*.ssh` vertex shader (see
-//! `particle.wesl`). PORT: the engine rewrites a dynamic vertex buffer; a Bevy
-//! `Mesh` asset rewritten each frame is freed and re-allocated by the mesh
-//! allocator, a `ShaderBuffer` is not.
+//! Particle billboards: per emitter one storage buffer ([`fill_buffer`]) rewritten every frame (grow-only
+//! power-of-two capacity) and a shared static quad mesh ([`quad_mesh`]), expanded on the GPU by a port of the
+//! `particle*.ssh` vertex shader (`particle.wesl`). PORT: the engine rewrites a dynamic vertex buffer.
 //!
 //! Per particle (`Emitter::RenderPass`): centre, 4 corners uv
 //! (0,0)(1,0)(1,1)(0,1), "dir" = (up or velocity, stretch), params = (rotation
@@ -29,29 +25,25 @@ pub const SHADER: &str = "embedded://gd_render/fx/particle.wesl";
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 #[bind_group_data(ParticleKey)]
 pub struct ParticleMaterial {
-    /// x: `orientVertically` (bools[10]); distortion (`particledistort*`,
-    /// render/distort.rs): y `screenTextureScale`, z 1 = `particledistortadditive`.
+    /// x: `orientVertically` (bools[10]); distortion (`particledistort*`): y `screenTextureScale`, z 1 =
+    /// `particledistortadditive`.
     #[uniform(0)]
     pub params: Vec4,
     /// Flipbook frames as array layers (UNORM: blended in gamma space).
     #[texture(1, dimension = "2d_array")]
     #[sampler(2)]
     pub texture: Handle<Image>,
-    /// The emitter's particles (see [`fill_buffer`]); rewritten in place each frame.
+    /// The emitter's particles (see [`fill_buffer`]).
     #[storage(3, read_only)]
     pub particles: Handle<ShaderBuffer>,
     pub blend: Blend,
-    /// Shader sort order (`Emitter::sort_order`) and emitter index: the queue
-    /// is sorted by the shader order first, then distance (`build_mesh`
-    /// anchor), then the emitter's place in its effect.
-    /// `GraphicsMTRenderer::RenderScenePasses`: the scene passes
-    /// (sort orders 0-8999, particles included) are merge-sorted (stable,
-    /// `GraphicsMTRenderer::MergeSortPasses` / comparator `GraphicsMTRenderer::ComparePasses`) by sort order,
-    /// then shader, style, light and texture pointer; no distance (only the 10000-11000
-    /// transparency passes are sorted far to near, `ExecutePrepareTransparency`).
-    /// PORT: within one sort order the engine's draw order follows pointer
-    /// values and collection order, which a port cannot reproduce; back to
-    /// front stands in.
+    /// Shader sort order (`Emitter::sort_order`) and emitter index: the queue is sorted by the shader order first,
+    /// then distance, then the emitter's place in its effect.
+    /// `GraphicsMTRenderer::RenderScenePasses`: the scene passes (sort orders 0-8999, particles included) are
+    /// merge-sorted (stable, `GraphicsMTRenderer::MergeSortPasses` / `ComparePasses`) by sort order, then shader,
+    /// style, light and texture pointer; no distance (only the 10000-11000 transparency passes are sorted far to
+    /// near). PORT: within one sort order the engine's draw order follows pointer values and collection order, which
+    /// a port cannot reproduce; back to front stands in.
     pub sort: u32,
     pub order: u32,
 }
@@ -85,8 +77,7 @@ impl Material for ParticleMaterial {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
-    /// Distortion reads the frame copy and is drawn after the scene
-    /// (render/distort.rs).
+    /// Distortion reads the frame copy and is drawn after the scene.
     fn reads_view_transmission_texture(&self) -> bool {
         self.blend == Blend::Distort
     }

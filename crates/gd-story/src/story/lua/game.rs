@@ -65,13 +65,9 @@ impl ScriptHost {
                 lua.create_function(move |lua, path: String| Ok(load_script(lua, &c, &path)))?,
             )?;
             // Script.RegisterForUpdate(uint id, function name, int period ms)
-            // (`LuaScript::RegisterForUpdate` → `LuaManager::RegisterForUpdates`): a
-            // name that resolves to no function logs "Error registering
-            // object %u for updates, function '%s' does not exist!" and is not
-            // registered; otherwise an entry is appended (no de-duplication)
-            // with its countdown at 0, so it first runs on the next update.
-            // PORT: past `MAX_UPDATE_REGS` entries the call logs and registers
-            // nothing.
+            // (`LuaManager::RegisterForUpdates`): an unknown function logs and is not registered; entries are
+            // appended (no de-duplication) with their countdown at 0. PORT: past `MAX_UPDATE_REGS` entries the
+            // call logs and registers nothing.
             let c = ctx.clone();
             script.set(
                 "RegisterForUpdate",
@@ -90,10 +86,8 @@ impl ScriptHost {
                     Ok(())
                 })?,
             )?;
-            // Script.UnregisterForUpdate(uint id, function name)
-            // (`LuaScript::UnregisterForUpdate` → `LuaManager::UnregisterForUpdates`): removes the
-            // first entry with that id and name, moving the last entry into
-            // its place.
+            // Script.UnregisterForUpdate(uint id, function name) (`LuaManager::UnregisterForUpdates`): removes
+            // the first match, moving the last entry into its place.
             let c = ctx.clone();
             script.set(
                 "UnregisterForUpdate",
@@ -105,10 +99,8 @@ impl ScriptHost {
                     Ok(())
                 })?,
             )?;
-            // Script.Event(name) (`LuaScript::Event` →
-            // `GameEngine::ScriptEvent`): only unlocks Steam achievements
-            // (EV_WARDEN, EV_INVENTOR → ACH026, ...); the port passes the name
-            // on as an effect.
+            // Script.Event(name) (`GameEngine::ScriptEvent`): only unlocks Steam achievements; passed on as an
+            // effect.
             let c = ctx.clone();
             script.set(
                 "Event",
@@ -124,13 +116,9 @@ impl ScriptHost {
         }
         g.set("Script", script)?;
 
-        // MpScript.QuestEvent / QuestGlobalEvent / LuaGlobalEvent(string)
-        // (`LuaMpScript::QuestEvent` / `QuestGlobalEvent` / `LuaGlobalEvent` →
-        // `GameEngine::QuestCommandEvent` / `QuestCommandGlobalEvent` /
-        // `LuaCommandGlobalEvent`; the inbound side of all three is
-        // `CallLuaQuestCommand*Event`, which call the one Lua function
-        // reference `GameEngine.questEventDispatch`, `QuestEventDispatch`, with the
-        // event). Single player is its own server, so all three dispatch now.
+        // MpScript.QuestEvent / QuestGlobalEvent / LuaGlobalEvent(string) (`GameEngine::QuestCommandEvent` /
+        // `QuestCommandGlobalEvent` / `LuaCommandGlobalEvent`): all three call `GameEngine.questEventDispatch`
+        // with the event; single player is its own server.
         let mp = lua.create_table()?;
         for name in ["QuestEvent", "QuestGlobalEvent", "LuaGlobalEvent"] {
             mp.set(
@@ -163,10 +151,7 @@ impl ScriptHost {
         }
         g.set("Shared", shared)?;
 
-        // Time.Now() (`LuaTime::BindClass` binds `timeGetTime`: a
-        // millisecond clock). The port's clock is the session time in ms; the
-        // scripts only take differences of it (cooldowns), which match except
-        // while the game is paused.
+        // Time.Now() (`timeGetTime`, ms). PORT: the session time in ms; differences match except while paused.
         let time = lua.create_table()?;
         {
             let c = ctx.clone();
@@ -193,10 +178,7 @@ impl ScriptHost {
         }
         g.set("UI", ui)?;
 
-        // Debug.AddStatisticText(text) (the exe binds a `Debug` table with it; the glue reaches
-        // `Engine::AddStatisticText`, which formats the text into the engine's statistics display and does
-        // nothing without one). PORT: the port has no statistics display, so it is a no-op (no stock script
-        // calls it).
+        // Debug.AddStatisticText(text) (`Engine::AddStatisticText`). PORT: no statistics display, a no-op.
         let debug = lua.create_table()?;
         debug.set(
             "AddStatisticText",
@@ -305,10 +287,7 @@ impl ScriptHost {
                         .map_or(0, |(_, l)| *l))
                 })?,
             )?;
-            // GetGameTime() (`LuaGame::GetGameTime` returns
-            // `GameEngine.scriptClock`, an engine clock with no named accessor in
-            // Game.dll; no stock script calls it). The port returns its
-            // session milliseconds.
+            // GetGameTime() (`GameEngine.scriptClock`). PORT: the session milliseconds.
             let c = ctx.clone();
             game.set(
                 "GetGameTime",
@@ -373,10 +352,8 @@ impl ScriptHost {
                 })?,
             )?;
         }
-        // Crucible bindings (`LuaGame` thunks in `Grim Dawn.exe` and the Game.dll
-        // `GameEngine` / `PlayStats` functions).
-        // Get* return 0 outside a survival session; Set* / Increment* / Reset* need survival
-        // and the server (always, single player).
+        // Crucible bindings (`LuaGame`, Game.dll `GameEngine` / `PlayStats`): Get* return 0 outside a
+        // survival session; Set* / Increment* / Reset* need survival.
         {
             macro_rules! surv {
                 ($name:expr, |$sv:ident, $args:ident| $body:expr) => {{
@@ -588,11 +565,9 @@ impl ScriptHost {
         // `GameEngine` functions).
         {
             // GenerateEndlessDungeon(ruleset, entranceDoorId [, startTier]) -> WorldCoords of floor 0's
-            // entrance (`GameEngine::GenerateEndlessDungeon` then `EndlessDungeon_Generator::GetActiveFloorEntrance`):
-            // dungeonsGenerated becomes `startTier` if given, else +1; the floors, exits and
-            // proxies are picked ([`crate::endless::generate`]). The Ultimate Veteran takes the fourth
-            // timer / adjustment slot. PORT: the entrance door id (`EndlessDungeon_Generator.entranceDoorId`) is
-            // not used.
+            // entrance (`GameEngine::GenerateEndlessDungeon`): dungeonsGenerated becomes `startTier` if given,
+            // else +1. The Ultimate Veteran takes the fourth timer / adjustment slot. PORT: the entrance door
+            // id is not used.
             let c = ctx.clone();
             game.set(
                 "GenerateEndlessDungeon",
@@ -607,9 +582,7 @@ impl ScriptHost {
                         _ => None,
                     };
                     let door = arg_id(&args, 1);
-                    // The story borrow must not span a Lua call (`coords_value`
-                    // runs the script's `Vec` global) or the host's map provider:
-                    // compute the entrance position, drop it, build the value.
+                    // The story borrow must not span a Lua call (`coords_value`) or the host's map provider.
                     let at = 'entrance: {
                         let mut st = c.story.borrow_mut();
                         let Some(db) = c.env.database() else {
@@ -645,10 +618,8 @@ impl ScriptHost {
                         e.entrance_door = door;
                         e.generated = start.unwrap_or(e.generated + 1);
                         e.next_id += 1;
-                        // `EndlessDungeon_Generator::Clear`: bossDead, the section's timer latch
-                        // (`EndlessDungeon_Generator.timerLatch`) and the kill chain's counter reset, the timer-ran /
-                        // bonus flags (`EndlessDungeon_Generator.timerRan` / `EndlessDungeon_Generator.bonusFlag`) are
-                        // kept.
+                        // `EndlessDungeon_Generator::Clear`: bossDead, the timer latch and the kill chain's
+                        // counter reset; the timer-ran / bonus flags are kept.
                         e.boss_dead = false;
                         e.timer_started = false;
                         e.chain.count = 0;
@@ -727,10 +698,8 @@ impl ScriptHost {
                 )?;
             }
         }
-        // Game.ScreenShake(WorldVec3, float secs, float amplitude)
-        // (`LuaGame::ScreenShake`): a type-7 camera-shake game event, the
-        // seconds converted to ms. Presentational `Effect::ScreenShake`;
-        // headless no-op.
+        // Game.ScreenShake(WorldVec3, float secs, float amplitude) (`LuaGame::ScreenShake`): a type-7
+        // camera-shake event, seconds converted to ms.
         {
             let c = ctx.clone();
             game.set(
@@ -820,28 +789,14 @@ impl ScriptHost {
                     Ok(id.is_some_and(|id| has_class(&c.story.borrow(), cls, id)))
                 })?,
             )?;
-            // Create: none of the overloads places the object; scripts place
-            // it with `SetCoords` (which adds it to the world).
-            // * Entity.Create(record) (`LuaEntity::Create`,
-            //   `CreateObjectFromFile`), Item.Create(record) (`LuaItem::Create`),
-            //   AreaTrigger.Create(record) (`LuaAreaTrigger::Create`); Destructible and
-            //   the others inherit Entity.Create.
-            // * Character.Create(record) (`LuaCharacter::Create`) and
-            //   Character.Create(record, uint level, WorldVec3|nil origin)
-            //   (`LuaCharacter::CreateAtLevel`: level 0 keeps the record's level limits;
-            //   with an origin the level is clamped to that region's level
-            //   limits plus bonus — the origin only selects those limits).
-            // * Proxy.Create(record [, WorldVec3|nil [, bool]])
-            //   (`LuaProxy::Create` / `LuaProxy::CreateAt` / `LuaProxy::CreateAtIgnoreBoss`: the vector is
-            //   `Proxy::SetLimitsLocation`, the bool `Proxy::SetIgnoreBossRestriction`).
-            // `LuaCharacter::CreateAtLevel` (no origin): a non-zero level goes
-            // straight to `Character::SetCharLevel` (the uint of the Lua
-            // number, truncated); `Entities::levels` carries it to the host
-            // and `Entities::origins` the origin (the host clamps the level
-            // to the region's limits around it); the proxy's vec/bool go to
-            // `Entities::proxy_limits` / `proxy_ignore_boss`.
-            // Both Character overloads (and `CreateNearPlayer`) enable the
-            // spawn animation (`Entities::spawn_animation`).
+            // Create: none of the overloads places the object; `SetCoords` does.
+            // * Entity.Create(record) (`LuaEntity::Create`), Item.Create, AreaTrigger.Create; the others inherit
+            //   Entity.Create.
+            // * Character.Create(record [, uint level, WorldVec3|nil origin]) (`LuaCharacter::CreateAtLevel`):
+            //   level 0 keeps the record's limits; with an origin the host clamps the level to that region's
+            //   limits. Both overloads (and `CreateNearPlayer`) enable the spawn animation.
+            // * Proxy.Create(record [, WorldVec3|nil [, bool]]) (`LuaProxy::CreateAt` / `CreateAtIgnoreBoss`):
+            //   the vector is `Proxy::SetLimitsLocation`, the bool `Proxy::SetIgnoreBossRestriction`.
             let c = ctx.clone();
             t.set(
                 "Create",
@@ -874,10 +829,8 @@ impl ScriptHost {
                 })?,
             )?;
             if cls == "Player" {
-                // Player.Teleport(WorldVec3): a static function, not a method (`LuaPlayer::Teleport`: its only
-                // argument is the `WorldVec3`, no player object; the Crucible calls `Player.Teleport(coords)`):
-                // `GameEngine::InitiatePlayerTeleport` of the main player to the position. The engine passes the
-                // world position as integers, the port keeps floats.
+                // Player.Teleport(WorldVec3): a static function (`LuaPlayer::Teleport`) →
+                // `GameEngine::InitiatePlayerTeleport` of the main player. PORT: floats, not integers.
                 let c = ctx.clone();
                 t.set(
                     "Teleport",
@@ -893,11 +846,9 @@ impl ScriptHost {
                 )?;
             }
             if cls == "Character" {
-                // Character.CreateNearPlayer(record, uint playerId, bool aggro)
-                // (`LuaCharacter::CreateNearPlayer`: nil unless the id is a player; spawns
-                // at `FindSuperBossSpawnPoint` near the player, the bool makes
-                // the player the monster's most hated enemy). The port places it
-                // 2 m off the player and leaves aggro to the host AI.
+                // Character.CreateNearPlayer(record, uint playerId, bool aggro) (`LuaCharacter::CreateNearPlayer`:
+                // nil unless the id is a player; `FindSuperBossSpawnPoint`, the bool makes the player most hated).
+                // PORT: placed 2 m off the player; aggro left to the host AI.
                 let c = ctx.clone();
                 t.set(
                     "CreateNearPlayer",
@@ -940,9 +891,7 @@ impl ScriptHost {
                 t.set("SoundType", st)?;
             }
             if cls == "Object" {
-                // Object.Cache/Release(record) (`LuaObject::Cache` /
-                // `LuaObject::Release` → `ObjectManager::CacheObjectEx` / `Release`):
-                // resource preloading, nothing to do in the port.
+                // Object.Cache/Release(record) (`ObjectManager::CacheObjectEx` / `Release`): no-op.
                 t.set("Cache", lua.create_function(|_, _: MultiValue| Ok(()))?)?;
                 t.set("Release", lua.create_function(|_, _: MultiValue| Ok(()))?)?;
             }

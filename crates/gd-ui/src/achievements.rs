@@ -1,7 +1,7 @@
 //! The achievements window (`hudAchievementsWindow` = `records/ui/achievements/achievements_mastertable.dbr`,
 //! `UIPlayerHud.achievementsWindow`, `UIAchievementWindow`): the achievement groups as buttons on the left, the
-//! selected group's achievements in a scrolled list on the right. Gameplay state: `gd_game::achievements` (the list and
-//! the ids unlocked this process: a build without Steam starts with every achievement locked).
+//! selected group's achievements in a scrolled list on the right. Gameplay state: `gd_game::achievements` (a build
+//! without Steam starts with every achievement locked).
 //!
 //! `Grim Dawn.exe` (`UIAchievementWindow::UIAchievementWindow`, loader `UIAchievementWindow::Load`, rebuild
 //! `AchievementWindow::RefreshList`, update `UIAchievementWindow::Update`, draw `UIAchievementWindow::Render`, event 62
@@ -29,8 +29,7 @@
 //!
 //! PORT: each group's list scroll is not kept (a new group starts at the top); the description is wrapped at its box
 //! width with the style's line height (`UIMultiLineTextBox::Layout` not read) and its row grows to fit it; the group
-//! buttons share one auto-sized width (the widest label, clamped to the pane) instead of the bitmaps' fixed width
-//! (UX over parity). Hooks (hooks.rs): `GD_UI_OPEN=achievements`, `GD_UI_TAB=<group>`.
+//! buttons share one auto-sized width (the widest label, clamped to the pane) instead of the bitmaps' fixed width.
 use super::Ui;
 use super::contains;
 use super::factions::{Pane, fmt, num, pane_rects};
@@ -83,7 +82,7 @@ pub struct AchievementsView {
     pub scroll: [f32; 2],
 }
 
-/// The built window (physical px). Empty while it is closed.
+/// The built window (physical px). Empty while closed.
 #[derive(Resource, Default)]
 pub struct AchievementsLayout {
     pub window: Option<URect>,
@@ -116,7 +115,6 @@ struct AchievementsRoot;
 #[derive(Component)]
 struct BarsRoot;
 
-/// The scrolled child of a scroll window ([`super::window::pane`]).
 #[derive(Component)]
 struct Scrolled {
     pane: usize,
@@ -124,11 +122,10 @@ struct Scrolled {
     inv: f32,
 }
 
-/// A group button's `bitmapNameInFocus` (shown under the mouse by [`live`]).
+/// A group button's `bitmapNameInFocus`.
 #[derive(Component)]
 struct GroupFocus(usize);
 
-/// The close button's `bitmapNameInFocus`.
 #[derive(Component)]
 struct CloseFocus;
 
@@ -147,7 +144,6 @@ fn shown<'a>(
     (list, unlocked)
 }
 
-/// `GD_UI_OPEN` / `GD_UI_TAB` (hooks.rs): the window once the player exists, on that group.
 #[cfg(feature = "dev")]
 fn test_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -180,9 +176,8 @@ fn toggle_key(
     }
 }
 
-/// The window's open/close watcher: opening it applies the one policy ([`super::window::WindowPolicy`],
-/// `UIPlayerHud::CloseWindows` from the button); a window the policy excludes opening closes it (their
-/// openers call `UIPlayerHud::ClosePanels`, which hides `UIPlayerHud.achievementsWindow`).
+/// The window's open/close watcher: opening it applies the policy (`UIPlayerHud::CloseWindows`); a window
+/// the policy excludes opening closes it (`UIPlayerHud::ClosePanels`).
 fn exclusive(
     mut windows: super::window::Windows,
     policy: Res<super::window::WindowPolicy>,
@@ -202,8 +197,8 @@ fn exclusive(
     *was = windows.snapshot();
 }
 
-/// Event 62: the window's `unlockSound` (`UIAchievementWindow::OnAchievementUnlocked`, whether or not the window
-/// shows).
+/// Event 62: the window's `unlockSound` (`UIAchievementWindow::OnAchievementUnlocked`, whether or not the
+/// window shows).
 fn unlock_sound(
     mut events: MessageReader<gd_game::achievements::AchievementUnlocked>,
     data: Res<GameData>,
@@ -231,7 +226,6 @@ fn build(
     bar_roots: Query<Entity, With<BarsRoot>>,
     mut layout: ResMut<AchievementsLayout>,
     mut fresh: gd_game_core::session::NewSession,
-    // The built signature, compared with the live values by reference (the unlocked list is copied on a rebuild only).
     mut built: Local<Option<(UVec2, u32, bool, usize, Vec<String>, u64)>>,
     mut built_bars: Local<Rebuild<u64>>,
     mut assets: gd_ui_kit::UiAssets,
@@ -245,7 +239,6 @@ fn build(
     if size.x == 0 {
         return;
     }
-    // The UI scale too: an applied UI Scale rebuilds the window at the new size.
     let sb = assets.scale(size).to_bits();
     let generation = assets.fonts.generation;
     let same = built.as_ref().is_some_and(|b| {
@@ -287,13 +280,11 @@ fn build(
             draw(&mut ui, &groups, &state, view.group, &mut layout);
         }
     }
-    // The scroll bars follow the scroll (the panes' content moves in place, [`live`]).
     for (i, p) in layout.panes.iter().enumerate() {
         if let Some(p) = p {
             view.scroll[i] = view.scroll[i].clamp(0.0, p.max);
         }
     }
-    // The scroll is not keyed: `live` moves the thumbs in place.
     let bar_sig = layout.version;
     if !built_bars.changed(bar_sig) {
         return;
@@ -338,9 +329,8 @@ fn build(
     }
 }
 
-/// A `ButtonStaticText2` at `at` (module doc): its bitmap (down when `down`), its hidden in-focus bitmap marked
-/// [`GroupFocus`], its two texts; returns its rect. `w` is the column's shared auto-sized width ([`draw`]):
-/// the bitmaps stretch to it and a label too long for it truncates.
+/// A `ButtonStaticText2` at `at`: its bitmap (down when `down`), its hidden in-focus bitmap, its two texts;
+/// returns its rect. `w` is the column's shared width: the bitmaps stretch to it and a too-long label truncates.
 fn group_button(
     ui: &mut Ui,
     b: &gd_formats::arz::Record,
@@ -392,7 +382,6 @@ fn group_button(
     Some(r)
 }
 
-/// Draws the open window (draw order: module doc).
 fn draw(
     ui: &mut Ui,
     groups: &[Group],
@@ -414,7 +403,6 @@ fn draw(
         let (list, unlocked) = shown(g, state);
         (t + unlocked, n + list.len() as u32)
     });
-    // The groups list.
     if let Some(sw) = ui.record(&field("groupsList")) {
         let (_, clip) = pane_rects(ui, &sw, o);
         let inner = super::window::pane(ui, clip, 0.0);
@@ -424,10 +412,7 @@ fn draw(
             inv: ui.inv,
         });
         ui.root = inner;
-        // One width for the whole radio column: the widest button texture or label
-        // (`widgets::button_width`'s rule for the title, the same for the counts line),
-        // clamped to the pane so a long localised name truncates instead of running into
-        // the achievement list. PORT: the stock buttons are fixed at their bitmaps' width.
+        // One width for the whole radio column: the widest button texture or label, clamped to the pane.
         let mut btns = Vec::new();
         let mut bw = 0.0f32;
         for (i, g) in groups.iter().enumerate() {
@@ -477,7 +462,6 @@ fn draw(
         });
         ui.root = outer;
     }
-    // The selected group's list.
     if let (Some(sw), Some(g)) = (ui.record(&field("achievementList")), groups.get(selected)) {
         let (_, clip) = pane_rects(ui, &sw, o);
         let inner = super::window::pane(ui, clip, 0.0);
@@ -529,8 +513,7 @@ fn draw(
                     let lh = ui.line_height(&style);
                     let bw = ui.sc(tb.rect.w);
                     let top = ui.sc(tb.rect.y);
-                    // The row grows with the wrapped description so a long one never overlaps
-                    // the next row (PORT: the stock row is fixed at its background's height).
+                    // The row grows with the wrapped description.
                     h = h.max(top + gd_ui_kit::layout::row_height(ui, &style, &text, bw, 0.0));
                     let mut ly = row.y + top;
                     for l in ui.wrap_lines(&style, bw, &text) {
@@ -631,7 +614,7 @@ fn live(
     }
 }
 
-/// Clicks, the wheel and the scroll bars (the scroll windows as `factions.rs`).
+/// Clicks, the wheel and the scroll bars.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -658,7 +641,6 @@ fn clicks(
         *held = None;
         return;
     }
-    // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
     let Some(p) = super::cursor_px(win) else {
         return;

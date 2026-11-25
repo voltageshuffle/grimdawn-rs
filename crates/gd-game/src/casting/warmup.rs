@@ -1,9 +1,7 @@
 use super::*;
 
-/// The modifiers of `skill` on `caster` for its warm-up ([`WarmUp`]):
-/// (record, level index, from gear), the learned ones first (`Skill.modifiers`
-/// order), then the gear's (`Skill.itemSkillModifiers`). From [`gd_game_core::weapon_pool::SkillLinks`]
-/// (gear modifiers are those not learned, at level index 0).
+/// The modifiers of `skill` on `caster`: (record, level index, from gear), the learned ones first
+/// (`Skill.modifiers`), then the gear's (`Skill.itemSkillModifiers`, level index 0).
 pub fn warm_up_modifiers(w: &World, caster: Entity, skill: &str) -> Vec<(String, usize, bool)> {
     let Some(links) = w.get::<gd_game_core::weapon_pool::SkillLinks>(caster) else {
         return Vec::new();
@@ -24,7 +22,7 @@ pub fn warm_up_modifiers(w: &World, caster: Entity, skill: &str) -> Vec<(String,
     mine.into_iter().chain(gear).collect()
 }
 
-/// `WarmUpStart`'s presentation ([`WarmUp`]) for `skill` at level index `li`.
+/// `WarmUpStart` for `skill` at level index `li`.
 pub(super) fn start_warm_up(
     commands: &mut Commands,
     data: &GameData,
@@ -72,8 +70,7 @@ pub(super) fn start_warm_up(
             }
             w.flush();
         }
-        // `WarmUpEffect`: the first gear, then learned, modifier with an
-        // effect wears it instead of the skill's.
+        // `WarmUpEffect`: the first gear, then learned, modifier with an effect wears it instead.
         let owner = mods
             .iter()
             .filter(|m| m.2)
@@ -137,8 +134,7 @@ pub(super) fn start_warm_up(
     });
 }
 
-/// `WarmUpEnd`: the move that carried the warm-up ended (arrival, a cut-short
-/// charge, death, another request; [`WarmUp`]).
+/// `WarmUpEnd`: the move that carried the warm-up ended.
 pub(super) fn end_warm_ups(
     mut commands: Commands,
     q: Query<(

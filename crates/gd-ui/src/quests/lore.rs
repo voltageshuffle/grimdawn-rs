@@ -170,9 +170,7 @@ pub(super) fn codex_pages(
         }
     }
     groups.sort();
-    // No note chosen yet: the first note of the first group that has one
-    // (`LoreJournal::SelectFirstNote`, used by the journal refresh `QuestWindow::Refresh` while the
-    // page has none).
+    // No note chosen yet: the first note of the first group (`LoreJournal::SelectFirstNote`).
     let selected: Option<String> = journal.note.clone().or_else(|| {
         groups
             .iter()
@@ -184,7 +182,6 @@ pub(super) fn codex_pages(
     let (lx, ly) = (ui.sc(num(lr, "positionX")), ui.sc(num(lr, "positionY")));
     let outer = ui.root;
 
-    // Upper page.
     let jpane = URect::new(
         o.x + jx,
         o.y + jy + ui.sc(num(jr, "topGuardBand")),
@@ -212,7 +209,6 @@ pub(super) fn codex_pages(
                 ui.sc(num(&t, "textBoxWidth")),
             );
             y += ui.sc(num(&t, "positionY"));
-            // Lines step by the style's font size, as the quest page's.
             let lh = ui
                 .fonts
                 .style(ui.data, &style)
@@ -241,7 +237,6 @@ pub(super) fn codex_pages(
         );
     }
 
-    // Lower page: the tree.
     let Some(tree) = ui.record(&field(lr, "tree")) else {
         return;
     };
@@ -311,7 +306,6 @@ pub(super) fn codex_pages(
             ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), c);
         }
     };
-    // A tree row's hit rect and hover key for `clicks`, and its hover shade.
     let hover_node = |ui: &mut Ui, layout: &mut JournalLayout, key: String, y: f32, h: f32| {
         if let Some((img, _)) = node.clone() {
             let e = ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), hover_color);
@@ -419,7 +413,6 @@ pub(super) fn help_pages(
 ) {
     let field = |r: &gd_formats::arz::Record, k: &str| r.str(k).unwrap_or("").to_string();
     let num = |r: &gd_formats::arz::Record, k: &str| r.f32(k).unwrap_or(0.0);
-    // The index: distinct pages by first nugget title.
     let mut pages: Vec<(String, String)> = Vec::new();
     for p in lr.strs("tutorialPages") {
         if pages.iter().any(|(r, _)| r == p) {
@@ -448,7 +441,6 @@ pub(super) fn help_pages(
     let (lx, ly) = (ui.sc(num(lr, "positionX")), ui.sc(num(lr, "positionY")));
     let outer = ui.root;
 
-    // Upper page.
     let jpane = URect::new(
         o.x + jx,
         o.y + jy + ui.sc(num(jr, "topGuardBand")),
@@ -546,7 +538,6 @@ pub(super) fn help_pages(
         );
     }
 
-    // Lower page: the index.
     let Some(tree) = ui.record(&field(lr, "tree")) else {
         return;
     };
@@ -650,9 +641,7 @@ pub(super) fn help_pages(
     }
 }
 
-/// A `keyOperation` name's key action: `KeyBindings::GetActionByName`, the engine's
-/// whole name table (the stock tutorial nuggets use only a few of them; a
-/// name outside it maps to 0 there, no key).
+/// A `keyOperation` name's key action (`KeyBindings::GetActionByName`; unknown names map to 0).
 pub fn key_operation(name: &str) -> Option<u32> {
     Some(match name {
         "CharacterWindow" => 1,

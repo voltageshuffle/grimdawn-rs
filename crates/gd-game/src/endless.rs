@@ -1,60 +1,36 @@
 //! The Shattered Realm's running dungeon (host side of `gd_story::endless`).
-//! [`sync_endless`] gives the generator the world map and keeps the player's map region.
 //!
-//! `EndlessDungeon_Generator::Update`: while the main player stands in the active floor
-//! the generator starts the bonus timer at the section's first entry (latch `EndlessDungeon_Generator.sectionEntered`,
-//! cleared by `Clear` at each generation) if no timer ever ran (`EndlessDungeon_Generator.timerRan`) or the last boss
-//! beat the clock (`EndlessDungeon_Generator.bonusComplete`); starting it sets `timerRan` and clears `bonusComplete`
-//! (one word write). Both flags live as
-//! long as the generator, i.e. the session (`Clear` and `ResetEndlessDungeon` keep them): once a boss is
-//! killed after the clock ran out, no later section of the session is timed, so no bonus / `bonusEarned`
-//! chests either. The reward room reads `IsEndlessDungeonBonusComplete` (`rewards.lua` `dispenseReward`: the
-//! two bonus chests of `bonusTable[tier]`, or `checkpointBonusTable` when the run is cashed out at its
-//! checkpoint tier) after the boss set it, before the next section clears it. The generator also activates each of the
-//! floor's `ProxyEndless` whose level is loaded (the dormant proxy, [`crate::monsters::EndlessProxy`], spawns
-//! its held monsters); a floor ends when all its proxies ran and their monsters are dead — counted in the
-//! level state ([`ProxyStates`]), so a monster whose level streamed out is not dead
-//! (`IncrementProgress(force)`). `GameEngine::OnCreatureDeath`: a kill of a dungeon monster (any floor;
-//! none on `blacklistedHeroes`) adds a hero 4 s / boss 12 s / nemesis 12 s of bonus time while the boss lives and
-//! counts toward the kill chain (pays `killCountBonusTime` after [`gd_story::endless::Ruleset::kill_count_reset_ms`]
-//! without a kill once `killCountMinimum` kills are in); one in the active, non-boss floor adds 1 to its progress.
-//! `IncrementProgress`: at the floor total the next floor
-//! becomes active, the finished floor's proxies are disabled and its monsters killed
-//! (`KillMonstersInRegion`). A boss floor (total 100) ends when every boss of its proxies is dead
-//! (`IsReallyDead`): `bossDead`, and `bonusComplete` when the timer still ran; then the generator
-//! resets the bonus timer (`SetEndlessTimer` reset, `ResetSurvivalMultiplier`'s event 64: `timerFailedSound` when
-//! it had already run out) and sends `Endless_SoundType` 1 (event 67), whose HUD handler (exe
-//! `UIEndlessHud::OnSoundEvent`, only while the HUD shows) plays `bossCompleteSound` and unlocks tutorial page 0x42
-//! ([`BOSS_TUTORIAL_PAGE`]).
+//! `EndlessDungeon_Generator::Update`: while the main player stands in the active floor, the section's first
+//! entry (`sectionEntered`, cleared at each generation) starts the bonus timer if no timer ever ran
+//! (`timerRan`) or the last boss beat the clock (`bonusComplete`); starting it sets `timerRan` and clears
+//! `bonusComplete`. Both flags last the session: once a boss is killed after the clock ran out, no later
+//! section is timed (no bonus chests either). The generator activates each loaded `ProxyEndless` of the
+//! floor ([`crate::monsters::EndlessProxy`]); a floor ends when all its proxies ran and their monsters are
+//! dead, counted in the level state ([`ProxyStates`]) so a monster whose level streamed out is not dead.
+//! `GameEngine::OnCreatureDeath`: a dungeon monster's kill (any floor; none on `blacklistedHeroes`) adds
+//! hero 4 s / boss 12 s / nemesis 12 s of bonus time while the boss lives and counts toward the kill chain
+//! (pays `killCountBonusTime` after [`gd_story::endless::Ruleset::kill_count_reset_ms`] without a kill once
+//! `killCountMinimum` kills are in); one in the active non-boss floor adds 1 to its progress.
+//! `IncrementProgress`: at the floor total the next floor becomes active, the finished floor's proxies are
+//! disabled and its monsters killed (`KillMonstersInRegion`). A boss floor ends when every boss of its
+//! proxies is dead (`IsReallyDead`): `bossDead`, and `bonusComplete` when the timer still ran; then the
+//! bonus timer resets (event 64) and event 67 type 1 makes the HUD play `bossCompleteSound` and unlock
+//! [`BOSS_TUTORIAL_PAGE`].
 //!
-//! The ruleset's per-difficulty fields are read at the session's mode ([`gd_game_core::session::GameMode`],
-//! `gd_story::endless::Ruleset::slot`: Ultimate Veteran has its own adjustment pak, the Ultimate timer).
+//! The ruleset's per-difficulty fields are read at the session's mode (`gd_story::endless::Ruleset::slot`).
 //!
-//! Buff shrines: `ProxyEndless::InitializeAccessoryPool`:
-//! a shrine proxy activated after the dungeon used every accessory pool places no shrine
-//! ([`spawn_activated_shrines`]); `EndlessBuffShrine::RequestToUse`: the player casts the
-//! shrine's `Skill_BuffOther`, so its pets within 30 m get the buff too ([`use_shrine`]);
-//! `DispelEndlessShrineBuffs`: the dispels reach the pets of the player's pet pen
-//! ([`dispel_endless_buffs`]).
+//! Buff shrines: a shrine proxy activated after the dungeon used every accessory pool places no shrine
+//! ([`spawn_activated_shrines`]); `EndlessBuffShrine::RequestToUse`: the player casts the shrine's
+//! `Skill_BuffOther`, so its pets within 30 m get it too ([`use_shrine`]); the dispels reach the pets of
+//! the player's pet pen ([`dispel_endless_buffs`]).
 //!
 //! PORT: the dungeon's monsters are its activated proxies' (the engine flags a monster in any of its regions).
 //!
-//! PORT test hook `GD_ENDLESS_FLOOR` (`force_floor`, dev builds): a held override — floor 0 of every generated section is
-//! the named floor record (through [`gd_story::endless::EndlessMap::forced_floor`], which `pick_floors` reads);
-//! placed (story) monsters log their level once armed.
-//!
-//! Save / quit / reload: nothing of a run reaches the save. The
-//! generator has no save code and `GameEngine::ExitPlayingMode` deletes it; `EnableGameEngine`
-//! sets `dungeonsGenerated` to 0 at every game start; the game start (exe `Game::LoadModMap`) reloads the
-//! Lua scripts and puts the player at its respawn point. The dungeon objects' `SaveState` (`ProxyEndless`
-//! state / active / stamp, `EndlessBuffShrine`, the exit gates, the essences) goes only
-//! into the level state, which Engine.dll keeps in memory while a level is unloaded (region unload `Region::Unload`
-//! -> `Level::SaveState` into a buffer of the region, restored and freed by the region load
-//! `Region::Load`); the character files are `player.gdc`, `quests.gdd`, `conversations.gdd`, `map.fow`. What a
-//! run leaves in them: the quests and tokens the scripts gave, and the `PlayStats` endless souls / essence
-//! (counted where the essence buff lands, `crate::play_stats`). Here the run is session
-//! state (`gd_story::story::Endless`, [`ProxyStates`], [`ShrineMemory`]) that the session's end resets; within a
-//! session the level states are [`ProxyStates`] / [`ShrineMemory`] and the stamp rule is [`drop_stale_proxies`].
+//! Nothing of a run reaches the save: `ExitPlayingMode` deletes the generator, `EnableGameEngine` sets
+//! `dungeonsGenerated` to 0, and the dungeon objects' `SaveState` goes only into the in-memory level state.
+//! A run leaves only the scripts' quests and tokens and the `PlayStats` endless souls / essence. Here the run
+//! is session state (`gd_story::story::Endless`, [`ProxyStates`], [`ShrineMemory`]); the stamp rule is
+//! [`drop_stale_proxies`].
 use crate::combat::MonsterKilled;
 use crate::monsters::{EndlessProxy, ProfileCache, ProxyStates, spawn_state};
 use gd_game_core::combat::Dead;
@@ -65,11 +41,10 @@ use gd_story::story::lua::ScriptEnv as _;
 
 use bevy::prelude::*;
 
-/// The tutorial page the Shattered Realm HUD unlocks when a Shard's boss dies (index 66 of `helpindex.dbr`'s
-/// `tutorialPages`: `endlessdungeonend/tutorial_p67_end.dbr`, `tagQuickTip67`).
+/// The tutorial page the Shattered Realm HUD unlocks when a Shard's boss dies (`tagQuickTip67`).
 pub const BOSS_TUTORIAL_PAGE: u32 = 0x42;
 
-/// Activates the active floor's proxies (see the module docs).
+/// Activates the active floor's proxies.
 #[allow(clippy::too_many_arguments)]
 pub fn activate_proxies(
     mut commands: Commands,
@@ -97,13 +72,11 @@ pub fn activate_proxies(
     let Some(floor) = d.floors.get_mut(d.active) else {
         return;
     };
-    // Only while the player stands in the active floor.
     if !region.is_some_and(|r| floor.regions.contains(&r)) {
         return;
     }
-    // The section's first entry (`sectionEntered`): its bonus timer (`SetEndlessTimer(ms, 0, reset 0, addBonus 0)` =
-    // `SetBonusTimer`, the `timer*` equation) only in the session's first timed section or after a boss beat
-    // the clock (see the module docs); starting it clears the bonus flag. The ruleset is re-read here.
+    // The section's first entry: its bonus timer (`SetBonusTimer`, the `timer*` equation) only in the
+    // session's first timed section or after a boss beat the clock.
     if !e.timer_started {
         e.timer_started = true;
         if e.timer_ever && !e.bonus_complete {
@@ -121,12 +94,11 @@ pub fn activate_proxies(
             }
         }
     }
-    // uid → proxy entity, built once per frame and only while a proxy of the floor is not activated.
+    // uid → proxy entity, built only while a proxy of the floor is not activated.
     let mut by_uid: Option<gd_formats::collections::HashMap<_, &EndlessProxy>> = None;
-    // PORT: the engine activates the floor's proxies in one frame; here a proxy waits until its monsters' meshes
-    // and animation clips are parsed in the background ([`crate::creature::ready_to_spawn`]) and at most
-    // [`crate::creature::SPAWNS_PER_FRAME`] monsters spawn a frame, so entering a floor does not stall a frame on
-    // dozens of spawns and a new monster never parses a clip mid-fight.
+    // PORT: the engine activates the floor's proxies in one frame; here a proxy waits until its monsters'
+    // meshes and clips are parsed ([`crate::creature::ready_to_spawn`]), at most
+    // [`crate::creature::SPAWNS_PER_FRAME`] spawns a frame.
     let mut budget = crate::creature::SPAWNS_PER_FRAME;
     let deadline = std::time::Instant::now() + crate::creature::CLIPS_BUDGET;
     for p in floor.proxies.iter_mut().filter(|p| !p.activated) {
@@ -162,7 +134,7 @@ pub fn activate_proxies(
             d.active, p.kind, ep.key
         );
         e.activated.push((d.active, ep.key));
-        // Active again (`SetActive` restamps it): no longer stale, its state is the running dungeon's.
+        // `SetActive` restamps it: no longer stale.
         e.stale.retain(|k| *k != ep.key);
         for (i, m) in list.iter_mut().enumerate() {
             if m.alive && m.pending {
@@ -184,7 +156,6 @@ pub fn activate_proxies(
     }
 }
 
-/// A monster's classification (`monsterClassification`).
 fn class_of<'a>(data: &'a gd_game_core::data::GameData, record: &str) -> &'a str {
     data.db
         .get(record)
@@ -192,7 +163,7 @@ fn class_of<'a>(data: &'a gd_game_core::data::GameData, record: &str) -> &'a str
         .unwrap_or_default()
 }
 
-/// Kills, the kill chain's bonus time, floor progress and the boss floor (see the module docs).
+/// Kills, the kill chain's bonus time, floor progress and the boss floor.
 #[allow(clippy::too_many_arguments)]
 pub fn progress(
     mut commands: Commands,
@@ -226,7 +197,6 @@ pub fn progress(
         killed.clear();
         return;
     };
-    // The ruleset is parsed once per (record, slot), not every frame.
     let slot = gd_story::endless::Ruleset::slot(&mode.0);
     if cached
         .as_ref()
@@ -248,11 +218,9 @@ pub fn progress(
         .map(|(_, k)| *k)
         .collect();
     let boss_floor = d.floors.get(active).is_some_and(|f| f.floor.boss);
-    // Kills (`GameEngine::OnCreatureDeath`): a monster of the dungeon (any of its floors)
-    // not on `blacklistedHeroes` (the blacklist skips all of it) adds its classification's bonus time while the
-    // boss lives and joins the kill chain; one of the active non-boss floor adds 1 to its progress
-    // (`IncrementProgress` counts only there) and rolls its essence. Their `Monster` stays on the corpse.
-    // Essences the dungeon's monsters dropped (`loot::on_kill`: the special essence of a boss).
+    // `GameEngine::OnCreatureDeath`: a dungeon monster not on `blacklistedHeroes` adds bonus time while the
+    // boss lives and joins the kill chain; one of the active non-boss floor adds progress and rolls its
+    // essence. Boss essences come queued from `loot::on_kill`.
     let mut essences: Vec<String> = std::mem::take(&mut e.essence_queue);
     for k in killed.read() {
         let Ok((m, _)) = monsters.get(k.entity) else {
@@ -282,10 +250,8 @@ pub fn progress(
             && let Some(f) = d.floors.get_mut(active)
         {
             f.progress += 1.0;
-            // Essence drops (`ControllerMonster::DropLoot`): a monster not on the
-            // blacklist, in the active non-boss floor, rolls its classification's chance (percent,
-            // `rand(0, 100) <= chance`). The item is picked up and used at once (auto-pickup 4 m,
-            // `OneShotFilter`), so it is applied here without an item entity.
+            // `ControllerMonster::DropLoot`: `rand(0, 100) <= chance` for its classification. The item is
+            // auto-picked up and used at once, so it is applied here without an item entity.
             let idx = gd_story::endless::Ruleset::essence_index(class_of(&data, &m.record));
             if !rs.essence_item[idx].is_empty()
                 && gd_game_core::rng::f32() * 100.0 <= rs.essence_chance[idx]
@@ -294,7 +260,6 @@ pub fn progress(
             }
         }
     }
-    // Using the essences: the item's progress, and the soul buff with one more charge.
     for item in essences {
         let Some(rec) = data.db.get(&item) else {
             continue;
@@ -312,9 +277,8 @@ pub fn progress(
         else {
             continue;
         };
-        // `OneShot_Skill::Use` -> `Skill_ChargedBuffOther::IncrementCharge(skillIncrement)` (default 1): below
-        // the cap the charge grows by the increment, then is clamped to the cap, the buff's `skillChargeLevel` at
-        // the skill's level (one value in every stock record).
+        // `Skill_ChargedBuffOther::IncrementCharge(skillIncrement)` (default 1), clamped to
+        // `skillChargeLevel`.
         let buff_rec = data.db.get(&buff);
         let max = buff_rec
             .and_then(|b| gd_sim::stats::level_value(b, "skillChargeLevel", 0))
@@ -327,12 +291,12 @@ pub fn progress(
             continue;
         }
         if let Ok((player, list)) = players.single_mut() {
-            // `Skill_ChargedBuffOther::TargetResult` at the charge's level (`crate::play_stats`).
+            // `Skill_ChargedBuffOther::TargetResult` at the charge's level.
             stats.write(crate::play_stats::PlayStat::Essence {
                 buff: buff.clone(),
                 level: e.soul_charges,
             });
-            // Each pickup refreshes the buff for the buff's `skillChargeDuration` at the charge level (`TargetResult`).
+            // Each pickup refreshes the buff for `skillChargeDuration` at the charge level.
             let secs = buff_rec
                 .and_then(|b| {
                     gd_sim::stats::level_value(
@@ -366,7 +330,7 @@ pub fn progress(
                 .try_insert(gd_game_core::player::ProfileDirty);
         }
     }
-    // The kill chain pays out once it pauses (`Update`: only a positive bonus reaches the timer).
+    // The kill chain pays out once it pauses (only a positive bonus reaches the timer).
     let kills = e.chain.count;
     if let Some(ms) = e.chain.tick(dt, e.boss_dead, rs)
         && ms > 0
@@ -379,15 +343,13 @@ pub fn progress(
                 .push(gd_story::endless::bonus_text(&t, Some(kills), ms));
         }
     }
-    // The maps start marking the floor's last monsters (`grimdawn::ui::localmap`); `GD_SHOT_ON=endlessreveal`.
+    // The maps start marking the floor's last monsters.
     if !revealed && d.reveal_monsters() {
         info!("endless: floor {active} at 80 %: its monsters are revealed");
         gd_game_core::visuals::notify(&mut commands, "endlessreveal");
     }
-    // The floor's living monsters come from the level state ([`ProxyStates`]),
-    // not the loaded entities: a monster whose level streamed out is still
-    // alive in it (the engine keeps it in the level state; `IsReallyDead`
-    // reads the proxy's spawned list, not the world's entities).
+    // Living monsters come from the level state, not the loaded entities (`IsReallyDead` reads the proxy's
+    // spawned list).
     let alive = |states: &ProxyStates, keys: &[(usize, u32)], bosses_only: bool| {
         keys.iter()
             .filter_map(|k| states.0.get(k))
@@ -406,7 +368,7 @@ pub fn progress(
         if let Some(f) = d.floors.get_mut(active) {
             f.progress = f.total;
         }
-        // The floor's proxies are disabled for good: nothing held spawns later.
+        // Disabled for good: nothing held spawns later.
         for k in keys {
             if let Some(list) = states.0.get_mut(k) {
                 for m in list.iter_mut().filter(|m| m.pending) {
@@ -424,18 +386,16 @@ pub fn progress(
             }
             info!("endless: the boss is dead (bonus {})", e.bonus_complete);
             finish(d, &mut e.kill_keys, &keys, &mut states);
-            // The timer stops (`SetEndlessTimer(0, 0, reset 1)`; event 64), then event 67 type 1: the HUD,
-            // while shown (the player in a floor), unlocks the end-of-Shard tutorial page.
+            // `SetEndlessTimer(0, 0, reset 1)` (event 64), then event 67 type 1: the HUD, while shown,
+            // unlocks the end-of-Shard tutorial page.
             st.game.survival.reset_timer(false);
             if region.is_some_and(|r| d.floors.iter().any(|f| f.regions.contains(&r))) {
                 tutorial.write(crate::tutorials::UnlockTutorial(BOSS_TUTORIAL_PAGE));
             }
-            // `GD_SHOT_ON=endlessbosscomplete` (hooks.rs).
             gd_game_core::visuals::notify(&mut commands, "endlessbosscomplete");
         }
         return;
     }
-    // A normal floor: all its proxies ran and their monsters are dead, or the progress reached the total.
     if d.normal_floor_done(alive(&states, &keys, false)) {
         finish(d, &mut e.kill_keys, &keys, &mut states);
         d.active += 1;
@@ -443,7 +403,7 @@ pub fn progress(
     }
 }
 
-/// The cinematic texts (`ShowCinematicText` type 9: scale 1.25, 3 s, `ui/cinematic.rs`).
+/// `ShowCinematicText` type 9.
 pub fn show_texts(
     mut rt: Option<NonSendMut<StoryRuntime>>,
     mut out: MessageWriter<gd_game_core::story::CinematicText>,
@@ -455,7 +415,7 @@ pub fn show_texts(
     }
 }
 
-/// `KillMonstersInRegion` for a finished floor (`Endless::kill_keys`): its remaining monsters die.
+/// `KillMonstersInRegion` for a finished floor: its remaining monsters die.
 pub fn kill_finished_floor(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
@@ -496,10 +456,9 @@ pub fn kill_finished_floor(
     }
 }
 
-/// The objective line the HUD shows in the dungeon (`UIEndlessHud::Update`): in the boss
-/// region `tagEndlessFloorBoss` (`...BossDead` once the boss is dead), elsewhere `tagEndlessFloorNotComplete`
-/// in the active floor and `tagEndlessFloorComplete` in a finished one. The tag replaces the whole objective list
-/// (`SyncObjectivesInbound` with add and clear) when it is not already the list.
+/// The HUD's objective line (`UIEndlessHud::Update`): `tagEndlessFloorBoss` (`...BossDead` once dead) in
+/// the boss region, else `tagEndlessFloorNotComplete` / `tagEndlessFloorComplete`. It replaces the whole
+/// objective list when it is not already the list.
 pub fn sync_objectives(rt: Option<NonSend<StoryRuntime>>) {
     let Some(rt) = rt else { return };
     let mut story = rt.story.borrow_mut();
@@ -527,11 +486,9 @@ pub fn sync_objectives(rt: Option<NonSend<StoryRuntime>>) {
     }
 }
 
-/// `Game.RemoveEndlessSoulBuffs` / `RemoveEndlessShrineBuffs` (`DispelEndlessSoulBuffs` /
-/// `DispelEndlessShrineBuffs`): the `SkillBuff_PassiveCharged` (soul) / `SkillBuff_PassiveEndless`
-/// (shrine) buffs end on the main player and on every pet of its pet pen (the player's SkillManager,
-/// then each `Character` of `GetPetPen`'s list; the quest pet pen is not dispelled); the soul
-/// charges reset. Entering through a door or an exit gate dispels the souls.
+/// `Game.RemoveEndlessSoulBuffs` / `RemoveEndlessShrineBuffs`: the soul (`SkillBuff_PassiveCharged`) /
+/// shrine (`SkillBuff_PassiveEndless`) buffs end on the main player and its pet pen's pets (not the quest
+/// pet pen); the soul charges reset.
 pub fn dispel_endless_buffs(
     mut commands: Commands,
     mut events: MessageReader<gd_game_core::story::StoryEffect>,
@@ -570,7 +527,6 @@ pub fn dispel_endless_buffs(
                 || shrines && class == "SkillBuff_PassiveEndless")
         });
         if list.list.len() != before {
-            // A pet's profile is rebuilt when its received buffs changed (`pets::refresh_profiles`).
             list.changed = true;
             if is_player {
                 commands
@@ -581,7 +537,7 @@ pub fn dispel_endless_buffs(
     }
 }
 
-/// The soul buff ran out: its charges reset (a buff the player no longer has).
+/// The soul buff ran out: its charges reset.
 pub fn soul_expiry(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
@@ -611,10 +567,8 @@ pub fn soul_expiry(
     }
 }
 
-/// `Player::CharacterIsDying`: a death in any region of the dungeon takes the ruleset's
-/// `dyingPenalty` from the bonus timer (only the bonus is lost; respawn is the normal bound respawn point outside,
-/// `death.rs`). The gravestone goes when the next dungeon is generated (`RemoveGravestoneInDungeon`, see
-/// [`sync_endless`]).
+/// `Player::CharacterIsDying`: a death in the dungeon takes the ruleset's `dyingPenalty` from the bonus
+/// timer.
 pub fn dying_penalty(
     died: Query<(), (With<gd_game_core::player::Player>, Added<Dead>)>,
     rt: Option<NonSend<StoryRuntime>>,
@@ -653,10 +607,8 @@ pub fn dying_penalty(
     };
     info!("endless: died, bonus timer -{} ms", rs.dying_penalty_ms);
     st.game.survival.timer_subtract(rs.dying_penalty_ms);
-    // `Monster::OnKilledPlayer`: every monster that was after
-    // the player heals `healthGainOnKillPct` % of its own max life (`CharacterBio::TakeBonus`), the ruleset's
-    // 10000 % a full heal; the ruleset sets it for the Veteran challenge and above (`healthGainOnKillDifficulty`).
-    // PORT: the life bonus modifiers (`1 + lifeBonusMods`) are not applied.
+    // `Monster::OnKilledPlayer`: every monster that was after the player heals `healthGainOnKillPct` % of
+    // its max life (from `healthGainOnKillDifficulty`). PORT: the life bonus modifiers are not applied.
     if rs.health_gain_pct > 0.0 && mode.0.challenge >= rs.health_gain_challenge {
         for (mut cb, ai) in &mut monsters {
             if ai.aggro {
@@ -667,8 +619,8 @@ pub fn dying_penalty(
     }
 }
 
-/// An exit gate (`FixedItemDungeonTeleport`, `endlessdungeon_riftgate_personal`): stands where the player was
-/// in a finished floor, travels to the active floor's entrance when used, and goes when its dungeon is over.
+/// An exit gate (`FixedItemDungeonTeleport`): stands where the player was in a finished floor, travels to
+/// the active floor's entrance when used, and goes when its dungeon is over.
 #[derive(Component, Debug)]
 pub struct EndlessGate {
     /// The dungeon stamp (`Dungeon::id`): a gate of an older dungeon is stale.
@@ -676,16 +628,12 @@ pub struct EndlessGate {
     pub floor: usize,
 }
 
-/// The exit gates' record.
 pub const EXIT_GATE_RECORD: &str =
     "records/endlessdungeon/doors/endlessdungeon_riftgate_personal.dbr";
 
-/// `EndlessDungeon_Generator::Update`: while the player stands in a floor behind the active
-/// one, one exit gate is created for that floor at the player's position; a gate whose dungeon stamp is stale is
-/// removed (the engine waits 500 ms; PORT: at once).
-/// Its look (the record model: an invisible mesh whose `DoorFX` creates the small rift effect) is grimdawn
-/// `riftgates.rs`'s; its hover name is `FixedItemTeleport::GetGameDescription`'s `tagRiftgatePersonal` (grimdawn
-/// `hover.rs`).
+/// `EndlessDungeon_Generator::Update`: while the player stands in a floor behind the active one, one exit
+/// gate is created for that floor at the player's position; a gate whose dungeon stamp is stale is removed
+/// (the engine waits 500 ms; PORT: at once).
 pub fn exit_gates(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
@@ -708,7 +656,6 @@ pub fn exit_gates(
     };
     if k < d.active && !gates.iter().any(|(_, g)| g.stamp == d.id && g.floor == k) {
         info!("endless: exit gate for floor {k}");
-        // `GD_SHOT_ON=riftgate_personal` (hooks.rs).
         gd_game_core::visuals::notify(&mut commands, EXIT_GATE_RECORD);
         commands.spawn((
             EndlessGate {
@@ -721,8 +668,8 @@ pub fn exit_gates(
     }
 }
 
-/// `FixedItemDungeonTeleport::RequestToUse`: in reach, the player travels to the active
-/// floor's entrance and the soul buffs are dispelled (no other condition, the gate is reusable).
+/// `FixedItemDungeonTeleport::RequestToUse`: in reach, the player travels to the active floor's entrance
+/// and the soul buffs are dispelled (the gate is reusable).
 #[allow(clippy::too_many_arguments)]
 pub fn use_exit_gate(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -743,7 +690,7 @@ pub fn use_exit_gate(
     #[cfg(feature = "dev")] mut fresh: gd_game_core::session::NewSession,
     #[cfg(feature = "dev")] mut tried: Local<Vec<Entity>>,
 ) {
-    // The gate ids are the session's (a reused id is a new gate).
+    // Gate ids are the session's (a reused id is a new gate).
     #[cfg(feature = "dev")]
     if fresh.begun() {
         tried.clear();
@@ -751,7 +698,6 @@ pub fn use_exit_gate(
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_EXIT_GATE` (hooks.rs): use each gate once, from anywhere.
     #[cfg(feature = "dev")]
     let test = hooks.gameplay.use_exit_gate;
     #[cfg(feature = "dev")]
@@ -764,8 +710,8 @@ pub fn use_exit_gate(
     }
     #[cfg(not(feature = "dev"))]
     let test = false;
-    // The player is frozen through a teleport's activity (`doors::run_teleport`): the gate is used once it
-    // ends, not dropped (a travel granted while another is pending would be lost).
+    // Frozen through a teleport: use the gate once it ends (a travel granted while another is pending would
+    // be lost).
     if activity.active() {
         return;
     }
@@ -774,8 +720,7 @@ pub fn use_exit_gate(
         return;
     };
     let Some(rt) = rt else { return };
-    // The fixed actors' use range (`combat::fixed_use_range`): the player's radius + the gate's `Actor::GetRadius`
-    // (`actorRadius` 3) + its `usableRange` (4), 3D, +1 m at the walk's end.
+    // `actorRadius` 3, `usableRange` 4.
     let range = gd_game_core::combat::fixed_use_range(
         data.db.get(EXIT_GATE_RECORD),
         pcb.radius,
@@ -803,12 +748,11 @@ pub fn use_exit_gate(
     }
 }
 
-/// A buff shrine (`EndlessBuffShrine`, `records/endlessdungeon/shrines/buffshrine_NN.dbr`) placed by a shrine
-/// proxy's accessory pool.
+/// A buff shrine (`EndlessBuffShrine`) placed by a shrine proxy's accessory pool.
 #[derive(Component, Debug)]
 pub struct EndlessShrine {
     pub record: String,
-    /// `Actor::GetRadius` (`combat::get_radius`): the use range's and the hover pick's.
+    /// `Actor::GetRadius`.
     pub radius: f32,
     pub used: bool,
     /// The proxy (level, entity index) that placed it.
@@ -816,8 +760,7 @@ pub struct EndlessShrine {
 }
 
 impl EndlessShrine {
-    /// `EndlessBuffShrine::IsOfInterest`: state 1 (unused), or 4 without the `EndlessBuffShrine.used` flag
-    /// (PORT: not traced; the port's shrine is unused or used).
+    /// `EndlessBuffShrine::IsOfInterest`: state 1 (unused), or 4 without the `used` flag (PORT: not traced).
     pub fn is_of_interest(&self) -> bool {
         !self.used
     }
@@ -849,28 +792,21 @@ pub fn spawn_shrine(
     ));
 }
 
-/// What the running dungeon remembers of its shrines (the generator's state: the pools used,
-/// `EndlessDungeon_Generator.shrinePools`; each
-/// shrine's used state). `EndlessBuffShrine::InitialUpdate` / `UpdateSelf`: a
-/// shrine carries the stamp of the dungeon that placed it and is destroyed once the stamp is stale, so all of it
-/// belongs to one dungeon and resets with the next (`Dungeon::id`).
-/// `EndlessBuffShrine::SaveState` / `RestoreState`: the state and stamp go into
-/// the level state, kept in memory while the level is unloaded (see the module docs, "Save / quit / reload"),
-/// so a shrine used stays used when its level streams back in; here that memory is this resource (session state).
+/// What the running dungeon remembers of its shrines: the pools used (`EndlessDungeon_Generator.shrinePools`)
+/// and each shrine's used state. A shrine carries the stamp of the dungeon that placed it and is destroyed
+/// once the stamp is stale (`EndlessBuffShrine::UpdateSelf`), so all of it resets with the next dungeon.
+/// `EndlessBuffShrine::SaveState` keeps its state in the level state, so a used shrine stays used when its
+/// level streams back in.
 #[derive(Resource, Default)]
 pub struct ShrineMemory {
-    /// The dungeon stamp the memory belongs to.
     dungeon: Option<u32>,
-    /// The accessory pools the dungeon's shrine proxies picked (`InitializeAccessoryPool` excludes them).
+    /// The accessory pools picked (`InitializeAccessoryPool` excludes them).
     pools: Vec<String>,
-    /// Proxies whose pool was picked.
     chosen: gd_formats::collections::HashSet<(usize, u32)>,
-    /// Shrines used.
     used: gd_formats::collections::HashSet<(usize, u32)>,
 }
 
-/// A shrine proxy ran: the shrine appears at its spot (`proxyActivateSound` plays there, see
-/// `grimdawn::endless_shrine`).
+/// A shrine proxy ran: the shrine appears at its spot (`proxyActivateSound` plays there).
 #[derive(Message, Clone, Debug)]
 pub struct ShrineProxyRan {
     pub record: String,
@@ -910,18 +846,14 @@ pub fn shrine_memory(
     }
 }
 
-/// `ProxyEndless::RestoreState`: a proxy whose level comes back with the stamp of an older
-/// dungeon (`SetActive` stamps it with the dungeon that activated it) is reset to dormant (state 1),
-/// so a floor used again by a later dungeon runs its proxies afresh (`Proxy::RunProxy` picks pools
-/// and spawns anew from state 0). While the level stays loaded nothing changes (the generator only flips 1 -> 0).
-/// Here: the [`ProxyStates`] (and accessory chests) of a stale proxy are dropped once its level is unloaded, so
-/// the next load rolls it again, held for the generator. PORT: the engine also disables (state 2) a proxy restored
-/// outside the active floor, or with no generator; here such a proxy stays dormant, and the generator activates
-/// only the active floor's proxies. A stale proxy whose level stayed loaded and that a new dungeon activates is
-/// no longer stale (its old, spent state is kept, as the engine's state 6 never runs again while loaded).
-/// The dungeon rules for a kill (no experience, `progress.rs`; drops, `loot.rs`) follow `activated`, i.e. the
-/// running dungeon's proxies; the engine decides by the monster's region (`IsRegionInDungeon` of the running
-/// generator), so a leftover monster of an older dungeon outside the new floors gets the normal rules in both.
+/// `ProxyEndless::RestoreState`: a proxy whose level comes back with the stamp of an older dungeon is reset
+/// to dormant, so a floor used again by a later dungeon runs its proxies afresh. While the level stays
+/// loaded nothing changes. Here: a stale proxy's [`ProxyStates`] (and accessory chests) are dropped once its
+/// level is unloaded. PORT: the engine also disables (state 2) a proxy restored outside the active floor or
+/// with no generator; here it stays dormant. A stale proxy whose level stayed loaded and that a new dungeon
+/// activates keeps its spent state. The dungeon kill rules follow `activated`; the engine decides by the
+/// monster's region (`IsRegionInDungeon`), so a leftover old-dungeon monster outside the new floors gets
+/// the normal rules in both.
 pub fn drop_stale_proxies(
     rt: Option<NonSend<StoryRuntime>>,
     levels: Res<gd_game_core::levels::Levels>,
@@ -944,14 +876,11 @@ pub fn drop_stale_proxies(
     });
 }
 
-/// A shrine proxy's shrine exists only once the generator activated the proxy (the engine runs only the proxies
-/// `PickProxies` chose; a level's other `ProxyEndless` entities stay dormant, shrines included): the shrines of the
-/// activated proxies of loaded levels are placed here, and again when their level streams back in.
-/// `ProxyEndless::InitializeAccessoryPool`: at activation the proxy picks its accessory
-/// pool among those the dungeon has not used yet and adds it to the set (the five stock pools are the five buff
-/// shrines): the shrine rolled when the level loaded keeps only its spot. With every pool used (a sixth shrine
-/// proxy in one dungeon) there is no candidate, no pool is made and the proxy places no shrine
-/// ([`gd_sim::proxy::pick_endless_accessory`]).
+/// A shrine proxy's shrine exists only once the generator activated the proxy: the shrines of the activated
+/// proxies of loaded levels are placed here, and again when their level streams back in.
+/// `ProxyEndless::InitializeAccessoryPool`: at activation the proxy picks an accessory pool the dungeon has
+/// not used yet; the shrine rolled at level load keeps only its spot. With every pool used there is no
+/// candidate and the proxy places no shrine ([`gd_sim::proxy::pick_endless_accessory`]).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_activated_shrines(
     mut commands: Commands,
@@ -983,8 +912,8 @@ pub fn spawn_activated_shrines(
                 .is_some_and(|r| r.class == "EndlessBuffShrine")
         };
         if fresh {
-            // The generator's pick replaces the shrine rolled at the level load; no pick (every pool used, or the
-            // pool's item chance failed): no shrine, for as long as the dungeon lasts.
+            // The generator's pick replaces the shrine rolled at the level load; no pick: no shrine for as
+            // long as the dungeon lasts.
             let mut rng = gd_rules::Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
             let mut item = gd_sim::proxy::pick_endless_accessory(
                 &data.db,
@@ -1030,19 +959,16 @@ pub fn spawn_activated_shrines(
     }
 }
 
-/// The Death shrine's buff (`damageAbsorptionPercent` 100) is a damage filter on whoever has it (the player and the
-/// pets it reached, [`use_shrine`]) while it runs.
-/// `SkillBuff_PassiveEndless` records (`damageAbsorptionPercent` 100, `skillActiveDuration` 30): the
-/// buff absorbs all damage. The filter is a [`gd_game_core::casting::ShieldKind::Shrine`] entry of the holder's
-/// [`gd_game_core::casting::Shields`], there for as long as a received shrine buff with an absorb is on.
+/// `SkillBuff_PassiveEndless` (`damageAbsorptionPercent` 100) absorbs all damage: a
+/// [`gd_game_core::casting::ShieldKind::Shrine`] entry of the holder's [`gd_game_core::casting::Shields`]
+/// while a received shrine buff with an absorb is on.
 pub fn shrine_shield(
     data: Res<gd_game_core::data::GameData>,
     rt: Option<NonSend<StoryRuntime>>,
     mut holders: Query<(&ReceivedBuffs, &mut gd_game_core::casting::Shields)>,
 ) {
     use gd_game_core::casting::ShieldKind;
-    // Shattered Realm only: without a running dungeon no shrine buff can be on
-    // anyone, so the per-buff record scan is skipped entirely.
+    // Without a running dungeon no shrine buff can be on anyone.
     let Some(rt) = rt else { return };
     if rt.story.borrow().endless.dungeon.is_none() {
         return;
@@ -1075,15 +1001,10 @@ pub fn shrine_shield(
     }
 }
 
-/// `EndlessBuffShrine::RequestToUse`: in reach (`usableRange`), an unused shrine of the
-/// running dungeon is used at once (no offering, one use) by the main player: the player casts the record's
-/// `skillName` (`Load`; a `Skill_BuffOther` of the quest skill tree) on itself
-/// (`ActivateSkillConfigCmd`, caster and target the player). `Skill_BuffOther::ActivateNow` puts its buff
-/// (`SkillBuff_PassiveEndless`, 30 s) on the player and on every friend of the player within the buff's
-/// `skillTargetRadius` (30 m): the pets too. Here the cast is a
-/// [`gd_game_core::story::PlayerSkillCast`], which [`crate::story::cast_story_skills`] casts from the player that way.
-/// The used state is [`ShrineMemory`]'s (per dungeon); the used animation and the `dormantToRestored` sound are
-/// the dressing's (`grimdawn::endless_shrine`). PORT: only while a dungeon runs.
+/// `EndlessBuffShrine::RequestToUse`: in reach, an unused shrine of the running dungeon is used at once by
+/// the main player, who casts the record's `skillName` (a `Skill_BuffOther`) on itself;
+/// `Skill_BuffOther::ActivateNow` buffs every friend within `skillTargetRadius`, the pets too. Here the cast
+/// is a [`gd_game_core::story::PlayerSkillCast`]. PORT: only while a dungeon runs.
 #[allow(clippy::too_many_arguments)]
 pub fn use_shrine(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -1105,7 +1026,6 @@ pub fn use_shrine(
     let Ok((ptf, mut path, mut interact, pcb)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_BUFF_SHRINE` (hooks.rs): use the nearest unused shrine, from anywhere.
     #[cfg(feature = "dev")]
     let test = hooks.gameplay.use_buff_shrine;
     #[cfg(feature = "dev")]
@@ -1131,8 +1051,6 @@ pub fn use_shrine(
         interact.0 = None;
         return;
     };
-    // Use range (`player_orders::usable_range`): player radius + shrine radius + `usableRange`, 3D, +1 m at the
-    // walk's end.
     let reach = gd_game_core::player_orders::usable_range(
         pcb.radius,
         shrine.radius,
@@ -1156,12 +1074,9 @@ pub fn use_shrine(
     cast.write(gd_game_core::story::PlayerSkillCast(skill.to_owned()));
 }
 
-/// PORT test hook `GD_ENDLESS_FLOOR=<floor record>` ([`gd_game_core::hooks::GameplayHooks::endless_floor`]): a held
-/// override — floor 0 of every generated section is the named floor. The scripts generate inside `gd-story`, so
-/// the override travels through the generator's map ([`gd_story::endless::EndlessMap::forced_floor`], read by
-/// `pick_floors`): this system builds the map ahead of the first generation (the Lua binding builds it lazily)
-/// and keeps the field set. While the hook is set, placed (story) monsters log their level once armed
-/// (`Character::Load`'s clamp, [`crate::monsters::placed_char_level`]).
+/// `GD_ENDLESS_FLOOR=<floor record>`: floor 0 of every generated section is the named floor, through
+/// [`gd_story::endless::EndlessMap::forced_floor`]; this system builds the map ahead of the first generation
+/// and keeps the field set. While set, placed monsters log their level once armed.
 #[cfg(feature = "dev")]
 pub fn force_floor(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -1195,10 +1110,9 @@ pub fn force_floor(
     }
 }
 
-/// The Shattered Realm's host side: the story's generator reads the world map ([`gd_game_core::save::MapLayout`]),
-/// pre-built here at session load (the provider closure remains the Lua binding's fallback), and while a
+/// The story's generator reads the world map ([`gd_game_core::save::MapLayout`]), pre-built here; while a
 /// dungeon exists the player's map region is kept in `Player::region` (the first region whose box holds the
-/// player on the ground plane; the dungeon's regions are far from the normal world, where they overlap nothing else).
+/// player on the ground plane).
 pub fn sync_endless(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
@@ -1222,8 +1136,7 @@ pub fn sync_endless(
             gd_story::endless::EndlessMap::from_world(&map)
         }));
     }
-    // The ~500-level scan of `EndlessMap::from_world` runs at session load, not inside
-    // the first `GenerateEndlessDungeon` Lua call (a one-time Shattered Realm hitch).
+    // Built here, not inside the first `GenerateEndlessDungeon` Lua call.
     if story.endless.map.is_none() {
         story.endless.map = Some(std::sync::Arc::new(
             gd_story::endless::EndlessMap::from_world(map),
@@ -1233,8 +1146,7 @@ pub fn sync_endless(
         story.player.region = None;
         return;
     }
-    // `GameEngine::RemoveGravestoneInDungeon` (from the generator's `Clear`): a new
-    // dungeon removes the gravestones standing in any region of the old one.
+    // `GameEngine::RemoveGravestoneInDungeon`: a new dungeon removes the gravestones in the old one.
     if let Some(d) = story.endless.dungeon.as_ref()
         && last.as_ref().is_none_or(|(id, _)| *id != d.id)
     {

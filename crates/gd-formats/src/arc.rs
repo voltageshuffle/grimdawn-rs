@@ -1,11 +1,9 @@
 //! `.arc` resource archives (version 3). Files are split into LZ4-block parts
 //! of up to 256 KiB ([`MAX_PART`]); a part whose compressed size equals its decompressed size
-//! is stored raw. A part that claims more than [`MAX_PART`] is refused (every stock part fits;
-//! the 255× LZ4 bound alone would let a hostile mod's 1 MiB part allocate 255 MiB).
+//! is stored raw. A part that claims more than [`MAX_PART`] is refused.
 //!
 //! [`Arc::read`] decodes a whole entry; [`Arc::open_entry`] gives a seekable reader ([`EntryReader`]) that
-//! decodes only the parts a read touches, as the engine's `FileSystem` serves a map to `World::Load`
-//! (maps are read region by region as the world streams in, never whole).
+//! decodes only the parts a read touches (the engine reads maps region by region as the world streams in).
 use crate::util::{Reader, latin1, lz4_max_size};
 use anyhow::{Context, Result, bail};
 use std::fs::File;
@@ -45,11 +43,8 @@ pub struct Arc {
     /// Shared by concurrent [`Arc::read`]s through positional reads (`pread`: no cursor, no lock).
     #[cfg(unix)]
     file: File,
-    /// The handles [`Arc::read`]s borrow, one per read in flight. Windows serializes every request on a synchronous
-    /// handle (the I/O manager holds the file object's lock for each read, a positional `seek_read` too), so readers
-    /// sharing one handle would queue behind each other's disk reads: a read takes a free handle, or opens another
-    /// when all are lent out, and puts it back after. Kept for the archive's life: at most as many as reads ever ran
-    /// at once.
+    /// The handles [`Arc::read`]s borrow, one per read in flight: Windows serializes reads on one synchronous
+    /// handle, even positional ones. A read takes a free handle or opens another, and puts it back after.
     #[cfg(windows)]
     files: parking_lot::Mutex<Vec<File>>,
 }
@@ -270,7 +265,7 @@ fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
 }
 
 /// Reads exactly `buf.len()` bytes at `offset` without reading at the file cursor, so readers on other threads
-/// cannot move this one's position (`Arc::files` for Windows, where they would still queue on one handle).
+/// cannot move this one's position.
 fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
         let n = read_at(file, buf, offset)?;

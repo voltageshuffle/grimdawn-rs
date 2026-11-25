@@ -30,7 +30,6 @@ fn attribute_points_raise_the_profile() {
             .write_message(SpendAttribute(Attribute::Physique));
     }
     g.step();
-    // Only two points to spend.
     assert_eq!(g.get::<Loadout>(p).allocated.physique, 2);
     assert_eq!(g.progress().progress.attribute_points, 0);
     assert!(g.get::<Combatant>(p).profile.sheet.physique > before);

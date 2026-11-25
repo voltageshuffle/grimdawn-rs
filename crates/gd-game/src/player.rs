@@ -1,5 +1,4 @@
-//! The player systems: profile rebuilds, effective skills and item toggles
-//! (the player data — [`Player`], [`Loadout`] — is [`gd_game_core::player`]).
+//! The player systems: profile rebuilds, effective skills and item toggles.
 use bevy::prelude::*;
 use gd_formats::save::gdc::Gdc;
 use gd_game_core::combat::Combatant;
@@ -28,10 +27,8 @@ impl Plugin for PlayerStatePlugin {
     }
 }
 
-/// The gameplay components of the player entity: the marker, its loadout
-/// and its combat state (profile at `level`, full life, the player record's
-/// `Actor::GetRadius`, `combat::get_radius`). The game adds the body, camera focus and movement path;
-/// headless tests spawn it bare. None when the profile cannot be built.
+/// The gameplay components of the player entity: the marker, its loadout and its combat state (profile at
+/// `level`, full life, `Actor::GetRadius`). None when the profile cannot be built.
 pub fn player_bundle(
     data: &GameData,
     rules: &gd_sim::actor::Rules,
@@ -47,7 +44,7 @@ pub fn player_bundle(
     ))
 }
 
-/// [`SpawnData`] from `gdc` (None: a new character of sex `female_default`); None when the profile cannot be built.
+/// `gdc` None: a new character of sex `female_default`. None when the profile cannot be built.
 pub fn spawn_data(
     data: &GameData,
     rules: &gd_sim::actor::Rules,
@@ -55,7 +52,7 @@ pub fn spawn_data(
     female_default: bool,
     unlock: impl FnOnce(&mut SkillBook),
 ) -> Option<SpawnData> {
-    // Header byte = `GetGender() == 1` (male), `Character::Load`.
+    // `Character::Load`: header byte = `GetGender() == 1` (male).
     let female = gdc.map_or(female_default, |g| g.header.sex == 0);
     let level = gdc.map_or(1, |g| g.bio.level as i32);
     let mut skills = skill_book_from_save(&data.db, gdc);
@@ -73,8 +70,7 @@ pub fn spawn_data(
     })
 }
 
-/// Recomputes [`EffectiveSkills`] whenever the loadout changes (and adds it
-/// to a newly spawned player).
+/// Also adds [`EffectiveSkills`] to a newly spawned player.
 pub fn derive_effective_skills(
     mut commands: Commands,
     data: Res<GameData>,
@@ -98,26 +94,15 @@ pub fn derive_effective_skills(
     }
 }
 
-/// An item toggle whose item comes off (module docs: item toggles,
-/// `SkillManager::RemoveItemSkills`): one that was on
-/// starts its cooldown (`Skill::StartCooldown`: the skill's own cooldown
-/// reduction; an item skill takes no character part) and stops (`StopSkill`:
-/// `skillDeactivatedSound`); the skill object goes, so its off / dispelled
-/// state does not outlive it (`inactive` / `dispelled` lose the name) and a
-/// new item skill starts off, then on at the next update (`AutoActivateNow`).
-/// A set's toggle still granted after its piece count changed is removed
-/// and granted again the same way (`ItemSet::SkillAugmentInstall` /
-/// `SkillAugmentRemove`, [`gd_sim::items::sets::regranted_set_skills`]):
-/// stopped with its cooldown started, then on at the next update (the
-/// auto toggle does not test the cooldown). Dormant in stock (every set
-/// grants its skill only at its full count).
+/// An item toggle whose item comes off (`SkillManager::RemoveItemSkills`): one that was on starts its cooldown
+/// (`Skill::StartCooldown`, no character part) and stops (`skillDeactivatedSound`); its off / dispelled state
+/// goes with the skill object, and a new item skill starts off, then on at the next update (`AutoActivateNow`).
+/// A set's toggle still granted after its piece count changed is removed and granted again the same way
+/// (`ItemSet::SkillAugmentInstall` / `SkillAugmentRemove`); dormant in stock.
 ///
-/// Every item skill removed is stopped (`RemoveItemSkills` calls the virtual
-/// `StopSkill` on each): a summon's stop kills its pets
-/// (`Skill_SpawnPet::StopSkill` / `Skill_TargetedSpawnPet::StopSkill`,
-/// `crate::pets` docs), sent as a [`crate::pets::StopSummonSkill`].
-/// PORT: pets are known by their summon record, not the skill object, so a
-/// record also granted by another worn item (or learned) keeps its pets.
+/// Every item skill removed is stopped: a summon's stop kills its pets ([`crate::pets::StopSummonSkill`]).
+/// PORT: pets are known by their summon record, not the skill object, so a record also granted by another
+/// worn item (or learned) keeps its pets.
 #[allow(clippy::type_complexity)]
 pub fn unequipped_toggles(
     mut commands: Commands,
@@ -202,12 +187,10 @@ pub fn unequipped_toggles(
                 loadout.skills.dispelled.remove(s);
             }
         }
-        // A regranted set toggle is a new item skill: off until the next
-        // update's auto toggle.
+        // A regranted set toggle is a new item skill: off until the next update's auto toggle.
         for (s, _) in gone.iter().filter(|g| kept_again(&g.0)) {
             loadout.skills.inactive.insert(s.to_ascii_lowercase());
         }
-        // Every item skill removed (or regranted) stops: a summon's pets die.
         for s in current.2.iter().filter(|s| {
             !skills.iter().any(|n| n.eq_ignore_ascii_case(s))
                 || regranted.iter().any(|r| r.eq_ignore_ascii_case(s))
@@ -224,8 +207,7 @@ pub fn unequipped_toggles(
     }
 }
 
-/// Rebuilds the profile of a player marked [`ProfileDirty`] at its current
-/// level; life keeps its fraction of the maximum.
+/// Life keeps its fraction of the maximum.
 pub fn rebuild_profile(
     mut commands: Commands,
     data: Res<GameData>,
@@ -249,7 +231,7 @@ pub fn rebuild_profile(
         let level = progress
             .as_ref()
             .map_or(cb.profile.level, |p| p.progress.level);
-        // In a challenge area: its rules (mutators).
+        // In a challenge area: its mutators.
         let rules = area.map_or(&rules.0, |a| &a.0);
         let Some(p) = loadout.profile_with(&data, rules, level, auras, charges) else {
             continue;

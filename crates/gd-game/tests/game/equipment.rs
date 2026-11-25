@@ -1,6 +1,5 @@
-//! Headless checks of equipment changes: the worn items are the player's
-//! loadout, and an equipment change keeps the player entity (and its other
-//! state) while the stats and skills follow.
+//! Equipment changes: the worn items are the player's loadout, and an equipment change keeps the player
+//! entity while the stats and skills follow.
 use gd_formats::inventory::EquipSlot;
 use gd_game::testing::TestGame;
 use gd_game_core::combat::Combatant;

@@ -20,10 +20,8 @@ fn raptor_pool() {
             &Default::default(),
             &mut rng,
         );
-        // spawnMin 4, spawnMax 6 (+1 from `challengeAdjustment`, applied on
-        // Normal / Elite with or without Veteran), champions included.
-        // Champions count toward the roll, so they only raise the ceiling
-        // when they alone outnumber it.
+        // spawnMin 4, spawnMax 6 (+1 `challengeAdjustment` on Normal / Elite); champions count
+        // toward the roll, so they only raise the ceiling when they alone outnumber it.
         let champions = s.iter().filter(|x| x.champion).count();
         assert!((4..=7.max(champions)).contains(&s.len()), "{s:?}");
         for x in &s {

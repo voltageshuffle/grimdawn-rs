@@ -4,14 +4,12 @@
 //! type, [`GROUPS`]). Reagents are counted and taken from the bags, the material storage
 //! (`reagents.gst`), the personal stash and the transfer stash, in that order.
 //! Crafting costs the blueprint's creation cost and puts the items in the bags.
-//! The crafting panel's search box (`trade.rs` [`gd_ui::state::trade::TradeSearch`])
+//! The crafting panel's search box ([`gd_ui::state::trade::TradeSearch`])
 //! filters the list: a recipe shows when any of its search lines contains the
 //! query, and a group whose recipes all filtered out hides its header
-//! (row filter `CraftList::FilterRows`, query cache `CraftList::CacheQuery`). The
-//! lines are the product item's `GenerateSearchText`, format-stripped and
-//! lowercased (`CraftList::BuildSearchLines`: `Item::GenerateSearchText` with the player,
-//! `LocalizerFormatStrip` + `towlower_l` per line; port
-//! [`CraftList::fill_search_lines`], `gd_sim::items::market::search_line`).
+//! (`CraftList::FilterRows`, `CraftList::CacheQuery`). The lines are the product
+//! item's `Item::GenerateSearchText`, format-stripped and lowercased
+//! (`CraftList::BuildSearchLines`; port [`CraftList::fill_search_lines`]).
 //! The Inventor's tabs: dismantling ([`dismantle`]), salvage ([`salvage`]),
 //! set conversion ([`convert`]); reroll in `reroll.rs`.
 use crate::trade::Stash;
@@ -23,8 +21,7 @@ use gd_ui::trade::CraftScrolled;
 use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
 
 /// Clicks in the crafting window: category tabs, recipe rows, the craft
-/// button; the wheel scrolls the list. `GD_CRAFT` (hooks.rs): once the window is open, select the first
-/// recipe whose record contains the text and craft.
+/// button; the wheel scrolls the list.
 #[allow(clippy::too_many_arguments)]
 pub fn craft_clicks(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -39,7 +36,7 @@ pub fn craft_clicks(
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     mut capture: ResMut<gd_ui::state::inventory::UiCapture>,
     mut requests: MessageWriter<gd_game::crafting::CraftRequest>,
-    // The row count is cached by `Trade::version`, which restarts with each session (`NewSession`).
+    // Keyed by `Trade::version`, which restarts with each session.
     (mut rows, mut last_query, mut fresh): (
         Local<Option<(u64, bool, usize)>>,
         Local<String>,
@@ -94,17 +91,15 @@ pub fn craft_clicks(
     }
     let p = window.single().ok().and_then(gd_ui_kit::cursor_px);
     trade.hover = None;
-    // The game menu, a modal question (`inventory::question_up`) or the stack window takes every click and
-    // the wheel: none reaches the window under it (as `trade_clicks`).
+    // The game menu, a modal question or the stack window takes every click and the wheel.
     if pause.menu
         || gd_ui::apply::question_up(&inv, &trade, &confirm)
         || p.is_some_and(|p| stack.covers(p))
     {
         return;
     }
-    // The search box (trade.rs module doc): a click on it clears a non-empty
-    // text and focuses it; the clear button empties it; any other click
-    // unfocuses it. Only the crafting tab shows the box.
+    // A click on the search box clears a non-empty text and focuses it; the clear button empties it; any
+    // other click unfocuses it.
     if let Some(p) = p
         && buttons.just_pressed(MouseButton::Left)
         && trade.panel == gd_ui::state::trade::Panel::Craft
@@ -130,7 +125,7 @@ pub fn craft_clicks(
         }
     }
     // A new query starts the list at its top; one that shrinks the list must not strand the scroll past
-    // its last page (counted once per `version`).
+    // its last page.
     let query = trade.search.query();
     if *last_query != query {
         *last_query = query;
@@ -148,7 +143,6 @@ pub fn craft_clicks(
             n
         }
     };
-    // The rows the list shows at once (`ui/trade.rs`: its height over the row height).
     let visible = match (layout.list, layout.rows.first()) {
         (Some(l), Some((_, r))) if r.h > 0.0 => (l.h / r.h) as usize,
         _ => 1,
@@ -173,23 +167,19 @@ pub fn craft_clicks(
         {
             let s = (trade.scroll as i32 - scroll.delta.y.signum() as i32 * 2)
                 .clamp(0, max_scroll as i32) as usize;
-            // A wheel step moves the pane in place ([`craft_scroll`], PERF-23): no rebuild.
             if s != trade.scroll {
                 trade.scroll = s;
             }
         }
         if buttons.just_pressed(MouseButton::Left) {
-            // The scroll bar's press and held repeat are [`craft_scroll`]'s (it moves the pane and
-            // thumb in place, PERF-23); the bar sits outside the list rect, so a press on it matches
-            // no row here.
+            // The scroll bar is [`craft_scroll`]'s; it sits outside the list rect.
             if let Some((t, _)) = layout.tabs.iter().find(|(_, r)| contains(r, p)) {
                 trade.tab = *t;
                 trade.recipe = None;
                 trade.scroll = 0;
                 trade.version += 1;
             } else if layout.list.is_some_and(|lr| contains(&lr, p)) {
-                // Rows keep content coordinates (scroll 0, the pane shifts them): hit-test with the
-                // scroll-shifted point, only inside the list rect.
+                // Rows keep content coordinates (the pane shifts them): hit-test the scroll-shifted point.
                 let line = layout.rows.first().map_or(0.0, |(_, r)| r.h);
                 let q = Vec2::new(p.x, p.y + trade.scroll as f32 * line);
                 if let Some((i, _)) = layout.rows.iter().find(|(_, r)| contains(r, q)) {
@@ -207,7 +197,6 @@ pub fn craft_clicks(
     let Some(r) = trade.recipe.and_then(|i| list.recipes.get(i)) else {
         return;
     };
-    // `gd_game::crafting::apply_inventor` pays, takes the reagents and fills the bags.
     requests.write(gd_game::crafting::CraftRequest {
         bp: r.bp.clone(),
         enhancement: list.enhancement.clone(),
@@ -215,11 +204,9 @@ pub fn craft_clicks(
     trade.version += 1;
 }
 
-/// Scrolls the crafting recipe list in place (PERF-23, the journal's `journal_live` pattern):
-/// `Trade::scroll` is not in `TradeSig`, so a wheel step, a bar press or a held arrow / thumb drag
-/// moves the pane ([`CraftScrolled`]) and the bar's thumb ([`ScrollThumb`]) instead of rebuilding the
-/// window. The bar's press and held repeat ([`gd_ui::window::Bar::press`] / [`bar_held`]) live
-/// here too; the wheel and the row clicks are [`craft_clicks`]'. Runs after the rebuild and clicks.
+/// Scrolls the crafting recipe list in place: `Trade::scroll` is not in `TradeSig`, so a wheel step, a bar
+/// press or a held arrow / thumb drag moves the pane ([`CraftScrolled`]) and the bar's thumb
+/// ([`ScrollThumb`]) without a rebuild. Runs after the rebuild and [`craft_clicks`].
 #[allow(clippy::too_many_arguments)]
 pub fn craft_scroll(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -239,7 +226,6 @@ pub fn craft_scroll(
     ),
     mut held: Local<Option<BarHold>>,
     mut px: Local<f32>,
-    // As `craft_clicks`' (`Trade::version` restarts with each session).
     (mut rows, mut fresh): (
         Local<Option<(u64, bool, usize)>>,
         gd_game_core::session::NewSession,
@@ -295,7 +281,6 @@ pub fn craft_scroll(
     let max_scroll = n.saturating_sub(visible);
     let max_px = max_scroll as f32 * line;
     let p = window.single().ok().and_then(gd_ui_kit::cursor_px);
-    // A modal (the game menu, a question, the stack box) takes the press and the hold.
     if pause.menu
         || gd_ui::apply::question_up(&inv, &trade, &confirm)
         || p.is_some_and(|p| stack.covers(p))
@@ -306,8 +291,7 @@ pub fn craft_scroll(
     if !buttons.pressed(MouseButton::Left) {
         *held = None;
     }
-    // A held arrow repeats, a held thumb follows the mouse; `px` keeps the sub-row remainder so the
-    // repeat accumulates smoothly while the shown scroll stays whole rows.
+    // `px` keeps the sub-row remainder while the shown scroll stays whole rows.
     if let Some(hold) = held.as_mut() {
         let Some(p) = p else {
             *held = None;
@@ -329,7 +313,7 @@ pub fn craft_scroll(
         capture.0 = true;
         return;
     }
-    // A row is the list item's `LineHeight` (23 units) at the UI scale, so `line / 23` is that scale.
+    // A row is the list item's `LineHeight` (23 units) at the UI scale.
     if buttons.just_pressed(MouseButton::Left)
         && let Some(p) = p
         && let Some(wr) = layout.window
@@ -347,9 +331,8 @@ pub fn craft_scroll(
     }
 }
 
-/// The dismantle tab's action (`trade.go`, set by `crate::trade` `panel_clicks` after its warning prompt): sends
-/// the slot item to `gd_game::crafting` (rules, cost and notes there; window UI: `ui/trade.rs`
-/// `dismantle_panel`; results: [`dismantle_results`]).
+/// The dismantle tab's action (`trade.go`, set after its warning prompt): sends the slot item to
+/// `gd_game::crafting`.
 pub fn dismantle(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
@@ -357,8 +340,6 @@ pub fn dismantle(
     #[cfg(feature = "dev")] mut stage: MessageWriter<gd_game::crafting::StageItem>,
     #[cfg(feature = "dev")] mut tested: Local<bool>,
 ) {
-    // `GD_DISMANTLE` (hooks.rs): once the crafter is open, put the first bag item into the dismantle slot
-    // and press the button.
     #[cfg(feature = "dev")]
     if hooks.items.dismantle
         && !*tested
@@ -379,18 +360,14 @@ pub fn dismantle(
         return;
     }
     trade.go = false;
-    // `gd_game::crafting::apply_inventor` runs the rules; a refused item comes back as a `SlotReturn`.
     if let Some(item) = trade.slot.take() {
         requests.write(gd_game::crafting::DismantleRequest(item));
     }
 }
 
 /// A dismantle's results ([`gd_game::crafting::DismantleResult`]): into the dismantle tab's result boxes
-/// (`gd_game::crafting::receive_dismantled`) while the tab is shown, else back to the player
-/// (`ControllerPlayer::GiveDismantledItemToPlayer`: the UI call returns false ->
-/// `GiveItemToPlayer`, `InvRequest::Stow`). Both boxes play the tab's sound (`UIDismantleTab.sound`; PORT: taken
-/// as its
-/// `dismantleItemSound`).
+/// while the tab is shown, else back to the player (`ControllerPlayer::GiveDismantledItemToPlayer`).
+/// Both boxes play the tab's sound (`UIDismantleTab.sound`; PORT: taken as its `dismantleItemSound`).
 pub fn dismantle_results(
     mut msgs: MessageReader<gd_game::crafting::DismantleResult>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
@@ -427,9 +404,8 @@ pub fn dismantle_results(
     }
 }
 
-/// Puts what the Inventor's requests leave back into the window's slot (a
-/// refused item, what did not fit the bags, a staged hook item), presses the
-/// button of a staged item and rebuilds the window.
+/// Puts what the Inventor's requests leave back into the window's slot, presses the button of a staged item
+/// and rebuilds the window.
 pub fn slot_returns(
     mut msgs: MessageReader<gd_game::crafting::SlotReturn>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
@@ -443,8 +419,7 @@ pub fn slot_returns(
     }
 }
 
-/// The salvage tab (`dividing_table.dbr`, window `InventorWindow::Load`, panel
-/// loader `UISalvagePanel::Load`, update `UISalvagePanel::Update`).
+/// The salvage tab (`dividing_table.dbr`, `UISalvagePanel::Load` / `UISalvagePanel::Update`).
 /// The slot takes an equipment item; the cost is `salvage_cost`; the buttons
 /// are all off when the item is missing or the money short (`UISalvagePanel::Update`:
 /// `CurrentMoney < cost`); otherwise Keep Item and Keep Add-on need a
@@ -467,7 +442,6 @@ pub fn salvage(
     {
         return;
     }
-    // `GD_SALVAGE` (hooks.rs): once, put the first bag item in the slot and press the button.
     #[cfg(feature = "dev")]
     if let Some(k) = hooks.items.salvage.clone()
         && !*tested
@@ -502,11 +476,9 @@ pub fn salvage(
 }
 
 /// The convert tab (`convert_table.dbr`, rules in `gd_sim::items::convert`,
-/// GrimDawn.exe `UIEnchanterConvertTab::OnButton` button handler): the create button
-/// converts the slot item at once (no prompt; a `blacklistedSets` item gets
-/// the refusal notice instead). The new item goes to the bags; the slot
-/// keeps it when they are full. `GD_CONVERT` (hooks.rs): once the Inventor is open, puts the first bag
-/// set item into the slot and presses the button (money and reagents provided).
+/// `UIEnchanterConvertTab::OnButton`): the create button converts the slot item at once (no prompt; a
+/// `blacklistedSets` item gets the refusal notice instead). The new item goes to the bags; the slot
+/// keeps it when they are full.
 pub fn convert(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut trade: ResMut<gd_ui::state::trade::Trade>,
@@ -527,7 +499,6 @@ pub fn convert(
         *tested = true;
         trade.panel = gd_ui::state::trade::Panel::Convert;
         trade.random_set = k == "random";
-        // The money and reagents are provided with the item.
         stage.write(gd_game::crafting::StageItem {
             which: gd_game::crafting::Stage::Convertible {
                 random: trade.random_set,

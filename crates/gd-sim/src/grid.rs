@@ -1,18 +1,13 @@
-//! A uniform grid over horizontal points (x, z) for neighbour queries, built once per frame from a point list
-//! (PORT: stands in for the engine's proximity grid; it only narrows the candidates, the callers keep the engine's
-//! distance tests). The points are kept as (cell, index) sorted, so a cell's points form one run and so do a
-//! column's (one x, the z ascending): a query does one binary search per column it covers.
+//! A uniform grid over horizontal points (x, z) for neighbour queries (PORT: stands in for the engine's proximity
+//! grid; it only narrows the candidates, the callers keep the engine's distance tests).
 //!
-//! [`Grid::near`] lists, by ascending index (the order the points were given in), every point whose cell meets the
-//! square of half side |range| around a position. That is a superset of the points with |dx| ≤ |range| and
-//! |dz| ≤ |range|, exactly in float arithmetic (rounding is monotone, so `(x − range) / cell` never lands past
-//! a point within range), hence of any test `d² < range²` / `d ≤ range` over computed differences: filtering the
-//! candidates with the caller's own test gives the brute-force result, in the brute-force order.
+//! [`Grid::near`] lists, by ascending index, every point whose cell meets the square of half side |range| around a
+//! position: a superset (exact in float arithmetic, rounding is monotone) of the points any `d² < range²` /
+//! `d ≤ range` test accepts, so filtering with the caller's own test gives the brute-force result and order.
 
 /// A horizontal point (x, z).
 pub type V2 = [f32; 2];
 
-/// The grid (module docs).
 #[derive(Clone, Debug, Default)]
 pub struct Grid {
     cell: f32,
@@ -31,8 +26,7 @@ impl Grid {
         g
     }
 
-    /// Replaces the points ([`Self::new`]'s build for the same input), reusing the cell list's allocation:
-    /// a per-frame reader keeps its grid and rebuilds it in place.
+    /// [`Self::new`] over the same input, in place.
     pub fn rebuild(&mut self, cell: f32, points: impl IntoIterator<Item = V2>) {
         debug_assert!(cell > 0.0, "grid cell {cell}");
         self.cell = cell;
@@ -55,14 +49,14 @@ impl Grid {
         (Self::col(cell, p[0]), Self::col(cell, p[1]))
     }
 
-    /// Fills `out` with the candidate neighbours of `pos` within `range` (module docs), by ascending index.
+    /// Fills `out` with the candidate neighbours of `pos` within `range`, by ascending index.
     pub fn near(&self, pos: V2, range: f32, out: &mut Vec<usize>) {
         out.clear();
         let (Some(first), Some(last)) = (self.cells.first(), self.cells.last()) else {
             return;
         };
         let range = range.abs();
-        // Only the columns that hold points: a huge range does not walk empty ones.
+        // Clamped to the columns that hold points.
         let x0 = Self::col(self.cell, pos[0] - range).max(first.0.0);
         let x1 = Self::col(self.cell, pos[0] + range).min(last.0.0);
         let (z0, z1) = (

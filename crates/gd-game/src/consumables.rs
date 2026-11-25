@@ -1,77 +1,40 @@
-//! Using consumables from the bags (right click, `inventory.rs` queues them
-//! in `Inventory::used`).
+//! Using consumables from the bags (right click queues them in `Inventory::used`).
 //!
-//! Game.dll `…::Use`: `OneShot_Scroll` (elixirs, oils, potions)
-//! activates its `skillName` on the user (`Character::ActivateSkill` at its
-//! coords, after `SkillManager::AddToScrollSkillList`).
+//! `OneShot_Scroll` (elixirs, oils, potions): `Use` activates its `skillName` on the user
+//! (`Character::ActivateSkill` at its coords). `UseItem` → `UsePotionOfType`: refused and kept while the cooldown
+//! of its scroll `type` (Elixir / Oil / Tincture, shared per type, `GetCurrentScrollCooldown`) or, untyped, of the
+//! record runs; using one starts it at `useDelayTime`. `AddToScrollSkillList` stops the previous scroll skill of the
+//! same type (`Skill_BuffSelfToggled::StopSkill`). Item skill records are single-valued: cast level index 0.
 //!
-//! `ItemDevotionReset` (Tonic of Clarity):
-//! `CreateSecondaryCursorHandler` (requirements met, [`use_gated`]) -> `CursorHandlerDevotionReset`;
-//! `AllowUse` = some devotion points spent (`GetDevotionPoints < GetTotalDevotionPoints`).
-//! `SecondaryInitialize`: allowed -> the yes / no dialog `tagDevotionResetConfirmation`
-//! ([`Inventory::use_ask`] up, answered with [`UseAnswer`]; `Update`: yes ->
-//! `UseItem`, no -> cancelled, kept); not allowed -> `UseItem`, refused by `AllowUse`: the "cannot" sound
-//! (`GameEngine.genericErrorSound`, `PlayErrorSound`'s), kept, no dialog ([`ask_use`]).
-//! `Use` -> `DevotionWindow_ResetAll` (exe): every star removed (powers and bindings
-//! cleared), unspent = total (shrines stay); skipped entirely while the devotion pane is in its reclaim mode
-//! (`DevotionWindow.reclaimMode`, [`crate::reclamation::SkillReclamation::devotion_mode`]), the tonic still used
-//! up; then `useSound`.
-//! Game.dll `PlayerInventoryCtrl::UseItem` → `UsePotionOfType`
-//! (`OneShot_Scroll` derives from `OneShot_Potion`): a scroll is refused
-//! (and kept) while its cooldown runs: the cooldown of its scroll `type`
-//! (Elixir / Oil / Tincture, shared by every scroll of that type,
-//! `GetCurrentScrollCooldown`) or, untyped, of the item record itself; using
-//! one starts it at the item's `useDelayTime`. `AddToScrollSkillList` stops
-//! the skill of the previous scroll of the same type
-//! (`Skill_BuffSelfToggled::StopSkill`). Every item skill record
-//! (`skillName` of all 64 scroll / usable skill items, and their buff
-//! records) has single-valued fields, so the cast level is moot (level
-//! index 0). `ItemUsableSkill` (binding stones, pet and mini pet summons,
-//! `pets.rs` module docs; a class
-//! without symbols in Game.dll, loader `ItemUsableSkill_Load`): `Use` activates its `skillName` like a
-//! scroll, with no item cooldown (it is not an `OneShot_Potion`) and no
-//! cooldown test in the activation (`Skill_SpawnPet::ActivateNow`); its
-//! `AllowUse` always allows and `Character::UseInventoryItem`
-//! takes one of the stack, so the item is used up unless it is a single
-//! `infiniteUse` item. `ItemUsableSkill_Use`: it plays `useSound` at the user's coords, then
-//! `Character::ActivateSkill(skill, "End", user, user coords)`: target the user, at its own position (no
-//! cursor target, no confirmation). PORT: the game looks the skill up in the user's skill manager
-//! (`FindSkillId`, none -> nothing; where the item's skill is added there is not traced); the port casts the
-//! record. `OneShot_Sack` is not used from the bags: the game adds
-//! the bag when the item enters the inventory (`Inventory::add_to_bags`).
-//! `OneShot_SkillUnlock` unlocks potion containers / modifiers
-//! (`gd_sim::potions` rules), applied to every character on load.
-//! PORT: kept account-wide in `potionunlocks.txt` of the shared folder (`Choice::shared_save_dir`) (one item
-//! record per line), the port's own file; a hardcore character's is `potionunlocks_hardcore.txt` (the engine's
-//! `potions.gsh`, `gd_formats::save::Shared::Potions`); the game keeps them in the shared
-//! save `potions.gst` (`GameEngine::GetSharedSavePath` type 6,
-//! `Load/SavePotionUnlocks`, an encrypted `CheckedReader` stream; no real
-//! file to test against). Choosing containers / modifiers: the potions
-//! window (`cauldron`), hook `GD_POTION_SELECT` (applied
-//! on load, `gd_sim::potions::select`).
-//! `OneShot_Food` (the three Potions of Constitution): a one-shot, so like a sack it never stays in the
-//! bags: `Inventory::add_to_bags` uses it at once (`PlayerInventoryCtrl::OneShotFilter`, notes
-//! `shattered_realm2`), picked up within 1 m (`gd_sim::items::loot::auto_pickup_radius`). Its life / mana fields are the
-//! `OneShot_Potion` ones (tooltip `OneShot_Potion::GetUIDisplayText`): `Character::TakeBonus` like the charge
-//! potion's own fields (`casting::take_bonus`: `bonusLifePercent`, `bonusLifePercentSlow` into the restore pool,
-//! `bonusManaPercent`); `bonusConstitutionPercent` / `bonusConstitutionPoints` fill
-//! [`crate::constitution::Constitution`] (`CharacterBio::TakeBonus`). The other `OneShot_Potion`
-//! bonus fields (experience, gold, attribute / skill points) are 0 in every stock food and not applied.
-//! `ItemAttributeReset` (Tonic of Reshaping): `CreateSecondaryCursorHandler` (requirements
-//! met) -> `CursorHandlerAttributeReset`, the same shape as the devotion one (`SecondaryInitialize`:
-//! allowed -> `tagAttributeResetConfirmation`, dialog 27; `Update`: yes -> `UseItem`); `AllowUse`
-//! = `IsExpansion1Loaded` and `HasModifierPointsInUse` (some attribute point spent; the port always
-//! has the expansion); `Use`: the refund (`points` module doc), then `useSound`. PORT: `Use` also calls
-//! a `GameEngine.attributeResetListener` object's `AttributeResetListener::OnReset` (not traced, taken as a UI
-//! refresh; the port's UI reads the state).
-//! `ItemFactionBooster` / `ItemFactionWarrant` (writs / bounties): `CreateSecondaryCursorHandler`
-//! (requirements met) -> `CursorHandlerFactionBooster` (both classes; the bounty derives from the
-//! writ): `SecondaryInitialize` asks `tagFactionWarrantConfirmation` (a bounty allowed while the
-//! faction has a positive boost) or `tagFactionMandateConfirmation` (allowed while it has a negative boost), dialog
-//! 24, else `UseItem` at once; `AllowUse` (both classes') and `Use`: `factions` module doc.
-//! Item classes `ItemUpgrade` / `MasteryReset` / `SkillReset` / `Respec` / `InventorBlueprint` are not in stock
-//! data.
-//! Hook `GD_USE_ITEM` (hooks.rs).
+//! `ItemUsableSkill` (binding stones, pet summons): `Use` plays `useSound` and activates its `skillName` on the
+//! user like a scroll, with no item cooldown and no cooldown test; it is used up unless a single `infiniteUse`
+//! item. PORT: the game looks the skill up in the user's skill manager (`FindSkillId`, not traced); the port casts
+//! the record.
+//!
+//! `OneShot_Sack` / `OneShot_Food` never stay in the bags: `Inventory::add_to_bags` uses them at once; food is
+//! picked up within 1 m. Food's life / mana fields are `Character::TakeBonus` like the charge potion's own
+//! (`casting::take_bonus`); `bonusConstitution*` fill [`crate::constitution::Constitution`]; its other bonus fields
+//! are 0 in stock data and not applied.
+//!
+//! `OneShot_SkillUnlock` unlocks potion containers / modifiers (`gd_sim::potions`), applied to every character on
+//! load. PORT: kept account-wide in the shared folder's `potionunlocks.txt` (`potionunlocks_hardcore.txt`), the
+//! port's own file; the game uses its encrypted shared save `potions.gst` / `potions.gsh`.
+//!
+//! `ItemDevotionReset` (Tonic of Clarity) → `CursorHandlerDevotionReset`: `AllowUse` = some devotion points spent.
+//! Allowed: the `tagDevotionResetConfirmation` question ([`Inventory::use_ask`], answered with [`UseAnswer`]);
+//! refused: the "cannot" sound (`GameEngine.genericErrorSound`), kept, no question ([`ask_use`]). `Use` →
+//! `DevotionWindow_ResetAll`: every star removed, unspent = total (shrines stay); skipped while the devotion pane is
+//! in its reclaim mode, the tonic still used up; then `useSound`.
+//!
+//! `ItemAttributeReset` (Tonic of Reshaping) → `CursorHandlerAttributeReset`, the same shape
+//! (`tagAttributeResetConfirmation`); `AllowUse` = some attribute point spent; `Use`: the refund, then `useSound`.
+//! PORT: `AttributeResetListener::OnReset` is not traced (taken as a UI refresh).
+//!
+//! `ItemFactionBooster` / `ItemFactionWarrant` (writs / bounties) → `CursorHandlerFactionBooster`: asks
+//! `tagFactionWarrantConfirmation` (a bounty while the faction has a positive boost) or
+//! `tagFactionMandateConfirmation` (any while it has a negative boost), else `UseItem` at once.
+//!
+//! `ItemUpgrade` / `MasteryReset` / `SkillReset` / `Respec` / `InventorBlueprint` are not in stock data.
 use crate::constitution::Constitution;
 use bevy::prelude::*;
 use gd_game_core::casting::{Caster, Casting, Kind, ProcCast};
@@ -117,8 +80,7 @@ pub struct DifficultyUnlockUsed {
     pub quests: Vec<String>,
 }
 
-/// The classes whose secondary cursor handler may ask first: `CursorHandlerDevotionReset`,
-/// `CursorHandlerAttributeReset`, `CursorHandlerFactionBooster` (the writ's and the bounty's, module doc).
+/// The classes whose secondary cursor handler may ask first.
 pub fn asks(class: &str) -> bool {
     matches!(
         class,
@@ -126,11 +88,9 @@ pub fn asks(class: &str) -> bool {
     )
 }
 
-/// The devotion reset question's text tag.
 pub const DEVOTION_RESET_TAG: &str = "tagDevotionResetConfirmation";
-/// The attribute reset question's text tag (`CursorHandlerAttributeReset::SecondaryInitialize`).
 pub const ATTRIBUTE_RESET_TAG: &str = "tagAttributeResetConfirmation";
-/// A bounty replacing a writ (`CursorHandlerFactionBooster::SecondaryInitialize`).
+/// A bounty replacing a writ.
 pub const FACTION_WARRANT_TAG: &str = "tagFactionWarrantConfirmation";
 /// A writ / bounty while the faction has a negative boost.
 pub const FACTION_MANDATE_TAG: &str = "tagFactionMandateConfirmation";
@@ -144,7 +104,7 @@ pub fn use_question(inv: &Inventory) -> Option<&'static str> {
 #[derive(Message, Clone, Copy, Debug)]
 pub struct UseAnswer(pub bool);
 
-/// The item's `AllowUse` (module doc).
+/// The item's `AllowUse`.
 fn allow_use(
     data: &GameData,
     a: &UseAsk,
@@ -167,9 +127,8 @@ fn booster(data: &GameData, record: &str) -> Option<gd_rules::faction::Booster> 
         .and_then(gd_rules::faction::Booster::from_record)
 }
 
-/// The secondary cursor handlers that ask first (module doc): `SecondaryInitialize` decides between the
-/// question and `UseItem` at once; a yes `UseItem`s one from its cell. `UseItem` tests `AllowUse`: refused ->
-/// the "cannot" sound, kept.
+/// The secondary cursor handlers that ask first: `SecondaryInitialize` decides between the question and `UseItem`
+/// at once; `UseItem` tests `AllowUse` (refused: the "cannot" sound, kept).
 fn ask_use(
     data: Res<GameData>,
     mut inv: ResMut<Inventory>,
@@ -187,7 +146,7 @@ fn ask_use(
     );
     let allowed = |a: &UseAsk| allow_use(&data, a, devotion, factions, loadout);
     let mut decided = Vec::new();
-    // Read first: the inventory is written (and marked changed) only when the pending use moves on.
+    // Read first: the inventory is marked changed only when the pending use moves on.
     let pending = inv
         .use_ask
         .as_ref()
@@ -197,9 +156,7 @@ fn ask_use(
             let question = match a.class.as_str() {
                 "ItemDevotionReset" => ok.then_some(DEVOTION_RESET_TAG),
                 "ItemAttributeReset" => ok.then_some(ATTRIBUTE_RESET_TAG),
-                // `CursorHandlerFactionBooster::SecondaryInitialize`: a bounty allowed while the
-                // faction is positive boosted asks `tagFactionWarrantConfirmation`; else any allowed while it is
-                // negative boosted asks `tagFactionMandateConfirmation`; else `UseItem` at once.
+                // `CursorHandlerFactionBooster::SecondaryInitialize`.
                 _ => booster(&data, &a.record).and_then(|b| {
                     let f = factions?;
                     if b.negative && ok && f.boosted(b.faction, false) {
@@ -263,19 +220,14 @@ fn ask_use(
 /// The inventory bags a difficulty unlock item gives.
 const UNLOCK_BAG: &str = "records/items/misc/inventorybag.dbr";
 
-/// The campaign's difficulty unlock item, `ItemDifficultyUnlock::Use`:
-/// `GameEngine::CompleteDifficulty` (above the greatest difficulty, 3 reading 0: the cinematic text
-/// `tagDifficultyUnlocked` / `tagDifficultyLevelUnlocked` with `tagGameDifficultySetting0<d+1>`, type 7, and the
-/// greatest becomes it); the difficulties it skips ([`gd_story::story::Story::skip_difficulties`]) get every riftgate
-/// of the world's `Riftgates` instance groups ([`crate::riftgates::RiftgateGroup`], `Player::AddTeleportUID`) and
-/// the skill / attribute points of the `statQuests` tasks not done there (events 49 / 50); then five inventory bags
-/// (`GiveItemToCharacter`). The quests' own catch-up scaling (`Quest2Task::AdjustRewards`) runs when a task
-/// completes, in gd-sim, and leaves skipped difficulties out.
+/// The campaign's difficulty unlock item (`ItemDifficultyUnlock::Use` → `GameEngine::CompleteDifficulty`): above
+/// the greatest difficulty, the cinematic text and the greatest becomes it; the skipped difficulties
+/// ([`gd_story::story::Story::skip_difficulties`]) get every riftgate of the world's `Riftgates` groups and the
+/// skill / attribute points of the `statQuests` tasks not done there; then five inventory bags.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_difficulty_unlocks(
     mut used: MessageReader<DifficultyUnlockUsed>,
-    // Option: session state made after the start (`story::game_won`, the story, the travel state, the map's
-    // riftgates); each part of the unlock that needs one is skipped without it.
+    // Option: session state made after the start; each part of the unlock that needs one is skipped without it.
     mut unlock: Option<ResMut<gd_game_core::session::DifficultyUnlock>>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut travel: Option<ResMut<crate::riftgates::TravelState>>,
@@ -324,7 +276,7 @@ pub fn apply_difficulty_unlocks(
             effects.write(gd_game_core::story::StoryEffect(Effect::GiveSkillPoints(
                 skill,
             )));
-            // Event 49 (the effect itself sends none: `progress` module doc); event 50 comes with the attribute effect.
+            // Event 49 (the effect sends none); event 50 comes with the attribute effect.
             gained.write(gd_game_core::progress::PointsGained {
                 skill: true,
                 ..default()
@@ -361,9 +313,8 @@ pub fn is_usable(class: &str) -> bool {
         || class == "OneShot_Dye"
 }
 
-/// `OneShot_Potion` and its subclasses (classInfo parents; `OneShot_Scroll` is one too, with its own `Use`):
-/// `PlayerInventoryCtrl::UseItem` sends them through `UsePotionOfType` (the cooldown).
-/// `OneShot_Dye` derives from `OneShot`, not from them.
+/// `OneShot_Potion` and its subclasses (`OneShot_Scroll` too, with its own `Use`): `UseItem` sends them through
+/// `UsePotionOfType` (the cooldown). `OneShot_Dye` is not one.
 pub fn is_potion(class: &str) -> bool {
     matches!(
         class,
@@ -385,15 +336,8 @@ pub fn is_formula(class: &str) -> bool {
     )
 }
 
-/// Whether a right click's `CursorHandlerItemUse` (`PlayerInventoryCtrl::UseItem(id, 1)` at once) is behind
-/// the item's requirements. Game.dll `CreateSecondaryCursorHandler` (an `Item` virtual):
-/// `OneShot_Potion::…` (also `OneShot_PotionHealth` / `_PotionMana` / `OneShot_Dye`) always
-/// makes it; `OneShot_SkillUnlock::…` (folded: `OneShot_Scroll`, the formulas, `ItemNote`,
-/// `ItemDifficultyUnlock`, `ItemTransmuterSet`) only when `AreRequirementsMet` passes,
-/// else none (the click then goes to `SmartAutoInsert`, which refuses them: nothing happens).
-/// `ItemUsableSkill` shares the folded `OneShot_SkillUnlock` handler;
-/// `ItemDevotionReset::CreateSecondaryCursorHandler` makes its
-/// `CursorHandlerDevotionReset` only when `AreRequirementsMet` passes.
+/// Whether a right-click use is behind the item's requirements (`CreateSecondaryCursorHandler`: refused unless
+/// `AreRequirementsMet`, the click then does nothing). Potions and dyes are not.
 pub fn use_gated(class: &str) -> bool {
     is_formula(class)
         || matches!(
@@ -411,17 +355,14 @@ pub fn use_gated(class: &str) -> bool {
         )
 }
 
-/// Whether using it (one of a stack of `stack`) takes it from the bags: all
-/// but a single `infiniteUse` item (see the module docs).
+/// Whether using it (one of a stack of `stack`) takes it from the bags: all but a single `infiniteUse` item.
 pub fn consumed(rec: &gd_formats::arz::Record, stack: u32) -> bool {
     // A note is taken by `lore::read_notes` only when it is new.
     rec.class != "ItemNote"
         && !(rec.class == "ItemUsableSkill" && rec.bool("infiniteUse") && stack <= 1)
 }
 
-/// The scroll cooldown key of an `OneShot_Scroll` (`OneShot_Scroll::GetCooldownKey`: the
-/// three scroll types share one cooldown each; untyped scrolls have their
-/// own, by record).
+/// `OneShot_Scroll::GetCooldownKey`: the three scroll types share one cooldown each; untyped scrolls have their own.
 pub(crate) fn scroll_key(rec: &gd_formats::arz::Record, item: &str) -> String {
     match rec.str("type") {
         Some(t @ ("Elixir" | "Oil" | "Tincture")) => format!("scrolltype:{t}"),
@@ -429,8 +370,7 @@ pub(crate) fn scroll_key(rec: &gd_formats::arz::Record, item: &str) -> String {
     }
 }
 
-/// In the session's shared folder (`Choice::shared_save_dir`, as the engine's `potions.gst`); a hardcore
-/// character's is `potionunlocks_hardcore.txt` (the engine's `potions.gsh`, `gd_formats::save::Shared::Potions`).
+/// In the session's shared folder; hardcore: `potionunlocks_hardcore.txt`.
 fn unlocks_file(
     choice: &gd_game_core::session::Choice,
     dir: &gd_game_core::session::SaveDir,
@@ -470,7 +410,7 @@ pub fn apply_account_unlocks(
     }
 }
 
-/// The `GD_POTION_SELECT` choices (hooks.rs), made right after [`apply_account_unlocks`].
+/// The `GD_POTION_SELECT` choices, made right after [`apply_account_unlocks`].
 #[cfg(feature = "dev")]
 pub fn potion_select_hook(
     db: &gd_formats::vfs::Database,
@@ -514,7 +454,7 @@ fn test_use(
     time: Res<Time>,
     mut inv: ResMut<Inventory>,
     players: Query<(), With<Player>>,
-    // `GD_USE_ITEM`: seconds to the uses (negative: done), per session.
+    // Seconds to the uses (negative: done), per session.
     mut done: Local<Option<f32>>,
     mut fresh: gd_game_core::session::NewSession,
 ) {
@@ -633,7 +573,7 @@ pub(crate) fn use_items(
                 let scroll = rec.class == "OneShot_Scroll";
                 let key = scroll_key(rec, &item.base_name);
                 if scroll && caster.cooldowns.contains_key(&key) {
-                    // Refused: back to its source cell (`inventory.rs` took one).
+                    // Refused: back to its source cell.
                     info!(
                         "{} is cooling down",
                         item.base_name.rsplit('/').next().unwrap_or("")
@@ -647,10 +587,8 @@ pub(crate) fn use_items(
                     give_back(&mut commands, &mut inv, &data, at, item, from);
                     continue;
                 }
-                // The skill object is cast: a buff wrapper's profile (its
-                // `buffSkillName` record) is resolved where it fires
-                // (`casting::fire_casts`, `gd_sim::skills::profile_name`), so
-                // a radius buff keeps its aura passes.
+                // The skill object is cast; a buff wrapper's profile is resolved where it fires, so a radius buff
+                // keeps its aura passes.
                 let cast = skill;
                 if scroll {
                     let cd = rec.f32("useDelayTime").unwrap_or(0.0);
@@ -675,9 +613,8 @@ pub(crate) fn use_items(
                     item.base_name.rsplit('/').next().unwrap_or(""),
                     cast.rsplit('/').next().unwrap_or("")
                 );
-                // `OneShot_Scroll` / `ItemUsableSkill_Use`: the skill on the user at its own position
-                // (`Character::ActivateSkill` at its coords; the port's self casts take the caster as their
-                // target: `target` stays None). `ItemUsableSkill` plays its `useSound` at the user.
+                // `OneShot_Scroll` / `ItemUsableSkill_Use`: the skill on the user at its own position;
+                // `ItemUsableSkill` plays its `useSound`.
                 if !scroll && let Some(pak) = rec.str("useSound").filter(|p| !p.is_empty()) {
                     sound.write(gd_game_core::visuals::PlaySound {
                         pak: pak.to_owned(),
@@ -698,11 +635,9 @@ pub(crate) fn use_items(
                     },
                 });
             }
-            // Read by `lore::read_notes` (it takes the note when new).
             "ItemNote" => {
                 notes.write(crate::lore::UseNote(item.base_name.clone()));
             }
-            // Unlocked by `illusion::use_sets` (`ItemTransmuterSet::Use`).
             "ItemTransmuterSet" => {
                 sets.write(crate::illusion::UseTransmuteSet(item.base_name.clone()));
             }
@@ -724,13 +659,9 @@ pub(crate) fn use_items(
                 };
                 info!("{tag}: {}", item.base_name.rsplit('/').next().unwrap_or(""));
             }
-            // `ItemDifficultyUnlock::AllowUse` / `Use` (`gameMode` Survival, the
-            // Merit items): in the Crucible the Merit items are usable when their difficulty
-            // is above the character's greatest survival difficulty; using one stores it
-            // (`CompleteSurvivalDifficulty(GameDifficulty)`). The campaign's (`gameMode` Campaign,
-            // `difficultyunlock_*`): outside the Crucible (game mode 0 or 2), with Forgotten Gods loaded (the items are
-            // its records), when its difficulty is above the greatest campaign difficulty ([`apply_difficulty_unlocks`]).
-            // An item refused stays.
+            // `ItemDifficultyUnlock::AllowUse` / `Use`: a Survival (Merit) item in the Crucible when its difficulty is
+            // above the greatest survival difficulty (`CompleteSurvivalDifficulty`); a Campaign item outside the
+            // Crucible when above the greatest campaign difficulty. A refused item stays.
             "ItemDifficultyUnlock" => {
                 let unlocked = match rec.str("difficultyUnlocked") {
                     Some("Elite") => 1,
@@ -767,9 +698,8 @@ pub(crate) fn use_items(
                     continue;
                 }
             }
-            // `UseItem` → `UsePotionOfType` (the record's cooldown, refused and kept while it
-            // runs; started at `useDelayTime`), then `OneShot_Potion::Use`: `OneShot::Use`
-            // (use sound, play stats) and `Character::TakeBonus` of its bonus fields.
+            // `UseItem` → `UsePotionOfType` (the record's cooldown), then `OneShot_Potion::Use`:
+            // `Character::TakeBonus` of its bonus fields.
             c if is_potion(c) => {
                 let key = scroll_key(rec, &item.base_name);
                 if caster.cooldowns.contains_key(&key) {
@@ -806,9 +736,8 @@ pub(crate) fn use_items(
                 info!("drank {}", item.base_name.rsplit('/').next().unwrap_or(""));
                 stats.write(crate::play_stats::PlayStat::PotionUsed(c.to_owned()));
             }
-            // `OneShot_Dye::Use` (a `OneShot`, no potion cooldown): `OneShot::Use`, then the
-            // player's base texture becomes `maleTexture` / `femaleTexture` (`OneShot_Dye::Load`) by gender.
-            // PORT: the texture is not swapped (no stock dye record); the dye is used up.
+            // `OneShot_Dye::Use`: the player's base texture becomes `maleTexture` / `femaleTexture`. PORT: not
+            // swapped (no stock dye record); the dye is used up.
             "OneShot_Dye" => {
                 info!(
                     "dyed with {}",
@@ -853,7 +782,7 @@ pub(crate) fn use_items(
                     give_back(&mut commands, &mut inv, &data, at, item, from);
                     continue;
                 };
-                // `Use` re-tests some-spent (reached here only by the `GD_USE_ITEM` hook, which skips `AllowUse`).
+                // `Use` re-tests some-spent.
                 if d.points >= d.total {
                     info!("no devotion points to reset");
                     give_back(&mut commands, &mut inv, &data, at, item, from);
@@ -873,9 +802,7 @@ pub(crate) fn use_items(
                     });
                 }
             }
-            // `ItemAttributeReset::Use` (`HasModifierPointsInUse` re-tested; reached refused
-            // only by the `GD_USE_ITEM` hook, which skips `AllowUse`): the refund (`points::ResetAttributes`),
-            // then `useSound`.
+            // `ItemAttributeReset::Use` re-tests `HasModifierPointsInUse`.
             "ItemAttributeReset" => {
                 if !crate::points::attributes_spent(&loadout) {
                     info!("no attribute points to reset");
@@ -890,7 +817,6 @@ pub(crate) fn use_items(
                     });
                 }
             }
-            // The boost itself: `factions::use_boosters` (`ItemFactionBooster::Use` / `ItemFactionWarrant::Use`).
             "ItemFactionBooster" | "ItemFactionWarrant" => {
                 let ok = gd_rules::faction::Booster::from_record(rec)
                     .zip(factions.as_deref())
@@ -921,9 +847,8 @@ fn give_back(
     }
 }
 
-/// `DevotionWindow_ResetAll` (module doc): every star skill removed, powers and bindings cleared, the spent
-/// points back. The window's pending undo steps go too (undoing a step taken before the reset would refund
-/// points past the total).
+/// `DevotionWindow_ResetAll`: every star skill removed, powers and bindings cleared, the spent points back. The
+/// pending undo steps go too (undoing an earlier step would refund past the total).
 fn reset_devotion(
     d: &mut crate::devotion::DevotionState,
     loadout: &mut Loadout,

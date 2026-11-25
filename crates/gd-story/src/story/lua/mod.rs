@@ -1,62 +1,42 @@
 //! Lua 5.1 host for the game's scripts (`Scripts.arc`: `scripts/main.lua` →
 //! `libs/`, `game/`). Per binding:
 //!
-//! * Registration: `Grim Dawn.exe` `LuaGlue::RegisterAll` calls one LuaGlue
-//!   `BindClass` function per class (Vec `LuaVec::BindClass`, Coords, WorldCoords,
-//!   Object `LuaObject::BindClass`, Entity `LuaEntity::BindClass`, Actor
-//!   `LuaActor::BindClass`, Character `LuaCharacter::BindClass`, Player
-//!   `LuaPlayer::BindClass`, Proxy `LuaProxy::BindClass`, Door `LuaDoor::BindClass`,
-//!   Lever `LuaLever::BindClass`, Destructible `LuaDestructible::BindClass`, Chest
-//!   `LuaChest::BindClass`, Riftgate `LuaRiftgate::BindClass`, Shrine
-//!   `LuaShrine::BindClass`, Npc `LuaNpc::BindClass`, Item `LuaItem::BindClass`,
-//!   AreaTrigger `LuaAreaTrigger::BindClass`) and the static tables (Time
-//!   `LuaTime::BindClass`, UI `LuaUi::BindClass`, Shared `LuaShared::BindClass`, Game +
-//!   `Script.Event` `LuaGame::BindClass`, MpScript `LuaMpScript::BindClass`).
+//! * Registration: `LuaGlue::RegisterAll` calls one `Lua<Class>::BindClass` per class
+//!   (Vec, Coords, WorldCoords, Object, Entity, Actor, Character, Player, Proxy, Door,
+//!   Lever, Destructible, Chest, Riftgate, Shrine, Npc, Item, AreaTrigger) and static
+//!   table (Time, UI, Shared, Game + `Script.Event`, MpScript).
 //!   `Script.Load/RegisterForUpdate/UnregisterForUpdate` are bound in Engine.dll
-//!   `LuaScript::BindClass`; the exe also binds `Debug.AddStatisticText` (see below).
+//!   `LuaScript::BindClass`; the exe also binds `Debug.AddStatisticText`.
 //! * Each class table is the metatable of its objects (`__index` = itself,
 //!   `__base` = parent class), so methods are also reachable as
 //!   `Character.IsAlive(obj)` / `Player.HasMastery(player, id)`, which the
 //!   stock scripts use; the port forwards such calls to the object method.
-//! * Argument shapes: each binding's overload matcher (`LuaGlueFunction::MatchArgs`, a virtual of the
-//!   LuaGlue function object, e.g. `LuaPlayer::MatchHasItemArgs` for `HasItem`) requires the
-//!   exact argument count and Lua types (`lua_gettop == n`, `isstring`,
-//!   `isnumber`, `type == LUA_TBOOLEAN`, userdata of the class); a call that
-//!   matches no overload is a Lua error, so the engine has no defaulted
-//!   arguments. The port accepts the same shapes and is lenient beyond them
-//!   (missing counts default to 1); stock scripts always pass full lists.
+//! * Argument shapes: each binding's overload matcher (`LuaGlueFunction::MatchArgs`, e.g.
+//!   `LuaPlayer::MatchHasItemArgs`) requires the exact argument count and Lua types; a call
+//!   that matches no overload is a Lua error. PORT: the port accepts the same shapes and is
+//!   lenient beyond them (missing counts default to 1).
 //! * Objects are `{0, objectId}` userdata; `Class.Get(id)` returns nil unless
 //!   the object exists and derives from that class (classInfo walk).
 //!
-//! The comment on each binding names the exe thunk and
-//! the Game.dll function it forwards to. The whole engine binding surface is
-//! implemented. `Debug.AddStatisticText` writes to the engine's statistics display,
-//! which the port lacks: a no-op. Engine
-//! quirks are preserved, not "fixed": `Character.Turn` is a no-op (the glue
-//! passes ms=0 to `Character::RotateTowards`);
-//! `Player.GetPlayerName` returns ""; `Character.PlaySound`'s
-//! chance roll matches (`Character::PlayAnimationSound`);
-//! `Object.Cache/Release` (refcounted preloads) and `Entity.NetworkEnable`
-//! (multiplayer replication) are faithful headless no-ops. `Character.Say`
-//! and `Game.ScreenShake` are presentational effects (speech bubble / camera
-//! shake), headless no-ops. `Entity.GetAttachedCoords` reads host-published
-//! attach points (`Entities::attach_coords`) and falls back to the entity
-//! coords when none is published.
+//! The comment on each binding names the exe thunk and the Game.dll function it forwards
+//! to. `Debug.AddStatisticText` is a no-op (no statistics display). Engine quirks are
+//! preserved: `Character.Turn` is a no-op (the glue passes ms=0 to
+//! `Character::RotateTowards`); `Player.GetPlayerName` returns ""; `Character.PlaySound`'s
+//! chance roll matches (`Character::PlayAnimationSound`). `Object.Cache/Release`,
+//! `Entity.NetworkEnable`, `Character.Say` and `Game.ScreenShake` are headless no-ops.
+//! `Entity.GetAttachedCoords` reads host-published attach points
+//! (`Entities::attach_coords`), else the entity coords.
 //!
 //! PORT: the VM is sandboxed (`ScriptHost::new`): no `os` / `io` / `package`
-//! and no `dofile` / `loadfile` / `require` (no stock script uses them), a
-//! memory limit, and an instruction budget per top-level call, script load
-//! or frame (`update` / `run_queued`); the engine has neither limit.
+//! and no `dofile` / `loadfile` / `require`, a memory limit, and an instruction
+//! budget per top-level call, script load or frame (`update` / `run_queued`).
 //!
-//! Objects are userdata wrapping an object id; class tables (`Entity`,
-//! `Character`, `Player`, `Door`, ...) carry the static `Get`/`Create`. Coords
-//! are plain tables `{origin = Vec, xAxis, yAxis, zAxis}` and `Vec` is a small
+//! Coords are plain tables `{origin = Vec, xAxis, yAxis, zAxis}` and `Vec` is a small
 //! Lua class (the scripts' `libs/vector.lua` adds methods to it).
 //!
 //! PORT: an update registration keeps the `mlua::Function` resolved at registration
-//! (`Script.RegisterForUpdate`); the engine re-resolves the name from the globals every period.
-//! A script that reassigns the named global after registering keeps the old function (no stock
-//! script does).
+//! (`Script.RegisterForUpdate`); the engine re-resolves the name from the globals every period,
+//! so a script that reassigns the global after registering keeps the old function.
 //!
 //! Layout: `api` (the object methods the class tables forward), `obj` (object methods), `game` (global and
 //! class tables), `host` (the host's entry points: frame update, world objects, hooks, conversations).
@@ -78,13 +58,11 @@ use mlua::{
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// What the script host needs from the game data.
 pub trait ScriptEnv {
     /// Resource bytes (`scripts/...lua`), lower-case `/` path.
     fn read(&self, path: &str) -> Option<Vec<u8>>;
     /// A database record field (`Class`, `onAddToWorld`, `extentsX`, ...).
     fn record_field(&self, record: &str, field: &str) -> Option<String>;
-    /// Localised text of a tag.
     fn localize(&self, _tag: &str) -> Option<String> {
         None
     }
@@ -92,8 +70,7 @@ pub trait ScriptEnv {
     fn database(&self) -> Option<&gd_formats::vfs::Database> {
         None
     }
-    /// The bag footprint of a new item of `record` (its bitmap's size, as the inventory places it); None when
-    /// no item can be made of the record (`Player.IsSpaceAvailable`).
+    /// The bag footprint of a new item of `record`; None when no item can be made of the record.
     fn item_footprint(&self, _record: &str) -> Option<gd_formats::inventory::Footprint> {
         None
     }
@@ -109,44 +86,28 @@ struct Ctx {
     loaded: RefCell<HashSet<String>>,
     /// Remaining instruction-budget hook ticks of the open budget scope.
     budget: Cell<u32>,
-    /// How many budget scopes are open: Lua calls (bindings can call back
-    /// into Lua) and whole frame drains ([`ScriptHost::update`],
-    /// [`ScriptHost::run_queued`]).
+    /// How many budget scopes are open (bindings can call back into Lua).
     depth: Cell<u32>,
-    /// [`ScriptHost::update`]'s due registrations (a reused buffer): id, name, resolved function.
+    /// [`ScriptHost::update`]'s due registrations (reused): id, name, resolved function.
     due: RefCell<Vec<(u32, Rc<str>, Function)>>,
-    /// [`ScriptHost::update`]'s trigger hook calls (a reused buffer).
     calls: RefCell<Vec<TriggerCall>>,
 }
 
-/// PORT: the engine runs scripts with no instruction limit; a runaway script
-/// (a mod or a data error) must raise a Lua error instead of freezing the
-/// game. The outermost budget scope ([`Ctx::enter_scope`]: a top-level call,
-/// a script load, or a whole [`ScriptHost::update`] / [`ScriptHost::run_queued`]
-/// drain) gets [`INSTRUCTION_BUDGET`] instructions, shared by everything
-/// inside it. Stock usage (base game + expansions): running every
-/// script's top-level code takes ~50k instructions, a frame's updates and
-/// triggers a few hundred.
+/// PORT: the engine has no instruction limit. The outermost budget scope ([`Ctx::enter_scope`])
+/// gets this many instructions, shared by everything inside it.
 const INSTRUCTION_BUDGET: u32 = 10_000_000;
 /// How often the budget hook runs (instructions per tick).
 const HOOK_INTERVAL: u32 = 10_000;
-/// PORT: the engine's Lua state has no memory limit; a runaway script must
-/// get a Lua error instead of exhausting the process. The stock scripts use
-/// ~7 MB once `main.lua` has run, so this leaves ~9x headroom.
+/// PORT: the engine's Lua state has no memory limit.
 const MEMORY_LIMIT: usize = 64 << 20;
-/// PORT: `LuaManager::RegisterForUpdates` appends without a limit; the port
-/// refuses registrations past this many (the stock scripts register one or
-/// two functions per scripted object).
+/// PORT: `LuaManager::RegisterForUpdates` appends without a limit.
 const MAX_UPDATE_REGS: usize = 1024;
-/// PORT: the queue of Lua calls is a port construct (quest/conversation
-/// actions and the hooks of objects a script places run once the current
-/// step returns); one drain runs at most this many and drops the rest, so a
-/// feedback loop cannot grow the queue without bound.
+/// PORT: the queue of Lua calls is a port construct; one drain runs at most this many and drops
+/// the rest.
 const MAX_QUEUED_CALLS: usize = 4096;
 /// Rounds of one [`ScriptHost::run_queued`] drain (calls queue more calls).
 const QUEUE_ROUNDS: usize = 64;
 
-/// Keeps [`Ctx::depth`] balanced while a budget scope is open.
 struct ScopeGuard(Rc<Ctx>);
 
 impl Drop for ScopeGuard {
@@ -236,8 +197,7 @@ fn coords_value(lua: &Lua, c: &Coords) -> mlua::Result<Table> {
     Ok(t)
 }
 
-/// A binding's string argument: the Lua string borrowed when valid UTF-8 (no copy), else an
-/// owned conversion (a number, or lossy bytes).
+/// A binding's string argument: borrowed when valid UTF-8, else an owned conversion.
 enum ArgStr {
     Lua(mlua::BorrowedStr),
     Owned(String),
@@ -297,11 +257,9 @@ fn value_id(v: &Value) -> Option<u32> {
     }
 }
 
-/// Whether object `id` passes `<cls>.Get`/`IsType`'s classInfo check
-/// (e.g. Entity.Get `LuaEntity::Get`, Player.Get `LuaPlayer::Get`: nil
-/// unless the object exists and derives from the class). The port's record
-/// `Class` mapping is coarse, so objects it could not classify
-/// (`ObjClass::Entity`/`ScriptEntity`) pass every non-character check.
+/// Whether object `id` passes `<cls>.Get`/`IsType`'s classInfo check (`LuaEntity::Get`).
+/// Objects the port could not classify (`ObjClass::Entity`/`ScriptEntity`) pass every
+/// non-character check.
 fn has_class(s: &Story, cls: &str, id: u32) -> bool {
     if id == s.player.id {
         return matches!(cls, "Object" | "Entity" | "Actor" | "Character" | "Player");
@@ -377,8 +335,7 @@ impl Ctx {
                 class,
                 coords: c,
             });
-            // `World::AddEntity`'s `onAddToWorld` hook (see `Entity.SetCoords`),
-            // then `onInitialUpdate` (`ScriptHost::add_object`).
+            // `World::AddEntity`'s `onAddToWorld` hook, then `onInitialUpdate`.
             for hook in ["onAddToWorld", "onInitialUpdate"] {
                 if let Some(f) = self
                     .env
@@ -396,20 +353,13 @@ impl Ctx {
     }
 }
 
-/// The Lua VM with the game's scripts loaded.
 pub struct ScriptHost {
     pub lua: Lua,
     ctx: Rc<Ctx>,
 }
 
 impl ScriptHost {
-    /// Creates the VM, registers the API and runs `scripts/main.lua`.
-    ///
-    /// PORT: the VM is sandboxed. It has no `os`, `io` or `package` library
-    /// and no `dofile` / `loadfile` / `require` (no stock script of the base
-    /// game, the expansions or the survival mods uses any of them; `loadstring`
-    /// stays), a memory limit (`MEMORY_LIMIT`) and an instruction budget
-    /// (`INSTRUCTION_BUDGET`).
+    /// Creates the VM (sandboxed, module doc), registers the API and runs `scripts/main.lua`.
     pub fn new(story: Shared, env: Rc<dyn ScriptEnv>) -> mlua::Result<Self> {
         let lua = Lua::new_with(
             StdLib::ALL_SAFE & !(StdLib::OS | StdLib::IO | StdLib::PACKAGE),
@@ -428,14 +378,12 @@ impl ScriptHost {
         });
         let host = Self { lua, ctx };
         host.register()?;
-        // The instruction budget (PORT, see [`INSTRUCTION_BUDGET`]): the hook
-        // errors out of a call that runs too long, which `call` / `load` log.
+        // The hook errors out of a call that exceeds [`INSTRUCTION_BUDGET`].
         let c = host.ctx.clone();
         host.lua.set_global_hook(
             HookTriggers::new().every_nth_instruction(HOOK_INTERVAL),
             move |_, _| {
-                // Only an open scope ([`Ctx::enter_scope`]) carries a budget;
-                // a direct chunk outside one runs unbounded.
+                // A direct chunk outside a scope runs unbounded.
                 if c.depth.get() == 0 {
                     return Ok(VmState::Continue);
                 }
@@ -514,9 +462,8 @@ impl ScriptHost {
         )
     }
 
-    /// Runs Lua functions queued by quest/conversation actions, until the
-    /// queue settles: one budget scope (PORT, see `INSTRUCTION_BUDGET`), at
-    /// most `QUEUE_ROUNDS` rounds and `MAX_QUEUED_CALLS` calls.
+    /// Runs Lua functions queued by quest/conversation actions until the queue settles: one budget
+    /// scope, at most `QUEUE_ROUNDS` rounds and `MAX_QUEUED_CALLS` calls.
     pub fn run_queued(&self) {
         let _scope = self.ctx.enter_scope();
         let mut ran = 0;
@@ -525,7 +472,7 @@ impl ScriptHost {
             if calls.is_empty() {
                 return;
             }
-            // The quest events these calls may run read live Lua results (quest module doc PORT).
+            // The quest events these calls may run read live Lua results.
             self.eval_event_lua_conditions();
             for c in calls {
                 if ran == MAX_QUEUED_CALLS {
@@ -542,11 +489,9 @@ impl ScriptHost {
     }
 }
 
-/// `Script.Load` / `LuaManager::Load` (Engine.dll): the path is
-/// normalised (`\\` → `/`, lower case); a path already in the loaded list
-/// returns true without running again; a missing file logs and returns
-/// false (not listed); otherwise the path is listed before the chunk runs,
-/// so a script that fails is not retried either.
+/// `Script.Load` / `LuaManager::Load` (Engine.dll): the path is normalised (`\\` → `/`, lower
+/// case); a loaded path returns true without running again; a missing file logs and returns false
+/// (not listed); otherwise the path is listed before the chunk runs, so a failed script is not retried.
 fn load_script(lua: &Lua, ctx: &Rc<Ctx>, path: &str) -> bool {
     let norm = path.replace('\\', "/").to_ascii_lowercase();
     if ctx.loaded.borrow().contains(&norm) {
@@ -573,10 +518,7 @@ fn load_script(lua: &Lua, ctx: &Rc<Ctx>, path: &str) -> bool {
     }
 }
 
-/// PORT (see `MEMORY_LIMIT`): after a Lua memory error, collects in full.
-/// Lua 5.1 has no emergency collection, so the garbage the failed call left
-/// would otherwise fail the next allocations until the incremental collector
-/// caught up.
+/// After a Lua memory error, collects in full (Lua 5.1 has no emergency collection).
 fn after_memory_error(lua: &Lua, e: &mlua::Error) {
     fn is_memory_error(e: &mlua::Error) -> bool {
         match e {
@@ -588,7 +530,6 @@ fn after_memory_error(lua: &Lua, e: &mlua::Error) {
         }
     }
     if is_memory_error(e) {
-        // A failed collection leaves the VM as it was; the error is logged by the caller.
         let _collected = lua.gc_collect();
     }
 }

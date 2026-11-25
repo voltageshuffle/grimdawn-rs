@@ -1,47 +1,21 @@
 //! World geometry a projectile collides with.
 //!
-//! Game.dll: a projectile is a physics entity
-//! (`ProjectileBase::GetCollisionType` 2 / 3) and the physics engine reports
-//! its contact with level objects and terrain through
-//! `ProjectileFireballLike::CollisionCallback` (the collision is
-//! with the objects' physics meshes, Engine.dll `PhysicsMesh_Bullet`; terrain
-//! through `Terrain::GetIntersection`'s heightfield). Contact with anything
-//! but another projectile is a "miss": `ProjectileStop` (state 3), no
-//! damage; the next update runs `ProcessExplosion` only when the record's
-//! `explodeOnMiss` is set, then deletes it (`ProjectileFireballLike::
-//! UpdateSelf`).
+//! Game.dll: a projectile is a physics entity; contact with level objects (their physics
+//! meshes) or terrain (`Terrain::GetIntersection`) reaches
+//! `ProjectileFireballLike::CollisionCallback`. Contact with anything but another projectile
+//! is a "miss": `ProjectileStop` (state 3), no damage; the next update explodes only with
+//! `explodeOnMiss`, then deletes it.
 //!
-//! The physics mesh is the `.msh` chunk 2 blob (`gd_formats::msh::PhysicsMesh`, whose module docs give the layout).
+//! Which level objects get a body: `Actor::InitialUpdate` simulates static, in-world, part-of-
+//! level actors; only `Decoration` records with `!allowPathing` and an empty `description`
+//! qualify (`gd_world` picks them). `Actor::PhysicsSetup` mode 1 builds the body from the
+//! mesh's physics mesh (`.msh` chunk 2), else from every hit box not named `Visibility` /
+//! `Transparency` (so `BlockLOS` boxes are solid too), scaled by the entity scale.
+//! Destructibles, fixed items and doors only get nav obstacles.
 //!
-//! Which level objects get a body: `Actor::InitialUpdate` (Engine.dll)
-//! calls `Entity::SetPhysicsSimulation(1)` when `IsStatic()`,
-//! `IsInWorld()` and `GetIsPartOfLevel()`; Game.dll `Decoration::IsStatic` is
-//! `!allowPathing` and `Decoration::GetIsPartOfLevel` is "empty `description`".
-//! Props, destructibles, fixed items (doors, shrines, chests), NPCs and
-//! monsters keep the `false` defaults, so only such `Decoration` records are
-//! solid (`gd_world` picks them). `Actor::PhysicsSetup` mode 1
-//! builds the body from the mesh's physics mesh (`GraphicsMesh::
-//! GetPhysicsMesh`, chunk 2) when it has one, otherwise from every hit box
-//! whose name is not `Visibility` / `Transparency` (so `BlockLOS` boxes are
-//! solid too; `GraphicsMeshInstance::CheckLOS` only uses them for sight
-//! checks, never for projectiles), the box half sizes and origins scaled by
-//! the entity scale. The body's collision group is 1 and its mask 0x7C
-//! (includes the projectile group 64; `ProjectileBase` bodies use group 64,
-//! mask 1, plus 64 when `collidesWithProjectiles`).
-//!
-//! No body: intact `Destructible`s only get a nav obstacle
-//! (`SetBlocked` → `SetDynamicObstacle`); their `PhysicsSetup` runs for the
-//! dynamic debris once `BreakApart` sets simulation mode 2. `FixedItem*` /
-//! `FixedDoor` / `DynamicDoor` only create nav obstacles from their hit boxes
-//! (`CreatePathObstacle(s)`), and `TerrainDecoration` only gets a body through
-//! `Decoration::IsStatic` with its generated geometry (the port has none).
-//! No Game.dll projectile code queries anything but the physics world.
-//!
-//! PORT: the game's physics world is a rigid-body simulation (Bullet); here a
-//! projectile's swept segment is tested against those triangles / boxes and
-//! the terrain heightfield. Closed doors' hit boxes also stop projectiles
-//! because that is what the game was observed to do; the decompile shows no
-//! physics body behind it (mechanism not found).
+//! PORT: the game's physics world is Bullet; here a projectile's swept segment is tested against
+//! those triangles / boxes and the terrain heightfield. Closed doors' hit boxes also stop
+//! projectiles, though Game.dll shows no physics body behind it.
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
@@ -57,7 +31,6 @@ enum Shape {
         mesh: Arc<PhysicsMesh>,
         inv: Affine3A,
     },
-    /// World-space hit boxes.
     Boxes(Vec<Obstacle>),
 }
 
@@ -68,14 +41,14 @@ struct Instance {
 }
 
 impl Instance {
-    /// First contact of the segment `a → b` with this object: the segment
-    /// parameter, the `PhysicsSurface` and what was hit.
+    /// First contact of the segment `a → b`: the segment parameter, the `PhysicsSurface` and
+    /// what was hit.
     fn first_hit(&self, a: Vec3, b: Vec3) -> Option<(f32, u32, &'static str)> {
         self.first_hit_normal(a, b).map(|(t, s, k, _)| (t, s, k))
     }
 
-    /// [`Self::first_hit`] with the face's world normal, turned towards `a`
-    /// (a hit box gives −(b − a)).
+    /// [`Self::first_hit`] with the face's world normal, turned towards `a` (a hit box gives
+    /// −(b − a)).
     fn first_hit_normal(&self, a: Vec3, b: Vec3) -> Option<(f32, u32, &'static str, Vec3)> {
         let d = b - a;
         if !seg_aabb(a, d, self.min, self.max) {
@@ -94,7 +67,7 @@ impl Instance {
                     if let Some(s) = seg_tri(la, ld, v)
                         && best.is_none_or(|x| s < x.0)
                     {
-                        // Local → world normal: the inverse transpose of the placement.
+                        // Local → world normal: the inverse transpose.
                         let local = (v[1] - v[0]).cross(v[2] - v[0]);
                         let n = Mat3::from(inv.matrix3)
                             .transpose()
@@ -119,7 +92,6 @@ impl Instance {
     }
 }
 
-/// What a mesh path resolves to once: its physics mesh, else its hit boxes.
 #[derive(Clone)]
 enum MeshKind {
     Physics(Arc<PhysicsMesh>),
@@ -134,8 +106,8 @@ const MAX_SPAN: i64 = 16;
 /// A query covering more bins than this tests every object (in index order) instead.
 const MAX_QUERY: i64 = 64;
 
-/// A level's objects with a uniform XZ grid over their world boxes. Queries visit the candidates of the bins the
-/// query box touches in ascending index order, so first-hit ties resolve exactly as a full scan would.
+/// A level's objects with a uniform XZ grid over their world boxes. Candidates are visited in
+/// ascending index order, so first-hit ties resolve exactly as a full scan would.
 #[derive(Default)]
 struct Bins {
     items: Vec<Instance>,
@@ -192,7 +164,7 @@ impl Bins {
             return ControlFlow::Continue(());
         }
         if x0 == x1 && z0 == z1 {
-            // One bin: merge its sorted list with `wide`, no allocation.
+            // One bin: merge its sorted list with `wide`.
             let cell = self.cells.get(&(x0, z0)).map_or(&[][..], Vec::as_slice);
             let (mut a, mut b) = (cell.iter().peekable(), self.wide.iter().peekable());
             loop {
@@ -239,11 +211,11 @@ struct LevelCollision {
     height: u32,
     heights: Vec<f32>,
     instances: Bins,
-    /// The other scenery objects: only the ground a character stands on ([`WorldCollision::add_surfaces`]).
+    /// The other scenery objects: only the ground a character stands on.
     floors: Bins,
-    /// The `BlockLOS` hit boxes of the level's objects ([`WorldCollision::los_clear`]).
+    /// The `BlockLOS` hit boxes of the level's objects.
     los: Bins,
-    /// What its terrain and water are made of ([`WorldCollision::surface_below`]).
+    /// What its terrain and water are made of.
     ground: Option<Ground>,
 }
 
@@ -254,7 +226,7 @@ pub struct WorldCollision {
     meshes: HashMap<String, MeshKind>,
 }
 
-/// Segment (a → b, `len` long) against an AABB: whether it may touch it.
+/// Segment (a → a + d) against an AABB: whether it may touch it.
 fn seg_aabb(a: Vec3, d: Vec3, min: Vec3, max: Vec3) -> bool {
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
     for i in 0..3 {
@@ -298,8 +270,7 @@ fn seg_tri(a: Vec3, d: Vec3, p: [Vec3; 3]) -> Option<f32> {
 }
 
 impl LevelCollision {
-    /// The heightfield's normal at (x, z): central differences of the
-    /// bilinear height over ±1 m (the vertex normals' interpolation).
+    /// The heightfield's normal at (x, z): central differences of the bilinear height over ±1 m.
     fn normal(&self, p: Vec3) -> Option<Vec3> {
         let y = self.ground(p)?;
         let h = |dx: f32, dz: f32| self.ground(p + Vec3::new(dx, 0.0, dz)).unwrap_or(y);
@@ -327,7 +298,6 @@ impl LevelCollision {
 }
 
 impl WorldCollision {
-    /// Registers a level's terrain and scenery physics meshes.
     pub fn add_level(
         &mut self,
         index: usize,
@@ -362,15 +332,10 @@ impl WorldCollision {
         );
     }
 
-    /// Registers a level's scenery objects without a physics body (call after [`Self::add_level`]): what
-    /// [`Self::surface_below`] finds besides the solid ones. `World::GetSurfaceTypeBelow`'s object
-    /// test (Engine.dll `World::IntersectObjectsBelow`) takes every entity of the region's tree whose `GetVisibility`
-    /// is 1 or 3 (an `Actor` with a mesh instance, not faded out) but the character itself, through
-    /// `Actor::GetIntersection`
-    /// → `GraphicsMeshInstance::GetIntersection` (the mesh's physics mesh, else its hit boxes,
-    /// else its bounding box: surface 100), with a physics body or not: a `TerrainDecoration` bridge
-    /// (`bridgestonea02cntr.msh`: stone deck faces) or an `allowPathing` floor tile is stood on like a solid
-    /// `Decoration`. PORT: built like the solid objects ([`Self::instance`]: no bounding-box fallback,
+    /// Registers a level's scenery objects without a physics body (after [`Self::add_level`]):
+    /// `World::IntersectObjectsBelow` stands on every visible actor's mesh (physics mesh, else hit
+    /// boxes, else bounding box: surface 100), body or not (a `TerrainDecoration` bridge, an
+    /// `allowPathing` floor tile). PORT: built like the solid objects (no bounding-box fallback,
     /// `Visibility` / `Transparency` boxes left out).
     pub fn add_surfaces(
         &mut self,
@@ -431,8 +396,7 @@ impl WorldCollision {
         Some(Instance { shape, min, max })
     }
 
-    /// Registers a level's sight blockers: the `BlockLOS` hit boxes of its
-    /// objects (call after [`Self::add_level`]).
+    /// Registers a level's sight blockers: the `BlockLOS` hit boxes of its objects.
     pub fn add_los_boxes(
         &mut self,
         index: usize,
@@ -462,12 +426,8 @@ impl WorldCollision {
         }
     }
 
-    /// `World::CheckLOS` (Engine.dll): the segment
-    /// `a → b` is clear unless it meets a `BlockLOS` hit box of a level
-    /// object (`GraphicsMeshInstance::CheckLOS` tests exactly
-    /// the mesh's hit boxes named `BlockLOS`, scaled by the instance scale;
-    /// `Level::CheckLOS` walks the level's object tree, `World::CheckLOS`
-    /// every loaded level). The terrain is not tested.
+    /// `World::CheckLOS`: the segment `a → b` is clear unless it meets a `BlockLOS` hit box of a
+    /// level object (`GraphicsMeshInstance::CheckLOS`). The terrain is not tested.
     pub fn los_clear(&self, a: Vec3, b: Vec3) -> bool {
         let d = b - a;
         self.levels.values().all(|lv| {
@@ -485,8 +445,8 @@ impl WorldCollision {
         })
     }
 
-    /// The terrain heightfield of the level under (x, z) of `p`: its origin,
-    /// width, height (vertices) and level-local vertex heights (decals).
+    /// The terrain heightfield under (x, z) of `p`: its origin, width, height (vertices) and
+    /// level-local vertex heights.
     pub fn terrain_at(&self, p: Vec3) -> Option<(Vec3, u32, u32, &[f32])> {
         self.levels
             .values()
@@ -499,14 +459,9 @@ impl WorldCollision {
         self.levels.values().find_map(|l| l.normal(p))
     }
 
-    /// The first physics surface straight below `top` within `depth` (the
-    /// terrain or a scenery physics mesh / hit box): the contact point and the
-    /// surface normal, what a falling rigid body lands on (the engine's
-    /// Bullet world holds exactly these, module doc). An object `top` is
-    /// already inside (a gib launched inside a spire's hit box) is no floor:
-    /// counting its contact at the start would lift the body by its step
-    /// every frame up to the box's top. PORT: Bullet would push such a body
-    /// out of the box.
+    /// The first physics surface straight below `top` within `depth`: the contact point and the
+    /// surface normal, what a falling rigid body lands on. An object `top` is already inside is no
+    /// floor (it would lift the body every frame). PORT: Bullet would push such a body out.
     pub fn floor_below(&self, top: Vec3, depth: f32) -> Option<(Vec3, Vec3)> {
         let (a, b) = (top, top - Vec3::Y * depth);
         let mut best: Option<(f32, Vec3)> = None;
@@ -536,36 +491,25 @@ impl WorldCollision {
         best.map(|(t, n)| (a + (b - a) * t, n))
     }
 
-    /// The terrain height under (x, z) of `p`, if a loaded level has terrain there.
     pub fn terrain_ground(&self, p: Vec3) -> Option<f32> {
         self.levels.values().find_map(|l| l.ground(p))
     }
 
-    /// Registers what a level's terrain and water are made of (call after
-    /// [`Self::add_level`]).
+    /// Registers what a level's terrain and water are made of (after [`Self::add_level`]).
     pub fn add_ground(&mut self, index: usize, ground: Ground) {
         if let Some(l) = self.levels.get_mut(&index) {
             l.ground = Some(ground);
         }
     }
 
-    /// The `PhysicsSurface` under a character at `p`, [`NO_SURFACE`] if
-    /// nothing is in reach. `World::GetSurfaceTypeBelow`
-    /// casts a ray from 1 m above the character straight down, 2 m long
-    /// (`World::RaycastLevelsBelow`); of every level within reach the nearest of its
-    /// terrain, its objects (closer than that) and its water (closer than
-    /// both) counts. Terrain: [`Ground::terrain_surface`]; objects: the face's
-    /// surface of the physics mesh (`PhysicsMesh::GetIntersection`),
-    /// or [`NO_SURFACE`] for hit boxes
-    /// (`GraphicsMeshInstance::GetIntersection`: no physics mesh); water
-    /// always 7 ([`gd_sim::surface`]).
+    /// The `PhysicsSurface` under a character at `p`, [`NO_SURFACE`] if nothing is in reach.
+    /// `World::GetSurfaceTypeBelow`: a 2 m ray down from 1 m above; per level the nearest of
+    /// terrain ([`Ground::terrain_surface`]), objects (the physics-mesh face's surface, or
+    /// [`NO_SURFACE`] for hit boxes) and water (always 7).
     ///
-    /// PORT: the terrain is the bilinear height, not the cell's two triangles;
-    /// the objects are the static scenery of [`Self::add_level`] and
-    /// [`Self::add_surfaces`] (the engine's tree also holds characters, moving
-    /// physics actors and an actor's bounding box if its mesh has no hit box,
-    /// surface 100). A level without
-    /// [`Ground`] (the test arena) is dirt.
+    /// PORT: the terrain is the bilinear height, not the cell's two triangles; only static scenery
+    /// counts (no characters, moving actors or bounding-box fallback). A level without [`Ground`]
+    /// (the test arena) is dirt.
     pub fn surface_below(&self, p: Vec3) -> u32 {
         const REACH: f32 = 2.0;
         let (a, b) = (p + Vec3::Y, p - Vec3::Y);
@@ -622,18 +566,16 @@ impl WorldCollision {
         self.levels.remove(&index);
     }
 
-    /// First contact of the segment `a → b` with the terrain or a scenery
-    /// physics mesh: the point and what it was.
+    /// First contact of the segment `a → b` with the terrain or a scenery physics mesh: the point
+    /// and what it was.
     pub fn segment_hit(&self, a: Vec3, b: Vec3) -> Option<(Vec3, &'static str)> {
         let d = b - a;
         let mut best: Option<(f32, &'static str)> = None;
         for lv in self.levels.values() {
-            // Terrain: below the heightfield at the end (the step is short).
             if lv.width > 1
                 && let (Some(ga), Some(gb)) = (lv.ground(a), lv.ground(b))
                 && b.y < gb
             {
-                // Where the segment crosses the surface (linear in the step).
                 let (da, db) = (a.y - ga, b.y - gb);
                 let t = if da > 0.0 { da / (da - db) } else { 0.0 };
                 if best.is_none_or(|x| t < x.0) {
@@ -652,13 +594,10 @@ impl WorldCollision {
         best.map(|(t, k)| (a + d * t, k))
     }
 
-    /// The terrain and solid scenery triangles that may touch the world box `min ..= max`, appended to `out`:
-    /// what a rigid body collides with (`gd_sim::drop_body`, module doc). The terrain is its heightfield's two
-    /// triangles per 1 m cell, split along the (x + 1, z) – (x, z + 1) diagonal (`TerrainBase::
-    /// PhysicsSetup` builds a `btHeightfieldTerrainShape` without flipped or diamond quad edges, whose
-    /// `processAllTriangles` splits that way); the scenery its physics-mesh faces or its hit boxes' faces, placed.
-    /// Each triangle carries its object (the terrain or a scenery object of a level), as Bullet keeps contacts
-    /// per object pair.
+    /// The terrain and solid scenery triangles that may touch `min ..= max`, appended to `out`:
+    /// what a rigid body collides with. The terrain is two triangles per 1 m cell, split along the
+    /// (x + 1, z) – (x, z + 1) diagonal (Bullet's `btHeightfieldTerrainShape`). Each triangle
+    /// carries its object, as Bullet keeps contacts per object pair.
     pub fn triangles_near(&self, min: Vec3, max: Vec3, out: &mut Vec<gd_sim::drop_body::Tri>) {
         let overlaps = |lo: Vec3, hi: Vec3| lo.cmple(max).all() && hi.cmpge(min).all();
         let tri = |v, owner| gd_sim::drop_body::Tri { v, owner };
@@ -751,8 +690,7 @@ fn boxes_bounds(boxes: &[Obstacle]) -> (Vec3, Vec3) {
     (min, max)
 }
 
-/// `Actor::PhysicsSetup`: every hit box but `Visibility` and
-/// `Transparency` (names compared as `Name` ids) is part of the body.
+/// `Actor::PhysicsSetup`: every hit box but `Visibility` and `Transparency` is part of the body.
 fn is_solid_box(name: &str) -> bool {
     !name.eq_ignore_ascii_case("Visibility") && !name.eq_ignore_ascii_case("Transparency")
 }

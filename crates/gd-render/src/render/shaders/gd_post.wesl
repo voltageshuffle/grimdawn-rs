@@ -1,4 +1,4 @@
-// The engine's final image chain (render/post.rs module doc): the deferred
+// The engine's final image chain: the deferred
 // fog (deferred.ssh fogPS), bloom (filter.ssh extractHot, the 8-tap blur,
 // composite lighten), enhancement (postprocessing/enhance.ssh), depth of
 // field (downsample.ssh normal, depthoffield.ssh), then gamma → linear so
@@ -30,7 +30,7 @@ struct GammaOut {
     hdr: vec4<f32>,
     // 1 = on, ssaoStrength, ssaoScale, zFar
     ao: vec4<f32>,
-    // fullscreen gamma ramp: 2c, 2b - 1, 1 / g, 1 = on (post.rs `with_gamma_ramp`)
+    // fullscreen gamma ramp: 2c, 2b - 1, 1 / g, 1 = on
     gamma_ramp: vec4<f32>,
 }
 
@@ -145,7 +145,7 @@ fn blur_h(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return blur(in.uv, step_h(), settings.bloom_gain.x);
 }
 
-// ssao.ssh createPS (render/post.rs module doc). The kernel as compiled
+// ssao.ssh createPS. The kernel as compiled
 // (its z repeats x).
 const AO_KERNEL = array<vec3<f32>, 8>(
     vec3<f32>(0.527837, -0.085868, 0.527837),
@@ -219,7 +219,7 @@ fn ao_create(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 }
 
 // `GraphicsCanvas_Blur8Tap` with gain 1 and spread 1 (`Engine.ssaoBlurSpread`). The occlusion is
-// half size here (post.rs module doc), so the steps are half a texel: one full-size pixel, as in
+// half size here, so the steps are half a texel: one full-size pixel, as in
 // the engine.
 @fragment
 fn ao_blur_v(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -306,8 +306,8 @@ fn depth_of_field(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(mix(base, blur, f), 1.0);
 }
 
-// postprocessing/fxaa.ssh `normal` (GraphicsCanvas::ApplyFXAA; render/post.rs module doc): FXAA from the UNORM
-// frame copy, pixelSize = 1 / its size. A transcription of the shader's DXBC (Lottes' FXAA, no edge threshold early
+// postprocessing/fxaa.ssh `normal` (GraphicsCanvas::ApplyFXAA): FXAA from the UNORM
+// frame copy, pixelSize = 1 / its size. Transcribed from the shader's DXBC (Lottes' FXAA, no edge threshold early
 // out): luma = 1.963·r + g, sub-pixel blend sat(|avg4 − M| / range − ¼)·4/3 capped at ¾ towards the 3 × 3 mean, an
 // edge search of up to 32 steps on each side ending where |luma − pair| >= ¼ gradient.
 fn fxaa_luma(c: vec3<f32>) -> f32 {

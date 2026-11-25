@@ -24,8 +24,7 @@
 //!   no dungeon test), and the fog keeps being revealed and saved there
 //!   (`Player::UpdateSelf` calls `World::AddFOWVisibility` unconditionally);
 //! - the widget keeps one render texture (`DetailMapWidget.renderTexture`), created once at the widget's
-//!   size and redrawn by the map pass on every draw (`DetailMapWidget::Render`): moving
-//!   the player rebuilds nothing;
+//!   size and redrawn by the map pass on every draw (`DetailMapWidget::Render`);
 //! - the minimap's render is composited through
 //!   `system/textures/circlemask.tex` (`shaders/basictexturemasked.ssh`
 //!   style `normal`: colour = map rgb, alpha = mask alpha × the widget's
@@ -111,14 +110,10 @@
 //!
 //! PORT: the minimap is composited on the CPU ([`gd_sim::minimap_raster`])
 //! with an analytic disc for `circlemask.tex`; NPCs without a story object count as visible; party members'
-//! nuggets are not drawn (multiplayer); the gamepad's pan / zoom is not
-//! ported (no gamepad input in the port); a Custom
-//! quad on the minimap shows whole while its centre is inside the circle
-//! (the engine masks it); story-scripted scenery has no nugget; the wheel's
-//! delta is taken as 120 per notch; it hides while the
-//! devotion window is open (reference shot; the rule is not decompiled); the
-//! zoom ease and the legend blink run on real time (they keep animating while
-//! the game is paused).
+//! nuggets are not drawn; the gamepad's pan / zoom is not ported; a Custom quad on the minimap shows whole
+//! while its centre is inside the circle (the engine masks it); story-scripted scenery has no nugget; the
+//! wheel's delta is taken as 120 per notch; it hides while the devotion window is open (the rule is not
+//! decompiled); the zoom ease and the legend blink run on real time.
 mod gather;
 mod input;
 mod local;
@@ -150,9 +145,8 @@ pub const AERIAL: &str = "records/ui/mapaerial/aerialmapconfiguration.dbr";
 const AREA_TITLE: &str = "records/ui/mapaerial/map_regionnamedisplayaerial.dbr";
 const NAME_STYLE: &str = "records/ui/styles/text/style_defaultwhite_sizen.dbr";
 
-/// The minimap's (map and icons, north marker) alphas in HUD modes 3 / 4: the HUD table's `floatingMapTransparency` /
-/// `floatingMarkerTransparency` (`UIPlayerHud::ToggleCompass`, loaded by `UIPlayerHud::Load`; module
-/// doc), 1 when the field is missing.
+/// The minimap's (map and icons, north marker) alphas in HUD modes 3 / 4: the HUD table's
+/// `floatingMapTransparency` / `floatingMarkerTransparency`, 1 when the field is missing.
 fn map_alphas(data: &GameData, options: &gd_game_core::options::GameOptions) -> (f32, f32) {
     let rec = data
         .db
@@ -191,8 +185,6 @@ impl Plugin for LocalMapPlugin {
     }
 }
 
-/// `GD_UI_OPEN=localmap` / `worldmap` (hooks.rs): the map window at start; `GD_MAP_ZOOM` is the local map's
-/// zoom (the option `mapZoom`). Without them the window starts as `MapWindow::default()`.
 #[cfg(feature = "dev")]
 fn start_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let zoom = hooks.ui.map_zoom.map_or(65.0, |z| z.clamp(40.0, 135.0));
@@ -211,20 +203,17 @@ fn start_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) 
     });
 }
 
-/// The local map's zoom is the option `mapZoom`: the window starts at the stored value (unless
-/// `GD_MAP_ZOOM` is set), again in every session (Exit to Main Menu puts `MapWindow::default()` back, whose 65 is
-/// not a zoom the player chose), and a change is written back to the port's options file once the zoom has stopped
-/// changing for a second (PORT: the engine saves the options on exit; the port has no exit hook for that).
+/// The local map's zoom is the option `mapZoom`: every session's window starts at the stored value, and a change
+/// is written back once the zoom has stopped changing for a second (PORT: the engine saves the options on exit).
 fn persist_zoom(
     mut win: ResMut<MapWindow>,
     mut options: ResMut<gd_game_core::options::GameOptions>,
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time<Real>>,
     mut fresh: gd_game_core::session::NewSession,
-    // (the stored zoom is loaded into this session's window, seconds the zoom has differed from the stored one)
+    // (stored zoom loaded this session, seconds the zoom has differed from the stored one)
     mut state: Local<(bool, f32)>,
 ) {
-    // `GD_MAP_ZOOM` pins the zoom: the stored one is neither loaded nor written.
     #[cfg(feature = "dev")]
     let pinned = hooks.ui.map_zoom.is_some();
     #[cfg(not(feature = "dev"))]
@@ -253,24 +242,20 @@ fn persist_zoom(
     }
 }
 
-/// Decoded region minimap images and the two render targets. A region's image decodes in the background the first time
-/// a map needs it; the maps draw it once it lands ([`MapTiles::landed`]), so entering a new area does not stall a frame
-/// on its map tiles. The last [`TILES_KEPT`] images drawn stay decoded ([`MapTiles::kept`], 256 KB each): closing and
-/// opening the local map, panning back over ground or zooming does not decode them again, while a long trip or a
-/// teleport lets the old ones go. The session's end drops them all (`ui::reset_session`).
+/// Decoded region minimap images and the two render targets. A region's image decodes in the background the first
+/// time a map needs it; the maps draw it once it lands. The last [`TILES_KEPT`] images drawn stay decoded; the
+/// session's end drops them all.
 #[derive(Resource)]
 pub struct MapTiles {
     /// The map the tiles are of (its address): another map starts over.
     map: usize,
     /// Per map region: `None` never decoded, `Some(None)` no image (or unreadable), else the decoded image.
     regions: Vec<Option<Option<Weak<MinimapImage>>>>,
-    /// Regions decoding in the background.
     loading: gd_formats::collections::HashMap<usize, bevy::tasks::Task<Option<MinimapImage>>>,
-    /// The images drawn (or landed) last, held.
     kept: gd_game_core::weak_cache::Recent<Arc<MinimapImage>>,
     /// The regions whose image landed, the last [`LANDED_LOG`] in order: the `landed - log.len()`th landing onward.
     landed_log: std::collections::VecDeque<usize>,
-    /// Landings so far: a map drawn before redraws the landed regions' boxes ([`MapCache::update`]).
+    /// Landings so far: a map drawn before redraws the landed regions' boxes.
     landed: u64,
     mini: Option<(Handle<Image>, UVec2)>,
     local: Option<(Handle<Image>, UVec2)>,
@@ -291,13 +276,12 @@ impl Default for MapTiles {
     }
 }
 
-/// Region images [`MapTiles`] keeps decoded (256 KB each: 64 MB).
+/// Region images [`MapTiles`] keeps decoded.
 const TILES_KEPT: usize = 256;
 /// Landings [`MapTiles`] remembers by region; a map further behind redraws whole.
 const LANDED_LOG: usize = 64;
 
 impl MapTiles {
-    /// Files the images decoded in the background.
     fn poll(&mut self) {
         use bevy::tasks::block_on;
         use bevy::tasks::futures_lite::future;
@@ -400,8 +384,7 @@ impl MapTiles {
     }
 }
 
-/// The view's screen axes in world x / z: right and up (the camera's
-/// horizontal right / forward).
+/// The view's screen axes in world x / z: right and up (the camera's horizontal right / forward).
 #[derive(Clone, Copy, PartialEq)]
 struct Axes {
     right: Vec2,
@@ -419,12 +402,8 @@ fn axes(cam: &Transform) -> Axes {
     Axes { right, up }
 }
 
-/// The axes of both maps: `lockMapRotation` (an `Options` bool, "Force the map to always point north") fixes them to
-/// the default 45 degree camera's basis, else they follow the camera's yaw. `DetailMapWidget::DrawMapPass` (the map
-/// pass, run by the widget's draw `DetailMapWidget::Render` for the minimap and the local map alike: it builds the map
-/// camera `DetailMapWidget.mapCamera` from the fixed vectors or the live camera's axes) and the icons projected through
-/// that camera (`DetailMapWidget::RenderLocalMapIcons`, local map) or drawn with a fixed (0, −1) up
-/// (`DetailMapWidget::RenderMinimapIcons`, minimap).
+/// The axes of both maps: `lockMapRotation` fixes them to the default 45 degree camera's basis, else they follow
+/// the camera's yaw (`DetailMapWidget::DrawMapPass`).
 fn map_axes(cam: &Transform, options: &gd_game_core::options::GameOptions) -> Axes {
     if options.flag("lockMapRotation") {
         let up = Vec2::new(-1.0, -1.0).normalize();
@@ -437,8 +416,7 @@ fn map_axes(cam: &Transform, options: &gd_game_core::options::GameOptions) -> Ax
     }
 }
 
-/// The ground view of a `w × h` px widget centred on `centre` (x, z) at
-/// `mpp` metres per px.
+/// The ground view of a `w × h` px widget centred on `centre` (x, z) at `mpp` metres per px.
 fn view_of(centre: Vec2, a: Axes, mpp: f32, w: f32, h: f32) -> View {
     let dx = a.right * mpp;
     let dy = -a.up * mpp;
@@ -450,11 +428,9 @@ fn view_of(centre: Vec2, a: Axes, mpp: f32, w: f32, h: f32) -> View {
     }
 }
 
-/// What a map image is drawn from. The fog passes ([`gd_sim::minimap_raster`] module doc,
-/// `DetailMapWidget::DrawMapPass` /
-/// `DetailMapWidget::DrawFogPass`): the local map greys unexplored ground and the minimap does not; both darken it to
-/// black except in regions of the running Shattered Realm dungeon (`in_dungeon`, by map region index); a region without
-/// a fog grid is fully fogged (the engine creates it on first use).
+/// What a map image is drawn from (`DetailMapWidget::DrawMapPass` / `DetailMapWidget::DrawFogPass`): the local map
+/// greys unexplored ground and the minimap does not; both darken it to black except in regions of the running
+/// Shattered Realm dungeon; a region without a fog grid is fully fogged.
 struct MapSource<'a> {
     tiles: &'a mut MapTiles,
     map: &'a Arc<gd_formats::map::MapFile>,
@@ -463,7 +439,6 @@ struct MapSource<'a> {
     fog_new: bool,
     minimap: bool,
     in_dungeon: &'a dyn Fn(usize) -> bool,
-    /// The running Shattered Realm dungeon.
     dungeon: Option<u32>,
 }
 
@@ -473,10 +448,9 @@ const REVEAL_REACH: f32 = gd_formats::save::fow::VISIBLE_RANGE + 3.0 * gd_format
 /// The margin a map image is drawn with around its widget's view, per side, in widget sizes.
 const MAP_MARGIN: f32 = 0.5;
 
-/// A widget's map image (RGBA8), drawn with a margin around the view (PORT: the engine draws its map pass on the GPU
-/// every frame; the CPU raster here draws it whole only when its scale, turn or dungeon changes; a view leaving it
-/// moves the image, copying what both cover and drawing only the uncovered strips; a fog reveal or a tile landing
-/// redraws only its box). The view scrolls across it in whole pixels.
+/// A widget's map image (RGBA8), drawn with a margin around the view. PORT: the engine draws its map pass on the GPU
+/// every frame; here it is redrawn whole only when its scale, turn or dungeon changes, else shifted or patched.
+/// The view scrolls across it in whole pixels.
 struct MapCache {
     view: View,
     size: UVec2,
@@ -625,9 +599,8 @@ impl MapCache {
         }
     }
 
-    /// The view the widget actually shows when cut at whole-pixel offset `o`: icons placed with it move in the same
-    /// whole-pixel steps as the image under them (placed with the exact view they drift up to a pixel against it
-    /// as the camera moves).
+    /// The view the widget actually shows when cut at whole-pixel offset `o`, so icons move in the same whole-pixel
+    /// steps as the image under them.
     fn shown(&self, o: UVec2) -> View {
         View {
             origin: self.view.world(o.x as f32, o.y as f32),
@@ -683,8 +656,7 @@ impl MapCache {
                 found.push((i, ([a.x, a.z], [b.x, b.z]), img));
             }
         }
-        // The saved fog darkens (a region without one is fully fogged: black), the session fog greys the local map
-        // (module doc of `gd_sim::minimap_raster`).
+        // The saved fog darkens (no grid: black), the session fog greys the local map.
         fn mask(g: Option<&gd_formats::save::fow::FogGrid>) -> FogMask<'_> {
             g.map_or(FogMask::FOGGED, |g| FogMask {
                 w: g.w,
@@ -749,8 +721,7 @@ fn icon_node(ui: &mut Ui, img: Handle<Image>, c: Vec2, size: Vec2, angle: f32, a
     }
 }
 
-/// An icon's bitmap: the nugget's own (Custom, Regular) or its type's
-/// (`blink`: its `...over` variant, `DetailMapWidget::RenderLocalMapIcons`).
+/// An icon's bitmap: the nugget's own (Custom, Regular) or its type's (`blink`: its `...over` variant).
 fn icon_image(
     ui: &mut Ui,
     i: &MapIcon,
@@ -778,8 +749,7 @@ fn icon_image(
     }
 }
 
-/// Icons turned by their facing (`DetailMapWidget::RenderMinimapIcons`: the hero, party members,
-/// NPCs, and Custom quads); the rest stand upright.
+/// Icons turned by their facing (`DetailMapWidget::RenderMinimapIcons`); the rest stand upright.
 fn turns(kind: u8) -> bool {
     matches!(kind, 0 | 1 | 2 | 14)
 }

@@ -1,273 +1,119 @@
-//! Buffs and debuffs other characters put on a character: the `SkillBuff`
-//! records an aura pass, a curse or a debuff skill lands on it, each kept
-//! as one entry ([`ReceivedBuff`]: record, level, modifiers, caster, time
-//! left) in [`ReceivedBuffs`]. The entry is the raw state: its stats count
-//! in the holder's profile rebuild (`player::rebuild_profile`,
-//! `pets::refresh_profiles`, `monster_skills::rebuild_profiles` through
-//! [`ReceivedBuffs::stat_records`]), the buff bar lists it
-//! (`crate::buff_bar`), a debuff's attack runs from it ([`run_buffs`]).
+//! Buffs and debuffs other characters put on a character: the `SkillBuff` records an aura pass, a curse or a debuff
+//! skill lands on it, each kept as one entry ([`ReceivedBuff`]: record, level, modifiers, caster, time left) in
+//! [`ReceivedBuffs`]. Its stats count in the holder's profile rebuild ([`ReceivedBuffs::stat_records`]), the buff bar
+//! lists it, a debuff's attack runs from it ([`run_buffs`]).
 //!
 //! How a buff gets there (Game.dll):
-//! - `SkillActivated::ApplyBuffOnTarget` fills a `SkillBuffTransfer`: the
-//!   buff record's name (`SkillBuffTransfer.buffName`), the level
-//!   (`.level`), the skill's devotion level (`.devotionLevel` =
-//!   `Skill.devotionLevel`, `Skill::GetDevotionLevel`, 0 from the
-//!   constructor, raised by `IncrementDevotionLevel`:
-//!   [`ReceivedBuff::devotion`]), its modifiers (`Skill::GetModifierInfo` +
-//!   `GetItemModifierInfo`, `.modifiers`, each entry with its level), the
-//!   duration in ms (`.duration`), the caster's object id (`.caster`), the
-//!   applying skill's record (`.skill`), the item it came from (`.item`);
-//!   then `Character::BuffTarget` or, for a debuff (its `a7`),
-//!   `Character::DebufTarget`.
-//! - `Character::DebufTarget`: nothing on an invincible or dead (action
-//!   state 21) target; else the target's `SkillServices_Character::
-//!   CreateUpdateSkillBuff`; then, unless the caster debuffs
-//!   itself, `Character::UnderAttack(caster)` on the target, an empty
-//!   `DurationDamageManager` attack (`BeginNewAttack(5)` / `EndAttack`) and
-//!   the caster's `SkillServices_Character::CastingDebuf` (the `CastDebuf` autocast
-//!   trigger, `crate::autocast`).
-//! - Curses: `Skill_AttackBuff::TargetResult` (also the class
-//!   of `Skill_AttackBuffRadius`): per target `CreateTargetFx`, the
-//!   duration = the skill's `skillActiveDuration` with its modifiers'
-//!   (`GetSkillModifierData`) × 1000 as int, `ApplyBuffOnTarget(…, level =
-//!   GetCurrentLevel, debuff)`, then `ActivateSecondarySkills` with that
-//!   target. It makes no attack of its own (the wrapper loads its profile
-//!   from the `buffSkillName` table, so radius and duration are the buff
-//!   record's).
-//! - Projectile debuffs (webs, nets, Blade Trap): `Skill_AttackProjectileDebuf
-//!   ::TargetResult` the same per target its projectile hits
-//!   (impact and explosion radius), without an attack or secondaries
-//!   (`crate::casting::ProjectileDebuf`).
-//! - Aura passes (`crate::auras`): `Skill_BuffRadius::TargetResult` the same
-//!   way with 1500 ms, so a celestial power's aura carries its devotion level
-//!   too (the player's, `DevotionState::devotion_level`; pets' and monsters'
-//!   skills: 0, only the player's celestial powers gain devotion experience,
-//!   `SkillManager::AddExperience`; PORT: not traced further).
+//! - `SkillActivated::ApplyBuffOnTarget` fills a `SkillBuffTransfer`: buff name, level, the skill's devotion level
+//!   ([`ReceivedBuff::devotion`]), its modifiers (each with its level), duration in ms, caster, applying skill and
+//!   item; then `Character::BuffTarget` or, for a debuff, `Character::DebufTarget`.
+//! - `Character::DebufTarget`: nothing on an invincible or dead target; else `CreateUpdateSkillBuff`; then, unless
+//!   the caster debuffs itself, `Character::UnderAttack(caster)` on the target, an empty `DurationDamageManager`
+//!   attack and the caster's `CastingDebuf` (the `CastDebuf` autocast trigger).
+//! - Curses: `Skill_AttackBuff::TargetResult` (also `Skill_AttackBuffRadius`): per target `CreateTargetFx`, the
+//!   duration = `skillActiveDuration` with its modifiers' × 1000 as int, `ApplyBuffOnTarget(…, GetCurrentLevel,
+//!   debuff)`, then `ActivateSecondarySkills` with that target. No attack of its own (the wrapper's profile is the
+//!   `buffSkillName` record's, so radius and duration are the buff record's).
+//! - Projectile debuffs (webs, nets, Blade Trap): `Skill_AttackProjectileDebuf::TargetResult` the same per target
+//!   its projectile hits, without an attack or secondaries.
+//! - Aura passes: `Skill_BuffRadius::TargetResult` the same way with 1500 ms; a celestial power's aura carries its
+//!   devotion level (pets' and monsters' skills: 0; PORT: not traced further).
 //!
-//! The rule ([`ReceivedBuffs::land`]; `CreateUpdateSkillBuff`,
-//! a list of transfers per character searched by buff name):
+//! The rule ([`ReceivedBuffs::land`]; `CreateUpdateSkillBuff`, transfers per character searched by buff name):
 //! - none of that name: appended, the buff created ([`Landed::New`]);
-//! - one equal in every field (`SkillBuffTransfer::Equals`: level, devotion level, modifiers,
-//!   duration, caster, flags, skill, item): `SkillBuff::SetTimeToLive`
-//!   (duration) on the running buff ([`Landed::Refreshed`]);
-//! - same caster, other values: the transfer copied over and the buff made
-//!   anew (`CreateRemoveSkillBuffConfigCmd` → `SkillManager::CreateSkillBuff`
-//!   destroys the old one first, [`Landed::Replaced`]); a transfer with a
-//!   count (`SkillBuffTransfer.addTimeCount`) > 0 would `AddTimeToLive`
-//!   instead (`ApplyBuffOnTarget` always passes 0);
-//! - another caster, equal values but the caster
-//!   (`SkillBuffTransfer::EqualsButCaster`): ignored
-//!   while the first caster `IsAlive`, else replaced;
-//! - another caster, other values: replaced when level + its modifiers'
-//!   levels + its devotion level exceed the running one's, else ignored
-//!   ([`Landed::Ignored`]).
+//! - one equal in every field (`SkillBuffTransfer::Equals`): `SetTimeToLive` on the running buff
+//!   ([`Landed::Refreshed`]);
+//! - same caster, other values: the transfer copied over and the buff made anew ([`Landed::Replaced`]);
+//! - another caster, equal values but the caster: ignored while the first caster `IsAlive`, else replaced;
+//! - another caster, other values: replaced when level + its modifiers' levels + its devotion level exceed the
+//!   running one's, else ignored ([`Landed::Ignored`]).
 //!
-//! A new `SkillBuff` (also a replacing one) goes active
-//! (`SkillBuff::ReceiveActiveUpdate`): `skillCastSound` at the
-//! holder (`crate::combat_sounds::buff_cast`), the record's
-//! `charFxPakOtherNames` on another character. It is pushed to the front of
-//! the holder's buff list, which the UI lists front to back
-//! (`crate::auras` module docs): [`ReceivedBuffs::list`] is newest first.
-//! `SkillBuff::Update` runs its time to live (`SkillBuff.timeToLive`; 0 total =
-//! endless) down and at the end has the services remove it
-//! (`RemoveSkillBuff`, transfer and buff): `skillUnCastSound`, its effects
-//! go.
+//! A new `SkillBuff` (also a replacing one) goes active: `skillCastSound` at the holder, the record's
+//! `charFxPakOtherNames` on another character. It is pushed to the front of the holder's buff list:
+//! [`ReceivedBuffs::list`] is newest first. `SkillBuff::Update` runs its time to live down (0 total = endless) and
+//! at the end removes it: `skillUnCastSound`, its effects go.
 //!
-//! Debuffs (`SkillBuff_Debuf` and the `…Trap` / `…Freeze` subclasses, whose
-//! `Update` calls it): `SkillBuff_Debuf::Update` attacks the holder from the
-//! caster every 1000 ms (`SkillBuff_Debuf.attackTimer`, constructor `SkillBuff_Debuf::SkillBuff_Debuf`;
-//! the timer starts at 0, so a new or replaced debuff attacks on its first
-//! update, a refreshed one keeps its cadence): `CollectCombatParameters` of
-//! the buff record as the caster's attack, `ParametersCombat` style 4 with
-//! the multiplier `max(CalculateDamageModifier(ProbabilityToHit(attack OA,
-//! holder DA), rand), 1)` (it never misses) and `Character::AttackTarget`
-//! (its autocast triggers included) — [`DebuffTick`] → `crate::combat`
-//! (`gd_sim::combat::AttackKind::Debuff`). The caster is looked up as any
-//! `Character` object (`Game::GetCharacterObject`: no life check) and `AttackTarget`
-//! only refuses copies (`Entity::IsCopy`) and a dead target for styles ≤ 2,
-//! so a dead caster's debuffs keep attacking (its kills included) until its
-//! body is removed (`crate::combat::corpse_time`); nothing once it is gone.
-//! A debuff gives its holder only its character / defense attributes:
-//! `SkillBuff_Debuf`'s vtable leaves `CollectPassiveOffensiveDamageAttributes`
-//! and `…OffensiveModifierAttributes` empty, and
-//! `SkillBuff_Debuf::CollectPassiveCharAttributes` adds the profile store at the
-//! level and the modifiers' (with the accumulator's flag
-//! `CharAttributeAccumulator.debufFlag` set; not identified) — so its
-//! `offensive*` fields are its attack's, not the
-//! holder's.
+//! Debuffs (`SkillBuff_Debuf` and the `…Trap` / `…Freeze` subclasses): `SkillBuff_Debuf::Update` attacks the holder
+//! from the caster every 1000 ms (the timer starts at 0, so a new or replaced debuff attacks on its first update, a
+//! refreshed one keeps its cadence): the buff record's combat parameters as the caster's attack, style 4, the
+//! multiplier `max(CalculateDamageModifier(ProbabilityToHit(attack OA, holder DA), rand), 1)` (it never misses),
+//! `Character::AttackTarget` with its autocast triggers — [`DebuffTick`]. The caster is looked up with no life
+//! check, so a dead caster's debuffs keep attacking (its kills included) until its body is removed. A debuff gives
+//! its holder only its character / defense attributes: its `offensive*` fields are its attack's.
 //!
-//! `SkillBuff_DebufRadius::Update` (its own, not
-//! `SkillBuff_Debuf`'s; only with the first expansion loaded, PORT: always):
-//! on the same 1000 ms timer, the caster's foes (`GetTargetsInRadius` with
-//! the caster's faction pack) within the buff's `skillTargetRadius` with its
-//! modifiers' (`GetSkillModifierData`, `SkillModifierData.targetRadius`) of the holder, the holder
-//! included, each `Character` among them in line of sight of the holder
-//! (`Skill::IsTargetInLOS(holder, id)`, the
-//! monsters' `UseSkill` ray: from the holder's `HeadEffect` to the target's
-//! centre of mass, `crate::monster_skills::sight_ray`; others are kept
-//! untested), are attacked from the caster like the holder above (style 4;
-//! the multiplier rolled per target against the holder's defensive ability:
-//! [`DebuffTick::holder`]); the profile's `radiusEffectName` (the level's
-//! entry, the last past the list; played before the targets are
-//! collected) at the holder each time, targets or not (PORT: no stock buff has one; unit-tested only). It neither traps nor freezes (`SkillBuff::
-//! Install`).
+//! `SkillBuff_DebufRadius::Update` (its own; only with the first expansion loaded, PORT: always): on the same
+//! 1000 ms timer, the caster's foes within the buff's `skillTargetRadius` (with its modifiers') of the holder, the
+//! holder included, each `Character` among them in line of sight of the holder (`Skill::IsTargetInLOS`; others
+//! untested), are attacked from the caster like the holder (the multiplier rolled against the holder's defensive
+//! ability: [`DebuffTick::holder`]); the profile's `radiusEffectName` plays at the holder each time, targets or not
+//! (PORT: no stock buff has one). It neither traps nor freezes.
 //!
-//! Projectile debuffs on the holder (`SkillBuff_DebufProjectile`: Evernight's
-//! Mark of Darkness, Kurn's Mark of Doom; its constructor
-//! runs `SkillBuff_Debuf`'s, `LoadResources` reads `hideFromUI`
-//! and `debufAttackTime` (s → whole ms), `Update`, only with
-//! Fangs of Asterkarn loaded, PORT: always): `SkillBuff::Update` only (no
-//! debuff attack on the holder); while the holder is not dead the debuff
-//! timer (`SkillBuff_DebufProjectile.projectileTimer`, from 0) runs down and at 0 is re-armed to `debufAttackTime`
-//! (≤ 0: the 1000 ms); with the caster object and the applying skill still
-//! there, the caster's `SkillServices_Character::SendCreateProjectile`
-//! launches that skill's projectile from the holder's coordinates (to 1 m
-//! above them), `GetNumProjectiles` (only
-//! `Skill_AttackProjectileDrop` overrides the base's constant 1, so
-//! one per tick) of them unless `ProjectileLimit` (`skillProjectileMaximumNumber`
-//! live ones; no stock record sets it). The applying `Skill_AttackBuff`'s
-//! `Skill_AttackBuff::CreateProjectile` gives the projectile the profile's (the buff record's)
-//! `projectileDuration` as whole seconds; stock: a `ProjectileAreaEffect`
-//! (pools of darkness / ichor) of `projectileExplosionRadius` hitting the
-//! caster's foes from the buff record's attack (`casting::spawn_area`).
-//! Contagious debuffs (`SkillBuff_Contageous`: Bloody Pox, the plague item
-//! skills, Fetid Pool's devotion; its constructor runs
-//! `SkillBuff_Debuf`'s, vtable with its empty offensive collectors, so it is
-//! a debuff in stats, buff bar and attack, [`is_debuff`] / [`gd_game_core::skill_buffs::attacks`]):
-//! - `SkillBuff_Contageous::Install` (a created buff, after `SetTimeToLive`): the
-//!   spread timer (`SkillBuff_Contageous.spreadTimer`) = `contagionInterval` (whole ms, default 1000),
-//!   the budget (`.spreadBudget`) = `contagionMaxSpread` (default 1), the caster
-//!   (`.caster`) = the transfer's; `Character::SetImmuneToPlagueTime(buff,
-//!   (int)(total ms × 1.5 + 4000))` on the holder ([`plague_immunity_secs`],
-//!   [`ReceivedBuffs::immune`]; `Character::UpdateSelf` runs it down by the
-//!   frame, erased at ≤ 0; `CharacterIsDying` clears them all); a monster
-//!   holder's controller gets `SetNeedsDeathUpdate` (its buffs update on
-//!   its death).
-//! - `SkillBuff_Contageous::Update`: the debuff's attack first; then, while
-//!   spreading (`SkillBuff.spreading`), when the timer runs out or the holder has just died
-//!   (`IsAlive` was true last update): timer = `contagionInterval`; the
-//!   caster's foes (`GetTargetsInRadius` with the caster's faction pack,
-//!   the holder excluded) within `contagionRadius` (default 2; none at ≤ 0)
-//!   of the holder that are characters it sees (`IsTargetInLOS`, as for
-//!   `SkillBuff_DebufRadius`); nothing if the caster object is gone. Up to
-//!   `contagionLimit` (default 1) of them that neither hold that buff
-//!   (`Character::IsSkillBuffActive`) nor are immune to it
-//!   (`IsImmuneToPlague`) get `Character::DebufTarget(caster, …)` with a
-//!   transfer of the buff record, its level, devotion level, modifiers and
-//!   applying skill / item, for its `skillActiveDuration` with the
-//!   modifiers' (`GetSkillModifierData`) × 1000 as int; each infection
-//!   takes one off the budget, which at ≤ 0 stops spreading for good (the
-//!   current spread still runs to its limit). A holder that died then has
-//!   the buff removed (`SkillServices_Character::RemoveSkillBuff`). Every
-//!   infected character's own buff spreads the same way (no generation
-//!   limit): only the budget per buff and the immunity bound it.
+//! Projectile debuffs (`SkillBuff_DebufProjectile`: Mark of Darkness, Mark of Doom; only with Fangs of Asterkarn
+//! loaded, PORT: always): no debuff attack on the holder; while the holder is not dead a timer (from 0) runs down
+//! and at 0 is re-armed to `debufAttackTime` (s → whole ms; ≤ 0: 1000 ms); with the caster and the applying skill
+//! still there, the caster launches that skill's projectile from the holder's coordinates (to 1 m above them), one
+//! per tick unless `skillProjectileMaximumNumber` live ones (no stock record sets it). The projectile lasts the buff
+//! record's `projectileDuration` as whole seconds; stock: a `ProjectileAreaEffect` hitting the caster's foes from
+//! the buff record's attack.
 //!
-//! PORT: `SkillBuff.spreading` (`SkillActiveState.spreading`, from the creating transfer) is
-//! taken as set for every new buff; `Skill::ResolveValidateTarget` is not
-//! modelled (`DebufTarget` refuses dead targets); breakables are no
-//! characters; the death spread runs the frame the holder becomes [`Dead`].
+//! Contagious debuffs (`SkillBuff_Contageous`: Bloody Pox, the plague item skills, Fetid Pool's devotion): a debuff
+//! in stats, buff bar and attack ([`is_debuff`], [`gd_game_core::skill_buffs::attacks`]).
+//! - `Install`: the spread timer = `contagionInterval` (whole ms, default 1000), the budget = `contagionMaxSpread`
+//!   (default 1); `Character::SetImmuneToPlagueTime(buff, total ms × 1.5 + 4000)` on the holder
+//!   ([`plague_immunity_secs`], [`ReceivedBuffs::immune`]; cleared on death).
+//! - `Update`: the debuff's attack first; then, while spreading, when the timer runs out or the holder has just died:
+//!   timer re-armed; the caster's foes (the holder excluded) within `contagionRadius` (default 2; none at ≤ 0) of the
+//!   holder that it sees; nothing if the caster is gone. Up to `contagionLimit` (default 1) of them that neither
+//!   hold that buff nor are immune to it get `DebufTarget(caster, …)` with the buff's level, devotion level,
+//!   modifiers and applying skill / item, for its `skillActiveDuration` with the modifiers' × 1000 as int; each
+//!   infection takes one off the budget, which at ≤ 0 stops spreading for good (the current spread still runs to its
+//!   limit). A holder that died then has the buff removed. Infected characters' buffs spread the same way: only the
+//!   budget per buff and the immunity bound it.
 //!
-//! Dispels ([`DispelOn`]): `Character::DispelSkillBuffs` →
-//! `SkillManager::DispelSkillBuffs` runs `DispelBuff` on each
-//! received `SkillBuff` (only `SkillBuff_Passive*` / `…BuffImmobilize` have
-//! one, `SkillBuff_Passive::DispelBuff`) and `DispellSelfBuff` on the skills of its own
-//! three lists: `SkillManager.activeList` (`AddToActiveList`, from
-//! `Skill::SetSkillLevel` / `ReceiveStateUpdate`: every skill with a level,
-//! not an item skill), `SkillManager.itemSkills` (`GetItemSkillList`),
-//! `SkillManager.subSkills` (`GetSubSkillsList`). `DispellSelfBuff` is empty in `Skill`; the
-//! `SkillActivatedBuffSelf` family's is `SkillActivatedBuffSelf::DispellSelfBuff`:
-//! unless the profile is `notDispelable`, `StopSkill`, which for
-//! `Skill_BuffSelfToggled` (its subclasses `…Duration`,
-//! `Skill_Shapeshift`, `…Colossus`, `…Shield`, …), `Skill_BuffRadius`
-//! (and `…Toggled`), `Skill_BuffAttackRadiusToggled`
-//! (and `…Duration`, `…Lightning`), `Skill_OnHitBuffSelf` /
-//! `Skill_OnHitAttackRadius` clears the skill's active flag and sends the
-//! inactive `SendSkillActiveUpdate` (`skillDeactivatedSound`): timed self
-//! buffs, toggles, damage auras and forms all stop. The classes with
-//! own `DispellSelfBuff` (its xrefs from the vtables):
-//! `SkillActivatedBuffSelf`, `Skill_BuffSelf{Toggled,Duration,Sick,Shield,
-//! Invulnerable,Immobilize,Colossus}`, `Skill_Shapeshift`,
-//! `Skill_BuffRadius{,Toggled}`, `Skill_BuffAttackRadius{Toggled,Duration,
-//! Lightning}` and an unnamed vtable (`Skill_BuffAttackRadiusDrop::vftable`) with the toggled damage
-//! aura's `StopSkill` (`Skill_BuffAttackRadiusDrop`, a `…Duration` by RTTI),
-//! `Skill_OnHitAttackRadius`, `Skill_OnHitBuffSelf` (own
-//! `Skill_OnHitBuffSelf::StopSkill`), and `Skill_ChargePotion` / `Skill_Teleport` /
-//! `Skill_RefreshCooldown`, whose `StopSkill` is empty. Every other class has
-//! an empty `DispellSelfBuff`, so a dispel leaves it running: the passive procs
-//! (`Skill_PassiveOnHitBuffSelf` / `…OnCritBuffSelf` / `…OnLifeBuffSelf` /
-//! `…OnHitBuffShield`: Stoneward, Will to Live, …), the secondaries'
-//! buffs (`SkillSecondary_BuffSelfDuration`, `…BuffRadius`,
-//! `…BuffAttackRadiusDuration`), `Skill_BuffOther`, `Skill_GiveBonus`,
-//! pets' and passives' skills ([`stopped_by_dispel`]). The three lists
-//! go through the same `DispellSelfBuff`, so an item-granted skill (`SkillManager.itemSkills`, filled by
-//! `SkillManager::AddItemSkills`) stops like a learned one;
-//! the sub skills (`SkillManager.subSkills`) are only `Skill_Shapeshift::Install`'s
-//! `grantedSkills` (`SkillManager::AddSubSkills`, its one
-//! caller; `UnInstall` removes them), every stock one an attack (empty
-//! `DispellSelfBuff`), so a dispel stops none of them. A toggle comes back
-//! only by a new use, except the main player's: `SkillManager::Update`
-//! runs each active-list and item-list skill's
-//! `AutoActivateNow` while `IsDispelBuffActive` (a received
-//! `SkillBuff_DispelMagic`) is false, and
-//! a toggle's (`Skill_BuffSelfToggled::AutoActivateNow`, auto toggle `Skill_BuffSelfToggled.autoToggle` set by
-//! the toggles' constructors) switches it on again ([`auto_toggles`]).
-//! `SkillManager::DispelSkillDeBuffs`
-//! runs `DispelDeBuff` on each received one (`SkillBuff_Debuf::DispelDeBuff`:
-//! the debuffs and `SkillBuff_Contageous`); each skips a
-//! profile with `notDispelable` (a wrapper's: its `buffSkillName`
-//! record's) and removes the buff through `RemoveSkillBuff` (like running
-//! out: `skillUnCastSound`); `DispelDamageOverTime` clears the damage over
-//! time (`crate::afflictions`). Callers of `Character::DispelSkillBuffs`:
-//! `SkillBuff_DispelMagic::Install` and `Skill_DispelMagic::TargetResult`
-//! (on foes).
-//! `SkillBuff_DispelMagic` (Nullification curses of heroes / nemeses, an
-//! elixir; `SkillBuff_DispelMagic::Load`: `dispelDamageOverTime`, `dispelFriendly`):
-//! a plain `SkillBuff`, landed by its `Skill_AttackBuff` like a debuff
-//! ([`gd_game_core::skill_buffs::lands_as_debuff`]); `SkillBuff_DispelMagic::Install` (when created) with a
-//! `Character` caster: on a foe of the caster (`FactionManager::IsFriend`)
-//! `DispelSkillBuffs`, then the caster's `AttackTarget` with the buff's
-//! `CollectCombatParameters` (style 4); on a friend (the caster itself
-//! too) `DispelSkillBuffs` with `dispelFriendly`, else `DispelSkillDeBuffs`,
-//! and with `dispelDamageOverTime` `DispelDamageOverTime`. It stays for its
-//! duration with its stats like any buff.
-//! The port's own skills, each by its cast record's class: the player's
-//! timed buffs, learned or item-granted, procs included
-//! (`player::Loadout::buffs`, the shared [`gd_game_core::skill_buffs::TimedBuffs`]), learned toggles (into `SkillBook::dispelled`)
-//! and form (the Fangs relic's is `notDispelable`); monsters' and pets'
-//! timed buffs and switched-on toggles (`MonsterSkills::dispel`,
-//! `Pet::dispel`) and anyone's damage auras (`casting::DamageAuras`).
-//! A worn item's toggle stops and comes back like a learned one (into
-//! `SkillBook::dispelled`, `crate::player` docs: item toggles). A stopped
-//! buff-self skill's absorb ends with it ([`stop_shields`]) and a stopped `Skill_BuffSelfImmobilize`'s
-//! hold with its last refresh (`casting::ImmobilizeRefresh`). Death stops every character's timed self buffs the
-//! same way (`SkillManager::ImDead`, [`stop_buffs_on_death`]). PORT: the attack's multiplier
-//! is the debuff tick's roll ([`DebuffTick`]).
+//! PORT: `SkillBuff.spreading` is taken as set for every new buff; `Skill::ResolveValidateTarget` is not modelled;
+//! breakables are no characters; the death spread runs the frame the holder becomes [`Dead`].
 //!
-//! Traps and freezes (`SkillBuff_DebufTrap` / `…Freeze`):
-//! `SetTimeToLive(ms)` (creation and refresh)
-//! sets the time left and total, then `ModifyDuration` takes the holder's
-//! resistance (`GetResistance`: the sum of its defense attributes of type 44
-//! trap / 45 freeze, `defensiveTrap` / `defensiveFreeze`) off the time left
-//! when > 0 ([`resisted_ms`]; the total stays, the buff bar's time is left /
-//! total); `SkillBuff_DebufTrap::Install` (on creation, new or replaced) plays the
-//! holder's stun sound ([`on_created`] → `crate::combat_sounds::StunSound`).
-//! `Update` = the debuff's attack, then every 100 ms (`SkillBuff_DebufTrap.holdTimer`; timer from 0)
-//! while more than 1 ms is left `ApplyBuffDamage`: `DurationDamageManager::
-//! AddFixedDamage(44 / 45, 1.0, min(0.25 s (`SkillBuff_DebufTrap.maxHold`), time left))` on the
-//! holder, so it is trapped (moves not, acts) / frozen for as long as the
-//! buff lasts (`crate::afflictions`, `Afflictions::hold`).
+//! Dispels ([`DispelOn`]): `SkillManager::DispelSkillBuffs` runs `DispelBuff` on each received `SkillBuff` (only
+//! `SkillBuff_Passive*` / `…BuffImmobilize` have one) and `DispellSelfBuff` on the skills of its active, item and
+//! sub skill lists. `SkillActivatedBuffSelf::DispellSelfBuff`: unless the profile is `notDispelable`, `StopSkill`,
+//! which for `Skill_BuffSelfToggled` (and subclasses: `…Duration`, `Skill_Shapeshift`, `…Colossus`, `…Shield`, …),
+//! `Skill_BuffRadius{,Toggled}`, `Skill_BuffAttackRadius{Toggled,Duration,Lightning}`, `Skill_OnHitBuffSelf` /
+//! `Skill_OnHitAttackRadius` clears the active flag (`skillDeactivatedSound`): timed self buffs, toggles, damage
+//! auras and forms all stop. Every other class has an empty `DispellSelfBuff`, so a dispel leaves it running: the
+//! passive procs, the secondaries' buffs, `Skill_BuffOther`, `Skill_GiveBonus`, pets' and passives' skills
+//! ([`stopped_by_dispel`]). An item-granted skill stops like a learned one; the sub skills (`Skill_Shapeshift`'s
+//! `grantedSkills`) are all attacks, so a dispel stops none of them. A toggle comes back only by a new use, except
+//! the main player's: `SkillManager::Update` runs `AutoActivateNow` while no `SkillBuff_DispelMagic` is received,
+//! which switches an auto toggle on again ([`auto_toggles`]). `SkillManager::DispelSkillDeBuffs` runs
+//! `SkillBuff_Debuf::DispelDeBuff` on each received debuff (contagious ones too); each skips a profile with
+//! `notDispelable` (a wrapper's: its `buffSkillName` record's) and removes the buff like running out;
+//! `DispelDamageOverTime` clears the damage over time. Callers of `DispelSkillBuffs`: `SkillBuff_DispelMagic::Install`
+//! and `Skill_DispelMagic::TargetResult` (on foes).
+//! `SkillBuff_DispelMagic` (Nullification, an elixir; `dispelDamageOverTime`, `dispelFriendly`): a plain
+//! `SkillBuff` landed like a debuff ([`gd_game_core::skill_buffs::lands_as_debuff`]); `Install` with a `Character`
+//! caster: on a foe of the caster `DispelSkillBuffs`, then the caster's `AttackTarget` with the buff's combat
+//! parameters (style 4); on a friend (the caster too) `DispelSkillBuffs` with `dispelFriendly`, else
+//! `DispelSkillDeBuffs`, and with `dispelDamageOverTime` `DispelDamageOverTime`. It stays for its duration with its
+//! stats like any buff.
+//! The port's own skills, each by its cast record's class: the player's timed buffs (learned or item-granted, procs
+//! included, [`gd_game_core::skill_buffs::TimedBuffs`]), learned and worn-item toggles (into `SkillBook::dispelled`)
+//! and form; monsters' and pets' timed buffs and toggles, and anyone's damage auras. A stopped buff-self skill's
+//! absorb ends with it ([`stop_shields`]) and a stopped `Skill_BuffSelfImmobilize`'s hold with its last refresh.
+//! Death stops every character's timed self buffs the same way (`SkillManager::ImDead`, [`stop_buffs_on_death`]).
+//! PORT: the attack's multiplier is the debuff tick's roll.
 //!
-//! The transfer's modifiers are the buff's own (`SkillManager::
-//! CreateSkillBuff`: each is created as a skill at its level and added to
-//! the buff's modifier list, `SkillBuff.modifiers`, or its item modifiers), so they add to
-//! its attack like any skill's (`Skill::CollectLocalOffensiveDamageAttributes`
-//! / `…ModifierAttributes` → `AddModifierOffensive*Attributes`):
-//! [`DebuffTick::mods`].
+//! Traps and freezes (`SkillBuff_DebufTrap` / `…Freeze`): `SetTimeToLive(ms)` (creation and refresh) sets the time
+//! left and total, then `ModifyDuration` takes the holder's resistance (`defensiveTrap` / `defensiveFreeze`) off the
+//! time left when > 0 ([`resisted_ms`]; the total stays); `Install` (new or replaced) plays the holder's stun sound
+//! ([`on_created`]). `Update` = the debuff's attack, then every 100 ms while more than 1 ms is left
+//! `AddFixedDamage(44 / 45, 1.0, min(0.25 s, time left))` on the holder, so it is trapped (moves not, acts) /
+//! frozen for as long as the buff lasts.
 //!
-//! PORT: the per-debuff random stream (`SkillBuff_Debuf.rng`) is the combat `Rng`; the empty
-//! `DurationDamageManager` attack is not made; the player's own buffs on
-//! itself stay in `Loadout::buffs` / `SkillBook::stat_sources` (see
-//! `crate::auras`).
+//! The transfer's modifiers are the buff's own (`SkillManager::CreateSkillBuff`), so they add to its attack like any
+//! skill's: [`DebuffTick::mods`].
+//!
+//! PORT: the per-debuff random stream is the combat `Rng`; the empty `DurationDamageManager` attack is not made; the
+//! player's own buffs on itself stay in `Loadout::buffs` / `SkillBook::stat_sources`.
 use crate::afflictions::Afflictions;
 use crate::collision::WorldCollision;
 use bevy::prelude::*;
@@ -311,8 +157,7 @@ impl Plugin for SkillBuffsPlugin {
     }
 }
 
-/// A `SkillBuff_DebufProjectile`'s launch due: the caster, the holder's
-/// position, the buff record and level.
+/// A `SkillBuff_DebufProjectile`'s launch due.
 struct Launch {
     caster: Entity,
     at: Vec3,
@@ -321,8 +166,7 @@ struct Launch {
     hostile: bool,
 }
 
-/// A received buff `Character::DispelSkillBuffs` removes: the classes with
-/// `SkillBuff_Passive::DispelBuff` (module docs).
+/// A received buff `Character::DispelSkillBuffs` removes: the classes with `SkillBuff_Passive::DispelBuff`.
 fn dispellable_buff(rec: &Record) -> bool {
     matches!(
         rec.class.as_str(),
@@ -334,42 +178,36 @@ fn dispellable_buff(rec: &Record) -> bool {
     )
 }
 
-/// `Character::DebufTarget` (module docs): put `buff` on `target`.
+/// `Character::DebufTarget`: put `buff` on `target`.
 #[derive(Message, Clone, Debug)]
 pub struct DebufTarget {
     pub caster: Entity,
     pub target: Entity,
     pub buff: String,
-    /// The skill applying it (the curse).
+    /// The skill applying it.
     pub skill: String,
     pub level_index: usize,
     pub mods: Vec<(String, usize)>,
-    /// The skill's devotion level ([`ReceivedBuff::devotion`]).
     pub devotion: u32,
     /// Seconds (the transfer's whole milliseconds).
     pub secs: f32,
 }
 
-/// A debuff's attack on its holder (module docs), sent by [`run_buffs`] and
-/// made by `crate::combat` as the caster's `TakeAttack` style 4.
+/// A debuff's attack on its holder, made by `crate::combat` as the caster's `TakeAttack` style 4.
 #[derive(Message, Clone, Debug)]
 pub struct DebuffTick {
     pub caster: Entity,
     pub target: Entity,
-    /// The debuff's holder: its defensive ability rolls the multiplier
-    /// (the target but for a `SkillBuff_DebufRadius`'s other targets).
+    /// Its defensive ability rolls the multiplier (the target but for a `SkillBuff_DebufRadius`'s other targets).
     pub holder: Entity,
     pub buff: String,
     pub level_index: usize,
-    /// The buff's modifiers (the transfer's; module docs).
+    /// The buff's modifiers (the transfer's).
     pub mods: Arc<[(String, usize)]>,
 }
 
-/// What a created buff does on landing (module docs): `skillCastSound` at
-/// the holder, a trap / freeze's stun sound; on another character than the
-/// caster, when new, the buff record's (else the skill's) `charFxPakOtherNames`.
-/// Its heals are the casting skill's bonus and the buff's own every second
-/// (`crate::casting::Bonus`, [`ReceivedBuff::heal`]).
+/// What a created buff does on landing: `skillCastSound` at the holder, a trap / freeze's stun sound; on another
+/// character than the caster, when new, the buff record's (else the skill's) `charFxPakOtherNames`.
 pub(crate) fn on_created(
     commands: &mut Commands,
     data: &GameData,
@@ -454,10 +292,9 @@ type Others<'w, 's> = Query<
     ),
     Without<Dead>,
 >;
-/// A debuff caster's side (`combat::Side`), looked up as any character.
+/// A debuff caster's side, looked up as any character.
 type Bodies<'w, 's> = Query<'w, 's, crate::combat::SideData, With<Combatant>>;
 
-/// A contagious buff's spread due this frame (module docs).
 struct Pulse {
     holder: Entity,
     at: Transform,
@@ -466,11 +303,8 @@ struct Pulse {
     dying: bool,
 }
 
-/// Each frame, before the aura passes (`crate::auras::pulse_auras`): buffs
-/// run out (`skillUnCastSound`, their effects on others go), debuffs land
-/// ([`DebufTarget`]), debuffs attack ([`DebuffTick`]) and hold (traps,
-/// freezes), contagious ones spread. A player whose received buffs changed
-/// is marked [`ProfileDirty`] (by `pulse_auras`).
+/// Each frame, before the aura passes: buffs run out, debuffs land ([`DebufTarget`]), attack ([`DebuffTick`]) and
+/// hold (traps, freezes), contagious ones spread.
 #[allow(clippy::too_many_arguments)]
 pub fn run_buffs(
     mut commands: Commands,
@@ -543,10 +377,8 @@ pub fn run_buffs(
         // `SkillBuff::ReceiveActiveUpdate` going inactive: `skillUnCastSound`.
         removed(&mut commands, &data, &fx, e, tf.translation, &gone);
     }
-    // BTreeMap: the landing order feeds `run_debuffs`' immediate ticks below,
-    // so it must be deterministic (a HashMap's would vary run to run). One map
-    // for the frame's landings and spreads: each new holder's list is inserted
-    // once, at the end, with everything that landed on it.
+    // BTreeMap: the landing order feeds `run_debuffs`' immediate ticks below, so it must be deterministic. Each new
+    // holder's list is inserted once, at the end, with everything that landed on it.
     let mut fresh: std::collections::BTreeMap<Entity, ReceivedBuffs> =
         std::collections::BTreeMap::new();
     for d in debufs.read() {
@@ -605,9 +437,8 @@ pub fn run_buffs(
     for (fx, at) in radius_fx {
         gd_game_core::visuals::spawn_fx(&mut commands, &data, &fx, Transform::from_translation(at));
     }
-    // The debuffs' projectiles: an area of the buff record's projectile at
-    // the holder for its `projectileDuration` (whole s; `Skill_AttackBuff::
-    // CreateProjectile`), radius `projectileExplosionRadius`.
+    // The debuffs' projectiles: an area of the buff record's projectile at the holder for its `projectileDuration`
+    // (whole s), radius `projectileExplosionRadius`.
     for l in launches {
         let Some(rec) = data.db.get(&l.buff) else {
             continue;
@@ -625,9 +456,8 @@ pub fn run_buffs(
         };
         crate::casting::spawn_area(&mut commands, &data, rec, cast, l.caster, dur, radius);
     }
-    // `SkillBuff_Contageous::Update` on a holder that died: a spread at
-    // once, then `RemoveSkillBuff`; `Character::CharacterIsDying` clears
-    // its immunities.
+    // `SkillBuff_Contageous::Update` on a holder that died: a spread at once, then `RemoveSkillBuff`; its
+    // immunities are cleared.
     for (e, tf, mut buffs) in &mut dying {
         for b in buffs
             .list
@@ -673,8 +503,8 @@ pub fn run_buffs(
     }
 }
 
-/// `Character::DebufTarget` → `CreateUpdateSkillBuff` (module docs): lands
-/// `d` on its target (in `fresh` when it has no buffs yet).
+/// `Character::DebufTarget` → `CreateUpdateSkillBuff`: lands `d` on its target (in `fresh` when it has no buffs
+/// yet).
 fn land(
     commands: &mut Commands,
     data: &GameData,
@@ -709,8 +539,7 @@ fn land(
         None => fresh.entry(t).or_default(),
     };
     let put = list.land(b.clone(), |c| others.contains(c));
-    // A trap / freeze's `SetTimeToLive` (new or refreshed) shortens its
-    // time by the holder's resistance (module docs).
+    // A trap / freeze's `SetTimeToLive` (new or refreshed) shortens its time by the holder's resistance.
     if put != Landed::Ignored
         && let Some((ty, _)) = b.hold
         && let Some(entry) = list
@@ -720,8 +549,7 @@ fn land(
     {
         entry.left = resisted_ms(entry.total, resistance(cb, ty)) / 1000.0;
     }
-    // `SkillBuff_Contageous::Install` (a created buff): the holder's
-    // immunity to its spread.
+    // `SkillBuff_Contageous::Install`: the holder's immunity to its spread.
     if put.created() && b.contagion.is_some() {
         list.set_immune(&b.buff, plague_immunity_secs(b.total));
     }
@@ -736,8 +564,8 @@ fn land(
     }
 }
 
-/// `SkillBuff_Contageous::Update`'s spreads (module docs): the infections
-/// as [`DebufTarget`]s; the holders' budgets are written back.
+/// `SkillBuff_Contageous::Update`'s spreads: the infections as [`DebufTarget`]s; the holders' budgets are written
+/// back.
 #[allow(clippy::too_many_arguments)]
 fn spread(
     db: &Database,
@@ -761,8 +589,7 @@ fn spread(
         let prof = contagion_profile(rec, b.level_index);
         let mut limit = prof.limit;
         let mut left = b.contagion.map_or(0, |c| c.left);
-        // The transfer: the buff at its level, devotion level and modifiers
-        // for its `skillActiveDuration` with the modifiers' (whole ms).
+        // The transfer's duration: `skillActiveDuration` with the modifiers' (whole ms).
         let secs = ((level_f(rec, "skillActiveDuration", b.level_index)
             + mod_sum(db, &b.mods, "skillActiveDuration"))
             * 1000.0) as i32 as f32
@@ -772,7 +599,7 @@ fn spread(
                 if limit == 0 {
                     break;
                 }
-                // Foes, not hiding (`FilterInvalidTargets`, `combat::Side::hits`), no breakable.
+                // Foes, not hiding, no breakable.
                 if t == p.holder
                     || !caster_side.hits(&v)
                     || breakables.contains(t)
@@ -827,11 +654,8 @@ fn spread(
     out
 }
 
-/// Whether `DispelSkillBuffs` stops a character's own skill of `class`
-/// (module docs, vtables): its `DispellSelfBuff` is `SkillActivatedBuffSelf::
-/// DispellSelfBuff` with a `StopSkill` that ends something. The others
-/// (`Skill_Passive*` procs, `SkillSecondary_*` buffs, `Skill_BuffOther`,
-/// `Skill_GiveBonus`, `Skill_ChargePotion`, …) keep running.
+/// Whether `DispelSkillBuffs` stops a character's own skill of `class`: its `DispellSelfBuff` is
+/// `SkillActivatedBuffSelf::DispellSelfBuff` with a `StopSkill` that ends something.
 pub fn stopped_by_dispel(class: &str) -> bool {
     matches!(
         class,
@@ -854,10 +678,8 @@ pub fn stopped_by_dispel(class: &str) -> bool {
     )
 }
 
-/// What a dispel strips from one character (module docs): its buffs
-/// (`Character::DispelSkillBuffs`: received `SkillBuff_Passive*` and its
-/// own timed buffs), its debuffs (`DispelSkillDeBuffs`) and its damage over
-/// time (`DispelDamageOverTime`); none flagged `notDispelable`.
+/// What a dispel strips from one character: its buffs (received `SkillBuff_Passive*` and its own timed buffs), its
+/// debuffs and its damage over time; none flagged `notDispelable`.
 #[derive(Message, Clone, Debug)]
 pub struct DispelOn {
     pub target: Entity,
@@ -866,8 +688,7 @@ pub struct DispelOn {
     pub dots: bool,
 }
 
-/// A `SkillBuff_DispelMagic` was created on `holder` (its `Install`,
-/// sent by [`on_created`]).
+/// A `SkillBuff_DispelMagic` was created on `holder`.
 #[derive(Message, Clone, Debug)]
 pub struct DispelInstall {
     pub caster: Entity,
@@ -877,10 +698,9 @@ pub struct DispelInstall {
     pub mods: Vec<(String, usize)>,
 }
 
-/// `SkillBuff_DispelMagic::Install` (module docs): on a foe of the caster
-/// its buffs go and the caster attacks it with the buff (style 4); on a
-/// friend (the caster too) its debuffs go, or with `dispelFriendly` its
-/// buffs, and with `dispelDamageOverTime` its damage over time.
+/// `SkillBuff_DispelMagic::Install`: on a foe of the caster its buffs go and the caster attacks it with the buff
+/// (style 4); on a friend (the caster too) its debuffs go, or with `dispelFriendly` its buffs, and with
+/// `dispelDamageOverTime` its damage over time.
 fn install_dispels(
     data: Res<GameData>,
     mut installs: MessageReader<DispelInstall>,
@@ -922,13 +742,9 @@ fn install_dispels(
     }
 }
 
-/// Applies [`DispelOn`]: removed received buffs end like run-out ones
-/// (`RemoveSkillBuff`: `skillUnCastSound`, their effects go); the
-/// character's own buff-self skills stop (`SkillActivatedBuffSelf::
-/// DispellSelfBuff` → `StopSkill`: `skillDeactivatedSound`): timed buffs
-/// (the player's through `casting::expire_buffs`), toggles (the player's
-/// into `SkillBook::dispelled`, see [`auto_toggles`]), damage auras and the
-/// player's form (module docs).
+/// Applies [`DispelOn`]: removed received buffs end like run-out ones; the character's own buff-self skills stop
+/// (`skillDeactivatedSound`): timed buffs, toggles (the player's into `SkillBook::dispelled`, see
+/// [`auto_toggles`]), damage auras and the player's form.
 #[allow(clippy::type_complexity)]
 fn dispel_on(
     mut commands: Commands,
@@ -947,8 +763,7 @@ fn dispel_on(
     fx: Query<(Entity, &BuffFx)>,
     mut forms: MessageWriter<crate::shapeshift::Toggle>,
 ) {
-    // A skill of a class whose `DispellSelfBuff` does nothing, or with a `notDispelable`
-    // profile, keeps running.
+    // A skill of a class whose `DispellSelfBuff` does nothing, or with a `notDispelable` profile, keeps running.
     let keep = |name: &str| {
         data.db.get(name).is_some_and(|r| {
             !stopped_by_dispel(&r.class)
@@ -991,11 +806,9 @@ fn dispel_on(
                     }
                 }
             }
-            // The timed buffs that stop.
             let mut timed: Vec<String> = stopped.clone();
             if let Some(mut l) = loadout {
-                // The timed buffs that stop (a form entry stays: it leaves
-                // with the form, not by dispel).
+                // A form entry stays: it leaves with the form, not by dispel.
                 for b in l
                     .buffs
                     .list
@@ -1005,7 +818,6 @@ fn dispel_on(
                     timed.push(b.0.clone());
                     b.2 = 0.0;
                 }
-                // The learned / granted / worn items' toggles that are on.
                 let on: Vec<String> = l
                     .skills_and_item_toggles(&data.db)
                     .iter()
@@ -1061,14 +873,10 @@ fn dispel_on(
     }
 }
 
-/// A stopped `SkillActivatedBuffSelf` skill (`Skill_BuffSelfToggled::StopSkill`, the
-/// class of `Skill_BuffSelfShield` / `…Immobilize` / `…Duration`)
-/// clears its combat filter's on byte (`SkillActivatedBuffSelf.combatFilter`, its `CombatFilter.on`;
-/// `Install` adds the filter once, `ModifyDamage` absorbs while it
-/// is on) and its active flag, so a stopped skill with an absorb drops its
-/// own buff filter from the caster's [`gd_game_core::casting::Shields`] (not a potion's:
-/// `Skill_ChargePotion`'s `StopSkill` is empty). A stopped `Skill_BuffSelfImmobilize`
-/// refreshes its hold no more: the last refresh runs out (`casting::ImmobilizeRefresh`).
+/// A stopped `SkillActivatedBuffSelf` skill (`Skill_BuffSelfToggled::StopSkill`) clears its combat filter's on byte
+/// and its active flag, so a stopped skill with an absorb drops its own buff filter from the caster's
+/// [`gd_game_core::casting::Shields`] (not a potion's: `Skill_ChargePotion`'s `StopSkill` is empty). A stopped
+/// `Skill_BuffSelfImmobilize` refreshes its hold no more: the last refresh runs out.
 fn stop_shields(commands: &mut Commands, data: &GameData, target: Entity, stopped: &[String]) {
     let absorbs = |r: &Record| {
         ["damageAbsorptionPercent", "damageAbsorption"]
@@ -1099,9 +907,8 @@ fn stop_shields(commands: &mut Commands, data: &GameData, target: Entity, stoppe
     }
 }
 
-/// A character's own timed buffs ended ([`gd_game_core::skill_buffs::TimedBuffs::tick`] / [`gd_game_core::skill_buffs::TimedBuffs::stop_timed`]: run out, dispelled,
-/// stopped by death): `skillDeactivatedSound` at the caster (`crate::combat_sounds::deactivate`) and the effects
-/// they put on it go. The caller marks the profile dirty.
+/// A character's own timed buffs ended (run out, dispelled, stopped by death): `skillDeactivatedSound` at the caster
+/// and the effects they put on it go. The caller marks the profile dirty.
 pub(crate) fn timed_buffs_ended(
     commands: &mut Commands,
     data: &GameData,
@@ -1123,11 +930,9 @@ pub(crate) fn timed_buffs_ended(
     }
 }
 
-/// Death stops the character's own timed buffs: `Character::ImDying` → `SkillManager::ImDead` `StopSkill`s every
-/// active-list and item-list skill (`crate::casting::stop_skills` docs), which ends a timed self buff as a
-/// dispel does ([`dispel_on`]): `skillDeactivatedSound`, its effects and absorb ([`stop_shields`]) go, the profile
-/// rebuilds. The same for monsters' and pets' lists (`casting::expire_buffs` only runs the living ones' timers). A
-/// form entry stays: it leaves with the form.
+/// Death stops the character's own timed buffs: `SkillManager::ImDead` `StopSkill`s every active-list and item-list
+/// skill, which ends a timed self buff as a dispel does: `skillDeactivatedSound`, its effects and absorb go, the
+/// profile rebuilds. The same for monsters' and pets' lists. A form entry stays: it leaves with the form.
 #[allow(clippy::type_complexity)]
 fn stop_buffs_on_death(
     mut commands: Commands,
@@ -1176,35 +981,19 @@ fn stop_buffs_on_death(
     }
 }
 
-/// The main player's toggles, learned and item ones (Game.dll):
-/// `SkillManager::Update` runs, every
-/// update and unless `IsDispelBuffActive` (a received `SkillBuff_DispelMagic`
-/// is on), each active-list and item-list skill's `AutoActivateNow`; a
-/// toggle's (`Skill_BuffSelfToggled::AutoActivateNow` / `SkillActivatedBuffSelf::AutoActivateNow`) switches
-/// it on when it is off, enabled (level > 0), the character alive, an auto
-/// toggle (`Skill_BuffSelfToggled.autoToggle`: every toggle's constructor sets it, nothing clears it),
-/// its weapons and hand state qualify and `ExclusiveSkillCheck` passes. So
-/// a toggle is on whenever it can be: there is no user switch-off (the hot
-/// slots refuse auto toggles: `HotSlotOptionSkill::Validate`,
-/// `crate::hotbar` docs), a newly learned or loaded one comes on at the next
-/// update (the save's active flag does not matter), one stopped by weapons
-/// (`toggles_need_weapons`), death or a dispel comes back once its weapons
-/// qualify again, after the respawn or once the dispelling buff is gone,
-/// with its activate effect.
-/// - death: `SkillManager::ImDead` `StopSkill`s every active-list and
-///   item-list skill (`skillDeactivatedSound`); the alive test keeps them
+/// The main player's toggles, learned and item ones (Game.dll): `SkillManager::Update` runs, unless a
+/// `SkillBuff_DispelMagic` is received, each active-list and item-list skill's `AutoActivateNow`, which switches a
+/// toggle on when it is off, enabled, the character alive, an auto toggle (every toggle is), its weapons and hand
+/// state qualify and `ExclusiveSkillCheck` passes. So a toggle is on whenever it can be: there is no user
+/// switch-off, a newly learned or loaded one comes on at the next update (the save's active flag does not matter),
+/// one stopped by weapons, death or a dispel comes back once that is over, with its activate effect.
+/// - death: `SkillManager::ImDead` `StopSkill`s every active-list and item-list skill; the alive test keeps them
 ///   off until the respawn.
-/// - exclusive skills (`exclusiveSkill`, Possession, Primal Bond, Mind over
-///   Matter, ...): one going active becomes the manager's exclusive skill
-///   (`Skill::HandleExclusiveSkill` → `SkillManager::SetExclusiveSkill`,
-///   which `StopSkill`s the one before); `Skill::ExclusiveSkillCheck`
-///   lets another exclusive come on only with a higher level
-///   (the points spent, no item bonus), equal: the higher mastery
-///   enumeration, equal: the higher item bonus ([`gd_sim::skills::ExclusiveRank`]).
-///   So the highest one runs. An item toggle's level is its granted level with no augment
-///   (`SkillManager::SetAllSkillAugment` / `SetSkillLevelAugment` /
-///   `FindSkillId` walk only the learned list; no stock augment reaches the 60 item toggles).
-///   PORT: several on (a load) keep the first of the book that no later one beats.
+/// - exclusive skills (`exclusiveSkill`): one going active becomes the manager's exclusive skill, stopping the one
+///   before; `Skill::ExclusiveSkillCheck` lets another exclusive come on only with a higher
+///   [`gd_sim::skills::ExclusiveRank`] (points spent, then mastery enumeration, then item bonus). So the highest one
+///   runs. An item toggle's level is its granted level with no augment. PORT: several on (a load) keep the first of
+///   the book that no later one beats.
 #[allow(clippy::type_complexity)]
 fn auto_toggles(
     mut commands: Commands,
@@ -1224,12 +1013,9 @@ fn auto_toggles(
 ) {
     let db = &data.db;
     for (e, tf, mut l, received, links, dead) in &mut q {
-        // What decides a toggle: the book and worn items (`Loadout`), the weapons
-        // (`SkillLinks`), a dispel (`ReceivedBuffs`) and being dead; nothing else
-        // changes the outcome, so an idle frame skips the pass. The dispel test is
-        // the semantic `changed` flag (a buff came or went), not Bevy's change
-        // detection: `run_buffs` ticks the buff timers through `ReceivedBuffs` every
-        // frame, which would mark it changed always.
+        // Only the book and worn items, the weapons, a dispel and being dead decide a toggle, so an idle frame skips
+        // the pass. The dispel test is the `changed` flag, not Bevy's change detection: `run_buffs` ticks the buff
+        // timers every frame.
         let was = std::mem::replace(&mut *was_dead, dead);
         if !dead
             && !was
@@ -1270,8 +1056,7 @@ fn auto_toggles(
                 .iter()
                 .any(|b| db.get(&b.buff).is_some_and(|r| r.class == DISPEL_MAGIC))
         }) {
-            // The flag sits on the buff record (`auraconviction1_buff`), like
-            // `SkillBook::exclusive_conflict` reads it.
+            // The flag sits on the buff record (`auraconviction1_buff`).
             let exclusive = |s: &str| {
                 gd_sim::skills::profile_record(db, s).is_some_and(|r| r.bool("exclusiveSkill"))
             };
@@ -1299,8 +1084,7 @@ fn auto_toggles(
                     .map(|i| ranks[i])
                     .expect("a listed toggle")
             };
-            // The exclusive skill on (several only from a load: the best
-            // stays).
+            // The exclusive skill on (several only from a load: the best stays).
             let mut current: Option<(String, gd_sim::skills::ExclusiveRank)> = None;
             for (s, _, _, _) in toggles
                 .iter()
@@ -1321,8 +1105,7 @@ fn auto_toggles(
                 if is_on(&l, s) || stopped.iter().any(|x| x.eq_ignore_ascii_case(s)) {
                     continue;
                 }
-                // PORT: item toggles' weapons are not tested (`crate::player`
-                // docs).
+                // PORT: item toggles' weapons are not tested.
                 if *learned && links.as_ref().is_some_and(|k| !k.weapons_allow(db, r, s)) {
                     continue;
                 }
@@ -1352,14 +1135,12 @@ fn auto_toggles(
             debug!("toggle {s} stopped (death / exclusive)");
         }
         if changed || !stopped.is_empty() {
-            // The toggles' aura loops come and go with them (`skill_fx`).
             commands.entity(e).try_insert(ProfileDirty);
         }
     }
 }
 
-/// Received buffs that ended (ran out, dispelled): `skillUnCastSound` at
-/// the holder, the effects they put on it go.
+/// Received buffs that ended (ran out, dispelled): `skillUnCastSound` at the holder, the effects they put on it go.
 fn removed(
     commands: &mut Commands,
     data: &GameData,
@@ -1387,8 +1168,7 @@ fn mod_sum(db: &Database, mods: &[(String, usize)], field: &str) -> f32 {
         .filter_map(|(m, li)| db.get(m).map(|m| level_f(m, field, *li)))
         .sum()
 }
-/// The holder's resistance to a hold (`SkillBuff_DebufTrap::GetResistance`:
-/// the sum of its defense attributes of that type).
+/// `SkillBuff_DebufTrap::GetResistance`: the sum of the holder's defense attributes of that type.
 fn resistance(cb: &Combatant, ty: CombatType) -> f32 {
     cb.profile
         .resistances
@@ -1398,8 +1178,7 @@ fn resistance(cb: &Combatant, ty: CombatType) -> f32 {
         .sum()
 }
 
-/// `SkillBuff_DebufTrap::ModifyDuration`: `secs` (whole ms) less `res` %
-/// when `res` > 0, as whole ms.
+/// `SkillBuff_DebufTrap::ModifyDuration`: `secs` (whole ms) less `res` % when `res` > 0, as whole ms.
 pub fn resisted_ms(secs: f32, res: f32) -> f32 {
     let ms = (secs * 1000.0).round();
     if res > 0.0 {
@@ -1409,8 +1188,7 @@ pub fn resisted_ms(secs: f32, res: f32) -> f32 {
     }
 }
 
-/// Runs the debuffs' attack and hold timers on `holder` at `at` (module
-/// docs).
+/// Runs the debuffs' attack and hold timers on `holder` at `at`.
 #[allow(clippy::too_many_arguments)]
 fn run_debuffs(
     db: &Database,
@@ -1439,8 +1217,7 @@ fn run_debuffs(
                 }
             }
         }
-        // `SkillBuff_Contageous::Update` after the debuff's: every
-        // `contagionInterval` while it spreads.
+        // `SkillBuff_Contageous::Update` after the debuff's: every `contagionInterval` while it spreads.
         if let Some(c) = b.contagion.as_mut() {
             c.next -= dt;
             if c.spreading && c.next <= 0.0 {
@@ -1494,10 +1271,9 @@ fn run_debuffs(
             });
             continue;
         }
-        // `SkillBuff_DebufRadius::Update`: the profile's `radiusEffectName` of the level (the last when
-        // the level is past the list) at the holder, then the caster's foes within the
-        // buff's `skillTargetRadius` (with its modifiers') of the holder,
-        // the holder included, that the holder sees.
+        // `SkillBuff_DebufRadius::Update`: the profile's `radiusEffectName` at the holder, then the caster's foes
+        // within the buff's `skillTargetRadius` (with its modifiers') of the holder, the holder included, that the
+        // holder sees.
         if let Some(fx) = radius_effect(rec, b.level_index) {
             radius_fx.push((fx, at));
         }
@@ -1523,8 +1299,8 @@ fn run_debuffs(
     }
 }
 
-/// A `SkillBuff_DebufRadius` profile's `radiusEffectName` for a level (`Update` clamps the level
-/// to the list's last entry; an empty name plays nothing).
+/// A `SkillBuff_DebufRadius` profile's `radiusEffectName` for a level (clamped to the list's last entry; an empty
+/// name plays nothing).
 fn radius_effect(rec: &gd_formats::arz::Record, level_index: usize) -> Option<String> {
     rec.strs_iter("radiusEffectName")
         .nth(level_index)
@@ -1533,7 +1309,7 @@ fn radius_effect(rec: &gd_formats::arz::Record, level_index: usize) -> Option<St
         .map(|f| f.to_string())
 }
 
-/// What a holder's `IsTargetInLOS` needs (module docs).
+/// What a holder's `IsTargetInLOS` needs.
 struct Sight<'a, 'w, 's> {
     data: &'a GameData,
     chars: &'a Query<'w, 's, &'static Character>,
@@ -1541,8 +1317,7 @@ struct Sight<'a, 'w, 's> {
 }
 
 impl Sight<'_, '_, '_> {
-    /// `Skill::IsTargetInLOS(holder, target)` (`crate::monster_skills::
-    /// sight_ray`); a target that is no character is not tested.
+    /// `Skill::IsTargetInLOS(holder, target)`; a target that is no character is not tested.
     fn sees(&self, holder: Entity, at: &Transform, target: Entity, tat: &Transform) -> bool {
         let (Ok(ch), Ok(tch)) = (self.chars.get(holder), self.chars.get(target)) else {
             return true;

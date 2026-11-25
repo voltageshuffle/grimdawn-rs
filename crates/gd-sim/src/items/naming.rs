@@ -59,9 +59,8 @@ pub fn record_name(tags: &TagTable, rec: &gd_formats::arz::Record) -> String {
 }
 
 /// `GetGameDescription` of a bare record (no affixes), markup stripped: the
-/// equipment name (quality, style and base tag, `tagItemNameOrder`;
-/// `Armor::GetGameDescription`, so "Empowered Skytear Hat"), else
-/// [`record_name`]. The Illusionist's list sorts on it.
+/// equipment name (quality, style and base tag, `tagItemNameOrder`), else
+/// [`record_name`].
 pub fn record_description(tags: &TagTable, rec: &gd_formats::arz::Record) -> String {
     if !super::resolve::is_equipment_class(&rec.class) {
         return record_name(tags, rec);
@@ -76,10 +75,10 @@ pub fn record_description(tags: &TagTable, rec: &gd_formats::arz::Record) -> Str
 }
 
 /// A gold pile's name and its colour (`OneShot_Gold::GetGameDescription` /
-/// `GetUIGameDescription`): `tagMoneyFormat` (stock `{^s}{%d0}  {%s1}`) localised with the amount
-/// and the item's name (`name_tag`, the record's `description`), spacing kept; only `^n`, line breaks and the
-/// outer spaces / braces are removed (`Game::StripTextFormatting`, `Game::TrimTextBraces`), so the format's own
-/// colour code colours the text (`None`: it has none and the classification's colour shows).
+/// `GetUIGameDescription`): `tagMoneyFormat` localised with the amount and `name_tag`,
+/// spacing kept; only `^n`, line breaks and the outer spaces / braces are removed
+/// (`Game::StripTextFormatting`, `Game::TrimTextBraces`). The colour is the format's own
+/// colour code (`None`: it has none and the classification's colour shows).
 pub fn money_label(tags: &TagTable, name_tag: &str, amount: u32) -> (String, Option<[f32; 4]>) {
     use super::tooltip::{Arg, format_spaced};
     let fmt = tags.get("tagMoneyFormat").unwrap_or("tagMoneyFormat");

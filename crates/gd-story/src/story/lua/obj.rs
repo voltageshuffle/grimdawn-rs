@@ -24,18 +24,13 @@ impl UserData for Obj {
                     .unwrap_or_default()
             })
         });
-        // Player.GetPlayerName (`LuaPlayer::GetPlayerName`): always returns the
-        // empty wide string constant `Game::emptyWideString`.
+        // Player.GetPlayerName (`LuaPlayer::GetPlayerName`): always `Game::emptyWideString`.
         m.add_method("GetPlayerName", |_, _, _: MultiValue| Ok(String::new()));
-        // `obj:IsType()` resolves through the class the object was fetched
-        // with, which already passed that class check; the static form
+        // `obj:IsType()`: the object already passed its fetching class's check; the static
         // `Class.IsType(id)` is on the class tables.
         m.add_method("IsType", |_, _, _: MultiValue| Ok(true));
-        // Entity.IsReloaded (`LuaEntity::IsReloaded` → `Entity::IsRestored`,
-        // Engine.dll `Entity.restored`: only `Level::RestoreState` sets it, for every
-        // entity it re-creates from the saved state of a level streamed out
-        // earlier this session). The host publishes those objects
-        // (`HostFacts::restored_objects`).
+        // Entity.IsReloaded (`LuaEntity::IsReloaded` → `Entity::IsRestored`): set by
+        // `Level::RestoreState` for entities re-created from a streamed-out level's saved state.
         m.add_method("IsReloaded", |_, o, ()| {
             Ok(o.ctx
                 .story
@@ -64,10 +59,9 @@ impl UserData for Obj {
         };
         m.add_method("GetCoords", get_coords_fn);
         // Actor.GetAttachedCoords(name) (`LuaActor::GetAttachedCoords` →
-        // `Actor::GetAttachedCoords`): the world coords of a mesh attach point (the entity coords ×
-        // the actor-scaled posed point, `Actor::GetAttachPointCoords`). PORT: no meshes here — the host
-        // publishes each story character's points in the world every frame (`Entities::attach_coords`,
-        // name matched ignoring case); without them this falls back to the entity coords.
+        // `Actor::GetAttachPointCoords`): the world coords of a mesh attach point. PORT: the host
+        // publishes the points (`Entities::attach_coords`, name matched ignoring case); without
+        // them, the entity coords.
         m.add_method("GetAttachedCoords", |lua: &Lua, o: &Obj, name: String| {
             let c = {
                 let s = o.ctx.story.borrow();
@@ -89,18 +83,14 @@ impl UserData for Obj {
         });
         // Entity.SetCoords(WorldCoords) (`LuaEntity::SetCoords`): moves an
         // entity in the world, or adds it (`World::AddEntity`) if it is not
-        // in the world yet — this is how every `Create`d object gets placed.
-        // PORT: the host shows an object from its `in_world` state and coords
+        // in the world yet. PORT: the host shows an object from its `in_world` state and coords
         // when it first appears; an object it already spawned is not moved.
         m.add_method("SetCoords", |_, o, v: Value| {
             let Some(c) = get_coords(&v) else {
                 return Ok(());
             };
-            // A proxy placed in the world runs at once (`Proxy::RunProxy`)
-            // unless its record's `delayedRun` holds it back until the
-            // script's `Run()` (`Proxy::Load` sets state 1 for
-            // `delayedRun`; `RunProxy` only runs in state 0): the host spawns
-            // no pool for it meanwhile (`Story::is_present`).
+            // A placed proxy runs at once (`Proxy::RunProxy`) unless its record's `delayedRun`
+            // holds it until `Run()` (`Proxy::Load` sets state 1; `RunProxy` only runs in state 0).
             let delayed = o.ctx.story.borrow().entities.get(o.id).is_some_and(|e| {
                 e.class == ObjClass::Proxy
                     && !e.in_world
@@ -114,15 +104,13 @@ impl UserData for Obj {
                 return Ok(());
             };
             e.coords = c;
-            // Moving an object already in the world runs nothing.
             if e.in_world {
                 return Ok(());
             }
             e.in_world = true;
             let (record, class) = (e.record.clone(), e.class);
-            // `World::AddEntity` runs the record's `onAddToWorld` hook with the object id
-            // (as for streamed level objects, `ScriptHost::add_object`): queued, since the
-            // script is still running.
+            // `World::AddEntity` runs the record's `onAddToWorld` hook: queued, since the script is
+            // still running.
             for hook in ["onAddToWorld", "onInitialUpdate"] {
                 if let Some(f) = o
                     .ctx
@@ -152,20 +140,17 @@ impl UserData for Obj {
             Ok(())
         });
         // Object.Destroy() (`LuaObject::Destroy`: `World::RemoveEntity` +
-        // `ObjectManager::DestroyObjectEx`, so the record's
-        // `onRemoveFromWorld` (`Entity::OnRemoveFromWorld`, if it was in the
-        // world) then `onDestroy` (`Entity::~Entity`) run, queued since the
-        // script is still running) and the Destructible overload
+        // `ObjectManager::DestroyObjectEx`; the record's `onRemoveFromWorld` (if it was in the
+        // world) then `onDestroy` run, queued) and the Destructible overload
         // Destroy(Vec3 direction, float force, bool) (`LuaDestructible::Destroy`
-        // → `QuestCommandDestroyDestructible` → `Destructible::BreakApart`,
-        // Game.dll): the object breaks but stays valid and in
-        // the world (broken mesh + debris; the bool arms a ~1000 ms despawn,
-        // host-side); `onBroken` is only fired by `Destructible::TakeAttack`.
+        // → `QuestCommandDestroyDestructible` → `Destructible::BreakApart`): the object breaks
+        // but stays valid and in the world (the bool arms a ~1000 ms despawn, host-side);
+        // `onBroken` is only fired by `Destructible::TakeAttack`.
         m.add_method("Destroy", |_, o, args: MultiValue| {
             let mut s = o.ctx.story.borrow_mut();
             if args.is_empty() {
                 if let Some(e) = s.entities.remove(o.id) {
-                    // Its trigger and proxy state go with it (as `host.rs` does for a host-side removal).
+                    // Its trigger and proxy state go with it.
                     s.triggers.retain(|t| t.id != o.id);
                     s.host_facts.proxies_active.remove(&o.id);
                     s.host_facts.proxies_delayed.remove(&o.id);
@@ -451,14 +436,11 @@ impl UserData for Obj {
             Ok(())
         });
         // TakeItem(record, count, bool) (`LuaPlayer::TakeItem` →
-        // `QuestCommandTakeItem(id, record, count, bool)` → SP
-        // `Player::TakeItemFromStashes` (Game.dll): the bool IS
-        // forwarded — `Effect::TakeItem.extra`, its filter semantics applied
-        // host-side) and Player.DestroyItem(record)
+        // `QuestCommandTakeItem` → `Player::TakeItemFromStashes`; the bool is
+        // `Effect::TakeItem.extra`) and Player.DestroyItem(record)
         // (`LuaPlayer::DestroyItem`: the same virtual with count 1, bool false).
         let take = |o: &Obj, rec: &str, n: i32, extra: bool| -> mlua::Result<()> {
-            // (bad data: a count below 1 takes nothing, as `GiveItem` gives
-            // nothing)
+            // Bad data: a count below 1 takes nothing.
             if n <= 0 {
                 return Ok(());
             }
@@ -479,9 +461,8 @@ impl UserData for Obj {
         m.add_method("DestroyItem", move |_, o, args: MultiValue| {
             take(o, &arg_str(&args, 0), 1, false)
         });
-        // HasItem(record, count, bool) (`LuaPlayer::HasItem` → the Player virtual
-        // `Player::GetItemCountInStashes`(record, …, bool, 0, 1, 0) >= count:
-        // [`crate::story::Player::item_count_in_stashes`], the bool its
+        // HasItem(record, count, bool) (`LuaPlayer::HasItem` →
+        // `Player::GetItemCountInStashes`(record, …, bool, 0, 1, 0) >= count; the bool is the
         // complete-only filter).
         m.add_method("HasItem", |_, o, args: MultiValue| {
             let (rec, n) = (
@@ -496,12 +477,9 @@ impl UserData for Obj {
                 .item_count_in_stashes(&rec, complete) as f64
                 >= n)
         });
-        // Player.IsSpaceAvailable(record) (`LuaPlayer::IsSpaceAvailable`: creates the
-        // item, false when it can't, and asks `Player::
-        // IsInventorySpaceAvailable` → `PlayerInventoryCtrl::IsSpaceAvailable`:
-        // per sack, a not-full stack of the item
-        // (`InventorySack::GetNotFullItem`) or a free rect of its bitmap
-        // size). The host mirrors its bags (`Player::bags`).
+        // Player.IsSpaceAvailable(record) (`LuaPlayer::IsSpaceAvailable`: false when the item
+        // can't be created, else `PlayerInventoryCtrl::IsSpaceAvailable`: per sack, a not-full
+        // stack of the item or a free rect of its bitmap size, against `Player::bags`).
         m.add_method("IsSpaceAvailable", |_, o, args: MultiValue| {
             let rec = arg_str(&args, 0);
             let Some(size) = o.ctx.env.item_footprint(&rec) else {
@@ -590,16 +568,11 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Character.MoveAction(uint target, WorldCoords, bool) (
-        // `LuaCharacter::MoveAction` → `GameEngine::QuestCommandMove` → `Character::
-        // QuestCommandMove` → `ControllerAI::QuestCommandMove` (stores the
-        // bool, then the controller's state response `ControllerMonsterState::
-        // DefaultQuestCommandMoveResponse`: the destination is the target
-        // entity's coords if that object exists, else the given coords; if
-        // the monster can path there it enters the "QuestMove" state). The
-        // bool is the controller's `AllowQuestInterruptions` (read by
-        // `ControllerMonsterStateQuestMove`: enemy/attack/low-health events
-        // are answered only when it is set).
+        // Character.MoveAction(uint target, WorldCoords, bool) (`LuaCharacter::MoveAction` →
+        // `ControllerAI::QuestCommandMove` → `ControllerMonsterState::DefaultQuestCommandMoveResponse`:
+        // the destination is the target entity's coords if it exists, else the given coords; a
+        // pathable destination enters the "QuestMove" state). The bool is `AllowQuestInterruptions`
+        // (`ControllerMonsterStateQuestMove` answers enemy/attack/low-health events only when set).
         m.add_method("MoveAction", |_, o, args: MultiValue| {
             let target = arg_id(&args, 0).unwrap_or(0);
             let coords = args
@@ -618,14 +591,11 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Character.UseSkillAction(string skill, uint target, bool) (
-        // `LuaCharacter::UseSkillAction` → `GameEngine::QuestCommandUseSkill` → `Character::
-        // QuestCommandUseSkill`: `SkillManager::FindSkillId(name)` among the
-        // character's own skills, then `ControllerAI::QuestCommandUseSkill`
-        // → the "QuestUseSkill" state; `OnBegin` uses the target Character's
-        // coords, any other target id makes the monster use the skill on
-        // itself at its own coords). The bool is stored in the same
-        // controller flag, which the "QuestUseSkill" state never reads.
+        // Character.UseSkillAction(string skill, uint target, bool) (`LuaCharacter::UseSkillAction`
+        // → `Character::QuestCommandUseSkill`: `SkillManager::FindSkillId(name)` among the
+        // character's own skills, then the "QuestUseSkill" state; `OnBegin` uses the target
+        // Character's coords, any other target id makes the monster use the skill on itself). The
+        // bool is stored in the same controller flag, which "QuestUseSkill" never reads.
         m.add_method("UseSkillAction", |_, o, args: MultiValue| {
             let skill = arg_str(&args, 0);
             let target = arg_id(&args, 1).unwrap_or(0);
@@ -639,9 +609,8 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Shrine.IsRestored() (`LuaShrine::IsRestored` → `StaticShrine::
-        // IsCleansed`, state 6; false when the id is not a StaticShrine).
-        // The host publishes the restored shrines' uids (`HostFacts`).
+        // Shrine.IsRestored() (`LuaShrine::IsRestored` → `StaticShrine::IsCleansed`, state 6;
+        // false when the id is not a StaticShrine).
         m.add_method("IsRestored", |_, o, _: MultiValue| {
             let s = o.ctx.story.borrow();
             let is_shrine = s
@@ -667,12 +636,9 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Proxy.LinkPatrolPointGroup(name) (`LuaProxy::LinkPatrolPointGroup`): the
-        // name must be an instance group of type "Patrol Points" (else an
-        // error is logged and nothing changes); the host does the group
-        // bookkeeping and re-points the proxy's spawned monsters
-        // (`Monster::SetPatrolPoints` + `ControllerMonster::ReplacePatrolPoints`).
-        // The proxy must exist (the Lua `Proxy.Get` object is a Proxy).
+        // Proxy.LinkPatrolPointGroup(name) (`LuaProxy::LinkPatrolPointGroup`): the name must be
+        // an instance group of type "Patrol Points" (else an error is logged); the host re-points
+        // the proxy's spawned monsters (`ControllerMonster::ReplacePatrolPoints`).
         m.add_method("LinkPatrolPointGroup", |_, o, args: MultiValue| {
             let mut s = o.ctx.story.borrow_mut();
             if s.entities
@@ -687,14 +653,10 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Proxy.AllKilled() (`LuaProxy::AllKilled`: true when the proxy
-        // does not exist; else false if any id of the proxy's spawned list
-        // (the Proxy virtual `Proxy::GetSpawnedIds`) is a living Monster, `Character::IsAlive`
-        // virtual). `HostFacts::proxies_active` is that list:
-        // PORT: a run proxy's monsters spawn a few frames after it is placed
-        // (once nav data is in), so it counts as alive until the host says
-        // its spawned monsters are dead; a proxy held back by `delayedRun`
-        // has no spawned list yet, so it answers true.
+        // Proxy.AllKilled() (`LuaProxy::AllKilled`: true when the proxy does not exist; else false
+        // if any id of `Proxy::GetSpawnedIds` is a living Monster). `HostFacts::proxies_active` is
+        // that list. PORT: a run proxy counts as alive until the host reports its monsters dead; a
+        // proxy held back by `delayedRun` answers true.
         m.add_method("AllKilled", |_, o, _: MultiValue| {
             let s = o.ctx.story.borrow();
             Ok(!s.host_facts.proxies_active.contains(&o.id))
@@ -838,13 +800,11 @@ impl UserData for Obj {
             }
             Ok(())
         });
-        // Character.Turn(Vec3) (`LuaCharacter::Turn`): the engine glue passes
-        // ms=0 to `Character::RotateTowards`, a zero-dt
-        // turn — a no-op in the engine too. Preserved: accept and do nothing.
+        // Character.Turn(Vec3) (`LuaCharacter::Turn`): the engine glue passes ms=0 to
+        // `Character::RotateTowards`, a no-op.
         m.add_method("Turn", |_, _, _: MultiValue| Ok(()));
-        // Character.Say(tag) (`LuaCharacter::Say`, Grim Dawn.exe): the
-        // localised tag goes to a UI speech bubble over the object — no
-        // sound, no gameplay. Presentational `Effect::Say`; headless no-op.
+        // Character.Say(tag) (`LuaCharacter::Say`): a UI speech bubble over the object
+        // (`Effect::Say`).
         m.add_method("Say", |_, o, args: MultiValue| {
             let tag = arg_str(&args, 0).into_owned();
             o.ctx
@@ -893,11 +853,10 @@ impl UserData for Obj {
             });
             Ok(())
         });
-        // Item.HasAffix(name) (`LuaItem::HasAffix` → `Item::HasAffix`): false unless the object is an
-        // Item; then streq (case-sensitive) of the name against the item's own prefix and suffix. Every
-        // item object a script can name was made from its record alone (`Item.Create` →
-        // `ObjectManager::CreateObjectFromFile`, or placed by a level), so both are empty and only ""
-        // matches; picking it up keeps the same object. (`Player.GiveAffixItem` returns no object.)
+        // Item.HasAffix(name) (`LuaItem::HasAffix` → `Item::HasAffix`): false unless the object is
+        // an Item; then a case-sensitive match against the item's own prefix and suffix. Every item
+        // object a script can name was made from its record alone, so both are empty and only ""
+        // matches.
         m.add_method("HasAffix", |_, o, args: MultiValue| {
             let name = arg_str(&args, 0);
             let s = o.ctx.story.borrow();

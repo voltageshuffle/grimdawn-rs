@@ -55,7 +55,7 @@
 //! - the local map's legend buttons (`localmap.rs`, `LocalMap::HandleMouseEvent`) show
 //!   their `iconbutton_<kind>rollover` records the same way (mode 2).
 //! - the caravan window's buy tab: "Expand Stash" and the next page's cost
-//!   (PORT, the source comment in `hud_rollover` has the parts; mode 2).
+//!   (PORT; mode 2).
 //!
 //! - the health / energy orbs and the experience bar (`UIPlayerHud::HandleMouseEvent`):
 //!   after the HUD buttons above it tests the `hudManaBar`,
@@ -81,10 +81,8 @@
 //!   clears it; [`super::hud::LevelUpIndicator`]); the orb HUD master table has
 //!   no such button, so it never shows in the orb HUD.
 //!
-//! The HUD's hover capture (`hud::capture`, [`crate::state::inventory::UiCapture`]) is click-through
-//! prevention over any `HudLayout` rect, not a window over the HUD, so it does not hide these
-//! bar / indicator rollovers (nor the Crucible / Shattered Realm pane zones', `survival.rs`);
-//! only a registered window button in front of the rect (`widgets::frontmost`) suppresses them.
+//! The HUD's hover capture is click-through prevention, not a window over the HUD: it does not hide
+//! these rollovers; only a registered window button in front of the rect (`widgets::frontmost`) does.
 //!
 //! - the loot filter button (`hudLootFilterButton`, `UIPlayerHud::HandleMouseEvent`:
 //!   tested after the compass button, in mouse input mode) shows
@@ -97,10 +95,8 @@
 //!   wrapped the same way (`RolloverLine2::GetText`).
 //!
 //! The key names are the bound keys' primary, else the secondary, else
-//! `tagKeybindUnassigned` (`super::keys`; defaults 33 = DIK_L, 34 = DIK_W). The text area has a 7 px
-//! padding, as the item tooltips (`tooltip.rs`). `GD_HUD_HOVER` (hooks.rs) puts the cursor on a HUD
-//! button (`equipSwap1LeftButton`: the open character window's or Illusionist's swap button); `GD_SHEET_HOVER`
-//! on a character-sheet row ([`sheet_lines`]).
+//! `tagKeybindUnassigned` (defaults 33 = DIK_L, 34 = DIK_W). The text area has a 7 px
+//! padding, as the item tooltips.
 use super::text::FontCache;
 use super::{HudValues, Ui};
 use bevy::prelude::*;
@@ -112,7 +108,7 @@ pub struct RolloverPlugin;
 
 impl Plugin for RolloverPlugin {
     fn build(&self, app: &mut App) {
-        // The HUD's hit rects are read by systems of several modules; they are registered with this plugin.
+        // The HUD's hit rects are read by several modules' systems.
         app.init_resource::<super::hud::HudLayout>()
             .init_resource::<super::status::StatusLayout>()
             .add_systems(
@@ -130,24 +126,18 @@ impl Plugin for RolloverPlugin {
 #[derive(Component)]
 struct RolloverRoot;
 
-/// The menu manager's rollover box root ([`menu_tip`], [`menu_tip_text`]; the map's centre button and the options
-/// window's controls and open dropdown rows): not part of any rebuilt window tree, moved with the cursor, shown by
-/// `tip::delay_tips`.
+/// The menu manager's rollover box root: not part of any rebuilt window tree, moved with the cursor.
 #[derive(Component)]
 pub struct MenuTipRoot;
 
-/// The menu manager's rollover box text style (the box's constructor `MenuRolloverBox::MenuRolloverBox`).
 const MENU_TIP_STYLE: &str = "records/ui/styles/text/style_rollover_title.dbr";
-/// Its delay: 500 ms since the text was set (`MenuRolloverBox::Draw`; the class does not read a style delay).
+/// 500 ms since the text was set (`MenuRolloverBox::Draw`; the class does not read a style delay).
 pub const MENU_TIP_DELAY: f32 = 500.0;
 
-/// The menu manager's rollover box (Grim Dawn.exe: the button's mouse move `MenuButton::HandleMouseEvent` hands its tag
-/// to the UI manager `MenuManager::SetRollover`, localised and split at `^n` `MenuRolloverBox::SetText`; drawn
-/// `MenuRolloverBox::Draw`): an opaque black rect (the text grown by 10 px each side), the `style_genericrolloverbox`
-/// border around it, the lines in `style_rollover_title`'s font and size in white. Drawn in SCREEN pixels (the caller's
-/// [`Ui`] at scale 1: the engine's `RenderText2d` does not UI-scale it) at the caller's origin; the caller places the
-/// root at [`menu_tip_origin`]. Returns the text size. The raw-text variant ([`menu_tip_text`]) draws an
-/// already-localised string without the tag lookup.
+/// The menu manager's rollover box (`MenuManager::SetRollover`, `MenuRolloverBox::SetText` / `Draw`):
+/// an opaque black rect (the text grown by 10 px each side), the `style_genericrolloverbox` border,
+/// the lines in `style_rollover_title` in white. Drawn in SCREEN pixels (the engine's `RenderText2d`
+/// does not UI-scale it); the caller places the root at [`menu_tip_origin`]. Returns the text size.
 pub fn menu_tip(ui: &mut Ui, tag: &str) -> Vec2 {
     let text = ui
         .fonts
@@ -157,8 +147,7 @@ pub fn menu_tip(ui: &mut Ui, tag: &str) -> Vec2 {
     menu_tip_text(ui, &text)
 }
 
-/// [`menu_tip`] with already-localised text (no tag lookup, no `{}` stripping): the options window's open
-/// dropdown rows show their raw labels (device names) in the same box.
+/// [`menu_tip`] with already-localised text (no tag lookup, no `{}` stripping).
 pub fn menu_tip_text(ui: &mut Ui, text: &str) -> Vec2 {
     let lines: Vec<&str> = text.split("^n").map(str::trim).collect();
     let lh = ui.line_height(MENU_TIP_STYLE);
@@ -184,9 +173,8 @@ pub fn menu_tip_text(ui: &mut Ui, text: &str) -> Vec2 {
     size
 }
 
-/// The box root's top-left for the cursor at `p` (the menu manager's anchor `MenuRolloverBox::Place`:
-/// the cursor + 64 px in both axes, pulled back so the text ends 20 px inside the screen; the box
-/// `MenuRolloverBox::Draw` is vertically centred on the anchor).
+/// `MenuRolloverBox::Place`: the cursor + 64 px in both axes, pulled back so the text ends 20 px
+/// inside the screen; the box is vertically centred on the anchor.
 pub fn menu_tip_origin(p: Vec2, text: Vec2, screen: Vec2) -> Vec2 {
     let mut a = p + Vec2::splat(64.0);
     a.x = a.x.min(screen.x - 20.0 - text.x);
@@ -194,11 +182,7 @@ pub fn menu_tip_origin(p: Vec2, text: Vec2, screen: Vec2) -> Vec2 {
     Vec2::new(a.x - 10.0, a.y - 10.0 - text.y * 0.5)
 }
 
-/// The generic button tooltip (a `ButtonStaticText`'s `rolloverTag`), the menu manager's box
-/// ([`menu_tip`]): used for the riftgate map's centre button (`tagAerialMapCenteredButton`) on the world
-/// and local map (the same window record; switch / close have no tag). The box is drawn once per hover
-/// and moved with the cursor in place (the cursor is not in its identity: no flicker while moving);
-/// `tip::delay_tips` shows it after [`MENU_TIP_DELAY`], and hides it while the game menu holds the game.
+/// The riftgate map's centre button tooltip (`tagAerialMapCenteredButton`) in the menu manager's box.
 #[allow(clippy::too_many_arguments)]
 fn button_tip(
     mut commands: Commands,
@@ -228,7 +212,6 @@ fn button_tip(
     } else {
         None
     };
-    // The game menu takes the mouse (`gamemenu.rs`).
     let tip = cursor.filter(|_| size.x > 0 && hovered == Some(1) && !pause.menu);
     let Some(p) = tip else {
         if let Some((e, _)) = shown.take() {
@@ -239,7 +222,6 @@ fn button_tip(
     const TAG: &str = "tagAerialMapCenteredButton";
     let screen = Vec2::new(size.x as f32, size.y as f32);
     if let Some((e, text)) = *shown {
-        // Still hovered: move the box with the cursor (no rebuild).
         let o = menu_tip_origin(p, text, screen) / win.scale_factor();
         if let Ok((_, _, mut node)) = roots.get_mut(e) {
             node.left = Val::Px(o.x);
@@ -253,7 +235,7 @@ fn button_tip(
         Visibility::Hidden,
         super::tip::TipDelay::menu(TAG.to_owned(), MENU_TIP_DELAY),
     ));
-    // Drawn in screen pixels: the style's font size and the paddings are not UI-scaled.
+    // The style's font size and the paddings are not UI-scaled.
     let mut ui = assets.ui(
         &mut commands,
         &data,
@@ -275,23 +257,20 @@ fn button_tip(
     *shown = Some((root, text));
 }
 
-/// The hovered window button's `bitmapNameInFocus` (see the module doc).
 #[derive(Component)]
 struct FocusRoot;
 
-/// Rollover window placement around the anchor (`RolloverWindow::Place`'s modes).
 #[derive(Clone, Copy)]
 pub(super) enum Placement {
-    /// Mode 0: the window's right edge at the anchor (HUD buttons).
+    /// Mode 0: the window's right edge at the anchor.
     LeftOf,
-    /// Mode 2: the window's left edge at the anchor (window widgets).
+    /// Mode 2: the window's left edge at the anchor.
     RightOf,
-    /// Mode 3: centred above the anchor (the factions window's rollovers, `FactionsWindow::PlaceRollover`).
+    /// Mode 3: centred above the anchor (`FactionsWindow::PlaceRollover`).
     Above,
 }
 
-/// The menu buttons that have a rollover here: the classic HUD's toolbar ones, the orb HUD's inside its open menu
-/// folder (`menufolder.rs`, the same fields at the folder's origin).
+/// The classic HUD's toolbar buttons with a rollover; the orb HUD's sit inside its open menu folder.
 const MENU_BUTTONS: [&str; 6] = [
     "hudCharacterButton",
     "hudAchievementsButton",
@@ -303,28 +282,15 @@ const MENU_BUTTONS: [&str; 6] = [
 
 /// (button, rollover, key actions of lines 1 and 2: 0 none). The rollover is the HUD table's field, or a record path
 /// (`records/...`).
-///
-/// Each button's own press system (`hud.rs`, `lootfilter.rs`, `riftmap.rs`) takes the cursor ([`UiCapture`]) while it
-/// is over the button, and `hud::capture` sets it over any `HudLayout` rect to keep world clicks off the HUD. The
-/// capture is click-through prevention, not a window over the HUD, so it does not hide these tips — nor the bars',
-/// the classic level-up indicator's and the Crucible / Shattered Realm pane zones' rollovers below, which hit-test
-/// with the same frontmost-window filter (`widgets::frontmost`): only a registered window button in front of the
-/// rect suppresses them.
-///
-/// [`UiCapture`]: crate::state::inventory::UiCapture
 const BUTTONS: [(&str, &str, u32, u32); 13] = [
-    // The row select button: the HUD loader `UIPlayerHud::Load` loads its rollover from the hard-coded
-    // `hud_hotslotswaprollover.dbr` (`UIPlayerHud.hotSlotSwapRollover`), key action 43 (Quickbar Switch, set by the
-    // ctor `UIPlayerHud::UIPlayerHud`); the mouse handler `UIPlayerHud::HandleMouseEvent` tests it first.
+    // `UIPlayerHud::Load` hard-codes this rollover; key action 43 set by `UIPlayerHud::UIPlayerHud`; tested first.
     (
         "hotSlotSelectUpButton",
         "records/ui/hud/hud_hotslotswaprollover.dbr",
         super::keys::QUICKBAR_SWITCH,
         0,
     ),
-    // The menu buttons (their keys open the windows). The group button has no window or key here; the faction button's
-    // rollover names key action 52, the achievements button's 53 (HUD ctor `UIPlayerHud::UIPlayerHud`,
-    // `UIPlayerHud.factionRollover` / `UIPlayerHud.achievementRollover`).
+    // The group button has no window or key here; faction key action 52, achievements 53 (`UIPlayerHud::UIPlayerHud`).
     (
         "hudCharacterButton",
         "hudCharacterButtonRollover",
@@ -389,8 +355,7 @@ const BUTTONS: [(&str, &str, u32, u32); 13] = [
     ),
 ];
 
-/// The name of the key bound to `action` for `{%t1}`: the primary, else the
-/// secondary, else `tagKeybindUnassigned` (`RolloverLine2::GetText`).
+/// `{%t1}`: the primary, else the secondary, else `tagKeybindUnassigned` (`RolloverLine2::GetText`).
 fn bound_key(bindings: &super::keys::KeyBindings, fonts: &FontCache, action: u32) -> String {
     let [p, s] = bindings.get(action);
     match if p != 0 { p } else { s } {
@@ -399,29 +364,24 @@ fn bound_key(bindings: &super::keys::KeyBindings, fonts: &FontCache, action: u32
     }
 }
 
-/// The HUD bars with rollovers, in the handler's test order (module doc).
+/// In the handler's test order.
 const BARS: [(&str, &str); 3] = [
     ("hudManaBar", "hudManaBarRollover"),
     ("hudHealthBar", "hudHealthBarRollover"),
     ("hudExperienceBar", "hudExperienceBarRollover"),
 ];
 
-/// What fills a rollover's first line.
 #[derive(Clone, PartialEq)]
 enum Line1 {
-    /// `RolloverLine2` / `RolloverLine3`: `{%t1}` = this key name (and
-    /// line 2's, when it has a `Line2FormatTag`).
+    /// `RolloverLine2` / `RolloverLine3`: `{%t1}` = this key name (and line 2's).
     Key(String, String),
-    /// `RolloverLine1`: the line, formatted by its class (module doc).
+    /// `RolloverLine1`: the line, formatted by its class.
     Text(String),
-    /// A stats row's rollover, every line ([`sheet_lines`]).
     Lines(Vec<(String, String, bool)>),
-    /// The armour row's breakdown window (`armor_window.rs`).
     Armor(gd_sim::sheet::ArmorBreakdown),
 }
 
-/// The `RolloverLine1` text of a HUD bar (module doc): (format tag field,
-/// arguments).
+/// (format tag field, arguments).
 fn bar_text(field: &str, v: &HudValues, vit: &super::HudVitals) -> (&'static str, Vec<String>) {
     match field {
         "hudHealthBar" => (
@@ -454,13 +414,11 @@ fn bar_text(field: &str, v: &HudValues, vit: &super::HudVitals) -> (&'static str
     }
 }
 
-/// The rollover record a window's `field` names.
 fn rollover_record(ui: &Ui, master: &str, field: &str) -> Option<String> {
     ui.record(master)
         .and_then(|m| m.str(field).map(str::to_owned))
 }
 
-/// Screen rect of a HUD button field (its up bitmap at the toolbar anchor).
 pub fn button_rect(ui: &mut Ui, field: &str) -> Option<URect> {
     let to = super::hud::toolbar_origin(ui)?;
     let rec = ui.record(ui.hud_master())?.str(field)?.to_string();
@@ -479,8 +437,7 @@ pub fn button_rect(ui: &mut Ui, field: &str) -> Option<URect> {
     ))
 }
 
-/// `{%s0}` / `{%t1}`-style arguments into a localised format (the loaded tags
-/// may have lost their braces).
+/// `{%s0}` / `{%t1}`-style arguments into a localised format (the loaded tags may have lost their braces).
 pub(super) fn fill(fmt: &str, args: &[&str]) -> String {
     let mut out = fmt.to_string();
     for (i, a) in args.iter().enumerate() {
@@ -493,9 +450,8 @@ pub(super) fn fill(fmt: &str, args: &[&str]) -> String {
     out
 }
 
-/// A stats row's rollover lines (style, text, wrapped), Grim Dawn.exe: the page updates
-/// (`CharacterWindow::UpdatePage1`, `CharacterWindow::UpdatePage2`, `CharacterWindow::UpdatePage3`)
-/// store each line's two values in the rollover object ([`gd_sim::sheet::RollValues`]) and its class formats them:
+/// A stats row's rollover lines (style, text, wrapped). The page updates (`CharacterWindow::UpdatePage1..3`)
+/// store each line's two values ([`gd_sim::sheet::RollValues`]) and its class formats them:
 /// - `rolloverline2.tpl` rows (page I: class `SheetRolloverLine2`, text
 ///   `SheetRolloverLine2::GetText`; the list rows' `SheetListRolloverLine2::GetText` pass floats):
 ///   line 1 = `Line1FormatTag` with `{%s0}` = `Line1Tag` and both values as
@@ -509,13 +465,9 @@ pub(super) fn fill(fmt: &str, args: &[&str]) -> String {
 ///   lines 5..7 formatted when they have a `LineNFormatTag`, else their
 ///   `LineNTag` as a wrapped description; line 8 the description.
 ///
-/// Rows without computed values (`gd_sim::sheet::numbers_and_rollovers` covers the
-/// ones whose rollover shows more than the row) read line 1's values back
-/// from the row's own text (PORT; one source: the row), the second being
-/// the amount over the maximum on the capped rows (resistances,
-/// `CharacterWindow::GetCappedDefense`'s over-cap amount; `over.` keys of `gd_sim::sheet`) or a range's maximum.
-/// The lines keep their colour codes ([`format`]). `None`: not a line class (the armour
-/// window is `armor_window.rs`).
+/// Rows without computed values read line 1's values back from the row's own text (PORT), the second being
+/// the over-cap amount on capped rows (`CharacterWindow::GetCappedDefense`; `over.` keys) or a range's maximum.
+/// The lines keep their colour codes. `None`: not a line class.
 fn sheet_lines(
     ui: &Ui,
     roll: &str,
@@ -581,9 +533,8 @@ fn sheet_lines(
         format(&fmt, &[Arg::Str(&label), Arg::Num(v1), Arg::Num(v2)])
     };
     let style = |n: usize| rec.str(&format!("Line{n}Style")).unwrap_or("").to_owned();
-    // Page I's rows pass line 1's values as `(int)` (class `SheetRolloverLine2`, and
-    // the 8-line class), page II / III's list rows as floats (class
-    // `SheetListRolloverLine2`, text `SheetListRolloverLine2::GetText`; the same tag choice).
+    // Page I's rows and the 8-line class pass `(int)`, page II / III's list rows floats
+    // (`SheetListRolloverLine2::GetText`).
     let int = multi || !key.starts_with("list.");
     let mut out = vec![(
         style(1),
@@ -598,7 +549,6 @@ fn sheet_lines(
     }
     let vals = |n: usize| computed.map_or((0.0, 0.0), |r| r.lines[n - 1]);
     for n in 2..=8 {
-        // A computed label (the DPS window's mouse skills) else the record's `Line<n>Tag`.
         let Some(label) = computed
             .and_then(|r| r.labels[n - 1].as_deref())
             .map(|t| ui.fonts.tag(t).to_owned())
@@ -610,10 +560,8 @@ fn sheet_lines(
         let text = if n == 2
             && let Some(name) = computed.and_then(|r| r.name.as_deref())
         {
-            // `SimpleStringFormat` of the label, then the foe's name
-            // (localised when it is a tag; PORT: not in the monster colour).
-            // PORT: a space after the label (the tag's trailing one is lost
-            // by the tag loader).
+            // `SimpleStringFormat` of the label, then the foe's name.
+            // PORT: not in the monster colour; a space after the label (the tag loader loses the trailing one).
             let simple = ui.fonts.tag("SimpleStringFormat").to_owned();
             format!(
                 "{} {}",
@@ -670,7 +618,7 @@ fn skill_lines(
             }
             .to_owned()
         } else {
-            format!("{ty:?}")
+            ty.name().to_owned()
         };
         let label = ui
             .fonts
@@ -706,24 +654,17 @@ fn skill_lines(
     Some(out)
 }
 
-/// A rollover line's tag text with its arguments, keeping the `^X` colour
-/// codes: the rollover classes hand the formatted string to the text widget
-/// as it is, and the font renderer colours the spans
-/// (`GraphicsFont2::ProcessCharacter`, codes and colour table in
-/// `gd_formats::text`; `^b` = the sheet's blue numbers, `^s` the grey
-/// "over maximum" part of `tagOverCapResist`).
+/// Keeps the `^X` colour codes: the font renderer colours the spans (`GraphicsFont2::ProcessCharacter`).
 fn format(fmt: &str, args: &[gd_sim::items::tooltip::Arg]) -> String {
     gd_sim::items::tooltip::format_rich(fmt, args)
 }
 
-/// The numbers of a sheet row's text in order ("+15%" → 15, "12 - 20" →
-/// 12, 20, "-22%" → -22).
+/// "+15%" → 15, "12 - 20" → 12, 20, "-22%" → -22.
 fn row_numbers(text: &str) -> Vec<f32> {
     let c: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < c.len() {
-        // A minus sign belongs to the number right after it.
         let neg = c[i] == '-' && c.get(i + 1).is_some_and(|d| d.is_ascii_digit());
         if c[i].is_ascii_digit() || neg {
             let start = i;
@@ -741,11 +682,8 @@ fn row_numbers(text: &str) -> Vec<f32> {
     out
 }
 
-/// The wrap sample of a rollover line (`RolloverLine::GetWrapSample`): a text
-/// longer than `minCharsBeforeWrapping` (n) is cut at the space nearest to
-/// index n (the later one on a tie),
-/// keeping 2 more characters; the window wraps the line at that sample's
-/// width. `None`: the line is not wrapped.
+/// `RolloverLine::GetWrapSample`: a text longer than `n` is cut at the space nearest to index n (the later one
+/// on a tie), keeping 2 more characters. `None`: the line is not wrapped.
 pub fn wrap_sample(text: &str, n: usize) -> Option<String> {
     let c: Vec<char> = text.chars().collect();
     if n == 0 || c.len() <= n {
@@ -767,8 +705,7 @@ pub fn wrap_sample(text: &str, n: usize) -> Option<String> {
     Some(c[..len.min(c.len())].iter().collect())
 }
 
-/// A rollover line wrapped at its own sample's width or the widest line so
-/// far (module doc).
+/// Wrapped at its own sample's width or the widest line so far.
 fn push_wrapped(
     ui: &mut Ui,
     lines: &mut Vec<(String, String)>,
@@ -803,8 +740,7 @@ fn hud_rollover(
     (values, vitals): (Res<HudValues>, Res<super::HudVitals>),
     time: Res<Time<Real>>,
     mut roots: Query<(Entity, &mut Node), With<RolloverRoot>>,
-    // (rollover, anchor and line-1 text, ms hovered, drawn, the anchor and outer box (physical px) it was
-    // built at).
+    // (rollover, anchor and line-1 text, ms hovered, drawn, anchor and outer box (physical px) it was built at).
     mut state: Local<(
         Option<(String, Vec2, Line1)>,
         f32,
@@ -871,9 +807,7 @@ fn hud_rollover(
         1.0 / win.scale_factor(),
         Vec2::new(size.x as f32, size.y as f32),
     );
-    // The teleport button shown (none: no button to hover).
     let shown_teleport = values.teleport.map(super::hud::teleport_field);
-    // `GD_HUD_HOVER` / `GD_SHEET_HOVER` (hooks.rs): the HUD field / sheet row or button to hover.
     #[cfg(feature = "dev")]
     let (test, sheet_hover) = (
         hooks.ui.hud_hover.as_deref(),
@@ -882,8 +816,7 @@ fn hud_rollover(
     #[cfg(not(feature = "dev"))]
     let (test, sheet_hover): (Option<&str>, Option<&str>) = (None, None);
     let mut hit = None;
-    // A HUD rect hovers only while no registered window blocker / button is in front of it (the press's
-    // own test, `widgets::frontmost`, as `hud::buttons`).
+    // A HUD rect hovers only while no registered window blocker / button is in front of it (`widgets::frontmost`).
     let cursor_p = super::cursor_px(win);
     let front = cursor_p.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
@@ -891,7 +824,6 @@ fn hud_rollover(
         if field.contains("Teleport") && shown_teleport != Some(field) {
             continue;
         }
-        // Under the game menu only its HUD button is tested (module doc).
         if menu.blocks_hud(&pause, field) {
             continue;
         }
@@ -908,8 +840,7 @@ fn hud_rollover(
             cursor_p.filter(|_| in_front(&r))
         };
         if let Some(p) = cursor.filter(|p| super::contains(&r, *p)) {
-            // The disabled weapon-swap button explains itself
-            // (`gd_game::weapon_sets`, `UIPlayerHud::HandleMouseEvent`).
+            // The disabled weapon-swap button explains itself (`UIPlayerHud::HandleMouseEvent`).
             let roll = if field == "hudButtonWeaponSwap" && !values.weapon_swap {
                 "hudButtonWeaponSwapRolloverSpecial"
             } else {
@@ -935,11 +866,8 @@ fn hud_rollover(
             break;
         }
     }
-    // The orb HUD's level-up buttons ('+', `hud::LEVEL_UP_BUTTONS`, while they have points to spend): the mouse handler
-    // `UIPlayerHud::HandleMouseEvent` hands the hovered `UIButton` itself to the rollover window
-    // (`RolloverWindow::SetRollover`), whose text is the button's, `UIButton::GetRolloverText`: `SimpleStringFormat` of
-    // its `rolloverTag` in its `textStyleName`, the window in its `rolloverStyleName`, placement mode 3 around the
-    // button's rect. PORT: anchored at the button's top centre.
+    // The orb HUD's level-up buttons: `UIButton::GetRolloverText` = `SimpleStringFormat` of its `rolloverTag` in its
+    // `textStyleName`, the window in its `rolloverStyleName`, placement mode 3. PORT: anchored at the button's top centre.
     if hit.is_none() && !pause.menu && !ui.classic_hud {
         let points = [values.attribute_points, values.skill_points];
         for (field, n) in super::hud::LEVEL_UP_BUTTONS.into_iter().zip(points) {
@@ -966,9 +894,7 @@ fn hud_rollover(
             }
         }
     }
-    // The menu, or a modal question (`inventory::question_up`: destroy / use / apply / sort / trade prompt),
-    // took the mouse: nothing else is tested, no focus bitmap is set (a hit without a rollover stops every
-    // test below).
+    // The menu or a modal question took the mouse: a hit without a rollover stops every test below.
     if (pause.menu || crate::apply::question_up(&inv, &trade, &confirm)) && hit.is_none() {
         hit = Some((
             None,
@@ -977,8 +903,7 @@ fn hud_rollover(
             Placement::LeftOf,
         ));
     }
-    // The classic HUD's level-up indicator (`playerPortraitLevelUpIndicatorButton`, a hidden 60 x 60 button at
-    // the portrait origin, tested while the indicator flag is set): `SimpleStringFormat` of `tagHUDPortraitLevelUP`.
+    // The classic HUD's level-up indicator: a hidden 60 x 60 button at the portrait origin.
     if hit.is_none()
         && ui.classic_hud
         && level_up.0
@@ -1003,7 +928,6 @@ fn hud_rollover(
             ));
         }
     }
-    // The orbs and the experience bar (module doc).
     for (field, roll) in BARS {
         if hit.is_some() {
             break;
@@ -1034,7 +958,7 @@ fn hud_rollover(
             ));
         }
     }
-    // The Crucible and Shattered Realm panes' areas (`survival.rs::Zone`; mode 0 like the HUD buttons).
+    // Mode 0 like the HUD buttons.
     for z in pane_zones
         .crucible
         .iter()
@@ -1061,8 +985,6 @@ fn hud_rollover(
             hit = Some((Some(z.record.clone()), line1, p, Placement::LeftOf));
         }
     }
-    // The character window's and the Illusionist's weapon-swap buttons
-    // (module doc).
     let mut focus_rect = None;
     let illusionist = matches!(
         trade.open,
@@ -1097,7 +1019,6 @@ fn hud_rollover(
                 p,
                 Placement::RightOf,
             ));
-            // Set II shows the down bitmap even when hovered (`ButtonStatic::Render`).
             if !inv.alternate {
                 focus_rect = ui
                     .record(master)
@@ -1105,10 +1026,6 @@ fn hud_rollover(
             }
         }
     }
-    // The character window's auto-sort buttons (`AutoSortRollover`, the
-    // second only with more than one bag) and move-reagents button
-    // (`reagentDepositRollover`), `CharacterWindow::HandleMouseEvent` (mode 2 at the cursor).
-    // `GD_SHEET_HOVER` also takes `invSortButton1|invSortButton2|reagentDepositButton`.
     let centre = |r: &URect| Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5);
     let test_button = match sheet_hover {
         Some("invSortButton1") => layout.sort_buttons.first().map(|b| centre(&b.1)),
@@ -1121,8 +1038,7 @@ fn hud_rollover(
         && let Some(p) = test_button.or(super::cursor_px(win))
     {
         let over = |r: &URect| super::contains(r, p);
-        // The hovered button's `bitmapNameInFocus` (`ButtonStatic::Render`); the
-        // first sort button is `invSortButton1`, the second `invSortButton2`.
+        // `ButtonStatic::Render`'s `bitmapNameInFocus`.
         let button = |k: &str| {
             ui.record(super::character::MASTER)
                 .and_then(|m| m.str(k).map(str::to_owned))
@@ -1150,8 +1066,7 @@ fn hud_rollover(
             ));
         }
     }
-    // The character window's stats rows (`InvLayout::sheet_rows`,
-    // [`sheet_lines`]; mode 2 at the cursor like the window's other rollovers).
+    // Mode 2 at the cursor like the window's other rollovers.
     if hit.is_none()
         && panels.character
         && let Some(p) = sheet_hover
@@ -1194,8 +1109,6 @@ fn hud_rollover(
             ui.quad(img, r, None, Color::WHITE);
         }
     }
-    // The local map's legend buttons (`localmap.rs`, the same window
-    // rollover: mode 2 at the cursor).
     if hit.is_none()
         && let Some((r, path)) = map.legend_rollover(&rift)
     {
@@ -1207,8 +1120,7 @@ fn hud_rollover(
             Placement::RightOf,
         ));
     }
-    // The conversation window's faction icon (`ConversationWindow::GetFactionRollover`, lines: `dialog::faction_lines`;
-    // mode 2 at the cursor, the window base class's rollover draw `UIWindow::DrawRollover`).
+    // `ConversationWindow::GetFactionRollover`; mode 2 at the cursor (`UIWindow::DrawRollover`).
     if hit.is_none()
         && let (Some(tip), Some(ir)) = (&conv.faction_tip, dialog.icon)
         && conv.view.is_some()
@@ -1223,12 +1135,8 @@ fn hud_rollover(
             Placement::RightOf,
         ));
     }
-    // The trade windows' search box rollover: the vendor master table's
-    // `marketSearchRollover` (= `tagVendorSearchBoxInfo`; the window mouse
-    // handler `MarketWindow::HandleMouseEvent` owns it), the caravan window's `searchBoxRollover`,
-    // the crafting panel's `crafterRollover` (= `tagCraftingSearchBoxInfo`).
-    // PORT: the engine's exact placement is not read; placed like the other
-    // window widgets' rollovers (mode 2).
+    // The trade windows' search box: `marketSearchRollover`, the caravan's `searchBoxRollover`, the crafting
+    // panel's `crafterRollover`. PORT: the engine's placement is not read; mode 2.
     if hit.is_none()
         && let Some(r) = trade_layout.search
         && let Some(p) = super::cursor_px(win)
@@ -1258,11 +1166,8 @@ fn hud_rollover(
             Placement::RightOf,
         ));
     }
-    // The caravan window's buy tab (`buyTabButton` / `buyTransferTabButton`; PORT: the engine's caravan window
-    // sets no rollover on it that was found, the stock data has the parts): `tagCaravanExpand` in the rollover
-    // title style, then `tagCaravanCost` with the next page's cost in the stash window's `CanAffordFontStyle` /
-    // `CannotAffordFontStyle`, in the caravan's `StashRollover` style, placed like the window's other rollovers
-    // (mode 2). `GD_HUD_HOVER=buyTabButton` hovers it.
+    // The caravan window's buy tab. PORT: no engine rollover found; built from the stock parts: `tagCaravanExpand`
+    // in the title style, then `tagCaravanCost` in `CanAffordFontStyle` / `CannotAffordFontStyle`, mode 2.
     if hit.is_none()
         && trade.prompt.is_none()
         && let Some(r) = trade_layout.buy
@@ -1298,8 +1203,7 @@ fn hud_rollover(
             Placement::RightOf,
         ));
     }
-    // The factions window's booster marks and large bar (`factions.rs`: lines built with the window; mode 3 at the
-    // pointer, `FactionsWindow::PlaceRollover`).
+    // Mode 3 at the pointer (`FactionsWindow::PlaceRollover`).
     if hit.is_none()
         && let Some((part, p)) = super::factions::hovered(&factions, &faction_view, win)
         && let Some(lines) = factions.tip(part).filter(|l| !l.is_empty())
@@ -1309,8 +1213,7 @@ fn hud_rollover(
     {
         hit = Some((Some(roll), Line1::Lines(lines.clone()), p, Placement::Above));
     }
-    // The loot filter window's checkboxes and Defaults button: their `...Info` text in the default rollover style
-    // (`lootfilter.rs` only finds the tag; the window is this one).
+    // The loot filter window's checkboxes and Defaults button: their `...Info` text in the default rollover style.
     if hit.is_none()
         && let Some(p) = super::cursor_px(win)
         && let Some(tag) = loot.tip_tag(p)
@@ -1337,12 +1240,10 @@ fn hud_rollover(
         .as_ref()
         .and_then(|(rec, l1, p, _)| rec.clone().map(|r| (r, *p, l1.clone())));
     if key.as_ref().map(|k| &k.0) != state.0.as_ref().map(|k| &k.0) {
-        // A new rollover (or none): restart the delay.
         state.1 = 0.0;
         state.2 = false;
     }
-    // The same rollover with only its anchor moved keeps its nodes: the drawn root is moved (kept on screen)
-    // instead of rebuilt each frame. The armour window places itself (`armor_window.rs`), so it rebuilds.
+    // Only the anchor moved: keep the nodes and move the root. The armour window places itself, so it rebuilds.
     let same_content = match (&key, &state.0) {
         (Some(a), Some(b)) => {
             a.0 == b.0 && a.2 == b.2 && (!matches!(a.2, Line1::Armor(_)) || a.1 == b.1)
@@ -1351,7 +1252,6 @@ fn hud_rollover(
         _ => false,
     };
     if !same_content {
-        // The bars' text follows their values.
         state.0 = key.clone();
         state.2 = false;
         state.3 = None;
@@ -1359,7 +1259,7 @@ fn hud_rollover(
             ui.commands.entity(e).try_despawn();
         }
     } else if key != state.0 {
-        // The anchor follows the cursor (`UIPlayerHud::UpdateRollover` each frame).
+        // `UIPlayerHud::UpdateRollover` follows the cursor each frame.
         state.0 = key.clone();
         if let (Some((_, now, _)), Some((built, r))) = (&key, state.3) {
             let (sw, sh) = (size.x as f32, size.y as f32);
@@ -1378,8 +1278,7 @@ fn hud_rollover(
     };
     state.1 += time.delta_secs() * 1000.0;
     let Some(rec) = ui.record(&path) else { return };
-    // PORT: a rollover without a style of its own (the LMB / RMB skill rows, the loot filter's tips) uses the default one.
-    // A `UIButton`'s own rollover names it `rolloverStyleName` (`UIButton::GetRolloverText`).
+    // PORT: a rollover without a style of its own uses the default one. A `UIButton`'s names it `rolloverStyleName`.
     let style = rec
         .str("rolloverStyle")
         .or(rec.str("rolloverStyleName"))
@@ -1396,7 +1295,6 @@ fn hud_rollover(
     };
     ui.root = gd_ui_kit::spawn_root(ui.commands, RolloverRoot, 210);
     if let Line1::Armor(armor) = &line1_arg {
-        // Its own layout and placement (`armor_window.rs`).
         super::armor_window::draw(&mut ui, &rec, armor, anchor);
         return;
     }
@@ -1437,8 +1335,7 @@ fn hud_rollover(
         let (st1, st2, st3) = (st("Line1Style"), st("Line2Style"), st("Line3Style"));
         lines.push((st1.clone(), line1));
         if rec.str("Line2FormatTag").is_some_and(|t| !t.is_empty()) {
-            // `RolloverLine3` with a formatted line 2: `{%t1}` = the second key,
-            // one unwrapped line (`RolloverLine2::GetText`).
+            // `RolloverLine3` with a formatted line 2: `{%t1}` = the second key, unwrapped (`RolloverLine2::GetText`).
             if rec.str("Line2Tag").is_some_and(|t| !t.is_empty()) {
                 lines.push((
                     st2.clone(),
@@ -1449,7 +1346,6 @@ fn hud_rollover(
             let t = tag(&ui, "Line2Tag");
             push_wrapped(&mut ui, &mut lines, &t, &st2, chars);
         }
-        // Line 3 (`RolloverLine3`), wrapped as line 2.
         let t = tag(&ui, "Line3Tag");
         push_wrapped(&mut ui, &mut lines, &t, &st3, chars);
     }
@@ -1457,8 +1353,7 @@ fn hud_rollover(
     state.3 = Some((anchor, outer));
 }
 
-/// A rollover window (`RolloverStyleUIHelp` `style`, module doc) holding `lines` (style, text; empty ones
-/// dropped), placed around `anchor`. Returns its outer box.
+/// A `RolloverStyleUIHelp` window holding `lines` (style, text; empty ones dropped). Returns its outer box.
 pub(super) fn draw_window(
     ui: &mut Ui,
     style: Option<&gd_formats::arz::Record>,
@@ -1484,7 +1379,6 @@ pub(super) fn draw_window(
     let (ow, oh) = (iw + 2.0 * cw, ih + 2.0 * ch);
     let (mut x, mut y) = (anchor.x, anchor.y);
     match placement {
-        // Mode 0 (`RolloverWindow::Place`).
         Placement::LeftOf => {
             if x - ow < 0.0 {
                 x = ow;
@@ -1492,14 +1386,14 @@ pub(super) fn draw_window(
             }
             x -= ow;
         }
-        // Mode 2: moved left (and up) when it would leave the right edge.
+        // Mode 2: moved left and up when it would leave the right edge.
         Placement::RightOf => {
             if x + ow > ui.screen.x {
                 x = ui.screen.x - ow;
                 y -= oh;
             }
         }
-        // Mode 3 (a zero-size anchor): above it, centred and kept on screen; above the top edge: at y 0 left of
+        // Mode 3 (a zero-size anchor): centred above, kept on screen; above the top edge: at y 0 left of
         // the anchor, or right of it when that leaves the screen.
         Placement::Above => {
             y -= oh;

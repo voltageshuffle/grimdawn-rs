@@ -1,10 +1,9 @@
-//! The defenses (`survival/defenses.lua`: five kinds, two upgrades each, `records/creatures/defenses/`).
+//! The defenses (`survival/defenses.lua`).
 use super::*;
 
-/// `defenses.lua` on arena A's script objects: building a Fire Turret at site 1 spawns `turret_fire` at the
-/// defense point (level `avg + avg / 50 + 1`), swaps the site NPC for its upgrade NPC (`npc_defensesite_01b`) and
-/// grants `SURVIVALMODE_DEFENSEBUILT`; the first upgrade replaces it by `turret_fire02` (NPC `01c`), the second by
-/// `turret_fire03` with no NPC left; an upgrade grants no token.
+/// Building a Fire Turret at site 1 spawns `turret_fire` (level `avg + avg / 50 + 1`), swaps the site NPC for
+/// its upgrade NPC and grants `SURVIVALMODE_DEFENSEBUILT`; the upgrades replace it by `turret_fire02`, then
+/// `turret_fire03` with no NPC left, granting no token.
 #[test]
 fn a_defense_is_built_and_upgraded_twice() {
     let Some((g, _, _)) = setup() else {

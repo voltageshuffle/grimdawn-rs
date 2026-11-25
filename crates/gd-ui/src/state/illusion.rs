@@ -21,7 +21,6 @@ pub const EQUIP_BOXES: [(&str, usize); 9] = [
 /// Looks per page (`displayBoxCount`).
 pub const PAGE: usize = 18;
 
-/// The open window's state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IllusionView {
     /// The selected worn slot.

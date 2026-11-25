@@ -110,8 +110,7 @@ pub const OPTIONS: [&[Option<(usize, &str)>]; 4] = [
     ],
 ];
 
-/// A new character's options: 0–17 and 39 on (the real game's
-/// new character file; the port's template keeps them in `gd-game` `save.rs`).
+/// A new character's options: 0–17 and 39 on (the game's new character file).
 pub fn defaults() -> [bool; COUNT] {
     std::array::from_fn(|i| i <= 17 || i == 39)
 }
@@ -161,7 +160,7 @@ pub struct ItemFacts<'a> {
     /// `petBonusName` on the base or an affix.
     pub pet_bonus: bool,
     /// `augmentSkillName{n}`, `augmentMasteryName{n}`, `augmentAllLevel` of
-    /// the item (`gd_sim::skills::item_skill_bonuses`).
+    /// the item.
     pub skills: &'a crate::skills::SkillBonuses,
 }
 
@@ -188,7 +187,7 @@ fn types<'a>(item: &'a ItemFacts, store: StoreKind) -> impl Iterator<Item = u8> 
 }
 
 /// The filter's Armor group (option 15): head, chest, legs, feet, hands, shoulders
-/// (`gd_sim::items::illusion::item_type` 1, 3, 4, 5, 7, 14).
+/// (item types 1, 3, 4, 5, 7, 14).
 pub fn is_armor(item_type: u32) -> bool {
     matches!(item_type, 1 | 3 | 4 | 5 | 7 | 14)
 }

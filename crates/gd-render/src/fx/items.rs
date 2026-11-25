@@ -10,8 +10,7 @@
 //! an attach point with a parent bone follows that bone of the posed mesh.
 //! Item records add no effect fields of their own (`Item::Load`,
 //! `ItemEquipment::Load`, `Weapon::Load`, `Armor::Load` read none). A
-//! character's own body mesh goes the same way ([`attach_armour`] from
-//! `character::dress`, a shapeshift form's from `wear_forms`). The
+//! character's own body mesh goes the same way ([`attach_armour`]). The
 //! `toggledWeaponEffects` interface option does not touch these:
 //! `EquipManager::UpdateWeaponFxVisibility` only sets or clears
 //! the skill-applied weapon enchantment (`SetWeaponEnchantment`, a
@@ -131,9 +130,8 @@ fn spawn(commands: &mut Commands, record: &str, fx: ItemFx, parent: Entity, mesh
     commands.entity(parent).add_child(e);
 }
 
-/// Places every item effect at its weapon / bone this frame (a mesh
-/// effect's parts and its scale along, see `follow_points` in `enchant.rs`);
-/// a doll's effects take the doll's render layer.
+/// Places every item effect at its weapon / bone this frame (a mesh effect's parts and its scale along); a doll's
+/// effects take the doll's render layer.
 pub(crate) fn follow(
     mut commands: Commands,
     owners: Query<
@@ -158,8 +156,7 @@ pub(crate) fn follow(
         (Without<ItemFx>, Without<Character>, Without<WeaponOf>),
     >,
     mut scratch: Local<Vec<gd_formats::msh::Coords>>,
-    // This frame's poses of other meshes with their owners' keys: ((owner, mesh), range in `posed`), so each is
-    // posed once however many effects it carries.
+    // This frame's poses of other meshes with their owners' keys: ((owner, mesh), range in `posed`).
     mut poses: Local<(
         Vec<((Entity, usize), (usize, usize))>,
         Vec<gd_formats::msh::Coords>,

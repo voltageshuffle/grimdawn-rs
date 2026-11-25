@@ -1,49 +1,27 @@
-//! `ControllerGraeae` (the Wight hags of Scarstone, the Aetherial
-//! reanimators of the Enclave and the roguelike dungeon): sisters sharing one
+//! `ControllerGraeae` (the Wight hags of Scarstone, the Aetherial reanimators): sisters sharing one
 //! eye. Game.dll:
 //!
-//! - The constructor adds the controller to the class's one
-//!   list (`s_vGraeaes`, `AddToList`; the destructor removes
-//!   it), so every Graeae in the world is a sister of every other; a
-//!   Graeae made while the list is empty sets `s_bFirstFire`.
-//! - `Load`: `eyeTimeMin` / `eyeTimeMax` (s), `eyeFleeChance`,
-//!   `eyeDodgeChance`, `eyeLeadChance` (x 0.01), `eyeRandomRepositionChance`.
-//! - `InitialUpdate` keeps the attack skill (`ControllerMonster.attackSkill`) and the
-//!   eight special slots (`ControllerMonster.specialAttacks`, 28 bytes each) aside, empties every slot and
-//!   puts back only slot 3 (`specialAttack4`, its delay at 0 and its timeout
-//!   whole); the controller's `FleeChance`, `DodgeChance`, the difficulty's
-//!   `LeadChance` and `randomRepositionChance` are kept aside too.
-//! - `GetEye`: the eye flag (`ControllerGraeae.hasEye`) is set and its timer
-//!   (`ControllerGraeae.eyeTimer`) zeroed; the attack becomes slot 0's skill (`specialAttack`),
-//!   slots 1 and 4 (`specialAttack2` / `5`) come back rearmed and slot 3
-//!   goes; the chances become the `eye*` ones; `ToggleEyeSkill(true)`.
-//!   `LoseEye` is the reverse (the record's attack, slot 3 back
-//!   rearmed, slots 1 and 4 gone, the kept chances, `ToggleEyeSkill(false,
-//!   force)`).
-//! - `ToggleEyeSkill` pushes the "ToggleEye" temporary state
-//!   (`ControllerGraeaeStateToggleEye`: 2000 ms doing nothing,
-//!   `OnBegin` / `OnUpdate`), then uses the eye
-//!   skill, slot 2's (`specialAttack3`, a toggle) when it is enabled and its
-//!   on state differs from the wanted one (or forced): an
-//!   `ActivateSkillConfigCmd` at once for an `instantCast` skill (activation
-//!   type 2), else `UseSkill` on itself. With the eye given, unless
-//!   `s_bFirstFire`, it also uses `chainNextSkill` on itself; the
-//!   flag is cleared.
-//! - `Update`: when no sister holds the eye this one takes it;
-//!   the holder's timer counts up and from `eyeTimeMin` on, each update
-//!   with `IGenerate(0, 100) == 0` or past `eyeTimeMax`, the eye goes to
-//!   `GetNextGraeae` (a random other living sister,
-//!   `IGenerate(0, n - 1)`; none: kept).
-//! - "Dying" (`ControllerGraeaeStateDying::OnBegin`) and "Dead"
-//!   pass a held eye on the same way.
+//! - Every Graeae is in one class list (`s_vGraeaes`), so all are sisters; one made while the list
+//!   is empty sets `s_bFirstFire`.
+//! - `Load`: `eyeTimeMin` / `eyeTimeMax` (s), `eyeFleeChance`, `eyeDodgeChance`, `eyeLeadChance`
+//!   (x 0.01), `eyeRandomRepositionChance`.
+//! - `InitialUpdate` keeps the attack skill and the eight special slots aside, empties every slot
+//!   and puts back only slot 3 (`specialAttack4`, rearmed); `FleeChance`, `DodgeChance`, the
+//!   difficulty's `LeadChance` and `randomRepositionChance` are kept aside too.
+//! - `GetEye`: `hasEye` set, `eyeTimer` zeroed; the attack becomes slot 0's skill, slots 1 and 4
+//!   come back rearmed and slot 3 goes; the chances become the `eye*` ones; `ToggleEyeSkill(true)`.
+//!   `LoseEye` is the reverse (`ToggleEyeSkill(false, force)`).
+//! - `ToggleEyeSkill` pushes "ToggleEye" (`ControllerGraeaeStateToggleEye`: 2000 ms doing nothing),
+//!   then uses slot 2's toggle skill when its on state differs from the wanted one (or forced): at
+//!   once for an `instantCast` skill, else `UseSkill` on itself. With the eye given, unless
+//!   `s_bFirstFire`, it also uses `chainNextSkill` on itself; the flag is cleared.
+//! - `Update`: when no sister holds the eye this one takes it; the holder's timer counts up and from
+//!   `eyeTimeMin` on, each update with `IGenerate(0, 100) == 0` or past `eyeTimeMax`, the eye goes to
+//!   `GetNextGraeae` (a random other living sister; none: kept).
+//! - "Dying" and "Dead" pass a held eye on the same way.
 //!
-//! The port: [`Graeae`] holds the kept kit (`MonsterSkills::set_kit`
-//! swaps it), [`FirstFire`] is `s_bFirstFire` (per game), [`ToggleEye`] the
-//! temporary state (the monster AI and its skill choice skip it).
-//! PORT: the eye skill toggles through `MonsterSkills::set_toggle` (a
-//! non-instant one with its cast animation); the random draws use the
-//! port's RNG; the lead chance is set for every difficulty (the engine
-//! writes the current one's, the only one read).
+//! PORT: the eye skill toggles through `MonsterSkills::set_toggle` (a non-instant one with its cast
+//! animation); the lead chance is set for every difficulty (the engine writes only the current one's).
 use crate::combat::MonsterAi;
 use crate::monster_skills::MonsterSkills;
 use bevy::prelude::*;
@@ -68,8 +46,7 @@ impl Plugin for GraeaePlugin {
     }
 }
 
-/// `ControllerGraeae::s_bFirstFire`: the next eye given is the group's first
-/// (no `chainNextSkill`).
+/// `ControllerGraeae::s_bFirstFire`: the next eye given is the group's first (no `chainNextSkill`).
 #[derive(Resource, Default)]
 pub struct FirstFire(pub bool);
 
@@ -77,10 +54,8 @@ pub struct FirstFire(pub bool);
 #[derive(Component)]
 pub struct ToggleEye(pub f32);
 
-/// `ControllerGraeaeStateToggleEye::OnBegin`: 2000 ms.
 const TOGGLE_EYE_SECS: f32 = 2.0;
 
-/// The controller chances the eye swaps.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Chances {
     pub flee: u32,
@@ -107,24 +82,20 @@ impl Chances {
     }
 }
 
-/// A Graeae's controller state (module docs).
 #[derive(Component, Debug)]
 pub struct Graeae {
-    /// Holds the eye (`ControllerGraeae.hasEye`).
+    /// `ControllerGraeae.hasEye`.
     pub eye: bool,
-    /// Seconds with the eye (`ControllerGraeae.eyeTimer`).
+    /// `ControllerGraeae.eyeTimer` (s).
     timer: f32,
     /// `eyeTimeMin`, `eyeTimeMax` (s).
     time: (f32, f32),
     eye_chances: Chances,
     kept_chances: Chances,
-    /// The record's attack skill.
     attack: Option<(String, usize, Kind, f32)>,
-    /// The special slots as the record has them.
     slots: Vec<Special>,
     /// Slot 2's skill (record, level index, `instantCast`).
     eye_skill: Option<(String, usize, bool)>,
-    /// `chainNextSkill`.
     chain_next: Option<(String, usize, Kind)>,
 }
 
@@ -136,12 +107,10 @@ impl Graeae {
             .map(Special::rearmed)
     }
 
-    /// The kit without the eye: the record's attack, slot 3.
     fn plain_kit(&self) -> (Option<(String, usize, Kind, f32)>, Vec<Special>) {
         (self.attack.clone(), self.slot(3).into_iter().collect())
     }
 
-    /// The eye's kit: slot 0's skill as the attack, slots 1 and 4.
     fn eye_kit(&self) -> (Option<(String, usize, Kind, f32)>, Vec<Special>) {
         let attack = self
             .slots
@@ -224,7 +193,7 @@ fn init(
     }
 }
 
-/// Gives or takes the eye (`GetEye` / `LoseEye`, module docs).
+/// `GetEye` / `LoseEye`.
 #[allow(clippy::too_many_arguments)]
 fn set_eye(
     commands: &mut Commands,
@@ -247,7 +216,6 @@ fn set_eye(
     let (attack, specials) = if on { g.eye_kit() } else { g.plain_kit() };
     ms.set_kit(attack, specials);
     if on { g.eye_chances } else { g.kept_chances }.apply(ai);
-    // `ToggleEyeSkill(on, !on)`.
     commands.entity(e).try_insert(ToggleEye(TOGGLE_EYE_SECS));
     let Some((skill, li, instant)) = g.eye_skill.clone() else {
         return;
@@ -276,7 +244,6 @@ fn set_eye(
     }
 }
 
-/// `GetNextGraeae`: a random other living sister.
 fn next_sister(me: Entity, sisters: &[(Entity, bool)]) -> Option<Entity> {
     let others: Vec<Entity> = sisters
         .iter()
@@ -307,7 +274,6 @@ fn update(
     let dt = time.delta_secs();
     let sisters: Vec<(Entity, bool)> = q.iter().map(|(e, .., dead)| (e, !dead)).collect();
     let mut pass: Vec<(Entity, Entity)> = Vec::new();
-    // Dying / Dead: a held eye goes on.
     for e in &newly_dead {
         if q.get(e).is_ok_and(|g| g.1.eye)
             && let Some(n) = next_sister(e, &sisters)
@@ -374,7 +340,6 @@ fn update(
     }
 }
 
-/// The "ToggleEye" state's 2 s run out.
 fn toggle_eye_states(
     mut commands: Commands,
     time: Res<Time>,

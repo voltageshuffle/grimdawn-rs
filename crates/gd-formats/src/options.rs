@@ -19,10 +19,9 @@
 //! PORT: `showFPS` (default off) and `maxFPS` (default 0, uncapped) are the port's own options — the FPS overlay
 //! and the frame limiter; the engine's table has neither.
 //! PORT: `mapZoom` is stored as the engine's 0.5; the local map reads it in
-//! its own 40..135 zoom units (`ui::localmap` clamps on read). The Default
-//! button's per-group overrides (`Options::SetToDefaults`: corpse persistence
-//! 0.0 on Gameplay, music volume 0.6 on Audio) live in the options window, not
-//! in these factory defaults.
+//! its own 40..135 zoom units. The Default button's per-group overrides
+//! (`Options::SetToDefaults`: corpse persistence 0.0 on Gameplay, music
+//! volume 0.6 on Audio) are not part of these factory defaults.
 //!
 //! `options.txt` lines are `name = value`, names padded to 26 columns, bools `true` / `false`, vectors as two
 //! numbers, strings quoted. [`table`] holds every option the engine's constructor sets (including some the port
@@ -164,10 +163,8 @@ fn build_table() -> Vec<(&'static str, Value)> {
         ("resolution", Value::Vec2(0, 0)), // int2 0; (0, 0) auto-detects the monitor size
         ("anisotropicFiltering", I(1)),    // int 2
         ("screenMode", I(0)),              // int 5
-        ("device", I(0)), // int 7; the wgpu adapter index (grimdawn `render_devices`), applied at next launch
-        ("syncToRefresh", B(true)), // bool 6
-        // PORT: FPS display and frame limiter (the engine has neither); read live each frame
-        // (`gd_ui::hud::fps_overlay`, `grimdawn::fps_limit`). `maxFPS` 0 = uncapped.
+        ("device", I(0)),                  // int 7; the wgpu adapter index, applied at next launch
+        ("syncToRefresh", B(true)),        // bool 6
         ("showFPS", B(false)),
         ("maxFPS", I(0)),
         ("detailObjects", B(true)),   // bool 9
@@ -175,7 +172,7 @@ fn build_table() -> Vec<(&'static str, Value)> {
         ("fxQuality", q("medium")),
         ("lightingQuality", q("medium")),
         ("uiScale", F(0.5)),    // float 11
-        ("brightness", F(0.5)), // float 6 (the fullscreen gamma ramp, gd-render `post.rs`)
+        ("brightness", F(0.5)), // float 6 (the fullscreen gamma ramp)
         ("contrast", F(0.5)),   // float 7
         ("gamma", F(0.5)),      // float 8, "Fullscreen Gamma"
         ("colorblind", I(0)),
@@ -261,7 +258,6 @@ impl Options {
                 writeln!(s, "{name:<26}= {}", v.write()).unwrap();
             }
         }
-        // PORT: the real game's options this port neither uses nor shows stay in the file as they were read.
         for line in &self.unknown {
             s.push_str(line);
             s.push('\n');

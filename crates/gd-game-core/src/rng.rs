@@ -1,19 +1,13 @@
-//! The game's random draws: one wyrand generator (`fastrand::Rng`) per
-//! thread. gd-game's gameplay draws from it, and so does presentation
-//! randomness (gd-render's water, chaos beams, lightning and FX meshes;
-//! grimdawn's breakables, cast decals, gibs and the menu's arena pick).
+//! The game's random draws: one wyrand generator (`fastrand::Rng`) per thread,
+//! for gameplay and presentation randomness.
 //!
-//! Not `fastrand`'s own thread-local generator: Bevy's task pool draws from
-//! that one (`async_executor::Executor::run` and `futures_lite::future::race`
-//! call `fastrand::Rng::new()`, which forks it) whenever a scope's tasks
-//! outlive their first poll on the calling thread: a timing-dependent number of
-//! draws that shifted a seeded headless game's dice (`tests/game/determinism.rs`).
+//! Not `fastrand`'s own thread-local generator: Bevy's task pool forks that one
+//! (`async_executor::Executor::run`, `futures_lite::future::race`) a
+//! timing-dependent number of times.
 //!
-//! The functions mirror `fastrand`'s free functions, so draws are the same
-//! wyrand sequence for a seed. Unseeded, each thread starts from a random seed.
-//! Seeded determinism is promised only for the headless `TestGame`: no render,
-//! and a single-threaded executor, so the drawing systems run on one thread and
-//! none of the presentation draws above happen there.
+//! Same wyrand sequence as `fastrand`'s free functions for a seed; unseeded, each
+//! thread starts from a random seed. Seeded determinism holds only for the
+//! headless single-threaded `TestGame`.
 use std::cell::Cell;
 use std::ops::RangeBounds;
 
@@ -30,7 +24,7 @@ fn with<T>(f: impl FnOnce(&mut fastrand::Rng) -> T) -> T {
     })
 }
 
-/// Restarts this thread's generator from `seed` (`TestGame`'s seed).
+/// Restarts this thread's generator from `seed`.
 pub fn seed(seed: u64) {
     with(|r| r.seed(seed));
 }

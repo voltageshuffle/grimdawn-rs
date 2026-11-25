@@ -1,32 +1,21 @@
-//! The combat data: actor radii and reach (the combat systems are gd-game's
-//! `combat`).
+//! The combat data: actor radii and reach.
 use bevy::prelude::*;
 use gd_sim::actor::Profile;
 use std::sync::Arc;
 
-/// `gameengine.dbr` `meleeRange` (1.25 m): the gap between two actors' radii
-/// a melee attack reaches (`GameEngine::GetMeleeRange`).
+/// `gameengine.dbr` `meleeRange`: the gap between two actors' radii a melee attack reaches
+/// (`GameEngine::GetMeleeRange`).
 pub const MELEE_RANGE: f32 = 1.25;
 
-/// `actorRadius` of a record that has none: Engine.dll `Actor::Load` reads `actorRadius`,
-/// `actorHeight` and `scale` with the default 1.0 each (no riftgate record has an `actorRadius`).
+/// `actorRadius` of a record that has none (`Actor::Load` defaults `actorRadius`, `actorHeight` and `scale`
+/// to 1.0).
 pub const ACTOR_RADIUS: f32 = 1.0;
 
-/// The radius of an actor spawned from `rec`: `Actor::GetRadius` (Engine.dll, an `Object` virtual)
-/// = the length of the current scale vector (`Actor.scale`) x `actorRadius` (`Actor.actorRadius`); `Actor::Load`
-/// copies the record's `scale` into all three components of the base scale (`Actor.baseScale`) and hands it to
-/// `SetScale(Vec3)` (`Actor::SetScale`), so it is sqrt(3) x `scale` x `actorRadius`. The crowd agent's radius
-/// (`Character::CrowdAgentCreated`), the reach (`Character::GetTargetDistance`: skill
-/// range + both radii), `Character::NearTarget` and a fixed actor's use range
-/// (`FixedActor::GetUsableRange` and `ControllerPlayerState::DefaultRequestInteractableAction`
-/// call the same vtable slot on the chest / door / shrine / riftgate; Game.dll overrides it only for
-/// `AreaOfInterest` and `PatrolPoint`) all read it: the one radius of characters and usable objects alike, which
-/// their components keep (`Combatant::radius`, `Chest::radius`, `Door::radius`, `Shrine::radius`) for the hover
-/// pick and the use range (a riftgate's `Waypoint::radius` is its teleporter `radius`, not this). `default`
-/// stands for a missing `actorRadius` ([`ACTOR_RADIUS`] is the engine's); a missing or zero `scale` is 1 (as
-/// `gd_game::creature::spawn_creature`). The Colossus growth scales it (`gd_game::colossus`).
-/// Not this: the loot drop radius and the nav obstacle of a breakable read the raw `actorRadius` field
-/// (`gd_sim::loot_toss::drop_radius`, `gd_game::breakables` module doc).
+/// `Actor::GetRadius`: the scale vector's length x `actorRadius` = sqrt(3) x `scale` x `actorRadius`
+/// (`Actor::Load` copies `scale` into all three components). The one radius of characters and usable
+/// objects: crowd agent, reach (`Character::GetTargetDistance`), `Character::NearTarget` and a fixed actor's
+/// use range (`FixedActor::GetUsableRange`). `default` stands for a missing `actorRadius`; a missing or
+/// zero `scale` is 1. Not the loot drop radius or a breakable's nav obstacle, which read raw `actorRadius`.
 pub fn get_radius(rec: Option<&gd_formats::arz::Record>, default: f32) -> f32 {
     let actor_radius = rec.and_then(|r| r.f32("actorRadius")).unwrap_or(default);
     let scale = rec
@@ -36,25 +25,19 @@ pub fn get_radius(rec: Option<&gd_formats::arz::Record>, default: f32) -> f32 {
     3f32.sqrt() * scale * actor_radius
 }
 
-/// The actor's own cylinder radius in metres (`actorRadius` x `scale`) behind a [`get_radius`] value, which is
-/// that x sqrt(3) (the scale vector's length). A pick sphere that stands in for the mesh (`grimdawn::hover`)
-/// takes this, so the hover and the use range come from the one radius without the pick growing by sqrt(3).
+/// The actor's own cylinder radius (`actorRadius` x `scale`) behind a [`get_radius`] value; a pick sphere
+/// standing in for the mesh takes this.
 pub fn body_radius(radius: f32) -> f32 {
     radius / 3f32.sqrt()
 }
 
-/// A fixed actor's `usableRange`, the term its use range adds to both radii ([`crate::player_orders::usable_range`]):
-/// Game.dll, every fixed actor's `Load` (`FixedActor`, `FixedItem`, `FixedDoor`, `FixedLever`,
-/// `DynamicDoor`, `StaticShrine`, `StaticTeleporter`, `AscendantAltar`, `BindingInteractable`) reads
-/// it with the default 1.0, so a record without one (nearly every chest and door) is used from 1 m beyond the
-/// radii, not 0.
+/// A fixed actor's `usableRange`, the term its use range adds to both radii: every fixed actor's `Load`
+/// defaults it to 1.0.
 pub fn fixed_usable_range(rec: Option<&gd_formats::arz::Record>) -> f32 {
     rec.and_then(|r| r.f32("usableRange")).unwrap_or(1.0)
 }
 
-/// The use range of the fixed actor of `rec` for a player of `player_radius`: [`crate::player_orders::usable_range`]
-/// with the object's [`get_radius`] and [`fixed_usable_range`], for the objects that keep no radius of their own
-/// (riftgates, portals, rifts, the gravestone).
+/// The use range of the fixed actor of `rec` for objects that keep no radius of their own.
 pub fn fixed_use_range(
     rec: Option<&gd_formats::arz::Record>,
     player_radius: f32,
@@ -77,31 +60,22 @@ pub struct CombatSet;
 pub struct Combatant {
     pub profile: Arc<Profile>,
     pub life: f32,
-    /// The actor's radius, `Actor::GetRadius` ([`get_radius`]): the one radius of the crowd, the reach
-    /// (`GetTargetDistance`), `NearTarget` and the other range checks.
+    /// `Actor::GetRadius` ([`get_radius`]).
     pub radius: f32,
-    /// The object-space bounding box (`GraphicsMeshInstance::GetObjectSpaceBoundingBox`, `gd_sim::bounds`): what
-    /// the skill target queries test ([`Self::in_radius`], [`Self::around_ray`]) and the cursor pick
-    /// (`gd_game::combat::pick_monster`). Set from the `gd_game::character::Character`'s mesh and scale
-    /// (`gd_game::combat::body_bounds`) or by the spawner (a breakable's mesh); a point at the origin until then
-    /// (no mesh).
+    /// The object-space bounding box (`GraphicsMeshInstance::GetObjectSpaceBoundingBox`) the skill target
+    /// queries and the cursor pick test; a point at the origin until a mesh sets it.
     pub bounds: gd_sim::bounds::Aabb,
     pub target: Option<Entity>,
     /// Seconds until the next attack may start.
     pub cooldown: f32,
-    /// Milliseconds until the shield can block again (`CombatManager.blockCooldown`,
-    /// counted down by `CombatManager::Update`).
+    /// `CombatManager.blockCooldown`: milliseconds until the shield can block again.
     pub block_cooldown_ms: i32,
 }
 
-/// Who attacked a character: its `CombatManager.lastAttacker`, which
-/// `TakeAttack` sets early for every attack (a miss too) and `DurationDamageManager::ExecuteDamage`
-/// before each duration entry that deals damage (life leech included, mana leech not; the
-/// killer of a death, a `gd_game::combat::Suicide`'s too), and `GameEngine::RegisterDamage`, which `CombatManager::ApplyDamage`
-/// calls with each damage application (hits and DoT ticks) on a character that is not a `Player`:
-/// the damage summed per `GetMasterAttacker` (a pet's owner, a leaderless monster itself). The experience share
-/// is the main player's part of that sum (`PlayerManagerServer::GetExperienceMultiplier`). A hit
-/// registers every amount it applies, overkill included ([`gd_sim::actor::Hit::applied_total`]).
+/// `CombatManager.lastAttacker` (set by `TakeAttack` for every attack, a miss too, and by
+/// `DurationDamageManager::ExecuteDamage` before each damaging duration entry, mana leech excluded), and
+/// `GameEngine::RegisterDamage`: on a non-`Player`, every applied amount (overkill included) summed per
+/// `GetMasterAttacker`, for `PlayerManagerServer::GetExperienceMultiplier`.
 #[derive(Component, Default, Debug, Clone)]
 pub struct Attackers {
     pub last: Option<Entity>,
@@ -129,8 +103,7 @@ impl Attackers {
     }
 }
 
-/// A dying or dead combatant; `timer` counts down to its next step (the
-/// body's removal, or the player's respawn).
+/// A dying or dead combatant; `timer` counts down to its next step (body removal or player respawn).
 #[derive(Component)]
 pub struct Dead {
     pub timer: f32,
@@ -161,15 +134,13 @@ impl Combatant {
         )
     }
 
-    /// Whether `GameEngine::GetTargetsInRadius(at, r)` finds this body under `m` (the
-    /// sphere meets its world box, `gd_sim::bounds::Aabb::meets_sphere`; 3D).
+    /// Whether `GameEngine::GetTargetsInRadius(at, r)` finds this body under `m` (3D).
     pub fn in_radius(&self, m: &bevy::math::Affine3A, at: Vec3, r: f32) -> bool {
         self.body_box(m).meets_sphere(at.to_array(), r)
     }
 
-    /// Whether `GameEngine::GetTargetsAroundRay(ray, len, thick)` finds this body under `m`
-    /// (the ray from `a` along `dir` enters its world box grown by `thick` before `len`,
-    /// `gd_sim::bounds::Aabb::around_ray`; 3D). `dir` need not be normalised.
+    /// Whether `GameEngine::GetTargetsAroundRay(ray, len, thick)` finds this body under `m` (3D).
+    /// `dir` need not be normalised.
     pub fn around_ray(
         &self,
         m: &bevy::math::Affine3A,
@@ -189,32 +160,18 @@ impl Combatant {
     }
 }
 
-/// The controller record's `Class` (the RTTI class `Monster::Load`
-/// creates; Game.dll classInfo chain). Every class reads
+/// The controller record's `Class` (the RTTI class `Monster::Load` creates). Every class reads
 /// `ControllerMonster::Load`'s fields; they differ in their states.
 ///
-/// * `ControllerStationaryMonster`: `CanMove` returns false, and its
-///   `RegisterStates` has no Patrol, Roam, Wander,
-///   WaitToAttack, RepositionForAttack, NavigateObstacle, DodgeAttack or
-///   QuestMove state; Flee, Return, FollowLeader, DefendLeader and Move are a
-///   stub whose `OnBegin` goes "Idle" (`SetState` of a missing
-///   state only logs "State %s is trying to be set, but not found." and
-///   stays). Its Pursue `OnBegin`: a valid enemy that is
-///   `CloseEnoughToUseSkill` → "Attack", else "Idle". Idle's roaming
-///   (`ControllerMonsterStateIdle::StartedRoaming`) and Attack's
-///   `randomRepositionChance` need `CanMove`, so the monster never moves: it
-///   turns to and attacks what comes in reach (the record's run speed is
-///   not used by its AI).
-/// * `ControllerTotem` (parent Stationary): a stationary monster whose `AngerManager` comparator is
-///   the distance one (`SetDistanceAngerComparator`: the
-///   entry's distance, set by `AngerManager::Update`): it goes
-///   for the nearest foe on its anger list, not the angriest.
-/// * `ControllerMonsterHidden` (`ControllerMonsterHidden::Create`): `appearDistance`
-///   (`ControllerMonsterHidden.appearDistance`, default 5, `Load`) and the monster's states with
-///   "Startup" replaced by `ControllerMonsterStateHidden` (`RegisterStates`),
-///   see `gd_game::combat::Hidden`.
-/// * `ControllerGraeae` and `ControllerMonsterSynergy`: the monster's states
-///   plus their own (`gd_game::graeae`, `gd_game::synergy`).
+/// * `ControllerStationaryMonster`: `CanMove` is false; `RegisterStates` lacks Patrol, Roam, Wander,
+///   WaitToAttack, RepositionForAttack, NavigateObstacle, DodgeAttack and QuestMove; Flee, Return,
+///   FollowLeader, DefendLeader and Move are stubs that go "Idle". Pursue: an enemy
+///   `CloseEnoughToUseSkill` → "Attack", else "Idle". It never moves; it turns to and attacks what is in reach.
+/// * `ControllerTotem` (parent Stationary): its `AngerManager` comparator is distance
+///   (`SetDistanceAngerComparator`), so it goes for the nearest foe, not the angriest.
+/// * `ControllerMonsterHidden`: `appearDistance` (default 5) and "Startup" replaced by
+///   `ControllerMonsterStateHidden`.
+/// * `ControllerGraeae` and `ControllerMonsterSynergy`: the monster's states plus their own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ControllerClass {
     #[default]
@@ -222,13 +179,9 @@ pub enum ControllerClass {
     Stationary,
     Totem,
     Hidden,
-    /// `ControllerGraeae` (`gd_game::graeae`).
     Graeae,
-    /// `ControllerMonsterSynergy` (`gd_game::synergy`).
     Synergy,
-    /// `ControllerSpirit` (`gd_game::spirit`).
     Spirit,
-    /// `ControllerSpiritHost` (`gd_game::spirit`).
     SpiritHost,
 }
 
@@ -247,9 +200,7 @@ impl ControllerClass {
         }
     }
 
-    /// `ControllerMonster::CanMove` as far as the class decides it (the
-    /// stationary classes: never; the port's `movement::Rooted` stands in for
-    /// the rest of `ControllerMonster::CanMove`).
+    /// `ControllerMonster::CanMove` as far as the class decides it (`movement::Rooted` covers the rest).
     pub fn can_move(self) -> bool {
         !matches!(self, Self::Stationary | Self::Totem)
     }

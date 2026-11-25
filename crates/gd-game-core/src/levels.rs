@@ -1,68 +1,48 @@
 //! The loaded levels as gameplay sees them: which are loaded (and their root
-//! entity), their sector grids (what area a point is in, [`Levels::sector_entry`]
-//! the map's entry there) and the map's area level limits, challenge areas and damage sectors.
-//! The game's world streamer fills it as levels load and unload; tests can mark
-//! levels loaded by hand.
+//! entity), their sector grids and the map's area level limits, challenge areas
+//! and damage sectors. The world streamer fills it; tests can mark levels loaded by hand.
 //!
-//! The map's regions in the world: [`region_origin`] (a level's positions are
-//! relative to it), [`region_distance`] (the streaming distance), [`region_at`]
-//! and [`region_zone`] (which region / riftgate map zone holds a point).
-//!
-//! Streaming never despawns in `Update`: an unloaded level's root, the
-//! monsters / NPCs / props of unloaded levels (`gd_game::monsters::cull_monsters`),
-//! the chests, breakables, doors and physics props of unloaded levels ([`LevelMember`],
-//! `gd_game::levels::cull_level_members`) and story actors whose objects left the world get [`Unload`], and
+//! Streaming never despawns in `Update`: entities of unloaded levels get [`Unload`] and
 //! `gd_game::levels::despawn_unloaded` despawns them in `Last`, so inserts other systems
 //! queued for them that frame still apply.
 //!
-//! Every world entity belongs to a level: Engine.dll `Region::UnloadLevel` →
-//! `Level::UnloadEntities` takes every entity of the region out of the world, and `Level::SaveState`
-//! keeps those whose `ShouldSaveState` holds (Game.dll `Item::ShouldSaveState`: every item but a stale
-//! Shattered Realm one) for the region's next load. A level's own content hangs under its root; the loose entities
-//! the game drops into the world — ground items, effects, the containers a death drops, the Shattered Realm's exit
-//! gates — take the loaded level they appear in (`gd_game::levels::place_loose`, `gd_game::monsters::LevelProp`) and go with it
-//! (ground items come back with it, `gd_game::loot::LevelItems`); script-created story objects leave the story when
-//! their region streams out (`gd_game::story_world`). PORT: the level is the loaded region nearest the entity's position
-//! when it appears ([`Levels::level_at`]; the engine keeps each entity's region pointer).
+//! Every world entity belongs to a level (Engine.dll `Region::UnloadLevel` →
+//! `Level::UnloadEntities`; `Level::SaveState` keeps those whose `ShouldSaveState` holds).
+//! Loose entities (ground items, effects, death containers, Shattered Realm exit gates)
+//! take the loaded level they appear in (`gd_game::levels::place_loose`) and go with it.
+//! PORT: the level is the loaded region nearest the entity's position when it appears
+//! ([`Levels::level_at`]; the engine keeps each entity's region pointer).
 use bevy::prelude::*;
 use gd_formats::map::sector::{Challenge, DamageSector, LevelLimit, SectorEntry, SectorLayers};
 use gd_formats::map::{MapFile, RegionInfo};
 use std::collections::BTreeMap;
 
-/// Levels whose XZ bounds are within this distance ([`region_distance`]) of the streaming focus are loaded (the
-/// world streamer's levels, `gd_game::story_world`'s story objects).
+/// Levels within this XZ distance ([`region_distance`]) of the streaming focus are loaded.
 pub const LOAD_RADIUS: f32 = 160.0;
-/// Loaded levels farther than this are unloaded; the gap to [`LOAD_RADIUS`] keeps a level at the edge from
-/// reloading back and forth.
+/// Loaded levels farther than this are unloaded; the gap to [`LOAD_RADIUS`] is hysteresis.
 pub const UNLOAD_RADIUS: f32 = 220.0;
 
-/// On an entity streaming took out of the world; `gd_game::levels::despawn_unloaded`
-/// despawns it (with its children) in `Last` (module doc).
 #[derive(Component)]
 pub struct Unload;
 
-/// A level's placed chest, breakable, door or physics prop (not a story object's): it goes with level `.0`
-/// (`gd_game::levels::cull_level_members`).
+/// A level's placed chest, breakable, door or physics prop (not a story object's): it goes with level `.0`.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct LevelMember(pub usize);
 
-/// Where the camera / player is: levels and their story objects stream in around it (the game's world streamer,
-/// `gd_game::story_world::stream_story_objects`).
+/// Where the camera / player is: levels and their story objects stream in around it.
 #[derive(Resource, Default, PartialEq)]
 pub struct StreamFocus(pub Vec3);
 
 #[derive(Resource, Default)]
 pub struct Levels {
-    /// Loaded level (region index) → its root entity. Ordered, so overlap
-    /// lookups resolve deterministically (lowest region first).
+    /// Loaded level (region index) → root. Ordered so overlap lookups pick the lowest region.
     pub loaded: BTreeMap<usize, Entity>,
     /// Sector-data index grids of loaded levels: region → (origin, extent, grid).
     sectors: BTreeMap<usize, (Vec3, Vec3, SectorLayers)>,
-    /// Sector layer 9 (`LevelLimitSectorData`) of the map.
     pub level_limits: Vec<LevelLimit>,
-    /// Sector layer 13 (`ChallengeSectorData`) of the map (`gd_game::challenge_areas`).
+    /// Sector layer 13 (`ChallengeSectorData`).
     pub challenges: Vec<Challenge>,
-    /// Sector layer 7 (`DamageSectorData`) of the map (`gd_game::damage_sectors`).
+    /// Sector layer 7 (`DamageSectorData`).
     pub damages: Vec<DamageSector>,
 }
 
@@ -74,19 +54,16 @@ impl Levels {
         }
     }
 
-    /// The map's challenge-area table (sector layer 13).
     pub fn with_challenges(mut self, challenges: Vec<Challenge>) -> Self {
         self.challenges = challenges;
         self
     }
 
-    /// The map's damage-sector table (sector layer 7).
     pub fn with_damages(mut self, damages: Vec<DamageSector>) -> Self {
         self.damages = damages;
         self
     }
 
-    /// A level finished loading at `origin` with its sector grid.
     pub fn add(
         &mut self,
         level: usize,
@@ -100,7 +77,6 @@ impl Levels {
         self.loaded.insert(level, root);
     }
 
-    /// A level unloaded; returns its root entity.
     pub fn remove(&mut self, level: usize) -> Option<Entity> {
         self.sectors.remove(&level);
         self.loaded.remove(&level)
@@ -110,8 +86,8 @@ impl Levels {
         self.loaded.contains_key(&level)
     }
 
-    /// The loaded level a world position belongs to (module doc): the one whose region footprint is nearest (0
-    /// inside; where regions overlap, as the Shattered Realm's over main-world ground, the lowest region index).
+    /// The loaded level a world position belongs to: the one whose region footprint is nearest
+    /// (0 inside; on overlap the lowest region index).
     pub fn level_at(&self, map: &MapFile, p: Vec3) -> Option<usize> {
         self.loaded
             .keys()
@@ -129,13 +105,9 @@ impl Levels {
         Self::cell_guid(found, pos, layer)
     }
 
-    /// [`Self::sector_guid`] in the grid of one level (region index) instead of
-    /// whichever loaded level covers `pos`: `Player::UpdateSelf`
-    /// reads an entity's sector from its own region's level
-    /// (`Entity::GetRegion` -> `Region::GetLevelPtr` -> `Level::GetSectorLayers`
-    /// -> `SectorLayers::GetTargetId` at the region-local position). The Shattered
-    /// Realm's dungeon regions are placed over main-world ground, so the
-    /// position alone can hit the wrong level.
+    /// [`Self::sector_guid`] in the grid of one level (region index): `Player::UpdateSelf`
+    /// reads an entity's sector from its own region's level; Shattered Realm regions overlap
+    /// main-world ground, so the position alone can hit the wrong level.
     pub fn sector_guid_in(&self, level: usize, pos: Vec3, layer: usize) -> Option<[i32; 4]> {
         Self::cell_guid(self.sectors.get(&level)?, pos, layer)
     }
@@ -151,7 +123,6 @@ impl Levels {
         map_entry(map, layer, self.sector_guid(pos, layer)?)
     }
 
-    /// [`Self::sector_entry`] in the level of one region ([`Self::sector_guid_in`]).
     pub fn sector_entry_in<'m>(
         &self,
         map: &'m MapFile,
@@ -177,14 +148,10 @@ impl Levels {
         Some(grid.palettes.get(layer)?.iter().find(|(i, _)| *i == id)?.1)
     }
 
-    /// The sector-data entries of `layer` around `pos`, weighted by area,
-    /// `AmbianceManager_SectorWeights` (Engine.dll): for every
-    /// level whose grid overlaps the square ±`radius` (xz), the cells
-    /// `int(local - radius) ..= int(local + radius + 0.5)` (clamped to the
-    /// grid, 1 m cells) are counted by palette id; each id with an entry
-    /// weighs its count / the count of all cells (id 0 and ids without an
-    /// entry included), so the weights add up to at most 1 and the caller
-    /// fills the rest with its default. Same GUIDs are merged.
+    /// The sector-data entries of `layer` around `pos`, weighted by area
+    /// (`AmbianceManager_SectorWeights`, Engine.dll): cells `int(local - radius) ..=
+    /// int(local + radius + 0.5)` of every overlapping grid, each id's count over all cells
+    /// (id 0 included), so weights sum to at most 1. Same GUIDs are merged.
     pub fn sector_weights(&self, pos: Vec3, layer: usize, radius: f32) -> Vec<([i32; 4], f32)> {
         let mut total = 0u32;
         let mut counts: Vec<([i32; 4], u32)> = Vec::new();
@@ -238,14 +205,9 @@ impl Levels {
 
     /// `GameEngine::GetLevelLimits`: the area's `(min, max, offset)` of the
     /// proxy player level for `difficulty` (0 normal, 1 elite, 2 ultimate).
-    ///
-    /// `region`: the level (region index) the spawning proxy / container
-    /// belongs to; its own grid is read (`Entity::GetRegion` ->
-    /// `Level::GetSectorLayers`, see [`Self::sector_guid_in`]), so a dungeon
-    /// level over main-world ground gets its own limits. `None` (or the
-    /// story's `usize::MAX`): PORT: whichever loaded level covers `pos`
-    /// (script-placed proxies and shrines carry no region here; the engine's
-    /// source of their region is not traced).
+    /// `region`: the level whose grid is read, so a dungeon over main-world ground gets its own
+    /// limits. `None` / `usize::MAX`: PORT: whichever loaded level covers `pos` (the engine's
+    /// region source for script-placed proxies is not traced).
     pub fn level_limits(
         &self,
         region: Option<usize>,
@@ -261,13 +223,11 @@ impl Levels {
     }
 }
 
-/// The entry of the map's sector-data table `layer` with GUID `guid`.
 fn map_entry(map: &MapFile, layer: usize, guid: [i32; 4]) -> Option<&SectorEntry> {
     let (_, entries) = map.sector_data.layers.get(layer)?;
     entries.iter().find(|e| e.base().ints == guid)
 }
 
-/// World position of region `r`'s origin.
 pub fn region_origin(r: &RegionInfo) -> Vec3 {
     Vec3::new(
         r.position[0] as f32,
@@ -276,8 +236,7 @@ pub fn region_origin(r: &RegionInfo) -> Vec3 {
     )
 }
 
-/// How far `p` is outside the region's box on the ground plane (0 inside): the streaming distance of world and
-/// story objects.
+/// How far `p` is outside the region's box on the ground plane (0 inside).
 pub fn region_distance(r: &RegionInfo, p: Vec3) -> f32 {
     let c = region_origin(r) + Vec3::from(r.bbox.center);
     let h = Vec3::from(r.bbox.half);
@@ -286,9 +245,8 @@ pub fn region_distance(r: &RegionInfo, p: Vec3) -> f32 {
     (dx * dx + dz * dz).sqrt()
 }
 
-/// The region a world position is in: PORT (the engine keeps each object's region pointer;
-/// the port has world positions): the first region whose box holds it, else the first whose
-/// ground footprint does.
+/// The region a world position is in. PORT: the first region whose box holds it, else the
+/// first whose ground footprint does (the engine keeps each object's region pointer).
 pub fn region_at(map: &MapFile, p: Vec3) -> Option<usize> {
     let inside = |r: &RegionInfo, y: bool| {
         let l = p - region_origin(r) - Vec3::from(r.bbox.center);
@@ -300,7 +258,7 @@ pub fn region_at(map: &MapFile, p: Vec3) -> Option<usize> {
 }
 
 /// The map zone record (`Region::GetZoneRecord`) of the map region holding
-/// `pos` (PORT: by the regions' bounds grown by 1 m; the smallest one when they overlap).
+/// `pos` (PORT: regions' bounds grown by 1 m; the smallest on overlap).
 pub fn region_zone(map: &MapFile, pos: Vec3) -> Option<String> {
     map.regions
         .iter()

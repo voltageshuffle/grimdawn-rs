@@ -1,21 +1,11 @@
-//! Fog of war (map exploration), per difficulty in
-//! `levels_world001.map/<Difficulty>/map.fow` (format and reveal rule:
-//! `gd_formats::save::fow`). The game reveals around the player through
-//! `World::AddFOWVisibility` (Engine.dll): only when the player has
-//! moved at least 1 m (x or z) since the last call, for every region touching a
-//! box of `kVisibleRange` (30 m) around the player, in the region's local
-//! coordinates. Each region's grid is created fully fogged on first use
-//! (`FogOfWar::Initialize` with the region's bbox width/depth, 2 * half extents)
-//! and the map's `FOWManager` keeps every region it knows for the next save.
+//! Fog of war (map exploration), per difficulty in `levels_world001.map/<Difficulty>/map.fow` (format and reveal
+//! rule: `gd_formats::save::fow`). `World::AddFOWVisibility` reveals only once the player has moved at least 1 m
+//! (x or z) since the last call, for every region touching a 30 m (`kVisibleRange`) box around the player, in the
+//! region's local coordinates. A region's grid is created fully fogged on first use (`FogOfWar::Initialize`, the
+//! region's bbox width/depth) and kept for the next save.
 //!
-//! The data is exposed as [`FogOfWar`] for a minimap: [`FogOfWar::is_in_fog`]
-//! for a world position, or the per-region [`FogGrid`]s.
-//! [`reveal`] reveals around the player (by map region of the open map,
-//! [`gd_game_core::save::MapLayout`]). Engine.dll `World::AddFOWVisibility` /
-//! `FogOfWar::Reveal` / `Region::GetFogOfWar`: each region has two
-//! grids revealed together, the saved one (`Region.fogOfWar`, [`FogOfWar::grids`])
-//! and a session one (`Region.sessionFogOfWar`, [`FogOfWar::session`]: fully fogged on first use,
-//! never saved), which the local map greys by (grimdawn `ui::localmap::raster`).
+//! Each region has two grids revealed together (`FogOfWar::Reveal`): the saved one ([`FogOfWar::grids`]) and a
+//! session one ([`FogOfWar::session`], never saved) the local map greys by.
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
 use gd_formats::save::fow::{FogGrid, Fow, FowRegion};
@@ -28,17 +18,15 @@ pub struct FogOfWar {
     pub grids: HashMap<String, FogGrid>,
     /// Region names in file order (kept for the save).
     pub order: Vec<String>,
-    /// Region level name (lowercase) -> this session's grid (module doc).
+    /// Region level name (lowercase) -> this session's grid.
     pub session: HashMap<String, FogGrid>,
     pub last: Option<Vec2>,
-    /// The reveals that changed a cell of either grid, counted: what the local map draws by (it greys by the session
-    /// grid). The maps draw the box around [`Self::last`] again when their count moves by one
-    /// (`grimdawn/src/ui/localmap`).
+    /// Reveals that changed a cell of either grid, counted: the local map redraws the box around [`Self::last`]
+    /// when it moves.
     pub revision: u64,
-    /// The reveals that changed a cell of the saved grids, counted: what the minimap draws by (it never shows the
-    /// session grid, so walking explored ground leaves it alone).
+    /// Reveals that changed a cell of the saved grids, counted: the minimap redraws by it.
     pub saved_revision: u64,
-    /// The open map's region names lowercased, by region index: the grid keys, built once.
+    /// The open map's region names lowercased, by region index.
     keys: std::sync::OnceLock<Vec<String>>,
 }
 
@@ -95,8 +83,7 @@ impl FogOfWar {
         keys
     }
 
-    /// `World::IsInFog`-style query for a world position (true when the region
-    /// has no grid yet).
+    /// `World::IsInFog`-style query for a world position (true when the region has no grid yet).
     pub fn is_in_fog(&self, map: &gd_formats::map::MapFile, p: Vec3) -> bool {
         for (r, key) in map.regions.iter().zip(self.keys(map)) {
             let (lo, hi) = bounds(r);
@@ -154,8 +141,7 @@ impl FogOfWar {
     }
 }
 
-/// `World::AddFOWVisibility` around the living player, once it has moved at least 1 m (x or z) since the last
-/// reveal (module doc).
+/// `World::AddFOWVisibility` around the living player.
 pub fn reveal(
     mut fog: ResMut<FogOfWar>,
     map: Res<gd_game_core::save::MapLayout>,
@@ -199,8 +185,7 @@ pub fn init_fog(
         difficulty: d,
         ..Default::default()
     };
-    // The map file loads under the save guard (`stash::read_guarded`): unreadable → set aside / block,
-    // never rewritten from the empty runtime (`save.rs`).
+    // Loaded under the save guard: an unreadable file is set aside / blocks, never rewritten from the empty runtime.
     if let Some(c) = &loaded {
         let rel = std::path::Path::new(&choice.map_folder())
             .join(FogOfWar::dir_name(d))

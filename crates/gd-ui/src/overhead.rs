@@ -58,10 +58,7 @@
 //!
 //! PORT: "hit received" is life below its maximum; the anchor uses the
 //! record's mesh top × the creature's `scale`; bars sit under the windows
-//! (the engine draws the world widgets before the UI). A widget is built per
-//! layout (classification, bar or icon, large bar, window size, UI scale, font generation; the player's:
-//! the options) around its anchor; its root follows the anchor and its fill
-//! and text change in place (a performance choice).
+//! (the engine draws the world widgets before the UI).
 use super::Ui;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -92,7 +89,7 @@ impl Plugin for OverheadPlugin {
 #[derive(Component)]
 struct OverheadRoot;
 
-/// One character's overhead widget (positioned at its anchor every frame).
+/// One character's overhead widget.
 #[derive(Component)]
 struct MonsterBar {
     owner: Entity,
@@ -100,8 +97,7 @@ struct MonsterBar {
     frame: u32,
 }
 
-/// A bar's fill quad ([`bar_at`]), sized in place: the bar's width (px), the full bitmap's size and the
-/// window's inverse scale factor.
+/// A bar's fill quad: the bar's width (px), the full bitmap's size and the window's inverse scale factor.
 #[derive(Component)]
 struct OverheadFill {
     w: f32,
@@ -110,7 +106,6 @@ struct OverheadFill {
 }
 
 impl OverheadFill {
-    /// Fills the quad to `ratio` (as [`bar_at`] draws it).
     fn set(&self, node: &mut Mut<Node>, img: &mut Mut<ImageNode>, ratio: f32) {
         let w = Val::Px((self.w * ratio).round() * self.inv);
         if node.width != w {
@@ -123,7 +118,6 @@ impl OverheadFill {
     }
 }
 
-/// Moves a widget's root to `anchor` (physical px) when it moved.
 fn place_root(node: &mut Mut<Node>, anchor: Vec2, inv: f32) {
     let (l, t) = (Val::Px(anchor.x * inv), Val::Px(anchor.y * inv));
     if node.left != l || node.top != t {
@@ -132,7 +126,7 @@ fn place_root(node: &mut Mut<Node>, anchor: Vec2, inv: f32) {
     }
 }
 
-/// A widget root at `anchor` (its parts are placed around (0, 0)), drawn under the windows.
+/// A widget root at `anchor` (its parts are placed around (0, 0)).
 fn spawn_widget_root(
     commands: &mut Commands,
     marker: impl Bundle,
@@ -153,7 +147,7 @@ fn spawn_widget_root(
         .id()
 }
 
-/// The health text's style and placement around the anchor (`healthValuesBox`).
+/// `healthValuesBox`.
 fn health_text_at(ui: &mut Ui) -> Option<super::TextAt> {
     let tb = TextBox::from_record(&ui.record(HEALTH_TEXT)?);
     Some(super::TextAt::Line {
@@ -186,8 +180,7 @@ struct PlayerMetrics {
     icon_offset: f32,
 }
 
-/// The player's widget as built: its layout (window size, UI scale, font generation, text / bar shown, large
-/// bar), root, fill and text, and the (life, max) the text shows.
+/// The player's widget as built, and the (life, max) the text shows.
 struct PlayerWidget {
     key: (UVec2, u32, u64, (bool, bool), bool),
     root: Entity,
@@ -196,7 +189,7 @@ struct PlayerWidget {
     numbers: (i64, i64),
 }
 
-/// The player's health text: `tagHUDHealth_Head` with the numbers (the loaded tags may lack braces).
+/// `tagHUDHealth_Head` with the numbers (the loaded tags may lack braces).
 fn player_text(fonts: &super::text::FontCache, (cur, max): (i64, i64)) -> String {
     let fmt = fonts.tag("tagHUDHealth_Head");
     if fmt == "tagHUDHealth_Head" {
@@ -209,8 +202,7 @@ fn player_text(fonts: &super::text::FontCache, (cur, max): (i64, i64)) -> String
     }
 }
 
-/// The player's overhead text and bar: built when the window size, the UI scale, the font generation or the
-/// options change, moved to the anchor and filled / numbered in place every frame.
+/// The player's overhead text and bar.
 #[allow(clippy::too_many_arguments)]
 fn player_health(
     mut fresh: gd_game_core::session::NewSession,
@@ -272,16 +264,13 @@ fn player_health(
         values.health_max.max(1.0) as i64,
     );
     let ratio = (numbers.0 as f32 / numbers.1 as f32).clamp(0.02, 1.0);
-    // `WorldActorDescription::ShouldShow`: the main player's entry (text and bar) exists only with
-    // `playerLocalBar`.
+    // `WorldActorDescription::ShouldShow`: the main player's entry exists only with `playerLocalBar`.
     let local = options.flag("playerLocalBar");
     let show = (
         local && options.flag("playerHealth"),
         local && options.flag("playerBars"),
     );
     let large = options.flag("playerBarsLarge");
-    // The UI scale too (`f32` bits): the bar is built at it; the font generation: a language swap redraws the
-    // text in the new tags and fonts.
     let key = (
         size,
         assets.scale(size).to_bits(),
@@ -355,13 +344,11 @@ fn player_health(
     });
 }
 
-/// A creature record's anchor metrics, classification and foe flag. PORT (a performance choice): cached
-/// per record path in [`monster_bars`] for the session (a session may mount another mod); the mesh top comes
-/// from the shared [`gd_game_core::creature::BodyCache`] (the body's own loader, parsed once), not a second
-/// `.msh` parse. The foe flag is recomputed when the factions' version changes.
+/// A creature record's anchor metrics, classification and foe flag, cached per record path for the
+/// session; the foe flag is recomputed when the factions' version changes.
 #[derive(Clone)]
 struct RecordFacts {
-    /// The mesh box's top; `top_known` false while the mesh still loads ([`mesh_top`]; the bar uses 2 m meanwhile).
+    /// `top_known` false while the mesh still loads (the bar uses 2 m meanwhile).
     top: Option<f32>,
     top_known: bool,
     scale: f32,
@@ -373,8 +360,8 @@ struct RecordFacts {
     foe_version: u64,
 }
 
-/// The top of `record`'s mesh box: `None` while the mesh is parsed in the background (`BodyCache::ready`, so a new
-/// creature record never reads its mesh on the game thread), `Some(None)` without a mesh or box.
+/// The top of `record`'s mesh box: `None` while the mesh is parsed in the background, `Some(None)`
+/// without a mesh or box.
 fn mesh_top(
     data: &GameData,
     bodies: &mut gd_game_core::creature::BodyCache,
@@ -454,9 +441,7 @@ type BarSubjects<'w, 's> = Query<
     ),
 >;
 
-/// What a monster's widget is built for (its layout): the classification, the bar mode's large bar (`None`: the
-/// icon only), the window size, the UI scale (`f32` bits: the widget is built at it) and the font generation (a
-/// language swap redraws the text in the new fonts). The fill and the text change in place.
+/// What a monster's widget is built for: `bar` `None` is the icon only, `scale` the UI scale's bits.
 #[derive(Clone, Copy, PartialEq)]
 struct Look {
     classification: u8,
@@ -466,10 +451,8 @@ struct Look {
     generation: u64,
 }
 
-/// What a widget's text shows: the truncated life and max life, `monsterHealth` and `healthBarsPercent`.
 type Numbers = (i64, i64, bool, bool);
 
-/// A character in view this frame: its anchor, layout, fill (‰) and text inputs.
 struct Seen {
     anchor: Vec2,
     look: Look,
@@ -477,7 +460,6 @@ struct Seen {
     numbers: Numbers,
 }
 
-/// One character's widget as drawn: its root, layout, fill and text, and what the text shows.
 struct Drawn {
     root: Entity,
     look: Look,
@@ -499,9 +481,7 @@ fn monster_text((cur, max, health, percent): Numbers) -> String {
     }
 }
 
-/// Overhead bars of the monsters (and, with `petBars`, the pets): see the
-/// module docs. A widget is built when its layout ([`Look`]) changes; its root follows the anchor and its fill and
-/// text change in place.
+/// Overhead bars of the monsters (and, with `petBars`, the pets).
 #[allow(clippy::too_many_arguments)]
 fn monster_bars(
     mut fresh: gd_game_core::session::NewSession,
@@ -528,7 +508,6 @@ fn monster_bars(
 ) {
     if fresh.begun() {
         shown.clear();
-        // The facts are the ended session's data (its mod's records, its factions).
         facts.clear();
     }
     let (Ok(win), Ok((cam, cam_tf, gc))) = (window.single(), cams.single()) else {
@@ -552,8 +531,7 @@ fn monster_bars(
         o("healthBarsPercent"),
         o("petBars"),
     );
-    // Per character: anchor, layout, fill and text inputs. The facts (and the foe flag) are cached per record:
-    // no record clone, DB lookup or mesh parse per monster per frame.
+    // The facts (and the foe flag) are cached per record.
     let faction_version = factions.as_deref().map_or(0, |f| f.version);
     live.clear();
     let (scale, generation) = (assets.scale(size).to_bits(), assets.fonts.generation);
@@ -561,8 +539,7 @@ fn monster_bars(
         if vis.is_some_and(|v| !v.get()) || c.life <= 0.0 {
             continue;
         }
-        // `Character::CausesAnger` false (`WorldActorDescription::ShouldShow`): no widget at all, whatever the
-        // options (a training dummy, a dormant host, a totem).
+        // `Character::CausesAnger` false (`WorldActorDescription::ShouldShow`): no widget at all.
         let causes_anger = match (ai, pet) {
             (Some(ai), _) => ai.as_target.causes_anger,
             (None, Some(p)) => p.causes_anger,
@@ -706,8 +683,8 @@ fn monster_bars(
     }
 }
 
-/// One monster's widget around (0, 0) = its anchor (`WorldActorDescription::Draw`): its fill and text, when it has
-/// a bar.
+/// One monster's widget around (0, 0) = its anchor (`WorldActorDescription::Draw`): its fill and text,
+/// when it has a bar.
 fn draw_monster(ui: &mut Ui, seen: &Seen) -> (Option<Entity>, Option<Entity>) {
     let classification = seen.look.classification;
     let Some(desc) = ui.record(DESC_WIDGET) else {
@@ -724,7 +701,6 @@ fn draw_monster(ui: &mut Ui, seen: &Seen) -> (Option<Entity>, Option<Entity>) {
     };
     let anchor = Vec2::ZERO;
     let Some(large) = seen.look.bar else {
-        // Icon only, centred on the anchor (plus its own offset).
         if let Some(k) = icon_key
             && let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&field(k))
             && let Some((h, sz)) = ui.image(&bitmap)
@@ -763,7 +739,6 @@ fn draw_monster(ui: &mut Ui, seen: &Seen) -> (Option<Entity>, Option<Entity>) {
     );
     let (w, h) = (ui.sc(bw), ui.sc(bh));
     let top = (anchor.y + iy + ih * 0.5 - h * 0.5).round();
-    // Side icons for Hero and above.
     if let Some(k) = icon_key.map(|k| format!("{k}Small"))
         && let Some((hdl, x, y, sz)) = small(ui, &k)
     {
@@ -784,7 +759,7 @@ fn draw_monster(ui: &mut Ui, seen: &Seen) -> (Option<Entity>, Option<Entity>) {
     (bar_at(ui, &bar, Vec2::new(anchor.x, top), ratio), text)
 }
 
-/// The bar centred on `anchor.x`, top at `anchor.y`, filled to `ratio`: its fill quad ([`OverheadFill`]).
+/// The bar centred on `anchor.x`, top at `anchor.y`, filled to `ratio`: its fill quad.
 fn bar_at(ui: &mut Ui, bar: &BarGraph, anchor: Vec2, ratio: f32) -> Option<Entity> {
     let empty = bar.empty.as_deref().and_then(|p| ui.image(p));
     let (full, fs) = bar.full.as_deref().and_then(|p| ui.image(p))?;

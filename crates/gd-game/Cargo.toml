@@ -8,10 +8,8 @@ description = "Headless gameplay state and systems (Bevy ECS without rendering, 
 license = "MIT"
 
 [features]
-# Set by grimdawn's `dev`: the `GD_*` hook systems and reads (the hooks resource is gd-game-core's, which this
-# forwards to). Tests run without it: production behaviour, no hooks.
+# Set by grimdawn's `dev`: the `GD_*` hook systems and reads. Tests run without it.
 dev = ["gd-game-core/dev"]
-# The test harness (`testing`), for this crate's and dependents' tests.
 testing = ["gd-formats/testdata"]
 
 [dependencies]
@@ -32,9 +30,9 @@ gd-game-core = { path = "../gd-game-core" }
 gd-rules = { path = "../gd-rules" }
 gd-sim = { path = "../gd-sim" }
 gd-story = { path = "../gd-story" }
-log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+log = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
 parking_lot = "0.12"
-tracing = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+tracing = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
 
 [dev-dependencies]
 gd-game = { path = ".", features = ["testing"] }

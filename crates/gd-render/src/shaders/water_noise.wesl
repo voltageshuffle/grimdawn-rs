@@ -7,7 +7,7 @@ import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 // The engine's 256-texture bank (water.rs noise_bank).
 @group(0) @binding(0) var noise_textures: texture_2d_array<f32>;
 @group(0) @binding(1) var noise_sampler: sampler;
-// The type's state (water.rs noise_gpu, rewritten in place every frame): [0] phases, [1] previous bank
+// The type's state (water.rs noise_gpu): [0] phases, [1] previous bank
 // slices, [2] current bank slices, [3] octave weights (levels), [4] x size, y 1 = normalMap.
 @group(0) @binding(2) var<storage, read> noise: array<vec4<f32>>;
 

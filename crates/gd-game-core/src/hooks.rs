@@ -1,33 +1,18 @@
-//! Test hooks (`GD_*` environment variables, one typed field each, documented below), parsed once at startup into
-//! [`Hooks`]; systems read the resource instead of `std::env`. Dev builds only: the module exists with this crate's
-//! `dev` feature (forwarded by every crate's `dev`, grimdawn's `cargo dev`), and a build without it (release, tests)
-//! has no `Hooks` type, no hook read, no hook-only system and no `GD_*` hook string (release.yml checks the
-//! binary). The code that reads a hook is gated the same way: a hook-only system and its registration, a dev overlay
-//! system ordered after the production one it overrides, or a `hooks` param and branch of a production system.
-//! A dev game inserts `Hooks::from_env()`; the dev test harness (`gd_game::testing`) the empty `from_vars([])`, so
-//! tests never depend on the process environment.
+//! Test hooks: `GD_*` environment variables parsed into [`Hooks`]; systems read the resource, never `std::env`.
+//! Dev builds only (this crate's `dev` feature): without it there is no `Hooks` type, no hook read and no `GD_*`
+//! string, and hook-reading code (systems, registrations, params, branches) is gated the same way. A dev game
+//! inserts `Hooks::from_env()` before its plugins; the dev test harness inserts `from_vars([])`.
 //!
-//! Every variable has a typed field, grouped by area: [`SessionHooks`] (`session`: character, menu skipping, world
-//! and save folder), [`UiHooks`] (`ui`: windows, hovers, scripted clicks, menus), [`RenderHooks`] (`render`:
-//! switches, camera, time of day, character / model scenes), [`ShotHooks`] (`shot`: screenshots), [`GameplayHooks`]
-//! (`gameplay`: scripted combat, world and story actions), [`ItemHooks`] (`items`: trade, crafting, loot, tooltips)
-//! and [`AuditHooks`] (`audit`: census, exit cycles, memory). Parsing happens once in [`Hooks::from_vars`]; a malformed value
-//! gives `None` / the documented default. Where the value is a small mini-language that only one system
-//! understands (`GD_FX`, `GD_MODELS`, `GD_CHARS`, `GD_PORTAL`, ...) the field keeps the raw `String` and that system
-//! parses it. To add a hook: add the field (with a doc comment giving its syntax) to the area struct, parse it in
-//! `from_vars` and read it in a system through `Res<Hooks>`.
-//!
-//! There is no process-wide copy: `main` builds the hooks first and inserts them before the plugins (along with
-//! the `GD_SAVE_DIR` `SaveDir`), so plugin `build`s (which decide what to register, or replace a default resource
-//! such as `TimeOfDay` with its hook value) and systems all read the one resource of the world; helpers get the
-//! typed value from their calling system.
+//! Fields are grouped by area: [`SessionHooks`], [`UiHooks`], [`RenderHooks`], [`ShotHooks`], [`GameplayHooks`],
+//! [`ItemHooks`], [`AuditHooks`]. A malformed value gives `None` / the documented default; a mini-language only one
+//! system understands (`GD_FX`, `GD_MODELS`, `GD_CHARS`, `GD_PORTAL`, ...) stays a raw `String` that system parses.
+//! To add a hook: a field documenting its syntax in the area struct, parsed in `from_vars`, read through `Res<Hooks>`.
 use bevy::math::Vec2;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
 
 #[derive(Resource, Clone, Debug)]
 pub struct Hooks {
-    /// Which character the session starts with, whether the menu is skipped, the world and the save folder.
     pub session: SessionHooks,
     pub ui: UiHooks,
     pub render: RenderHooks,
@@ -63,13 +48,11 @@ pub struct SessionHooks {
     pub autosave_secs: Option<f32>,
     /// `GD_MAP`: the world map resource (default `levels/world001.map`; with `GD_SURVIVAL` the arena's).
     pub map: Option<String>,
-    /// `GD_SURVIVAL=<letter>` (`a`..`j`): a Crucible session on `survivalworld_<letter>` without the menu
-    /// (the menu's game-mode window is the player's way, `grimdawn::menu`): the Crucible mod
-    /// (`gd_formats::vfs::SURVIVAL_MOD`) is mounted from startup and the story is in survival mode.
+    /// `GD_SURVIVAL=<letter>` (`a`..`j`): a Crucible session on `survivalworld_<letter>` without the menu: the
+    /// Crucible mod is mounted from startup and the story is in survival mode.
     pub survival: Option<String>,
-    /// `GD_MOD=<name>`: a custom-game session on the user mod `mods/<name>` without the menu
-    /// (`Choice::custom`, `gd_game::session::load_save`); `GD_MOD_MAP` picks its map resource
-    /// (default `levels/world001.map`, read through the mounted mod).
+    /// `GD_MOD=<name>`: a custom-game session on the user mod `mods/<name>` without the menu; `GD_MOD_MAP` picks its
+    /// map resource (default `levels/world001.map`).
     pub module: Option<String>,
     pub mod_map: Option<String>,
     /// `GD_OPTIONS`: an options.txt to load instead of the port's.
@@ -124,8 +107,7 @@ pub struct UiHooks {
     pub skill_hover: Option<Vec2>,
     pub hot_hover: Option<Vec2>,
     pub buff_hover: Option<usize>,
-    /// `GD_DEBUFF_TARGET=<skill record>`: the skill's debuff lands once on each character the pointer hovers
-    /// (`hover.rs`, the target debuff strip checks).
+    /// `GD_DEBUFF_TARGET=<skill record>`: the skill's debuff lands once on each character the pointer hovers.
     pub debuff_target: Option<String>,
     /// `GD_SUNDERED=<v>`: the HUD sees a type-61 duration entry of value `v` on the player (the sundered overlay).
     pub sundered: Option<f32>,
@@ -142,8 +124,7 @@ pub struct UiHooks {
     pub tutorial_tip: Option<(u32, f32)>,
     pub lore_select: Option<String>,
     pub quest_select: Option<String>,
-    /// `GD_QUEST_REWARD=<secs>`: opens the Quest Complete window with a sample reward (money, a faction gain and
-    /// loss, a skill point, an item ×2) at that time (`grimdawn::ui::questpopup`).
+    /// `GD_QUEST_REWARD=<secs>`: opens the Quest Complete window with a sample reward at that time.
     pub quest_reward: Option<f32>,
     /// `GD_MAP_ZOOM` (unclamped).
     pub map_zoom: Option<f32>,
@@ -275,11 +256,11 @@ pub struct GameplayHooks {
     pub evade: Option<f32>,
     pub die: Option<f32>,
     pub move_key: Option<f32>,
-    /// `GD_GOD`: the player's life is kept at its maximum (a test hook, e.g. to finish a Crucible tier).
+    /// `GD_GOD`: the player's life is kept at its maximum.
     pub god: bool,
-    /// `GD_LIFE_PCT=<percent>`: the player's life is held at that percent of its maximum (low-health overlay checks).
+    /// `GD_LIFE_PCT=<percent>`: the player's life is held at that percent of its maximum.
     pub life_pct: Option<f32>,
-    /// `GD_NOT_READY=<secs>`: the "skill not ready" text is raised at that time (`ui/errormsg.rs`).
+    /// `GD_NOT_READY=<secs>`: the "skill not ready" text is raised at that time.
     pub not_ready: Option<f32>,
     /// `GD_FACTION=<NAME>=<value>;...`, `GD_TOKENS=A,B`.
     pub faction: Vec<(String, f32)>,
@@ -289,8 +270,7 @@ pub struct GameplayHooks {
     pub auto_fight: bool,
     /// `GD_AUTO_FIGHT=<metres>` (default 20): how far the test bot looks for a target.
     pub auto_fight_range: f32,
-    /// `GD_KILL_ALL=<secs>`: every `secs` of play `Game.KillAllMonsters` runs (a stand-in for a bot that reaches every
-    /// monster: waves and floors complete).
+    /// `GD_KILL_ALL=<secs>`: every `secs` of play `Game.KillAllMonsters` runs.
     pub kill_all_secs: Option<f32>,
     /// `GD_OVERKILL=1`: the `GD_KILL_ALL` kills overkill (gibs).
     pub overkill: bool,
@@ -298,9 +278,8 @@ pub struct GameplayHooks {
     pub use_exit_gate: bool,
     /// `GD_USE_BUFF_SHRINE=1`: the player uses the nearest unused Shattered Realm buff shrine at once (no walk).
     pub use_buff_shrine: bool,
-    /// `GD_ENDLESS_FLOOR=<floor>`: floor 0 of every generated Shattered Realm section is this floor record
-    /// (a held override; a bare name like `specialfloor_06` or a full record path). A test hook
-    /// (`endless::force_floor`); placed (story) monsters log their level once armed.
+    /// `GD_ENDLESS_FLOOR=<floor>`: floor 0 of every generated Shattered Realm section is this floor record (a bare
+    /// name like `specialfloor_06` or a full record path).
     pub endless_floor: Option<String>,
     pub open_chests: bool,
     /// `GD_OPEN_CHESTS=<metres>` (more than 1): how far a chest may be (default 30).
@@ -324,7 +303,7 @@ pub struct GameplayHooks {
     /// `GD_STORY_TALK=<text>[,<text>...]` (not "1"): only NPCs whose record contains one of the (lower case)
     /// texts; an NPC matching an earlier text is talked to first.
     pub story_talk_filter: Option<Vec<String>>,
-    /// `GD_LUA=[@<secs>:]<code>`: runs this Lua once (after `secs` of play) after the story's first frame (a test hook: start a script flow directly).
+    /// `GD_LUA=[@<secs>:]<code>`: runs this Lua once (after `secs` of play) after the story's first frame.
     pub lua: Option<String>,
     /// `GD_POTION=<h|e>@<secs>;...` as `(secs, health)`, `GD_POTION_SELECT=<skill>;...`, `GD_USE_ITEM=<record>;...`.
     pub potion: Vec<(f32, bool)>,
@@ -409,8 +388,7 @@ pub struct AuditHooks {
     /// `GD_EXIT_CYCLES=<n>` (`GD_EXIT_SECS`, default 12).
     pub exit_cycles: Option<u32>,
     pub exit_secs: f32,
-    /// `GD_MEM_LOG=<secs>`: logs the memory audit (`mem:`, grimdawn `dev/memory.rs`) every `secs`; `GD_MEM_TRIM`:
-    /// returns the allocator's free memory to the system (`malloc_trim`) before each log.
+    /// `GD_MEM_LOG=<secs>`: logs the memory audit every `secs`; `GD_MEM_TRIM`: `malloc_trim` before each log.
     pub mem_log: Option<f32>,
     pub mem_trim: bool,
     /// `GD_MEM_TOUR=<n>@<secs>`: travels to `n` riftgates of the map, one `secs` after each arrival.
@@ -421,7 +399,7 @@ pub struct AuditHooks {
 }
 
 impl Hooks {
-    /// The process environment's hooks (the game inserts them before its plugins).
+    /// The process environment's hooks.
     pub fn from_env() -> Self {
         Self::from_vars(std::env::vars())
     }
@@ -437,7 +415,6 @@ impl Hooks {
         let p = |k: &str| -> Option<Vec2> { vars.get(k).and_then(|v| point(v)) };
         let n = |k: &str| -> Option<usize> { vars.get(k).and_then(|v| v.parse().ok()) };
         let f = |k: &str| -> Option<f32> { vars.get(k).and_then(|v| v.parse().ok()) };
-        // `;`-separated entries without the empty ones.
         let list = |k: &str| -> Vec<String> {
             vars.get(k)
                 .map(|v| {
@@ -818,14 +795,14 @@ impl Hooks {
     }
 }
 
-/// `x,y` as a point (no whitespace allowed, as the hooks always read it).
+/// `x,y` as a point (no whitespace).
 fn point(v: &str) -> Option<Vec2> {
     let (x, y) = v.split_once(',')?;
     Some(Vec2::new(x.parse().ok()?, y.parse().ok()?))
 }
 
 /// A scripted click list, `[l:|r:]x,y@secs;...` (physical px, seconds since the app started; `r:` is the right
-/// button): the test hooks that click a window without a mouse (`GD_INV_CLICKS`, `GD_SKILL_CLICKS`). Malformed entries are skipped.
+/// button). Malformed entries are skipped.
 fn clicks(v: Option<&String>) -> Vec<Click> {
     let Some(v) = v else {
         return Vec::new();
@@ -847,7 +824,7 @@ fn clicks(v: Option<&String>) -> Vec<Click> {
         .collect()
 }
 
-/// One scripted click (`GD_INV_CLICKS`, `GD_SKILL_CLICKS`: [`ItemHooks::inv_clicks`], [`UiHooks::skill_clicks`]).
+/// One scripted click (`GD_INV_CLICKS`, `GD_SKILL_CLICKS`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Click {
     pub secs: f32,

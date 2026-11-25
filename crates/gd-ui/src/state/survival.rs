@@ -25,8 +25,7 @@ pub struct SurvivalView {
 }
 
 /// A rollover area of a pane (hover tests `UISurvivalHud::HitTestRollover` / `UIEndlessHud::HitTestRollover`): the
-/// first area under the cursor shows its `RolloverLine2` record (`field` names the table field for the `GD_HUD_HOVER`
-/// hook).
+/// first area under the cursor shows its `RolloverLine2` record.
 pub struct Zone {
     pub field: &'static str,
     pub rect: URect,
@@ -35,13 +34,13 @@ pub struct Zone {
     pub lines: Option<Vec<(String, String, bool)>>,
 }
 
-/// The panes' rollover areas in hit-test order, set when a pane is built (`rollover.rs::hud_rollover` reads them).
+/// The panes' rollover areas in hit-test order, set when a pane is built.
 #[derive(Resource, Default)]
 pub struct PaneRollovers {
     pub crucible: Vec<Zone>,
     pub endless: Vec<Zone>,
     pub mutators: Vec<Zone>,
-    /// The challenge-area window's name (`challenge.rs`).
+    /// The challenge-area window's name.
     pub challenge: Vec<Zone>,
 }
 

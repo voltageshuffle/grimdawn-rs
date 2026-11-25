@@ -2,7 +2,7 @@
 // u = 0.5 - dot(p-c,U)/width, v = dot(p-c,V)/height + 0.5, decal.rs). Outside
 // [0,1] is discarded; U is remapped into the texture variant strip.
 // Textures are UNORM and shading is gamma-space like the terrain under it
-// (gd_terrain.wesl: deferred ambient + sun + point lights, render/mod.rs).
+// (deferred ambient + sun + point lights).
 // Deferred PS of decal_standard / decal_glow / decal_bump.ssh: the
 // G-buffer gets albedo = texel (alpha = texel.a x opacity), material
 // (ambient x1, ambient add 0), so ambient = albedo x hemi (terrain: x0.65);
@@ -13,8 +13,8 @@
 // decal_selfillum.ssh is emissive: texel x colour, unlit, added after the
 // lighting (its only technique emissiveStyle: SrcAlpha / One).
 // The sun and point lights light that G-buffer like any other (deferred.ssh
-// directionalPS / pointSpecularPS, gd_standard.wesl), the point lights with
-// specular per light (not at lightingQuality low, nor in simple mode; render/env.rs).
+// directionalPS / pointSpecularPS), the point lights with specular per light
+// (not at lightingQuality low, nor in simple mode).
 // decal_standard / glow write specular (0, 0, 0, alpha) (decal_standard.ssh
 // deferredPS): the terrain's is faded by 1 - alpha, as the blend over the lit
 // terrain does here.
@@ -53,11 +53,9 @@ struct DecalParams {
 
 const BUMP_POWER: f32 = 5.0;
 
-/// The sun shadow the way deferred.ssh `directionalPS` tests it (see
-/// render/shadow.rs, which builds the engine's LiSPSM map): 4 bilinear taps at
-/// ±½·shadowBluriness in a plus, ¼ each, lit unless the stored depth is
-/// nearer than the receiver's + shadowBias (−0.001). The same function is in
-/// gd_terrain.wesl / gd_standard.wesl / decal.wesl.
+/// The sun shadow the way deferred.ssh `directionalPS` tests it (the engine's LiSPSM map): 4 bilinear taps at
+/// ±½·shadowBluriness in a plus, ¼ each, lit unless the stored depth is nearer than the receiver's + shadowBias
+/// (−0.001). Keep in step with gd_terrain.wesl / gd_standard.wesl.
 const SHADOW_BIAS: f32 = -0.001;
 
 /// The stored depth at `uv` filtered like the engine's shadowTexture sampler:
@@ -92,7 +90,7 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
     }
     let ndc = c.xyz / c.w;
     let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
-    // Outside the map is lit (gd_terrain.wesl).
+    // Outside the map is lit.
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
         return 1.0;
     }
@@ -111,12 +109,11 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
             lit += 0.25;
         }
     }
-    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its
-    // statistics text (render/shadow.rs).
+    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its statistics text.
     return lit;
 }
 
-/// The point-light shadow of deferred.ssh `pointPS` (render/point_shadow.rs):
+/// The point-light shadow of deferred.ssh `pointPS`:
 /// the engine's paraboloid uv of the light→pixel direction (light frame rows
 /// (−1,0,0), (0,1,0), (0,0,−1): uv = (0.5 + 0.5 s, 0.5 − 0.5 t), s, t =
 /// (q.x, q.z) / (q.y − 1)), 4 taps at ±½·shadowBluriness in a plus, ¼ each, lit
@@ -204,7 +201,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // bumpTexture rgb x alpha x 4, blended by the base alpha x opacity
         // (the pass's SrcAlpha / OneMinusSrcAlpha on every target). That
         // target is added unblurred (here, additive) and blurred (the same
-        // value into the glow view, post.rs).
+        // value into the glow view).
         let g = textureSample(decal_bump, decal_bump_sampler, tuv);
         return vec4<f32>(g.rgb * g.a * texel.a * decal.glow * fade, 0.0);
     }
@@ -247,7 +244,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_lights = u32(env[3].w);
     for (var k = 0u; k < n_lights; k++) {
         let lp = env[5u + 2u * k];
-        // FireLights step their colour on the CPU (world::Flicker).
+        // FireLights step their colour on the CPU.
         let lc = env[6u + 2u * k];
         let lv = lp.xyz - wpos;
         let dist = length(lv);
@@ -257,7 +254,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             let sh = point_shadow(lp.xyz, wpos, extra.x);
             let L = lv / dist;
             var t = saturate(dot(N, L)) * albedo;
-            // pointSpecularPS: per light (lightingQuality, simple mode; render/env.rs).
+            // pointSpecularPS: per light (lightingQuality, simple mode).
             if extra.y > 0.5 {
                 let V = normalize(view.world_position - wpos);
                 let R = 2.0 * dot(N, L) * N - L;

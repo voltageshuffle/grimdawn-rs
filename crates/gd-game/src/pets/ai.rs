@@ -2,7 +2,7 @@ use super::*;
 use bevy::ecs::system::SystemParam;
 use std::cell::RefCell;
 
-/// `ControllerMonster::Update`'s `WheneverPossible` self-buff check (4 s).
+/// `ControllerMonster::Update`'s `WheneverPossible` self-buff poll (s).
 pub(super) const SELF_BUFF_POLL: f32 = 4.0;
 
 #[allow(clippy::too_many_arguments)]
@@ -23,7 +23,7 @@ pub(super) fn start_pet_cast(
     if !ch.start_cast(&rec.class, special) {
         ch.start_cast("Skill_AttackSpell", None);
     }
-    // `AttackAction::Execute`: the pet turns to its target (`crate::turning`).
+    // `AttackAction::Execute`: the pet turns to its target.
     ch.begin_cast(tf, Some((target, at)), at);
     commands.entity(e).try_insert(Casting {
         skill: a.skill.clone(),
@@ -44,7 +44,7 @@ pub(super) fn start_pet_cast(
     }
 }
 
-/// The charge lookups a pet reads: one parameter, so `pet_ai` stays within Bevy's system-parameter limit.
+/// One parameter, so `pet_ai` stays within Bevy's system-parameter limit.
 #[derive(SystemParam)]
 pub(super) struct PetCharges<'w, 's> {
     starts: Query<'w, 's, &'static gd_game_core::casting::ChargeStarts>,
@@ -67,11 +67,10 @@ pub(super) fn pet_ai(
     data: Res<GameData>,
     mut landed: MessageReader<crate::combat::HitLanded>,
     mut ally_now: MessageWriter<crate::monster_skills::AllyLanded>,
-    // The owner, and the monster a converted pet follows meanwhile (`combat::JoinedPack::leader`).
+    // The owner, and the monster a converted pet follows (`combat::JoinedPack::leader`).
     owners: Query<&Transform, (With<Combatant>, Without<Pet>)>,
     mut slot_q: crate::melee::SlotQuery,
     charges: PetCharges,
-    // Rooted pets, and the characters' sleep (`ignoreSleepingEnemies`).
     (rooted, sleepers): (
         Query<(), With<crate::movement::Rooted>>,
         crate::combat::Sleepers,
@@ -93,10 +92,9 @@ pub(super) fn pet_ai(
             Without<crate::movement::Stunned>,
         ),
     >,
-    // The characters a pet may fight: those its side calls foes (`combat::Side::foe`, `IsFoe`): a pet
-    // carries its owner's pack (`Monster::JoinMe` copies it), so a monster that is not the player's foe
-    // (`combat::Allied`: a guard, a converted monster) is none of its foes; a pet a monster's convert joined
-    // (`combat::JoinedPack`) fights that pack's foes: the player and the other pets. Pets are added below.
+    // The characters a pet may fight (`IsFoe`): a pet carries its owner's pack (`Monster::JoinMe`), so an
+    // `Allied` monster is none of its foes; a pet a monster's convert joined fights that pack's foes. Pets
+    // are added below.
     chars: Query<
         (Entity, &Transform, &Combatant, crate::combat::SideData),
         (
@@ -105,8 +103,7 @@ pub(super) fn pet_ai(
             Without<Pet>,
         ),
     >,
-    // The other characters a pet may buff (`ChooseBestAllyToBuff`): the player, monsters, a released quest
-    // pet (pets are in `pets`).
+    // `ChooseBestAllyToBuff` candidates besides the pets.
     allies: Query<
         (
             Entity,
@@ -132,7 +129,7 @@ pub(super) fn pet_ai(
     }
     let dt = time.delta_secs();
     let slots = crate::melee::Slots::new(&mut slot_q, &scratch);
-    // A pet's side: its owner's (the player's), or the pack a monster's convert joined it to.
+    // Its owner's side, or the pack a monster's convert joined it to.
     let side_of = |j: Option<&crate::combat::JoinedPack>| {
         j.map_or(crate::combat::Side::Player, |j| {
             crate::combat::Side::Monster {
@@ -141,11 +138,9 @@ pub(super) fn pet_ai(
             }
         })
     };
-    // Buff-other candidates (`ChooseBestAllyToBuff`, `monster_skills::buff_ally_candidate`): the live
-    // characters but the pet itself that are friends of its current side and have no leader or are quest pets
-    // (another pet of the owner is led by him and never one). (entity, position, life, life fraction, side,
-    // `monster_skills::buff_candidate_by_leader`), and per pet with a buff for its allies those that already have
-    // it (`IsSkillBuffActive`). Listed only when such a pet exists.
+    // Buff-other candidates (`ChooseBestAllyToBuff`): friends of the pet's side with no leader or quest
+    // pets, and per pet with an ally buff those that already have it (`IsSkillBuffActive`). Listed only
+    // when such a pet exists.
     let mut have: Vec<(Entity, Vec<Entity>)> = Vec::new();
     for (caster, _, pet, ..) in &pets {
         let Some((_, _, inner, _)) = &pet.buff_other else {
@@ -183,15 +178,14 @@ pub(super) fn pet_ai(
             (e, tf.translation, cb.life, frac(cb), side_of(j), by_leader)
         }));
     }
-    // The pets as foes of one another (a converted one and the rest).
     struct OtherPet {
         e: Entity,
         at: Vec3,
         radius: f32,
         side: crate::combat::Side,
-        /// `angerMultiplier` (0 without `causesAnger`).
+        /// 0 without `causesAnger`.
         mult: f32,
-        /// Life percent (`AngerManager::Update`'s entry value for the health comparator).
+        /// Life percent, for the health comparator.
         life: f32,
     }
     let life_pct = |cb: &Combatant| cb.life.max(0.0) / cb.profile.sheet.life.max(1.0) * 100.0;
@@ -210,8 +204,7 @@ pub(super) fn pet_ai(
             life: life_pct(cb),
         })
         .collect();
-    // `AngerManager::AddAnger` scales anger by the target's `angerMultiplier`; one without `causesAnger` gets none
-    // (`ShouldRemoveEnemy`), as `combat::anger_from_hits`: a monster's `as_target`, a pet's record, else 1.
+    // `AngerManager::AddAnger` scales anger by the target's `angerMultiplier`; none without `causesAnger`.
     let anger_mult = |m: Entity| -> f32 {
         match chars.get(m) {
             Ok((.., sd)) => sd.ai.map_or(1.0, |ai| {
@@ -231,14 +224,14 @@ pub(super) fn pet_ai(
             .ok()
             .or_else(|| pet_sides.iter().find(|p| p.e == m).map(|p| p.at))
     };
-    // The hit-anger gate decays before this frame's hits (as `combat::monster_ai`): one armed now keeps 500 ms.
+    // The hit-anger gate decays before this frame's hits, so one armed now keeps 500 ms.
     for (.., mut pet, _, _, _, _) in &mut pets {
         if pet.anger_timer > 0.0 {
             pet.anger_timer -= dt;
         }
     }
-    // Hits taken (`ControllerMonster::UnderAttack`): only an attacker within the pursuit range (`InPursuitRange`
-    // from the leader) counts; at most every 500 ms it gains `AttackedAnger` (a monster has no master to share it).
+    // `ControllerMonster::UnderAttack`: only an attacker `InPursuitRange` from the leader counts; at most
+    // every 500 ms it gains `AttackedAnger`.
     for h in landed.read() {
         let Ok((_, tf, mut pet, _, _, _, joined)) = pets.get_mut(h.target) else {
             continue;
@@ -267,14 +260,12 @@ pub(super) fn pet_ai(
             commands.entity(e).try_despawn();
             continue;
         };
-        // A converted pet follows the monster that converted it while the join lasts, else its owner.
+        // A converted pet follows the monster that converted it while the join lasts.
         let leader = joined.map_or(pet.owner, |j| j.leader);
         let otf = owners.get(leader).unwrap_or(otf);
         let side = side_of(joined);
-        // `JoinMe` / `UnJoinLeader` clear the anger list, the most hated enemy and the target
-        // (`Monster::JoinMe`) and leave the state alone: a pet on a
-        // move order runs on to its point, the rest picks its walk afresh. Its owner's orders reach it no more
-        // meanwhile (`commands::pet_commands`).
+        // `Monster::JoinMe` / `UnJoinLeader` clear the anger list, the most hated enemy and the target, and
+        // leave the state alone.
         if joined.is_some() != pet.joined {
             pet.joined = joined.is_some();
             pet.anger.clear();
@@ -284,9 +275,8 @@ pub(super) fn pet_ai(
             }
             cb.target = None;
         }
-        // The crowd failed the move (`Character::CrowdAgentError`, movement.rs): it stops and the state's
-        // `PathFailed` runs: the fight states' are melee.rs'; FollowLeader's is "DefendLeader" (it
-        // stands and asks for its slot again in 300..699 ms); Move's is "Idle", as the path's end.
+        // `Character::CrowdAgentError`: it stops and the state's `PathFailed` runs: FollowLeader's is
+        // "DefendLeader" (asks for its slot again in 300..699 ms); Move's is "Idle".
         let mut agent = crowd.get_mut(e).ok();
         if agent.as_mut().is_some_and(|a| a.take_path_failed()) {
             debug!("pet {e}: path failed");
@@ -296,12 +286,8 @@ pub(super) fn pet_ai(
                 pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.4;
             }
         }
-        // The Startup state (`ControllerMonsterStateStartup::OnBegin`
-        // / `HandleEvent`): every spawned
-        // pet has `EnableSpawnAnimation` set; it plays animation type 19
-        // (Spawn) once and stays until its "End", or goes Idle at once when
-        // the set has none. The pet does nothing else meanwhile; the initial
-        // skills (`UseInitialSkillIfSet`) follow at the exit (below).
+        // `ControllerMonsterStateStartup`: every spawned pet plays animation type 19 (Spawn) once and does
+        // nothing else until its "End" (Idle at once without one); the initial skills follow.
         if pet.startup {
             if !pet.startup_played {
                 pet.startup_played = true;
@@ -309,16 +295,14 @@ pub(super) fn pet_ai(
                     continue;
                 }
             } else if ch.state == CharState::Scripted {
-                // PORT: "End" is the scripted animation leaving its state
-                // (as the hidden monster's Startup reads it).
+                // PORT: "End" is the scripted animation leaving its state.
                 continue;
             }
             pet.startup = false;
         }
         cb.cooldown -= dt;
         pet.find_timer -= dt;
-        // Energy regenerates up to the cap (`CharacterBio::
-        // UpdateHealthAndMana`; max − reserve, as the player's).
+        // `CharacterBio::UpdateHealthAndMana`: up to max − reserve.
         pet.energy = (pet.energy + cb.profile.sheet.energy_regen_per_sec * dt)
             .min(cb.profile.sheet.usable_energy());
         let found_enemy = pet.found_enemy;
@@ -332,11 +316,9 @@ pub(super) fn pet_ai(
         pet.cooldowns.retain(|c| c.1 > 0.0);
         let owner = otf.translation;
         let ctl = pet.ctl;
-        // A foe counts within `MaxPursuitDistance` of the leader and
-        // `MaxYViewDistance` in height (`InPursuitRange`).
+        // `InPursuitRange`: `MaxPursuitDistance` of the leader, `MaxYViewDistance` in height.
         let in_pursuit = |p: Vec3, me: Vec3| ctl.in_pursuit(owner, p, me);
         let me = tf.translation;
-        // A foe of the pet's side, alive: (entity, position, radius).
         let foe_at = |m: Entity| -> Option<(Entity, Vec3, f32)> {
             match chars.get(m) {
                 Ok((m, mt, mcb, sd)) => {
@@ -350,9 +332,8 @@ pub(super) fn pet_ai(
             }
         };
         let ignored = |m: Entity| ctl.ignore_sleeping && crate::combat::asleep(&sleepers, m);
-        // `AngerUpdate` (as the monsters' `combat::sight_anger`): every 250 ms forgiving and dropping the entries
-        // `ShouldRemoveEnemy` refuses (gone, dead, a friend, asleep while `ignoreSleepingEnemies`), then the sight
-        // anger × the elapsed ticks.
+        // `AngerUpdate`: every 250 ms forgiving and dropping what `ShouldRemoveEnemy` refuses, then the
+        // sight anger × the elapsed ticks.
         pet.anger_tick -= dt;
         if pet.anger_tick < 0.0 {
             let ticks = (1.0 - pet.anger_tick / 0.25).floor().max(1.0);
@@ -364,9 +345,8 @@ pub(super) fn pet_ai(
                 a.1 >= 0.0 && foe_at(a.0).is_some() && !ignored(a.0)
             });
             let (inner, rate, inner_rate) = ctl.sight;
-            // The sight sphere (`GetCharactersInSphere`): foes within `ViewDistance`; one that causes no anger
-            // (`CausesAnger`: a training dummy, a turret) or has `angerMultiplier` 0 (traps, crates, tentacles)
-            // gains none, an attack order still makes it a target.
+            // `GetCharactersInSphere`: foes within `ViewDistance`; one without anger multiplier gains none
+            // (an attack order still makes it a target).
             let seen = chars
                 .iter()
                 .filter(|c| c.1.translation.distance(me) <= ctl.view && side.foe(c.3.side_ref()))
@@ -384,7 +364,7 @@ pub(super) fn pet_ai(
                 if mult <= 0.0 || !in_pursuit(mt, me) || ignored(m) {
                     continue;
                 }
-                // `pathingViewDistance`: a foe whose path is longer gains nothing (a failed search passes).
+                // `pathingViewDistance` (a failed search passes).
                 if ctl.pathing_view > 0.0
                     && let Some(path) = nav.0.find_path(
                         &mut scratch.borrow_mut(),
@@ -409,20 +389,18 @@ pub(super) fn pet_ai(
                 add_anger(&mut pet.anger, m, r * secs * mult);
             }
         }
-        // Down or getting up (`crate::ragdoll`): no state is requested until the get-up clip has ended.
+        // Down or getting up: no state is requested until the get-up clip has ended.
         if matches!(ch.state, CharState::KnockedDown | CharState::GettingUp) {
             continue;
         }
-        // A weapon charge's warm-up (`casting::charges`, as `combat::monster_ai`: `ControllerPet` registers the
-        // monster states, `ControllerPet::RegisterStates`): a dash after the cast is the
-        // casting's move; the Pursue's warm-up ends as the attack begins, the Pursue ends or a stun / death took
-        // the charge.
+        // A weapon charge's warm-up: the Pursue's warm-up ends as the attack begins, the Pursue ends or a
+        // stun / death took the charge.
         let (charge, marked) = charges.charging.get(e).unwrap_or((false, None));
         if charge && marked.is_none() {
             continue;
         }
         let mut pursuit = marked.map(|p| (p.skill.clone(), p.bonus, p.cap));
-        // The Attack state sees its attack begin and end (`HandleEvent` "End").
+        // The Attack state sees its attack begin and end.
         let busy = casting || matches!(ch.state, CharState::Attack | CharState::Cast);
         if pursuit.is_some() && (busy || !charge || pet.melee.st != crate::melee::St::Pursue) {
             commands
@@ -438,8 +416,7 @@ pub(super) fn pet_ai(
             pet.buff_poll = SELF_BUFF_POLL;
         }
         let ended = std::mem::replace(&mut pet.was_busy, busy) && !busy;
-        // Buff other (`BuffAllyBehavior`): on finding an enemy
-        // (WhenEnemyIsSeen) or with the 4 s poll (WheneverPossible).
+        // `BuffAllyBehavior`: WhenEnemyIsSeen (2) or the poll (WheneverPossible, 3).
         let has_target = cb.target.is_some();
         pet.found_enemy |= has_target;
         if (ctl.buff_ally == 3 && poll) || (ctl.buff_ally == 2 && has_target && !pet.had_target) {
@@ -451,11 +428,8 @@ pub(super) fn pet_ai(
         if busy {
             continue;
         }
-        // Initial skills that are not toggles: the startup state's
-        // `UseSkillOnAlly` on itself (`ControllerMonsterStateStartup::
-        // UseInitialSkillIfSet`: `initialSkillName`,
-        // then `initial2SkillName`, each pushed as a temporary state with
-        // the pet as its target), e.g. the Concussive Rune's opening nova.
+        // `ControllerMonsterStateStartup::UseInitialSkillIfSet`: `initialSkillName`, then
+        // `initial2SkillName`, used on itself (e.g. the Concussive Rune's opening nova).
         if !pet.initial_casts.is_empty() {
             let (s, li) = pet.initial_casts.remove(0);
             if let Some(r) = data.db.get(&s) {
@@ -481,15 +455,11 @@ pub(super) fn pet_ai(
                 continue;
             }
         }
-        // Self buffs (`ChooseBestBuffSelfSkill`, `monster_skills` module
-        // docs): on finding an enemy, at an attack's end with an enemy, and
-        // every 4 s for `WheneverPossible`, the first self toggle not yet on
-        // is used: it switches on with its cast animation (none for
-        // `instantCast`) and stays on.
+        // `ChooseBestBuffSelfSkill`: on finding an enemy, at an attack's end with an enemy, and on the
+        // `WheneverPossible` poll, the first self toggle not yet on is used.
         let found = has_target && !pet.had_target;
         pet.had_target = has_target;
-        // `ChooseBestSkill` runs on finding an enemy, at an attack's end and
-        // every 200 ms while pursuing (`monster_skills` docs).
+        // `ChooseBestSkill`: on finding an enemy, at an attack's end and every 200 ms while pursuing.
         let choose = found || ended || pet.choose_poll <= 0.0;
         if choose {
             pet.choose_poll = 0.2;
@@ -515,8 +485,7 @@ pub(super) fn pet_ai(
                     continue;
                 }
             } else {
-                // A timed self buff is cast on itself (`casting.rs` puts it on
-                // the pet when the cast goes off).
+                // A timed self buff is cast on itself.
                 debug!("pet {e}: casts {}", s.rsplit('/').next().unwrap_or(""));
                 let a = PetAttack {
                     skill: s,
@@ -535,10 +504,8 @@ pub(super) fn pet_ai(
                 continue;
             }
         }
-        // `ChooseBestAllyToBuff` (`monster_skills` module docs) among the candidates above
-        // that lack the buff, by `BuffAllyTargeting`; the cast lands as the monsters' does
-        // (`monster_skills::ally_casts_land`). A converted pet's friends are its joined pack's: it buffs the
-        // leaderless monsters there (the one that converted it, when that follows nobody), never the player.
+        // `ChooseBestAllyToBuff` among the candidates that lack the buff, by `BuffAllyTargeting`. A
+        // converted pet buffs its joined pack's leaderless monsters, never the player.
         if std::mem::take(&mut pet.ally_due)
             && let Some((skill, li, inner, secs)) =
                 pet.buff_other.clone().filter(|b| pet.ready(&b.0))
@@ -589,15 +556,12 @@ pub(super) fn pet_ai(
                 }
             }
         }
-        // Target (`AngerManager::GetNewTarget`): the commanded enemy while it
-        // is valid (`IsEnemyValid`; else Pursue "Return"s and the leader
-        // states clear it), else every 200 ms (`FindEnemyUpdate`) the valid foes on the anger list whose
-        // anger (× 1.3 for the current target) reaches `AngerTolerance` and that are not asleep while
-        // `ignoreSleepingEnemies`, ranked by the comparator: the angriest; `petTargetGreatestHealth` the highest
-        // life percent first, then the angriest; a totem's (`SetDistanceAngerComparator`) the nearest. In between
-        // the current target stays while valid. None while a move command runs (the "Move" state does not fight).
-        // PORT: `petTargetLeastAttacked` (no stock controller sets it) and `petTargetLevelRange` (1000 in
-        // every stock one) take no part.
+        // `AngerManager::GetNewTarget`: the commanded enemy while valid (`IsEnemyValid`), else every 200 ms
+        // (`FindEnemyUpdate`) the valid foes whose anger (× 1.3 for the current target) reaches
+        // `AngerTolerance` and that are not ignored asleep, ranked: the angriest; `petTargetGreatestHealth`
+        // the highest life percent first; a totem's (`SetDistanceAngerComparator`) the nearest. None while a
+        // move command runs. PORT: `petTargetLeastAttacked` and `petTargetLevelRange` take no part (unused
+        // in stock data).
         let target = if pet.moving.is_some() || pet.dodging {
             None
         } else {
@@ -646,10 +610,9 @@ pub(super) fn pet_ai(
         };
         cb.target = target.map(|t| t.0);
         let mut want = CharState::Idle;
-        // Where the pet is going: its defence slot.
         let mut goal: Option<Vec3> = None;
         if pet.moving.is_some() || pet.dodging {
-            // "Move" / "DodgeAttack": run along the path; "Idle" at its end.
+            // "Move" / "DodgeAttack": "Idle" at the path's end.
             let speed = run_speed(&ch);
             let mut path = std::mem::take(&mut pet.path);
             if !rooted.contains(e)
@@ -676,16 +639,11 @@ pub(super) fn pet_ai(
             let d = to.with_y(0.0).length();
             // `CloseEnoughToUseSkill`: both radii + `Skill::GetRange` + 0.5.
             let close = |range: f32| d <= cb.radius + mcb + range + SKILL_USE_TOLERANCE;
-            // Specials first, then the primary attack.
-            // `ChooseBestSkill`: delay and timeout both out.
             let gap = (d - cb.radius - mcb).max(0.5);
-            // `ChooseBestSkill`: the first slot whose delay and
-            // timeout are out and that passes `rand() % 100 < chance` (rolled on every
-            // call) and whose band holds the target; `SkillUsed` re-arms the delay.
-            // The choice is not tested for reach: one out of reach is held and
-            // pursued for until the next choice (`monster_skills` docs). The 200 ms
-            // re-choice skips a held skill whose class keeps its Pursue
-            // (`melee::SkillMove::rechooses`: charges, leaps, disengage, evade).
+            // `ChooseBestSkill`: specials first, the first slot whose delay and timeout are out, that passes
+            // `rand() % 100 < chance` and whose band holds the target. Not tested for reach: one out of
+            // reach is held and pursued until the next choice, which keeps a held skill whose class keeps
+            // its Pursue (`melee::SkillMove::rechooses`).
             let kept = choose
                 && !found
                 && !ended
@@ -714,8 +672,7 @@ pub(super) fn pet_ai(
                 start_pet_cast(&mut commands, e, &data, &mut tf, &mut ch, &a, t, mt);
                 continue;
             }
-            // The chosen skill as the approach states need it: the primary
-            // skill, or the plain melee swing (`meleeRange` reach).
+            // The primary skill, or the plain melee swing (`meleeRange` reach).
             let radii = cb.radius + mcb;
             let primary = pet
                 .held
@@ -795,8 +752,7 @@ pub(super) fn pet_ai(
             if pet.melee.take_swing_reset() {
                 cb.cooldown = 0.0;
             }
-            // The Pursue's move carries its skill: a weapon charge warms up on it (`casting::begin_pursuit_charge`,
-            // as `combat::monster_ai`).
+            // The Pursue's move carries its skill: a weapon charge warms up on it.
             let key = pet.melee.key();
             let pursue = act == crate::melee::Act::Run
                 && pet.melee.st == crate::melee::St::Pursue
@@ -819,7 +775,6 @@ pub(super) fn pet_ai(
             }
             match act {
                 crate::melee::Act::Return => {
-                    // "Return": the fight starts afresh at the next look.
                     pet.melee.leave(&slots, e);
                     pet.path.clear();
                 }
@@ -827,9 +782,7 @@ pub(super) fn pet_ai(
                     pet.path.clear();
                     ch.begin_swing(&tf, Some((t, mt)), mt);
                     want = CharState::Attack;
-                    // `ResetSwingTimer`
-                    // (`combat::monster_ai`): the controller's swing pause,
-                    // a uniform draw in [min, max].
+                    // `ResetSwingTimer`: a uniform draw in the controller's swing pause.
                     cb.cooldown = pet.ctl.swing_pause.0
                         + gd_game_core::rng::f32()
                             * (pet.ctl.swing_pause.1 - pet.ctl.swing_pause.0).max(0.0);
@@ -837,8 +790,7 @@ pub(super) fn pet_ai(
                 crate::melee::Act::Stand => {
                     if pet.melee.in_attack() {
                         ch.turn.look_at(mt);
-                        // The Attack state uses the skill once the swing
-                        // timer has run out, wherever the target now is.
+                        // Once the swing timer has run out, wherever the target now is.
                         if let Some(a) = primary
                             && cb.cooldown <= 0.0
                         {
@@ -852,8 +804,7 @@ pub(super) fn pet_ai(
                     }
                 }
                 crate::melee::Act::Run => {
-                    // A warmed-up weapon charge: the pace's move clip at the warmed-up run speed
-                    // (`crate::combat::charge_move`).
+                    // A warmed-up weapon charge: the pace's clip at the warmed-up run speed.
                     let paced = crate::combat::pace_speed(&ch, pet.melee.pace(), &pet.walk);
                     let (speed, state, rate) = match &pursuit {
                         Some((_, bonus, cap)) if paced.1 != CharState::Idle => {
@@ -881,23 +832,19 @@ pub(super) fn pet_ai(
                 }
             }
         } else {
-            // The fight is over: the slots of the foe are released and the
-            // states start afresh.
             if pet.melee.engaged() {
                 pet.melee.leave(&slots, e);
                 pet.path.clear();
             }
-            // `FollowLeader` / `DefendLeader`: teleport when too far, else
-            // every 300–700 ms walk back to the defence slot.
+            // `FollowLeader` / `DefendLeader`: teleport when too far, else every 300–700 ms walk back to the
+            // defence slot.
             let far = tf.translation.distance(owner);
             if !ctl.class.can_move() {
-                // A stationary controller's FollowLeader / DefendLeader are
-                // the stub that goes "Idle": it stays where it was put.
+                // A stationary controller's FollowLeader / DefendLeader go "Idle".
                 pet.following = false;
                 pet.path.clear();
             } else if slots.take_lost(e) && pet.following {
-                // `ControllerMonsterStateFollowLeader::LostSlot`: its `OnUpdate` makes it
-                // "DefendLeader" (stands, checks again in 300..400 ms).
+                // `ControllerMonsterStateFollowLeader::LostSlot` → "DefendLeader" (checks again in 300..400 ms).
                 pet.following = false;
                 pet.path.clear();
                 pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.1;
@@ -911,8 +858,7 @@ pub(super) fn pet_ai(
                 pet.follow_check -= dt;
                 if pet.follow_check <= 0.0 {
                     pet.follow_check = 0.3 + gd_game_core::rng::f32() * 0.4;
-                    // `GetMoveToPoint` → `RequestDefenseSlot`; run there when
-                    // the slot is more than the pet's radius away.
+                    // `RequestDefenseSlot`; run there when more than the pet's radius away.
                     pet.slot = slots.defense(leader, e, &nav);
                     if pet
                         .slot
@@ -948,9 +894,8 @@ pub(super) fn pet_ai(
                     )
                     .map(|p| p.into_iter().skip(1).map(Vec3::from).collect())
                     .unwrap_or_default();
-                // Nothing to walk (the spot is in the pet's own cell, or no path): the follow ends as at the
-                // path's end or its failure (`FollowLeader` → "DefendLeader"), it does not search again
-                // every frame.
+                // Nothing to walk: the follow ends (`FollowLeader` → "DefendLeader") rather than searching
+                // again every frame.
                 if pet.path.is_empty() {
                     pet.following = false;
                 }

@@ -54,10 +54,7 @@ impl Key {
     /// `SkeletalPose::CacheCoords` builds it: the scale scales SR's columns
     /// (post-multiplied), not its rows.
     pub fn to_coords(&self) -> Coords {
-        // Fast path: unit scale and no stretch rotation (version-1 files have identity
-        // `scale_rotation`; most keys only rotate + translate). `T*R*SR*S` then collapses to
-        // `T*R`, skipping a quaternion conversion, the scale loop and a 3x3 multiply. With
-        // SR = I and S = 1 the general path below reduces to exactly this (×1/×0 are exact).
+        // Unit scale and no stretch rotation: `T*R*SR*S` reduces exactly to `T*R`.
         if self.scale == [1.0, 1.0, 1.0] && self.scale_rotation == [0.0, 0.0, 0.0, 1.0] {
             let m = quat_to_mat3(self.rotation);
             return Coords {
@@ -206,8 +203,8 @@ pub struct Animation {
     /// Parsed text trailer (CallbackPoint / CreateEntity / RemoveEntity /
     /// RagDollData blocks).
     pub trailer: Vec<MifBlock>,
-    /// Each skeleton's bone → track map, built once per (clip, skeleton) for [`pose_mesh_abs_into`]
-    /// instead of a name scan per bone per pose. Entries of dropped skeletons are dropped with them.
+    /// Each skeleton's bone → track map for [`pose_mesh_abs_into`]. Entries of dropped skeletons
+    /// are dropped with them.
     bone_maps: parking_lot::Mutex<Vec<BoneMap>>,
 }
 
@@ -318,7 +315,7 @@ impl Animation {
     /// `RagDollData { effectType, direction (Push|Pull), elevation (Upward|Downward), push (Left|Right) }`:
     /// `GraphicsAnim::GetRagDollEffectType` & co. A skill captures the block of the clip it starts with
     /// (`Skill::CaptureAnimationRagDollInfo`); its `effectType` is the hit's ragdoll effect
-    /// when the skill names none (`gd_game::ragdoll`).
+    /// when the skill names none.
     pub fn ragdoll(&self) -> Option<&MifBlock> {
         self.trailer.iter().find(|b| b.kind == "RagDollData")
     }
@@ -345,8 +342,7 @@ pub fn pose_mesh(
     (abs, skin)
 }
 
-/// [`pose_mesh`]'s `anim_abs` alone, written into `abs` (its allocation reused). The bone → track
-/// map is [`Animation`]'s, built once for this skeleton.
+/// [`pose_mesh`]'s `anim_abs` alone, written into `abs`.
 pub fn pose_mesh_abs_into(
     mesh: &std::sync::Arc<crate::msh::Mesh>,
     anim: &Animation,

@@ -6,24 +6,20 @@ use super::pak::{ENGINE_HZ, PENDING_FRAMES, Positioned, audible_gain, start_voic
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 
-/// The conversation voice-over's sound entity (at most one).
+/// At most one.
 #[derive(Component)]
 pub(super) struct DialogVoice;
 
-/// The volume of a conversation voice-over: the step's `SoundDescriptor` default,
-/// `SoundDescriptor::SoundDescriptor` (`SoundDescriptor.volume` = 0x3F4CCCCD; `ConversationStep::Read` changes
-/// only the volume set).
+/// `SoundDescriptor::SoundDescriptor`'s default volume (0x3F4CCCCD); `ConversationStep::Read` changes only the
+/// volume set.
 pub const VOICE_VOLUME: f32 = 0.8;
 
-/// Conversation voice-overs (rules in `gd_game::conversation`): the voice of each new line shown starts, the previous
-/// one stops; closing the window stops it. `ConversationStep::Read` (Game.dll) loads the step's
-/// VO into its own `SoundDescriptor` (a `.wav` sample; an `.ogg` a stream) in the Dialog volume set
-/// (`dialogVolume`); `ConversationStep::PlayVO` plays it with `SoundManager::Play2D` (2D, at no
-/// position), `StopVO` is `SoundManager::StopPlaying`. A WAV voice plays at the descriptor's 44100 Hz
-/// (`pak::playback_speed`): all 166 stock voices are 44.1 kHz WAVs, so they play at their own speed. `Play2D` gates it
-/// as any sound: Dialog and master volume at least 1e-4 ([`audible_gain`]), a free voice slot ([`VOICES`]). A voice not
-/// loaded yet is read in the background and starts when it lands, a few frames into the line (`cache::start_2d`;
-/// PORT: the engine streams it rather than stall the frame).
+/// Conversation voice-overs (rules in `gd_game::conversation`): each new line's voice starts, the previous one
+/// stops; closing the window stops it. `ConversationStep::Read` loads the VO into its own `SoundDescriptor` in the
+/// Dialog volume set; `ConversationStep::PlayVO` plays it with `SoundManager::Play2D`, `StopVO` is
+/// `SoundManager::StopPlaying`. A WAV voice plays at 44100 Hz (`pak::playback_speed`). `Play2D` gates it as any
+/// sound: Dialog and master volume at least 1e-4 ([`audible_gain`]), a free voice slot ([`VOICES`]).
+/// PORT: a voice not loaded yet starts when its background read lands (the engine streams it).
 pub(super) fn dialog_voice(
     mut commands: Commands,
     conv: Res<gd_game::conversation::Conversation>,
@@ -69,21 +65,18 @@ pub(super) fn dialog_voice(
     commands.entity(e).insert(DialogVoice);
 }
 
-/// The sound entity of an NPC's `dialogPak` line ([`npc_voices`]): the NPC that says it.
+/// The NPC that says the `dialogPak` line.
 #[derive(Component)]
 pub(super) struct NpcVoicePlaying(Entity);
 
-/// The fall-off of a `dialogPak` line: the `SoundDescriptor` default, `SoundDescriptor::SoundDescriptor`
-/// (`SoundDescriptor.fallOff` = 5.5; the pak's load sets only the volume set).
+/// `SoundDescriptor::SoundDescriptor`'s default `fallOff`; the pak's load sets only the volume set.
 const NPC_VOICE_FALLOFF: f32 = 5.5;
 
-/// NPCs' greeting / goodbye lines (rules and pick in `gd_game::trade`, "Voices"): `DialogPak::PlayRandom` plays the
-/// file with `SoundManager::Play3D` at the NPC's coords, in the Dialog volume set with the descriptor's volume
-/// ([`VOICE_VOLUME`]), fall-off and 44 100 Hz; `Play3D` gates it as any sound (Dialog and master volume ≥ 1e-4, a
-/// free voice slot) and checks no hearing range. A stereo file plays 2D (`pak` module doc). `DialogPak::Say`:
-/// no new line while the NPC's previous one still plays. A line whose file is not loaded yet is read in the background
-/// and plays when it lands, as a `SoundPak` one-shot does (`pak::replay_pending`): it counts as the NPC's line while
-/// it waits, and is dropped after [`PENDING_FRAMES`] or when the NPC goes.
+/// NPCs' greeting / goodbye lines (rules and pick in `gd_game::trade`): `DialogPak::PlayRandom` plays the file
+/// with `SoundManager::Play3D` at the NPC's coords, Dialog volume set, [`VOICE_VOLUME`], 44 100 Hz; gated as any
+/// sound, no hearing range. A stereo file plays 2D. `DialogPak::Say`: no new line while the NPC's previous one
+/// still plays. A line not loaded yet plays when it lands (`pak::replay_pending`), counting as the NPC's line
+/// while it waits; it is dropped after [`PENDING_FRAMES`] or when the NPC goes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn npc_voices(
     mut commands: Commands,
@@ -104,7 +97,6 @@ pub(super) fn npc_voices(
         .into_iter()
         .chain(lines.read().map(|l| (l.clone(), 0)))
     {
-        // A waited line whose NPC went is dropped.
         if frames > 0 && !alive.contains(line.npc) {
             continue;
         }

@@ -24,9 +24,8 @@
 //! receives and levels up while its experience reaches
 //! `skillExperienceLevels[level]`, up to the table's length.
 //!
-//! Removing a star (exe star lock refresh `DevotionWindow::UpdateLocks` in reclaim mode and its
-//! affinity check `DevotionWindow::CheckAffinityLoss`; the aether / gold refund cost is
-//! `gd_game::devotion::reclaim_cost`): a star is locked while any taken star of its
+//! Removing a star (`DevotionWindow::UpdateLocks` in reclaim mode,
+//! `DevotionWindow::CheckAffinityLoss`): a star is locked while any taken star of its
 //! constellation lists it in its links, even when that star has another
 //! taken link; and, when its constellation is complete, while the player's
 //! affinity less that constellation's bonus no longer covers the
@@ -200,7 +199,7 @@ impl Devotions {
         None
     }
 
-    /// Why the star cannot be removed (see the module docs).
+    /// Why the star cannot be removed.
     pub fn cannot_remove(
         &self,
         c: usize,
@@ -212,7 +211,6 @@ impl Devotions {
         if !taken(gone) {
             return Some("not taken");
         }
-        // Every taken star locks the stars it links to.
         if k.stars
             .iter()
             .enumerate()
@@ -230,10 +228,7 @@ impl Devotions {
     }
 
     /// The constellations that would lose their affinity requirement if constellation `c` lost its
-    /// completion bonus (GrimDawn.exe `DevotionWindow::CheckAffinityLoss`): only a complete constellation gives
-    /// affinity; its bonus is taken off the player's `affinity` ([`Self::affinity`]) and every constellation
-    /// with a taken star is checked, `c` itself included (then it is "self locked",
-    /// `FailedConstellationSelfLocked`).
+    /// completion bonus (`DevotionWindow::CheckAffinityLoss`), `c` itself included.
     pub fn affinity_dependents_with(
         &self,
         c: usize,

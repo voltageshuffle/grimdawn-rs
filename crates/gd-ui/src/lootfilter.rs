@@ -46,10 +46,11 @@
 //! also resets (`UIWidget::Reset`) is not identified; opening the devotion window
 //! (its opener not traced) does not close the loot filter window.
 //!
-//! PORT (addition): the bottom row's page button switches to the Item Styles page (`super::item_styles`: the
-//! user's name colour / tag rules, `gd_game::item_style`), whose bottom row has Load Preset and Clear All in
-//! place of Defaults; both ask first (Yes / No box as Defaults, English text: no stock string). Esc cancels a
-//! question or the page's text field before the window closes ([`LootFilterView::escape`]).
+//! PORT (addition): the bottom row's page button (right) switches to the Item Styles page (`super::item_styles`:
+//! the user's name colour / tag rules, `gd_game::item_style`), whose bottom row has Clear All (left) and Load
+//! Preset (in Defaults' place); both ask first (Yes / No box as Defaults, English text: no stock string). Every
+//! bottom-row button sits in a copy of the background's Defaults frame. Esc cancels a question or the page's
+//! text field before the window closes ([`LootFilterView::escape`]).
 //!
 //! Both directions go through the shared window policy
 //! (`super::window::WindowPolicy` / `Windows`): the press opens with
@@ -61,7 +62,8 @@
 //! `lootFilterRowSpacing` (36), a spacer `lootFilterRowSpacing2` (30)
 //! before and after its line, the line at the spacer record's offset from
 //! the first row; the label right after the box bitmap in the checkbox's
-//! `style`.
+//! `style`. All rows shrink evenly when the tallest column would reach the
+//! bottom row (the Character column at stock spacing does).
 //!
 //! PORT: the columns flow to their content (`gd_ui_kit::layout::flow_columns`,
 //! the options pages' pattern) instead of the fixed `lootFilterColumnIndent`
@@ -443,15 +445,17 @@ fn build(
     let field = |k: &str| rec.str(k).unwrap_or("").to_string();
     let w = WindowDef::from_record(rec).screen_rect(ui.screen.x, ui.screen.y, s);
     let o = Vec2::new(w.x, w.y);
-    if let Some(bg) = ui.record(&field("lootFilterBitmap"))
-        && let Some(path) = bg.str("bitmapName")
-    {
-        ui.bitmap(
-            path,
-            bg.f32("bitmapPositionX").unwrap_or(0.0),
-            bg.f32("bitmapPositionY").unwrap_or(0.0),
-            o,
-        );
+    let bg = ui.record(&field("lootFilterBitmap")).and_then(|bg| {
+        Some(StockBackground {
+            path: bg.str("bitmapName")?.to_owned(),
+            at: Vec2::new(
+                bg.f32("bitmapPositionX").unwrap_or(0.0),
+                bg.f32("bitmapPositionY").unwrap_or(0.0),
+            ),
+        })
+    });
+    if let Some(bg) = &bg {
+        ui.bitmap(&bg.path, bg.at.x, bg.at.y, o);
     }
     if let Some(r) = ui.record(&field("lootFilterWindowTitle")) {
         let tb = TextBox::from_record(&r);
@@ -487,57 +491,6 @@ fn build(
         }
     }
     let reset = ui.record(&field("lootFilterResetButton"));
-    if let Some(b) = &reset {
-        // The bottom row in the reset button's look, each auto-sized to its label (kit `static_button`).
-        let tex_w = b
-            .str("bitmapNameUp")
-            .and_then(|p| ui.image(p))
-            .map(|(_, sz)| ui.sc(sz.x as f32))
-            .unwrap_or(0.0);
-        let bx = ui.sc(b.f32("bitmapPositionX").unwrap_or(0.0));
-        let width =
-            |ui: &mut Ui, text: &str| super::widgets::button_width(ui, b, tex_w, Some(text));
-        // Drawn with its left edge at `x`.
-        let at = |ui: &mut Ui, x: f32, text: &str| -> Option<URect> {
-            let r = super::widgets::static_button(
-                ui,
-                b,
-                Vec2::new(x - bx, o.y),
-                true,
-                false,
-                super::widgets::Label::Text(text),
-            )?;
-            ui.record_button_sound(r, b);
-            Some(r)
-        };
-        // The stock centre, kept when a label grows.
-        let centre = o.x + bx + tex_w * 0.5;
-        // The page button (a port addition), at the window's right.
-        let page = if view.styles.shown {
-            ui.fonts.tag("tagLootFilterWindowTitle").to_string()
-        } else {
-            "Item Styles".to_owned()
-        };
-        let pw = width(&mut ui, &page);
-        let right = w.x + w.w - ui.sc(40.0);
-        view.page_button = at(&mut ui, right - pw, &page);
-        if view.styles.shown {
-            let pw = width(&mut ui, "Load Preset");
-            view.preset = at(&mut ui, centre - pw * 0.5, "Load Preset");
-            let cw = width(&mut ui, "Clear All");
-            if let Some(p) = view.preset {
-                let gap = ui.sc(16.0);
-                view.clear = at(&mut ui, p.x - gap - cw, "Clear All");
-            }
-        } else {
-            let text = b
-                .str("textTag")
-                .map(|t| ui.fonts.tag(t).to_string())
-                .unwrap_or_default();
-            let dw = width(&mut ui, &text);
-            view.defaults = at(&mut ui, centre - dw * 0.5, &text);
-        }
-    }
     let (Some(cb), spacer) = (
         ui.record(&field("lootFilterCheckbox")),
         ui.record(&field("lootFilterSpacer")),
@@ -558,23 +511,17 @@ fn build(
         .map(str::to_owned);
     // The Item Styles page replaces the checkboxes (`super::item_styles`).
     if view.styles.shown {
-        let titles = [
-            "lootFilterTitle01",
-            "lootFilterTitle02",
-            "lootFilterTitle03",
-            "lootFilterTitle04",
-        ]
-        .map(|t| ui.record(&field(t)).map(|r| TextBox::from_record(&r)));
         if let Some(label) = &label_style {
             let look = super::item_styles::Look {
                 o,
-                w,
                 checkbox: &cb,
                 button: reset.as_ref(),
                 label,
-                titles,
             };
             super::item_styles::build(&mut ui, &mut view.styles, &styles, &look);
+        }
+        if let Some(b) = &reset {
+            bottom_row(&mut ui, &mut view, b, o, w, bg.as_ref());
         }
         finish(&mut ui, &mut view, w);
         return;
@@ -596,6 +543,35 @@ fn build(
             sp.f32("bitmapPositionY").unwrap_or(137.0),
         ))
     });
+    // The rows shrink evenly when the tallest column would reach the bottom row's frames.
+    let box_h = cb
+        .str("bitmapNameUp")
+        .and_then(|p| ui.image(p))
+        .map_or(0.0, |(_, sz)| sz.y as f32);
+    let tallest = OPTIONS
+        .iter()
+        .map(|entries| {
+            let (mut y, mut end) = (y0, y0);
+            for e in entries.iter() {
+                match e {
+                    Some(_) => {
+                        end = y + box_h;
+                        y += row;
+                    }
+                    None => y += 2.0 * row2 - row,
+                }
+            }
+            end
+        })
+        .fold(y0, f32::max);
+    let k = reset
+        .as_ref()
+        .and_then(|b| b.f32("bitmapPositionY"))
+        .filter(|_| tallest > y0)
+        .map_or(1.0, |by| {
+            ((by - 10.0 - y0) / (tallest - y0)).clamp(0.0, 1.0)
+        });
+    let fit = |y: f32| y0 + k * (y - y0);
     let cols: Vec<Vec<gd_ui_kit::layout::FlowRow>> = OPTIONS
         .iter()
         .map(|entries| {
@@ -659,7 +635,12 @@ fn build(
                     else {
                         continue;
                     };
-                    let br = URect::new(x, o.y + ui.sc(y), ui.sc(sz.x as f32), ui.sc(sz.y as f32));
+                    let br = URect::new(
+                        x,
+                        o.y + ui.sc(fit(y)),
+                        ui.sc(sz.x as f32),
+                        ui.sc(sz.y as f32),
+                    );
                     ui.quad(img, br, None, Color::WHITE);
                     ui.record_button_sound(br, &cb);
                     if let Some(style) = &label_style {
@@ -677,7 +658,7 @@ fn build(
                     if let Some((img, sw, sh, dx, sy)) = &spacer_geo {
                         let sx = flow.col_x[col] + ui.sc(*dx);
                         let cw = sw.min((flow.col_right(col) - sx).max(0.0));
-                        let r = URect::new(sx, o.y + ui.sc(sy + (y - y0)), cw, *sh);
+                        let r = URect::new(sx, o.y + ui.sc(fit(sy + (y - y0))), cw, *sh);
                         if cw < *sw {
                             ui.quad_stretch(img.clone(), r, Color::WHITE);
                         } else {
@@ -689,7 +670,114 @@ fn build(
             }
         }
     }
+    if let Some(b) = &reset {
+        bottom_row(&mut ui, &mut view, b, o, w, bg.as_ref());
+    }
     finish(&mut ui, &mut view, w);
+}
+
+/// The window background's texture and its record position (`lootFilterBitmap`).
+struct StockBackground {
+    path: String,
+    at: Vec2,
+}
+
+/// The stock frame around the Defaults button in the background texture, past the button bitmap's edges
+/// (left, top, right, bottom; texture px).
+const FRAME_PAD: [f32; 4] = [6.0, 4.0, 7.0, 1.0];
+/// The frame's ends kept unstretched when a button grows (texture px).
+const FRAME_CAP: f32 = 30.0;
+
+/// The bottom row in the reset button's look, each button auto-sized to its label (kit `static_button`) and set
+/// in a copy of the background's Defaults frame. PORT: the stock window has only Defaults; the page button
+/// (right) and the Item Styles page's Clear All (left) and Load Preset (in Defaults' place) are additions.
+fn bottom_row(
+    ui: &mut Ui,
+    view: &mut LootFilterView,
+    b: &gd_formats::arz::Record,
+    o: Vec2,
+    w: URect,
+    bg: Option<&StockBackground>,
+) {
+    let Some(tex) = b
+        .str("bitmapNameUp")
+        .and_then(|p| ui.image(p))
+        .map(|(_, sz)| sz.as_vec2())
+    else {
+        return;
+    };
+    let pos = Vec2::new(
+        b.f32("bitmapPositionX").unwrap_or(0.0),
+        b.f32("bitmapPositionY").unwrap_or(0.0),
+    );
+    let frame = bg.and_then(|bg| Some((ui.image(&bg.path)?.0, pos - bg.at)));
+    let tex_w = ui.sc(tex.x);
+    let width = |ui: &mut Ui, text: &str| super::widgets::button_width(ui, b, tex_w, Some(text));
+    // Drawn with its left edge at `x`.
+    let at = |ui: &mut Ui, x: f32, text: &str| -> Option<URect> {
+        if let Some((img, src)) = &frame {
+            let r = URect::new(x, o.y + ui.sc(pos.y), width(ui, text), ui.sc(tex.y));
+            stock_frame(ui, img, *src, tex, r);
+        }
+        let r = super::widgets::static_button(
+            ui,
+            b,
+            Vec2::new(x - ui.sc(pos.x), o.y),
+            true,
+            false,
+            super::widgets::Label::Text(text),
+        )?;
+        ui.record_button_sound(r, b);
+        Some(r)
+    };
+    // The stock centre, kept when a label grows.
+    let centre = o.x + ui.sc(pos.x) + tex_w * 0.5;
+    let inset = ui.sc(40.0);
+    let page = if view.styles.shown {
+        ui.fonts.tag("tagLootFilterWindowTitle").to_string()
+    } else {
+        "Item Styles".to_owned()
+    };
+    let pw = width(ui, &page);
+    view.page_button = at(ui, w.x + w.w - inset - pw, &page);
+    if view.styles.shown {
+        let pw = width(ui, "Load Preset");
+        view.preset = at(ui, centre - pw * 0.5, "Load Preset");
+        view.clear = at(ui, w.x + inset, "Clear All");
+    } else {
+        let text = b
+            .str("textTag")
+            .map(|t| ui.fonts.tag(t).to_string())
+            .unwrap_or_default();
+        let dw = width(ui, &text);
+        view.defaults = at(ui, centre - dw * 0.5, &text);
+    }
+}
+
+/// The background's Defaults frame (the button bitmap's top-left at `at` in the texture, `tex` its size) around
+/// a button drawn at `r`; its middle stretches with a wider button.
+fn stock_frame(ui: &mut Ui, img: &Handle<Image>, at: Vec2, tex: Vec2, r: URect) {
+    let [l, t, rt, bt] = FRAME_PAD;
+    let src = URect::new(at.x - l, at.y - t, tex.x + l + rt, tex.y + t + bt);
+    let d = URect::new(
+        r.x - ui.sc(l),
+        r.y - ui.sc(t),
+        r.w + ui.sc(l + rt),
+        r.h + ui.sc(t + bt),
+    );
+    let cap = ui.sc(FRAME_CAP);
+    for (dx, dw, sx, sw) in [
+        (0.0, cap, 0.0, FRAME_CAP),
+        (cap, d.w - 2.0 * cap, FRAME_CAP, src.w - 2.0 * FRAME_CAP),
+        (d.w - cap, cap, src.w - FRAME_CAP, FRAME_CAP),
+    ] {
+        ui.quad(
+            img.clone(),
+            URect::new(d.x + dx, d.y, dw, d.h),
+            Some(URect::new(src.x + sx, src.y, sw, src.h)),
+            Color::WHITE,
+        );
+    }
 }
 
 /// The built window's last parts: its click rect and, when one is up, the confirmation box.

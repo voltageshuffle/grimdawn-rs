@@ -19,8 +19,7 @@ pub fn probability_to_hit(f: &CombatFormulas, oa: f32, da: f32) -> f32 {
         ..Default::default()
     };
     let pth = f.probability_to_hit.as_ref().map_or(0.0, |e| v.eval(e));
-    // (bad data: OA = DA = 0 makes the stock equation 0/0; NaN would fail
-    // every later comparison and turn each hit into 0 damage.)
+    // Bad data: OA = DA = 0 makes the stock equation 0/0; a NaN would turn each hit into 0 damage.
     if !pth.is_finite() || pth <= f.pth_minimum {
         f.pth_minimum
     } else {
@@ -413,13 +412,9 @@ pub struct DotDamage {
     pub scale_by_attributes: bool,
     /// Hit multiplier recorded by `ProcessBluntDamageModifier`.
     pub hit_multiplier: f32,
-    /// The owning source's stable key (`actor::dot_source_key`: the item
-    /// instance / skill record / passive that owns the attribute, hashed with
-    /// the attribute's field). `DamageAttributeDur::AddDamageToAccumulator`:
-    /// the slot key is
-    /// `(GetObjectId(owner), attribute_index)` — the owner object, not the
-    /// attacker; distinct owners' same-type DoTs stack, only the same owner's
-    /// re-application keeps max. 0: unkeyed (display-only values).
+    /// The owning source's stable key (the item instance / skill record / passive owning the attribute, hashed with
+    /// its field; `DamageAttributeDur::AddDamageToAccumulator`'s slot key `(GetObjectId(owner), attribute_index)`):
+    /// distinct owners' same-type DoTs stack, the same owner's re-application keeps max. 0: unkeyed (display-only).
     pub source: u64,
 }
 
@@ -537,8 +532,7 @@ impl Damage {
         }
     }
 
-    /// `ScaleDamage(pct)` (per-class).
-    /// Scales every value by `pct` %.
+    /// `ScaleDamage(pct)` (per class): every value × `pct` %.
     pub fn scale(&mut self, pct: f32) {
         if pct < 0.0 {
             return;
@@ -973,8 +967,7 @@ pub struct Defender<'a> {
     pub defensive_ability: f32,
     pub dodge: f32,
     pub deflect: f32,
-    /// The defenses before `ProcessDefense` ([`take_attack`] processes a copy
-    /// of each per hit, so a profile's list is shared, not cloned).
+    /// The defenses before `ProcessDefense`.
     pub defenses: &'a [Defense],
     /// `GetDefenseAttributeCap()`.
     pub resistance_cap: f32,
@@ -984,8 +977,7 @@ pub struct Defender<'a> {
     pub armor_reduction: f32,
     /// `100 + DDM(61) + negativeDamageMult` (% damage taken; scaled only when > 100).
     pub damage_taken_pct: f32,
-    /// `defensivePercentReflectionResistance`, capped
-    /// (`actor::Profile::reflection_resist`).
+    /// `defensivePercentReflectionResistance`, capped.
     pub reflection_resist: f32,
     /// `defensiveReflect` total (%).
     pub reflect: f32,
@@ -1028,10 +1020,8 @@ pub struct Shield {
 }
 
 impl Shield {
-    /// A shield record's fields (`WeaponArmor_Shield::Load`,
-    /// The record's own values, `GetShieldBlockChance` /
-    /// `GetShieldDefense` / `GetShieldAbsorption` read them back,
-    /// `GetShieldRecoveryTime` = `(int)(blockRecoveryTime × 1000)` ms).
+    /// A shield record's fields (`WeaponArmor_Shield::Load`; `GetShieldRecoveryTime` =
+    /// `(int)(blockRecoveryTime × 1000)` ms).
     pub fn from_record(rec: &gd_formats::arz::Record) -> Self {
         use crate::items::db::Fields;
         Self {
@@ -1055,7 +1045,7 @@ pub enum MissReason {
 /// [`Damage::Reflex`] (no blunt, crit or damage-taken scaling, reduced by the defender's restricted resistance of
 /// the type and by a block, never reflected nor linked) and are executed here, not as crowd control:
 /// - taunt (50): `CombatAttributeInfluenceDamage_Taunt::Execute`: a value above 0 goes to
-///   `Character::CombatExertInfluenceTaunt` (the value passed on in xmm1) → the defender's controller
+///   `Character::CombatExertInfluenceTaunt` → the defender's controller
 ///   `ControllerMonster::TauntMe`: within `InPursuitRange`, `AngerManager::AddAnger(last attacker,
 ///   value)`. One call per instance, so the instances add up.
 /// - convert (51): `CombatAttributeInfluenceDamage_Convert::Execute`: a value of at least 1
@@ -1107,12 +1097,10 @@ pub struct HitResult {
     pub energy_burned: f32,
     /// Total reflect % (`defensiveReflect`).
     pub reflect_pct: f32,
-    /// The incoming damage scaled by the reflect % (to send back with
-    /// `actor::reflect`); empty without reflect.
+    /// The incoming damage scaled by the reflect %; empty without reflect.
     pub reflected: Vec<Damage>,
-    /// A reflect link's share of the hit ([`Defender::link_absorb`]): the
-    /// damage after the defenses, scaled by `link_absorb` % (to scale by the
-    /// link's reflect %, `actor::link_reflection`); empty without a link.
+    /// A reflect link's share of the hit ([`Defender::link_absorb`]): the damage after the defenses, scaled by
+    /// `link_absorb` %; empty without a link.
     pub link_copy: Vec<Damage>,
 }
 
@@ -1193,7 +1181,6 @@ pub fn take_attack(
     if res.miss.is_some() || res.roll.multiplier <= 0.0 {
         return res;
     }
-    // Damage-taken multiplier, crit bonus, blunt modifier.
     if def.damage_taken_pct > 100.0 {
         atk.damage
             .iter_mut()
@@ -1207,8 +1194,7 @@ pub fn take_attack(
     // taunt/fear/convert), so hits, weapon damage, DoTs, debuffs, leech and
     // % current life are reflected, then `ScaleDamage(reflect %)` scales
     // every part. A player's `playerReflectCap` limits only the debuffs
-    // (`CombatAttributeDurFixedDamage` uses the reflect cap), applied in
-    // `actor::attack_linked`.
+    // (`CombatAttributeDurFixedDamage` uses the reflect cap), applied by the caller.
     if def.reflect > 0.0 && !matches!(atk.kind, AttackKind::Retaliation | AttackKind::Reflection) {
         res.reflected = atk
             .damage
@@ -1228,7 +1214,6 @@ pub fn take_attack(
     }
     res.roll.multiplier = m;
     atk.damage.iter_mut().for_each(|d| d.blunt(m));
-    // Shield block.
     if def.block_cooldown_ms <= 0
         && let Some(sh) = def.shield
     {
@@ -1266,10 +1251,8 @@ pub fn take_attack(
             d.reduce_damage(t, p)
         });
     }
-    // ProcessDefense, then ExecuteDefense: every defense against every
-    // damage. Each defense is processed on its own from the defender's cap
-    // and debuffs (unchanged since the hit began), so the processed copy is
-    // made here and the defender's list stays as built.
+    // ProcessDefense, then ExecuteDefense: every defense against every damage, each processed on a copy from the
+    // defender's cap and debuffs as they were when the hit began.
     for dfn in def.defenses {
         let mut dfn = dfn.clone();
         dfn.process(
@@ -1302,9 +1285,6 @@ pub fn take_attack(
             })
             .collect();
     }
-    // PERF-36: size the per-hit result lists once (they escape to the caller as
-    // owned `Vec`s, so cannot be scratch-reused); the bounds only avoid growth
-    // reallocations and never change a value or the draw order.
     res.applied.reserve(atk.damage.len() + 1);
     res.dots.reserve(atk.damage.len());
     res.reflex.reserve(atk.damage.len());
@@ -1346,7 +1326,6 @@ pub fn take_attack(
                 }
             }
             Damage::Reflex { ty, secs } => match ty {
-                // `Influence` (Execute thresholds there).
                 CombatType::Taunt if *secs > 0.0 => res.influence.taunt += *secs,
                 CombatType::Convert if *secs >= 1.0 && res.influence.convert == 0.0 => {
                     res.influence.convert = *secs
@@ -1468,8 +1447,7 @@ impl Timeline {
     }
 }
 
-/// Longest DoT in 100 ms slots (bad data: an infinite or huge duration would
-/// queue billions of ticks; stock durations are seconds).
+/// Longest DoT in 100 ms slots (bad data: an infinite or huge duration would queue billions of ticks).
 const MAX_DOT_SLOTS: usize = 6_000;
 
 /// One [`DotManager::update`]: damage per type, the part from one attacker,
@@ -1505,7 +1483,7 @@ pub struct DotTick {
 /// multiplier of every ticked slot entry (`DurationDamageManager::GetLargestMultiplier`): the
 /// DoT combat numbers ([`DotTick`]). A slot's entries, sorted, are scaled by
 /// gameengine.dbr `damageMagnitude` % by rank (the last value for the rest;
-/// `DurationDamageManager::ApplyDamageMagnitude`); stock it is just 100, so stacking is full.
+/// `DurationDamageManager::ApplyDamageMagnitude`).
 ///
 /// PORT: the manager stores one entry per application ([`DotApp`]) instead
 /// of writing it into every slot, and derives a slot's entries when it ticks
@@ -1514,7 +1492,6 @@ pub struct DotTick {
 pub struct DotManager {
     timelines: Vec<Timeline>,
     carry_ms: i32,
-    /// Reused slot entries of [`Self::update_from`].
     scratch: Vec<SlotEntry>,
 }
 
@@ -1526,8 +1503,6 @@ impl DotManager {
     }
 
     /// [`Self::add`] with the hit's to-hit multiplier.
-    // The engine's `AddDamage` parameters, kept flat (type, value, duration,
-    // slot key, attacker, multiplier, skill).
     #[allow(clippy::too_many_arguments)]
     pub fn add_hit(
         &mut self,
@@ -1697,16 +1672,10 @@ pub type Conversion = (CombatType, CombatType, f32);
 /// the source); hit damage stays hit damage and DoTs stay DoTs
 /// (`ConvertCombatAttributes`).
 ///
-/// The % modifier a damage already holds goes along: the piece copies it
-/// and both piece and original scale damage and modifier by their share
-/// (`ScaleDamage(pct)` then `ScaleModifiers(pct)`,
-/// `CombatAttributeAbsDamage::ScaleModifiers` / `CombatAttributeDurDamage::
-/// ScaleModifiers` / `CombatAttributeDamage_BasePhysical::ScaleModifiers`:
-/// modifier × pct / 100). `Skill::CollectCombatParameters` applies the
-/// skill's own modifiers before its conversions, so those are the modifiers
-/// that scale here; the character's come after (see `actor::collect_damage`).
-/// `stages` run in order (the skill's conversions, then the character's);
-/// what one stage converted stays out of the next.
+/// The % modifier a damage already holds goes along: piece and original scale damage and modifier by their share
+/// (`ScaleDamage(pct)` then `ScaleModifiers(pct)`). `Skill::CollectCombatParameters` applies the skill's own
+/// modifiers before its conversions, the character's after. `stages` run in order (the skill's conversions, then
+/// the character's); what one stage converted stays out of the next.
 pub fn convert_damage(damage: &mut Vec<Damage>, stages: &[&[Conversion]]) {
     let mut s = CONVERT_SCRATCH.with(|c| c.replace(ConvertScratch::default()));
     convert_damage_with(damage, stages, &mut s);
@@ -1715,12 +1684,8 @@ pub fn convert_damage(damage: &mut Vec<Damage>, stages: &[&[Conversion]]) {
     });
 }
 
-/// Reusable conversion buffers (PERF-36): [`convert_damage`]'s `converted` list
-/// and [`weigh_with`]'s per-input groups are collected here instead of fresh
-/// heap allocations per attack. One per thread, taken empty and returned
-/// cleared (the `gd_game_core::rng` pattern), so a nested or parallel
-/// conversion never shares buffers; only capacity is reused, no value survives
-/// a call. PORT: the engine allocates these per `ConvertDamage`.
+/// Conversion buffers for [`convert_damage`] / [`weigh_with`]: one per thread, taken empty and returned cleared, so a
+/// nested or parallel conversion never shares buffers.
 #[derive(Default)]
 pub(crate) struct ConvertScratch {
     pub(crate) converted: Vec<Damage>,
@@ -1732,7 +1697,7 @@ thread_local! {
     static CONVERT_SCRATCH: RefCell<ConvertScratch> = RefCell::new(ConvertScratch::default());
 }
 
-/// [`convert_damage`] over caller-held buffers (the attack path's scratch).
+/// [`convert_damage`] over caller-held buffers.
 pub(crate) fn convert_damage_with(
     damage: &mut Vec<Damage>,
     stages: &[&[Conversion]],

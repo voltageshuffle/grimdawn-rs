@@ -2,10 +2,10 @@
 // of shaders/terrain/{terrain,snow}highquality.ssh (top layer first, blend
 // src·dstAlpha + dst, dstAlpha *= a) or, at terrain quality 3,
 // {terrain,snow}ultraquality.ssh (bottom first, SrcAlpha / InvSrcAlpha, the
-// coverage times `ultra_soft`; render/terrain.rs) and then the shared deferred
-// lighting (see gd_standard.wesl). Values are gamma-space (render/mod.rs).
+// coverage times `ultra_soft`) and then the shared deferred
+// lighting (see gd_standard.wesl). Values are gamma-space.
 // Patch mode (grid.w = 1): a TerrainDecoration's painted layers over its mesh,
-// terrainpatch.ssh `deferred`, alpha-blended (render/terrain.rs).
+// terrainpatch.ssh `deferred`, alpha-blended.
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, lights, directional_shadow_textures, clustered_lights},
@@ -26,19 +26,18 @@ struct TerrainParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var opacity: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var opacity_smp: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(7) var<storage, read> env: array<vec4<f32>>;
-// Quality 3's depthTexture: the swap-chain surface's depth, no scene in it (render/terrain.rs).
+// Quality 3's depthTexture: the swap-chain surface's depth, no scene in it.
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var scene_depth: texture_depth_2d;
 
 const AMBIENT_INTENSITY: f32 = 0.65;
 const SPECULAR_INTENSITY: f32 = 1.56;
 
-/// The water reflection camera (render/reflection.rs): exposure ev100 −2 → 3.33.
+/// The water reflection camera: exposure ev100 −2 → 3.33.
 fn is_reflection_view() -> bool {
     return view.exposure > 2.0;
 }
 
-/// The sun shadow the way deferred.ssh `directionalPS` tests it
-/// (render/shadow.rs, which builds the engine's LiSPSM map): 4 bilinear taps at
+/// The sun shadow the way deferred.ssh `directionalPS` tests it: 4 bilinear taps at
 /// ±½·shadowBluriness in a plus, ¼ each, lit unless the stored depth is
 /// nearer than the receiver's + shadowBias (−0.001). The same function is in
 /// gd_terrain.wesl / gd_standard.wesl / decal.wesl.
@@ -86,7 +85,7 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
     let z = 1.0 - saturate(1.0 - ndc.z + SHADOW_BIAS);
     let size = vec2<i32>(textureDimensions(directional_shadow_textures));
     let layer = i32((*light).depth_texture_base_index);
-    // texel_size carries ½·shadowBluriness in map UV (render/shadow.rs).
+    // texel_size carries ½·shadowBluriness in map UV.
     let o = (*light).cascades[0].texel_size;
     let taps = array<vec2<f32>, 4>(vec2<f32>(-o, 0.0), vec2<f32>(o, 0.0), vec2<f32>(0.0, -o), vec2<f32>(0.0, o));
     var lit = 0.0;
@@ -96,12 +95,11 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
             lit += 0.25;
         }
     }
-    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its
-    // statistics text (render/shadow.rs).
+    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its statistics text.
     return lit;
 }
 
-/// The point-light shadow of deferred.ssh `pointPS` (render/point_shadow.rs):
+/// The point-light shadow of deferred.ssh `pointPS`:
 /// the engine's paraboloid uv of the light→pixel direction (light frame rows
 /// (−1,0,0), (0,1,0), (0,0,−1): uv = (0.5 + 0.5 s, 0.5 − 0.5 t), s, t =
 /// (q.x, q.z) / (q.y − 1)), 4 taps at ±½·shadowBluriness in a plus, ¼ each, lit
@@ -178,7 +176,7 @@ fn linear_depth(ndc: f32) -> f32 {
     return -p.z / p.w;
 }
 
-/// terrainultraquality.ssh `deferredPS` (value 38, per its disassembly; the
+/// terrainultraquality.ssh `deferredPS` (value 38; the
 /// snow / parallax variants alike): the factor on every layer's coverage. With
 /// the depthTexture's surface within 0.35 m of the fragment, k = |dz| / 0.35
 /// and soft = k + (1 − k)·sat((max(face·N, 0) − 0.9)·10), the face normal from
@@ -192,7 +190,7 @@ fn ultra_soft(frag: vec4<f32>, n0: vec3<f32>) -> f32 {
     let c = view.world_from_clip * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
     let p = c.xyz / c.w;
     var f = cross(dpdxCoarse(p), dpdyCoarse(p));
-    // PORT: turned to the camera (render/terrain.rs).
+    // PORT: turned to the camera.
     if dot(f, view.world_position - p) < 0.0 {
         f = -f;
     }
@@ -217,9 +215,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // explicit gradients: the layer loop is non-uniform control flow
     let gx = dpdx(tuv);
     let gy = dpdy(tuv);
-    // Weights are stored like the vertex layer mask (row z, column x): not
-    // flipped (a flip made layer presence and weight disagree → black cells).
-    // A terrain patch (render/terrain.rs): origin = its texel grid's corner, grid = its size, so the same
+    // Weights are stored like the vertex layer mask (row z, column x): not flipped.
+    // A terrain patch: origin = its texel grid's corner, grid = its size, so the same
     // formula is terrainpatch.ssh's (x − centre) / width + ½.
     let is_patch = terrain.grid.w > 0.5;
     let ouv = vec2<f32>(local.x / terrain.grid.x, local.z / terrain.grid.y);
@@ -293,7 +290,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         }
     }
     // A patch blends the G-buffer values of its layers over the decoration's with alpha = their cover: here
-    // the lit colour of their normalised composite, blended (PORT, like gbuffer_blend.rs).
+    // the lit colour of their normalised composite, blended (PORT).
     var alpha = 1.0;
     if is_patch {
         alpha = 1.0 - T;
@@ -310,7 +307,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     albedo = min(albedo, vec3<f32>(1.0));
     let N = nenc * 2.0 - vec3<f32>(1.0);
     let power = exp2(10.5 * logp);
-    // reflectionStyle (render/reflection.rs): base × (sat(N·L)·sun + hemisphere
+    // reflectionStyle: base × (sat(N·L)·sun + hemisphere
     // ambient), no point lights / shadows / specular.
     if is_reflection_view() {
         let hemi = mix(env[3].rgb, env[2].rgb, N.y * 0.5 + 0.5);
@@ -335,7 +332,6 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let n_lights = u32(env[3].w);
     for (var k = 0u; k < n_lights; k++) {
         let lp = env[5u + 2u * k];
-        // FireLights step their colour on the CPU (world::Flicker).
         let lc = env[6u + 2u * k];
         let lv = lp.xyz - wpos;
         let dist = length(lv);
@@ -345,7 +341,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             let sh = point_shadow(lp.xyz, wpos, extra.x);
             let L = lv / dist;
             var t = saturate(dot(N, L)) * albedo;
-            // pointSpecularPS: per light (lightingQuality, simple mode; render/env.rs).
+            // pointSpecularPS: per light (lightingQuality, simple mode).
             if extra.y > 0.5 {
                 let R = 2.0 * dot(N, L) * N - L;
                 t += exp2(log2(max(saturate(dot(V, R)), 1e-8)) * power) * min(spec, 1.0);

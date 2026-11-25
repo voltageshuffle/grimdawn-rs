@@ -1,4 +1,4 @@
-//! `playmenu.cpn` round trip (`gd_formats::save::cpn`).
+//! `playmenu.cpn` round trip.
 use gd_formats::save::cpn::PlayMenu;
 
 #[test]

@@ -7,8 +7,6 @@
 //! main menu backdrop lights itself through [`render::backdrop::MenuBackdrop`].
 //!
 //! The gameplay data the drawing reads lives in `gd-game-core`; the modules reference it by path.
-// Bevy system parameters (queries with filters, param tuples) are long by nature; Bevy recommends
-// allowing this lint for them (as gd-game and grimdawn do).
 #![allow(clippy::type_complexity)]
 pub mod beams;
 pub mod camera;

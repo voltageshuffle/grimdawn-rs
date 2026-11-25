@@ -1,21 +1,9 @@
 use super::*;
 
-/// `SkillActivated_Suicide` used (`casting::fire_casts`): the user kills
-/// itself. `StartAction` plays the skill's special
-/// animation (else the character's action 14), and `ReceiveActiveUpdate`
-/// gives the user a `Bonus` of −100 % life
-/// (`Character::TakeBonus` → `CharacterBio::TakeBonus`, no attacker), so it
-/// dies of its own hand: the killer is whoever attacked it last (the `CombatManager.lastAttacker` the death
-/// event sends, [`Attackers::last`]; none if nothing did), its dying skill goes off as for any
-/// death (`ControllerMonsterStateDying::StartDyingSkill`; monsters:
-/// `monster_skills`, pets: `pets.rs`). It deals no damage itself. Stock
-/// users take it as a special attack (`specialAttackSkillName`): monster
-/// traps (`firetrap_suicide`: chthonic shards, ice spikes, cave-ins, the
-/// aether anomaly), Elemental Seeker and Black Blood of Yugol pets, the
-/// Gaze of Dreeg pet. The player's Thermite Mines list it in `skillName1`
-/// only, so they never use it (they end by `spawnObjectsTimeToLive`); the
-/// outlaw boss's mines' `heroskills/pets/thermitemine_skill_suicide` is a
-/// `Skill_BuffSelfToggled`. PORT: the death comes when the cast fires.
+/// `SkillActivated_Suicide` used: the user kills itself. `StartAction` plays the skill's special animation (else
+/// action 14), and `ReceiveActiveUpdate` gives the user a `Bonus` of −100 % life (no attacker): the killer is
+/// whoever attacked it last ([`Attackers::last`]), and its dying skill goes off as for any death. It deals no
+/// damage itself. PORT: the death comes when the cast fires.
 #[derive(Component)]
 pub struct Suicide;
 
@@ -56,7 +44,7 @@ pub(super) fn suicides(
     }
 }
 
-/// A character's life ran out (hit or damage over time).
+/// Hit or damage over time.
 #[allow(clippy::too_many_arguments)]
 pub fn kill(
     commands: &mut Commands,
@@ -107,31 +95,23 @@ pub fn kill(
     }
 }
 
-/// How long after `Character::DestroyMe`'s countdown starts the dead character is removed: the
-/// `Character` ctor sets `Character.destroyDelay` to 10000 ms; `Character::UpdateSelf` counts it down once the
-/// character is dead (state 4, set by `Character::ImDead`, which the death manager calls when every death
-/// handler has finished, `DeathManager::OnHandlersFinished`) and then calls `DestroyMe` unless
-/// `Character.destroyOnDeath` is clear (only `Corpse` clears it).
+/// `Character.destroyDelay` (10000 ms): counted down once the character is dead (every death handler finished),
+/// then `DestroyMe` unless `Character.destroyOnDeath` is clear (only `Corpse` clears it).
 const DESTROY_DELAY: f32 = 10.0;
 
-/// Seconds a monster's or pet's body stays after death (`f32::INFINITY`: until an
-/// animation callback starts it, or for good). `Character::InitialUpdate`
-/// picks the death handler by `deleteBehavior`:
-/// - `Dissolve`: `DissolveActorDeathHandler::Execute` waits
-///   the `corpsePersistence` option (Engine.dll `Options`, in
-///   minutes: `× 60000` ms) — none with `ignoreDissolveDelay` — then the mesh dissolves
-///   over `dissolveTime` s and the handler finishes (`Update`);
-/// - `DissolveOnCallback`: the dissolve starts at the death animation's
-///   `dissolve` callback (`AnimationCallback`);
-/// - `Fade`: `FadeActorDeathHandler` fades over `dissolveTime` s at once;
-/// - `Delete`: hidden when the handler is processed (`PostProcess`);
-/// - `Corpse`: no handler, `Character.destroyOnDeath` cleared: the body stays for good;
-/// - anything else (`None`, `PlayEffect`): only `DefaultDeathHandler`, which finishes when the death animation /
-///   ragdoll has (`Update`); the body goes [`DESTROY_DELAY`] later. PORT: the countdown runs from
-///   the death (the animation's length is not added).
+/// Seconds a monster's or pet's body stays after death (`f32::INFINITY`: until an animation callback starts it,
+/// or for good). `Character::InitialUpdate` picks the death handler by `deleteBehavior`:
+/// - `Dissolve`: waits the `corpsePersistence` option (minutes; none with `ignoreDissolveDelay`), then dissolves
+///   over `dissolveTime` s;
+/// - `DissolveOnCallback`: the dissolve starts at the death animation's `dissolve` callback;
+/// - `Fade`: fades over `dissolveTime` s at once;
+/// - `Delete`: hidden when the handler is processed;
+/// - `Corpse`: no handler, `destroyOnDeath` cleared: the body stays for good;
+/// - anything else: only `DefaultDeathHandler`, finished with the death animation; the body goes
+///   [`DESTROY_DELAY`] later. PORT: the countdown runs from the death (the animation's length is not added).
 ///
-/// The removal itself is `DestroyMe` [`DESTROY_DELAY`] after the handlers finish; a dissolved / faded / hidden
-/// body is already invisible then, so the port removes those at the handler's end.
+/// A dissolved / faded / hidden body is already invisible when `DestroyMe` runs, so the port removes those at the
+/// handler's end.
 pub fn corpse_time(rec: &gd_formats::arz::Record, persistence_min: f32) -> f32 {
     let dissolve = rec.f32("dissolveTime").unwrap_or(0.0).max(0.0);
     match rec.str("deleteBehavior").unwrap_or("") {
@@ -149,30 +129,21 @@ pub fn corpse_time(rec: &gd_formats::arz::Record, persistence_min: f32) -> f32 {
     }
 }
 
-/// The record's death-handler presentation data, kept on the body from the
-/// death; the presentation dissolves / fades the body from it and the
-/// [`Dead`] countdown (grimdawn `monsters::draw_corpses`)
-/// (`Character::InitialUpdate` picks the handler by
-/// `deleteBehavior`, [`corpse_time`];
-/// `DissolveActorDeathHandler::StartDissolve` reads the
-/// `dissolve*` fields). Inserted for monsters and pets at the death (the
-/// player respawns; its body is not dissolved).
+/// The record's death-handler presentation data (`deleteBehavior`, `dissolve*`), kept on a monster's or pet's
+/// body from the death.
 #[derive(Component, Clone, Debug)]
 pub struct Corpse {
-    /// `deleteBehavior`: `Dissolve`, `DissolveOnCallback`, `Fade`, `Delete`,
-    /// `Corpse`, or none / `PlayEffect` (the default handler).
+    /// `Dissolve`, `DissolveOnCallback`, `Fade`, `Delete`, `Corpse`, or none / `PlayEffect` (the default handler).
     pub delete_behavior: String,
-    /// `dissolveTime` (s): the dissolve / fade duration.
+    /// The dissolve / fade duration (s).
     pub dissolve_time: f32,
-    /// `dissolveTexture`.
     pub dissolve_texture: Option<String>,
-    /// `dissolveColorR/G/B` (0..255).
+    /// 0..255.
     pub dissolve_color: [f32; 3],
-    /// `dissolveEffect` (the particle pak played while dissolving).
+    /// Particle pak played while dissolving.
     pub dissolve_effect: Option<String>,
-    /// `dissolveLight` (the light that shrinks with the dissolve).
+    /// The light that shrinks with the dissolve.
     pub dissolve_light: Option<String>,
-    /// `ignoreDissolveDelay`: skip the `corpsePersistence` wait.
     pub ignore_dissolve_delay: bool,
     /// The `corpsePersistence` option (minutes) at the death.
     pub persistence_min: f32,
@@ -198,14 +169,9 @@ impl Corpse {
     }
 }
 
-/// Dead monsters and pets stay for their [`corpse_time`]; the player respawns.
-/// The player's death ends its move: `ControllerPlayer::CharacterIsDying` hands the death
-/// to the running controller state (`ControllerState::CharacterIsDying`), so a `MoveTo` / `MoveToSkill` state is
-/// left, and
-/// `Character::StartRespawn` teleports (`TeleportToLocation`). PORT: the states' own handlers were
-/// not decompiled; the pending walk ([`crate::movement::MovePath`]) and skill move
-/// ([`crate::movement::MoveToUseSkill`]) are dropped at the death and again with the respawn teleport, as every
-/// other teleport does. What the death clears of DoTs and crowd control: `crate::afflictions`, "Death".
+/// Dead monsters and pets stay for their [`corpse_time`]; the player respawns (`Character::StartRespawn`
+/// teleports). PORT: the controller states' death handlers were not decompiled; the pending walk and skill move are
+/// dropped at the death and again with the respawn teleport.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dead_bodies(
     mut commands: Commands,
@@ -247,7 +213,6 @@ pub(super) fn dead_bodies(
         if (dead.is_added() || dissolve_cb.contains(&e))
             && let Some(rec) = record.and_then(|r| data.db.get(r))
         {
-            // (`Added<Dead>` in a second query would conflict with `&mut Dead`.)
             if dead.is_added() {
                 let persistence = options.float("corpsePersistence");
                 dead.timer = corpse_time(rec, persistence);
@@ -267,8 +232,7 @@ pub(super) fn dead_bodies(
             continue;
         }
         if is_player {
-            // The Crucible keeps a dead player down while respawn is disabled
-            // (`Game.DisableRespawn`, [`crate::survival::respawn_control`]).
+            // The Crucible keeps a dead player down while respawn is disabled (`Game.DisableRespawn`).
             if held && dead.timer <= 0.0 {
                 dead.timer = 0.0;
                 continue;
@@ -286,7 +250,7 @@ pub(super) fn dead_bodies(
                         .unwrap_or(s.0.y);
                     tf.translation = Vec3::new(s.0.x, y, s.0.z);
                 }
-                // The respawn teleport ends a throw still running (`Character::StartRespawn`).
+                // `Character::StartRespawn` ends a throw still running.
                 commands
                     .entity(e)
                     .try_remove::<(Dead, crate::ragdoll::Ragdoll)>();
@@ -297,7 +261,6 @@ pub(super) fn dead_bodies(
     }
 }
 
-/// Drops the walk and the pending skill move of `e` ([`dead_bodies`]).
 fn end_moves(commands: &mut Commands, e: Entity, path: Option<&mut crate::movement::MovePath>) {
     if let Some(path) = path {
         path.points.clear();
@@ -307,15 +270,8 @@ fn end_moves(commands: &mut Commands, e: Entity, path: Option<&mut crate::moveme
         .try_remove::<crate::movement::MoveToUseSkill>();
 }
 
-/// Life regen for every living character: `CharacterBio::Update`
-/// runs for all of them (no player gate — monsters and pets
-/// recover between pulls; their `life_regen_per_sec` is the bio equation,
-/// `gd_sim::stats::BioStore::life_regen_per_sec`). Negative regen is a
-/// non-lethal drain (the update's `LifeRegenValue < 0` branch zeroes it
-/// when it would take the life to 0, or the life is already ≤ 1). The
-/// constitution / accelerated regen stays player-only
-/// (`crate::constitution`). PORT: the name stays `player_regen` for
-/// `combat/mod.rs`'s chain.
+/// Life regen for every living character (`CharacterBio::Update`, monsters and pets included). Negative regen is
+/// a non-lethal drain (zeroed when it would take the life to 0, or the life is already ≤ 1).
 pub(super) fn player_regen(
     time: Res<Time>,
     mut q: Query<&mut Combatant, (With<Character>, Without<Dead>)>,
@@ -338,23 +294,16 @@ pub(super) fn player_regen(
     }
 }
 
-/// The candidate frustum's stand-in margin ([`pick_monster`], [`pick_enemy`]): the ray passes within 0.4 m of a
-/// body box (the engine's sub-frustum is 0.011 of the viewport wide each way; the frustum needs the camera).
+/// The candidate frustum's stand-in: the ray passes within 0.4 m of a body box (the engine's sub-frustum is 0.011
+/// of the viewport wide each way).
 const NEAR_CURSOR: f32 = 0.4;
-/// The widened margin while a held click is pathing to an enemy / repeated
-/// (`InGameUI::HandleMouseEvent` sets the frustum factor 0.035 for
-/// `IsPathing || IsCommandRepeated`): 0.4 m × 0.035 / 0.011.
+/// While a held click is pathing to an enemy / repeated (`InGameUI::HandleMouseEvent`: frustum factor 0.035).
 const NEAR_CURSOR_HELD: f32 = NEAR_CURSOR * (0.035 / 0.011);
 
-/// The monster (alive) under the cursor ray. Grim Dawn.exe `InGameUIActorCapture::PickObjectUnderCursor`: of
-/// the candidates near the cursor, the one whose mesh the ray meets first (`Actor::GetIntersection`:
-/// its posed, scaled hit boxes, else its object-space box, under its coords); none: the one whose centre of mass
-/// is nearest to the ray. The candidates (`Game::GatherCursorCandidates`) are the actors whose box meets a
-/// sub-frustum around the
-/// cursor, 0.011 of the viewport wide each way (0.035 while a held click is pathing to an enemy).
-/// PORT: the world box ([`Combatant::body_box`], the posed hit boxes' union) stands in for the mesh test, and
-/// the candidates are the boxes the ray passes within 0.4 m of (the frustum needs the camera); the centre of mass
-/// is the box centre.
+/// The monster (alive) under the cursor ray (`InGameUIActorCapture::PickObjectUnderCursor`): of the candidates
+/// near the cursor, the one whose mesh the ray meets first; none: the one whose centre of mass is nearest to the
+/// ray. PORT: the world box ([`Combatant::body_box`]) stands in for the mesh test and the frustum, its centre for
+/// the centre of mass.
 pub fn pick_monster<'a>(
     ray: Ray3d,
     monsters: impl Iterator<Item = (Entity, &'a GlobalTransform, &'a Combatant)>,
@@ -385,12 +334,9 @@ pub fn pick_monster<'a>(
     hit.or(near).map(|b| b.1)
 }
 
-/// The hover / combat enemy under the cursor: of the enemies the cursor touches (their posed body box,
-/// [`pick_monster`]'s candidate test), the one nearest to the **player**, one pick feeding both the hover and the
-/// attack ([`crate::player_orders`]). Grim Dawn.exe picks nearest to the player only on the controller targeting's
-/// candidates (`InGameUI::PickNearestEnemy`); its mouse path picks the mesh hit, else the one nearest to the ray
-/// (`InGameUIActorCapture::PickObjectUnderCursor`, [`pick_monster`]). `wide` widens
-/// the candidate margin while a held click is pathing / repeated ([`NEAR_CURSOR_HELD`], the stickiness).
+/// The hover / combat enemy under the cursor: of the enemies the cursor touches, the one nearest to the player.
+/// PORT: the engine picks nearest to the player only for controller targeting (`InGameUI::PickNearestEnemy`);
+/// its mouse path is [`pick_monster`]'s. `wide`: [`NEAR_CURSOR_HELD`].
 pub fn pick_enemy<'a>(
     ray: Ray3d,
     monsters: impl Iterator<Item = (Entity, &'a GlobalTransform, &'a Combatant)>,

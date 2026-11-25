@@ -1,8 +1,5 @@
-//! Curses (`gd_game::skill_buffs` module docs): a `Skill_AttackBuff` lands
-//! its `SkillBuff_Debuf` record on the foes in radius as a received buff
-//! (record, level, caster, time left) under `CreateUpdateSkillBuff`'s rule;
-//! its stats count in the holder's profile, and it runs out. A level-1
-//! zombie curses the player.
+//! A `Skill_AttackBuff` lands its `SkillBuff_Debuf` record on the foes in radius as a received buff under
+//! `CreateUpdateSkillBuff`'s rule; its stats count in the holder's profile, and it runs out.
 use crate::common::ZOMBIE;
 use bevy::prelude::*;
 use gd_game::testing::TestGame;
@@ -10,9 +7,8 @@ use gd_game_core::casting::{Casting, Kind, ProcCast};
 use gd_game_core::combat::Combatant;
 use gd_game_core::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 
-/// The Necromancer's Curse of Vitality: `skillActiveDuration` 5, radius 10,
-/// `characterLifeModifier` -12 (-25 from level 13), vitality damage,
-/// `skillCastSound`.
+/// The Necromancer's Curse of Vitality: `skillActiveDuration` 5, radius 10, `characterLifeModifier` -12 (-25 from
+/// level 13).
 const CURSE: &str = "records/skills/nonplayerskills/factionskills/necro_curseofvitality.dbr";
 const CURSE_BUFF: &str =
     "records/skills/nonplayerskills/factionskills/necro_curseofvitality_buff.dbr";
@@ -26,7 +22,6 @@ fn game() -> Option<(TestGame, Entity, Entity)> {
     Some((g, p, z))
 }
 
-/// The zombie's curse at the player.
 fn curse(g: &mut TestGame, z: Entity, p: Entity, level_index: usize) {
     let point = g.get::<Transform>(p).translation;
     g.app.world_mut().write_message(ProcCast {

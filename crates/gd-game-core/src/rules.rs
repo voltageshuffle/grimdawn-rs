@@ -5,32 +5,27 @@ use gd_formats::arz::Record;
 use gd_sim::actor::Rules;
 use std::sync::Arc;
 
-/// `records/game/gameengine.dbr` (`GameEngine::LoadFromDatabase`), parsed once per mounted
-/// database ([`GameData::engine`](crate::data::GameData::engine)) instead of looked up per hit or cast. Defaults are the stock values.
+/// `records/game/gameengine.dbr` (`GameEngine::LoadFromDatabase`). Defaults are the stock values.
 pub struct GameEngineRules {
-    /// The record itself, for the readers of a whole record (`ComboTable::from_engine`) and of a field
-    /// chosen per use (the per-type damage fx paks).
+    /// For readers of the whole record or of a field chosen per use.
     pub record: Option<Record>,
-    /// `meleeRange` / `shortRange` / `moderateRange` / `longRange` / `maximumRange` / `bossRange`: the
-    /// `distanceProfile` ranges ([`Self::profile_range`]).
+    /// The `distanceProfile` ranges, in `PROFILES` order.
     ranges: [f32; 6],
     /// `absoluteRunSpeedCapMax` (%).
     pub absolute_run_cap: f32,
-    /// `alertDistance` (`GameEngine.alertDistance`): an enemy nearer than this is charged without the alert.
+    /// `alertDistance`: an enemy nearer than this is charged without the alert.
     pub alert_distance: f32,
-    /// `meleeTargetDistance` (stock 2.4): the melee hit re-check's slack, the 3-D centre distance minus
-    /// both radii (`Skill::IsTargetInRange` with `GameEngine.meleeTargetDistance`;
-    /// `SkillActivated::ExecuteMeleeAttack` re-checks it at the hit callback).
+    /// `meleeTargetDistance`: the melee hit re-check's slack over both radii (`Skill::IsTargetInRange`,
+    /// re-checked at the hit callback by `SkillActivated::ExecuteMeleeAttack`).
     pub melee_target_distance: f32,
-    /// `meleeAutoTargetDistance` (stock 4.0): the cone fallback's reach over the radii when the primary
-    /// target stepped out of melee reach (`ExecuteMeleeAttack` → `GameEngine::GetTargetsInCone`).
+    /// `meleeAutoTargetDistance`: the cone fallback's reach over the radii when the primary target
+    /// left melee reach (`ExecuteMeleeAttack` → `GameEngine::GetTargetsInCone`).
     pub melee_auto_target_distance: f32,
     /// `miniPetLimit` (0: none).
     pub mini_pet_limit: usize,
     /// `freezeDamageHandler` / `petrifyDamageHandler`: the icy look's handler records.
     pub freeze_handler: String,
     pub petrify_handler: String,
-    /// `aetherCrystal`: the aether crystal item record.
     pub aether_crystal: Option<String>,
 }
 
@@ -75,7 +70,7 @@ impl GameEngineRules {
         self.ranges[i]
     }
 
-    /// `longRange`: a ranged weapon's reach.
+    /// A ranged weapon's reach.
     pub fn long_range(&self) -> f32 {
         self.ranges[3]
     }
@@ -84,7 +79,6 @@ impl GameEngineRules {
 #[derive(Resource, Clone)]
 pub struct CombatRules(pub Arc<Rules>);
 
-/// The session's rules failed to load; stops `gd_game::rules::load_rules` retrying (and logging) every frame.
-/// Removed with the session.
+/// The session's rules failed to load; stops `gd_game::rules::load_rules` retrying every frame.
 #[derive(Resource)]
 pub struct RulesFailed;

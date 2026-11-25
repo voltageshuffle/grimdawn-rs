@@ -1,8 +1,7 @@
 //! Combat profiles of the player and of monsters, and one attack between two
 //! of them ([`attack_linked`]), built from the stats/combat/items rules.
 //!
-//! The pieces are the ones they call (bio equations, accumulator,
-//! OA/DA, `take_attack`). Monster skills: `Monster::Load` →
+//! Monster skills: `Monster::Load` →
 //! `SkillManager::LoadSkills` (34 slots, stops at the first empty
 //! `skillNameN`; `skillLevelN` a number or an equation in `charLevel`,
 //! `SkillManager::ResolveEquationVariable`, truncated to an integer). A
@@ -16,7 +15,7 @@
 //! adds its % to every hit type's modifier (physical, pierce, cold, fire,
 //! acid, lightning, vitality, chaos, aether) and every DoT type's (physical,
 //! cold … aether, bleeding), plus a marker entry whose `Execute` does
-//! nothing (see `hit_mod`).
+//! nothing.
 //!
 //! Damage over time is collected per owning source ([`Profile::dot_sources`]:
 //! each item instance, passive / pak record, the attacking skill, each global
@@ -29,17 +28,8 @@
 //!
 //! The derived combat parameters an attack reads (the global groups'
 //! attribute split, the chance-gated instances, the defender's resistances /
-//! armor) are memoized per profile ([`Profile::combat_cache`]); gd-game
-//! rebuilds the profile on `ProfileDirty`, so the cache never outlives its
-//! inputs.
-//!
-//! Submodules: `rules` (game-wide rule records, speed caps), `display` (what
-//! the sheet, tooltips and rollovers show), `retaliation`.
-//!
-//! PERF-36: the attack path reuses per-thread scratch buffers (AttackScratch,
-//! combat::ConvertScratch) for its small collections instead of allocating per
-//! hit. They hold no gameplay value between attacks (cleared on take and
-//! return), so totals / CombatCache remain the single source.
+//! armor) are memoized per profile ([`Profile::combat_cache`]); a changed
+//! profile is rebuilt, never mutated after its first attack.
 use crate::attributes::{CharAttr, CombatType};
 use crate::combat::{
     self, AttackKind, AttackerScaling, DamageScale, Defender, Defense, ReductionInfo, WeaponDamage,
@@ -103,8 +93,7 @@ pub struct Profile {
     /// blocks with the left hand's shield (`EquipManager::GetLeftHandShield`).
     pub shield: Option<combat::Shield>,
     /// Life and energy per second the active self buffs cost: the sum of
-    /// [`active_cost`] over them (the caller's, `gd_game::player::Loadout::profile_with`; 0 from
-    /// [`player_from_items`]).
+    /// [`active_cost`] over them (0 from [`player_from_items`]).
     pub active_costs: [f32; 2],
     /// The record's `characterRacialProfile` races ([`crate::racial`]).
     pub race: Vec<String>,
@@ -149,7 +138,7 @@ impl Profile {
     }
 }
 
-/// One attack's reading of a [`Profile`], in place (no copy of it): a dual wielder's off-hand
+/// One attack's reading of a [`Profile`]: a dual wielder's off-hand
 /// swing reads the off-hand weapon's flat damage instead of the main weapon's
 /// ([`Profile::off_hand`]), a charged skill's own attack reads `totals` without that skill's
 /// passive offensive modifiers ([`Attacker::without_skill`]). [`Attacker::total`] is the attack's
@@ -218,18 +207,11 @@ impl Attacker<'_> {
     }
 }
 
-/// One active skill's share of `SkillManager::GetActiveLifeCost` / `GetActiveManaCost` (life, energy per
-/// second). `SkillManager::Update`: for every `SkillActivatedBuffSelf` skill
-/// ([`crate::skills::ClassInfo::buff_self`]) whose
-/// `Skill.active` byte is set, the virtual `Skill_Modifier::GetSkillModifierData` (shared by
-/// every skill: `Skill::GetSkillModifierData` at `GetCurrentLevel`, modifiers included) is
-/// summed into `SkillManager.activeLifeCost` / `SkillManager.activeManaCost`: the skill's PROFILE
-/// (`GetSkillProfile`, a wrapper's `buffSkillName` record:
-/// the devotion `tier3_08g_skill` keeps its cost in `tier3_08g_skill_buff`) at its level, plus each learned
-/// modifier (`Skill.modifiers`) and gear skill modifier (`Skill.itemModifiers`) at theirs. `prof` is that
-/// profile record, `mods` the
-/// modifiers (record, level index). No reduction applies (`skillManaCostReduction` is the cast costs').
-/// Stock: no `Skill_Modifier` record has a `skillActive*Cost`, so `mods` adds 0 there.
+/// One active skill's share of `SkillManager::GetActiveLifeCost` / `GetActiveManaCost` (life, energy per second):
+/// `SkillManager::Update` sums `Skill::GetSkillModifierData` of every active `SkillActivatedBuffSelf` skill
+/// ([`crate::skills::ClassInfo::buff_self`]): its profile record `prof` (`GetSkillProfile`, a wrapper's
+/// `buffSkillName` record) at its level plus each learned and gear modifier in `mods` (record, level index) at
+/// theirs. No reduction applies (`skillManaCostReduction` is the cast costs').
 pub fn active_cost(prof: &Record, li: usize, mods: &[(Record, usize)]) -> [f32; 2] {
     let v = |r: &Record, k: &str, li: usize| crate::stats::level_value(r, k, li).unwrap_or(0.0);
     let mut c = [
@@ -255,12 +237,9 @@ pub fn active_cost(prof: &Record, li: usize, mods: &[(Record, usize)]) -> [f32; 
 /// of" attribute, picked by `rand × Σ chances` over their own chances in
 /// list order; both skip their own chance roll (the `bool` argument).
 ///
-/// On the character sheet (`CombatDisplayAccumulator`, whose random state
-/// (`CombatDisplayAccumulator.randomState`) starts at 0, so every draw is 0): the roll always passes, the
-/// "all" attributes count × the global chance (`GetChanceMultiplier`
-/// returns `CombatAttributeAccumulator.globalChance` × 0.01 while it is set) and the "one of" pick is always the
-/// first in load order ([`crate::attributes::DAMAGE_LOAD_ORDER`]) at its
-/// own chance (the global chance is reset to 0 before the pick).
+/// On the character sheet (`CombatDisplayAccumulator`, whose random state starts at 0, so every draw is 0): the roll
+/// always passes, the "all" attributes count × the global chance (`GetChanceMultiplier`) and the "one of" pick is
+/// always the first in load order ([`crate::attributes::DAMAGE_LOAD_ORDER`]) at its own chance.
 ///
 /// Skill / devotion / pak records keep their groups per record
 /// ([`add_fields`]), items per damage store ([`item_global_groups`]); a
@@ -290,17 +269,10 @@ pub struct HandFlats {
     pub off_dots: Vec<DotSource>,
 }
 
-/// One owner's damage-over-time fields (`offensiveSlowX*` of the damage
-/// types), kept apart from `totals` so an attack deals them as their own
-/// source: the defender's `DotManager` keys slots by the owning object +
-/// attribute (`DamageAttributeDur::AddDamageToAccumulator`:
-/// `(GetObjectId(owner), attribute_index)`;
-/// `ItemEquipment::GetOffensiveDamageAttributes` passes the
-/// item's id, `Skill_Passive::CollectPassiveOffensiveDamageAttributes`
-/// the skill's), so distinct owners' same-type DoTs stack and
-/// only the same owner's re-application keeps max. PORT: one entry per owner
-/// and damage type (the engine keeps one per attribute instance; an item's
-/// base and affix DoTs of one type are summed here before the key).
+/// One owner's damage-over-time fields (`offensiveSlowX*` of the damage types), kept apart from `totals` so an attack
+/// deals them as their own source (`ItemEquipment::GetOffensiveDamageAttributes` passes the item's id,
+/// `Skill_Passive::CollectPassiveOffensiveDamageAttributes` the skill's). PORT: one entry per owner and damage type
+/// (the engine keeps one per attribute instance; an item's base and affix DoTs of one type are summed here).
 #[derive(Debug, Clone, Default)]
 pub struct DotSource {
     /// The owner's stable id ([`item_dot_owner`] for an item instance,
@@ -311,17 +283,14 @@ pub struct DotSource {
     pub fields: BTreeMap<String, f32>,
 }
 
-/// A DoT's slot key: the owner id hashed with the attribute's field (the
-/// engine's `(GetObjectId(owner), attribute_index)`; the port hashes with
-/// [`gd_formats::collections::hash_one`], no allocation). The value is
-/// process-local (never saved): only equality matters.
+/// A DoT's slot key: the owner id hashed with the attribute's field (the engine's
+/// `(GetObjectId(owner), attribute_index)`). Process-local (never saved): only equality matters.
 pub fn dot_source_key(owner: u64, field: &str) -> u64 {
     gd_formats::collections::hash_one((owner, field))
 }
 
-/// An item instance's owner id: its base, affixes and seeds (the save's
-/// `Item` identity — two rolls of the same base are distinct owners), hashed
-/// with the port's hasher ([`gd_formats::collections::hash_one`]).
+/// An item instance's owner id: its base, affixes and seeds hashed (two rolls of the same base are distinct
+/// owners).
 pub fn item_dot_owner(item: &gd_formats::save::item::Item) -> u64 {
     gd_formats::collections::hash_one((
         &item.base_name,
@@ -398,19 +367,10 @@ impl Profile {
     }
 }
 
-/// A profile's memoized derived combat parameters ([`Profile::combat_cache`]):
-/// the global groups' attribute split ([`global_parts`]), the chance-gated
-/// modifiers and instances of `totals` ([`chance_key`]), the defender's
-/// profile-derived defenses and scalar lookups ([`defender`]), and the dense
-/// per-source offense arrays ([`SLOTS`], [`SlotVals`]) the attack's
-/// `collect_source` reads — gear (main / off hand), each DoT source, each global
-/// group's damage store and each gated instance — so an attack rolls over floats
-/// in catalog order instead of scanning the attribute families with string
-/// lookups per source. `totals` stays the single raw source; these are derived
-/// from it once. Built once per profile; gd-game rebuilds the profile on
-/// `ProfileDirty`, so the cache never outlives its inputs. A profile must be
-/// complete before the first attack reads it (the builders finish mutating it
-/// first).
+/// A profile's memoized derived combat parameters ([`Profile::combat_cache`]): the global groups' attribute split
+/// ([`global_parts`]), the chance-gated modifiers and instances of `totals` ([`chance_key`]), the defender's
+/// profile-derived defenses ([`defender`]) and the dense per-source offense values ([`SLOTS`], [`SlotVals`]), all
+/// derived from `totals`. A profile must be complete before the first attack reads it.
 #[derive(Debug, Clone)]
 pub struct CombatCache {
     groups: Vec<CachedGroup>,
@@ -422,8 +382,7 @@ pub struct CombatCache {
     /// Chance-gated retaliation instances ([`chance_instances`]).
     retaliation_instances: Vec<(f32, BTreeMap<String, f32>)>,
     /// Whether any retaliation attribute is present in `totals` (a zero
-    /// total still counts) or a gated instance exists: [`retaliate`]'s
-    /// early-out, so a retaliation-less defender skips the catalog scan.
+    /// total still counts) or a gated instance exists: [`retaliate`]'s early-out.
     has_retaliation: bool,
     defenses: Vec<Defense>,
     negative_damage_mult: f32,
@@ -480,9 +439,7 @@ struct CachedGroup {
     one_of_dmg: Vec<[SlotVals; OFFENSE_SLOTS]>,
 }
 
-/// One global store's offense attributes, split once per profile so an
-/// attack only rolls and accumulates (no per-hit catalog scan or string
-/// allocation).
+/// One global store's offense attributes, split by kind.
 #[derive(Debug, Clone, Default)]
 struct CachedAttrs {
     /// Modifier fields (`OffenseModifier` / `OffenseDurationModifier`).
@@ -523,7 +480,6 @@ fn cache_attrs(fields: &BTreeMap<String, f32>) -> CachedAttrs {
 }
 
 impl Profile {
-    /// The profile's memoized combat parameters ([`CombatCache`]).
     pub fn combat_cache(&self) -> &CombatCache {
         self.combat_cache.get_or_init(|| {
             use crate::attributes::AttrFamily as F;
@@ -836,15 +792,13 @@ fn offense_defs() -> impl Iterator<Item = &'static crate::attributes::FieldDef> 
     DEFS.iter().copied()
 }
 
-/// One offense attribute slot of [`SLOTS`]: a catalog definition [`collect_source`] reads, in the
-/// exact family/field iteration order the per-attack rolls follow (OffenseBase, Offense,
-/// OffenseDuration, OffenseCrowdControl). The dense per-source arrays ([`SlotVals`]) are indexed by
-/// these slots, so an attack reads floats instead of scanning the catalog with string lookups.
+/// One offense attribute slot of [`SLOTS`]: a catalog definition [`collect_source`] reads, in the per-attack roll
+/// order (OffenseBase, Offense, OffenseDuration, OffenseCrowdControl). [`SlotVals`] is indexed by these slots.
 #[derive(Clone, Copy)]
 struct SlotDef {
     ty: CombatType,
     kind: SlotKind,
-    /// [`SlotKind::Dot`]'s outcome filter (precomputed from `ty`).
+    /// [`SlotKind::Dot`]'s outcome filter.
     dot: DotKind,
     /// The min field (also the DoT slot key's field, [`dot_source_key`]).
     fmin: &'static str,
@@ -967,8 +921,7 @@ static SLOTS: LazyLock<Vec<SlotDef>> = LazyLock::new(|| {
     v
 });
 
-/// A source's dense offense values: read each slot's fields once (at cache build, or per attack for
-/// the skill source) instead of per-field string lookups in [`collect_source`].
+/// A source's dense offense values, one per [`SLOTS`] entry.
 fn dense_from(get: impl Fn(&str) -> f32) -> [SlotVals; OFFENSE_SLOTS] {
     let mut out = [SlotVals::default(); OFFENSE_SLOTS];
     for (i, s) in SLOTS.iter().enumerate() {
@@ -983,8 +936,7 @@ fn dense_from(get: impl Fn(&str) -> f32) -> [SlotVals; OFFENSE_SLOTS] {
     out
 }
 
-/// A record's offense field values at a level index, cached per record ([`Record::derived`] slot 1)
-/// so the skill source ([`skill_offense_vals`]) combines array reads, not record scans, per attack.
+/// A record's offense field values at a level index, cached per record ([`Record::derived`] slot 1).
 #[derive(Default)]
 struct RecordOffenseFields(parking_lot::Mutex<HashMap<usize, Arc<[SlotVals; OFFENSE_SLOTS]>>>);
 
@@ -1187,9 +1139,8 @@ pub fn item_global_groups(attrs: &[crate::items::resolve::Attr], owner: u64) -> 
         .collect()
 }
 
-/// What [`add_fields`] adds for one record at one level index: computed once per (record, level index, name) and
-/// kept on the record ([`Record::derived`]), so a profile rebuild (a monster gaining an aura, a player swapping an
-/// item) adds cached sums instead of walking every field of every record again.
+/// What [`add_fields`] adds for one record at one level index, cached on the record ([`Record::derived`]) per
+/// (level index, name).
 struct Contribution {
     /// Summed into `totals` (chance-gated fields under their `field@chance` keys).
     totals: Vec<(String, f32)>,
@@ -1332,7 +1283,7 @@ fn base_physical(t: impl Fn(&str) -> f32) -> ((f32, f32), f32) {
 
 /// Conversions of resolved item attributes (`ConversionAttribute`: the
 /// percentage plus `conversionInType:<name>` / `conversionOutType:<name>`
-/// markers, see `items::resolve::conversions`).
+/// markers).
 pub fn attr_conversions(
     attrs: &[crate::items::resolve::Attr],
 ) -> Vec<(CombatType, CombatType, f32)> {
@@ -1380,7 +1331,6 @@ pub fn monster_skill_levels(rec: &Record, level: i32) -> Vec<(String, u32)> {
         .collect()
 }
 
-/// `skillName1..=34` keys (a static table, no per-spawn `format!`).
 static SKILL_NAME_KEYS: LazyLock<[String; 34]> =
     LazyLock::new(|| std::array::from_fn(|i| format!("skillName{}", i + 1)));
 
@@ -1410,11 +1360,8 @@ pub fn monster_with(
 
 /// [`monster_with`] plus the items the monster wears (`Character::LoadLoot`
 /// equips them, so their attributes count like a player's gear; the main
-/// weapon's base damage only, as for players). Armor protects its own body
-/// region, as for players (the region is the item's, set by the
-/// `ArmorProtective_*` constructors, e.g. `ArmorProtective_Head` region 2;
-/// region chances are `Character::GetCombatRegionChance`, shared by every
-/// character).
+/// weapon's base damage only). Armor protects its own body region, as for
+/// players (set by the `ArmorProtective_*` constructors).
 pub fn monster_full(
     db: &Database,
     rules: &Rules,
@@ -1653,9 +1600,7 @@ fn player_inner(
     let original =
         [CharAttr::Physique, CharAttr::Cunning, CharAttr::Spirit].map(|a| bio.base.get(a));
     // PORT: the pc record's own `characterLifeRegen` / `characterManaRegen`
-    // (1 each) do not reach the player's totals: with them the sheet reads
-    // 33.59 / 296.03 where the real sheet of the same save reads 32.59 /
-    // 270.22 (life 15 from the amulet alone; energy 20.2 flat at +130 %).
+    // (1 each) do not reach the player's totals (the engine's sheet leaves them out).
     bio.base.value[CharAttr::LifeRegen as usize] = 0.0;
     bio.base.value[CharAttr::EnergyRegen as usize] = 0.0;
     if let Some([p, c, s, l, e]) = bio_values {
@@ -1791,10 +1736,9 @@ pub struct Hit {
     /// critical tier (`CalculateDamageModifier`).
     pub multiplier: f32,
     pub tier: u32,
-    /// The attack's style (`ParametersCombat.attackStyle`): `afflictions::receive`
-    /// reads it for the sleep wake (`DurationDamageManager::BeginNewAttack`
-    /// runs for every style but retaliation / debuff /
-    /// reflection).
+    /// The attack's style (`ParametersCombat.attackStyle`): the sleep wake
+    /// (`DurationDamageManager::BeginNewAttack`) runs for every style but
+    /// retaliation / debuff / reflection.
     pub kind: AttackKind,
     /// Absolute damage of the hit ([`combat::HitResult::total`]).
     pub total: f32,
@@ -1915,7 +1859,7 @@ pub struct SkillUse<'a> {
     /// `AddModifierOffensiveDamageAttributes`, `CollectLocalWeaponDamage`).
     pub mods: Vec<(&'a Record, usize)>,
     /// The weapon-pool skill a `Skill_WPAttack` runs under (Fire Strike,
-    /// Cadence…, see `weapon_pool`): its damage (with its modifiers) adds,
+    /// Cadence…): its damage (with its modifiers) adds,
     /// its weapon % multiplies (`Skill_WPAttack::CollectLocalWeaponDamage`).
     pub parent: Option<Box<SkillUse<'a>>>,
     /// Scale of the record's own fields (not its modifiers'): Righteous
@@ -1934,8 +1878,7 @@ pub struct SkillUse<'a> {
     /// classes).
     pub style: AttackKind,
     /// The combo charge bonus of this use, (100 + multiplier) % (the
-    /// `DamageScaleInfo.comboFactor`, applied after the % modifiers:
-    /// `gd_sim::combo`); 0 = none.
+    /// `DamageScaleInfo.comboFactor`, applied after the % modifiers); 0 = none.
     pub combo: f32,
     /// The attacker's worn weapons (right, left), when known: a modifier's
     /// `weaponDamagePct` counts only if they suit the modifier itself.
@@ -1999,8 +1942,7 @@ pub fn range_scale(rec: &Record, distance: f32) -> Option<f32> {
 /// each chance-gated reduction instance (`SkillAttribute::GetTotalValue`
 /// rolls a chance inside (0, 100) per call); pass `|_| false`
 /// for the plain value the hot slot's usable state shows (it asks without
-/// the chance part). The one cost function of the cast request and the
-/// energy absorption (`ParametersCombat.manaCost`).
+/// the chance part).
 pub fn skill_energy_cost(
     rec: &Record,
     level_index: usize,
@@ -2127,8 +2069,7 @@ impl<'a> SkillUse<'a> {
     /// character's retaliation modifiers; that part goes through the attack's
     /// conversions and `Process` (no attribute scaling, the racial / combo
     /// `DamageScaleInfo`) and joins the attack's damage, so it lands with the
-    /// attack's hit roll and the defender's defences. The modifiers: see
-    /// [`retaliation_damage`].
+    /// attack's hit roll and the defender's defences.
     pub fn retaliation_pct(&self) -> f32 {
         let k = "retaliationDamagePct";
         level_value(self.record, k, self.level_index).unwrap_or(0.0)
@@ -2139,8 +2080,7 @@ impl<'a> SkillUse<'a> {
                 .sum::<f32>()
     }
     /// `offensiveDamageMultModifier` of the skill, its modifiers and its
-    /// parent: one multiplier per record, max(1 + %, 0) each (see
-    /// `collect_damage`).
+    /// parent: one multiplier per record, max(1 + %, 0) each.
     fn damage_mult(&self) -> f32 {
         let k = "offensiveDamageMultModifier";
         let f = |v: f32| (1.0 + v * PCT).max(0.0);
@@ -2160,8 +2100,7 @@ impl<'a> SkillUse<'a> {
         self.conversions_into(&mut v);
         v
     }
-    /// [`conversions`](Self::conversions) appended into a caller-held buffer
-    /// (the attack path's scratch, PERF-36), in the same order.
+    /// [`conversions`](Self::conversions) appended into a caller-held buffer, in the same order.
     fn conversions_into(&self, out: &mut Vec<(CombatType, CombatType, f32)>) {
         conversions_of_into(self.record, self.level_index, out);
         for (r, li) in &self.mods {
@@ -2174,28 +2113,20 @@ impl<'a> SkillUse<'a> {
 }
 
 /// The global groups' modifier fields summed for one attack: (field, value),
-/// first-seen order, one entry per field (a small linear list — PERF-36 reuses
-/// its buffer; lookups return the same sum the `BTreeMap` held).
+/// first-seen order, one entry per field.
 type GroupMods = Vec<(&'static str, f32)>;
 
 /// One global group's damage source for [`collect_source`]: the profile's cached
-/// dense values in play (indices into [`CombatCache`]'s groups, so the buffer is
-/// scratch-reusable), a chance-weighted copy on the sheet (its own chance fields
+/// dense values in play, a chance-weighted copy on the sheet (its own chance fields
 /// set to the store's weight).
 enum GroupDmg {
     Cached { group: usize, pick: Option<usize> },
     Display(Box<[SlotVals; OFFENSE_SLOTS]>),
 }
 
-/// Reusable per-attack buffers (PERF-36): the attack path's small collections
-/// (the damage list, the global groups' modifier sums and damage sources, the
-/// chance-gated modifiers, the skill's conversions, the defender's absorb copy
-/// and the conversion buffers) are collected here instead of fresh heap
-/// allocations per hit. One per thread, taken empty and returned cleared (the
-/// `gd_game_core::rng` pattern), so a nested or parallel attack never shares
-/// buffers and no gameplay value survives an attack — only capacity is reused.
-/// `totals` / [`CombatCache`] stay the raw source; this caches nothing.
-/// PORT: the engine allocates these per `CollectCombatParameters` / `TakeAttack`.
+/// Per-attack buffers (the damage list, the global groups' modifier sums and damage sources, the chance-gated
+/// modifiers, the skill's conversions, the defender's absorb copy, the conversion buffers): one per thread, taken
+/// empty and returned cleared, so a nested or parallel attack never shares buffers and no value survives an attack.
 #[derive(Default)]
 struct AttackScratch {
     damage: Vec<combat::Damage>,
@@ -2227,8 +2158,7 @@ fn put_scratch(s: AttackScratch) {
 /// this attack. Modifiers join the totals (× their chance weight on the
 /// sheet); damage attributes are sources of their own (their chance field
 /// set to the weight the sheet gives them, or removed: no own roll), each
-/// with its store's source id. The attribute split is the profile's
-/// [`CombatCache`]; only the rolls run per attack.
+/// with its store's source id.
 fn global_parts(
     atk: &Profile,
     rng: &mut Rng,
@@ -2307,9 +2237,8 @@ fn global_parts(
     }
 }
 
-/// Chance-gated modifiers (`field@chance`, see `chance_key`) that apply to
-/// this attack (on the sheet: all, × chance / 100). The candidates are the
-/// profile's [`CombatCache`]; only the rolls run per attack. Flat damage
+/// Chance-gated modifiers (`field@chance`, [`chance_key`]) that apply to
+/// this attack (on the sheet: all, × chance / 100). Flat damage
 /// instances roll in `collect_damage` / `retaliation_parts`, not here.
 fn gated_mods(atk: &Profile, rng: &mut Rng, display: bool, out: &mut Vec<(usize, f32)>) {
     let chance_weight = |c: f32| if c > 0.0 && c < 100.0 { c * 0.01 } else { 1.0 };
@@ -2323,9 +2252,7 @@ fn gated_mods(atk: &Profile, rng: &mut Rng, display: bool, out: &mut Vec<(usize,
     }
 }
 
-/// One [`CombatType`]'s modifier fields from the catalog, built once
-/// ([`type_fields`]) so the per-damage modifier sums index a table instead of
-/// scanning the attribute families.
+/// One [`CombatType`]'s modifier fields from the catalog ([`type_fields`]).
 #[derive(Default)]
 struct TypeFields {
     /// [`hit_mod`]: the `OffenseModifier` fields of the type (and, for cold /
@@ -2344,7 +2271,6 @@ struct TypeFields {
     ret_dot_duration: Vec<&'static str>,
 }
 
-/// The [`TypeFields`] of `ty`.
 fn type_fields(ty: CombatType) -> &'static TypeFields {
     static TABLE: LazyLock<Vec<TypeFields>> = LazyLock::new(|| {
         use crate::attributes::{AttrFamily as F, family};
@@ -2594,14 +2520,12 @@ fn collect_damage(
     let skill_owner = skill.as_ref().map_or(0, |s| {
         gd_formats::collections::hash_one(s.record.name.as_str())
     });
-    // One source's offense attributes, read from its dense [`SlotVals`] in [`SLOTS`] order — the
-    // catalog family/field order the per-attack rolls follow (OffenseBase + Offense hits, then
-    // OffenseDuration DoTs / debuffs, then OffenseCrowdControl), so the interleaved `rng.unit()`
-    // draws and the f32 operations are exactly the catalog scan's. `instance_weight`: a chance-gated
-    // instance already rolled (or weighted, on the sheet); `None` rolls each attribute's own chance.
-    // `owner`: the source's DoT slot key base ([`dot_source_key`]); `collect_dots`: false for the
-    // summed gear source in play (its DoTs come per owner from `dot_sources` below; the sheet keeps
-    // the sum).
+    // One source's offense attributes, read from its dense [`SlotVals`] in [`SLOTS`] order (OffenseBase + Offense
+    // hits, then OffenseDuration DoTs / debuffs, then OffenseCrowdControl): the interleaved `rng.unit()` draws and
+    // f32 operations follow that order. `instance_weight`: a chance-gated instance already rolled (or weighted, on
+    // the sheet); `None` rolls each attribute's own chance. `owner`: the source's DoT slot key base
+    // ([`dot_source_key`]); `collect_dots`: false for the summed gear source in play (its DoTs come per owner from
+    // `dot_sources`; the sheet keeps the sum).
     let collect_source = |vals: &[SlotVals; OFFENSE_SLOTS],
                           scale: f32,
                           skip_base_physical: bool,
@@ -2775,7 +2699,7 @@ fn collect_damage(
         collect_source(vals, weapon_scale, true, None, rng, damage, *owner, true);
     }
     // The gear's and passives' DoTs per owning source (item instance / record): distinct owners
-    // stack in the defender's DotManager, the same owner's re-application keeps max (module docs).
+    // stack in the defender's DotManager, the same owner's re-application keeps max.
     // A dual wielder's swing deals its hand's weapon's DoTs, not the other hand's.
     if !display {
         let (hand_ds, hand_dense): (&[DotSource], &[[SlotVals; OFFENSE_SLOTS]]) =
@@ -2794,9 +2718,8 @@ fn collect_damage(
             collect_source(vals, weapon_scale, true, None, rng, damage, ds.owner, true);
         }
     }
-    // The character's chance-gated instances (`field@chance`, `chance_key`, split once per profile
-    // in its `CombatCache`): one roll each, as the engine's per-source attribute instances
-    // (`DamageAttributeAbs::AddDamageToAccumulator`).
+    // The character's chance-gated instances (`field@chance`, `chance_key`): one roll each, as the engine's
+    // per-source attribute instances (`DamageAttributeAbs::AddDamageToAccumulator`).
     if weapon_scale > 0.0 {
         for inst in &cache.offense_instances {
             let c = inst.chance;
@@ -2812,8 +2735,7 @@ fn collect_damage(
             // damage of its own: `DamageAttribute_Physical::AddDamageToAccumulator` adds a
             // `CombatAttributeDamage_BasePhysical` of its min / max × the chance multiplier × the
             // scale. PORT: its pierce ratio is its own record's `offensivePierceRatio`
-            // (`GetPierceRatio`), which the totals do not keep per instance: 0 (no stock record with
-            // a gated physical sets one).
+            // (`GetPierceRatio`), which the totals do not keep per instance: 0.
             let ((min, max), _) = base_physical(get);
             if min > 0.0 {
                 let k = total_mod * weapon_scale * weight;
@@ -2871,8 +2793,8 @@ fn collect_damage(
         &atk.profile.conversions
     };
     combat::convert_damage_with(damage, &[&sc.convs, player_convs], &mut sc.convert);
-    // `DamageScaleInfo`: the racial bonus (`DamageScaleInfo.racialBonus`, (100 + %) % when above 0,
-    // `crate::racial`) and the combo charges (`DamageScaleInfo.comboFactor`).
+    // `DamageScaleInfo`: the racial bonus (`DamageScaleInfo.racialBonus`, (100 + %) % when above 0) and the combo
+    // charges (`DamageScaleInfo.comboFactor`).
     let combo_scale = DamageScale(
         if racial_pct > 0.0 {
             100.0 + racial_pct
@@ -2966,8 +2888,8 @@ fn collect_damage(
     (damage, mana_burn_ratio, crit_damage_bonus)
 }
 
-/// The racial bonus % of an attack on a target of these races
-/// (`crate::racial`): the skill's own and its modifiers' at their level,
+/// The racial bonus % of an attack on a target of these races:
+/// the skill's own and its modifiers' at their level,
 /// plus the character's unless the skill has `excludeRacialDamage`.
 pub fn racial_damage(atk: &Profile, skill: &Option<SkillUse>, target: &[String]) -> f32 {
     let mut pct = 0.0;
@@ -3170,9 +3092,7 @@ pub fn reflect(
 
 /// The defender side of a hit: resistances, armor, `defensiveXDuration`,
 /// and the debuffs on it (DA, armor and resistance reductions). The
-/// profile-derived parts are the profile's [`CombatCache`] (built once,
-/// invalidated by the profile rebuild on `ProfileDirty`); only the
-/// debuff-dependent scalars run per hit.
+/// profile-derived parts come from [`CombatCache`].
 fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuffs) -> Defender<'a> {
     use CombatType as T;
     let dd = |ty| def_debuffs.get(ty);
@@ -3202,7 +3122,6 @@ fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuff
         // character attributes 27 / 28, percent.
         dodge: def.sheet.dodge,
         deflect: def.sheet.deflect,
-        // `take_attack` processes a copy of each per hit.
         defenses: &cache.defenses,
         resistance_cap: cap,
         resistance_reduction: res_red,
@@ -3210,12 +3129,10 @@ fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuff
         // `CombatManager::TakeAttack`: `(DDM.GetFixedDamage(61) + 100) +
         // accumulator.GetTotalDefenseType(61)` (the defender's `negativeDamageMult`,
         // `DefenseAttributeMisc_NegativeDamageMultiplier::AddToAccumulator`).
-        // `negativeDamageMultChance` is not rolled, by design: no stock record (base … gdx3,
-        // `survivalmode*`) sets it, so every `negativeDamageMult` (the Amplification potions) always counts.
+        // `negativeDamageMultChance` is not rolled (no stock record sets it).
         damage_taken_pct: 100.0 + dd(T::DamageMultiplier) + cache.negative_damage_mult,
         reflection_resist: def.reflection_resist(cap),
-        // The player's `playerReflectCap` applies to reflected debuffs only,
-        // see [`attack_linked`].
+        // The player's `playerReflectCap` applies to reflected debuffs only.
         reflect: cache.reflect,
         // The shield block (`TakeAttack`: the left hand's shield, defense
         // types 55 `defensiveBlockModifier` / 56 `defensiveBlockAmountModifier`,
@@ -3227,7 +3144,7 @@ fn defender<'a>(rules: &Rules, def: &'a Profile, life: f32, def_debuffs: &Debuff
         block_recovery_reduction: def.sheet.block_recovery_reduction,
         block_modifier: cache.block_modifier,
         block_amount_modifier: cache.block_amount_modifier,
-        // Against the attacker's races, set per attack (`crate::racial`).
+        // Against the attacker's races, set per attack.
         racial_reduction: 0.0,
         // `TakeAttack` tail: character attribute 26, percent of the
         // attack's energy cost.
@@ -3420,7 +3337,6 @@ pub fn player_from_items(
                     t.remove(k);
                 }
             }
-            // Body region an armor piece protects.
             (armor_region(&i.class), t)
         })
         .collect();

@@ -1,6 +1,5 @@
-//! Headless test harness: an `App` with the gameplay systems and no window,
-//! renderer or input, stepped frame by frame with a fixed time step so runs
-//! are deterministic.
+//! Headless test harness: an `App` with the gameplay systems and no window, renderer or input, stepped with a
+//! fixed time step so runs are deterministic.
 //!
 //! ```ignore
 //! let Some(mut game) = TestGame::new_character("Tester", false, false) else { return }; // GD_SKIP_DATA_TESTS=1
@@ -9,18 +8,12 @@
 //! let skills = game.app.world().get::<EffectiveSkills>(p).unwrap();
 //! ```
 //!
-//! Session state (mode, altar, dropped epics, the character choice) is in
-//! each app's resources ([`crate::session::begin`]), so tests in one binary
-//! do not affect each other; the read-only [`GameData`] is opened once per
-//! binary ([`data`]). Each game saves into its own temp
-//! [`SaveDir`] ([`TestGame::save_dir`]); no test sets environment
-//! variables.
+//! Session state lives in each app's resources, so tests in one binary do not affect each other; the
+//! read-only [`GameData`] is opened once per binary ([`data`]). Each game saves into its own temp [`SaveDir`].
 //!
-//! The only outside input is the game install: a test's character is a new
-//! one ([`TestGame::new_character`]) or one the port saved into a test's own
-//! save folder ([`TestGame::save_now`], loaded with [`TestGame::with_save`]).
-//! Without the game the constructors panic, or return None under
-//! `GD_SKIP_DATA_TESTS=1` ([`gd_formats::testdata`]). Temp folders: [`TempDir`].
+//! A test's character is a new one ([`TestGame::new_character`]) or one the port saved
+//! ([`TestGame::save_now`], loaded with [`TestGame::with_save`]). Without the game the constructors panic, or
+//! return None under `GD_SKIP_DATA_TESTS=1`.
 use crate::session;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -38,28 +31,21 @@ use std::time::Duration;
 
 pub use gd_formats::testdata::TempDir;
 
-/// The fixed frame time of [`TestGame::step`].
 pub const FRAME: Duration = Duration::from_millis(16);
 
 /// The random seed of a [`TestGame`] unless one is given.
 pub const SEED: u64 = 1;
 
-/// An app running [`crate::GameLogicPlugin`] over `data`, without a window,
-/// renderer or input; every `update()` advances time by [`FRAME`].
-///
-/// Deterministic: the schedules run single-threaded on the calling thread, in
-/// a fixed order, so the gameplay's random draws ([`gd_game_core::rng`], a
-/// thread-local generator nothing else draws from) all come from this
-/// thread's generator, seeded with `seed` (each test runs on its own thread).
+/// An app running [`crate::GameLogicPlugin`] over `data`; every `update()` advances time by [`FRAME`]. The
+/// schedules run single-threaded on the calling thread, so the thread-local [`gd_game_core::rng`] seeded with
+/// `seed` gives every random draw.
 pub fn headless_app(data: GameData, seed: u64) -> App {
     use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel, SingleThreadedExecutor};
     gd_game_core::rng::seed(seed);
     let mut app = App::new();
-    // Dev builds: the hook systems read the resource; a test never gets the environment's hooks.
     #[cfg(feature = "dev")]
     app.insert_resource(gd_game_core::hooks::Hooks::from_vars(std::iter::empty()));
-    // Each game saves into its own temp folder (removed with the app), never
-    // the player's save folder and never one shared by parallel tests.
+    // Never the player's save folder, never one shared by parallel tests.
     let save = TempDir::new("gd-game-save");
     app.insert_resource(SaveDir(save.path().to_owned()))
         .insert_resource(SaveDirGuard(save));
@@ -89,9 +75,8 @@ pub fn headless_app(data: GameData, seed: u64) -> App {
     app
 }
 
-/// The installed game's archives and database, opened once per test binary
-/// (read-only, shared by every [`TestGame`] of the binary). Panics when the
-/// game is missing unless `GD_SKIP_DATA_TESTS=1` (then None).
+/// The installed game's archives and database, opened once per test binary. Panics when the game is missing
+/// unless `GD_SKIP_DATA_TESTS=1` (then None).
 pub fn data() -> Option<GameData> {
     static DATA: std::sync::OnceLock<GameData> = std::sync::OnceLock::new();
     let root = gd_formats::testdata::game()?;
@@ -101,10 +86,8 @@ pub fn data() -> Option<GameData> {
     )
 }
 
-/// The first inventor blueprint (by record name) with reagents, each reagent
-/// naming at least one item. The database's name index is a `HashMap`
-/// (a different order every process), so a test must not take "the first" of
-/// `db.names()`: that picked a different blueprint each run.
+/// The first inventor blueprint by record name with reagents, each naming at least one item. Sorted: the
+/// database's name index has no stable order.
 pub fn first_blueprint(db: &gd_formats::vfs::Database) -> gd_sim::items::crafting::Blueprint {
     use gd_sim::items::crafting::Blueprint;
     let mut names: Vec<&str> = db
@@ -125,25 +108,22 @@ pub fn first_blueprint(db: &gd_formats::vfs::Database) -> gd_sim::items::craftin
         .expect("a blueprint")
 }
 
-/// Keeps a [`TestGame`]'s save folder alive (removed when the app drops).
+/// Keeps a [`TestGame`]'s save folder alive.
 #[derive(Resource)]
 struct SaveDirGuard(#[allow(dead_code)] TempDir);
 
-/// A headless game session.
 pub struct TestGame {
     pub app: App,
 }
 
 impl TestGame {
-    /// A session with the character saved at `path` (written by the port into
-    /// a test's save folder, [`Self::save_now`]; its difficulty and mode).
-    /// Without the game it panics, or gives None under `GD_SKIP_DATA_TESTS=1`.
+    /// A session with the character saved at `path` ([`Self::save_now`]), on its difficulty and mode.
     pub fn with_save(path: &Path) -> Option<Self> {
         Self::start(Some(path), Start::default())
     }
 
     /// [`Self::with_save`] started on `difficulty` (0..=2; `veteran`: Veteran on Normal, Ultimate Veteran on
-    /// Ultimate), as the main menu's difficulty choice starts it.
+    /// Ultimate).
     pub fn with_save_mode(path: &Path, difficulty: usize, veteran: bool) -> Option<Self> {
         Self::start(
             Some(path),
@@ -154,8 +134,7 @@ impl TestGame {
         )
     }
 
-    /// A session with a new character (no save; the main menu's Create
-    /// path); None only under `GD_SKIP_DATA_TESTS=1` without the game.
+    /// A session with a new character.
     pub fn new_character(name: &str, female: bool, hardcore: bool) -> Option<Self> {
         Self::start(
             None,
@@ -179,9 +158,8 @@ impl TestGame {
         )
     }
 
-    /// A Crucible session (`Choice::survival`: the arena map, e.g. `maps/survivalworld_a.map`) with a new
-    /// character. It turns the Crucible data overlay on for the shared [`data`]: only for a test binary whose
-    /// tests all run in the Crucible (`tests/crucible`).
+    /// A Crucible session (`maps/survivalworld_a.map`, ...) with a new character. It turns the Crucible data
+    /// overlay on for the shared [`data`]: only for a test binary whose tests all run in the Crucible.
     pub fn crucible(arena: &str) -> Option<Self> {
         Self::start(
             None,
@@ -248,19 +226,16 @@ impl TestGame {
         );
         app.world_mut().flush();
         let mut game = TestGame { app };
-        // The rules load once the session is ready.
         game.step();
         Some(game)
     }
 
-    /// This game's own save folder ([`SaveDir`]): where a
-    /// `SaveRequest` writes, empty at the start.
+    /// This game's own save folder, empty at the start.
     pub fn save_dir(&self) -> PathBuf {
         self.app.world().resource::<SaveDir>().0.clone()
     }
 
-    /// Saves the character now (a `SaveRequest`, one frame; the player must be spawned, [`Self::spawn_player`])
-    /// and returns its `player.gdc` in [`Self::save_dir`] (valid while this game lives): the save for
+    /// Saves the character now (one frame; the player must be spawned) and returns its `player.gdc` for
     /// [`Self::with_save`].
     pub fn save_now(&mut self) -> PathBuf {
         self.app.world_mut().write_message(crate::save::SaveRequest);
@@ -282,7 +257,6 @@ impl TestGame {
             .add(u64::MAX, layers);
     }
 
-    /// Runs one frame.
     pub fn step(&mut self) {
         self.app.update();
     }
@@ -293,9 +267,8 @@ impl TestGame {
         }
     }
 
-    /// Spawns the loaded character's player entity (gameplay components
-    /// only, as the game builds them minus the account unlocks file and test
-    /// hooks) and runs a frame so its derived state exists.
+    /// Spawns the loaded character's player entity (gameplay components only, without the account unlocks
+    /// file and hooks) and runs a frame.
     pub fn spawn_player(&mut self) -> Entity {
         let world = self.app.world_mut();
         let data = world.resource::<GameData>().clone();
@@ -332,8 +305,7 @@ impl TestGame {
         None
     }
 
-    /// Spawns a monster of `record` at `level` standing at `at` (as a level
-    /// proxy spawns it: creature, profile, AI), and runs a frame.
+    /// Spawns a monster of `record` at `level` standing at `at` as a level proxy spawns it, and runs a frame.
     pub fn spawn_monster(&mut self, record: &str, level: i32, at: Vec3) -> Entity {
         let world = self.app.world_mut();
         let data = world.resource::<GameData>().clone();
@@ -376,7 +348,6 @@ impl TestGame {
         e
     }
 
-    /// The player entity.
     pub fn player(&mut self) -> Entity {
         self.app
             .world_mut()
@@ -385,8 +356,7 @@ impl TestGame {
             .expect("one player")
     }
 
-    /// Clicks `target`: the `PlayerOrder::Interact` a click on it sends, routed by component on the next step
-    /// (`crate::player_orders::apply_orders`), so tests exercise the same path as the game.
+    /// Clicks `target`: the `PlayerOrder::Interact` a click sends, applied on the next step.
     pub fn interact(&mut self, target: Entity) {
         self.app
             .world_mut()
@@ -423,7 +393,6 @@ impl TestGame {
     }
 }
 
-/// How [`TestGame::start`] begins the session.
 struct Start {
     seed: u64,
     survival: Option<String>,
@@ -447,8 +416,8 @@ impl Default for Start {
     }
 }
 
-/// The player's animation state as the game builds it: the player record's
-/// body mesh and the hand state of the save's active weapon set.
+/// The player's animation state: the player record's body mesh and the hand state of the save's active
+/// weapon set.
 fn player_character(data: &GameData, gdc: Option<&Gdc>, female: bool) -> Character {
     let record = gd_game_core::player::player_record(female);
     let rec = data.db.get(record).expect("player record");

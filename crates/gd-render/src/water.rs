@@ -20,16 +20,14 @@
 //! `Engine::NoiseOctaveUvScales`) into a `size`² target, and converts the height to a normal map with the ×8 gradient
 //! at ±1/size (`noisetexturegen.ssh` `convertStyle`), which the water samples bilinearly (repeat). The port does the
 //! same: the bank is one 256-layer 32×32 array ([`noise_bank`]), the octave state lives in [`WaterMaterials`] and
-//! steps in [`update_water_noise`], which rewrites one fixed-size [`ShaderBuffer`] per water type in place (a
-//! same-size write is one `write_buffer`), and [`render_noise`] draws each type's composite + convert into its `size`²
+//! steps in [`update_water_noise`], and [`render_noise`] draws each type's composite + convert into its `size`²
 //! target (`shaders/water_noise.wesl`) before the cameras render; every material of the type binds that target
-//! (binding 1), so a water pixel pays one bilinear tap. `normalMap = 0` (lava records) writes the raw height, which
-//! `basePS` reads as the bump. PORT: one pass evaluates the three heights each texel's convert needs (the engine
-//! composites, then converts in a second pass); the target is `Rg16Float` (the engine's is 8-bit); a type with no
-//! water entity visible in any view skips its pass that frame (its target keeps the last image).
-//! The sun / sky ambient are the scene constants every material reads (`render/env.rs` `EnvGpu` via
-//! [`crate::render::GdDefaults`]): `basePS`'s `lightColor·lightDirection.y + skyAmbientColor` and the specular
-//! direction are the same per-frame cb1 values, not a separate light.
+//! (binding 1). `normalMap = 0` (lava records) writes the raw height, which `basePS` reads as the bump. PORT: one
+//! pass evaluates the three heights each texel's convert needs (the engine composites, then converts in a second
+//! pass); the target is `Rg16Float` (the engine's is 8-bit); a type with no water entity visible in any view skips
+//! its pass that frame (its target keeps the last image).
+//! The sun / sky ambient are the scene constants every material reads ([`crate::render::GdDefaults`]): `basePS`'s
+//! `lightColor·lightDirection.y + skyAmbientColor` and the specular direction are the same per-frame cb1 values.
 //!
 //! Scene reflection (`waterbasic.ssh` `reflectPS`, [`crate::render::reflection`]): a mirrored
 //! camera draws every mesh's `reflectionStyle` into a 512-wide target (the `reflectionQuality`
@@ -52,10 +50,10 @@
 //! Points on water ([`WaterPoints`], [`water_above`]): `Water::GetWaterPointInfo`, an upward ray
 //! against every layer, the nearest hit wins; a layer holds a point when its block exists and the block's alpha byte at
 //! the point is non-zero (`WaterLayer::IsPointInLayer`: cell `min(int(frac(x / 9) * 10), 9)` per axis).
-//! A path (river) holds a point that lies in one of its segments (`WaterPath::RayIntersection`,
-//! `gd_sim::surface::in_path_segment`), so rain and gusts ripple rivers too.
+//! A path (river) holds a point that lies in one of its segments (`WaterPath::RayIntersection`), so rain and gusts
+//! ripple rivers too.
 //!
-//! Water paths (rivers; format in gd-formats `map/water.rs`), `WaterPath::Load` and the segment builder
+//! Water paths (rivers), `WaterPath::Load` and the segment builder
 //! `WaterPath::BuildSegment` ([`path_segment`]): each pair of neighbouring control points is a segment whose centre is
 //! the Bézier (p0, p0 + t0, p1 − t1, p1). Its rows: n = min(int(L₂₀ / 4), 64) (L₂₀ = the centre's polyline length over
 //! 20 steps, `WaterPath::CentreLength`; n = 0: no geometry), t = r / n for r = 0..=n. The two banks are Béziers too:
@@ -76,16 +74,14 @@
 //! Ripples (`Water::CreateRipple`, the set's rules in `gd_sim::weather::Ripples`): the weather adds them
 //! (rain drops at `weatherQuality` > 1, strong directional wind), and so does every
 //! `World::CreatePointDisturbance` ([`gd_game_core::visuals::PointDisturbance`]: moving characters, debris,
-//! FX paks, floaters, waves; callers in `render/grass.rs`), which calls `CreateRipple(pos, radius, strength, splash)` on the
+//! FX paks, floaters, waves), which calls `CreateRipple(pos, radius, strength, splash)` on the
 //! water of each region whose box grown by the radius holds the point until one is hit. `CreateRipple`'s
 //! splash: when the point is on water, type 1 (the player walking; only when the point lies under the surface), 2
 //! (debris landing on water) or 3 starts the water type's matching splash effect ([`splash_effects`]) at the water
-//! point, whether or not a ripple was added. Their set lives in `render::weather::WeatherState` and [`update_ripples`]
-//! places, grows and draws it. Drawn only
+//! point, whether or not a ripple was added. [`update_ripples`] places, grows and draws the set. Drawn only
 //! with `detailObjects` (`Water::AddToScene`) by `WaterRipple.ssh` (`shaders/ripple.wesl`): one
 //! quad per live ripple, texture `WaterWalkRipple_01.tex`, SrcAlpha / InvSrcAlpha, no depth write, sort 4020 (before
 //! the effect particles, after the water). PORT: the engine keeps one set per region's water; the port one for all.
-//! The quad entity is hidden (no buffer write) while no ripple is drawn.
 use crate::render::GdDefaults;
 use crate::textures::Textures;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
@@ -247,7 +243,7 @@ impl Material for WaterMaterial {
 #[derive(Component)]
 pub struct WaterSurface {
     pub mesh: Option<Mesh>,
-    /// The layer's blocks for the shadow scene bounds (render/shadow.rs).
+    /// The layer's blocks for the shadow scene bounds.
     pub blocks: crate::render::shadow::SceneBlocks,
     pub water_type: WaterType,
     /// A path (`waterPathStyle`: the vertex's texture coordinates and flow) rather than a layer.
@@ -266,8 +262,7 @@ pub struct WaterPoints {
     shape: WaterShape,
     /// The water type's splash effects (`CreateRipple`'s splash types 1, 2, 3; [`splash_effects`]).
     splash: [String; 3],
-    /// `surfaceParams.z` (the lighting blend): > 0 = this surface reflects
-    /// (`Water::AddReflectionPlanes`, render/reflection.rs).
+    /// `surfaceParams.z` (the lighting blend): > 0 = this surface reflects (`Water::AddReflectionPlanes`).
     reflection_blend: f32,
 }
 
@@ -301,18 +296,18 @@ enum WaterShape {
 }
 
 impl WaterPoints {
-    /// World height of the surface (the reflection plane, render/reflection.rs).
+    /// World height of the surface (the reflection plane).
     pub fn height(&self) -> f32 {
         self.height
     }
 
-    /// `surfaceParams.z`: > 0 = this surface reflects (render/reflection.rs).
+    /// `surfaceParams.z`: > 0 = this surface reflects.
     pub fn reflection_blend(&self) -> f32 {
         self.reflection_blend
     }
 
     /// `IsPointInLayer`: inside the grid, on a stored block, on a cell of non-zero alpha; a path: in one of its
-    /// segments (`gd_sim::surface::in_path_segment`, `WaterPath::RayIntersection`).
+    /// segments (`WaterPath::RayIntersection`).
     pub fn holds(&self, x: f32, z: f32) -> bool {
         let (x, z) = (x - self.origin.x, z - self.origin.y);
         match &self.shape {
@@ -351,16 +346,14 @@ fn water_hit<'a>(
         .min_by(|a, b| a.height.total_cmp(&b.height))
 }
 
-/// The water material cache (keyed by type + params + path) with its NoiseTexture animation state.
-/// Kept across sessions like the materials themselves (`exit.rs` KEEP).
+/// The water material cache (keyed by type + params + path) with its NoiseTexture animation state; kept across
+/// sessions.
 #[derive(Resource, Default)]
 struct WaterMaterials {
-    /// Keyed by (type name, its params' bits, path).
     mats: HashMap<(String, [u32; 14], bool), Handle<WaterMaterial>>,
     /// The shared noise bank, generated on first use.
     bank: Option<Handle<Image>>,
-    /// One state per water type name (the engine: one NoiseTexture per WaterType; PORT: `gd_game_core::rng`
-    /// for the engine's `rand()`).
+    /// One state per water type name (the engine: one NoiseTexture per WaterType).
     states: HashMap<String, NoiseState>,
     /// The GPU side of each state, keyed by the same water type name.
     gpu: HashMap<String, NoiseGpu>,
@@ -382,8 +375,8 @@ struct NoiseState {
     cur: [u32; 4],
 }
 
-/// A water type's noise pass ([`render_noise`]): its state as the pass reads it ([`noise_gpu`]), rewritten in place
-/// every frame by [`update_water_noise`], and the `size`² target its materials sample ([`noise_target`]).
+/// A water type's noise pass ([`render_noise`]): its state as the pass reads it ([`noise_gpu`]) and the `size`²
+/// target its materials sample ([`noise_target`]).
 struct NoiseGpu {
     state: Handle<ShaderBuffer>,
     target: Handle<Image>,
@@ -926,8 +919,7 @@ fn finish_water(
         };
         let is_lava = wt.shader.to_ascii_lowercase().ends_with("lavabasic.ssh");
         let sky_path = param("skyTexture").map(str::to_owned);
-        // A new material waits for its textures, decoded in the background (a lava pool's four, the sky cubemap's
-        // six faces): the surface appears a few frames later instead of stalling the frame.
+        // A new material waits for its textures (a lava pool's four, the sky cubemap) to decode in the background.
         if !cache.mats.contains_key(&key) {
             let mut ready = true;
             if is_lava {
@@ -962,7 +954,6 @@ fn finish_water(
         let mat = mat_cache
             .entry(key)
             .or_insert_with(|| {
-                // The bank only feeds the noise pass ([`render_noise`]).
                 bank.get_or_insert_with(|| images.add(noise_bank()));
                 let state = states
                     .entry(wt.name.clone())
@@ -1068,9 +1059,8 @@ fn sky_ready(
     true
 }
 
-/// Steps each water type's NoiseTexture crossfade (`NoiseTexture::UpdateLayers`) and rewrites its
-/// shared [`ShaderBuffer`] in place: the size never changes, so the write is one `write_buffer` per type and
-/// the noise pass's bind group needs no new buffer (module doc).
+/// Steps each water type's NoiseTexture crossfade (`NoiseTexture::UpdateLayers`) and rewrites its shared
+/// [`ShaderBuffer`].
 fn update_water_noise(
     time: Res<Time<Virtual>>,
     mut cache: ResMut<WaterMaterials>,
@@ -1272,7 +1262,7 @@ impl Material for RippleMaterial {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
-    /// Sort 4020: after the water (bias 0), before the effect particles (fx/render.rs, 1000 and up).
+    /// Sort 4020: after the water (bias 0), before the effect particles (1000 and up).
     fn depth_bias(&self) -> f32 {
         500.0
     }
@@ -1320,7 +1310,7 @@ pub struct RippleSet {
     /// This frame's `CreateRipple(pos, size, strength)` calls, placed by [`update_ripples`].
     pub requests: Vec<(Vec3, f32, f32)>,
     draw: Option<(Entity, Handle<ShaderBuffer>, Handle<RippleMaterial>)>,
-    /// Whether the draw entity is `Visible` (hidden, its buffer untouched, while no ripple is drawn).
+    /// Whether the draw entity is `Visible` (hidden while no ripple is drawn).
     shown: bool,
     scratch: Vec<[f32; 4]>,
 }

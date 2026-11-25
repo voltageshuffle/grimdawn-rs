@@ -1,38 +1,19 @@
-//! `Skill_AttackPattern` (Fangs of Asterkarn bosses and nemeses: Beronath's
-//! and the final boss's lightning grids, Yurra's chaos eruption lines, the
-//! summoning rings, the Beaver's drops, Mogdrogen's, the Wight hags'
-//! eruptions, …): the skill marks spots on the ground in a pattern around a
-//! centre; each spot goes off after its own delay by running the skill's
-//! secondaries there (the explosion is a `SkillSecondary_AttackRadius` /
-//! `…TargetedSpawnPet` listed after the pattern in the monster's skills,
-//! `weapon_pool::SkillLinks::of_list`).
+//! `Skill_AttackPattern` (Fangs of Asterkarn bosses and nemeses): the skill marks spots on the ground in a
+//! pattern around a centre; each spot goes off after its own delay by running the skill's secondaries there.
 //!
-//! Game.dll (the placement rules: `gd_sim::pattern`):
-//! - `ActivateNow` (Fangs of Asterkarn loaded, the skill's
-//!   launcher present): the centre is the caster with `selfTarget`, else the
-//!   target object if there is one, else the skill's point; only the
-//!   position changes, the orientation stays the caster's (the lines' arms
-//!   follow its facing). The pattern's spots (`Pick…Points`), each put on the
-//!   floor (`PutOnFloor`), get one new object id each and go through the
-//!   services' spawn (`SkillServices::SendSpawnObject`) to `SkillSpawnObject`.
-//! - `SkillSpawnObject`: with any spot, the mana cost is paid
-//!   and the cooldown started; per spot the `groundEffect` entity (cached by
-//!   `Load`) is created there and starts emitting, with a delay of
-//!   `minDelay + r % (maxDelay − minDelay + 1)` ms (at least 1), r the
-//!   Park–Miller stream of the spawn's seed, stepped once per spot.
-//! - `Update`: every spot's delay runs down by the frame; at
-//!   ≤ 0 its effect entity, if still in the world, runs the skill's
-//!   `ActivateSecondarySkills` with no target and an empty
-//!   list at the effect's coordinates, then stops emitting and removes
-//!   itself (gone from the world: just destroyed).
+//! Game.dll (placement rules: `gd_sim::pattern`):
+//! - `ActivateNow`: the centre is the caster with `selfTarget`, else the target object, else the skill's
+//!   point; the orientation stays the caster's. Each spot (`Pick…Points`) is put on the floor and sent to
+//!   `SkillSpawnObject`.
+//! - `SkillSpawnObject`: per spot the `groundEffect` entity is created and starts emitting, with a delay of
+//!   `minDelay + r % (maxDelay − minDelay + 1)` ms (at least 1), r the Park–Miller stream of the spawn's
+//!   seed, stepped once per spot.
+//! - `Update`: at delay ≤ 0 the effect entity, if still in the world, runs `ActivateSecondarySkills` with
+//!   no target at its coordinates, then removes itself.
 //!
-//! The nav's blocking requests (`NavManager::RequestAndBlock…`) are
-//! `gd_sim::pattern::NavBlock`: a list of (x, z, r)
-//! circles that lives for one activation and is read only while picking
-//! the spots (never by path-finding). PORT: the on-radius request's
-//! `needPath` / sector tests are not made; the walkable-ground probe is the
-//! port's nav grid height. The mana cost / cooldown are paid by the cast as
-//! for any skill (`casting.rs`).
+//! The nav's blocking requests (`NavManager::RequestAndBlock…`) are `gd_sim::pattern::NavBlock`, circles
+//! read only while picking one activation's spots. PORT: the on-radius request's `needPath` / sector tests
+//! are not made; the walkable-ground probe is the nav grid height.
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
@@ -52,7 +33,7 @@ impl Plugin for PatternsPlugin {
     }
 }
 
-/// A `Skill_AttackPattern` cast went off (`casting::fire_casts`).
+/// A `Skill_AttackPattern` cast went off.
 #[derive(Message, Clone, Debug)]
 pub struct Fire {
     pub caster: Entity,
@@ -62,7 +43,7 @@ pub struct Fire {
     pub target: Option<Entity>,
 }
 
-/// One marked spot (its `groundEffect` entity and delay).
+/// One marked spot (a `groundEffect` entity).
 #[derive(Component, Clone, Debug)]
 pub struct PatternSpot {
     pub caster: Entity,
@@ -94,8 +75,6 @@ fn fire(
         let fwd = gd_game_core::character::facing_flat(ctf);
         let p = Params::from_record(rec, m.level_index + 1);
         let ground = |x: f32, z: f32, y: f32| nav.0.ground([x, y + 1.0, z]).unwrap_or(y);
-        // One activation's blocked circles (`NavManager`), emptied when the
-        // picking finishes (here: dropped).
         let mut block = NavBlock::default();
         let mut gnd = |x: f32, z: f32| nav.0.ground([x, centre.y + 1.0, z]);
         let mut rand = gd_game_core::rng::f32;

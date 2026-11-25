@@ -1,112 +1,70 @@
-//! The monster fight states that bring a monster to its enemy and the
-//! `SlotManager` plumbing they, the followers (patrol.rs) and the pets
-//! (pets.rs) share.
+//! The monster fight states that bring a monster to its enemy and the `SlotManager` plumbing they, the
+//! followers (patrol.rs) and the pets share.
 //!
 //! # Slots
 //!
 //! Every living character carries a [`MeleeSlots`] component: its attack and defence `SlotManager`
-//! (`gd_sim::slots`, `Character::RequestAttackSlot` / `RequestDefenseSlot`), created with `numAttackSlots` /
-//! `numDefenseSlots` (4 unless the record says, `Character::Load`), plus the body (position, radius) the managers
-//! ask the object manager for, synced once per frame by [`sync_slots`]. A character that dies loses the
-//! component, so its slots elsewhere are free (`CleanupRing`'s `IsAlive`). Systems reach the components through
-//! [`Slots`], a borrow of their [`SlotQuery`].
+//! (`gd_sim::slots`, `Character::RequestAttackSlot` / `RequestDefenseSlot`), sized by `numAttackSlots` /
+//! `numDefenseSlots` (default 4, `Character::Load`), plus its body (position, radius), synced once per
+//! frame by [`sync_slots`]. A character that dies loses the component, so its slots elsewhere are free
+//! (`CleanupRing`'s `IsAlive`). Systems reach the components through [`Slots`].
 //!
 //! # The states
 //!
-//! `ControllerMonsterState{Pursue, WaitToAttack, Attack, RepositionForAttack}`
-//! (Game.dll), each with the enemy and the chosen skill as state
-//! data; [`MeleeAi`] is their state machine for a monster that has an enemy.
-//! A transition runs the new state's `OnBegin` at once
-//! (`ControllerAI::SetState`), which also releases the monster's slots of the
-//! old enemy when the state data's enemy changes.
+//! `ControllerMonsterState{Pursue, WaitToAttack, Attack, RepositionForAttack}`, each with the enemy and
+//! the chosen skill as state data; [`MeleeAi`] is their state machine. A transition runs the new state's
+//! `OnBegin` at once (`ControllerAI::SetState`), which also releases the monster's slots of the old enemy
+//! when the enemy changes.
 //!
-//! * `GetMoveToPoint` (`Character::GetMoveToPoint`, enemy that is
-//!   a character): with a skill whose `Skill::GetRangeProfile` is Melee, a
-//!   monster asks the enemy's attack manager for a slot
-//!   (`RequestSlot(enemy attack slots, me, GetTargetDistance, false)`:
-//!   spacing = the skill's `Skill::GetRange` + both radii); none free: no
-//!   point. Any other skill: the point on the path to the enemy that is
-//!   `Skill::GetRange` + the enemy's radius short of it
-//!   (`CharacterMovementManager::GetPointAwayFromGoal`, [`point_away`]);
-//!   without a skill (RepositionForAttack): the same at both radii.
-//! * Pursue `OnBegin`: no `CanMove` (rooted): Idle. (The
-//!   stationary classes' own Pursue: in reach "Attack", else "Idle",
-//!   `combat::ControllerClass`.) No move
-//!   point: "WaitToAttack". `CloseEnoughToUseSkill` already, or a skill of
-//!   move type 3 / 5 (`Skill_AttackRadiusLeap`, `...Disengage`: jumped, not
-//!   walked, to use): "Attack". Else the point more than 0.025 m away and
-//!   reachable (`CanMoveTo`): go there, `PursuitTime` ms to live and the
-//!   skill re-chosen every 200 ms; one that cannot be reached:
-//!   "NavigateObstacle". The pace: with a `walkDistance` > 0 and the point
-//!   within it the monster walks (`walkSpeed` x its run speed, the Walk
-//!   animation unless `walkUsesRun`); else it runs, at unit speed for a move
-//!   type 2 skill (`Skill_AttackPathCharge`, charge animation) and at its
-//!   run speed otherwise. A walker that is later farther from its goal than
-//!   `walkDistance` runs on (`OnUpdate`). The move carries the skill
-//!   (`MoveToAction::Execute` → its `WarmUpStart`): a weapon
-//!   charge warms up on it, its clip at the warmed-up run speed until the
-//!   move ends (`crate::casting::begin_pursuit_charge`,
-//!   `crate::combat::charge_move`, run by `combat::monster_ai`).
-//!   `OnUpdate`: `PursuitTime` out: "Return"; a re-chosen skill (only while the skill's
-//!   `Skill::CanRechooseInPursuit` holds, [`SkillMove::rechooses`])
-//!   that differs: "Pursue" again; close enough, or the skill's `MaxSkillDistance`
-//!   (`Skill::GetMaxSkillDistance`, the goal passed with the monster's position; only `Skill_AttackWeaponCharge`,
-//!   `...Blink`,
-//!   `Skill_AttackPathCharge`: ran farther from the last charge start than the goal plus
-//!   `maxDistanceBuffer`, never with a 0 buffer): "Attack". Reaching the point
-//!   (`EndOfPathReached`): close enough, or a skill whose
-//!   `Skill::AttacksOnArrival` is true (`Skill_Evade`, `Skill_AttackRadiusDisengage`,
-//!   `...Leap`, `Skill_AttackPathCharge`, `Skill_AttackWeaponCharge`,
-//!   `...Blink`): "Attack", else the slot is released and "WaitToAttack".
-//!   `LostSlot` asks for the
-//!   move point again at the next update. `PathFailed` (the
-//!   crowd failed the move, [`MeleeAi::note_path_failed`]): a skill whose
-//!   `Skill::AttacksOnArrival` is true: "Attack"; else the slot is released and,
-//!   counting the failures since the last `OnUpdate` (which zeroes the
-//!   count), "RepositionForAttack" below 5, else "Idle".
-//! * NavigateObstacle `OnBegin` / `OnUpdate`: no
-//!   move point: Idle. A point more than 0.025 m away that can be reached is
-//!   run to at unit speed; else the point shifted by `radius + 1` m (the
-//!   code turns `i / 7` of its seven tries in integer arithmetic, so every
-//!   try is the same, the +x shift): reachable, run there; none: Idle.
-//!   `OnUpdate`: close enough "Attack", else "Pursue" again at once.
-//! * WaitToAttack `OnBegin` / `OnUpdate`: every
-//!   333 ms it asks for the move point again: found "Pursue", else 50 % of
-//!   the time "RepositionForAttack". Meanwhile it `EmoteOrRoam`s: every
-//!   1000 ms it runs to a random spot at half the distance (4..10 m, halved)
-//!   to the enemy on the circle around the point that far from the enemy
-//!   toward itself (`StartRoaming`); when it cannot roam it
-//!   stands.
-//! * Attack `OnBegin` / `OnUpdate`: stands; once
-//!   the swing timer has run out it attacks (`ResetSwingTimer`,
-//!   `AttackEnemyOrReturn`: the skill is used wherever the enemy now is,
-//!   `UseSkill` has no range test); when the attack has ended it chooses
-//!   again: close enough: with `randomRepositionChance` % (rolled until it
-//!   succeeds, needs `CanMove`; or the flag a projectile's world contact set,
-//!   [`ProjectileCollided`]) and the same skill "RepositionForAttack",
-//!   else "Attack"; not close enough: "Pursue". `LostSlot`:
-//!   "Pursue". `OnBegin` also zeroes the swing timer for a skill of move
-//!   type 2 (`Skill_AttackPathCharge`) or a `Skill_AttackWeaponCharge`
-//!   (`...Blink`).
-//! * RepositionForAttack `OnBegin`: runs to the move point
-//!   without a skill (both radii from the enemy). `OnUpdate`: a
-//!   monster that is not running ends the path (`EndOfPathReached`:
-//!   close enough "Attack", else "Pursue"); while it runs the
-//!   2500 ms timer counts down, then close enough: "Attack". `PathFailed`:
-//!   a random spot 3..6 m away (more than 3 m) to run to, none:
-//!   "Return"; from the 5th failure since the last `OnUpdate` the slot is
-//!   released and it waits ("WaitToAttack").
-//! * WaitToAttack `PathFailed` (its roaming walk failed):
-//!   `EmoteOrRoam`, which cannot: "Idle". The other fight states' `PathFailed`
-//!   is the empty base handler.
+//! * `GetMoveToPoint` (`Character::GetMoveToPoint`, a character enemy): with a Melee
+//!   `Skill::GetRangeProfile`, a slot from the enemy's attack manager (spacing = `Skill::GetRange` + both
+//!   radii); none free: no point. Any other skill: the point on the path `Skill::GetRange` + the enemy's
+//!   radius short of it (`CharacterMovementManager::GetPointAwayFromGoal`, [`point_away`]); without a skill
+//!   (RepositionForAttack): the same at both radii.
+//! * Pursue `OnBegin`: no `CanMove`: Idle (the stationary classes' own Pursue: in reach "Attack", else
+//!   "Idle"). No move point: "WaitToAttack". `CloseEnoughToUseSkill` already, or a skill of move type 3 / 5
+//!   (`Skill_AttackRadiusLeap`, `...Disengage`): "Attack". Else a point more than 0.025 m away and
+//!   reachable (`CanMoveTo`): go there, `PursuitTime` ms to live and the skill re-chosen every 200 ms;
+//!   unreachable: "NavigateObstacle". The pace: with a `walkDistance` > 0 and the point within it the
+//!   monster walks (`walkSpeed` × its run speed, the Walk animation unless `walkUsesRun`); else it runs, at
+//!   unit speed for a move type 2 skill (`Skill_AttackPathCharge`) and at its run speed otherwise; a walker
+//!   later farther than `walkDistance` runs on. The move carries the skill (`MoveToAction::Execute` →
+//!   `WarmUpStart`): a weapon charge warms up on it (`crate::casting::begin_pursuit_charge`).
+//!   `OnUpdate`: `PursuitTime` out: "Return"; a different re-chosen skill (only while
+//!   `Skill::CanRechooseInPursuit`, [`SkillMove::rechooses`]): "Pursue" again; close enough, or past the
+//!   skill's `Skill::GetMaxSkillDistance` (only `Skill_AttackWeaponCharge`, `...Blink`,
+//!   `Skill_AttackPathCharge`: farther from the last charge start than the goal plus a non-zero
+//!   `maxDistanceBuffer`): "Attack". `EndOfPathReached`: close enough, or `Skill::AttacksOnArrival`
+//!   (`Skill_Evade`, `Skill_AttackRadiusDisengage`, `...Leap`, `Skill_AttackPathCharge`,
+//!   `Skill_AttackWeaponCharge`, `...Blink`): "Attack", else the slot is released and "WaitToAttack".
+//!   `LostSlot` asks for the move point again at the next update. `PathFailed`
+//!   ([`MeleeAi::note_path_failed`]): `AttacksOnArrival`: "Attack"; else the slot is released and,
+//!   counting the failures since the last `OnUpdate`, "RepositionForAttack" below 5, else "Idle".
+//! * NavigateObstacle `OnBegin` / `OnUpdate`: no move point: Idle. A reachable point more than 0.025 m away
+//!   is run to at unit speed; else the point shifted by `radius + 1` m along +x (its seven tries compute
+//!   `i / 7` in integer arithmetic, so all are the same): reachable, run there; none: Idle. `OnUpdate`:
+//!   close enough "Attack", else "Pursue" again at once.
+//! * WaitToAttack `OnBegin` / `OnUpdate`: every 333 ms asks for the move point again: found "Pursue", else
+//!   50 % of the time "RepositionForAttack". Meanwhile it `EmoteOrRoam`s: every 1000 ms it runs to a
+//!   random spot at half the distance (4..10 m, halved) to the enemy on the circle around the point that
+//!   far from the enemy toward itself (`StartRoaming`); when it cannot roam it stands.
+//! * Attack `OnBegin` / `OnUpdate`: stands; once the swing timer has run out it attacks
+//!   (`AttackEnemyOrReturn`: wherever the enemy now is, `UseSkill` has no range test); when the attack has
+//!   ended it chooses again: close enough: with `randomRepositionChance` % (needs `CanMove`; or the flag a
+//!   projectile's world contact set, [`ProjectileCollided`]) and the same skill "RepositionForAttack", else
+//!   "Attack"; not close enough: "Pursue". `LostSlot`: "Pursue". `OnBegin` also zeroes the swing timer for
+//!   a move type 2 skill or a `Skill_AttackWeaponCharge` (`...Blink`).
+//! * RepositionForAttack `OnBegin`: runs to the move point without a skill. `OnUpdate`: a monster that is
+//!   not running ends the path (close enough "Attack", else "Pursue"); while it runs the 2500 ms timer
+//!   counts down, then close enough: "Attack". `PathFailed`: a random spot 3..6 m away to run to, none:
+//!   "Return"; from the 5th failure since the last `OnUpdate` the slot is released ("WaitToAttack").
+//! * WaitToAttack `PathFailed`: `EmoteOrRoam`, which cannot: "Idle". The other fight states' `PathFailed`
+//!   is empty.
 //!
-//! `LostSlot` (`Character::LostSlot` -> the controller's current state): only
-//! Pursue, Attack and FollowLeader (patrol.rs) react; WaitToAttack and
-//! RepositionForAttack have the empty base handler, so a slot lost there is
-//! dropped ([`Slots::take_lost`] is read every update).
+//! `LostSlot`: only Pursue, Attack and FollowLeader (patrol.rs) react; elsewhere a lost slot is dropped
+//! ([`Slots::take_lost`] is read every update).
 //!
-//! Pets (`ControllerPet` registers the monster's states) run these states
-//! too (pets.rs).
+//! Pets (`ControllerPet`) run these states too.
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_game_core::combat::Combatant;
@@ -124,25 +82,17 @@ impl Plugin for MeleePlugin {
     }
 }
 
-/// A projectile stopped by the world (terrain, scenery, a door): sent by
-/// `casting.rs`' flight (`ProjectileBase::CollisionCallback` →
-/// `Character::ProjectileCollisionCallback` → the owner's
-/// controller → its current state).
+/// A projectile stopped by the world (`ProjectileBase::CollisionCallback` →
+/// `Character::ProjectileCollisionCallback` → the owner's controller state).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct ProjectileCollided {
     pub attacker: Entity,
 }
 
-/// `ControllerMonsterStateAttack::ProjectileCollisionCallback`:
-/// in the Attack state the reposition flag (the one
-/// `randomRepositionChance` rolls, `ControllerMonsterStateAttack.reposition`) becomes `rand() % 100 <
-/// RepositionChance && CanMove`; the attack's end then runs
-/// "RepositionForAttack" when the same skill is chosen again (see the
-/// Attack state above). The other states have the empty base handler.
-/// `ProjectileResultCallback` clears the flag for a result on
-/// the entity it names. A pet's controller is the same monster state
-/// machine, so its projectiles report too ([`crate::pets::Pet::projectile_collided`]);
-/// a projectile that hits a target never collided.
+/// `ControllerMonsterStateAttack::ProjectileCollisionCallback`: in the Attack state the reposition flag
+/// becomes `rand() % 100 < RepositionChance && CanMove`; other states ignore it.
+/// `ProjectileResultCallback` clears the flag for a result on the entity it names. Pets report too
+/// ([`crate::pets::Pet::projectile_collided`]).
 fn projectile_collisions(
     mut seen: MessageReader<ProjectileCollided>,
     mut monsters: Query<&mut crate::combat::MonsterAi>,
@@ -163,11 +113,10 @@ fn projectile_collisions(
     }
 }
 
-/// `numAttackSlots` / `numDefenseSlots` defaults (`Character::Load`).
 const DEFAULT_SLOTS: usize = 4;
 
-/// A living character's slot managers, its body as the managers see it this frame, and whether it was handed
-/// `LostSlot` since it last looked.
+/// A living character's slot managers, its body this frame, and whether it was handed `LostSlot` since
+/// it last looked.
 #[derive(Component)]
 pub struct MeleeSlots {
     attack: SlotManager,
@@ -177,10 +126,8 @@ pub struct MeleeSlots {
     lost: bool,
 }
 
-/// The query a system borrows into [`Slots`].
 pub type SlotQuery<'w, 's> = Query<'w, 's, &'static mut MeleeSlots>;
 
-/// The slot store behind [`Slots`] (a [`SlotQuery`]).
 pub trait SlotStore {
     fn slots_mut(&mut self, e: Entity) -> Option<&mut MeleeSlots>;
     fn body(&self, e: Entity) -> Option<(Vec3, f32)>;
@@ -195,8 +142,8 @@ impl SlotStore for SlotQuery<'_, '_> {
     }
 }
 
-/// The characters' slot managers for one system run (see the module docs): `Slots::new(&mut slot_query, &scratch)`
-/// with the system's `Local<RefCell<PathScratch>>` (the slot search's path scratch).
+/// The characters' slot managers for one system run: `Slots::new(&mut slot_query, &scratch)` with the
+/// system's `Local<RefCell<PathScratch>>`.
 pub struct Slots<'a> {
     store: RefCell<&'a mut (dyn SlotStore + 'a)>,
     scratch: &'a RefCell<gd_sim::nav::PathScratch>,
@@ -252,7 +199,6 @@ impl<'a> Slots<'a> {
     ) -> Option<Vec3> {
         let mut store = self.store.borrow_mut();
         let (rpos, rrad) = store.body(req)?;
-        // The manager is taken out while the other bodies are read, then put back.
         let (opos, orad, mut m) = {
             let s = store.slots_mut(owner)?;
             let mode = if defense {
@@ -298,9 +244,7 @@ impl<'a> Slots<'a> {
         Some(Vec3::from(got.pos))
     }
 
-    /// `Character::RequestAttackSlot` / `GetMoveToPoint`'s melee branch: a
-    /// spot around `owner` for `req`, `range` (`Skill::GetRange`) + both
-    /// radii from it (`GetTargetDistance`).
+    /// `Character::RequestAttackSlot`: a spot around `owner` for `req`, `range` + both radii from it.
     pub fn attack(&self, owner: Entity, req: Entity, range: f32, nav: &Nav) -> Option<Vec3> {
         self.request(false, owner, req, |o, r| range + o + r, nav)
     }
@@ -322,8 +266,7 @@ impl<'a> Slots<'a> {
         }
     }
 
-    /// `ControllerAI::SetState` releasing the slots a monster held of the
-    /// state data's old enemy.
+    /// `ControllerAI::SetState` releasing the slots of the old enemy.
     pub fn release_all(&self, owner: Entity, req: Entity) {
         if let Some(s) = self.store.borrow_mut().slots_mut(owner) {
             s.attack.release(req.to_bits());
@@ -331,7 +274,6 @@ impl<'a> Slots<'a> {
         }
     }
 
-    /// `Character::LostSlot` was sent to `e` since the last call.
     pub fn take_lost(&self, e: Entity) -> bool {
         self.store
             .borrow_mut()
@@ -340,8 +282,8 @@ impl<'a> Slots<'a> {
     }
 }
 
-/// Gives new living characters their managers (`Character::Load`'s `numAttackSlots` / `numDefenseSlots`), syncs
-/// the bodies the managers read, and drops the managers of the dead.
+/// Gives new living characters their managers (`Character::Load`), syncs the bodies, and drops the
+/// managers of the dead.
 pub fn sync_slots(
     mut commands: Commands,
     data: Res<gd_game_core::data::GameData>,
@@ -387,9 +329,8 @@ pub fn sync_slots(
     }
 }
 
-/// `CharacterMovementManager::GetPointAwayFromGoal`:
-/// the path to `goal` is walked back from its end until `dist` from the goal
-/// is reached (the path's own end may already be short of it). None: no path.
+/// `CharacterMovementManager::GetPointAwayFromGoal`: the path to `goal` walked back from its end until
+/// `dist` from the goal. None: no path.
 pub fn point_away(
     nav: &Nav,
     scratch: &mut gd_sim::nav::PathScratch,
@@ -428,10 +369,9 @@ pub fn point_away(
     Some(path[0])
 }
 
-/// The fight state a monster with an enemy is in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum St {
-    /// None of them (Idle: the next update finds the enemy and pursues).
+    /// Idle: the next update finds the enemy and pursues.
     #[default]
     Idle,
     Pursue,
@@ -441,8 +381,7 @@ pub enum St {
     Reposition,
 }
 
-/// How a monster moves to its goal (`ControllerAI::MoveTo`'s animation and
-/// speed arguments, `ControllerMonsterStatePursue::OnBegin`).
+/// `ControllerAI::MoveTo`'s animation and speed arguments (`ControllerMonsterStatePursue::OnBegin`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Pace {
     /// The Run animation at `Character::GetRunSpeed`.
@@ -456,7 +395,6 @@ pub enum Pace {
     Walk,
 }
 
-/// `Character::Load`: `walkDistance`, `walkSpeed`, `walkUsesRun`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Walk {
     pub distance: f32,
@@ -475,25 +413,17 @@ impl Walk {
     }
 }
 
-/// What the states ask of a skill's class (Game.dll vtables:
-/// `Skill::GetMoveType` is 1 and set by the constructors of
-/// `Skill_AttackPathCharge` 2, `Skill_AttackRadiusLeap` 3 and
-/// `...Disengage` 5; `Skill::AttacksOnArrival` is true and `Skill::CanRechooseInPursuit` false for the six
-/// classes below, `CanRechooseInPursuit` true for the others: `Skill`, `SkillActivated`,
-/// `Skill_AttackWeapon`, `...Radius`, `...Spell`, `...Projectile`, `...Chain`,
-/// `SkillActivatedWeapon`, `Skill_WeaponPool_Default`).
+/// What the states ask of a skill's class: `Skill::GetMoveType` (1; `Skill_AttackPathCharge` 2,
+/// `Skill_AttackRadiusLeap` 3, `...Disengage` 5), `Skill::AttacksOnArrival` / `CanRechooseInPursuit`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SkillMove {
-    /// Move type 2: charges to use.
     pub charge: bool,
-    /// Move type 3 or 5: jumps to use.
     pub jump: bool,
     /// `Skill::AttacksOnArrival`: the end of the Pursue path starts the skill.
     pub shortcut: bool,
     /// `Attack::OnBegin` zeroes the swing timer.
     pub resets_swing: bool,
-    /// `Skill::CanRechooseInPursuit`: Pursue chooses again every 200 ms while it runs to use the skill
-    /// (`ControllerMonsterStatePursue::OnUpdate`); a charge, leap, disengage or evade is kept.
+    /// `Skill::CanRechooseInPursuit`: Pursue chooses again every 200 ms.
     pub rechooses: bool,
 }
 
@@ -519,41 +449,34 @@ impl SkillMove {
     }
 }
 
-/// What the monster does this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
-    /// Follow `path`.
     Run,
     Stand,
-    /// Start the plain attack (`AttackEnemyOrReturn`; a chosen skill is
-    /// started by `monster_skills`).
+    /// The plain attack (`AttackEnemyOrReturn`; a chosen skill is started by `monster_skills`).
     Swing,
-    /// The "Return" state: the fight is over for now.
+    /// The "Return" state.
     Return,
 }
 
-/// The chosen skill as the approach needs it (`monster_skills::approach`).
+/// The chosen skill as the approach needs it.
 #[derive(Clone, Debug, Default)]
 pub struct Approach {
-    /// Which skill: the state data's skill id.
+    /// The state data's skill id.
     pub key: String,
-    /// `CloseEnoughToUseSkill`: the centre distance within which it is used.
+    /// `CloseEnoughToUseSkill`: centre distance.
     pub reach: f32,
     /// `Skill::GetRange`.
     pub range: f32,
     /// `Skill::GetRangeProfile` is Melee: the enemy's attack slots are used.
     pub melee: bool,
-    /// The plain swing (no skill): `combat.rs` starts it.
     pub plain: bool,
     pub mv: SkillMove,
-    /// `Skill_AttackWeaponCharge::MaxSkillDistance` (also the blink and path
-    /// charge): where the skill's last charge started and its
-    /// `maxDistanceBuffer`; none for other skills, a zero buffer or no
-    /// charge yet.
+    /// `Skill::GetMaxSkillDistance` (weapon charge, blink, path charge): where the last charge started
+    /// and `maxDistanceBuffer`; none otherwise, for a zero buffer or before a charge.
     pub charge_limit: Option<(Vec3, f32)>,
 }
 
-/// Everything one update of the states reads.
 pub struct Frame<'a, 's> {
     pub me: Entity,
     pub pos: Vec3,
@@ -561,38 +484,30 @@ pub struct Frame<'a, 's> {
     pub dt: f32,
     pub foe: (Entity, Vec3, f32),
     pub app: &'a Approach,
-    /// `ControllerMonster::CanMove`.
     pub can_move: bool,
-    /// A `ControllerStationaryMonster` / `ControllerTotem` (`combat::ControllerClass`):
-    /// its own Pursue state.
+    /// `ControllerStationaryMonster` / `ControllerTotem`: its own Pursue state.
     pub stationary: bool,
-    /// The swing timer has run out.
     pub swing_ready: bool,
     pub view_y: f32,
-    /// `Monster::GetLeader`.
     pub leader: Option<Entity>,
     pub walk: Walk,
     pub nav: &'a Nav,
     pub slots: &'a Slots<'s>,
-    /// The system's path scratch (shared with [`Slots`]).
     pub scratch: &'a RefCell<gd_sim::nav::PathScratch>,
 }
 
-/// The states' data (see the module docs). `PursuitTime`,
-/// `randomRepositionChance` come from the controller record.
+/// The states' data.
 #[derive(Clone, Debug, Default)]
 pub struct MeleeAi {
     pub st: St,
-    /// The state data's enemy and skill.
     enemy: Option<Entity>,
     key: String,
     pursuit_ms: f32,
-    /// `randomRepositionChance` (%).
     pub random_reposition: i32,
     /// Pursue / Reposition / Wait timer (s) and the 200 ms re-choose timer.
     timer: f32,
     repick: f32,
-    /// Pursue: `LostSlot` was sent, ask again at the next update.
+    /// Pursue: `LostSlot` was sent.
     relook: bool,
     /// A `MoveTo` is under way: its path ending is `EndOfPathReached`.
     pathed: bool,
@@ -601,28 +516,21 @@ pub struct MeleeAi {
     roaming: bool,
     center: Option<Vec3>,
     radius: f32,
-    /// Attack: the attack was made / is over, and the reposition roll.
+    /// Attack: made / over, and the reposition roll.
     attacked: bool,
     ended: bool,
     swinging: bool,
     roll: bool,
-    /// The Pursue / RepositionForAttack `PathFailed` counts (`ControllerMonsterStatePursue.pathFailures` /
-    /// `ControllerMonsterStateRepositionForAttack.pathFailures`, reset
-    /// by their `OnUpdate`, i.e. every update).
+    /// `PathFailed` count since the last `OnUpdate` (`ControllerMonsterStatePursue.pathFailures`).
     fails: u32,
-    /// The crowd failed the move under way: `PathFailed` is due at the next
-    /// update.
+    /// `PathFailed` is due at the next update.
     failed: bool,
-    /// A state asked for "Return".
     ret: bool,
-    /// Pursue: the pace of the move under way, whether it walks, its goal.
     pace: Pace,
     walking: bool,
     dest: Option<Vec3>,
-    /// Attack `OnBegin` zeroed the swing timer.
     swing_reset: bool,
-    /// Another controller's `SetState("RepositionForAttack")` with this enemy
-    /// (the synergy super attack's end, synergy.rs), run at the next update.
+    /// Another controller's `SetState("RepositionForAttack")` (synergy.rs), run at the next update.
     reposition_on: Option<Entity>,
 }
 
@@ -637,8 +545,7 @@ impl MeleeAi {
         }
     }
 
-    /// Whether the monster is swinging or casting right now; the end of
-    /// the attack the Attack state made is its `HandleEvent` "End".
+    /// Whether the monster is swinging or casting; the end of the Attack state's attack is its "End".
     pub fn note_swing(&mut self, active: bool) {
         if active {
             self.swinging = true;
@@ -650,12 +557,10 @@ impl MeleeAi {
         }
     }
 
-    /// The fight states have an enemy.
     pub fn engaged(&self) -> bool {
         self.enemy.is_some()
     }
 
-    /// The state data's enemy.
     pub fn enemy(&self) -> Option<Entity> {
         self.enemy
     }
@@ -664,59 +569,50 @@ impl MeleeAi {
         self.st == St::Attack
     }
 
-    /// The Attack state has not made its attack yet (`ControllerMonsterStateAttack.attackPending`): the attack a skill
-    /// user starts (`monster_skills::choose_skills`) is due. Once an attack was made the state waits for its
-    /// "End", and the end re-chooses and re-checks `CloseEnoughToUseSkill` ([`Self::update`]: in reach "Attack"
-    /// again, else "Pursue"): the one source of "the attack ended and the target is still in reach", so a skill
-    /// never fires again off an ended attack at a target that walked away.
+    /// `ControllerMonsterStateAttack.attackPending`: a skill user's attack is due. After the attack's "End"
+    /// [`Self::update`] re-checks `CloseEnoughToUseSkill`, so a skill never fires off an ended attack at a
+    /// target that walked away.
     pub fn may_attack(&self) -> bool {
         self.st == St::Attack && !self.attacked
     }
 
-    /// The Attack state's `ProjectileCollisionCallback` ([`ProjectileCollided`]).
+    /// The Attack state's `ProjectileCollisionCallback`.
     pub fn projectile_collided(&mut self, chance: i32, can_move: bool) {
         if self.st == St::Attack {
             self.roll = gd_game_core::rng::i32(0..100) < chance && can_move;
         }
     }
 
-    /// `SetState("RepositionForAttack")` with `enemy` as the state data's enemy
-    /// from outside the fight states (`ControllerMonsterSynergyStateSuperAttack`'s
-    /// "End", synergy.rs): its `OnBegin` runs at the next [`Self::update`].
-    /// The state is left at once (no Attack state to use a skill before then).
-    /// PORT: an enemy other than the frame's then is dropped (the engine walks
-    /// to the old one until `EnemyFound` re-targets: "Attack" / "Pursue").
+    /// `SetState("RepositionForAttack")` from outside the fight states
+    /// (`ControllerMonsterSynergyStateSuperAttack`'s "End"); its `OnBegin` runs at the next
+    /// [`Self::update`]. PORT: an enemy other than the frame's then is dropped (the engine walks to the old
+    /// one until `EnemyFound` re-targets).
     pub fn reposition(&mut self, enemy: Entity) {
         self.reposition_on = Some(enemy);
         self.st = St::Reposition;
         self.pathed = false;
     }
 
-    /// `Character::CrowdAgentError`: the crowd failed the move (the path is
-    /// cleared by the caller); the state's `PathFailed` runs at the next
-    /// [`Self::update`] when a move of this state was under way.
+    /// `Character::CrowdAgentError`: `PathFailed` runs at the next [`Self::update`] if this state's move
+    /// was under way.
     pub fn note_path_failed(&mut self) {
         self.failed = self.pathed;
     }
 
-    /// The pace of the move under way.
     pub fn pace(&self) -> Pace {
         self.pace
     }
 
-    /// The skill the state's move carries (its state data's skill; the Pursue's `MoveTo` passes it).
+    /// The skill the state's move carries.
     pub fn key(&self) -> &str {
         &self.key
     }
 
-    /// `Attack::OnBegin` zeroed the swing timer since the last call.
     pub fn take_swing_reset(&mut self) -> bool {
         std::mem::take(&mut self.swing_reset)
     }
 
-    /// The fight is over (enemy gone or invalid, "Return"): the slots of the
-    /// enemy are released (`SetState` with another enemy) and the states
-    /// start afresh.
+    /// The fight is over: the enemy's slots are released and the states start afresh.
     pub fn leave(&mut self, slots: &Slots, me: Entity) {
         if let Some(e) = self.enemy.take() {
             slots.release_all(e, me);
@@ -729,8 +625,7 @@ impl MeleeAi {
         self.key.clear();
     }
 
-    /// `Character::GetMoveToPoint` for an enemy that is a character; None is
-    /// a point without a region.
+    /// `Character::GetMoveToPoint`; None is a point without a region.
     fn move_point(&self, f: &Frame, skill: bool) -> Option<Vec3> {
         let (foe, fpos, frad) = f.foe;
         if skill {
@@ -754,10 +649,8 @@ impl MeleeAi {
         )
     }
 
-    /// `ControllerMonsterStatePursue::OnUpdate`'s second test, `ControllerAIStateT::MaxSkillDistance`
-    /// (`Skill::GetMaxSkillDistance`) with the Pursue goal: the monster has run
-    /// farther from where the charge started than the goal is plus
-    /// `maxDistanceBuffer`. (Ground distances, as the charge itself.)
+    /// `ControllerAIStateT::MaxSkillDistance`: the monster has run farther (ground distance) from the
+    /// charge start than the Pursue goal plus `maxDistanceBuffer`.
     fn charge_far_enough(&self, f: &Frame) -> bool {
         let (Some((start, buffer)), Some(goal)) = (f.app.charge_limit, self.dest) else {
             return false;
@@ -771,7 +664,7 @@ impl MeleeAi {
         Vec2::new(f.foe.1.x - f.pos.x, f.foe.1.z - f.pos.z).length() <= f.app.reach
     }
 
-    /// `ControllerAI::MoveTo` / `Character::CanMoveTo`: the path, or none.
+    /// `ControllerAI::MoveTo` / `Character::CanMoveTo`.
     fn move_to(&mut self, f: &Frame, to: Vec3, path: &mut Vec<Vec3>) -> bool {
         match f.nav.0.find_path(
             &mut f.scratch.borrow_mut(),
@@ -796,8 +689,7 @@ impl MeleeAi {
         f.slots.release_attack(f.foe.0, f.me);
     }
 
-    /// `ControllerAI::SetState` onto `st` with the enemy and skill as state
-    /// data, and the state's `OnBegin`.
+    /// `ControllerAI::SetState` onto `st`, and the state's `OnBegin`.
     fn set(&mut self, st: St, f: &Frame, path: &mut Vec<Vec3>) {
         if let Some(old) = self.enemy
             && old != f.foe.0
@@ -831,7 +723,6 @@ impl MeleeAi {
                 self.ended = false;
                 self.roll = false;
                 self.timer = 10.0;
-                // `Attack::OnBegin`.
                 if f.app.mv.resets_swing {
                     self.swing_reset = true;
                 }
@@ -845,7 +736,7 @@ impl MeleeAi {
                             self.reposition_failed(f, path);
                         }
                     }
-                    // No enemy to run to: `IdleAction`.
+                    // `IdleAction`.
                     None => path.clear(),
                 }
             }
@@ -853,8 +744,7 @@ impl MeleeAi {
     }
 
     fn begin_pursue(&mut self, f: &Frame, path: &mut Vec<Vec3>) {
-        // The stationary Pursue `OnBegin`: in reach
-        // "Attack", else "Idle"; it never moves.
+        // The stationary Pursue `OnBegin`: in reach "Attack", else "Idle".
         if f.stationary {
             path.clear();
             let next = if self.close(f) { St::Attack } else { St::Idle };
@@ -871,7 +761,6 @@ impl MeleeAi {
         }
         if point.distance_squared(f.pos) > 0.000_625 {
             if self.move_to(f, point, path) {
-                // The pace (`MoveTo`'s animation and speed).
                 if f.walk.distance > 0.0 && f.pos.distance(point) <= f.walk.distance {
                     self.pace = Pace::Walk;
                     self.walking = true;
@@ -903,18 +792,15 @@ impl MeleeAi {
         if point.distance_squared(f.pos) > 0.000_625 && self.move_to(f, point, path) {
             return;
         }
-        // Seven tries at `radius + 1` m around the point; `i / 7` is an
-        // integer division, so each is the same +x shift.
+        // Seven tries at `radius + 1` m; `i / 7` in integer arithmetic makes each the same +x shift.
         if !self.move_to(f, point + Vec3::new(f.radius + 1.0, 0.0, 0.0), path) {
             path.clear();
             self.set(St::Idle, f, path);
         }
     }
 
-    /// The state's `PathFailed` (module docs).
     fn path_failed(&mut self, f: &Frame, path: &mut Vec<Vec3>) {
         match self.st {
-            // `ControllerMonsterStatePursue::PathFailed`.
             St::Pursue => {
                 if f.app.mv.shortcut {
                     return self.set(St::Attack, f, path);
@@ -929,7 +815,6 @@ impl MeleeAi {
                 self.set(next, f, path);
             }
             St::Reposition => self.reposition_failed(f, path),
-            // `ControllerMonsterStateWaitToAttack::PathFailed`.
             St::Wait => {
                 if !self.emote_or_roam(f, path) {
                     self.set(St::Idle, f, path);
@@ -1015,23 +900,20 @@ impl MeleeAi {
         self.roaming
     }
 
-    /// One `OnUpdate` of the state the monster is in (with the path events
-    /// and `LostSlot` delivered first); `path` is what is left of its move.
+    /// One `OnUpdate` of the state the monster is in (path events and `LostSlot` delivered first); `path`
+    /// is what is left of its move.
     pub fn update(&mut self, f: &Frame, path: &mut Vec<Vec3>) -> Act {
         self.ret = false;
         self.fails = 0;
-        // `LostSlot` reaches the state the monster is in; only Pursue and
-        // Attack react (the others have the empty base handler).
+        // Only Pursue and Attack react to `LostSlot`.
         let lost = f.slots.take_lost(f.me);
         if std::mem::take(&mut self.reposition_on) == Some(f.foe.0) {
             self.set(St::Reposition, f, path);
             return self.act(path);
         }
-        // `DefaultEnemyFoundResponse`: a monster not in these states (or
-        // with another enemy) pursues.
+        // `DefaultEnemyFoundResponse`: a monster not in these states (or with another enemy) pursues.
         if self.st == St::Idle || self.enemy != Some(f.foe.0) {
-            // `SetState` leaves DefendLeader / FollowLeader (the leader is
-            // the state data's second id): the defence slot is released.
+            // `SetState` leaving DefendLeader / FollowLeader releases the defence slot.
             if self.st == St::Idle
                 && let Some(l) = f.leader
             {
@@ -1057,7 +939,6 @@ impl MeleeAi {
                     self.relook = true;
                 }
                 if ended_path {
-                    // `EndOfPathReached`.
                     if self.close(f) || f.app.mv.shortcut {
                         self.set(St::Attack, f, path);
                     } else {
@@ -1065,8 +946,7 @@ impl MeleeAi {
                         self.set(St::Wait, f, path);
                     }
                 } else if std::mem::take(&mut self.relook) {
-                    // `OnUpdate` after `LostSlot`: the monster only checks
-                    // that a move point is still to be had.
+                    // After `LostSlot` the monster only checks that a move point is still to be had.
                     if self.move_point(f, true).is_none() {
                         self.set(St::Wait, f, path);
                     }
@@ -1088,8 +968,7 @@ impl MeleeAi {
                             && let Some(d) = self.dest
                             && f.pos.distance(d) > f.walk.distance
                         {
-                            // A walker farther from its goal than
-                            // `walkDistance` runs on (unit speed).
+                            // A walker farther from its goal than `walkDistance` runs on.
                             self.walking = false;
                             self.pace = Pace::Unit;
                         }
@@ -1097,7 +976,6 @@ impl MeleeAi {
                 }
             }
             St::Navigate => {
-                // `ControllerMonsterStateNavigateObstacle::OnUpdate`.
                 if self.close(f) {
                     self.set(St::Attack, f, path);
                 } else {

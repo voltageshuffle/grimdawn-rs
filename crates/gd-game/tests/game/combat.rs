@@ -41,8 +41,7 @@ fn monster_attacks_player() {
     );
 }
 
-/// The player holds the attack on a weak zombie (every frame asks for the next use, as the held button's repeat
-/// does) until it dies.
+/// The player holds the attack on a weak zombie (every frame asks for the next use) until it dies.
 #[test]
 fn player_kills_monster() {
     let Some((mut g, _)) = game() else { return };
@@ -57,8 +56,7 @@ fn player_kills_monster() {
     assert!(died, "MonsterKilled was sent");
 }
 
-/// A hotbar cast at a monster (the request the game sends for a key)
-/// spends energy and kills it.
+/// A hotbar cast at a monster spends energy and kills it.
 #[test]
 fn cast_request_kills_monster() {
     let Some((mut g, p)) = game() else { return };

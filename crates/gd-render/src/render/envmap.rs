@@ -5,8 +5,7 @@
 //! technique `emissiveStyle` (sort 6500): the VS reflects the eye ray about the
 //! world normal, R = I − 2(I·N)N with I = normalize(position − cameraOrigin);
 //! `emmisivePS`: rgb = cube(normalize(R)).rgb · base.rgb, a = base.a; blend
-//! SrcAlpha / InvSrcAlpha, cull back (states read from the technique,
-//! material.rs). PORT: drawn in the main view only (not the glow view).
+//! SrcAlpha / InvSrcAlpha, cull back. PORT: drawn in the main view only (not the glow view).
 use super::material::{PassStates, blend_factor};
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
@@ -54,11 +53,8 @@ impl Material for EnvmapMaterial {
             AlphaMode::Opaque
         }
     }
-    /// Sort 6500: after the particles of the portal's own effect
-    /// (`particlecombine` 6000, `particleadditive` 6100), whose dark ring orbs
-    /// and glows the starfield then covers where `base.a` is high.
-    /// `GraphicsMTRenderer::RenderScenePasses` (fx/render.rs `ParticleMaterial::sort`);
-    /// same bias scale as `ParticleMaterial::depth_bias`.
+    /// Sort 6500: after the portal's own particles (`particlecombine` 6000, `particleadditive` 6100),
+    /// which the starfield covers where `base.a` is high. Same bias scale as `ParticleMaterial::depth_bias`.
     fn depth_bias(&self) -> f32 {
         (6500 - 5900) as f32 * 10.0
     }

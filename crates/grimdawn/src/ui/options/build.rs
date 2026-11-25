@@ -4,8 +4,7 @@ use gd_ui::state::options::{OptionsWindow, Tab};
 #[derive(Component)]
 pub(super) struct OptionsRoot;
 
-/// The shown rollover: its tag (a control's rollover tag, or an open dropdown row's full label), root and text size
-/// (physical px).
+/// The shown rollover: its tag (or an open dropdown row's full label), root and text size (physical px).
 #[derive(Default)]
 pub(super) struct Tip {
     tag: Option<String>,
@@ -13,20 +12,11 @@ pub(super) struct Tip {
     size: Vec2,
 }
 
-/// The controls' rollovers: the menu manager's shared rollover box
-/// ([`gd_ui::rollover::menu_tip`]). Grim Dawn.exe: a hovered check box
-/// (`MenuButton::HandleMouseEvent`), slider (knob or rect, `MenuSlider::HandleMouseEvent`) or dropdown
-/// (`MenuDropBox::HandleDropMouse`) hands its rollover tag to the
-/// menu manager (`MenuManager::SetRollover`), which localises it and splits the lines at `^n`
-/// (`MenuRolloverBox::SetText`,
-/// no wrapping); the box draws (`MenuRolloverBox::Draw`) once 500 ms have passed since the first text was ever set (the
-/// timer `MenuRolloverBox.firstTextTime` is set once and only the constructor clears it). `first` keeps that one-shot
-/// start for the whole process (never reset): a new tag spawns a fresh root whose [`crate::ui::tip::TipDelay`] is
-/// seeded with the elapsed time, and `tip::delay_tips` drives its visibility (instant while paused). The box moves with
-/// the cursor in place (the cursor is not in its identity: no rebuild while moving).
-/// PORT: while a dropdown's list is open only its rows show a rollover — the row's full label (the drawn text is
-/// ellipsised), drawn without localisation ([`gd_ui::rollover::menu_tip_text`]); hidden while a binding waits for
-/// a key; in the main menu (no session, `delay_tips` is in `UiPlaySet`) the one-shot timer shows it here itself.
+/// The controls' rollovers in the menu manager's shared rollover box (`MenuManager::SetRollover`,
+/// `MenuRolloverBox::SetText`: localised, split at `^n`, no wrapping). The box draws once 500 ms have passed
+/// since the first text was ever set (`MenuRolloverBox.firstTextTime`, never reset): `first` keeps that start.
+/// PORT: while a dropdown's list is open only its rows show a rollover (the row's full label, not localised);
+/// hidden while a binding waits for a key.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rollover(
     mut commands: Commands,
@@ -48,7 +38,6 @@ pub(super) fn rollover(
         .filter(|_| win.open && win.rebind.is_none())
         .and_then(|p| {
             if win.dropdown.is_some() {
-                // The open list's rows show their full label (the drawn rows are ellipsised).
                 match hit_at(
                     &layout,
                     win.draft.as_ref().unwrap_or(&options),
@@ -135,9 +124,7 @@ pub(super) fn rollover(
     }
 }
 
-/// A state-dependent image node: `build` draws its initial state and [`live`]
-/// swaps the bitmap (and moves the knob) in place — a hover, drag or enabled
-/// change never rebuilds the window.
+/// A state-dependent image node: [`live`] swaps the bitmap (and moves the knob) in place.
 #[derive(Component)]
 pub(super) enum Look {
     /// A tab quad: the open tab keeps its down bitmap (the tab is in the signature).
@@ -192,8 +179,7 @@ pub(super) struct DropRowHl(pub(super) usize);
 #[derive(Component)]
 pub(super) struct ApplyGate;
 
-/// A node [`live`] moves with a list's scroll (the clipped pane's inner node
-/// or the scroll bar's thumb), so a scroll never rebuilds the window.
+/// A node [`live`] moves with a list's scroll (the clipped pane's inner node or the scroll bar's thumb).
 #[derive(Component)]
 pub(super) enum Scroll {
     /// The dropdown list's pane ([`gd_ui::window::pane`]): `max` its last first row.
@@ -375,10 +361,7 @@ pub(super) fn build(
     }
     let Ok(w) = window.single() else { return };
     let size = UVec2::new(w.physical_width(), w.physical_height());
-    // Only layout state plus the tags generation: hover, drags, scrolls and the draft's values are live
-    // ([`live`]); the movement type changes the layout (the key list's WASD rows),
-    // and the draft's language / device rebuild the closed dropdown box on a pick.
-    // No draft / bindings clone before the early-return.
+    // Only layout state plus the tags generation; hover, drags, scrolls and the draft's values are [`live`].
     let movement = win
         .draft
         .as_ref()
@@ -402,10 +385,8 @@ pub(super) fn build(
         language,
         device,
         win.keys_ver,
-        // A language / mod swap reloads the tags (`FontCache::generation`): rebuild the tag-resolved row
-        // labels and dropdown values, as the other UI groups' signatures do.
+        // A language / mod swap reloads the tags.
         assets.fonts.generation,
-        // An applied UI Scale rebuilds the open window at the new size.
         assets.scale(size).to_bits(),
     );
     if size.x == 0 || !built.changed(sig) {
@@ -424,8 +405,7 @@ pub(super) fn build(
     let s = assets.scale(size);
     let root = gd_ui_kit::spawn_root(&mut commands, OptionsRoot, gd_ui::window::Z_OPTIONS);
     commands.entity(root).insert(gd_ui::hud::KeepsShown);
-    // The dropdown values' tag table ([`ChoiceCtx`]): an Arc clone, so the `Ui`'s mutable borrow of the
-    // fonts cache below does not conflict with the context's borrow.
+    // Cloned so the `Ui`'s mutable borrow of the fonts cache does not conflict with the context's.
     let tags = assets.fonts.tags.clone();
     let mut ui = assets.ui(
         &mut commands,
@@ -455,10 +435,8 @@ pub(super) fn build(
         ui.sc(def.h),
     );
     let o = Vec2::new(wr.x, wr.y);
-    // The window takes the whole screen's mouse (`ui/widgets.rs`, button sounds): the HUD and the windows behind
-    // it neither sound nor press; its own buttons, registered after this, are in front.
+    // The window takes the whole screen's mouse; its own buttons, registered after this, are in front.
     ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
-    // Reference-shot coordinates → screen.
     let at =
         |ui: &Ui, x: f32, y: f32| Vec2::new(o.x + ui.sc(x - ORIGIN.x), o.y + ui.sc(y - ORIGIN.y));
     let field = |k: &str| rec.str(k).unwrap_or("").to_string();
@@ -482,7 +460,6 @@ pub(super) fn build(
             &text,
         );
     }
-    // Tabs.
     for (i, k) in TAB_FIELDS.iter().enumerate() {
         let Some(b) = ui.record(&field(k)) else {
             continue;
@@ -506,7 +483,6 @@ pub(super) fn build(
             ui.sc(sz.x as f32),
             ui.sc(sz.y as f32),
         );
-        // The open tab shows its down bitmap (the tab is in the signature).
         let img = if win.tab == tab {
             b.str("bitmapNameDown")
                 .map(str::to_owned)
@@ -557,8 +533,7 @@ pub(super) fn build(
         .image(&check.replace('*', "up"))
         .map_or(24.0, |(_, s)| s.x as f32);
     let arrow_w = ui.image(&drop_arrow).map_or(20.0, |(_, s)| s.x as f32);
-    // Measure the labels in reference units and lay the page out (the closure's mutable borrow of `ui` ends
-    // with this block, before the drawing below).
+    // The closure's mutable borrow of `ui` ends with this block.
     let placed = {
         let mut measure = |tag: &str| {
             if tag.is_empty() {
@@ -575,10 +550,8 @@ pub(super) fn build(
         };
         pages::layout(win.tab, &mut env)
     };
-    // Page-local reference coordinates → screen.
     let pat = |ui: &Ui, x: f32, y: f32| Vec2::new(po.x + ui.sc(x), po.y + ui.sc(y));
-    // A check box's state bitmaps and hit (`MenuCheckBox::Render`: a disabled box draws the `Disabled` bitmap,
-    // else `Up` tinted 0.6 grey when that one is missing; all five states resolved once, [`live`] swaps them).
+    // `MenuCheckBox::Render`: a disabled box draws the `Disabled` bitmap, else `Up` tinted 0.6 grey.
     let draw_check =
         |ui: &mut Ui, layout: &mut OptionsLayout, k: &'static str, tag: &'static str, p: Vec2| {
             let enabled = check_enabled(k, &draft);
@@ -651,7 +624,6 @@ pub(super) fn build(
                 }
                 let v = slider_get(&draft, k);
                 let kx = a.x + (b.x - a.x) * v;
-                // The knob's look ([`knob_bitmap`]): [`live`] swaps it and moves the knob.
                 if let Some((up_h, sz)) = ui.image(KNOB[0]) {
                     let (kw, kh) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
                     let held = ui.image(KNOB[1]).map_or_else(|| up_h.clone(), |(h, _)| h);
@@ -756,10 +728,8 @@ pub(super) fn build(
             );
         }
     }
-    // Default / Apply / Close.
     let (cx, bottom) = (o.x + wr.w * 0.5, o.y + wr.h);
     let changed = !draft.same_values(&options) || keys_draft != *bindings;
-    // Apply's sounds under a gate [`live`] shows while Apply is enabled.
     let gate = ui
         .commands
         .spawn((
@@ -794,25 +764,13 @@ pub(super) fn build(
             layout.hits.push((r, hit));
         }
     }
-    // The open dropdown's list (`Grim Dawn.exe`: the options window's dropdowns are made by
-    // `MenuDropBox::MenuDropBox`,
-    // drawn by `MenuDropBox::Draw` and their rows by `MenuDropBox::DrawRow`): rows `itemHeight` 19 px tall from
-    // `borderTop` 2 px under the box, at most 16 shown; a black (0, 0, 0, 1) back under them; the `dropboxBorder` frame
-    // drawn round the box and the list together; the highlighted row (the current choice when the list opens, then the
-    // row under the cursor, `MenuDropBox::SetSelection` / `MenuDropBox::SetHighlight`) inset `highlightBoxReduction`
-    // 1 px, filled `dropboxSelectColor` with a `dropboxSelectBorderColor` line along its top and bottom; the row text
-    // in `dropboxListFont`, `borderSide` 4 px in, centred in the row. Over 16 rows (`MenuDropBox::Draw` / input
-    // `MenuDropBox::HandleMouseEvent`): rows `drop_top..` shown, a wheel step scrolls a row, a press in the list's
-    // right 20 px sets the first row ([`drop_bar_row`]); the thumb (grey 0.5) is the arrow button's width less 12 px
-    // from 5 px into it, at `top + 4 + first * (height - 11) / rows`, `(height - 11) * 16 / rows` tall. PORT: the arrow
-    // button is drawn outside the box here, so the thumb takes its width at the list's right edge; all rows are drawn
-    // in a clipped pane ([`gd_ui::window::pane`]) at scroll 0 and [`live`] scrolls it. The drawn row text is
-    // ellipsised to the inner width, less the scroll column when it shows (`UITextBox::TruncateLine`); the layout keeps
-    // the full labels (`drop_rows`) for the rows' rollovers ([`rollover`]). The open list spawns
-    // last — after the key list and the Default / Apply / Close buttons — so it draws over the window chrome
-    // (`MenuDropBox::Draw` draws the open list over the window's buttons): the window's nodes all share one Z and
-    // Bevy draws equal-Z siblings in insertion (`Children`) order, later sibling on top, so spawn order is draw
-    // order. Its row / bar hits are prepended last to match, taking the mouse before the chrome's hits.
+    // The open dropdown's list (`MenuDropBox::Draw` / `DrawRow`): rows `itemHeight` 19 px from `borderTop` 2 px
+    // under the box, at most 16 shown, on a black back, framed with the box by `dropboxBorder`; the highlighted row
+    // inset `highlightBoxReduction` 1 px, filled `dropboxSelectColor` with `dropboxSelectBorderColor` top and bottom
+    // lines; text in `dropboxListFont`, `borderSide` 4 px in. Over 16 rows a wheel step scrolls a row and a press in
+    // the right 20 px sets the first row; the grey 0.5 thumb is at `top + 4 + first * (height - 11) / rows`,
+    // `(height - 11) * 16 / rows` tall. PORT: the thumb sits at the list's right edge; row text is ellipsised.
+    // Spawned last so it draws over the chrome (equal-Z siblings draw in insertion order); its hits go first.
     if let Some((r, shown, arrow_bottom, arrow_w)) = open_list {
         let rows = choices(shown, &draft, &ctx);
         let current = shown_text(shown, &draft, &ctx);
@@ -950,17 +908,14 @@ pub(super) fn key_list(
         .str("defaultControlFontName")
         .unwrap_or(VALUE_STYLE)
         .to_string();
-    // Measured: header bar 4..26, rows from 30, 20 px each.
+    // Stock layout: header bar 4..26, rows from 30, 20 px each.
     let (pad, head_y, head_h) = (ui.sc(6.0), ui.sc(4.0), ui.sc(22.0));
     ui.solid(
         URect::new(r.x + ui.sc(4.0), r.y + head_y, r.w - ui.sc(8.0), head_h),
         color4(consts, "optionsKeyBindingHeaderColor"),
     );
-    // PORT: the stock list fixes the action column at 370 px and the primary
-    // key column at 540 (`KeyBindingList`); here each column measures its
-    // content (headers, action names, key names): the key columns keep their
-    // measured widths and the action column takes the rest, so a long
-    // localised action name truncates before the key cells, never over them.
+    // PORT: the stock list fixes the action column at 370 px and the key column at 540; here the key columns
+    // measure their content and the action column takes the rest.
     let rows = binding_rows(ui.fonts, o, b);
     let headers = [
         "tagKeybindingTitle02",
@@ -1008,8 +963,6 @@ pub(super) fn key_list(
     layout.key_clip = URect::new(r.x, top, r.w, (r.y + r.h) - top);
     let scroll = scroll.min(layout.max_scroll);
     let rl = ui.line_height(&row_style);
-    // The selected row: the one being bound, else the first (static — rebind
-    // is in the signature).
     let selected = match rebind {
         Some((a, _)) => rows.iter().position(|(ra, ..)| *ra == a),
         None => Some(0),
@@ -1027,7 +980,6 @@ pub(super) fn key_list(
         let y = top + k as f32 * row_h;
         let waiting = rebind.filter(|r| r.0 == *a);
         if selected == Some(k) {
-            // The selected row (the first, or the one being bound).
             ui.solid(
                 URect::new(r.x + ui.sc(4.0), y, r.w - ui.sc(24.0), row_h),
                 color4(consts, "menuListSelectColor"),
@@ -1064,8 +1016,7 @@ pub(super) fn key_list(
     // The cells before the list's own hit.
     cells.append(&mut layout.hits);
     layout.hits = cells;
-    // Scroll bar: the slider's place in the list ([`live`] moves it); its thumb takes a press before the cells and
-    // the list ([`Hit::KeyThumb`]).
+    // Scroll bar; its thumb takes a press before the cells and the list.
     if let Some((img, sz)) = ui.image(
         consts
             .str("scrollbarSliderBitmap")

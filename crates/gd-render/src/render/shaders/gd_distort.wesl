@@ -1,6 +1,5 @@
-// Port of the distort*.ssh `distortPS` programs (DirectX11; maths in
-// render/distort.rs): refracts the frame copy (Bevy's view transmission
-// texture, filled by distort.rs after the scene) through the mesh.
+// Port of the distort*.ssh `distortPS` programs (DirectX11): refracts the frame copy (Bevy's view transmission
+// texture) through the mesh.
 import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::{view, globals, view_transmission_texture, view_transmission_sampler},
@@ -11,7 +10,7 @@ struct DistortParams {
     scroll: vec4<f32>,
     values: vec4<f32>,
     flags: vec4<u32>,
-    // The wind vertex program's (gd_wind.wesl).
+    // The wind vertex program's.
     wind: vec4<f32>,
     ripple_scale: vec4<f32>,
     ripple_amplitude: vec4<f32>,
@@ -33,7 +32,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv_s = uv + fract(material.scroll.xy * t);
     let uv_b = uv + fract(material.scroll.zw * t);
 
-    // View vector in the (T, −B, N) frame (B = sign·(N×T) as model.rs stores it).
+    // View vector in the (T, −B, N) frame (B = sign·(N×T)).
     let Nv = normalize(in.world_normal);
     var T = vec3<f32>(1.0, 0.0, 0.0);
     var Bn = vec3<f32>(0.0, 0.0, 1.0);
@@ -63,7 +62,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let base = textureSample(base_tex, base_smp, col_uv).rgb;
     let a = textureSample(base_tex, base_smp, a_uv).a * material.values.z;
-    // The glow view never draws these (main layer only); stay safe.
+    // The glow view never draws these (main layer only).
     if view.exposure > 0.1 {
         return vec4<f32>(0.0);
     }

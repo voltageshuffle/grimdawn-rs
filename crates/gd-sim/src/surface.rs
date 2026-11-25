@@ -1,5 +1,5 @@
 //! What a character stands on: the `PhysicsSurface` of a level's terrain and
-//! water at a point (the world's ray: `gd_game::collision::WorldCollision::surface_below`).
+//! water at a point.
 //!
 //! (Engine.dll): `TerrainType::Load` reads the terrain
 //! record's `surfaceType` by exact name ([`surface_type`]; anything else,
@@ -91,8 +91,7 @@ pub fn surface_type(name: &str) -> u32 {
 /// Cells per side of a terrain block (and metres of a water block).
 const BLOCK: u32 = 9;
 
-/// What decides a level's surfaces, level-local (a clone of its map data, the
-/// heights left out: `gd_game::collision` has them).
+/// What decides a level's surfaces, level-local (its map data without the heights).
 pub struct Ground {
     terrain: Option<Terrain>,
     /// [`surface_type`] of each terrain layer.

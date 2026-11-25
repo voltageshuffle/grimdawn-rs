@@ -1,28 +1,14 @@
 //! The melee combat loop: life, attacking a target, monster aggro/chase, death.
 //!
-//! Damage is `gd_sim::actor::attack_linked` (the engine's TakeAttack path), applied
-//! when the attack animation crosses its `RightHandHit`/`LeftHandHit`
-//! callback, as `AttackAction` does. Monster behaviour reads the creature's
-//! `controller` record (ViewDistance, MaxYViewDistance, MaxPursuitDistance,
-//! min/maxSwingPause). Melee reach = both actor radii + [`MELEE_RANGE`]
-//! (`Skill::IsTargetInRange`: distance minus both radii ≤ the
-//! skill's `Skill::GetRange`, `gameengine.dbr` `meleeRange` for the melee
-//! profile); the hit-callback re-check uses `meleeTargetDistance`
-//! ([`gd_game_core::rules::GameEngineRules::melee_target_distance`]) with a cone fallback ([`targets_in_cone`]).
+//! Damage is `gd_sim::actor::attack_linked` (`TakeAttack`), applied when the attack animation crosses its
+//! `RightHandHit`/`LeftHandHit` callback (`AttackAction`). Monster behaviour reads the creature's `controller`
+//! record. Melee reach = both actor radii + [`MELEE_RANGE`] (`Skill::IsTargetInRange`); the hit-callback re-check
+//! uses `meleeTargetDistance` with a cone fallback ([`targets_in_cone`]).
 //!
-//! Aggro is anger (`AngerManager`, see [`MonsterAi`]): sight anger
-//! ([`sight_anger`]), hits and distress calls ([`anger_from_hits`]) fill it
-//! and the monster goes for the target `AngerManager::GetNewTarget` picks
-//! (see `monster_ai`). Distress calls: `Character::UnderAttack`
-//! → `DoDistressCall` tells the friends within
-//! `distressCallRange` (`ControllerMonster::AllyAttacked`).
-//! Bodies: `Character::InitialUpdate` picks the death handler by
-//! `deleteBehavior` (see [`corpse_time`]).
-//!
-//! Submodules: `sight` (anger from sight / hits, speed sync), `ai` (controller classes, `MonsterAi`, flee,
-//! movement helpers), `monster_ai` (the monster / auto-fight / player attack systems), `hits` (`apply_hits`,
-//! block recovery), `influence` (convert and disruption), `bodies` (suicide, kill, corpses, regen, picking),
-//! `cc_states` (fear / confusion states), `combatant` (`Combatant`, `Dead`, ...), `grid` (spatial indices).
+//! Aggro is anger (`AngerManager`, see [`MonsterAi`]): sight ([`sight_anger`]), hits and distress calls
+//! ([`anger_from_hits`]) fill it, and the monster goes for the target `AngerManager::GetNewTarget` picks.
+//! Distress calls: `Character::UnderAttack` → `DoDistressCall` tells the friends within `distressCallRange`.
+//! Bodies: `Character::InitialUpdate` picks the death handler by `deleteBehavior` ([`corpse_time`]).
 use crate::monsters::ProxyStates;
 use crate::movement::MovePath;
 use crate::nav::Nav;
@@ -49,8 +35,7 @@ impl Plugin for CombatPlugin {
             .add_message::<Influenced>()
             .add_observer(body_bounds_on_combatant)
             .add_observer(body_bounds_on_character)
-            // Speeds reach the animation the frame the profile rebuilds them
-            // (the player's and the monsters' gear rebuild; pets rebuild at spawn).
+            // Speeds reach the animation the frame the profile rebuilds them.
             .add_systems(
                 Update,
                 sync_speeds
@@ -66,17 +51,9 @@ impl Plugin for CombatPlugin {
                     .after(crate::character::advance_animations)
                     .in_set(gd_game_core::character::CharacterStage::Animate),
             )
-            // ECS-1: the combat core is a genuine dependency chain, not a blanket
-            // serialization. Every link below carries data: the global-RNG draws
-            // (`gd_game_core::rng`, a thread-local stream) must keep their exact
-            // mutual order — `notify_monsters` (dodge roll) → `anger_rolls` →
-            // `monster_ai` (melee/flee/patrol/alert rolls) → `player_attack`
-            // (`try_cast`/`los_spot`) → `apply_hits` (its session RNG seed) →
-            // `anger_from_hits` (distress roll); the message flows
-            // (`AttackMade`→`hit_aggro`, `HitLanded`/`MonsterKilled`→`anger_from_hits`,
-            // `Influenced`→`join_converted`/`disrupt_skills`) and the shared
-            // `MonsterAi`/`Combatant`/`Transform`/`Character` writes fix the rest.
-            // None of these is component-disjoint from the next, so they stay ordered.
+            // The combat core is a dependency chain: the global-RNG draws must keep their order (`notify_monsters` →
+            // `anger_rolls` → `monster_ai` → `player_attack` → `apply_hits` → `anger_from_hits`); messages and
+            // shared `MonsterAi` / `Combatant` / `Transform` / `Character` writes link the rest.
             .add_systems(
                 Update,
                 (
@@ -101,12 +78,8 @@ impl Plugin for CombatPlugin {
                     .in_set(CombatSet)
                     .after(gd_game_core::player::PlayerSet),
             )
-            // `ambush_dissolve` is the one combat system component-disjoint from the
-            // core: it only advances `AmbushDissolve` (no other core system reads it),
-            // draws no RNG and passes no message, so it overlaps the core freely. It
-            // stays after `monster_ai`, which inserts `AmbushDissolve` deferred: the
-            // flush must precede the `is_added` skip so a fresh dissolve starts ticking
-            // the frame after its insert, exactly as the chain had it.
+            // `ambush_dissolve` shares nothing with the core, but stays after `monster_ai`, whose deferred
+            // `AmbushDissolve` insert must flush first.
             .add_systems(
                 Update,
                 ambush_dissolve
@@ -114,7 +87,6 @@ impl Plugin for CombatPlugin {
                     .in_set(CombatSet)
                     .after(gd_game_core::player::PlayerSet),
             );
-        // `GD_AUTO_FIGHT` (hooks.rs): where it ran in the core chain above.
         #[cfg(feature = "dev")]
         app.add_systems(
             Update,
@@ -137,53 +109,39 @@ pub struct HitLanded {
     pub critical: bool,
     /// Melee (plain swings and weapon skills, not ranged weapons).
     pub melee: bool,
-    /// The target's shield blocked it.
     pub blocked: bool,
-    /// Taunt the attack exerted: the anger `ControllerMonster::TauntMe` adds
-    /// for the attacker (`gd_sim::combat::Influence::taunt`: the skill's,
-    /// the gear's and passives' `offensiveTaunt*`, after the defender's
-    /// `defensiveTaunt`).
+    /// Taunt the attack exerted: the anger `ControllerMonster::TauntMe` adds for the attacker
+    /// (`gd_sim::combat::Influence::taunt`).
     pub taunt: f32,
 }
 
-/// An attack made on a target, hit or miss (`Character::AttackTarget`
-/// calls `SkillServices_Character::AttackingEnemy` whatever the
-/// outcome): the `AttackEnemy(Crit)` autocast triggers.
+/// An attack made on a target, hit or miss (`SkillServices_Character::AttackingEnemy`): the `AttackEnemy(Crit)`
+/// autocast triggers.
 #[derive(Message, Clone, Debug)]
 pub struct AttackMade {
     pub attacker: Entity,
     pub target: Entity,
     /// The skill used (None: a plain weapon swing).
     pub skill: Option<Arc<str>>,
-    /// Critical (`ParametersCombat` crit multiplier > 1).
+    /// Crit multiplier > 1.
     pub critical: bool,
-    /// A weapon attack (plain swing or weapon skill): it carries the
-    /// attacker's weapon ids (`ParametersCombat.weaponIds`); spells
-    /// pass none (`Skill_AttackSpell::TargetResult` / `Skill_AttackRadius::
-    /// TargetResult` hand `AttackTarget` zero ids).
+    /// A weapon attack: it carries the attacker's weapon ids; spells pass none.
     pub weapon: bool,
-    /// Combat type 1 (melee: a plain swing or a weapon skill, not a
-    /// projectile; `TakeAttack`'s impact sound, `crate::combat_sounds`).
+    /// Combat type 1 (a plain swing or a weapon skill, not a projectile).
     pub melee: bool,
-    /// The outcome (`TakeAttack`, the floating combat numbers): why it
-    /// missed, the shield block, the hit roll's multiplier and critical tier,
-    /// the absolute damage.
+    /// The outcome (`TakeAttack`, the floating combat numbers).
     pub miss: Option<gd_sim::combat::MissReason>,
     pub blocked: bool,
     pub multiplier: f32,
     pub tier: u32,
     pub total: f32,
-    /// The attack's Offensive Ability and the defender's Defensive Ability,
-    /// debuffs included (`gd_sim::actor::debuffed_offensive_ability` /
-    /// `debuffed_defensive_ability`; `CombatManager::RecordHit`, `death.rs`).
+    /// The attack's OA and the defender's DA, debuffs included (`CombatManager::RecordHit`).
     pub offensive_ability: f32,
     pub defensive_ability: f32,
 }
 
-/// A reflect link's passed-on attack (`ReflectLinkDamage` →
-/// `Character::AttackTarget`): runs the caster's `AttackEnemy(Crit)` autocast
-/// triggers like [`AttackMade`] but is not shown again (its numbers are the
-/// [`CounterHit`]'s).
+/// A reflect link's passed-on attack (`ReflectLinkDamage` → `Character::AttackTarget`): runs the caster's
+/// `AttackEnemy(Crit)` triggers like [`AttackMade`] but is not shown again.
 #[derive(Message, Clone, Debug)]
 pub struct LinkedAttack {
     pub attacker: Entity,
@@ -193,12 +151,9 @@ pub struct LinkedAttack {
     pub weapon: bool,
 }
 
-/// A retaliation (`TakeAttack` style 3) or reflection (style 6) hit back
-/// at the original attacker (`target`). It runs `TakeAttack`'s outcome and
-/// combat-number code like any attack (`CombatManager::TakeAttack`
-///: neither style can be blocked; reflection's multiplier is
-/// 1 − `defensivePercentReflectionResistance` %), but not
-/// `Character::AttackTarget`, so no [`AttackMade`] (no autocasts).
+/// A retaliation (`TakeAttack` style 3) or reflection (style 6) hit back at the attacker (`target`): `TakeAttack`'s
+/// outcome and combat numbers (neither can be blocked; reflection's multiplier is
+/// 1 − `defensivePercentReflectionResistance` %), but no `Character::AttackTarget`, so no [`AttackMade`].
 #[derive(Message, Clone, Debug)]
 pub struct CounterHit {
     pub attacker: Entity,
@@ -206,26 +161,22 @@ pub struct CounterHit {
     pub hit: gd_sim::actor::Hit,
 }
 
-/// The largest single life subtraction an attack (hit, reflection, retaliation) made on `target`
-/// (`Character::SubtractLife` → `PlayStats::TallyDamageReceived` type 1;
-/// [`gd_sim::actor::Hit::largest_applied`]; the greatest hit received, `death.rs`).
+/// The largest single life subtraction an attack made on `target` (`PlayStats::TallyDamageReceived` type 1).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct LifeSubtracted {
     pub target: Entity,
     pub amount: f32,
 }
 
-/// The melee hit re-check (`mtd`: [`gd_game_core::rules::GameEngineRules::melee_target_distance`]): the swing
-/// lands while the 3-D distance minus both radii (`radii`) is within `mtd`.
+/// The melee hit re-check: the swing lands while the 3-D distance minus both radii is within `mtd`
+/// (`meleeTargetDistance`).
 pub fn in_melee_reach(from: Vec3, to: Vec3, radii: f32, mtd: f32) -> bool {
     (to - from).length() - radii <= mtd
 }
 
-/// `GameEngine::GetTargetsInCone` (Engine `World::GetEntitiesInCone`):
-/// the targets within `range` of `at` (edge to edge, 3-D) inside the facing's cone
-/// (`half_angle` radians, horizontal), most centred first — the engine sorts by
-/// descending `forward · direction` (comparator `World::CompareConeHits`). `foes`: the valid
-/// targets as (entity, position, radius); the caller filters sides / hiding.
+/// `GameEngine::GetTargetsInCone` (`World::GetEntitiesInCone`): the targets within `range` of `at` (edge to edge,
+/// 3-D) inside the facing's cone (`half_angle` radians, horizontal), most centred first (`World::CompareConeHits`).
+/// `foes`: (entity, position, radius); the caller filters sides / hiding.
 pub fn targets_in_cone(
     at: Vec3,
     fwd: Vec3,

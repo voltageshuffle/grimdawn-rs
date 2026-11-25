@@ -1,61 +1,38 @@
-//! Autocast skills ("procs"): item skills with an `itemSkillAutoController`
-//! (on the base item, affixes, components and their bonus, augments) and
-//! devotion celestial powers bound to a skill (`devotion::DevotionState`
-//! bindings; save: the bound skill's `autocast_skill` / `autocast_controller`).
+//! Autocast skills ("procs"): item skills with an `itemSkillAutoController` (base item,
+//! affixes, components and their bonus, augments) and devotion celestial powers bound to a
+//! skill (save: the bound skill's `autocast_skill` / `autocast_controller`).
 //!
-//! A controller (`skillautocastcontroller.tpl`) has `triggerType`,
-//! `chanceToRun` %, `triggerParam`, `targetType` (Self / Enemy /
-//! EnemyLocation / Ally) and `autoTargetRadius`. When it triggers and the
-//! skill is off cooldown (`skillCooldownTime`, with its charges), the skill
-//! fires at once (`casting::ProcCast`: no animation, no energy) — the same
-//! frame (`casting::fire_late_procs` consumes the procs after the trigger
-//! writers).
+//! A controller (`skillautocastcontroller.tpl`) has `triggerType`, `chanceToRun` %,
+//! `triggerParam`, `targetType` (Self / Enemy / EnemyLocation / Ally) and `autoTargetRadius`.
+//! When it triggers and the skill is off cooldown (`skillCooldownTime`, with its charges), the
+//! skill fires the same frame (`casting::ProcCast`: no animation, no energy).
 //!
-//! Triggers (`SkillAutoCastController` builds one trigger
-//! object per `triggerType`; read from their virtual functions):
-//! `HitByEnemy` any hit taken (combat styles 3 / 6 excluded), `HitByMelee`
-//! style 1, `HitByProjectile` style 2, `HitByCrit` a critical hit taken,
-//! `Block` a hit the shield blocked; `OnKill` (`EnemyDeath`) a
-//! dead enemy — for a celestial power only when the killing skill is its
-//! bound skill; `LowHealth` / `LowMana` fire on dropping below `triggerParam`
-//! % and re-arm once back above it; `CastBuff` / `CastDebuf` on casting a
-//! buff / debuff.
+//! Triggers (`SkillAutoCastController`'s trigger objects):
+//! `HitByEnemy` any hit taken (combat styles 3 / 6 excluded), `HitByMelee` style 1,
+//! `HitByProjectile` style 2, `HitByCrit` a critical hit taken, `Block` a hit the shield
+//! blocked; `OnKill` (`EnemyDeath`, only on the killer) a dead enemy — for a celestial power
+//! only when the killing skill is its bound skill; `LowHealth` / `LowMana` fire on dropping
+//! below `triggerParam` % and re-arm once back above it; `CastBuff` / `CastDebuf` per character
+//! buffed / debuffed (`SkillActivated::ApplyBuffOnTarget`, [`buff_trigger`]).
 //!
-//! `AttackEnemy(Crit)`: `Character::AttackTarget` calls
-//! `AttackingEnemy` for every attack made on a target, hit or
-//! miss ([`crate::combat::AttackMade`]); the crit trigger needs a crit
-//! multiplier > 1 (`SkillAutoCastController::IsCritical`). A proc granted by a weapon (any
-//! `Weapon*` item: melee, ranged, caster off-hand, shield) only fires when
-//! the attack carries that item among its weapon ids (`SkillAutoCastController::AttackUsesItem`):
-//! weapon attacks, not spells. A celestial power needs its bound skill (a
-//! plain swing is the default attack skill, `SkillActivated::
-//! ApplyMeleeDamage` passes its own id). `OnKill`: `CombatManager::
-//! ApplyDamage` calls `EnemyDeath` only on the killer, so item procs fire
-//! on the player's kills. `CastBuff` / `CastDebuf`: `SkillActivated::
-//! ApplyBuffOnTarget` calls them per character it buffs /
-//! debuffs (see [`buff_trigger`]). `Ally` targets the character the trigger
-//! names (the buffed one for `CastBuff`), else the first friendly character
-//! within `autoTargetRadius` (`SkillAutoCastController::FindAllyTarget` → `GameEngine::
-//! GetTargetsInRadius`); with no radius, nothing. `OnEquip` is
-//! used by no item.
+//! `AttackEnemy(Crit)`: `Character::AttackTarget` calls `AttackingEnemy` for every attack on a
+//! target, hit or miss; crit needs a crit multiplier > 1 (`SkillAutoCastController::IsCritical`).
+//! A proc granted by a `Weapon*` item (shields and off-hands included) only fires when the
+//! attack carries that item among its weapon ids (`SkillAutoCastController::AttackUsesItem`).
+//! A celestial power needs its bound skill (a plain swing is the default attack skill).
+//! `Ally` targets the character the trigger names (the buffed one for `CastBuff`), else the
+//! first friendly within `autoTargetRadius` (`SkillAutoCastController::FindAllyTarget`); with
+//! no radius, nothing.
 //!
-//! Skill-level autocasts ([`SkillAutocasts`], monsters and pets: 262 monster skill records and the Shaman's
-//! Wendigo Totem auras `petskill_totem_wendigo{,lightning,pierce}aura` → `petskill_totem_heal_01`).
-//! Game.dll: `Skill::LoadResources` creates a child skill (`Skill.autoCastSkill`) from a record's `autoCastSkill`
-//! when `autoCastController` (`Skill.autoCastController`) is set too; `Skill::Install`, run for every skill a
-//! character gets, sets the child to the parent's level and calls `SkillManager::RegisterAutoCastSkill`
-//! (a non-player's manager becomes the controlling manager), which adds a
-//! `SkillAutoCastController` (`SkillServices_Character::AddAutoCastController`) built with the
-//! parent's id. The controller's source is then not an item (type 2): `AttackingEnemy` fires
-//! only for an attack made with the parent skill (or a `SkillBuff` / `Skill_WPAttack` / `SkillSecondary`
-//! attack the parent grants, `IsGrantingSkill`) and never on a `Destructible`; `HitByEnemy`
-//! only while the parent is active (`Skill.active`: a toggle on, a timed buff or damage aura running): the
-//! celestial powers' binding.
-//! `AppraiseAndExecute` rolls integer 0..=100 ≤ `chanceToRun` (no roll at 0) and starts the
-//! child's cooldown (cooldown reduction applies: not an item skill). Targets as above, around the owner.
-//! Stock triggers: AttackEnemy, HitByEnemy, HitByProjectile, HitByMelee, HitByCrit. PORT: `IsGrantingSkill`
-//! is not modelled (the attack's own skill must be the parent); the other triggers are not run for
-//! non-players (no stock skill-level controller uses them).
+//! Skill-level autocasts ([`SkillAutocasts`], monsters and pets): `Skill::LoadResources` creates
+//! a child skill from `autoCastSkill` when `autoCastController` is set too; `Skill::Install`
+//! sets it to the parent's level and registers a `SkillAutoCastController` with the parent's
+//! id. `AttackingEnemy` then fires only for an attack made with the parent skill (or one it
+//! grants, `IsGrantingSkill`) and never on a `Destructible`; `HitByEnemy` only while the
+//! parent is active (`Skill.active`). `AppraiseAndExecute` rolls integer 0..=100 ≤
+//! `chanceToRun` (no roll at 0); cooldown reduction applies (not an item skill).
+//! PORT: `IsGrantingSkill` is not modelled (the attack's own skill must be the parent);
+//! triggers other than AttackEnemy / HitBy* are not run for non-players.
 use crate::combat::{AttackMade, HitLanded, MonsterKilled};
 use bevy::prelude::*;
 use gd_game_core::casting::{Casting, ProcCast};
@@ -102,8 +79,7 @@ pub(crate) enum Trigger {
 
 impl Trigger {
     /// A controller's trigger name (`triggerType`, `refreshCooldownTrigger`,
-    /// `refreshDurationTrigger`: the names `SkillAutoCastController`'s and
-    /// the refresh controllers' constructors compare).
+    /// `refreshDurationTrigger`).
     pub(crate) fn parse(name: &str) -> Trigger {
         match name {
             "AttackEnemy" => Trigger::AttackEnemy,
@@ -122,8 +98,7 @@ impl Trigger {
         }
     }
 
-    /// A hit taken (`SkillAutoCastController::HitByEnemy` runs
-    /// these trigger objects).
+    /// A hit taken (`SkillAutoCastController::HitByEnemy`).
     pub(crate) fn taken(self) -> bool {
         matches!(
             self,
@@ -136,9 +111,7 @@ impl Trigger {
     }
 }
 
-/// One trigger event of the player this frame, as `trigger_autocasts`
-/// gathers them from the combat events: what the refresh controllers
-/// (`crate::refresh`) react to as well.
+/// One trigger event of the player this frame; the refresh controllers react to it as well.
 #[derive(Message, Clone, Debug)]
 pub(crate) struct Triggered {
     pub(crate) trigger: Trigger,
@@ -168,8 +141,7 @@ struct Auto {
     bound: Option<String>,
     /// Granted by a worn weapon (shields and off-hands included).
     weapon: bool,
-    /// An item's skill (`SkillManager::AddItemSkills` sets the skill's `Skill.isItemSkill`):
-    /// its cooldown takes no cooldown reduction.
+    /// An item's skill (`Skill.isItemSkill`): its cooldown takes no cooldown reduction.
     item: bool,
     /// How `chance` is rolled: 0 controller `chanceToRun` ([`controller_roll`]), 1 integer 0..=100
     /// ≤ chance (`Skill_PassiveOnHitBuffSelf`), 2 uniform 0.1..100 ≤ chance
@@ -184,13 +156,11 @@ struct Auto {
     from_buff: bool,
 }
 
-/// The player's autocasts and their cooldowns.
 #[derive(Component, Default)]
 pub struct Autocasts {
     list: Vec<Auto>,
     inv_version: u64,
     dev_version: u64,
-    /// Learned skills seen at the last collect (passive procs).
     skills_seen: usize,
     cooldowns: gd_game_core::casting::Cooldowns,
     /// LowHealth / LowMana: was below last frame (fires on crossing).
@@ -200,20 +170,17 @@ pub struct Autocasts {
 }
 
 impl Autocasts {
-    /// A proc of `skill` is held (item, skill, power or received buff).
     pub fn has(&self, skill: &str) -> bool {
         self.list
             .iter()
             .any(|a| a.skill.eq_ignore_ascii_case(skill))
     }
 
-    /// Seconds left on proc `skill`'s cooldown, if one runs.
     pub fn cooldown(&self, skill: &str) -> Option<f32> {
         self.cooldowns.left_of(skill)
     }
 
-    /// A passive proc's running buff got `secs` longer (`crate::refresh`):
-    /// it stays blocked as long.
+    /// A passive proc's running buff got `secs` longer: it stays blocked as long.
     pub(crate) fn extend_block(&mut self, skill: &str, secs: f32) {
         self.active
             .iter_mut()
@@ -221,16 +188,16 @@ impl Autocasts {
             .for_each(|a| a.1 += secs);
     }
 
-    /// A life monitor with `thresholdDuration` holds `skill`'s buff time while life (`life_pct` %) stays at or below
-    /// its threshold: the buff's countdown and the proc's block wait for life to come back.
+    /// A life monitor with `thresholdDuration` holds `skill`'s buff time while life
+    /// (`life_pct` %) stays at or below its threshold.
     pub(crate) fn holds(&self, skill: &str, life_pct: f32) -> bool {
         self.list
             .iter()
             .any(|a| a.threshold && life_pct <= a.param && a.skill.eq_ignore_ascii_case(skill))
     }
 
-    /// Disruption (`SkillManager::ApplyCooldownDamage`, `combat::influence`): the procs disruption reaches
-    /// (`gd_sim::skills::disruptable`) cool down for `secs` unless they already do for longer.
+    /// Disruption (`SkillManager::ApplyCooldownDamage`): disruptable procs cool down for
+    /// `secs` unless they already do for longer.
     pub(crate) fn disrupt(&mut self, db: &gd_formats::vfs::Database, secs: f32) {
         let mut names: Vec<String> = self.list.iter().map(|a| a.skill.clone()).collect();
         names.sort();
@@ -242,8 +209,7 @@ impl Autocasts {
         }
     }
 
-    /// `SkillManager::RefreshCooldown`'s item-list walk
-    /// (`gd_game_core::casting::Cooldowns::refresh_all`).
+    /// `SkillManager::RefreshCooldown`'s item-list walk.
     pub(crate) fn refresh_cooldowns(&mut self, secs: f32, except: &[String]) {
         self.cooldowns.refresh_all(secs, except);
     }
@@ -286,7 +252,7 @@ fn parse(
 fn collect_autocasts(
     mut commands: Commands,
     inv: Res<Inventory>,
-    // Option: devotion is optional input (version 0 and no bindings without it).
+    // Option: devotion is optional (version 0 and no bindings without it).
     devotion: Option<Res<crate::devotion::DevotionState>>,
     data: Res<gd_game_core::data::GameData>,
     mut players: Query<
@@ -319,14 +285,12 @@ fn collect_autocasts(
     let db = &data.db;
     let worn = inv.worn();
     let mut list = Vec::new();
-    // Worn items' and sets' skills with a controller
-    // (`gd_sim::skills::item_skill_grants`).
+    // Worn items' and sets' skills with a controller.
     let grants = gd_sim::skills::item_skill_grants(db, &worn);
     for g in &grants {
         let Some(ctl) = &g.controller else { continue };
         let level = gd_sim::skills::granted_level(&grants, &g.skill);
-        // The controller is built with the item's id; a `Weapon` item
-        // binds `AttackEnemy(Crit)` to attacks made with it.
+        // A `Weapon` item binds `AttackEnemy(Crit)` to attacks made with it.
         let weapon = g.item.is_some_and(|i| {
             db.get(&worn[i].base_name)
                 .is_some_and(|b| b.class.starts_with("Weapon"))
@@ -348,18 +312,11 @@ fn collect_autocasts(
             ));
         }
     }
-    // Passive procs of learned skills (no controller; their own code runs
-    // them): `Skill_PassiveOnLifeBuffSelf::Update`
-    // activates when life is at or below `lifeMonitorPercent` % (alive, the
-    // skill ready) and not already active; its buff time runs at once, or
-    // with `thresholdDuration` (default 1) only once life is back above;
-    // after it, it can activate again whenever the condition holds.
-    // `Skill_PassiveOnCritBuffSelf` runs `Skill_PassiveOnHitBuffSelf::
-    // OnHitActivation` from `SkillManager::OnCriticalAttack`
-    // (an attack with a crit multiplier > 1): ready, not active,
-    // integer 0..100 ≤ `onHitActivationChance`. Both buff the player for
-    // `skillActiveDuration` (+ `skillLifePercent` heal).
-    // Learned skills, then skills granted by worn items (no controller).
+    // Passive procs of learned and item-granted skills (no controller).
+    // `Skill_PassiveOnLifeBuffSelf::Update`: life at or below `lifeMonitorPercent` %, not
+    // active; its buff time runs at once, or with `thresholdDuration` (default 1) only once
+    // life is back above. `Skill_PassiveOnCritBuffSelf`: `SkillManager::OnCriticalAttack`,
+    // integer 0..100 ≤ `onHitActivationChance`. Both buff for `skillActiveDuration`.
     let granted: Vec<&String> = grants
         .iter()
         .filter(|g| g.controller.is_none())
@@ -385,16 +342,11 @@ fn collect_autocasts(
         let trigger = match r.class.as_str() {
             "Skill_PassiveOnLifeBuffSelf" => Trigger::LifeMonitor,
             "Skill_PassiveOnCritBuffSelf" => Trigger::AttackEnemyCrit,
-            // Fighting Spirit / Stoneward / Bileguard: any hit taken at
-            // `onHitActivationChance` % (`Skill_PassiveOnHitBuffSelf::
-            // OnHitActivation`; the game also skips it while the
-            // buff runs and the shield checks qualifying damage types: not done).
+            // `Skill_PassiveOnHitBuffSelf::OnHitActivation`. PORT: the skip while the buff
+            // runs and the shield's qualifying damage types are not done.
             "Skill_PassiveOnHitBuffSelf" | "Skill_PassiveOnHitBuffShield" => Trigger::HitByEnemy,
-            // Counter Strike / Vindictive Flame while switched on: a radius
-            // attack when hit (`Skill_OnHitAttackRadius::OnHitActivation`,
-            // the hit passes the skill's qualifier, the skill is
-            // on, uniform 0.1..100 ≤ `onHitActivationChance`, its own
-            // cooldown blocks it).
+            // Switched on: `Skill_OnHitAttackRadius::OnHitActivation`, uniform 0.1..100 ≤
+            // `onHitActivationChance`, its own cooldown blocks it.
             "Skill_OnHitAttackRadius" if loadout.skill_active(&data.db, name) => {
                 Trigger::HitByEnemy
             }
@@ -460,14 +412,10 @@ fn collect_autocasts(
     }
 }
 
-/// A running received buff with an `autoCastSkill` / `autoCastController` (the Shattered Realm's buff shrines:
-/// Azrakaa's, Rattosh's and Amatok's `*_buff` records, class `SkillBuff_PassiveEndless`) gives the player that
-/// proc while it lasts: the buff's own controller, the skill at level 1 (`skillMaxLevel` 1), no cooldown
-/// reduction (an item-style proc). The procs are replaced each time the set of such buffs changes.
-/// Stock data: the controllers are `AttackEnemy` (`cast_@enemyonattack_100%`) and `HitByEnemy`
-/// (`cast_@enemyonanyhit_100%`), both 100 % at `autoTargetRadius` 22. PORT: the engine's call that turns a
-/// buff's `autoCast*` fields into a `SkillAutoCastController` is not read; this is the same controller the item
-/// procs use.
+/// A running received buff with an `autoCastSkill` / `autoCastController` (the Shattered
+/// Realm's buff shrines, `SkillBuff_PassiveEndless`) gives the player that proc while it lasts,
+/// at level 1 with no cooldown reduction (an item-style proc).
+/// PORT: the engine's call that turns a buff's `autoCast*` fields into a controller is not read.
 fn buff_autocasts(
     data: Res<gd_game_core::data::GameData>,
     mut players: Query<
@@ -519,19 +467,11 @@ fn buff_autocasts(
     }
 }
 
-/// Which cast trigger a skill pulls when it applies its buff / debuff
-/// (the callers of `SkillActivated::ApplyBuffOnTarget`, whose
-/// debuff flag sends `Character::DebufTarget` → `CastingDebuf`, else
-/// `CastingBuff`: `Skill_BuffOther` / `Skill_ChargedBuffOther` buff,
-/// `Skill_AttackBuff` (and `Skill_AttackBuffRadius`) /
-/// `Skill_AttackProjectileDebuf` debuff, `Skill_BuffRadius` (and
-/// `Skill_BuffRadiusToggled`) by its `debufSkill` (`Skill_BuffRadius.debufSkill`, read from the
-/// `buffSkillName` table by `Skill_BuffRadius::Load`: `auras::is_debuf`).
-/// Other skills, self buffs included, pull neither. A hot slot cast runs as
-/// the wrapper's buff record (`casting::try_cast`), so the trigger classifies
-/// the wrapper it names (`casting::CastWrapper`). PORT: the trigger fires once
-/// per cast, not per buffed character; no stock controller uses these
-/// triggers.
+/// Which cast trigger a skill pulls when it applies its buff / debuff (the callers of
+/// `SkillActivated::ApplyBuffOnTarget`): `Skill_BuffOther` / `Skill_ChargedBuffOther` buff,
+/// `Skill_AttackBuff(Radius)` / `Skill_AttackProjectileDebuf` debuff, `Skill_BuffRadius(Toggled)`
+/// by its `debufSkill` (`Skill_BuffRadius::Load`). Other skills, self buffs included, pull neither.
+/// PORT: fires once per cast, not per buffed character.
 fn buff_trigger(db: &gd_formats::vfs::Database, rec: &gd_formats::arz::Record) -> Option<Trigger> {
     match rec.class.as_str() {
         "Skill_BuffOther" | "Skill_ChargedBuffOther" => Some(Trigger::CastBuff),
@@ -593,8 +533,7 @@ pub(crate) fn trigger_autocasts(
     let dt = time.delta_secs();
     auto.cooldowns.tick(dt);
     let life_pct = 100.0 * cb.life / cb.profile.sheet.life.max(1.0);
-    // Running passive buffs; a life monitor with `thresholdDuration` holds
-    // its time while life stays at or below the threshold ([`Autocasts::holds`]).
+    // A life monitor with `thresholdDuration` holds its time ([`Autocasts::holds`]).
     for i in 0..auto.active.len() {
         if !auto.holds(&auto.active[i].0, life_pct) {
             auto.active[i].1 -= dt;
@@ -648,8 +587,7 @@ pub(crate) fn trigger_autocasts(
             }
         }
     }
-    // OnKill: the player's kills only; `used` is the killing skill (bound
-    // powers need their skill).
+    // OnKill: `used` is the killing skill (bound powers need their skill).
     for k in killed.read() {
         if let Some((e, skill)) = &k.killer
             && *e == me
@@ -667,10 +605,8 @@ pub(crate) fn trigger_autocasts(
             ));
         }
     }
-    // Buff / debuff casts: the port's buff skills apply once per cast.
     for (c, w) in &casts {
-        // A hot slot cast runs as the wrapper's buff record: the wrapper's
-        // class decides the trigger.
+        // A hot slot cast runs as the wrapper's buff record: the wrapper's class decides.
         let name = w
             .filter(|w| w.buff == c.skill)
             .map_or(&c.skill, |w| &w.wrapper);
@@ -679,7 +615,6 @@ pub(crate) fn trigger_autocasts(
         };
         events.push((t, Some(Arc::from(name.as_str())), None, false));
     }
-    // Life monitors: checked every frame.
     if cb.life > 0.0
         && auto
             .list
@@ -688,7 +623,6 @@ pub(crate) fn trigger_autocasts(
     {
         events.push((Trigger::LifeMonitor, None, None, false));
     }
-    // Low health / energy: on dropping below the threshold.
     let energy_pct = caster.map_or(100.0, |c| {
         100.0 * c.energy / cb.profile.sheet.energy.max(1.0)
     });
@@ -722,14 +656,11 @@ pub(crate) fn trigger_autocasts(
             if a.trigger == Trigger::LifeMonitor && life_pct > a.param {
                 continue;
             }
-            // A weapon's attack procs need a weapon attack.
             if a.weapon && matches!(t, Trigger::AttackEnemy | Trigger::AttackEnemyCrit) && !weapon {
                 continue;
             }
-            // Bound powers: only their skill (`CastingBuff` / `CastingDebuf`
-            // do not check); hits taken count while the bound
-            // skill is active (`HitByEnemy` reads the skill's
-            // active byte, `Skill.active`: `Loadout::skill_active`).
+            // Bound powers: only their skill (`CastingBuff` / `CastingDebuf` do not check);
+            // hits taken count while the bound skill is active (`Skill.active`).
             let taken = t.taken();
             let active = |b: &str| loadout.skill_active(&data.db, b);
             if let Some(b) = &a.bound
@@ -754,7 +685,7 @@ pub(crate) fn trigger_autocasts(
                 continue;
             };
             let li = (a.level - 1) as usize;
-            // Enemy targets: the one involved, else the nearest in range.
+            // The enemy involved, else the nearest in range.
             let foe = enemy.and_then(|e| others.get(e).ok()).or_else(|| {
                 others
                     .iter()
@@ -767,8 +698,8 @@ pub(crate) fn trigger_autocasts(
             });
             let (point, target) = match a.target {
                 Target::Caster => (tf.translation, None),
-                // The buffed character for `CastBuff`, else the first friend
-                // within the radius: the player stands inside its own.
+                // The buffed character for `CastBuff`, else the first friend within the
+                // radius: the player stands inside its own.
                 Target::Ally if matches!(t, Trigger::CastBuff) || a.radius > 0.0 => {
                     (tf.translation, None)
                 }
@@ -805,14 +736,9 @@ pub(crate) fn trigger_autocasts(
     }
 }
 
-/// A proc's cooldown: `SkillAutoCastController::AppraiseAndExecute` →
-/// `Skill::GetCooldownTime`: the cooldown × (1 − `GetTotalSkillAttribute(
-/// skillCooldownReduction)` %) unless the skill is an item skill (`Skill.isItemSkill`) or a potion
-/// (`Skill.isPotion`): celestial powers,
-/// learned passive procs and skill-level children take the character's cooldown reduction, item procs do not.
-/// The cooldown is the skill's profile's: a wrapper's `buffSkillName` record (Dying God's `Skill_BuffRadius`:
-/// 30 s; `gd_sim::skills::profile_name`). The skill's own `skillCooldownReduction` (its record, chance-gated)
-/// adds to the character's (`gd_game_core::casting::own_skill_attribute`).
+/// A proc's cooldown (`Skill::GetCooldownTime`): the profile record's cooldown (a wrapper's
+/// `buffSkillName`) × (1 − `skillCooldownReduction` %), the skill's own plus the character's;
+/// item skills (`Skill.isItemSkill`) take no reduction.
 fn proc_cooldown(
     db: &gd_formats::vfs::Database,
     rec: &gd_formats::arz::Record,
@@ -835,14 +761,14 @@ fn proc_cooldown(
     (cd, charges)
 }
 
-/// A controller's `chanceToRun` roll (`SkillAutoCastController::AppraiseAndExecute`):
-/// no roll at a chance of 0 or less (it fires), else integer 0..=100 ≤ chance.
+/// `SkillAutoCastController::AppraiseAndExecute`'s roll: no roll at a chance ≤ 0 (it fires),
+/// else integer 0..=100 ≤ chance.
 fn controller_roll(chance: f32) -> bool {
     chance <= 0.0 || gd_game_core::rng::u32(0..=100) as f32 <= chance
 }
 
-/// How a proc fires: passive self-buff procs as buffs, `Skill_OnHitAttackRadius` as a radius attack, the rest
-/// by class (`gd_game_core::casting::kind_of`).
+/// Passive self-buff procs fire as buffs, `Skill_OnHitAttackRadius` as a radius attack, the
+/// rest by class.
 fn proc_kind(rec: &gd_formats::arz::Record) -> gd_game_core::casting::Kind {
     match rec.class.as_str() {
         c if c.starts_with("Skill_PassiveOn") => gd_game_core::casting::Kind::Buff,
@@ -851,9 +777,7 @@ fn proc_kind(rec: &gd_formats::arz::Record) -> gd_game_core::casting::Kind {
     }
 }
 
-/// A monster's or pet's skill-level autocasts (module docs, skill-level autocasts): each of its skills with an
-/// `autoCastSkill` + `autoCastController`, the child skill at the parent's level, bound to the parent; and their
-/// cooldowns.
+/// A monster's or pet's skill-level autocasts (module docs) and their cooldowns.
 #[derive(Component, Default, Debug)]
 pub struct SkillAutocasts {
     list: Vec<Auto>,
@@ -861,8 +785,7 @@ pub struct SkillAutocasts {
 }
 
 impl SkillAutocasts {
-    /// The autocast children of a character's skills `(record, level)` (`Skill::LoadResources` /
-    /// `Skill::Install`, module docs); None when it has none.
+    /// The autocast children of a character's skills `(record, level)`; None when it has none.
     pub(crate) fn of(db: &gd_formats::vfs::Database, skills: &[(String, u32)]) -> Option<Self> {
         let list: Vec<Auto> = skills
             .iter()
@@ -880,22 +803,19 @@ impl SkillAutocasts {
         })
     }
 
-    /// A child `skill` is held.
     pub fn has(&self, skill: &str) -> bool {
         self.list
             .iter()
             .any(|a| a.skill.eq_ignore_ascii_case(skill))
     }
 
-    /// `SkillManager::RefreshCooldown`'s sub-skill-list walk
-    /// (`gd_game_core::casting::Cooldowns::refresh_all`).
+    /// `SkillManager::RefreshCooldown`'s sub-skill-list walk.
     pub(crate) fn refresh_cooldowns(&mut self, secs: f32, except: &[String]) {
         self.cooldowns.refresh_all(secs, except);
     }
 }
 
-/// Runs the [`SkillAutocasts`] of monsters and pets (module docs, skill-level autocasts) on their attacks
-/// ([`AttackMade`], [`crate::combat::LinkedAttack`]) and the hits they take ([`HitLanded`]).
+/// Runs the [`SkillAutocasts`] of monsters and pets on their attacks and the hits they take.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn trigger_skill_autocasts(
     time: Res<Time>,
@@ -968,7 +888,7 @@ pub(crate) fn trigger_skill_autocasts(
         let auto = &mut *auto;
         auto.cooldowns.tick(dt);
         let side = crate::combat::Side::lookup(&sides, me, pet.is_none());
-        // The parent skill's active byte (`Skill.active`): a toggle switched on, a timed buff or damage aura running.
+        // The parent skill's `Skill.active`: a toggle on, a timed buff or damage aura running.
         let active = |s: &str| {
             ms.is_some_and(|m| m.skill_running(s))
                 || pet.is_some_and(|p| p.skill_running(s))
@@ -979,7 +899,7 @@ pub(crate) fn trigger_skill_autocasts(
                 if a.trigger != *t {
                     continue;
                 }
-                // Bound to the parent (`Skill::Install` passes its id, controller type 2).
+                // Bound to the parent (controller type 2).
                 let parent = a.bound.as_deref().unwrap_or("");
                 let bound_ok = if t.taken() {
                     active(parent)
@@ -997,8 +917,8 @@ pub(crate) fn trigger_skill_autocasts(
                     continue;
                 };
                 let li = (a.level - 1) as usize;
-                // Enemy targets: the character involved (not a breakable nor a physics prop: `AttackingEnemy`
-                // skips a `Destructible`), else the nearest foe within `autoTargetRadius`.
+                // The character involved (`AttackingEnemy` skips a `Destructible`), else the
+                // nearest foe within `autoTargetRadius`.
                 let foe = all
                     .get(*other)
                     .ok()
@@ -1020,7 +940,6 @@ pub(crate) fn trigger_skill_autocasts(
                     });
                 let (point, target) = match a.target {
                     Target::Caster => (tf.translation, None),
-                    // The first friend within the radius: the owner stands inside its own.
                     Target::Ally if a.radius > 0.0 => (tf.translation, None),
                     Target::Ally => continue,
                     Target::Enemy => match foe {

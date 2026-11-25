@@ -30,8 +30,7 @@ pub use loot::{LootParams, LootRoll, roll_loot, roll_table};
 pub use resolve::{Classification, ResolvedItem, resolve};
 
 /// Iron bits a creation-cost equation costs at `player_level`
-/// (`GetCreationCost`: `(u32)(max(eval, 1) + 0.5)`;
-/// [`convert::SetFormula::cost`], [`crafting::Blueprint::cost`]).
+/// (`GetCreationCost`: `(u32)(max(eval, 1) + 0.5)`).
 pub(crate) fn cost_at(cost: &str, player_level: u32) -> u64 {
     let v = gd_rules::expr::eval_var(cost, "playerLevel", player_level as f32).unwrap_or(0.0);
     (v.max(1.0) + 0.5) as u64

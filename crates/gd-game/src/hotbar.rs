@@ -1,132 +1,72 @@
-//! Binding hotbar slots: the HUD's slot pick list (`hudSlotSelectWindow`,
-//! `records/ui/hud/hud_hotslotselectmenu.dbr`, a `SlotSelectWindow`). The UI
-//! (`gd_ui` `hotbar_pick.rs`) shows [`choices`] and sends [`BindSlot`].
+//! Binding hotbar slots: the HUD's slot pick list (`hudSlotSelectWindow`, a `SlotSelectWindow`). The UI shows
+//! [`choices`] and sends [`BindSlot`].
 //!
-//! `Grim Dawn.exe`:
-//! - a right press on a hot slot button (`HotSlotButton::HandleMouseEvent`, event 2) runs
-//!   `PlayerHotSlotCtrl::DeactivateActiveSlot` and, when the button allows
-//!   it (`HotSlotButton.allowsPickList`: off only for the two potion buttons and the evade button,
-//!   `UIPlayerHud::UIPlayerHud`), opens the list at the button (`UIPlayerHud::OpenSlotSelectWindow`);
-//! - the list (`HotSlotPickList::Fill`) is, in order: every skill of
-//!   `Character::GetUISkillList` that passes `HotSlotButton::IsSkillSelectable` — current level
-//!   ≠ 0, `IsPrimary` or `IsSecondary`, not `IsAutoToggle`
-//!   ([`gd_sim::skills::hot_slot_flags`]), of the displayed skill set or
-//!   (no parent skill and) `SkillManager::IsGlobalSkillTypeAndAllowed`, and
-//!   on the left mouse slot (UI slot 10) only `IsPrimary` ones — as an
-//!   evade / health potion / energy potion option when it is the
-//!   `SkillManager` special skill 7 / 5 / 6, else a skill option; then,
-//!   on every slot but the left mouse one (`HotSlotButton::IsLeftMouseSlot`), one scroll
-//!   option per distinct `OneShot_Scroll` record in the bags
-//!   (`PlayerInventoryCtrl::GetUniquePotionsOfType(4)`: the potion map,
-//!   ordered by record name) that validates (some left); then, on every
-//!   slot but the left mouse one, the empty pick (`tagEmptyHotSlot`);
-//! - `GetUISkillList` (Game.dll `SkillManager.uiSkillList`): the default player
-//!   skills in `LoadDefaultPlayerSkills` order (`defaultwpbasicattack`,
-//!   `defaultmoveto`, `defaultweaponattack`, `defaultpetattack`, the two
-//!   potions, `defaultevade`; the kick is not added), then the skills as
-//!   created (`CreateAndLoadSkill`: the save's order, then learned ones) and
-//!   the item skills (`AddItemSkills`, those without an auto-cast
-//!   controller);
-//! - a pick (left or right press, `HotSlotPickList::HandleMouseEvent`) sets the slot
-//!   (`HotSlotButton::SetOption`: UI slot 10 `SetPrimarySlot`, 11 `SetSecondarySlot`,
-//!   else `SetHotSlot`), plays `skillSelectSound` and closes the list; a
-//!   left press outside it closes it.
-//! - the save: a skill option is a `HotSlotOptionSkill` (type 0), the
-//!   potions `HotSlotOptionPotionSkill` (types 2 / 3), evade type 5, a
-//!   scroll `HotSlotOptionScroll` (type 4: item record, `bitmapButtonUp`,
-//!   `bitmapButtonDown`, its text; `WriteProperties`);
-//!   a scroll slot uses one of that record from the bags
-//!   (`HotSlotOptionScroll::Activate` → `UsePotionOfType`).
+//! Pick list:
+//! - a right press on a hot slot button runs `PlayerHotSlotCtrl::DeactivateActiveSlot` and, when the button
+//!   allows it (off only for the two potion buttons and the evade button), opens the list at the button;
+//! - the list (`HotSlotPickList::Fill`) is, in order: every skill of `Character::GetUISkillList` that passes
+//!   `HotSlotButton::IsSkillSelectable` — current level ≠ 0, `IsPrimary` or `IsSecondary`, not `IsAutoToggle`
+//!   ([`gd_sim::skills::hot_slot_flags`]), of the displayed skill set or (no parent skill and)
+//!   `SkillManager::IsGlobalSkillTypeAndAllowed`, and on the left mouse slot (UI slot 10) only `IsPrimary` ones —
+//!   as an evade / health potion / energy potion option when it is the `SkillManager` special skill 7 / 5 / 6,
+//!   else a skill option; then, on every slot but the left mouse one, one scroll option per distinct
+//!   `OneShot_Scroll` record in the bags (ordered by record name); then, on every slot but the left mouse one,
+//!   the empty pick (`tagEmptyHotSlot`);
+//! - `GetUISkillList`: the default player skills in `LoadDefaultPlayerSkills` order (`defaultwpbasicattack`,
+//!   `defaultmoveto`, `defaultweaponattack`, `defaultpetattack`, the two potions, `defaultevade`; not the kick),
+//!   then the skills as created (the save's order, then learned ones) and the item skills without an auto-cast
+//!   controller;
+//! - a pick (left or right press) sets the slot (UI slot 10 `SetPrimarySlot`, 11 `SetSecondarySlot`, else
+//!   `SetHotSlot`), plays `skillSelectSound` and closes the list; a left press outside it closes it;
+//! - the save: a skill option is type 0, the potions types 2 / 3, evade type 5, a scroll type 4 (item record,
+//!   `bitmapButtonUp`, `bitmapButtonDown`, its text); a scroll slot uses one of that record from the bags.
 //!
-//!
-//! The armed slot ([`ArmedSlot`]), `Grim Dawn.exe` / Game.dll:
-//! - a left press on a hot slot button (the button's listener `HotSlotButton::OnLeftPress` →
-//!   `HotSlotButton::Activate`, `fromMouse` set) runs `PlayerHotSlotCtrl::ActivateHotSlot`:
-//!   the slot becomes the active one (`SkillSet.activeSlot`) and its option
-//!   is activated; `HotSlotOptionSkill::Activate` uses a skill of
-//!   activation mode 1 / 2 at once at the player
-//!   ([`gd_sim::skills::used_at_once`]), and for any other skill asks for a
-//!   target: the slot stays armed. Potion, scroll and evade options never ask
-//!   (their `Activate` clears the flag). A hot slot key goes the same way with
-//!   `fromMouse` clear (`UIPlayerHud::HandleKey` → `UIPlayerHud::PressHotSlotButton` →
-//!   `HotSlotButton::Press`): the skill
-//!   is requested at once at the cursor record and the slot is not armed (the
-//!   port's [`HotSlotKey`] → [`CastRequest`]); either way the previously armed slot is dropped;
-//! - the armed slot is used by the next world press, left or right
-//!   (`InGameUI::HandleMouseEvent`: `GetActiveSlotOption` replaces the mouse button's option,
-//!   `HandleActionFromMouse` → `ControllerPlayerState::ActivateSuperSkill`
-//!   takes and clears it: [`UseArmedSlot`]) or a press on a pet portrait
-//!   ([`gd_game_core::casting::CastOnAlly`]); a refused request still spends it;
-//! - it is dropped ([`DisarmHotSlot`]) by a right press on a hot slot button
-//!   (`HotSlotButton::HandleMouseEvent`, before the pick list opens), Esc (the HUD's Esc handler
-//!   `UIPlayerHud::HandleEscape` asks every slot button; the primary slot's, `HotSlotButton::HandleEscape`, runs
-//!   `DeactivateActiveSlot` and takes the key only when a slot was armed) and a
-//!   HUD window being shown (`UIPlayerHud::OnWindowEvent` → `UIPlayerHud::DeactivateHotSlot`; the list: gd_ui
-//!   `hotbar_pick.rs` `DisarmingWindows`) — the only callers of
-//!   `DeactivateActiveSlot` besides a press of another slot;
-//! - the controller's cursor record ([`WorldCursor`], `ControllerPlayer.cursorObjectId`
-//!   object id, `ControllerPlayer.cursorCoords` coordinates: `SetMouseRepeatData` /
-//!   `GetMouseRepeatData`) is written by the world's mouse handler
-//!   `InGameUI::HandleMouseEvent` on every mouse event it gets (moves too: an event with no
-//!   button held still runs the pick) — events the UI took never reach it, so
-//!   over the HUD the record keeps the last world point. It holds the object
-//!   under the cursor (`InGameUIActorCapture::CollectCandidates`: a foe, a friend, an NPC; its
-//!   coordinates) or the ground point under the cursor (`InGameUI::PickGroundUnderCursor`; no
-//!   ground hit: the record is left as it was). A key press requests its skill
-//!   at the record (`HotSlotOptionSkill::Activate` → `RequestSkillAction`),
-//!   and an evade option dashes towards it (`HotSlotOptionEvade::Activate`,
-//!   [`crate::evade`]);
-//! - a held hot slot key repeats ([`HeldHotSlots`], `Grim Dawn.exe`):
-//!   the key's press (`UIPlayerHud::HandleKey` → `UIPlayerHud::PressHotSlotButton`) presses the slot's button
-//!   (`HotSlotButton::Press` → `ActivateHotSlot`, `fromMouse` clear) and, when the
-//!   option `IsRepeatable` ([`gd_sim::skills::repeatable`]; a scroll's never),
-//!   puts the slot at the front of the held list (`UIPlayerHud.heldHotSlots`, not again when
-//!   it is the front already), sets the lock (`UIPlayerHud.heldRepeatLock`) and restarts its timer
-//!   (`UIPlayerHud.heldRepeatTimer`); the key's release (`UIPlayerHud::HotSlotKeyUp`) takes every entry of that
-//!   slot out. The HUD's update (`UIPlayerHud::Update`) clears the lock 50 ms after its
-//!   timer's restart, empties the list while the player is not alive
-//!   (`GetLifeState` ≠ 2) or teleporting, and with the lock clear, the list not
-//!   empty, the player not moving (`Character::IsMoving`) and no new mouse
-//!   command pending (`ControllerPlayer::IsNewMouseCommand`) presses the front
-//!   slot's button again (no cooldown / energy voice: `HotSlotButton::Press`'s third
-//!   argument) and sets the lock again: at most one request per 50 ms, the
-//!   most recently pressed held key, refused like any request while the
+//! The armed slot ([`ArmedSlot`]):
+//! - a left press on a hot slot button runs `PlayerHotSlotCtrl::ActivateHotSlot` (`fromMouse` set): the slot
+//!   becomes the active one and its option is activated; `HotSlotOptionSkill::Activate` uses a skill of
+//!   activation mode 1 / 2 at once at the player ([`gd_sim::skills::used_at_once`]), and for any other skill asks
+//!   for a target: the slot stays armed. Potion, scroll and evade options never ask. A hot slot key goes the same
+//!   way with `fromMouse` clear: the skill is requested at once at the cursor record and the slot is not armed
+//!   ([`HotSlotKey`] → [`CastRequest`]); either way the previously armed slot is dropped;
+//! - the armed slot is used by the next world press, left or right (`ActivateSuperSkill` takes and clears it:
+//!   [`UseArmedSlot`]) or a press on a pet portrait ([`gd_game_core::casting::CastOnAlly`]); a refused request
+//!   still spends it;
+//! - it is dropped ([`DisarmHotSlot`]) by a right press on a hot slot button, Esc (taking the key only when a
+//!   slot was armed) and a HUD window being shown — the only callers of `DeactivateActiveSlot` besides a press of
+//!   another slot;
+//! - the controller's cursor record ([`WorldCursor`], `ControllerPlayer.cursorObjectId` / `cursorCoords`) is
+//!   written by `InGameUI::HandleMouseEvent` on every mouse event it gets (moves too) — events the UI took never
+//!   reach it, so over the HUD the record keeps the last world point. It holds the object under the cursor (a
+//!   foe, a friend, an NPC; its coordinates) or the ground point under the cursor (no ground hit: left as it
+//!   was). A key press requests its skill at the record, and an evade option dashes towards it;
+//! - a held hot slot key repeats ([`HeldHotSlots`]): the key's press presses the slot's button and, when the
+//!   option `IsRepeatable` ([`gd_sim::skills::repeatable`]; a scroll's never), puts the slot at the front of the
+//!   held list (not again when it is the front already), sets the lock and restarts its timer; the key's release
+//!   takes every entry of that slot out. `UIPlayerHud::Update` clears the lock 50 ms after its timer's restart,
+//!   empties the list while the player is not alive or teleporting, and with the lock clear, the list not empty,
+//!   the player not moving and no new mouse command pending presses the front slot's button again (no cooldown /
+//!   energy voice) and sets the lock again: at most one request per 50 ms, refused like any request while the
 //!   previous cast runs;
-//! - the look: no slot highlight (the slot button's highlights are the option
-//!   statuses of `HotSlotOptionSkill::GetStatus`: energy, unusable); while armed
-//!   the cursor is `ui/cursor/cursorreticle.tex`, `cursorreticleattack.tex` over
-//!   an attack target (`InGameUI::UpdateCursor`, `IsAnyActiveTargetingNeeded`).
+//! - the look: no slot highlight; while armed the cursor is `ui/cursor/cursorreticle.tex`,
+//!   `cursorreticleattack.tex` over an attack target (`InGameUI::UpdateCursor`).
 //!
-//! - the world mouse handler runs at least once a frame: the input device adds one move event (the cursor and the
-//!   held buttons) to every update after its buffered button and wheel events (DirectInput.dll
-//!   `DirectInputDevice::Update`), so the UI sends [`CursorOverWorld`] every frame the cursor is over
-//!   the world, and [`WorldMouse`] for each press and each frame;
-//! - the new mouse command ([`NewMouseCommand`], `ControllerPlayer.newMouseCommand`, `Grim Dawn.exe`
-//!   `InGameUI::HandleMouseEvent`, `UIPlayerHud::HotSlotKeyUp`, Game.dll `SelectPrimaryAction`): set by a
-//!   world press (left or right) and by the release of the
-//!   last held hot slot key, cleared by a world mouse event with no left / right button held (so every frame
-//!   after the buttons are let go) and by the primary action's item / NPC / fixed actor requests (a left press on
-//!   a ground label, on an available NPC or a fixed actor of interest, `SelectPrimaryAction` after
-//!   the Item / Npc / FixedActor request; the label click `UIWorldDescManager::HandleClick` goes there too; in
-//!   Keyboard Only the
-//!   press acts on the cursor record, so only a picked NPC or item counts: [`WorldMouse::object`]); while set the
-//!   held keys do not repeat (a held world button owns the player);
+//! - the world mouse handler runs at least once a frame (`DirectInputDevice::Update` adds one move event per
+//!   update), so the UI sends [`CursorOverWorld`] every frame the cursor is over the world, and [`WorldMouse`] for
+//!   each press and each frame;
+//! - the new mouse command ([`NewMouseCommand`], `ControllerPlayer.newMouseCommand`): set by a world press (left
+//!   or right) and by the release of the last held hot slot key, cleared by a world mouse event with no left /
+//!   right button held and by the primary action's item / NPC / fixed actor requests (in Keyboard Only only a
+//!   picked NPC or item counts: [`WorldMouse::object`]); while set the held keys do not repeat;
 //! - the teleport state (`Character::IsTeleporting`): [`crate::teleport::PendingTravel`].
 //!
-//! - no drag: the hot slot button's mouse handler (`Grim Dawn.exe` `HotSlotButton::HandleMouseEvent`) assigns a
-//!   slot by drop only when the cursor's held handler (`InGameUI.cursorHandler`, set by
-//!   `CursorHandlerMgr::SetHeldHandler`) accepts hot slots (`CursorHandler::AcceptsHotSlot`) and gives its option
-//!   (`CursorHandlerHotSlotOption::GetOption`, Game.dll); that handler is the only one
-//!   whose `AcceptsHotSlot` is true (the item handlers' return false), and nothing creates it (its constructors are
-//!   only exported, the exe does not import them): skills and items are never dragged onto, off or between hot slots.
+//! - no drag: `CursorHandlerHotSlotOption` is the only handler that accepts hot slots, and nothing creates it:
+//!   skills and items are never dragged onto, off or between hot slots.
 //!
 //! PORT: a friend's record is its coordinates (the engine's is the ground point or the walk-to point by the
 //! `targetLock` option).
-//! PORT: a slot holds its option as a record ([`Caster::slots`]): a skill,
-//! [`HEALTH_POTION`] / [`ENERGY_POTION`] / [`EVADE`] for those options, an
-//! `OneShot_Scroll` item record for a scroll ([`option_kind`]). The form
-//! skills granted while shapeshifted are listed after the item skills (their
-//! place in the engine list, `AddSubSkills`, was not traced). The saved
+//! PORT: a slot holds its option as a record ([`Caster::slots`]): a skill, [`HEALTH_POTION`] / [`ENERGY_POTION`] /
+//! [`EVADE`] for those options, an `OneShot_Scroll` item record for a scroll ([`option_kind`]). The form skills
+//! granted while shapeshifted are listed after the item skills (`AddSubSkills`' place was not traced). The saved
 //! scroll text is left empty (the engine writes the item's name).
 use crate::evade::{EVADE, EvadeRequest};
 use bevy::prelude::*;
@@ -162,9 +102,8 @@ impl Plugin for HotbarPlugin {
                     .before(HotbarSet)
                     .before(crate::evade::EvadeStage::Start),
             )
-            // binds / potion / evade requests must land before casting reads them (UsePotion in CastingSet,
-            // EvadeRequest before CombatSet); the game's input writers (grimdawn's HotSlotKey / CastRequest)
-            // order before this chain so their requests are taken the same frame.
+            // Binds / potion / evade requests must land before casting reads them (UsePotion in CastingSet,
+            // EvadeRequest before CombatSet).
             .add_systems(
                 Update,
                 (show_skill_set, hot_slot_keys, arming, use_options)
@@ -176,19 +115,16 @@ impl Plugin for HotbarPlugin {
     }
 }
 
-/// The hotbar's cursor readers ([`record_cursor`], [`new_mouse_command`]): before the game's input writers
-/// that read the cursor record (grimdawn's cast chain) and the request chain ([`HotbarSet`]).
+/// The hotbar's cursor readers: before the game's input writers that read the cursor record and [`HotbarSet`].
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HotbarCursorSet;
 
-/// The hotbar's request chain (`hot_slot_keys` → `arming` → `use_options`): after the frame's input writers
-/// and before `CastingSet`, so a key press or a right-click option becomes its cast / potion / evade request
-/// the same frame.
+/// The hotbar's request chain: after the frame's input writers and before `CastingSet`, so a key press or a
+/// right-click option becomes its request the same frame.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HotbarSet;
 
-/// Another hotbar page shown, the HUD's request (`gd_ui` `hud`: Show Alternate Hot Slot Set, Quickbar Switch
-/// and the row button): [`Caster::next_displayed_set`] / [`Caster::reset_displayed_set`] on the player's hotbar.
+/// Another hotbar page shown: [`Caster::next_displayed_set`] / [`Caster::reset_displayed_set`].
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShowSkillSet {
     Next,
@@ -210,19 +146,14 @@ fn show_skill_set(
     }
 }
 
-/// The Move skill (`Skill_Move`, `SkillManager::GetDefaultSkillId(3)`: the default skills are
-/// `SkillManager.defaultSkillIds` in the order weapon attack 0, basic pool attack 1, kick 2, move 3, pet attack 4,
-/// health 5, energy 6, evade 7, `LoadDefaultPlayerSkills`). Its request always fails
-/// (`Skill_Move::GetValidTarget` returns false), so on a mouse slot it only moves:
-/// [`move_slot_keeps_target`].
+/// The Move skill (`SkillManager::GetDefaultSkillId(3)`). Its request always fails
+/// (`Skill_Move::GetValidTarget` returns false), so on a mouse slot it only moves: [`move_slot_keeps_target`].
 pub const MOVE_TO: &str = "records/skills/default/defaultmoveto.dbr";
 
-/// Whether `skill` is the Move skill ([`MOVE_TO`]).
 pub fn is_move_to(skill: &str) -> bool {
     skill.eq_ignore_ascii_case(MOVE_TO)
 }
 
-/// What a world press found under the cursor, for [`move_slot_keeps_target`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PressedObject {
     /// A `Player` or a `Monster` (foes, pets).
@@ -233,16 +164,12 @@ pub enum PressedObject {
     Other,
 }
 
-/// A world mouse press (or hold) whose slot option is the Move skill (the armed slot's, else the left button's
-/// primary slot / the right button's secondary slot; `Grim Dawn.exe` `InGameUI::HandleMouseEvent`): the
-/// object under the cursor stays the command's target only for a
-/// left (primary) press on something that is not a character, and on a breakable only with the option
-/// `breakingMoveTo` ("\"Move To\" Breaks Objects", default on). Otherwise the press is a plain move to the
-/// cursor point (the object's coordinates when there is one): the target id is dropped, the button acts as the
-/// primary one (`InGameUI.mouseActsAsPrimary` set, so a right press with Move walks too) and the command counts as
-/// repeated (`SetCommandRepeated`). A kept target goes to `SelectPrimaryAction`, whose Move request fails, so the
-/// default weapon attack (`GetDefaultSkillId(0)`) hits it: Move breaks breakables (`combat::player_attack`, the
-/// left Move skill not being a [`gd_game_core::casting::SpellAttacker`]) but never attacks a monster.
+/// A world mouse press (or hold) whose slot option is the Move skill (`InGameUI::HandleMouseEvent`): the object
+/// under the cursor stays the command's target only for a left press on something that is not a character, and on
+/// a breakable only with the option `breakingMoveTo` (default on). Otherwise the press is a plain move to the
+/// cursor point: the target id is dropped, the button acts as the primary one (a right press with Move walks too)
+/// and the command counts as repeated. A kept target goes to `SelectPrimaryAction`, whose Move request fails, so
+/// the default weapon attack hits it: Move breaks breakables but never attacks a monster.
 pub fn move_slot_keeps_target(
     right_button: bool,
     object: Option<PressedObject>,
@@ -256,8 +183,8 @@ pub fn move_slot_keeps_target(
     }
 }
 
-/// [`move_slot_keeps_target`] for a picked character / breakable — the classification every caller shared:
-/// a breakable is a [`PressedObject::Destructible`], anything else a [`PressedObject::Character`].
+/// [`move_slot_keeps_target`] for a picked breakable ([`PressedObject::Destructible`]) or anything else
+/// ([`PressedObject::Character`]).
 pub fn move_slot_keeps(right_button: bool, breakable: bool, breaking_move_to: bool) -> bool {
     move_slot_keeps_target(
         right_button,
@@ -270,24 +197,15 @@ pub fn move_slot_keeps(right_button: bool, breakable: bool, breaking_move_to: bo
     )
 }
 
-/// Whether the primary (left-button) action on this `Destructible` record is
-/// the kick, whatever skill the left slot holds:
-/// `ControllerPlayerState::SelectPrimaryAction` requests
-/// `GetDefaultSkillId(2)` ([`crate::casting::DEFAULT_KICK`]) for a
-/// `Destructible` whose `Destructible.attackAnimationType` is 47, before and instead of the slot's
-/// skill; `Destructible::Load` sets it to 47 exactly when
-/// `attackAnimation` is "Kick" (17 otherwise, "Attack" and "Attack;Kick"
-/// included). The right button (`SelectSecondaryAction`) and
-/// hot-slot keys have no such branch. The kick itself is a melee attack
-/// (`Skill_Kick::GetValidTarget` → `Skill::GetValidMeleeTarget`)
-/// with the record's `weaponDamagePct` 150 and flat physical
-/// 8–10 (`Skill_Kick::TargetResult`).
+/// Whether the primary (left-button) action on this `Destructible` record is the kick, whatever skill the left
+/// slot holds: `SelectPrimaryAction` requests [`crate::casting::DEFAULT_KICK`] for a `Destructible` whose
+/// `attackAnimationType` is 47 (`attackAnimation` exactly "Kick"). The right button and hot-slot keys have no such
+/// branch. The kick is a melee attack with the record's `weaponDamagePct` 150 and flat physical 8–10.
 pub fn kicks_breakable(rec: &gd_formats::arz::Record) -> bool {
     rec.str("attackAnimation").is_some_and(|a| a == "Kick")
 }
 
-/// The default player skills of the UI skill list, in its order (the basic
-/// pool attack and the kick are never listed: see the module docs).
+/// The default player skills of the UI skill list, in its order.
 pub const DEFAULT_SKILLS: [&str; 6] = [
     MOVE_TO,
     gd_game_core::casting::DEFAULT_ATTACK,
@@ -297,33 +215,30 @@ pub const DEFAULT_SKILLS: [&str; 6] = [
     EVADE,
 ];
 
-/// The armed hot slot (`PlayerHotSlotCtrl` `SkillSet` +0, `IsAnySlotActive`):
-/// clicked with the mouse, waiting for its target (module docs). Set and
-/// cleared by [`arming`] only; the UI reads it.
+/// The armed hot slot (`IsAnySlotActive`): clicked with the mouse, waiting for its target. Set and cleared by
+/// [`arming`] only.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ArmedSlot(pub Option<usize>);
 
-/// The controller's cursor record (module docs): the character that was
-/// under the cursor and the world point, at the last mouse event over the
-/// world (in Keyboard Only the controller targeting's pick instead, `crate::controller_target`). Set by
-/// [`record_cursor`] only; `point` None until the first one (and for an empty controller record).
+/// The controller's cursor record: the character under the cursor and the world point at the last mouse event
+/// over the world (in Keyboard Only the controller targeting's pick instead). Set by [`record_cursor`] only;
+/// `point` None until the first one (and for an empty controller record).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
 pub struct WorldCursor {
     pub target: Option<Entity>,
     pub point: Option<Vec3>,
 }
 
-/// A mouse event over the world (the UI did not take it): the character under
-/// the cursor (a foe or one's own pet) and its coordinates, else the ground
-/// point under the cursor (`SetMouseRepeatData`).
+/// A mouse event over the world: the character under the cursor (a foe or one's own pet) and its coordinates,
+/// else the ground point under the cursor (`SetMouseRepeatData`).
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct CursorOverWorld {
     pub target: Option<Entity>,
     pub point: Vec3,
 }
 
-/// [`CursorOverWorld`] (the mouse) or, in Keyboard Only, [`ControllerTarget`](crate::controller_target::ControllerTarget)
-/// (the controller targeting, which may empty the record) → [`WorldCursor`] (the last event of the frame wins).
+/// [`CursorOverWorld`] or, in Keyboard Only, [`ControllerTarget`](crate::controller_target::ControllerTarget)
+/// (which may empty the record) → [`WorldCursor`] (the last event of the frame wins).
 fn record_cursor(
     mut events: MessageReader<CursorOverWorld>,
     mut controller: MessageReader<crate::controller_target::ControllerTarget>,
@@ -343,10 +258,9 @@ fn record_cursor(
     }
 }
 
-/// A mouse event that reached the world (the UI did not take it): a left / right press, and whether a left or
-/// right button is held. The game sends one per press and one per frame (the input device's move event).
-/// `object`: the press is a primary action on an item, an NPC or a fixed actor (`SelectPrimaryAction`'s requests,
-/// module docs).
+/// A mouse event that reached the world: a left / right press, and whether a left or right button is held. Sent
+/// once per press and once per frame. `object`: the press is a primary action on an item, an NPC or a fixed
+/// actor.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct WorldMouse {
     pub press: bool,
@@ -354,14 +268,13 @@ pub struct WorldMouse {
     pub object: bool,
 }
 
-/// `ControllerPlayer::IsNewMouseCommand` (`ControllerPlayer.newMouseCommand`, module docs): a world press is pending,
-/// so held hot slot keys do
-/// not repeat. Set by [`new_mouse_command`] and [`hot_slot_keys`] only.
+/// `ControllerPlayer::IsNewMouseCommand`: a world press is pending, so held hot slot keys do not repeat. Set by
+/// [`new_mouse_command`] and [`hot_slot_keys`] only.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NewMouseCommand(pub bool);
 
-/// [`WorldMouse`] → [`NewMouseCommand`]: a press sets it, its primary action on an item / NPC / fixed actor clears
-/// it again (`SelectPrimaryAction`), an event with no button held clears it (`InGameUI::HandleMouseEvent`).
+/// [`WorldMouse`] → [`NewMouseCommand`]: a press sets it, its primary action on an item / NPC / fixed actor or an
+/// event with no button held clears it.
 fn new_mouse_command(mut events: MessageReader<WorldMouse>, mut flag: ResMut<NewMouseCommand>) {
     for e in events.read() {
         if e.press {
@@ -373,29 +286,26 @@ fn new_mouse_command(mut events: MessageReader<WorldMouse>, mut flag: ResMut<New
     }
 }
 
-/// A hot slot key went down or up (the UI sends both; `slot` is the caster
-/// slot the press used).
+/// A hot slot key went down or up; `slot` is the caster slot the press used.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct HotSlotKey {
     pub slot: usize,
     pub down: bool,
 }
 
-/// The held hot slot keys (`UIPlayerHud.heldHotSlots`, module docs): repeatable slots whose
-/// key is down, the most recent first, and the time of the last press (the
-/// 50 ms lock). Set by [`hot_slot_keys`] only.
+/// `UIPlayerHud.heldHotSlots`: repeatable slots whose key is down, the most recent first, and the time of the
+/// last press. Set by [`hot_slot_keys`] only.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct HeldHotSlots {
     pub slots: std::collections::VecDeque<usize>,
     pub last_press: Option<f32>,
 }
 
-/// The lock after a hot slot key press or repeat (`UIPlayerHud::Update`: 50 ms).
+/// `UIPlayerHud::Update`.
 pub const REPEAT_LOCK: f32 = 0.05;
 
-/// Hot slot keys (module docs): a press requests the slot's option at the
-/// cursor record and holds a repeatable slot; the update repeats the front
-/// held slot once the lock is over and the player stands.
+/// A press requests the slot's option at the cursor record and holds a repeatable slot; the update repeats the
+/// front held slot once the lock is over and the player stands.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn hot_slot_keys(
     mut keys: MessageReader<HotSlotKey>,
@@ -426,8 +336,7 @@ fn hot_slot_keys(
         held.slots.clear();
         return;
     };
-    // An empty record (no region): in the keyboard movement modes the player's own coordinates
-    // (`HotSlotOptionSkill::Activate`). PORT: in Classic a point 5 m
+    // An empty record: in the keyboard movement modes the player's own coordinates. PORT: in Classic a point 5 m
     // ahead (the engine's request with an empty point was not traced).
     let keyboard = options.as_ref().is_some_and(|o| o.int("movementType") > 0);
     let empty = if keyboard {
@@ -435,8 +344,7 @@ fn hot_slot_keys(
     } else {
         tf.translation + tf.rotation * Vec3::Z * 5.0
     };
-    // `RequestSkillAction` at the controller's cursor record (`ControllerPlayer.cursorObjectId` /
-    // `ControllerPlayer.cursorCoords`).
+    // `RequestSkillAction` at the controller's cursor record.
     let request = |slot: usize| CastRequest {
         slot,
         target: cursor.target.filter(|t| alive.get(*t).is_ok()),
@@ -447,7 +355,7 @@ fn hot_slot_keys(
     for k in keys.read() {
         if !k.down {
             held.slots.retain(|s| *s != k.slot);
-            // The last held key let go: a new mouse command (`UIPlayerHud::HotSlotKeyUp`).
+            // `UIPlayerHud::HotSlotKeyUp`.
             if held.slots.is_empty() {
                 new_mouse.0 = true;
             }
@@ -497,18 +405,15 @@ pub struct ActivateHotSlot {
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct DisarmHotSlot;
 
-/// A world press with a slot armed: use it at `target` (the character under
-/// the cursor: a foe or one's own pet) or the ground `point`.
+/// A world press with a slot armed: use it at `target` (a foe or one's own pet) or the ground `point`.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct UseArmedSlot {
     pub target: Option<Entity>,
     pub point: Vec3,
 }
 
-/// The armed slot's rules (module docs): every [`CastRequest`] (a hot slot
-/// key, a slot used at once) drops it, [`DisarmHotSlot`] drops it, an
-/// [`ActivateHotSlot`] uses its option at once or arms it, [`UseArmedSlot`] /
-/// [`CastOnAlly`] take it and request its skill.
+/// Every [`CastRequest`] drops the armed slot, [`DisarmHotSlot`] drops it, an [`ActivateHotSlot`] uses its option
+/// at once or arms it, [`UseArmedSlot`] / [`CastOnAlly`] take it and request its skill.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn arming(
     mut armed: ResMut<ArmedSlot>,
@@ -553,9 +458,7 @@ fn arming(
                 gd_sim::skills::used_at_once(&r.class, r.bool("instantCast"), r.bool("pointBlank"))
             });
         if now {
-            // At the player (`HotSlotOptionSkill::Activate` passes the
-            // player's coordinates); an evade option aims by the cursor
-            // record itself (`crate::evade::start_evade`).
+            // At the player; an evade option aims by the cursor record itself.
             out.push(at(p.slot, None, tf.translation + tf.rotation * Vec3::Z));
         } else {
             debug!("hot slot {} armed", p.slot);
@@ -568,8 +471,7 @@ fn arming(
         }
     }
     for a in allies.read() {
-        // The portrait: the pet as the combat ally, its coordinates
-        // (`PlayerPortrait::HandleMouseEvent` → `HandleActionFromMouse`); only one's own living pet.
+        // The portrait: the pet as the combat ally, its coordinates; only one's own living pet.
         let Some((ptf, _)) = pets.get(a.ally).ok().filter(|(_, p)| p.owner == me) else {
             continue;
         };
@@ -583,7 +485,6 @@ fn arming(
     }
 }
 
-/// What a slot's record is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptionKind {
     Skill,
@@ -607,16 +508,14 @@ pub fn option_kind(db: &Database, rec: &str) -> OptionKind {
     }
 }
 
-/// Bind `option` (None = empty) to the shown hotbar page's `slot` (the game
-/// sends it for a pick of the slot list).
+/// Bind `option` (None = empty) to the shown hotbar page's `slot`.
 #[derive(Message, Clone, Debug)]
 pub struct BindSlot {
     pub slot: usize,
     pub option: Option<String>,
 }
 
-/// The pick list of `slot` (module docs), `None` = the empty pick; `effective` the player's
-/// [`gd_game_core::player::EffectiveSkills`].
+/// The pick list of `slot`, `None` = the empty pick.
 pub fn choices(
     db: &Database,
     loadout: &Loadout,
@@ -685,8 +584,7 @@ pub fn choices(
     out
 }
 
-/// Binds the requested options; an option that is neither a fixed option nor a
-/// database record (a stale or bad UI request) is refused.
+/// Binds the requested options; one that is neither a fixed option nor a database record is refused.
 fn bind_slots(
     db: &Database,
     requests: &mut MessageReader<BindSlot>,
@@ -717,9 +615,8 @@ fn bind_slots(
     }
 }
 
-/// [`BindSlot`]s; a used slot holding a potion, evade or scroll option does
-/// what the R / E keys, Space or a right click on the item in the bags do
-/// (`casting.rs` casts only the skill options).
+/// [`BindSlot`]s; a used slot holding a potion, evade or scroll option does what the R / E keys, Space or a
+/// right click on the item in the bags do.
 #[allow(clippy::too_many_arguments)]
 fn use_options(
     mut binds: MessageReader<BindSlot>,
@@ -754,8 +651,7 @@ fn use_options(
             }
             OptionKind::Scroll => {
                 let Some(inv) = inv.as_mut() else { continue };
-                // A held key / button repeats the request: not while the
-                // scroll cools down (the use would be refused anyway).
+                // Not while the scroll cools down (the use would be refused anyway).
                 let cooling = data.db.get(&rec).is_some_and(|r| {
                     caster
                         .cooldowns

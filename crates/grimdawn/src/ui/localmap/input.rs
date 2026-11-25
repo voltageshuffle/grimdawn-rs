@@ -1,8 +1,7 @@
 use super::*;
 use gd_ui::state::map::MapWindow;
 
-/// The map key (`crate::ui::keys::MAP`, M by default) toggles the map window; Esc closes it. A riftgate opening its map
-/// shows the world page.
+/// The map key toggles the map window; Esc closes it. A riftgate opening its map shows the world page.
 pub(super) fn keys(
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
@@ -25,8 +24,7 @@ pub(super) fn keys(
             win.open = true;
         }
     }
-    // Esc closes the map (and the riftgate map with it) through the shared dispatcher
-    // (`ui::esc_dispatcher`).
+    // Esc closes the map (and the riftgate map with it) through the shared dispatcher.
     if win.local_shown(&rift) {
         let step = if input.just_pressed(KeyCode::Equal) || input.just_pressed(KeyCode::NumpadAdd) {
             -10.0
@@ -42,11 +40,8 @@ pub(super) fn keys(
     }
 }
 
-/// Center Map (action 31, default Numpad 0) presses the open map window's centre button: the local map's pan goes
-/// back to 0, the world map centres as on opening (`riftmap.rs`). `Grim Dawn.exe` `UIWorldMap` key action
-/// `UIWorldMap::OnKeyAction` (`UIWindow::OnKeyAction`, reached while the window is open): action 31 presses
-/// `UIWorldMap.centerButton` (the `centerButton`, whose press `UIWorldMap::OnButtonClick` handles for either page)
-/// through the window's button manager.
+/// Center Map (action 31) presses the open map window's centre button (`UIWorldMap::OnKeyAction` →
+/// `UIWorldMap::OnButtonClick`): the local map's pan goes back to 0, the world map centres as on opening.
 pub(in crate::ui) fn center_map_key(
     keys: &ButtonInput<KeyCode>,
     bindings: &gd_ui_kit::keys::KeyBindings,
@@ -54,9 +49,8 @@ pub(in crate::ui) fn center_map_key(
     bindings.just_pressed(gd_ui_kit::keys::CENTER_MAP, keys)
 }
 
-/// Local map mouse (module doc): zoom / centre / switch / close buttons,
-/// the legend (hover, click blink), the wheel's zoom, dragging the map;
-/// the window takes the mouse.
+/// Local map mouse: zoom / centre / switch / close buttons, the legend (hover, click blink), the wheel's zoom,
+/// dragging the map; the window takes the mouse.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -81,7 +75,6 @@ pub(super) fn clicks(
         return;
     };
     if pause.menu {
-        // Modal: the game menu / Options takes the wheel, hover, keys and presses.
         wheel.clear();
         win_state.drag = None;
         if win_state.legend_hover.is_some() {
@@ -99,8 +92,7 @@ pub(super) fn clicks(
     let Some(p) = gd_ui_kit::cursor_px(win) else {
         return;
     };
-    // A drag keeps going while the button is held inside the window; it
-    // ends on release or leaving it (`LocalMap::HandleMouseEvent`).
+    // A drag ends on release or leaving the window (`LocalMap::HandleMouseEvent`).
     if !buttons.pressed(MouseButton::Left) || !gd_ui_kit::contains(&wr, p) {
         win_state.drag = None;
     }
@@ -114,7 +106,7 @@ pub(super) fn clicks(
     if win_state.legend_hover != legend_hover {
         win_state.legend_hover = legend_hover;
     }
-    // `ButtonStatic` draws `bitmapNameInFocus` while hovered (as the world map).
+    // `ButtonStatic` draws `bitmapNameInFocus` while hovered.
     let over = |r: Option<URect>| r.is_some_and(|r| gd_ui_kit::contains(&r, p));
     let l = &win_state.layout;
     let button_hover = [l.close, l.center, l.switch]
@@ -130,8 +122,7 @@ pub(super) fn clicks(
     capture.0 = true;
     if let Some((start, pan0)) = win_state.drag {
         // Pixels to metres by the pane's width / height over zoom × 3.
-        // PORT: the x sign is the port's screen-right axis (the engine
-        // adds along the camera's X axis).
+        // PORT: the x sign is the screen-right axis (the engine adds along the camera's X axis).
         let pane = win_state.layout.pane;
         let m = win_state.zoom * 3.0;
         let d = p - start;
@@ -140,8 +131,7 @@ pub(super) fn clicks(
             pan0.y + d.y * m / pane.h.max(1.0),
         );
     }
-    // The wheel zooms: −delta / 30 with 120 per notch (PORT: the delta per
-    // notch), the zoom target clamped to 40..135.
+    // The wheel zooms: −delta / 30 with 120 per notch (PORT: the delta per notch), the target clamped to 40..135.
     for w in wheel.read() {
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,

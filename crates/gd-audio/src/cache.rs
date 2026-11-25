@@ -1,17 +1,14 @@
 //! The sound file cache ([`Sounds`]) and its background preload.
 //!
 //! The cache holds its files weakly ([`WeakLoaded`]): a file stays while a voice plays it or a creature holds it
-//! ([`HeldSounds`]), and goes with the last of them (PORT: the engine unloads a sound 5 s after its last release,
-//! `gd_game_core::weak_cache`). The last files used — played or preloaded — stay loaded too, up to 96 MB
-//! (`Sounds::recent`), so a sound used now and then is not read and decoded again each time.
+//! ([`HeldSounds`]), and goes with the last of them (PORT: the engine unloads a sound 5 s after its last release).
+//! The last files used, played or preloaded, stay loaded too, up to 96 MB (`Sounds::recent`).
 //!
 //! Preload: [`preload_sounds`] warms the cache in background tasks when a creature spawns or the player's equipment /
-//! skills change (`SoundPak::PreLoad` → the background `ResourceLoader`), so a first play does
-//! not read and parse the archive on the game thread. The creature holds what was preloaded for it ([`HeldSounds`],
-//! as the engine's `SoundPak`s hold their sounds) until it goes or its kit changes. A one-shot whose file is not
-//! loaded starts its read in the background and plays when it lands ([`Sounds::file_or_fetch`],
-//! `pak::replay_pending`, `dialog::npc_voices`); so do event / boss music and conversation voice-overs, whose sound
-//! entity exists from the start and gets its voice then ([`start_2d`], [`AwaitedFile`]). Only the main menu and the
+//! skills change (`SoundPak::PreLoad`). The creature holds what was preloaded for it ([`HeldSounds`]) until it goes
+//! or its kit changes. A one-shot whose file is not loaded starts its read in the background and plays when it
+//! lands ([`Sounds::file_or_fetch`]); so do event / boss music and conversation voice-overs, whose sound entity
+//! exists from the start and gets its voice then ([`start_2d`], [`AwaitedFile`]). Only the main menu and the
 //! credits read their music on the spot ([`Sounds::file`]).
 use super::Sounds;
 use super::listener::{SoundClass, sound};
@@ -25,7 +22,6 @@ use gd_game_core::data::GameData;
 use std::borrow::Cow;
 use std::sync::{Arc, Weak};
 
-/// The entries the file cache holds before it first drops the dead ones ([`Sounds::insert`]).
 const PRUNE_MIN: usize = 64;
 
 /// A sound file and how the engine plays it (`pak::playback_speed`).
@@ -33,11 +29,10 @@ const PRUNE_MIN: usize = 64;
 pub struct Loaded {
     /// The file's bytes (a stream decodes them while it plays).
     pub(crate) file: AudioSource,
-    /// The decoded samples of a WAV played from memory ([`BUFFER_BYTES`]).
     pub(super) pcm: Option<Pcm>,
     /// The WAV's own sample rate; `None` for an `.ogg` (a stream).
     pub rate: Option<u32>,
-    /// A one-channel file: only these become 3D buffers (`pak` module doc).
+    /// A one-channel file: only these become 3D buffers.
     pub mono: bool,
 }
 
@@ -122,7 +117,7 @@ pub(super) struct Hold {
 }
 
 impl Sounds {
-    /// Cached files still loaded and their bytes (file + decoded samples; the memory audit, `dev/memory.rs`).
+    /// Cached files still loaded and their bytes (file + decoded samples).
     #[cfg(feature = "dev")]
     pub fn footprint(&self) -> (usize, usize) {
         self.cache
@@ -137,8 +132,7 @@ impl Sounds {
             })
     }
 
-    /// Drops every loaded sound, pak fact, pending preload and waiting one-shot (the mounted mod changed:
-    /// [`reset_sounds`]).
+    /// Drops every loaded sound, pak fact, pending preload and waiting one-shot (the mounted mod changed).
     pub fn clear(&mut self) {
         self.cache.clear();
         self.recent.clear();
@@ -151,7 +145,7 @@ impl Sounds {
     }
 
     /// `Some(file)` while the file at `key` is loaded, `Some(None)` for a file that failed to load, `None` when it
-    /// was never read or has gone. Does not allocate.
+    /// was never read or has gone.
     fn cached(&self, key: &str) -> Option<Option<Loaded>> {
         match self.cache.get(key)? {
             None => Some(None),
@@ -202,9 +196,9 @@ impl Sounds {
         loaded
     }
 
-    /// The sound file at `path` when it is loaded. Otherwise its read starts in the background ([`collect_preload`]
-    /// caches it) and this returns `Err(true)` while it is on its way, `Err(false)` for a file that failed to load:
-    /// a one-shot never reads the archive on the game thread (a cold read stalled a fight's frame by up to 100 ms).
+    /// The sound file at `path` when it is loaded. Otherwise its read starts in the background and this returns
+    /// `Err(true)` while it is on its way, `Err(false)` for a file that failed to load: a one-shot never reads the
+    /// archive on the game thread.
     pub fn file_or_fetch(&mut self, data: &GameData, path: &str) -> Result<Loaded, bool> {
         let key = normalized(path);
         match self.cached(&key) {
@@ -214,7 +208,6 @@ impl Sounds {
             }
             Some(None) => Err(false),
             None => {
-                // Callers ask again every frame while the read is on its way: no key is allocated then.
                 if !self.in_flight.contains(key.as_ref()) {
                     let (key, data) = (key.into_owned(), data.clone());
                     self.in_flight.insert(key.clone());
@@ -234,10 +227,9 @@ impl Sounds {
         }
     }
 
-    /// Preloads the sound files `paths` for `owner` (`SoundPak::PreLoad` enqueues to the
-    /// background `ResourceLoader`): the loaded ones at once, the rest read in a background task (one read per file
-    /// however many owners wait for it); [`collect_preload`] hands `owner` the whole set ([`HeldSounds`]), replacing
-    /// its older one.
+    /// Preloads the sound files `paths` for `owner` (`SoundPak::PreLoad`): the loaded ones at once, the rest read in
+    /// a background task (one read per file however many owners wait for it); [`collect_preload`] hands `owner` the
+    /// whole set ([`HeldSounds`]), replacing its older one.
     fn warm<'a>(
         &mut self,
         data: &GameData,
@@ -291,13 +283,11 @@ impl Sounds {
 }
 
 /// A 2D sound entity whose file was still being read when it started ([`start_2d`]): it exists, and counts as
-/// playing, from that frame (a music session's state machine waits on it, the next voice-over line stops it), and
-/// [`start_awaited`] gives it its voice when the file lands, a few frames late (PORT: the engine streams these
-/// files rather than stall the frame on the read).
+/// playing, from that frame, and [`start_awaited`] gives it its voice when the file lands (PORT: a few frames late).
 #[derive(Component)]
 pub(super) struct AwaitedFile {
     path: String,
-    /// The engine frequency it plays at ([`Loaded::speed`]).
+    /// The engine frequency it plays at.
     hz: f32,
 }
 
@@ -376,7 +366,7 @@ fn wants_pcm(l: &Loaded) -> bool {
     l.rate.is_some() && l.pcm.is_none() && l.file.bytes.len() <= BUFFER_BYTES
 }
 
-/// `l` with its samples decoded when [`wants_pcm`] (run off the game thread).
+/// `l` with its samples decoded when [`wants_pcm`].
 fn with_pcm(mut l: Loaded) -> Loaded {
     if wants_pcm(&l) {
         let d = l.file.decoder();
@@ -389,8 +379,7 @@ fn with_pcm(mut l: Loaded) -> Loaded {
     l
 }
 
-/// The sound cache follows the mounted mod: `model::drop_on_mod_change` drops the render caches and sends
-/// `model::ModChanged`; the sounds clear on it. A new session lets the recently played files go.
+/// The sound cache clears on `model::ModChanged`. A new session lets the recently played files go.
 pub(super) fn reset_sounds(
     mut mod_changed: MessageReader<gd_render::model::ModChanged>,
     mut sounds: ResMut<Sounds>,
@@ -404,8 +393,7 @@ pub(super) fn reset_sounds(
     }
 }
 
-/// Drains the background preload tasks ([`Sounds::warm`]) into the cache and hands each complete preload to its
-/// owner ([`HeldSounds`]).
+/// Drains the background preload tasks into the cache and hands each complete preload to its owner.
 pub(super) fn collect_preload(mut commands: Commands, mut sounds: ResMut<Sounds>) {
     use bevy::tasks::block_on;
     use bevy::tasks::futures_lite::future;
@@ -477,7 +465,7 @@ const CHARACTER_PAKS: [&str; 22] = [
     "footMud",
 ];
 
-/// The own record's callback sounds (no form override: `char_sounds::callback`).
+/// The own record's callback sounds (no form override).
 const CALLBACK_PAKS: [&str; 8] = [
     "genericSound1",
     "genericSound2",
@@ -490,8 +478,7 @@ const CALLBACK_PAKS: [&str; 8] = [
 ];
 
 /// Warms the sound cache for new creatures and the player's kit (`SoundPak::PreLoad`): a creature's
-/// `CharacterSounds` paks, callback sounds, weapons and effective skills when it spawns or its equipment changes. The
-/// file reads run in background tasks ([`Sounds::warm`]); the creature holds the set ([`HeldSounds`]).
+/// `CharacterSounds` paks, callback sounds, weapons and effective skills when it spawns or its equipment changes.
 pub(super) fn preload_sounds(
     data: Res<GameData>,
     mut sounds: ResMut<Sounds>,

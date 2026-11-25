@@ -33,7 +33,6 @@ use gd_formats::arz::Record;
 use gd_formats::save::item::Item;
 use gd_rules::Rng;
 
-/// One blueprint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Blueprint {
     pub record: String,
@@ -103,9 +102,9 @@ impl Blueprint {
     }
 }
 
-/// The recipes a crafter offers (`crafter` = its `NpcCrafter` record,
-/// `window_defaults` = `craftingDefaultRecipes`, `learned` = `formulas.gst`),
-/// without the awakened list; see [`recipes_with_awakened`].
+/// [`recipes_with_awakened`] without the awakened list (`crafter` = its
+/// `NpcCrafter` record, `window_defaults` = `craftingDefaultRecipes`,
+/// `learned` = `formulas.gst`).
 pub fn recipes(crafter: &Record, window_defaults: &[&str], learned: &[&str]) -> Vec<String> {
     recipes_with_awakened(crafter, &[], window_defaults, learned)
 }
@@ -140,9 +139,8 @@ pub fn recipes_with_awakened(
     out
 }
 
-/// The item a blueprint makes and shows (`ItemArtifactFormula::LoadArtifact`:
-/// `Item::CreateItem` of `forcedRandomArtifactName`, else `artifactName`): the faction blueprints' `artifactName` is
-/// a loot table (Devil's Cord: `tdyn_craft_waist_f01a`) and their item the forced one. None without `artifactName`.
+/// The item a blueprint makes and shows (`ItemArtifactFormula::LoadArtifact`):
+/// `forcedRandomArtifactName`, else `artifactName`; `None` without `artifactName`.
 pub fn made_item(rec: &Record) -> Option<&str> {
     let artifact = rec.str("artifactName").filter(|s| !s.is_empty())?;
     Some(
@@ -152,7 +150,7 @@ pub fn made_item(rec: &Record) -> Option<&str> {
     )
 }
 
-/// `IsBluePrintValid` (module doc), per formula class. Game.dll:
+/// `IsBluePrintValid`, per formula class. Game.dll:
 /// - `ItemArtifactFormula::IsBluePrintValid`: some `reagent1..6Quantity` list non-empty or `reagentBaseQuantity` != 0,
 ///   and the made item exists (`LoadArtifact`: `artifactName` non-empty; `Item::CreateItem` of
 ///   `forcedRandomArtifactName`, else `artifactName`, returns an item).
@@ -184,8 +182,8 @@ pub fn formula_valid(db: &(impl super::RecordSource + ?Sized), rec: &Record) -> 
 }
 
 /// Whether records of `class` are items (`Item::CreateItem` makes an object of them).
-/// PORT: the engine tests the class's `classInfo` chain; the port takes the item class families of the stock
-/// database (`Armor*`, `Weapon*`, `Item*`, `OneShot_*`, `QuestItem`).
+/// PORT: the engine tests the class's `classInfo` chain; the port matches the stock
+/// item class families (`Armor*`, `Weapon*`, `Item*`, `OneShot_*`, `QuestItem`).
 pub fn is_item_class(class: &str) -> bool {
     ["Armor", "Weapon", "Item", "OneShot_"]
         .iter()

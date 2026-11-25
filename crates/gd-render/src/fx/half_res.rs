@@ -1,8 +1,8 @@
 //! Half-resolution particles. PORT: the engine draws every particle at full size; the port draws them at half
-//! size, its own fill-rate saving for effect-heavy fights, where the particles' overdraw dominates the frame.
+//! size.
 //!
 //! A main view's ([`GammaOut`]) [`super::render::ParticleMaterial`] draws (additive and
-//! alpha-blended; the distortion emitters are in Bevy's transmissive phase and stay with `render/distort.rs`) are
+//! alpha-blended; the distortion emitters are in Bevy's transmissive phase and stay full size) are
 //! taken out of Bevy's transparent phase once it is sorted and batched ([`hold_particles`]), and [`draw_particles`]
 //! draws them right after the transparent pass, before the fog and the glow composite (`render::post::fog_and_glow`),
 //! so their place relative to fog, glow and distortion is unchanged:
@@ -11,7 +11,7 @@
 //!    texel along a silhouette);
 //! 2. the particles are drawn in the phase's order into a cleared half-size target (the frame's format) with that
 //!    depth, by variants of their own pipelines ([`HalfResPipelines::variant`]): the colour blend is the material's
-//!    (additive SrcAlpha / One, alpha SrcAlpha / InvSrcAlpha, `fx/render.rs`), the alpha blend tracks coverage
+//!    (additive SrcAlpha / One, alpha SrcAlpha / InvSrcAlpha), the alpha blend tracks coverage
 //!    instead: additive Zero / One (the background shows through), alpha One / InvSrcAlpha (A = a + (1 − a)·A). The
 //!    target then holds the particles premultiplied by what covers them, and 1 − A is the share of the background
 //!    still visible;
@@ -23,8 +23,8 @@
 //! transparent pass.
 //!
 //! PORT: the held particles draw after every other transparent-pass item (blended meshes, the weather's rain / fog
-//! particles at sort 6200, `grimdawn` weather.rs) instead of interleaved with them by the sort, so a particle behind
-//! a blended mesh or a weather quad shows over it. Weather particles stay full size.
+//! particles at sort 6200) instead of interleaved with them by the sort, so a particle behind a blended mesh or a
+//! weather quad shows over it. Weather particles stay full size.
 use super::render::SHADER as PARTICLE_SHADER;
 use crate::render::post::GammaOut;
 use bevy::asset::embedded_asset;
@@ -51,7 +51,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use gd_formats::collections::HashMap;
 
 const SHADER: &str = "embedded://gd_render/fx/half_res.wesl";
-/// The main views' HDR frame (`render/post.rs`); the particle pipelines are specialized for it.
+/// The main views' HDR frame; the particle pipelines are specialized for it.
 const MAIN_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
 pub struct HalfResPlugin;
@@ -248,7 +248,7 @@ struct Held {
 }
 
 /// Render world: the particle items held between [`hold_particles`] and [`restore_particles`] (one frame), per
-/// view; `spare` is the phase item map swapped in while splitting (kept for its capacity).
+/// view; `spare` is the phase item map swapped in while splitting.
 #[derive(Resource, Default)]
 pub(crate) struct HeldParticles {
     views: HashMap<RetainedViewEntity, Held>,
@@ -335,8 +335,7 @@ fn hold_particles(
     }
 }
 
-/// Back for the next frame's queue and batching, with their own pipelines; the emptied phases are kept for reuse,
-/// views that are gone dropped.
+/// Back for the next frame's queue and batching, with their own pipelines; views that are gone are dropped.
 fn restore_particles(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldParticles>,

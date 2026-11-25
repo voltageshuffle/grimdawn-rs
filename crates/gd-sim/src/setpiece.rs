@@ -24,8 +24,7 @@
 //!
 //! Entity groups (`SetPiece::Load`): the host spends a set piece its `Unique Entities` /
 //! `Inverse Unique Entities` group leaves out before the placement-chance roll
-//! (`gd_game::unique::Loader::SetPiece`: Unique and not chosen, or Inverse and
-//! chosen); the `Unified Entities` flag shares one pool index across the group
+//! (Unique and not chosen, or Inverse and chosen); the `Unified Entities` flag shares one pool index across the group
 //! ([`run_set_piece_shared`]'s `pick`, `SetPiece::Generate`'s
 //! `GetEntityUnificationIndex` / `SetEntityUnificationIndex`). Placement itself
 //! is the host's (see [`Placement`]); [`SetPieceRun::stream`] is the set piece's
@@ -124,16 +123,13 @@ fn tag(s: &str) -> u32 {
 }
 
 /// `r % n` with the engine's guard against n = 0 (`SetPiece::Pick`); a
-/// negative span (bad data: max below min) counts as 1
-/// instead of wrapping to a huge unsigned modulus. Widened to `i64` so the
-/// callers' `hi - lo + 1` / `total + 1` cannot overflow (bad data: counts or
-/// weights near `i32::MAX`); identical to the engine's 32-bit maths on stock data.
+/// negative span (bad data: max below min) counts as 1. Widened to `i64` so
+/// `hi - lo + 1` / `total + 1` cannot overflow on bad data.
 fn modulo(r: u32, n: i64) -> i64 {
     i64::from(r) % n.max(1)
 }
 
-/// Placement / part count ceiling (bad data: a huge `minToPlace` /
-/// `minParts`). Stock set pieces place far fewer.
+/// Placement / part count ceiling (bad data: a huge `minToPlace` / `minParts`).
 const MAX_PICKS: i64 = 1000;
 
 /// `lo + r % (hi - lo + 1)`, the count roll, capped at [`MAX_PICKS`].
@@ -177,8 +173,6 @@ pub fn run_set_piece_shared(
     if pools.is_empty() {
         return None;
     }
-    // The group's stored choice first (it does not roll), else the weighted
-    // roll; the chosen index is stored back (`SetEntityUnificationIndex`).
     let chosen = match pick.filter(|i| *i < pools.len()) {
         Some(i) => i,
         None => {
@@ -191,8 +185,7 @@ pub fn run_set_piece_shared(
         }
     };
     *pick = Some(chosen);
-    // Monster totems: the set piece's `ascendantPool` on the totem roll
-    // (`SetPiece::Generate`; `crate::ascendant`).
+    // Monster totems: the set piece's `ascendantPool` on the totem roll (`SetPiece::Generate`).
     let pool = r
         .str("ascendantPool")
         .filter(|_| crate::ascendant::roll(rng, totem_chance))

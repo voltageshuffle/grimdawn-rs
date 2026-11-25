@@ -7,18 +7,14 @@
 //!   (`-2^2` = -4); unary `+` is skipped;
 //! - arithmetic is f32 (`powf` for `^`); unresolved variables read as 0.
 //!
-//! PORT: these semantics were read off `Equation::Parse` (a caller is the
-//! destructible loader) and are pinned by the stock equations
-//! the data tests evaluate (pth, regen, experience levels; see
-//! `tests/sim/stats_db.rs`), but the parser's own decompile is not in the notes,
-//! so the token set, precedence and associativity are not individually VERIFIED.
+//! PORT: the token set, precedence and associativity are not individually
+//! confirmed against `Equation::Parse`.
 //! PORT: the engine builds an RPN list and evaluates it iteratively; the port
 //! builds a tree evaluated recursively, so [`Expr::parse`] rejects trees deeper
-//! than [`MAX_DEPTH`] (bad data: no stock equation is near it).
+//! than [`MAX_DEPTH`].
 //!
-//! A hot evaluator resolves its variable names to slots once at parse time
-//! ([`Expr::parse_with`]) and evaluates against a value array
-//! ([`Expr::eval_slots`]) instead of comparing names per evaluation.
+//! [`Expr::parse_with`] resolves variable names to slots at parse time for
+//! [`Expr::eval_slots`].
 use anyhow::{Result, bail};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,8 +77,7 @@ impl StackOp {
     }
 }
 
-/// Deepest tree [`Expr::parse`] accepts (bad data: `eval` and drop recurse
-/// per level; stock equations nest a handful of levels).
+/// Deepest tree [`Expr::parse`] accepts (`eval` and drop recurse per level).
 pub const MAX_DEPTH: u32 = 256;
 
 /// Operand stack entries: a subtree and its depth.
@@ -160,7 +155,7 @@ impl Expr {
                     match ops.pop() {
                         Some(StackOp::Paren) => break,
                         Some(op) => reduce(op, &mut out)?,
-                        None => bail!("unbalanced ')' in {src:?}"),
+                        None => bail!("unbalanced ')' in \"{src}\""),
                     }
                 },
                 b'+' | b'-' | b'*' | b'/' | b'^' => {
@@ -171,7 +166,9 @@ impl Expr {
                                 continue;
                             }
                             b'-' => StackOp::Neg,
-                            _ => bail!("operator {:?} without left operand in {src:?}", c as char),
+                            _ => {
+                                bail!("operator '{}' without left operand in \"{src}\"", c as char)
+                            }
                         }
                     } else {
                         StackOp::Bin(match c {
@@ -195,7 +192,7 @@ impl Expr {
                     ops.push(new);
                     expect_operand = true;
                 }
-                _ => bail!("unexpected {:?} in {src:?}", c as char),
+                _ => bail!("unexpected '{}' in \"{src}\"", c as char),
             }
             i += 1;
         }
@@ -203,7 +200,7 @@ impl Expr {
             reduce(op, &mut out)?;
         }
         if out.len() != 1 {
-            bail!("malformed equation {src:?}");
+            bail!("malformed equation \"{src}\"");
         }
         Ok(out.pop().unwrap().0)
     }

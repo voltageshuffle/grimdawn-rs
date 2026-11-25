@@ -1,7 +1,6 @@
-//! Effect checks: `GD_FX` (hooks.rs) places effects in a row next to the spawn point (a
-//! `FxPak` record as a skill spawns it: sound, shake, mesh and particles); `GD_FX_GRID=n` repeats each as an
-//! n×n grid (performance checks). With `GD_FPS` the effect counters are logged every second. Registered by
-//! `dev::DevPlugin` (not with `GD_NO_FX`).
+//! Effect checks: `GD_FX` places effects (`FxPak` records: sound, shake, mesh, particles) in a row next to the
+//! spawn point; `GD_FX_GRID=n` repeats each as an n×n grid. With `GD_FPS` the effect counters are logged every
+//! second.
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 use gd_game_core::hooks::Hooks;

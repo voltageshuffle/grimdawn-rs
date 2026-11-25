@@ -1,44 +1,23 @@
-//! `Skill_TurretFireControl` (Krieg's, Ekketzul's, the Witch Gods' and
-//! Theodin's turrets, the Kraken's tentacles, Sylvarria's vines, Osyr's
-//! tomb, the Beaver's wave towers, …): the boss orders the `Turret`
+//! `Skill_TurretFireControl` (Krieg's, the Witch Gods', the Kraken's tentacles, …): the boss orders the `Turret`
 //! monsters around it to use one of their special skills.
 //!
 //! Game.dll:
-//! - `LoadResources`: `numToFire` (int), `specialSkillNum`
-//!   (int), `findClosest`, `targetCharacter`, `searchRadius` (float),
-//!   `turretName` (a record path), `useSpecialAnim`.
-//! - `ActivateNow` (only with Ashes of Malmouth loaded, and the
-//!   skill's launcher present): `GameEngine::GetTargetsInRadius` around the
-//!   caster within `searchRadius` with the friend filter
-//!   (`FilterInvalidTargets`: living characters, not NPCs,
-//!   `FactionManager::IsFriend`), without the caster; of those the `Turret`s
-//!   (RTTI) whose object name (record) equals `turretName` (`Game::RecordNamesEqual`:
-//!   case-insensitive, `/` = `\`; an empty `turretName` takes every turret).
-//!   `numToFire` < 0 orders them all, else min(n, found): the n nearest with
-//!   `findClosest` (`Game::FindClosestEntities`), else n drawn without replacement
-//!   (`Game::DrawWithoutReplacement`, as `geysers::pick`).
-//! - Each turret aims at the skill's own target (point and object) with
-//!   `targetCharacter`, else at 5 m along its own facing, no object. Its
-//!   controller must be a `ControllerMonster`; `specialSkillNum` 1..7 picks
-//!   its special slot (`specialAttackSkillName`, `specialAttack2SkillName`,
-//!   …: `ControllerMonster.specialSkills[n − 1]`, `Monster::InitSkillsInController`),
-//!   anything else nothing. With `useSpecialAnim` the
-//!   controller gets an `AttackAction` with that skill (the cast animation
-//!   plays first, `monster_skills::start`); without, an
-//!   `ActivateSkillConfigCmd` ("RightHandHit") makes it go off at once
-//!   (a [`ProcCast`]).
+//! - `LoadResources`: `numToFire`, `specialSkillNum`, `findClosest`, `targetCharacter`, `searchRadius`,
+//!   `turretName`, `useSpecialAnim`.
+//! - `ActivateNow` (Ashes of Malmouth loaded, launcher present): the friends within `searchRadius` of the caster
+//!   (`GameEngine::GetTargetsInRadius`, `FilterInvalidTargets`), without the caster; of those the `Turret`s whose
+//!   record equals `turretName` (`Game::RecordNamesEqual`; empty: every turret). `numToFire` < 0 orders them all,
+//!   else min(n, found): the n nearest with `findClosest`, else n drawn without replacement
+//!   (`Game::DrawWithoutReplacement`).
+//! - Each turret aims at the skill's own target with `targetCharacter`, else 5 m along its own facing, no object.
+//!   `specialSkillNum` 1..7 picks its `ControllerMonster` special slot (`specialSkills[n − 1]`), anything else
+//!   nothing. With `useSpecialAnim` the controller gets an `AttackAction` with that skill (the cast animation plays
+//!   first); without, `ActivateSkillConfigCmd` ("RightHandHit") fires it at once (a [`ProcCast`]).
 //!
-//! The turrets are monsters placed straight in the levels (class `Turret`,
-//! not proxies), streamed in with their level (`monsters::populate`,
-//! `LevelProxies::placed`). `Character::Load` (through
-//! `Monster::Load`): a character placed in a level file takes its record's
-//! `charLevel` equation at the players' average level, clamped to
-//! `minLevel` / `maxLevel` ([`crate::monsters::placed_char_level`]), for its
-//! stats, skills (`SkillManager::LoadSkills`) and rewards; no area level is
-//! consulted. Turrets a proxy or skill spawns keep their spawner's level.
-//! The game-balance pak column (`Monster::OnGameBalanceLevel`) is the global
-//! difficulty column every monster uses. PORT: the random pick uses the
-//! port's RNG; a slot whose skill the port cannot cast is skipped.
+//! Turrets are monsters placed straight in the levels (class `Turret`, not proxies). A placed character takes its
+//! record's `charLevel` equation at the players' average level, clamped to `minLevel` / `maxLevel`
+//! ([`crate::monsters::placed_char_level`]); turrets a proxy or skill spawns keep their spawner's level. PORT: the
+//! random pick uses the port's RNG; a slot whose skill the port cannot cast is skipped.
 use crate::combat::MonsterAi;
 use bevy::prelude::*;
 use gd_game_core::casting::{Casting, ProcCast, kind_of};
@@ -60,8 +39,7 @@ impl Plugin for TurretsPlugin {
     }
 }
 
-/// A `Skill_TurretFireControl` cast went off (`casting::fire_casts`): the
-/// skill's target point and object.
+/// A `Skill_TurretFireControl` cast went off: the skill's target point and object.
 #[derive(Message, Clone, Debug)]
 pub struct Command {
     pub caster: Entity,

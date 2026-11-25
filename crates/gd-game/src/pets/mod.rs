@@ -1,373 +1,133 @@
-//! Pets: summoned by `Skill_TargetedSpawnPet` / `Skill_SpawnPet` casts
-//! (`casting::SpawnPet`). The pet record is `spawnObjects[skill level − 1]`
-//! (one record per summon level), at the owner's character level
-//! (`charLevel` of its bio equations; `Skill_SpawnPet::SpawnPet`
-//! copies the caster's character level to the pet); at most `petLimit` per
-//! summon skill, the oldest goes first.
+//! Pets: summoned by `Skill_TargetedSpawnPet` / `Skill_SpawnPet` casts. The pet record is
+//! `spawnObjects[skill level − 1]` at the owner's character level (`Skill_SpawnPet::SpawnPet`); at
+//! most `petLimit` per summon skill, the oldest goes first.
 //!
-//! Mini pets (`Skill_SpawnMiniPet`: a `Skill_SpawnPet` subclass
-//! whose vtable differs only in `PostPetSpawned` and
-//! `KillExtraPets`): the 10 stock users are consumables
-//! (`ItemUsableSkill`: Will-o-Wisp, Crate, the Hargate / Kasparov quest
-//! crystals, the reward minis). The pet is an ordinary `Pet` (its record's
-//! controller, follow walk, skills, portrait flag); `PostPetSpawned` passes
-//! "mini" (true) to `Player::PostPetSpawn`, which stores it in the `PetPen`
-//! entry (`PetPenEntry.mini`, `PetPen::AddPet`). `KillExtraPets` (after the new pet joined
-//! the pen) first kills the skill's pets beyond `petLimit` (1 for every
-//! stock one, so a re-use replaces it), then the owner's mini pets of any
-//! skill beyond `GameEngine::GetMiniPetLimit` (`gameengine.dbr`
-//! `miniPetLimit` = 3, `LoadFromDatabase`, default 0 = no limit), oldest
-//! first ([`Pet::mini`]). `Skill_SpawnMiniPet::KillExtraPets`:
-//! both passes walk the ordinary pen (`GetPetPen`), count unreleased entries
-//! (`> limit`; the second pass those with
-//! the `PetPenEntry.mini` byte, any skill) and kill the first matching entries through
-//! pen helper `PetPen::ReleaseEntry(mode 0)` = `KillMe(overkillOnDismiss)` (the
-//! dying skill runs), as the base `KillExtraPets`. The stock mini pet records are `invincible` or
-//! `hiddenFromCombat` with `causesAnger` 0 / `angerMultiplier` 0: monsters
-//! never get angry at them and no skill reaches them
-//! (`combat::HiddenFromCombat`). Their skills set no
-//! `spawnObjectsTimeToLive`: they stay until replaced, disbanded or killed.
+//! Mini pets (`Skill_SpawnMiniPet`, consumables): ordinary pets flagged mini in the `PetPen`
+//! (`PetPenEntry.mini`). `KillExtraPets` (after the new pet joined) kills the skill's pets beyond
+//! `petLimit`, then the owner's mini pets of any skill beyond `gameengine.dbr` `miniPetLimit` (3;
+//! 0 = no limit), oldest first ([`Pet::mini`]), via `PetPen::ReleaseEntry(mode 0)` =
+//! `KillMe(overkillOnDismiss)`.
 //!
-//! A pet's skills are its record's `skillName{n}` at `skillLevel{n}`
-//! (equations of `charLevel`); skills unlocked by the owner's pet modifiers
-//! (`SkillSecondary_PetModifier.petSkillName`) take the modifier's level.
-//! Its primary attack is the first active attack skill with a level (e.g.
-//! the Raven's Storm Orb), else a melee swing; `specialAttack{,2,3}SkillName`
-//! fire with `specialAttack*Chance` % (rolled whenever `ChooseBestSkill` runs: on finding a foe, at an attack's end, every 200 ms while pursuing; a special that passes its roll and band but is out of reach is held: the pet pursues for it, `Pet::held`, until the next choice, as monsters do) once `specialAttack*Delay` s have passed since the last use, after
-//! their `specialAttack*Timeout` (below), while the foe is inside the
-//! `specialAttack*Range` band (`IsSkillInProperRange`, [`PetAttack::band`]).
-//! Pet bonuses (`GameEngine::SetPetBonus` list, applied by
-//! `ContributePetBonus*Attributes` to the owner's pets like a skill record
-//! at its level): the `petBonusName` of the owner's learned
-//! skills (devotion stars included) at their current level while installed
-//! ([`pet_bonuses`]), of the player's running buffs while they run (a
-//! `Skill_BuffSelfDuration` cast, a buff record on the player, a switched-on
-//! radius toggle's buff: `InitializeBuff` / `SkillBuff::Install`, removed
-//! when the buff ends; every pet of the owner, those summoned during it
-//! too) and of the records of
-//! every worn item (base, affixes, component, augment) at level 1. Filter
-//! (`ContributePetBonus*` → `Game::ShareAnyName`): a bonus with
-//! `petTypeNames` reaches only pets whose `petTypeNames` share a name
-//! (either list empty: it applies). Item bonuses at level 1 = index 0
-//! (`ItemEquipment::AttachItem`, `ItemRelic::InstallOnCharacter`
-//! and `ItemSet::PetBonusInstall` install their pet bonus with level 1, a
-//! learned skill with its own level, `Skill::InstallPetBonus`). Bonuses are
-//! live (`GameEngine::SetPetBonus` / `RemovePetBonus` only edit
-//! the list; the pet reads it in `Pet::ContributeMisc*Attributes`, which
-//! `CharacterBio::UpdateResources` runs every 250 ms): [`refresh_profiles`]
-//! rebuilds the pets' profiles when the owner's loadout changes.
-//! `isPetBonusScaling` (set on the pets' own skills, 167 records) takes no part
-//! in the bonuses or any rule (`SkillProfile.isPetBonusScaling` is read only by
-//! the tooltip builders, `DamageAttributeStore::ProcessScale` / `ProcessText`,
-//! `RetaliationAttributeStore::ProcessText` (`SetProcess(false)`: the pet
-//! skill's damage shown unprocessed, without the player's scaling), `Skill::
-//! CreateUIPetText` (the `SkillPetDescriptionHeading` block) and the summary
-//! texts; `GetPetBonusScaling` has no caller, Grim Dawn.exe imports none).
+//! Skills: the record's `skillName{n}` at `skillLevel{n}` (equations of `charLevel`); skills
+//! unlocked by the owner's pet modifiers (`SkillSecondary_PetModifier.petSkillName`) take the
+//! modifier's level. The primary attack is the first active attack skill with a level, else a melee
+//! swing; `specialAttack{,2,3}SkillName` fire with `specialAttack*Chance` % (rolled whenever
+//! `ChooseBestSkill` runs; one that passes its roll but is out of reach is held, `Pet::held`) once
+//! `specialAttack*Delay` s have passed, after their timeout, while the foe is inside the
+//! `specialAttack*Range` band ([`PetAttack::band`]).
 //!
-//! `PetPlayerScaling` pets (1245 stock records: the player classes' totems,
-//! turrets, ...; `Skill::CollectCombatParameters`): when the
-//! attacker's class is `PetPlayerScaling` and its
-//! leader (`Character::GetLeader`) is a `Player`, the attacker is replaced by that
-//! player for the whole collection: its attribute accumulator (offence,
-//! damage modifiers), racial bonuses (`ContributeRacialBonusDamage`) and
-//! skill manager (its retaliation and conversion attributes). Port:
-//! [`Pet::player_scaling`] makes `combat::apply_hits` attack with the owner's
-//! profile (attributes, racial bonuses, conversions, retaliation, which the
-//! profile holds); what the pet takes back (reflection, retaliation) is
-//! defended by its own profile. The skill's modifiers are the skill's own
-//! (`a1`, not the swapped manager), so nothing else is swapped.
+//! Pet bonuses (`GameEngine::SetPetBonus`, applied by `ContributePetBonus*Attributes` like a skill
+//! record at its level): the `petBonusName` of the owner's learned skills (devotions included) at
+//! their level ([`pet_bonuses`]), of the player's running buffs while they run, and of every worn
+//! item's records at level 1. A bonus with `petTypeNames` reaches only pets whose `petTypeNames`
+//! share a name (either list empty: it applies; `Game::ShareAnyName`). Bonuses are live:
+//! [`refresh_profiles`] rebuilds the pets' profiles when the owner's loadout changes.
+//! `isPetBonusScaling` is read only by tooltips.
 //!
-//! Pet bonus effects ([`PetBonusFx`]): a pet bonus record's
-//! `charFxPakPetNames` (per level, `PetBonus::Load`)
-//! is a character effect pak on every pet it reaches. `Skill::
-//! InstallPetBonus` (a learned skill or modifier, a running
-//! buff, a `SkillBuff` on the owner) takes the entry at the skill's current
-//! level (level − 1, clamped; empty: none) and, for each `Pet` led by the
-//! skill's owner whose `petTypeNames` pass the bonus's (as the stats),
-//! calls `GameEngine::AddPetBonusFxPak(pet, skill id, [pak])` → the pet's
-//! `SkillManager` `AddCharFxPak` (keyed by the skill id, its
-//! attach points from the pak); `Skill::RemovePetBonus` sends
-//! `RemovePetBonusFxPak(pet, skill id)` to every pet of the owner. A pet
-//! summoned later gets them from `Player::PostPetSpawn` →
-//! `GameEngine::GetPetBonusCharFxPakNames` (the owner's list
-//! entries that pass the type filter and have a skill id). Item bonuses
-//! (`ItemEquipment::AttachItem`, relics, components, augments, sets) are
-//! installed with skill id 0, so they never show effects. Stock data: Call
-//! of the Grave and Blasphemy. Port: [`sync_pet_bonus_fx`] derives the list
-//! from [`pet_bonuses`]' sources when the owner's loadout changes or a pet
-//! is new, and spawns the paks as `BuffFx` under [`pet_bonus_fx_key`].
-//! PORT: a dying pet drops them at once (as its other buff effects).
+//! `PetPlayerScaling` pets (totems, turrets, ...; `Skill::CollectCombatParameters`): when the
+//! attacker's leader is a `Player`, that player's accumulator, racial bonuses and skill manager stand
+//! in for the attacker. Port: [`Pet::player_scaling`] makes `combat::apply_hits` attack with the
+//! owner's profile; what the pet takes back is defended by its own profile.
 //!
-//! Self buffs (`ControllerPet::RegisterStates` is the monster's,
-//! so `ControllerMonster::ChooseBestBuffSelfSkill` picks them,
-//! called from `Update` (the 4 s `WheneverPossible` check),
-//! `DefaultEnemyFoundResponse`, `DefaultAttackedResponse`, the ally
-//! responses and the Attack state's "End"; `Player::PostPetSpawn` and
-//! `Skill_TargetedSpawnPet::PostPetSpawned` start none): the first of
-//! `buffSelfSkillName`, `buffSelf2…`, `buffSelf3…` that the pet has (a level
-//! from its record or the owner's pet modifier, e.g. the Hellhound's
-//! Hellfire Aura from `summon_hellhound3_petmodifier` at that skill's
-//! level) and that is not on yet (`IsTrackable`) is used, per the
-//! controller's `BuffSelfBehavior` (the stock pet controllers:
-//! WheneverPossible, so ~4 s after the summon or at once on the first foe).
-//! A toggle stays on (`Pet::toggled`); a radius aura then buffs the pet and
-//! its allies every second (`auras.rs`), other toggles add their records to
-//! the pet's profile; a timed self buff is cast on the pet and lasts its
-//! `skillActiveDuration` (`Pet::buffs`; a `Skill_BuffRadius` one reaches
-//! its allies through the aura passes). Initial skills
-//! (`initialSkillName`, `initial2SkillName`) that are toggles are on from
-//! the summon (`ControllerMonsterStateStartup::UseInitialSkillIfSet`, the
-//! startup state the pet's controller registers). Buff other: as a
-//! monster's (`monster_skills` module docs: only `buffOtherSkillName`, by
-//! `BuffAllyBehavior` / `BuffAllyTargeting`), the candidates being the live
-//! friends of the pet's current side within `ViewDistance` (and
-//! `MaxYViewDistance` in height when set) other than the pet itself that
-//! have no leader or are quest pets (`ChooseBestAllyToBuff` →
-//! `GetCharactersInSphere` with both flags false: the
-//! player, an allied monster that follows nobody, a quest pet; the owner's
-//! other pets are led by him and left out) that lack the buff; the cast lands through
-//! `monster_skills::ally_casts_land` (the Rift Hound guardians' Guardian
-//! Roar; the Ognapesh revenant's `Skill_BuffRadius` shield runs on itself).
-//! Energy: pets have a mana pool like every `Character` (the bio
-//! equations' `characterMana`, e.g. `bio_raven_01.dbr`; the portrait's bar
-//! is `CurrentMana / GetAttribute(5)`, `PlayerPortrait::Update`), full at the
-//! summon and regenerating ([`Pet::energy`]); no stock pet skill has a cost.
-//! Self / ally buffs and initial skills start their `skillCooldownTime` when
-//! used and wait it out (the `Skill` ready check of the choosers, as for
-//! monsters, `monster_skills`); initial skills that are not toggles are cast
-//! on the pet itself once at the start (`UseInitialSkillIfSet`).
-//! PORT: the defend / attacked responses are folded into "found a target";
-//! `instantCast` toggles skip the cast animation.
+//! Pet bonus effects ([`PetBonusFx`]): a bonus record's `charFxPakPetNames` (per level) is a
+//! character effect pak on every pet it reaches (`Skill::InstallPetBonus` →
+//! `GameEngine::AddPetBonusFxPak`, keyed by skill id; `Player::PostPetSpawn` gives them to later
+//! pets). Item bonuses use skill id 0, so never show effects. [`sync_pet_bonus_fx`] spawns the paks
+//! as `BuffFx` under [`pet_bonus_fx_key`]. PORT: a dying pet drops them at once.
 //!
-//! AI: pets run the monster AI (`ControllerPet` is a
-//! `ControllerMonster` whose `RegisterStates` are the monster's) with the
-//! pet record's `controller` and the owner as leader:
-//! - targets: every 200 ms the angriest foe (`ControllerMonster::FindEnemy` →
-//!   `AngerManager::GetNewTarget`: anger × 1.3 for the current target, at least
-//!   `AngerTolerance`; `petTargetGreatestHealth`, the Salazar chthonian item pet's
-//!   controllers, ranks by life percent first; `ignoreSleepingEnemies` skips a
-//!   sleeping foe); anger from sight within `ViewDistance` on the monsters' 250 ms
-//!   `AngerUpdate` tick (`ProcessAngerTarget`, same rates and `pathingViewDistance`
-//!   test as `combat::sight_anger`), from hits taken by an attacker in pursuit
-//!   range (`UnderAttack`: `AttackedAnger`, at most every 500 ms), each scaled by
-//!   the foe's `angerMultiplier` (`AngerManager::AddAnger`; traps, crates and
-//!   tentacles have 0, so a pet ignores them unless ordered), decaying
-//!   by `ForgiveRate`; a foe counts while within `MaxPursuitDistance` of the
-//!   home point, which for a follower is its leader (`InPursuitRange` /
-//!   `GetHomePosition`) and within `MaxYViewDistance` in height;
-//! - skills fire once the centre distance ≤ both radii + the skill's
-//!   `Skill::GetRange` (`distanceProfile` → `gameengine.dbr` ranges) + 0.5
-//!   (`CloseEnoughToUseSkill`, `GetSkillUseTolerance`);
-//! - the swing timer re-arms from the controller's `min/maxSwingPause` as
-//!   an attack starts (`ResetSwingTimer`,
-//!   `combat::monster_ai`), a uniform draw in the range;
-//! - without a target (`FollowLeader` / `DefendLeader`): every 300–700 ms
-//!   (`ControllerMonsterStateDefendLeader::GetNewTestDistanceInterval`) it checks its spot next to
-//!   the owner and walks there; the spot is a slot on the owner's defence
-//!   ring at both radii + 0.5 (`Character::RequestDefenseSlot`, the owner's
-//!   defence `SlotManager`, melee.rs: each follower gets its own spot, more
-//!   rings when full); farther than `TeleportToLeaderDistance` (0: never) it
-//!   is put on its slot (`ControllerMonster::TeleportToLeader`). Teleports
-//!   happen only in those two states, never while fighting (their
-//!   `OnUpdate`). A pet goes for its target as any monster does
-//!   (`Character::GetMoveToPoint`): a melee skill asks the target's attack
-//!   `SlotManager` for a spot, other skills run to the point `Skill::GetRange` +
-//!   the target's radius short of it. The fight is the monster's state
-//!   machine (melee.rs: Pursue, NavigateObstacle, WaitToAttack, Attack,
-//!   RepositionForAttack with `PursuitTime` / `randomRepositionChance` of the
-//!   pet's controller record): a melee pet whose target has no free attack
-//!   slot waits to attack (roaming near the target) instead of crowding it.
-//!   A follower that loses its defence slot (`ControllerMonsterStateFollowLeader::LostSlot`) stands
-//!   as `DefendLeader` until its next check.
-//! - the controller's `Class` decides its states as for monsters
-//!   (`combat::ControllerClass`; `Monster::UseController` puts
-//!   the pet on the stance's controller object, made from its record): a
-//!   `ControllerStationaryMonster` / `ControllerTotem` pet (traps, mines,
-//!   totems, the Living Plant, the Ice Wall) never moves: no follow walk or
-//!   teleport (FollowLeader / DefendLeader are its stub to "Idle"), a move
-//!   order only clears its anger (its "Move" is the stub), and it attacks
-//!   what is in reach of its skill (its Pursue); a totem picks the nearest
-//!   foe on its anger list.
+//! Self buffs (`ControllerMonster::ChooseBestBuffSelfSkill`, from the 4 s `WheneverPossible` check,
+//! the enemy-found / attacked / ally responses and the Attack state's "End"): the first of
+//! `buffSelfSkillName`, `buffSelf2…`, `buffSelf3…` the pet has and that is not on yet. A toggle stays
+//! on (`Pet::toggled`); a timed self buff lasts its `skillActiveDuration` (`Pet::buffs`). Initial
+//! skills (`initialSkillName`, `initial2SkillName`): toggles are on from the summon, others are cast
+//! on the pet once at the start (`ControllerMonsterStateStartup::UseInitialSkillIfSet`). Buff other:
+//! as a monster's, the candidates being live friends within `ViewDistance` that have no leader or are
+//! quest pets (`ChooseBestAllyToBuff`) and lack the buff. Pets have a mana pool, full at the summon
+//! ([`Pet::energy`]). Buffs and initial skills wait out their `skillCooldownTime`.
+//! PORT: the defend / attacked responses are folded into "found a target"; `instantCast` toggles
+//! skip the cast animation.
 //!
-//! Commands ([`PetCommand`]): vanilla has two ways to order pets.
-//! The "Pet Attack" skill (`records/skills/default/defaultpetattack.dbr`,
-//! class `Skill_PetAttack`, granted to every player by
-//! `SkillManager::LoadDefaultPlayerSkills`, put on the hotbar like any skill)
-//! commands every pet of the caster (`Skill_PetAttack::GetValidTarget`:
-//! each `PetPen` entry that is a `Monster` led by the caster):
-//! a target under the cursor → `RequestAllyAttackConfigCmd`, no target → a
-//! `RequestAllyMoveConfigCmd` to the ground point (no foe test: a friendly
-//! target is refused by the pet's `IsEnemyValid`). `SetAvailability` greys
-//! it out (status 6) without such a pet. Selected pets (the selection is UI
-//! state, `grimdawn::pets` module docs) get one order each on the next world
-//! click (GrimDawn.exe `InGameUI::OrderSelectedPets`): the attack request when a foe is
-//! under the cursor, else the move request; `ControllerPlayer::
-//! HandlePetAction` does the same for one pet (foe by
-//! `FactionManager::IsFoe`; clicking the pet itself does nothing). The pet's
-//! state handles them (`Character::RequestAttack` / `RequestMove` → state
-//! vtable slots 17 / 18):
-//! - attack (`DefaultRequestAttackResponse`): from the pet's
-//!   leader, when `IsEnemyValid` (a live foe within `MaxPursuitDistance` of
-//!   the leader) and not already its enemy, the target becomes the most hated
-//!   enemy (`SetMostHatedEnemy`, which `AngerManager::GetNewTarget` returns
-//!   before any anger) and the pet pursues it. It stays the target until it
-//!   is no longer valid; `FollowLeader` / `DefendLeader` `OnBegin` clear it.
-//! - move (`DefaultRequestMoveResponse`): anger list and most
-//!   hated cleared, state "Move": run (`GetRunSpeed`) to the point
-//!   (`ControllerMonsterStateMove::OnBegin`; unreachable → "Idle"), "Idle"
-//!   at the end of the path or when it fails. While moving the pet does not
-//!   fight and ignores attack requests (Move's slot 17 is empty); it still
-//!   gains anger, and fights or goes back to its owner from "Idle".
-//! - Stunned, knocked down, fleeing, dying and the other passive states
-//!   ignore both (empty slots); the Startup state ignores requests from a
-//!   player (`ControllerMonsterStateStartup::RequestAttack` /
-//!   `RequestMove`: the default response only when the sender is not a
-//!   `Player`): [`Pet::startup`]. Startup (`OnBegin`,
-//!   `HandleEvent`; `Skill_SpawnPet::SpawnPet` enables the
-//!   spawn animation on every pet): the pet plays animation type 19 (Spawn)
-//!   once and leaves for Idle at its "End" event, at once when its set has
-//!   none; `UseInitialSkillIfSet` follows the exit. PORT: "End" is the scripted
-//!   animation's state ending (`Character::play_scripted`, as the hidden monster).
-//! - Sounds: the attack command plays the pet's `petAttackSound` and Move
-//!   its `petAcknowledgeSound` (`Monster::Load`); no stock record sets them.
+//! AI: pets run the monster AI (`ControllerPet` is a `ControllerMonster`) with the record's
+//! `controller` and the owner as leader:
+//! - targets: every 200 ms the angriest foe (`AngerManager::GetNewTarget`: × 1.3 for the current
+//!   target, at least `AngerTolerance`; `petTargetGreatestHealth` ranks by life percent first;
+//!   `ignoreSleepingEnemies`); anger from sight on the 250 ms `AngerUpdate` tick and from hits taken
+//!   (`AttackedAnger`, at most every 500 ms), scaled by the foe's `angerMultiplier`, decaying by
+//!   `ForgiveRate`; a foe counts while within `MaxPursuitDistance` of the leader and
+//!   `MaxYViewDistance` in height;
+//! - skills fire once the centre distance ≤ both radii + `Skill::GetRange` + 0.5
+//!   (`CloseEnoughToUseSkill`);
+//! - the swing timer re-arms from `min/maxSwingPause` as an attack starts (`ResetSwingTimer`);
+//! - without a target (`FollowLeader` / `DefendLeader`): every 300–700 ms it walks to its slot on the
+//!   owner's defence ring at both radii + 0.5 (`Character::RequestDefenseSlot`); farther than
+//!   `TeleportToLeaderDistance` (0: never) it is put on its slot, only in those two states. A
+//!   follower that loses its slot stands as `DefendLeader` until its next check. Fighting is the
+//!   monster's state machine (melee.rs);
+//! - a `ControllerStationaryMonster` / `ControllerTotem` pet never moves: no follow or teleport, a
+//!   move order only clears its anger, it attacks what is in reach; a totem picks the nearest foe on
+//!   its anger list.
 //!
-//! Stances ([`Stance`]): a pet record names three controllers,
-//! `controller` (Normal, `Monster::ControllerType` 0), `controllerAggressive`
-//! (1) and `controllerDefensive` (2) (`Monster::Load`; the `controllers/pets`
-//! `_aggressive` / `_defensive` records differ in view distance, anger rates,
-//! pursuit distance, roaming, ...). The portrait's right-click menu
-//! (`tagPortraitNormal` / `Aggressive` / `Defensive`, GrimDawn.exe
-//! `PlayerPortrait::OnMenuPick`; with the cursor over a portrait, key actions 15 / 13 cycle Normal → Aggressive →
-//! Defensive forward / back, `PlayerPortrait::HandleKeyEvent`) calls `Monster::UseController` on
-//! that pet (a missing record: no change) and stores the type per summon
-//! skill (`Player::SetPetControllerType`, keyed by `PetPen::GetPetOwner`, the
-//! summoning skill); `Player::PostPetSpawn` puts each new pet of that skill
-//! on the stored controller. The map is session state (not saved: only the
-//! player's constructor / destructor and those calls touch it). A pet starts
-//! on Normal; the portrait shows Aggressive for a skill with no stored type
-//! (`GetPetControllerType` defaults to 1), a vanilla UI quirk. Each
-//! controller is its own object with its own anger list, so a switch starts
-//! the AI afresh ([`PetStances`] on the owner, [`SetPetStance`]).
+//! Commands ([`PetCommand`]): the "Pet Attack" skill (`Skill_PetAttack`, granted to every player)
+//! orders every pet of the caster: a target under the cursor → `RequestAllyAttackConfigCmd`, else a
+//! `RequestAllyMoveConfigCmd` to the ground point; greyed out without a pet. Selected pets get one
+//! order each on the next world click (`InGameUI::OrderSelectedPets`).
+//! - attack (`DefaultRequestAttackResponse`): when `IsEnemyValid` (a live foe within
+//!   `MaxPursuitDistance` of the leader), the target becomes the most hated enemy until no longer
+//!   valid; `FollowLeader` / `DefendLeader` `OnBegin` clear it.
+//! - move (`DefaultRequestMoveResponse`): anger cleared, state "Move": run to the point, "Idle" at
+//!   the end or on failure. A moving pet does not fight and ignores attack requests, but gains anger.
+//! - Passive states ignore both; Startup ignores requests from a player ([`Pet::startup`]). Startup
+//!   plays animation type 19 (Spawn) once and leaves for Idle at its "End" (at once without one).
+//!   PORT: "End" is the scripted animation's state ending.
+//! - Sounds: `petAttackSound` / `petAcknowledgeSound`; no stock record sets them.
 //!
-//! Portraits ([`portrait_pets`]): `Monster::JoinMe` registers a pet
-//! joining the main player in the local pet list (`GameEngine::
-//! RegisterLocalPet`, once, appended) only when its record sets
-//! `showStatusWidgetWhenPet` (`Monster::Load`, default false: Raven,
-//! Hellhound, Briarthorn, Primal Spirit, Blight Fiend and item pets; not
-//! skeletons, totems, mines, ...); `Monster::CharacterIsDying` unregisters
-//! it. The HUD (GrimDawn.exe `PetHud::Update`) keeps one portrait per listed
-//! pet in list order (new ones appended), so the order is the summon order
-//! of the live portrait pets. A portrait's stance icon is
-//! [`PetStances::portrait`]. "Disband Pet" ([`DisbandPet`], the portrait
-//! menu's `tagPortraitDisband`, `PlayerPortrait::OnMenuPick` → `ControllerPlayer::ReleasePet`
-//! → `ReleasePetConfigCmd::Execute` → the pet's
-//! `ControllerCombat::KillMe`): the pet dies.
+//! Stances ([`Stance`]): `controller` (Normal), `controllerAggressive`, `controllerDefensive`. The
+//! portrait menu (`PlayerPortrait::OnMenuPick`; key actions 15 / 13 cycle) calls
+//! `Monster::UseController` on that pet (missing record: no change) and stores the type per summon
+//! skill (`Player::SetPetControllerType`) for its new pets; not saved. The portrait shows Aggressive
+//! for a skill with no stored type (`GetPetControllerType` defaults to 1). Each controller has its own
+//! anger list, so a switch starts the AI afresh ([`PetStances`], [`SetPetStance`]).
 //!
-//! Lifetime ([`Pet::time_to_live`]): `Skill_SpawnPet::SpawnPet`
-//! (and every other summon: `Skill_TargetedSpawnPet`, the projectile /
-//! lightning / chaos spawners, `SkillSecondary_PetSpawn`,
-//! `Skill_MonsterGenerator`) asks `Skill::GetSpawnObjectTimeToLive`
-//! at the skill's level ([`spawn_time_to_live`]: the
-//! `spawnObjectsTimeToLive` of the skill and its learned and gear
-//! modifiers summed, e.g. the b011 medals' +12 s on Thermite Mines; a
-//! learned `Skill_SpawnPetTransmuter`'s `modSpawnObjectsTimeToLive` replaces
-//! it, the Rotgheist's 12 s) and, when > 0, `Monster::SetLifetime` puts it on
-//! the pet's controller (`ControllerMonster.lifetime`, ms). No stat or "pet duration" attribute
-//! takes part. `ControllerMonster::Update` counts it down by
-//! the frame's game time, whatever the state (stunned, fighting, moving), so
-//! it runs from the summon; `Monster::UseController` copies it to the new
-//! controller, so a stance switch keeps it. At 0: `ControllerCombat::KillMe
-//! (overkillOnDismiss)`, an ordinary death (`DieAction`; the flag only picks
-//! the overkill death), so the dying skill goes off ([`pet_dying_skills`]).
-//! Stock timed player summons: Thermite Mines 18 s, Mortar Trap 24 s, Wind
-//! Devil, totems, runes, Reap Spirit's spawns, the devotion summons
-//! (Elemental Seeker 3 s, the `tier2_10f` skeletons 6–20 s, ...).
-//! The HUD shows no timer (no getter of `ControllerMonster.lifetime` exists; Grim Dawn.exe's
-//! portraits read none). The expiry passes the record's `overkillOnDismiss`
-//! (`Character::GetDismissBehavior`): set, the
-//! pet dies as an overkill ([`crate::combat::Overkill`], gibs with gore on);
-//! a Disband is no overkill. Monster summons (`crate::monster_skills::Minion`)
-//! pass it too, on expiry and on the pet limit.
+//! Portraits ([`portrait_pets`]): only pets whose record sets `showStatusWidgetWhenPet`
+//! (`GameEngine::RegisterLocalPet`), in summon order. "Disband Pet" ([`DisbandPet`]): the pet dies.
 //!
-//! Release (`ReleasePetConfigCmd::Execute`, [`ReleasePet`]
-//! / [`DisbandPet`]): `overkill = max(life, 0) >= maxLife x gibThreshold`
-//! ([`Pet::gib_threshold`], the record's percent; absent: never) and, when
-//! the command's flag (`ReleasePetConfigCmd.suppressDyingSkill`) is set, `Character::SuppressDyingSkill`
-//! (`Character.dyingSkillSuppressed`, tested by `StartDyingSkill`; [`SuppressDyingSkill`]); then
-//! `KillMe(overkill)`. The portrait's Disband (`PlayerPortrait::OnMenuPick`) passes false:
-//! a disbanded pet's dying skill goes off, as an expiring one's.
+//! Lifetime ([`Pet::time_to_live`]): every summon asks `Skill::GetSpawnObjectTimeToLive`
+//! ([`spawn_time_to_live`]: `spawnObjectsTimeToLive` of the skill and its modifiers summed; a learned
+//! `Skill_SpawnPetTransmuter`'s `modSpawnObjectsTimeToLive` replaces it); > 0 →
+//! `ControllerMonster.lifetime` (ms), counted down by game time whatever the state and kept across a
+//! stance switch. At 0: `KillMe(overkillOnDismiss)`, an ordinary death, so the dying skill goes off
+//! ([`pet_dying_skills`]); `overkillOnDismiss` set: an overkill ([`crate::combat::Overkill`]). The HUD
+//! shows no timer.
 //!
-//! Release on a lost skill bonus (`ItemSkillAugment::RemoveAugments`; [`AugmentsRemoved`] from
-//! `crate::inventory::sync_equipment`, [`removed_augments`],
-//! [`released_by_augments`]): when a skill-bonus container comes off the main
-//! player (`ItemEquipment::DetachItem` / `ItemArtifact::DetachItem`: the item's
-//! records at level index 0 (count 1); `ItemRelic::RemoveFromCharacter` /
-//! `ItemEnchantment::RemoveFromCharacter`: a component / augment, also one
-//! replaced on a worn item; `ItemSet::SkillAugmentInstall` /
-//! `SkillAugmentRemove`: at every set-count change, the previous count's
-//! values), each bonus whose value is not 0 releases pets through the pen
-//! (`Player.petPen`; [`ReleasePet`] with the suppress flag; a quest
-//! pet's separate pen is untouched):
-//! - `augmentSkillName{n}`: the player's skill of that name
-//!   (`SkillManager::FindSkillId`, the learned list) gets `Skill::ReleasePets`
-//!   (only for the main player): its pets
-//!   (`PetPen::ReleaseSkillPets`, by skill reference) and those of each of its base skills
-//!   (`Skill.baseSkills`, filled by `SkillManager::CreateAndLoadSkill`:
-//!   the skill a modifier or secondary hangs on; the port's
-//!   `weapon_pool::SkillLinks`);
-//! - `augmentMasteryName{n}`: `PetPen::ReleaseMasteryPets`, the pets of every skill whose
-//!   mastery (`Skill.mastery`, `AddMastery`) is that one;
-//! - `augmentAllLevel`: `PetPen::ReleaseLearnedSkillPets`, the pets of every skill that is not
-//!   an item skill (`Skill.isItemSkill`, `SetAsItemSkill`), i.e. of the learned list.
+//! Release (`ReleasePetConfigCmd::Execute`, [`ReleasePet`] / [`DisbandPet`]): `overkill = max(life, 0) >=
+//! maxLife x gibThreshold` ([`Pet::gib_threshold`]; absent: never) and, with the command's flag,
+//! `Character::SuppressDyingSkill` ([`SuppressDyingSkill`]); then `KillMe(overkill)`. Disband passes
+//! false: the dying skill goes off.
 //!
-//! So taking off gear with "+N to Summon Hellhound" kills the hound (as a
-//! gib when healthy, no dying skill). A weapon swap is such a take-off
-//! (`EquipmentCtrl::SetAlternateEquipment` →
-//! `WeaponSet__Sift` → `ControllerCharacter::
-//! SendEquipDetachAction` → `DetachItemConfigCmd` → `Player::DetachItemAction`
-//! → `EquipManager::DetachItemAction` → `Weapon::DetachItem` →
-//! `ItemEquipment::DetachItem`): leaving a set whose items carry such a bonus
-//! releases those pets, e.g. Twilight's Veil (+1 Occultist): Raven and
-//! Hellhound die on the swap away from it, not on the swap back (an attach
-//! releases nothing). A swap between sets without such bonuses keeps every
-//! pet. PORT: several set pieces changing in
-//! one equipment change count as one move (the counts in between all
-//! release; the engine detaches and attaches one by one, so a piece swapped
-//! for another of the same set would release too); a pet's skill counts as
-//! "the player's" when the skill book lists it (consumable summons such as
-//! the mini pets are not, nor is a skill reached only through item grants).
+//! Release on a lost skill bonus (`ItemSkillAugment::RemoveAugments`; [`AugmentsRemoved`],
+//! [`removed_augments`], [`released_by_augments`]): when a skill-bonus container comes off the main
+//! player (item detach, a component / augment removed or replaced, a set-count change: the previous
+//! count's values), each non-zero bonus releases pets of the normal pen with the suppress flag:
+//! - `augmentSkillName{n}`: `Skill::ReleasePets` on the player's skill of that name: its pets and
+//!   those of its base skills (`Skill.baseSkills`; `weapon_pool::SkillLinks`);
+//! - `augmentMasteryName{n}`: `PetPen::ReleaseMasteryPets`, every skill of that mastery;
+//! - `augmentAllLevel`: `PetPen::ReleaseLearnedSkillPets`, every non-item skill.
 //!
-//! `Skill_SpawnPet::StopSkill` ([`StopSummonSkill`]; the owner's death
-//! runs it on every skill, `SkillManager::ImDead`, and taking off an
-//! item on each skill it granted, `RemoveItemSkills`:
-//! `crate::player::unequipped_toggles`) and
-//! `KillExtraPets` (the pet limit in `spawn_pets`) kill
-//! with `KillMe(overkillOnDismiss)` ([`dismiss`]; no suppress flag, the dying
-//! skill goes off): a stop kills all the skill's live pets, `KillExtraPets`
-//! the oldest beyond `petLimit` (0 = unlimited). `Skill_SpawnQuestPet`
-//! (`Character.questPetPen`, apart from the normal pen: other summons'
-//! limits do not count its pets; [`Pet::quest`]) stops with mode 2 while the
-//! owner lives (`Skill_SpawnPet::GetReleaseMode`; owner dead: mode 0, a kill): pen helper
-//! `PetPen::ReleaseEntry` runs `Monster::UnJoinLeader(false)`: the pet
-//! stays alive and friendly, loses banner, leader and anger and leaves the
-//! pen ([`release_quest_pet`], [`ReleasedQuestPet`]); a new quest pet's
-//! `SpawnPet` first releases all of the old ones the same way.
-//! PORT: no stock skill uses the class (only the base template exists), so
-//! the spawn replacement is untested; the `SkillProfile.questPetVector` (unknown) is
-//! taken as empty.
+//! A weapon swap is such a detach (an attach releases nothing). PORT: several set pieces changing in
+//! one equipment change count as one move (every count in between releases); a pet's skill counts as
+//! "the player's" when the skill book lists it.
 //!
-//! Special attack timeouts ([`PetAttack::timeout`],
-//! `Monster::InitSkillsInController`, the monster rule in
-//! `monster_skills`): each special slot keeps its `specialAttack*Timeout`
-//! (s → ms; the time left starts at it) beside its delay (left starts at 0);
-//! `ControllerMonster::Update` counts the timeout down only once the
-//! controller has found an enemy, and `ChooseBestSkill` takes a special
-//! only when both are out and `rand() % 100 < chance`. So a pet's special
-//! first comes `Timeout` s into its first fight: the Hellhound's
-//! `petskill_hellhound_breathefire` 4 s, the Elemental Seeker's suicide 3 s.
+//! `Skill_SpawnPet::StopSkill` ([`StopSummonSkill`]; owner death `SkillManager::ImDead`, item skills
+//! removed `RemoveItemSkills`) kills all the skill's live pets, `KillExtraPets` the oldest beyond
+//! `petLimit` (0 = unlimited), both with `KillMe(overkillOnDismiss)` ([`dismiss`]).
+//! `Skill_SpawnQuestPet` pets ([`Pet::quest`]) live in a separate pen; a stop while the owner lives
+//! (`GetReleaseMode` 2) runs `Monster::UnJoinLeader(false)`: the pet stays alive and friendly but
+//! leaves ([`release_quest_pet`], [`ReleasedQuestPet`]); a new quest pet releases the old ones the
+//! same way. PORT: no stock skill uses the class; `questPetVector` is taken as empty.
 //!
-//! Submodules: `types` (commands, stances, `Pet`, its controller), `spawn` (`spawn_pets`, profiles),
-//! `commands` (orders, expiry, `impl Pet`), `ai` (`pet_ai`), `bonuses` (pet bonus sources and their FX).
+//! Special attack timeouts ([`PetAttack::timeout`], `Monster::InitSkillsInController`): each slot's
+//! timeout (left starts at it) counts down only once the controller has found an enemy;
+//! `ChooseBestSkill` takes a special only when delay and timeout are out and `rand() % 100 < chance`.
 use crate::combat::{MonsterAi, advance_steered, run_speed};
 use crate::nav::Nav;
 use bevy::prelude::*;

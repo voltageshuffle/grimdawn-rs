@@ -80,8 +80,7 @@ fn irange(rng: &mut Rng, lo: i32, hi: i32) -> i32 {
     if hi <= lo {
         return lo;
     }
-    // Widened: equation outputs saturate to `i32::MAX` / `MIN` (bad data: a
-    // span past `u32`); identical to the engine's 32-bit modulus on stock data.
+    // Widened: equation outputs saturate to `i32::MAX` / `MIN` (bad data: a span past `u32`).
     let span = i64::from(hi) - i64::from(lo) + 1;
     (i64::from(lo) + i64::from(rng.next()) % span) as i32
 }
@@ -91,8 +90,7 @@ fn weight_sum(weights: impl Iterator<Item = i32>) -> i32 {
     weights.fold(0, i32::saturating_add)
 }
 
-/// Spawn-count ceiling (bad data: a `proxyPoolEquation` output of `i32::MAX`
-/// would otherwise emit billions of spawns). Stock pools stay far below it.
+/// Spawn-count ceiling (bad data: a `proxyPoolEquation` output of `i32::MAX`).
 const MAX_SPAWNS: i32 = 1000;
 
 fn eval(rec: &Record, field: &str, src: &str, vars: &dyn Fn(&str) -> Option<f32>) -> Option<f32> {
@@ -142,9 +140,8 @@ fn entries(db: &Database, r: &Record, prefix: &str, default_limit: i32) -> Vec<E
 }
 
 fn eligible(e: &Entry, level: i32) -> bool {
-    // The engine tests `limit != 0` (`ProxyPool::SpawnMonsters`); a negative limit (bad
-    // data) would never count down to 0 and loop the always-spawn pass forever,
-    // so only a positive limit is eligible.
+    // The engine tests `limit != 0` (`ProxyPool::SpawnMonsters`); a negative limit (bad data)
+    // would never count down to 0 and loop the always-spawn pass forever.
     e.limit > 0 && level >= e.min_level && level <= e.max_level
 }
 
@@ -269,19 +266,11 @@ pub fn run_pool(
         adj(&mut spawn_max, "spawnMax", "spawnMaxModifier");
         adj(&mut champ_min, "championMin", "championMinModifier");
         adj(&mut champ_max, "championMax", "championMaxModifier");
-        // Challenge adjustment spawn offsets, added after the % modifiers
-        // (`ProxyPool::SpawnMonsters`). `GameEngine::GetChallengeAdjustment`
-        // picks by `GameInfo::GetMode` / `GetDifficulty` (the plain
-        // 0-2 difficulty, no challenge/Veteran test): campaign (mode 0)
-        // difficulty 0 / 1 → `gameengine.dbr` `challengeAdjustment`, 2 →
-        // `gameascendant.dbr` `ultimateChallangeAdjustment` (Crucible, mode
-        // 1, would take the survival adjustment). The entry is indexed by
-        // `GameEngine::GetDifficultyRamp` = `GameInfo::GetChallenge` at game
-        // start (`SetDifficultyRamp`, GrimDawn.exe `Game::LoadModMap`),
-        // falling back to entry 0 when out of range; `ChallengeAdjustment::Load`
-        // builds one entry per `spawnMinAdj` element (missing
-        // max/champion elements = 0). The shipped records are scalars, so
-        // entry 0 applies on every campaign difficulty, Veteran or not.
+        // Challenge adjustment spawn offsets, added after the % modifiers (`ProxyPool::SpawnMonsters`).
+        // `GameEngine::GetChallengeAdjustment` by mode / plain difficulty (no Veteran test): campaign
+        // difficulty 0 / 1 → `gameengine.dbr` `challengeAdjustment`, 2 → `gameascendant.dbr`
+        // `ultimateChallangeAdjustment`. Entry `GameEngine::GetDifficultyRamp` (`GameInfo::GetChallenge`
+        // at game start), entry 0 when out of range (`ChallengeAdjustment::Load`: one per `spawnMinAdj`).
         let challenge = if mode.ramp.is_some() {
             // The Crucible's: the survival adjustment of the game difficulty (`survivalinfo.dbr`).
             let key = ["survivalAdjustmentNormal", "survivalAdjustmentElite"]
@@ -332,7 +321,7 @@ pub fn run_pool(
 
     let mut normal = entries(db, r, "", raw_max);
     let mut champs = entries(db, r, "Champion", raw_champ_max);
-    // The hero/boss restriction (module doc): a boss already in the game never spawns again.
+    // A boss already in the game never spawns again.
     for e in normal.iter_mut().chain(&mut champs) {
         if e.boss && bosses.contains(&e.name.to_ascii_lowercase()) {
             e.limit = 0;
@@ -476,7 +465,6 @@ pub fn run_proxy_shared(
         })
         .collect();
     let total = weight_sum(pools.iter().map(|p| p.1));
-    // The group's stored choice first (it does not roll), else the weighted roll.
     let chosen = match pick.filter(|i| *i < pools.len()) {
         Some(i) => Some(i),
         None => {
@@ -512,17 +500,11 @@ pub fn run_proxy_shared(
 /// one pool is chosen by weight (`Proxy::SelectPool`) and run like a `Proxy`'s ([`run_pool`]). There is no
 /// time-of-day or `chanceToRun` gate.
 ///
-/// Unification (same function): a proxy of an "Endless Dungeon
-/// Proxies <type>" group asks `GameEngine::GetEntityUnificationIndex` for the index stored under
-/// the name of its "Unified Entities" group; `pick` is that index (`Some`) or `None`. A stored index is used
-/// as is, into THIS proxy's candidate list (`Proxy::GetPoolName`: past the list the name is empty,
-/// the proxy gets no pool and spawns nothing); without one the weighted pick is made and its index stored in
-/// `pick` (`SetEntityUnificationIndex`; the store lives for the session). In stock data no
-/// `ProxyEndless` is in a "Unified Entities" group (checked against `world001.map`), so every proxy picks its own.
-/// The store's key on `Set` is the name of the first group holding the proxy (no type check); for every stock
-/// unified member that first group is its "Unified Entities" one, so the caller keys both by that name. PORT: the
-/// caller (`gd_game::monsters`) passes the stored index for any `ProxyEndless` of a unified group; the engine only
-/// asks for one of an "Endless Dungeon Proxies" group (type != 0), which no stock data tells apart.
+/// Unification (same function): `pick` is the index stored under the proxy's "Unified Entities" group
+/// (`GameEngine::GetEntityUnificationIndex`), used as is: past THIS proxy's candidate list the proxy gets no pool
+/// and spawns nothing (`Proxy::GetPoolName`). Without one the weighted pick is stored in `pick`
+/// (`SetEntityUnificationIndex`). PORT: the engine asks only for a proxy of an "Endless Dungeon Proxies" group
+/// (type != 0); here any unified `ProxyEndless` does (no stock `ProxyEndless` is unified).
 #[allow(clippy::too_many_arguments)]
 pub fn run_endless_proxy(
     db: &Database,
@@ -578,11 +560,11 @@ pub fn run_endless_proxy(
     }
 }
 
-/// A shrine proxy's accessory (`ProxyEndless::InitializePools` / `ProxyAccessoryPool::RunPool`,
-/// notes): one of the `accessoryN` pools (N = 1..5) by `accessoryWeightN` (the Epic / Legendary
+/// A shrine proxy's accessory (`ProxyEndless::InitializePools` / `ProxyAccessoryPool::RunPool`):
+/// one of the `accessoryN` pools (N = 1..5) by `accessoryWeightN` (the Epic / Legendary
 /// columns on those difficulties, an empty column falls back to the one below), then the pool's
 /// `fixedItemName1..10` like [`run_accessory`]. A proxy without accessory pools (a monster proxy) gives nothing.
-/// Rolled without the dungeon's used pools: [`pick_endless_accessory`] is the one the generator runs at activation.
+/// Ignores the dungeon's used pools ([`pick_endless_accessory`] honours them).
 pub fn run_endless_accessory(
     db: &Database,
     proxy: &str,
@@ -592,13 +574,10 @@ pub fn run_endless_accessory(
     pick_endless_accessory(db, proxy, difficulty, &[], rng).and_then(|(_, item)| item)
 }
 
-/// [`run_endless_accessory`] as `ProxyEndless::InitializeAccessoryPool` runs it: the pools in
-/// `used` (the dungeon's set, `DungeonGenerator.blacklistedShrinePools`, `GetBlacklistedShrinePools`) are not
-/// candidates; returns the chosen
-/// pool's name and its item (None when the pool's `fixedItemChance` failed: the pool is still the proxy's).
-/// `InitializeAccessoryPool` / `SelectAccessory`: with
-/// every pool used the candidate list is empty, `SelectAccessory` returns -1 and no accessory pool is made, so
-/// nothing is returned (the proxy places no shrine; the exclusion is never dropped).
+/// [`run_endless_accessory`] as `ProxyEndless::InitializeAccessoryPool` runs it: the pools in `used`
+/// (`DungeonGenerator.blacklistedShrinePools`) are not candidates. Returns the chosen pool's name and its item
+/// (None when the pool's `fixedItemChance` failed); `None` when every pool is used (`SelectAccessory` returns -1:
+/// the proxy places no shrine).
 pub fn pick_endless_accessory(
     db: &Database,
     proxy: &str,
@@ -671,13 +650,10 @@ fn fixed_item(pool: &Record, rng: &mut Rng) -> Option<String> {
         .map(|(n, _)| n.to_string())
 }
 
-/// The accessory pool (`Proxy::InitializePools`,
-/// `ProxyAccessoryPool::RunPool`): `accessoryLegendary1` on
-/// Ultimate, `accessoryEpic1` on Elite/Ultimate, else `accessory1` (the
-/// first non-empty one). The pool record gives `fixedItemChance`
-/// (`IGenerate(0, 100) <= chance`) and `fixedItemName/Weight1..10`
-/// (`IGenerate(0, Σw)`, first cumulative weight ≥ the roll). An accessory
-/// that names a `Proxy` instead of a pool has no fixed items: nothing.
+/// The accessory pool (`Proxy::InitializePools`, `ProxyAccessoryPool::RunPool`): `accessoryLegendary1` on
+/// Ultimate, `accessoryEpic1` on Elite/Ultimate, else `accessory1` (the first non-empty one), gated by
+/// `fixedItemChance` (`IGenerate(0, 100) <= chance`). An accessory that names a `Proxy` instead of a pool has
+/// no fixed items: nothing.
 fn run_accessory(
     db: &Database,
     proxy: &Record,
@@ -694,9 +670,7 @@ fn run_accessory(
     }
     keys.push("accessory1");
     let pool = db.get(keys.into_iter().find_map(|k| proxy.str(k))?)?;
-    // A treasure trove: the pool's `ascendantFixedItem` instead
-    // (`Proxy::RunProxy` picks the ascendant list on the trove roll;
-    // `crate::ascendant`).
+    // A treasure trove: the pool's `ascendantFixedItem` instead (`Proxy::RunProxy`).
     let trove = pool.str("ascendantFixedItem").map(str::to_owned);
     let trove = trove.filter(|_| crate::ascendant::roll(rng, trove_chance));
     if irange(rng, 0, 100) > pool.i32("fixedItemChance").unwrap_or(0) {

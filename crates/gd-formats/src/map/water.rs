@@ -4,9 +4,8 @@
 //!
 //! Water paths (rivers), per `WaterPath::Load`: the water type's name, the path's surface height
 //! (region-local y, `WaterPath.height`), then the control points, 64 bytes each of which the engine keeps the first 28
-//! ([`ControlPoint`]); a path of n points has n - 1 segments, each the cubic Bézier between two neighbours (geometry and
-//! hits: gd-render `water.rs`, `gd_sim::surface::in_path_segment`). A path whose water type is not loaded logs "Failed to
-//! load water type '%s' for water path." and is not used.
+//! ([`ControlPoint`]); a path of n points has n - 1 segments, each the cubic Bézier between two neighbours. A path
+//! whose water type is not loaded logs "Failed to load water type '%s' for water path." and is not used.
 use crate::util::Reader;
 use anyhow::{Result, bail};
 

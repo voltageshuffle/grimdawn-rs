@@ -13,8 +13,7 @@ use super::RegionInfo;
 /// The slack added to the box overlap test (m).
 pub const SLACK: f32 = 2.0;
 
-/// The neighbour lists of all regions (`Region.neighbours`): O(n^2) over the regions, about 4 million box tests
-/// for the world map.
+/// The neighbour lists of all regions (`Region.neighbours`).
 pub fn neighbours(regions: &[RegionInfo]) -> Vec<Vec<usize>> {
     let world = |r: &RegionInfo| -> ([f32; 3], [f32; 3]) {
         (

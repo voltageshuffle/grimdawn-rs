@@ -1,5 +1,4 @@
-//! Radius buffs reaching allies (`gd_game::auras`, `gd_game::pets` module
-//! docs): the player's Elemental Infusion buffs the pet.
+//! Radius buffs reaching allies: the player's Elemental Infusion buffs the pet.
 use bevy::prelude::*;
 use gd_game::pets::Pet;
 use gd_game::testing::TestGame;
@@ -9,7 +8,6 @@ use gd_game_core::skill_buffs::ReceivedBuffs;
 
 use crate::common::HOUND;
 const INFUSION: &str = "records/skills/playerclass05/elementalinfusion1.dbr";
-/// Its modifier.
 const INFUSION_MODIFIER: &str = "records/skills/playerclass05/elementalinfusion2.dbr";
 const INFUSION_BUFF: &str = "records/skills/playerclass05/elementalinfusion1_buff.dbr";
 
@@ -80,8 +78,7 @@ fn player_aura_buffs_the_pet() {
         !has_buff(g.app.world(), p, INFUSION_BUFF),
         "the player's own aura is not its own aura buff"
     );
-    // The aura gone (its points refunded: no user switch-off, the auto
-    // toggle would switch it on again): no more passes, the buff runs out.
+    // The aura gone (points refunded, else the auto toggle switches it on again): the buff runs out.
     g.get_mut::<Loadout>(p)
         .skills
         .skills

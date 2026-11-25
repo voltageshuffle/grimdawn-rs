@@ -1,11 +1,10 @@
 //! The level lights: a placed point light (`LightCpu`) and its record loaders, the `FireLight` flicker
-//! and `PulseLight` pulse, and the lights' shared CRT `rand()` stream. `render::env` gathers these into
-//! the lighting buffer; `gd_world` places them while streaming a level and `fx` attaches them to meshes.
+//! and `PulseLight` pulse, and the lights' shared CRT `rand()` stream.
 use bevy::prelude::*;
 use gd_sim::crt::CrtRand;
 
 /// A point light placed in a level (`FireLight` flickers; `DayNightLight`
-/// blends its day/night colours, `render::env::DayNightColors`).
+/// blends its day/night colours).
 pub struct LightCpu {
     pub position: Vec3,
     pub color: Vec3,
@@ -14,7 +13,7 @@ pub struct LightCpu {
     pub radius: f32,
     pub flicker: Option<Flicker>,
     pub pulse: Option<Pulse>,
-    /// The record's `shadowPriority` (`Light::Load`, `Light.shadowPriority`; render/point_shadow.rs).
+    /// The record's `shadowPriority` (`Light::Load`, `Light.shadowPriority`).
     pub shadow_priority: i32,
 }
 
@@ -34,8 +33,7 @@ pub struct LightCpu {
 /// `rand` is the CRT's (MSVC LCG, [`CrtRand`]), one stream shared with every other `rand()` caller of the
 /// process. PORT: the lights draw from their own shared stream, [`LightRand`] (seed 1, the CRT default; the engine's
 /// stream position depends on every other caller), and `Load`'s two draws happen at the light's first update.
-/// `Light::AddToScene` hands colour × intensity (1) and the radius to the renderer every frame
-/// (render/env.rs).
+/// `Light::AddToScene` hands colour × intensity (1) and the radius to the renderer every frame.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Flicker {
     base: Vec3,
@@ -55,7 +53,7 @@ pub struct Flicker {
     pub radius: Option<f32>,
 }
 
-/// The lights' CRT `rand()` stream (doc of [`Flicker`]).
+/// The lights' CRT `rand()` stream.
 #[derive(Resource, Default)]
 pub struct LightRand(pub CrtRand);
 
@@ -208,7 +206,7 @@ impl Pulse {
 }
 
 /// Steps every `FireLight` ([`Flicker`]) and `PulseLight` ([`Pulse`]) and hands its colour and radius to its
-/// `PointLight` (render/env.rs reads them; brightness k = intensity / (40 000 × range) stays 1).
+/// `PointLight` (intensity = 40 000 × range keeps the brightness at 1).
 pub fn update_fire_lights(
     time: Res<Time>,
     mut rng: ResMut<LightRand>,
@@ -240,8 +238,8 @@ pub fn update_fire_lights(
     }
 }
 
-/// Spawns a point light read by `render::env` (`light_from_record`). Spawned hidden (`Visibility`): Bevy neither
-/// clusters nor extracts it (the materials read `render::env`'s buffer; `rig_lights` skipped it anyway).
+/// Spawns a point light. Spawned hidden (`Visibility`): Bevy neither clusters nor extracts it (the materials
+/// read `render::env`'s buffer).
 pub fn spawn_light(commands: &mut Commands, l: &LightCpu) -> Entity {
     let color = Color::linear_rgb(l.color.x, l.color.y, l.color.z);
     let mut e = commands.spawn((
@@ -283,7 +281,6 @@ pub fn light_from_record(rec: &gd_formats::arz::Record, position: Vec3) -> Optio
         )
     };
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
-    // `Light::Load` / `FireLight::Load` / `DayNightLight::Load`.
     let shadow_priority = rec.i32("shadowPriority").unwrap_or(0);
     match rec.class.as_str() {
         "FireLight" => {
@@ -320,16 +317,10 @@ pub fn light_from_record(rec: &gd_formats::arz::Record, position: Vec3) -> Optio
                 shadow_priority,
             })
         }
-        // `Light::Load` (`radius`, `color`, `shadowPriority`; no update of its own:
-        // `light_blue40m_bright`, `light_sun_shadow`) and `NightLight` (Engine.dll, `NightLight::vftable`:
-        // `NightLight::Load` = `Light::Load` + `useInterpolatedEnvironment`; `NightLight::UpdateSelf` sets
-        // the intensity `Light.intensity`, which `Light::AddToScene` multiplies into the colour, to the
-        // AmbianceManager's
-        // night-light scale (`render::env::night_light_scale`): with `useInterpolatedEnvironment` the blend
-        // of the two environment slots, else the slot of its region (underground or not). No stock level is
-        // a grid level (render/env.rs), so both read the current lighting's scale, which `DayNightColors`
-        // (day black, night the colour) applies: Kurn's Hold's `lownight` lanterns
-        // (`light_lanternnight_01a`) light up at night only.
+        // `Light::Load` (`radius`, `color`, `shadowPriority`; no update of its own) and `NightLight`
+        // (`NightLight::Load` = `Light::Load` + `useInterpolatedEnvironment`; `NightLight::UpdateSelf` sets
+        // `Light.intensity` to the AmbianceManager's night-light scale). No stock level is a grid level, so
+        // both read the current lighting's scale, which `DayNightColors` (day black, night the colour) applies.
         "Light" | "NightLight" => Some(LightCpu {
             position,
             color: c("color"),

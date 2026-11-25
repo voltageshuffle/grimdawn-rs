@@ -1,6 +1,5 @@
-//! The object methods a class table forwards (`Character.IsAlive(obj)` calls `obj:IsAlive()`, module doc), by
-//! the classes that bind them. The class statics (`Get`, `IsType`, `Create`, ...) are set on the class tables
-//! themselves (`game.rs`).
+//! The object methods a class table forwards (`Character.IsAlive(obj)` calls `obj:IsAlive()`), by the classes
+//! that bind them. The class statics (`Get`, `IsType`, `Create`, ...) are set on the class tables themselves.
 pub const CLASS_METHODS: &[(&str, &[&str])] = &[
     (
         "Entity/Object",

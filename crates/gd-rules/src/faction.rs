@@ -11,7 +11,7 @@
 //! (= ranks 5..8) per market tier (`FactionMerchant::CheckMarketTier`).
 //! The faction's name is the tag `tag` + key (`tagFactionSurvivors`).
 //!
-//! The factions window's maths (`gd_ui::factions`): the engine's level table ([`Levels`]: level lookup,
+//! The factions window's maths: the engine's level table ([`Levels`]: level lookup,
 //! bounds, names, discounts), the packs' window data ([`Pack`], [`enemies`]) and the bars / rollover targets
 //! ([`row_bar`], [`large_bar`], [`tier_target`], [`remaining`], [`standing_colour`]). The engine's level lookup
 //! rounds a negative value towards 0 ([`Levels::level_of`]); the market discount ([`Levels::discount`]) takes
@@ -152,8 +152,8 @@ pub fn type_name(i: usize) -> Option<&'static str> {
     TYPE_NAMES.get(i).copied()
 }
 
-/// The type of a faction name ([`type_name`], any case). Alloc-free: the six fixed names match
-/// directly, `UserN` is parsed (exact decimal spelling, N ≤ 40 — the names [`type_name`] builds).
+/// The type of a faction name ([`type_name`], any case). `UserN` needs the exact decimal
+/// spelling, N ≤ 40.
 pub fn type_of(name: &str) -> Option<usize> {
     let name = name.trim();
     if let Some(i) = TYPE_NAMES[..6]
@@ -416,8 +416,7 @@ pub fn row_bar(levels: &Levels, v: i32) -> BarValue {
 }
 
 /// The selected faction's large bar (`FactionWindow::UpdateBars`): negative `(−v, 0, −value(nemesis))`, else
-/// positive
-/// `(v, 0, value(revered))`, the ends of the table.
+/// positive `(v, 0, value(revered))`, the ends of the table.
 pub fn large_bar(levels: &Levels, v: i32) -> BarValue {
     let end = |i: usize| levels.value_of(i) as i32;
     if v < 0 {
@@ -438,10 +437,9 @@ pub fn large_bar(levels: &Levels, v: i32) -> BarValue {
 }
 
 /// The level the large bar's rollover describes (`FactionWindow::UpdateBars` / mouse
-/// `FactionWindow::HandleMouse`): `hover` 0 = the
-/// bar itself (the current level), else the hovered tier mark: positive 1..4 = friendly, respected, honored,
-/// revered (levels 4..7), negative 1 = despised (2), 3 = hated (1), 4 = nemesis (0); the negative marks are
-/// `negativeTier1..3` = 1, 3, 4.
+/// `FactionWindow::HandleMouse`): `hover` 0 = the bar itself (the current level), else the hovered tier mark:
+/// positive 1..4 = friendly, respected, honored, revered (levels 4..7), negative 1 = despised (2), 3 = hated (1),
+/// 4 = nemesis (0); the negative marks are `negativeTier1..3` = 1, 3, 4.
 pub fn tier_target(levels: &Levels, v: i32, hover: u8) -> Option<usize> {
     let t = match (v < 0, hover) {
         (_, 0) => return levels.level_of(v as f32),
@@ -455,16 +453,14 @@ pub fn tier_target(levels: &Levels, v: i32, hover: u8) -> Option<usize> {
 }
 
 /// The points the rollover says are left to `target` (`FactionWindow::UpdateBars`): `value(target) − v`, at least 0
-/// for
-/// a positive value and at most 0 for a negative one, as a magnitude.
+/// for a positive value and at most 0 for a negative one, as a magnitude.
 pub fn remaining(levels: &Levels, v: i32, target: usize) -> i32 {
     let d = (levels.value_of(target) - v as f32) as i32;
     if v >= 0 { d.max(0) } else { d.min(0).abs() }
 }
 
 /// The colour code before the level name in the title and the rollover (`FactionWindow::UpdateBars`): red for a
-/// negative
-/// value, green in a positive level, yellow in the level starting at 0.
+/// negative value, green in a positive level, yellow in the level starting at 0.
 pub fn standing_colour(levels: &Levels, v: i32) -> &'static str {
     if v < 0 {
         "^r"

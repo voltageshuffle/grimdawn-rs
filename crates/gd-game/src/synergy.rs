@@ -1,53 +1,30 @@
-//! `ControllerMonsterSynergy` (the cave Groble shamans, the Aetherial
-//! phantoms, Fleshshaper's spirits): monsters that join up and let their
-//! leader release a charged super skill. Game.dll:
+//! `ControllerMonsterSynergy` (cave Groble shamans, Aetherial phantoms, Fleshshaper's spirits):
+//! monsters that join up and let their leader release a charged super skill.
 //!
-//! - `Load`: `synergyRadius`, `synergyTeamSize` (6),
-//!   `synergyChargeTime` (1000 ms), `synergySearchIntervalMin` /
-//!   `…Max` (1000 / 2000 ms), `synergyChaosBeam`, `synergyNumBeams` (1).
-//! - `InitialUpdate` keeps special slot 0 (`specialAttack`) aside
-//!   as the super skill (`GetSuperSkill`) and empties the slot.
-//! - `Update`, idle (`ControllerMonsterSynergy.mode` = 0), its search timer (`searchTimer`)
-//!   out: the timer is re-armed (`IGenerate(min, max)`); the `Monster`s
-//!   within `synergyRadius` (`GetTargetsInRadius`) whose controller is an
-//!   idle synergy one are the candidates, and the target most of them are
-//!   after (their state's target) is the team's. With at least
-//!   `synergyTeamSize` candidates and such a target: the leader is the
-//!   candidate nearest the centre of their bounding box; nothing happens when
-//!   this monster's super skill is missing or not ready (`Skill.ready`), fails
-//!   `rand() % 100 > chance` or is not close enough to the target
-//!   (`CloseEnoughToUseSkill`); from twice the team size only the team size
-//!   nearest the leader stay (`Game::FindClosestEntities`). Every member gets the target
-//!   (`ControllerMonster.target`); the leader takes a new team (`PickTeam`: ++`m_sTeamPool`),
-//!   mode 1 and the charge time (`chargeTimer`), the others mode 2 (`SetSlave`), and
-//!   each a `synergyChaosBeam` (`SetNumBeams`) from it to the leader that the
-//!   leader keeps with the member (`AddComrade`).
-//! - The leader (mode 1): the charge is 1 - left / `synergyChargeTime`; at 1
-//!   (once, `superAttackOrdered`) it goes "SuperAttack"
-//!   (`ControllerMonsterSynergyStateSuperAttack::OnBegin`:
-//!   `UseSkill` of the super skill on its target); before, with fewer than
-//!   `synergyTeamSize` of its members within `synergyRadius`, it `Disband`s;
-//!   the time left counts down; the beams follow the members' and its
-//!   "Target" points, filled to the charge. Members (mode 2) fight on as
-//!   usual.
-//! - The super attack's "End" (`HandleEvent`): `Disband`, then
-//!   "RepositionForAttack" with the current state's enemy and skill (not zeroed);
-//!   `ControllerMonsterStateRepositionForAttack` (`OnBegin`, `OnUpdate`)
-//!   is the fight state of `melee.rs` (`St::Reposition`: the run to `GetMoveToPoint` at both
-//!   radii, "Attack" in reach at the path's end or after 2500 ms, else "Pursue"), entered through
-//!   `MeleeAi::reposition`.
-//! - `Disband`: the flag cleared, the search timer re-armed; each
-//!   member (the leader one of them) idle again (mode 0), its beam detached
-//!   and freed; the member list emptied. "Dying"
-//!   (`ControllerMonsterSynergyStateDying::OnBegin`) disbands
+//! - `Load`: `synergyRadius`, `synergyTeamSize` (6), `synergyChargeTime` (1000 ms),
+//!   `synergySearchIntervalMin` / `…Max` (1000 / 2000 ms), `synergyChaosBeam`, `synergyNumBeams` (1).
+//! - `InitialUpdate` moves special slot 0 aside as the super skill and empties the slot.
+//! - `Update`, idle (mode 0), search timer out: re-armed (`IGenerate(min, max)`); the idle synergy
+//!   monsters within `synergyRadius` are candidates, and the target most of them are after is the
+//!   team's. With at least `synergyTeamSize` candidates and such a target: the leader is the one
+//!   nearest their bounding-box centre; nothing happens when this monster's super skill is missing,
+//!   not ready, fails `rand() % 100 > chance` or is not `CloseEnoughToUseSkill`; from twice the team
+//!   size only the team size nearest the leader stay. Every member gets the target; the leader takes
+//!   a new team (++`m_sTeamPool`), mode 1 and the charge time, the others mode 2, each with a
+//!   `synergyChaosBeam` from it to the leader.
+//! - The leader (mode 1): charge = 1 - left / `synergyChargeTime`; at 1 (once) it goes
+//!   "SuperAttack" (`UseSkill` of the super skill on its target); before, with fewer than
+//!   `synergyTeamSize` members within `synergyRadius`, it `Disband`s. The beams follow the
+//!   members' and its "Target" points, filled to the charge. Members fight on as usual.
+//! - The super attack's "End": `Disband`, then "RepositionForAttack" with the current state's enemy
+//!   and skill (`MeleeAi::reposition`).
+//! - `Disband`: the search timer re-armed; each member idle again, its beam freed. "Dying" disbands
 //!   first.
 //!
-//! PORT: the beams are drawn by `grimdawn::chaos_beam` (not seen in a run); the super attack starts once the leader
-//! is not mid-action (the engine's `SetState` cuts in); RepositionForAttack's
-//! in-reach test uses the skill the fight states chose, not the super skill
-//! of the state data; the reach distance is flat
-//! (the bounding-box centre test adds the region height); ties for the
-//! target go to the first found; the draws use the port's RNG.
+//! PORT: the super attack starts once the leader is not mid-action (the engine's `SetState` cuts
+//! in); RepositionForAttack's in-reach test uses the skill the fight states chose, not the super
+//! skill; the reach distance is flat; ties for the target go to the first found; draws use the
+//! port's RNG.
 use crate::combat::MonsterAi;
 use crate::monster_skills::MonsterSkills;
 use bevy::prelude::*;
@@ -168,7 +145,6 @@ fn update(
     targets: Query<(&Transform, &Combatant), (Without<Synergy>, Without<Dead>)>,
 ) {
     let dt = time.delta_secs();
-    // Dying: disband first.
     for e in &newly_dead {
         if q.get(e).is_ok_and(|r| matches!(r.1.mode, Mode::Leader(_))) {
             disband(&mut q, e);
@@ -320,8 +296,7 @@ fn update(
                     } else if casting || matches!(ch.state, CharState::Attack | CharState::Cast) {
                         s.started = true;
                     } else if s.started {
-                        // The super attack's "End": `Disband`, then
-                        // "RepositionForAttack" on the state's enemy.
+                        // "End": `Disband`, then "RepositionForAttack" on the state's enemy.
                         let enemy = ai.enemy.or(cb.target);
                         disband(&mut q, e);
                         if let (Some(t), Ok((_, _, mut ai, ..))) = (enemy, q.get_mut(e)) {

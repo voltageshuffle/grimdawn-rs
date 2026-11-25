@@ -26,12 +26,10 @@ pub mod tagged;
 use anyhow::{Result, bail};
 use std::path::Path;
 
-/// The account-wide save files (`GameEngine::GetSharedSavePath` kinds 0, 1, 4, 5, 6). Per
-/// `GameEngine::GetSharedSavePath`: `save\[<mod>\]<name>`, the extension `.gst`, or `.gsh` when the
-/// main player is hardcore (`Player::IsHardcore`), so hardcore and softcore characters never
-/// share a transfer stash, blueprints, illusions, reagents or potion unlocks. (Its `.bst` / `.cst` / `.dst`
-/// variants are backup / cloud copies; case 2 `playmenu.cpn` and case 3 `leaderboard.brd` have no
-/// hardcore twin.)
+/// The account-wide save files (`GameEngine::GetSharedSavePath` kinds 0, 1, 4, 5, 6):
+/// `save\[<mod>\]<name>`, the extension `.gst`, or `.gsh` when the main player is hardcore
+/// (`Player::IsHardcore`). `.bst` / `.cst` / `.dst` variants are backup / cloud copies; case 2
+/// `playmenu.cpn` and case 3 `leaderboard.brd` have no hardcore twin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shared {
     Transfer,

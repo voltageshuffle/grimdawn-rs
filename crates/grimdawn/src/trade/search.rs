@@ -7,13 +7,10 @@
 //! the window (`MarketWindow::HandleEscape`). The text is cut to the box's `Width` − 10 px (`EditBox::ClipText`). The
 //! clear button shows while the text is not empty; closing the window empties it (`MarketWindow::SetVisible`). Caret,
 //! selection, Delete, key repeat and Ctrl+A/C/V are `gd_sim::edit`. PORT: the clipboard is process-local
-//! ([`Clipboard`]); a click focuses
-//! with the caret at the end. The search lines are `Item::GenerateSearchText`'s
-//! (`gd_sim::items::tooltip_item::item_search_text`). The caravan window searches the shown
-//! stash's pages the same way (`CaravanWindow::FilterStash` / `CaravanWindow::MatchesSearch`; the query survives
-//! the personal / transfer toggle). PORT: the transfer view's Materials / Components plates are not searched. The
-//! crafting panel filters its recipe list instead (`crafting.rs`, `CraftList::CacheQuery` /
-//! `CraftList::FilterRows`).
+//! ([`Clipboard`]); a click focuses with the caret at the end. The search lines are `Item::GenerateSearchText`'s.
+//! The caravan window searches the shown stash's pages the same way (`CaravanWindow::FilterStash`; the query
+//! survives the personal / transfer toggle). PORT: the transfer view's Materials / Components plates are not
+//! searched. The crafting panel filters its recipe list instead (`CraftList::FilterRows`).
 use super::*;
 use gd_ui::state::trade::{Clipboard, Panel, Trade, TradeSearch, search_box_record};
 
@@ -41,7 +38,6 @@ pub(super) fn search_input(
         search_box_record(o).is_some()
             && (!matches!(o, TradeOpen::Crafter { .. }) || trade.panel == Panel::Craft)
     });
-    // `GD_VENDOR_SEARCH` (hooks.rs): types the text into the open trade window's search box (left focused).
     #[cfg(feature = "dev")]
     if !*hooked
         && has_box
@@ -55,8 +51,7 @@ pub(super) fn search_input(
     }
     if !has_box {
         if matches!(trade.open, Some(TradeOpen::Crafter { .. })) {
-            // The crafting panel's box is hidden on the other tabs: the query
-            // stays (the engine caches it per panel), the focus goes.
+            // The crafting panel's box is hidden on the other tabs: the query stays, the focus goes.
             if trade.search.focused {
                 trade.search.focused = false;
                 trade.version += 1;
@@ -189,7 +184,6 @@ pub(super) fn search_hits(
     rules: Option<Res<gd_game_core::rules::CombatRules>>,
     players: Query<&gd_game_core::combat::Combatant, With<Player>>,
 ) {
-    // Nothing the search reads changed this frame.
     if !trade.is_changed()
         && !markets.is_changed()
         && !stash.as_ref().is_some_and(|s| s.is_changed())

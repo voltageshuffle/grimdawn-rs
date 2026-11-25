@@ -5,7 +5,7 @@ pub use gd_formats::testdata::*;
 use gd_formats::vfs::{Database, Vfs};
 use std::sync::{Arc, OnceLock};
 
-/// The installed game's merged database (opened once).
+/// The installed game's merged database.
 pub fn db() -> Option<Arc<Database>> {
     static DB: OnceLock<Arc<Database>> = OnceLock::new();
     let dir = game()?;
@@ -15,7 +15,7 @@ pub fn db() -> Option<Arc<Database>> {
     )
 }
 
-/// The installed game's merged archives (opened once).
+/// The installed game's merged archives.
 pub fn vfs() -> Option<Arc<Vfs>> {
     static VFS: OnceLock<Arc<Vfs>> = OnceLock::new();
     let dir = game()?;

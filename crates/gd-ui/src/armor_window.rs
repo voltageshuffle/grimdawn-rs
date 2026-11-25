@@ -28,8 +28,7 @@ use bevy::prelude::*;
 use gd_formats::ui::{Rect as URect, TextAlign, TextBox};
 use gd_sim::sheet::ArmorBreakdown;
 
-/// The rows in the window's order (`ArmorWindow::Layout`'s widget arrays):
-/// (record field stem, index into [`ArmorBreakdown::rows`]).
+/// (record field stem, index into [`ArmorBreakdown::rows`]), in `ArmorWindow::Layout` order.
 pub const ROWS: [(&str, usize); 6] = [
     ("head", 0),
     ("shoulders", 5),
@@ -39,11 +38,9 @@ pub const ROWS: [(&str, usize); 6] = [
     ("feet", 4),
 ];
 
-/// What [`layout`] measures (UI units): widths of the texts as laid out
-/// and the record sizes.
+/// What [`layout`] measures (UI units).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Measures {
-    /// Each row's name width ([`ROWS`] order).
     pub names: [f32; 6],
     /// The widest armour, chance and absorption number.
     pub armor: f32,
@@ -51,9 +48,7 @@ pub struct Measures {
     pub absorption: f32,
     /// `textBoxXSize` of `titleText` (armour), `hitTitleText`, `absorptionTitle`.
     pub title_w: [f32; 3],
-    /// The tallest title box (`textBoxYSize`).
     pub title_h: f32,
-    /// A row's height: its widgets' largest font size.
     pub row_h: [f32; 6],
     /// `infoText`'s box height before it is wrapped.
     pub info_h: f32,
@@ -62,31 +57,21 @@ pub struct Measures {
     pub line_spacing: f32,
 }
 
-/// Window-relative placement (UI units).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Layout {
     pub size: Vec2,
-    /// Positions of the armour, chance and absorption titles.
     pub titles: [Vec2; 3],
-    /// x of the armour, chance and absorption columns (each as wide as its
-    /// title).
+    /// x of the armour, chance and absorption columns (each as wide as its title).
     pub columns: [f32; 3],
-    /// x of the names.
     pub name_x: f32,
-    /// Each row's (y, height), [`ROWS`] order.
     pub rows: [(f32, f32); 6],
     /// `infoText`'s position and wrap width.
     pub info: (Vec2, f32),
 }
 
-/// `ArmorWindow::Layout`. The window is as wide as the three titles or the widest
-/// numbers next to the widest name, with `2 × edgeClearance` and two
-/// (resp. three) column spacings; the columns sit from the right edge
-/// (clearance, absorption, spacing, armour, spacing, chance), the chance
-/// title right of the names. Rows start below the titles, each after
-/// `verticalTextLineSpacing`; the info text follows the rows at
-/// `2 × edgeClearance`, as wide as the window less that. The height counts
-/// the info box's record height (not its wrapped text) and three clearances.
+/// `ArmorWindow::Layout`: columns sit from the right edge (clearance, absorption,
+/// spacing, armour, spacing, chance); the height counts the info box's record
+/// height (not its wrapped text) and three clearances.
 pub fn layout(m: &Measures) -> Layout {
     let name_w = m.names.iter().copied().fold(0.0, f32::max).trunc();
     let [ta, th, tabs] = m.title_w.map(f32::trunc);
@@ -118,8 +103,7 @@ pub fn layout(m: &Measures) -> Layout {
     }
 }
 
-/// The text of a number widget (module doc): (text, shown in the
-/// unprotected colour).
+/// (text, shown in the unprotected colour).
 pub fn number_text(fonts: &FontCache, v: i32, percent: bool) -> (String, bool) {
     use gd_sim::items::tooltip::{Arg, format_rich};
     let t = if percent {
@@ -130,13 +114,10 @@ pub fn number_text(fonts: &FontCache, v: i32, percent: bool) -> (String, bool) {
     (t, v == 0)
 }
 
-/// A text widget record's box (its style and alignment). Read in place, not cloned
-/// ([`Ui::record`]): the window is redrawn whenever the cursor moves over the armour row.
 fn text_box(ui: &Ui, path: &str) -> Option<TextBox> {
     ui.data.db.get(path).map(TextBox::from_record)
 }
 
-/// Draws the window for the cursor `cursor` (px) under `ui.root`.
 pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, cursor: Vec2) {
     let field = |k: &str| rec.str(k).unwrap_or("");
     let int = |k: &str| rec.i32(k).unwrap_or(0) as f32;
@@ -146,7 +127,6 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
         rec.f32("unprotectedColorBlue").unwrap_or(0.0),
     ];
     let s = ui.s;
-    // The widgets' boxes and texts.
     let titles = ["titleText", "hitTitleText", "absorptionTitle"].map(|k| text_box(ui, field(k)));
     let title_text = |ui: &Ui, tb: Option<&TextBox>| {
         tb.and_then(|t| t.tag.as_deref())
@@ -193,7 +173,6 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
             (t1, c, c0),
             (t2, b, b0),
         ];
-        // The row's height: its widgets' largest font size.
         m.row_h[i] = cell
             .iter()
             .filter_map(|(tb, _, _)| {
@@ -256,7 +235,7 @@ pub fn draw(ui: &mut Ui, rec: &gd_formats::arz::Record, armor: &ArmorBreakdown, 
             ui.text_colored(&placed, st, origin, text, zero.then_some(unprotected));
         }
     }
-    // The info text, wrapped at its width (`TextWidget::WrapToWidth`).
+    // `TextWidget::WrapToWidth`.
     if let Some(tb) = &info_tb
         && let Some(st) = tb.style.as_deref()
     {

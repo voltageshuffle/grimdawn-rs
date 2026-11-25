@@ -1,6 +1,4 @@
-//! The inventory systems: the request handlers, equipment sync, initialization
-//! and the requirement sift (the inventory data and pure moves are
-//! [`gd_game_core::inventory`]).
+//! The inventory systems: the request handlers, equipment sync, initialization and the requirement sift.
 use bevy::prelude::*;
 #[cfg(feature = "dev")]
 use gd_formats::inventory::EquipSlot;
@@ -58,7 +56,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(
                 Update,
                 (
-                    // A session's own (a `Player` outside one must not build a new character's inventory).
+                    // A `Player` outside a session must not build a new character's inventory.
                     init_inventory
                         .in_set(InventoryStage::Init)
                         .run_if(resource_exists::<gd_game_core::session::SessionReady>),
@@ -87,7 +85,7 @@ impl Plugin for InventoryPlugin {
 fn apply_requests(
     mut msgs: MessageReader<ApplyRequest>,
     mut inv: ResMut<Inventory>,
-    // The stash is absent until `init_stash` ran; the answer then applies to the bags alone.
+    // Option: absent until `init_stash` ran; the answer then applies to the bags alone.
     mut stash: Option<ResMut<gd_game_core::stash::Stash>>,
     reqs: Query<&Requirements, With<Player>>,
     (shared, choice, save_dir, mut error): (
@@ -108,8 +106,8 @@ fn apply_requests(
             ApplyRequest::Start(src) => {
                 inv.start_apply(src, stash.as_deref());
             }
-            // A component from outside the blocked transfer stash onto an item in it (module doc); the
-            // confirmation is only ever asked by a click, so this covers its Yes too.
+            // A component from outside the blocked transfer stash onto an item in it; the confirmation is only
+            // ever asked by a click, so this covers its Yes too.
             ApplyRequest::Click(target) if inv.apply_blocked(target, transfer_open) => {
                 error.write(gd_game_core::stash::QuickActionError { notify: true });
             }
@@ -118,8 +116,8 @@ fn apply_requests(
     }
 }
 
-/// [`SortBag`]: the press's count (`CharacterWindow::OnButtonEvent` / `CharacterWindow::Update` post-increment
-/// it whatever the sort does) is the first layout tried.
+/// [`SortBag`]: the press's count is the first layout tried (`CharacterWindow::OnButtonEvent` increments it
+/// whatever the sort does).
 fn sort_bags(
     mut msgs: MessageReader<SortBag>,
     mut inv: ResMut<Inventory>,
@@ -185,8 +183,7 @@ fn apply_inv_requests(
                 nav.as_deref(),
                 item.clone(),
             ),
-            // A right press on a bag with an item held: the item-move handler's `SecondaryInventoryActivate`
-            // (the merchant's quick sale is the UI's `trade::SellHeld`): `Cancel`.
+            // `SecondaryInventoryActivate` with an item held: `Cancel`.
             InvRequest::Bag { right: true, .. } if inv.held.is_some() => {
                 if let Err(it) = inv.cancel_held(stash.as_deref_mut()) {
                     stow(&mut commands, &mut inv, &players, &data, nav.as_deref(), it);
@@ -207,7 +204,6 @@ fn apply_inv_requests(
                     .and_then(|b| b.item_at(cell.0, cell.1))
                     .cloned();
                 let Some(placed) = placed else {
-                    // Gone since the click: the slot stays empty.
                     back.write(crate::crafting::SlotReturn {
                         item: None,
                         go: false,
@@ -223,7 +219,6 @@ fn apply_inv_requests(
                 });
                 inv.changed();
             }
-            // The rest needs the player's equip requirements.
             rest => {
                 let Ok((.., req)) = players.single() else {
                     continue;
@@ -238,8 +233,7 @@ fn apply_inv_requests(
                         if let Some(name) =
                             right_click_bag(&mut inv, stash.as_deref_mut(), *bag, *cell, req, &data)
                         {
-                            // `ItemArtifactFormula::Use`: type 2,
-                            // `tagFormulaLearned` over `tagFormulaLearn01(name)`. PORT: the name is not rarity coloured.
+                            // `ItemArtifactFormula::Use`: type 2. PORT: the name is not rarity coloured.
                             cinematic.write(gd_game_core::story::CinematicText {
                                 head: "tagFormulaLearned".into(),
                                 sub: "tagFormulaLearn01".into(),
@@ -280,9 +274,8 @@ fn apply_inv_requests(
                                 .map(|i| i.size)
                                 .unwrap_or(Footprint { w: 1, h: 1 });
                             let drop = gd_game_core::stash::ui_drop_sound(&data.db, &h);
-                            // The footprint is centred on the cursor; it may
-                            // overlap at most one item, which is swapped into the hand
-                            // or, the same record with room, takes the stack (`crate::stack`).
+                            // The footprint is centred on the cursor; it may overlap at most one item, which is
+                            // swapped into the hand or, the same record with room, takes the stack.
                             let max = gd_game_core::stack::max_of(
                                 &inv,
                                 &h,
@@ -305,8 +298,7 @@ fn apply_inv_requests(
                     InvRequest::Slot { slot, right } => {
                         let i = slot_index(*slot);
                         match inv.held.take() {
-                            // A right press on a filled slot with an empty cursor: the item's secondary
-                            // handler, none for equipment, so nothing (the merchant sale is the UI's).
+                            // A right press on equipment with an empty cursor: no secondary handler.
                             None if *right => {}
                             None => {
                                 if let Some(it) = inv.equipped[i].take() {
@@ -359,8 +351,8 @@ fn apply_inv_requests(
     }
 }
 
-/// `ControllerPlayer::GiveItemToPlayer(id, false)` from the player's centre ([`crate::loot::give_item`]); with
-/// no level loaded (nothing to throw onto) the item stays on the cursor rather than being lost.
+/// `ControllerPlayer::GiveItemToPlayer(id, false)` from the player's centre; with no level loaded the item
+/// stays on the cursor.
 fn stow(
     commands: &mut Commands,
     inv: &mut Inventory,
@@ -377,7 +369,7 @@ fn stow(
     item: Item,
 ) {
     let Ok((t, ch, req)) = players.single() else {
-        // No player (nothing to equip on or throw from): the bags, else the cursor.
+        // No player: the bags, else the cursor.
         if !inv.add_to_bags(item.clone()) {
             inv.held.get_or_insert(item);
         }
@@ -402,7 +394,6 @@ fn stow(
     inv.changed();
 }
 
-/// Right click on the bag item at `cell` of `bag`.
 fn right_click_bag(
     inv: &mut Inventory,
     mut stash: Option<&mut gd_game_core::stash::Stash>,
@@ -411,7 +402,6 @@ fn right_click_bag(
     req: &Requirements,
     data: &gd_game_core::data::GameData,
 ) -> Option<String> {
-    // A held item's right press is its handler's (`InvRequest::Bag` arm, module doc).
     if inv.held.is_some() {
         return None;
     }
@@ -420,7 +410,6 @@ fn right_click_bag(
         .get(bag)
         .and_then(|b| b.item_at(cell.0, cell.1))
         .cloned()?;
-    // A component or augment is selected for use on an item.
     if inv.start_apply(
         ItemLoc::Bag {
             bag,
@@ -433,18 +422,16 @@ fn right_click_bag(
     }
     let info = inv.info(&placed.item)?;
     let class = info.resolved.class.as_str();
-    // The item-use handler of a scroll / formula / note / unlock exists only when its requirements are met
-    // (`crate::consumables::use_gated`); without it `SmartAutoInsert` refuses it: nothing happens.
+    // A scroll / formula / note / unlock has a use handler only when its requirements are met; without it
+    // `SmartAutoInsert` refuses it.
     if crate::consumables::use_gated(class)
         && let Some(why) = inv.requirement_failure(&placed.item, req)
     {
         info!("cannot use {}: {why}", placed.item.base_name);
         return None;
     }
-    // Blueprints are learned (`formulas.gst`) and used up; a known or invalid one is kept
-    // (`ItemArtifactFormula::AllowUse`, shared by every formula class: refused when
-    // `IsItemInFormulas` or not `IsBluePrintValid`, `gd_sim::items::crafting::formula_valid`; refused ->
-    // `PlayerInventoryCtrl::UseItem` plays the "cannot" sound, `genericErrorSound`).
+    // Blueprints are learned and used up; a known or invalid one is kept (`ItemArtifactFormula::AllowUse`:
+    // `IsItemInFormulas` or not `IsBluePrintValid`) and `PlayerInventoryCtrl::UseItem` plays `genericErrorSound`.
     if crate::consumables::is_formula(class) {
         let valid = data
             .db
@@ -461,7 +448,6 @@ fn right_click_bag(
             inv.changed();
             inv.sounds
                 .extend(gd_game_core::stash::learn_formula_sound(data));
-            // What it makes (`gd_sim::items::crafting::made_item`), named as an item.
             let made = data
                 .db
                 .get(&placed.item.base_name)
@@ -487,7 +473,6 @@ fn right_click_bag(
         }
         return None;
     }
-    // The tonics' and writs' handlers may ask first (`consumables::ask_use`).
     if crate::consumables::asks(class) {
         inv.use_ask = Some(gd_game_core::consumables::UseAsk {
             bag,
@@ -499,8 +484,7 @@ fn right_click_bag(
         });
         return None;
     }
-    // Consumables are used (`consumables.rs`): one of the stack
-    // goes, except a single `infiniteUse` skill item.
+    // One of the stack goes, except a single `infiniteUse` skill item.
     if crate::consumables::is_usable(class) {
         let mut one = placed.item.clone();
         one.stack_count = 1;
@@ -525,8 +509,8 @@ fn right_click_bag(
         inv.changed();
         return None;
     }
-    // SmartAutoInsert: the item leaves its cell first (the displaced items may take it), and returns
-    // there when nothing is equipped.
+    // SmartAutoInsert: the item leaves its cell first (the displaced items may take it), and returns there when
+    // nothing is equipped.
     inv.smart_slot(&placed.item, req)?;
     inv.bags[bag]
         .items
@@ -546,9 +530,8 @@ fn right_click_bag(
     None
 }
 
-/// Passes changed equipment to the living player's loadout and rebuilds its
-/// profile (life keeps its fraction, at the current level; `ProfileDirty`).
-/// The skill bonuses that came off release pets ([`crate::pets::AugmentsRemoved`]).
+/// Passes changed equipment to the living player's loadout and rebuilds its profile (life keeps its fraction).
+/// Also takes the skill bonuses that came off released pets ([`crate::pets::AugmentsRemoved`]).
 pub fn sync_equipment(
     mut commands: Commands,
     mut inv: ResMut<Inventory>,
@@ -574,7 +557,6 @@ pub fn sync_equipment(
     changed.write(EquipmentChanged { player });
 }
 
-/// Ends the glow of the items the cursor passed over.
 pub fn clear_fresh(mut seen: MessageReader<NewItemSeen>, mut inv: ResMut<Inventory>) {
     for NewItemSeen(key) in seen.read() {
         let before = inv.fresh.len();
@@ -593,7 +575,6 @@ pub fn init_inventory(
     inv: Option<Res<Inventory>>,
     loaded: Option<Res<LoadedCharacter>>,
     data: Res<GameData>,
-    // The player's [`Loadout`]: its `female` is the sex `Loadout::from_save` built the character with.
     players: Query<&Loadout, With<Player>>,
 ) {
     if inv.is_some() {
@@ -610,7 +591,6 @@ pub fn init_inventory(
                     inv.equipped[i] = Some(s.item.clone());
                 }
             }
-            // Both weapon sets: the active one is worn (`crate::weapon_sets`).
             let alt = d.use_alternate != 0;
             for (set, w) in d.weapons.iter().enumerate() {
                 for (k, s) in w
@@ -664,7 +644,6 @@ pub fn init_inventory(
             }
         }
     }
-    // `GD_EQUIP` (hooks.rs).
     #[cfg(feature = "dev")]
     if let Some(list) = hooks.items.equip.as_deref() {
         for r in list.split(';').filter(|r| !r.is_empty()) {
@@ -689,7 +668,6 @@ pub fn init_inventory(
             }
         }
     }
-    // `GD_GIVE` (hooks.rs).
     #[cfg(feature = "dev")]
     for g in hooks
         .items
@@ -714,10 +692,8 @@ pub fn init_inventory(
     commands.insert_resource(inv);
 }
 
-/// `EquipmentCtrl::AttributesHaveChanged` every 250 ms (module docs): each
-/// worn item attaches or detaches by the player's [`Requirements`]; an
-/// off-hand one-handed weapon also by its dual-wield bit
-/// (`WeaponSet__SiftLeftHand`, module docs: the hand rule).
+/// `EquipmentCtrl::AttributesHaveChanged` every 250 ms: each worn item attaches or detaches by the player's
+/// [`Requirements`]; an off-hand one-handed weapon also by its dual-wield bit (`WeaponSet__SiftLeftHand`).
 pub fn sift_equipment(
     mut inv: ResMut<Inventory>,
     players: Query<&Requirements, With<Player>>,
@@ -735,7 +711,7 @@ pub fn sift_equipment(
     if *wait <= 0.0 {
         *wait = SIFT_SECS;
     }
-    // Read through `&Inventory`; only a flipped slot takes `&mut` (change detection).
+    // Only a flipped slot takes `&mut` (change detection).
     let mut flips = [false; 14];
     let ro: &Inventory = &inv;
     for (i, slot) in ro.equipped.iter().enumerate() {
@@ -772,12 +748,11 @@ pub fn sift_equipment(
 
 const SIFT_SECS: f32 = 0.25;
 
-/// Derives the player's [`Requirements`]; a change bumps the inventory's
-/// version so the unusable marks are redrawn.
+/// Derives the player's [`Requirements`]; a change bumps the inventory's version.
 pub fn sync_requirements(
     mut inv: ResMut<Inventory>,
     data: Res<GameData>,
-    // Option: created by `init_progress`; level 1 until then (as a new character).
+    // Option: created by `init_progress`; level 1 until then.
     progress: Option<Res<PlayerProgress>>,
     mut players: Query<(&Combatant, &Loadout, &mut Requirements), With<Player>>,
 ) {
@@ -797,7 +772,6 @@ pub fn sync_requirements(
     }
 }
 
-/// Plays the queued inventory sounds ([`Inventory::sounds`]) as UI sounds.
 pub fn play_sounds(
     mut inv: ResMut<Inventory>,
     mut out: MessageWriter<gd_game_core::visuals::PlaySound>,

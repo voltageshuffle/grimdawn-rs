@@ -1,7 +1,5 @@
-//! Devotion shrines, presentation side: models, the dormant / restored
-//! look (animation and looping effect), and the story bridge
-//! (`shrine:SetLocked` on a story object → `gd_game::devotion::ShrineLock`).
-//! The rules are `gd_game::devotion`; the window is `ui::shrine`.
+//! Devotion shrines, presentation side: models, the dormant / restored look (animation and looping effect), and
+//! the story bridge (`shrine:SetLocked` on a story object → `gd_game::devotion::ShrineLock`).
 use bevy::prelude::*;
 pub use gd_game::devotion::*;
 use gd_render::character::CharAssets;
@@ -22,18 +20,14 @@ impl Plugin for DevotionViewPlugin {
     }
 }
 
-/// The shown look of a shrine: restored or not, and its looping effect.
 #[derive(Component, Default)]
 pub struct ShrineLook {
     shown: Option<bool>,
     fx: Option<Entity>,
 }
 
-/// A new shrine's model and what its mesh creates (`Actor::CreateAttachmentsFromMesh`, every
-/// actor: `fx::spawn_mesh_attachments`). The Mogdrogen shrine's rune (`FX_Rune` on `BN_Restored`) follows
-/// its bone: the dormant animation holds it 15 m under the shrine, the restore animation raises it
-/// (`model::BoneFx`). The model loads in the background (`CharAssets::model_ready`): a shrine is dressed (and
-/// given its [`ShrineLook`]) once it is built.
+/// A new shrine's model and its mesh attachments (`Actor::CreateAttachmentsFromMesh`). A shrine is dressed (and
+/// given its [`ShrineLook`]) once its model is built.
 fn dress_shrines(
     mut commands: Commands,
     new: Query<(Entity, &Shrine), Without<ShrineLook>>,
@@ -58,8 +52,7 @@ fn dress_shrines(
     }
 }
 
-/// A script's `shrine:SetLocked` names a story object: its record and spot.
-/// A riftgate's `SetLocked` likewise (`gd_game::riftgates::RiftgateLock`).
+/// A script's `shrine:SetLocked` (or a riftgate's `SetLocked`) names a story object: its record and spot.
 fn story_locks(
     mut events: MessageReader<gd_game_core::story::StoryEffect>,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
@@ -89,8 +82,7 @@ fn story_locks(
     }
 }
 
-/// Dormant or restored animation and looping effect; the restore plays `dormantToRestoredSound` (as the Shattered
-/// Realm's buff shrines, the same `StaticShrine` class: `crate::endless_shrine`).
+/// Dormant or restored animation and looping effect; the restore plays `dormantToRestoredSound`.
 fn shrine_looks(
     mut commands: Commands,
     state: Option<Res<DevotionState>>,

@@ -8,8 +8,7 @@ description = "Grim Dawn's gameplay data leaf: components, resources, messages, 
 license = "MIT"
 
 [features]
-# Dev builds only: the `hooks` module (`Hooks`, the `GD_*` test hooks read from the environment). Every crate's
-# `dev` that names `Hooks` forwards here; a build without it (release, tests) has no hooks at all.
+# The `hooks` module (`GD_*` test hooks).
 dev = []
 
 [dependencies]
@@ -29,6 +28,6 @@ gd-formats = { path = "../gd-formats" }
 gd-rules = { path = "../gd-rules" }
 gd-sim = { path = "../gd-sim" }
 gd-story = { path = "../gd-story" }
-log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+log = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
 parking_lot = "0.12"
-tracing = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+tracing = { version = "*", features = ["max_level_debug", "release_max_level_off"] }

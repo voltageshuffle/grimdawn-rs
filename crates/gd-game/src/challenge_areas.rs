@@ -1,57 +1,38 @@
-//! Challenge areas: the sectors of the map's challenge layer (sector layer 13, `ChallengeSectorData`, one
-//! `ChallengeArea` record each, [`gd_formats::map::sector::Challenge`]). Stock: the Forgotten Gods sandstorms
-//! (`challengelayer_sands_*`) and Fangs of Asterkarn blizzards (`challengelayer_blizzard_*`: only an effect pak),
-//! the "Easy" / "Hard" / "Roguelike" secret areas (mutators, scaling, loot weights), the Shattered Realm's treasure
-//! room (scaling) and the Asterkarn beaver den (`challengelayer_beaver_01`: also the timed debuff).
+//! Challenge areas: the sectors of the map's challenge layer (sector layer 13, one
+//! `ChallengeArea` record each, [`gd_formats::map::sector::Challenge`]).
 //!
-//! The area object, `GameEngine::GetChallengeArea`: one per layer id, made and loaded
-//! (`ChallengeArea::Load`) on the first lookup that names its record, kept for the session
-//! (`ClearAllChallengeAreas` from `ExitPlayingMode`): [`ChallengeAreas`]. Load rolls the area's mutators
-//! (`GenerateMutators`, once for `min/maxMutators` + `mutatorPakList`, once for the player list):
-//! `IGenerate(min, min(max, list length))` of the shuffled list, each added as an engine mutator of type 2 with
-//! the area's id (`AddMutatorOutbound`). The count is `IGenerate` on the engine's `RandomUniformLocked`
-//! (`GameEngine.random`: MINSTD a = 48271, seeded once from `_time64` at startup, drawn by ~180 gameplay
-//! functions); the shuffle is `std::random_shuffle` on CRT `rand()` (`ChallengeArea_RandomShuffleStrings_rand`).
-//! Neither stream is reproducible, so
-//! by design the port draws from `gd_game_core::rng` with the same distribution (count uniform, inclusive; uniform shuffle).
+//! The area object (`GameEngine::GetChallengeArea`, [`ChallengeAreas`]): one per layer id,
+//! loaded on the first lookup that names its record, kept for the session. Load rolls the
+//! mutators (`GenerateMutators`, once for `min/maxMutators` + `mutatorPakList`, once for the
+//! player list): `IGenerate(min, min(max, list length))` of the shuffled list, each added as an
+//! engine mutator of type 2 with the area's id. PORT: the engine's streams (`RandomUniformLocked`,
+//! CRT `rand()`) are not reproducible; the port draws from `gd_game_core::rng` with the same
+//! distribution.
 //!
 //! Who is in which area (`Character.challengeArea`, [`InChallengeArea`]):
 //! - the player, every update (`Player::UpdateSelf`): the layer-13 id of its cell in its own
-//!   region's level (`SectorLayers::GetTargetId`); none (no region, no entry) leaves the area;
-//! - a monster once, when it enters the world (`Monster::InitialUpdate`: its own region's level at its
-//!   spawn point; it keeps that area wherever it walks);
-//! - containers when they roll their loot (`LootContainer::GenerateFixedItem`, [`challenge_area_at`] in `crate::loot`).
+//!   region's level; none leaves the area;
+//! - a monster once, at its spawn point (`Monster::InitialUpdate`), wherever it walks after;
+//! - a pet, every update (`Pet::UpdateSelf`): it takes its area's player mutators and no area
+//!   scaling. PORT: a pet's region is its owner's;
+//! - containers when they roll their loot ([`challenge_area_at`]).
 //!
 //! What an area does:
-//! - the effect pak (`ChallengeArea::ApplyVisualEffects`): only the controlled player, only with a
-//!   non-empty `auraCharFxPakName`: `SkillManager::AddCharFxPak` on entering, `RemoveCharFxPak`
-//!   on leaving, a character effect pak like a buff's (`crate::casting::attach_buff_fx`, keyed by the
-//!   area record);
-//! - mutators and scaling ([`AreaRules`], `gd_sim::actor::Rules::with_challenge_area`): `Monster::
-//!   GetMonsterMutators` / `Player::GetPlayerMutators` take the engine mutators of type
-//!   2 with the area's id (monsters those without `affectsPlayers`, players those with it), except in the Crucible
-//!   (type 0) and in the Shattered Realm's dungeon (type 1); `Monster::ContributeGameBalance*` adds the area's
-//!   `difficultyAdjustment` pak at the game-balance column;
-//! - loot (`gd_sim::items::loot::{challenge_weight_mods, challenge_misc_drop}`): the monster misc drops and the
-//!   container drops take the area's weight maps and extra drop;
-//! - the timed debuff (`Player::UpdateSelf` + `ChallengeArea::ApplyDebuff`): entering an area
-//!   applies it and sets the player's timer (`Player.challengeDebuffTimer`) to `debuffTime` ms; the timer counts
-//!   down while above 0 and at
-//!   0, still in an area, applies that area's again and restarts. Applying needs the controlled player, a non-empty
-//!   `skillBuffCheck` the player does not have active (`Character::IsSkillBuffActive`) and a player that is not
-//!   invincible or dead: the `debuff` buff lands like `Character::DebufTarget` (level 1, `debuffTime` long;
-//!   `crate::skill_buffs`). Stock: the beaver den's `nerf_buff` every 2 s unless the cauldron's Purity buff
-//!   (`energypotion_pure_buff`) runs. PORT: the transfer has no caster (id 0); the port names the player;
-//! - the HUD (Grim Dawn.exe `UIPlayerHud::Update`): with `shouldDisplayUI` (default true) the area window shows
-//!   and the info icon window lists the area's mutators (`grimdawn::ui::challenge`, `ui/survival.rs`); entering a
-//!   displayed area other than the last one announced shows its `nameTag` as a type-0 cinematic text in white
+//! - the effect pak (`ChallengeArea::ApplyVisualEffects`): the controlled player only, a
+//!   non-empty `auraCharFxPakName` added on entering, removed on leaving, keyed by the record;
+//! - mutators and scaling ([`AreaRules`]): the type-2 mutators with the area's id (monsters
+//!   those without `affectsPlayers`, players those with it), except in the Crucible and the
+//!   Shattered Realm's dungeon; monsters add the area's `difficultyAdjustment` pak;
+//! - loot: monster misc drops and container drops take the area's weight maps and extra drop;
+//! - the timed debuff (`ChallengeArea::ApplyDebuff`): entering applies it and sets
+//!   `Player.challengeDebuffTimer` to `debuffTime` ms; at 0, still in an area, that area's is
+//!   applied again. Applying needs a non-empty `skillBuffCheck` the player does not have active
+//!   and a player not invincible or dead; the `debuff` lands like `Character::DebufTarget`
+//!   (level 1, `debuffTime` long). PORT: the transfer has no caster (id 0); the port names the
+//!   player;
+//! - the HUD (`UIPlayerHud::Update`): with `shouldDisplayUI` (default true), entering a displayed
+//!   area other than the last one announced shows its `nameTag` as a type-0 cinematic text
 //!   ([`announce`]).
-//!
-//! - a pet, every update (`Pet::UpdateSelf`: its own region's level at its
-//!   position, none without an entry): it takes its area's player mutators (the `Pet` vtable's
-//!   `ContributeMutator*` are `Player::`'s, `Pet::GetPetMutators` folded with `Player::GetPlayerMutators`) and
-//!   no area scaling (`Pet::ContributeGameBalance*` only add the pet pak). PORT: a pet's region is its owner's
-//!   (the port's pets carry none).
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
 use std::sync::Arc;
@@ -63,37 +44,34 @@ use gd_game_core::rules::CombatRules;
 use gd_game_core::visuals::BuffFx;
 use gd_sim::actor::Rules;
 
-/// The sector layer of the challenge areas.
 pub const CHALLENGE_LAYER: usize = 13;
 
-/// The challenge area a character stands in (`Character.challengeArea`): the area's layer id and record. On the
-/// player while it is in one, on a monster that entered the world in one.
+/// The challenge area a character stands in (`Character.challengeArea`): layer id and record.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub struct InChallengeArea {
     pub id: [i32; 4],
     pub record: String,
 }
 
-/// The combat rules of a character in a challenge area (its mutators and scaling, [`ChallengeAreas::rules`]); the
-/// profile rebuilds (`player::rebuild_profile`, `monster_skills::rebuild_profiles`) use them instead of
-/// [`CombatRules`]. Derived from [`InChallengeArea`] and [`CombatRules`] by this module only.
+/// The combat rules of a character in a challenge area; the profile rebuilds use them instead
+/// of [`CombatRules`].
 #[derive(Component, Clone)]
 pub struct AreaRules(pub Arc<Rules>);
 
-/// One area object (`ChallengeArea`): its record and the mutator paks `GenerateMutators` rolled.
+/// One area object: its record and the mutator paks `GenerateMutators` rolled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Area {
     pub record: String,
     pub mutators: Vec<String>,
 }
 
-/// The session's area objects by layer id (`GameEngine.challengeAreas`), with the rules derived from them.
+/// The session's area objects by layer id (`GameEngine.challengeAreas`).
 #[derive(Resource, Default)]
 pub struct ChallengeAreas {
     pub areas: HashMap<[i32; 4], Area>,
     /// The last displayed area whose name was announced (`UIPlayerHud.announcedChallengeArea`).
     pub announced: Option<[i32; 4]>,
-    /// Derived rules per (area, keeps the session's mutators), for the [`CombatRules`] they were made from.
+    /// Derived rules per (area, keeps the session's mutators), for `rules_of`.
     rules: HashMap<([i32; 4], bool), Arc<Rules>>,
     rules_of: Option<Arc<Rules>>,
 }
@@ -107,8 +85,7 @@ impl ChallengeAreas {
         })
     }
 
-    /// The rules of a character in area `id` (made with [`Self::area`]); `keep` (the Crucible, the Shattered
-    /// Realm's dungeon): the session's mutators stay.
+    /// The rules of a character in area `id`; `keep`: the session's mutators stay.
     pub fn rules(
         &mut self,
         db: &gd_formats::vfs::Database,
@@ -137,7 +114,7 @@ impl ChallengeAreas {
     }
 }
 
-/// `ChallengeArea::GenerateMutators` for both lists of `record` (module doc).
+/// `ChallengeArea::GenerateMutators` for both lists of `record`.
 fn roll_mutators(db: &gd_formats::vfs::Database, record: &str) -> Vec<String> {
     let Some(rec) = db.get(record) else {
         return Vec::new();
@@ -170,7 +147,7 @@ fn roll_mutators(db: &gd_formats::vfs::Database, record: &str) -> Vec<String> {
     out
 }
 
-/// The player's debuff timer (`Player.challengeDebuffTimer`, ms; module doc).
+/// `Player.challengeDebuffTimer`, ms.
 #[derive(Component, Default, Clone, Copy, Debug)]
 pub struct DebuffTimer(pub i32);
 
@@ -196,8 +173,8 @@ impl Plugin for ChallengeAreasPlugin {
     }
 }
 
-/// The challenge area at `pos`: (layer id, record) of the layer-13 entry of the cell in `region`'s level (else
-/// whichever loaded level covers `pos`). An entry with an empty record is no area (`GetChallengeArea` makes none).
+/// The challenge area at `pos`: the layer-13 entry of the cell in `region`'s level (else any
+/// loaded level covering `pos`). An entry with an empty record is no area.
 pub fn challenge_area_at(
     levels: &Levels,
     region: Option<usize>,
@@ -215,16 +192,16 @@ pub fn challenge_area_at(
         .map(|c| (guid, c.record.as_str()))
 }
 
-/// Whether the session's own mutators win over an area's at `region` (module doc): the Crucible, or a region of
-/// the Shattered Realm's dungeon.
+/// Whether the session's own mutators win over an area's at `region`: the Crucible, or the
+/// Shattered Realm's dungeon.
 fn keeps_mutators(rt: Option<&gd_game_core::story::StoryRuntime>, region: Option<usize>) -> bool {
     let Some(rt) = rt else { return false };
     let s = rt.story.borrow();
     s.game.survival_mode || region.is_some_and(|r| s.endless.in_dungeon(r, false))
 }
 
-/// `Player::UpdateSelf`'s challenge-area step (module doc) for the player: the area, its effect pak, the debuff
-/// timer and the name announcement.
+/// `Player::UpdateSelf`'s challenge-area step: the area, its effect pak, the debuff timer and
+/// the name announcement.
 #[allow(clippy::too_many_arguments)]
 fn track_challenge_area(
     mut commands: Commands,
@@ -252,7 +229,7 @@ fn track_challenge_area(
     for (player, tf, cur, timer, mut target) in &mut players {
         let now = challenge_area_at(&levels, region, tf.translation);
         let mut left = timer.as_ref().map_or(0, |t| t.0);
-        // The timer runs first (`Player.challengeDebuffTimer`), with the area of the last update.
+        // The timer runs first, with the area of the last update.
         if left > 0 {
             left -= dt_ms;
             if left <= 0
@@ -333,15 +310,15 @@ fn track_challenge_area(
     }
 }
 
-/// Whether area `record` shows the HUD (`ChallengeArea::GetDisplayUI`: `shouldDisplayUI`, default true).
+/// `ChallengeArea::GetDisplayUI`: `shouldDisplayUI`, default true.
 pub fn displays_ui(data: &GameData, record: &str) -> bool {
     data.db
         .get(record)
         .is_none_or(|r| r.f32("shouldDisplayUI").is_none_or(|v| v != 0.0))
 }
 
-/// The HUD update's announcement (`UIPlayerHud::Update`): a displayed area other than the last announced one
-/// becomes the last and its `nameTag` is announced (`Engine::ShowCinematicText(name, "", 0, white)`).
+/// `UIPlayerHud::Update`'s announcement: a displayed area other than the last announced one
+/// becomes the last and its `nameTag` is returned.
 pub fn announce(
     data: &GameData,
     areas: &mut ChallengeAreas,
@@ -364,7 +341,6 @@ fn debuff_ms(data: &GameData, record: &str) -> i32 {
         .map_or(0, |s| (s * 1000.0) as i32)
 }
 
-/// What [`apply_debuff`] reads and writes on the player.
 type DebuffTarget = (
     Option<&'static mut gd_game_core::skill_buffs::ReceivedBuffs>,
     Option<&'static gd_game_core::player::Loadout>,
@@ -372,9 +348,8 @@ type DebuffTarget = (
     Has<crate::combat::Invincible>,
 );
 
-/// Whether `buff` runs on the player (`Character::IsSkillBuffActive`: the character's active buffs by record).
-/// PORT: the port keeps them in two places: its timed self buffs (the shared
-/// [`gd_game_core::skill_buffs::TimedBuffs`] store) and the buffs others put on it.
+/// `Character::IsSkillBuffActive`. PORT: the port keeps the buffs in two places, the timed self
+/// buffs and the received buffs.
 fn buff_active(
     data: &GameData,
     buff: &str,
@@ -393,7 +368,7 @@ fn buff_active(
         || loadout.is_some_and(|l| l.buffs.list.iter().any(|b| is(&b.0)))
 }
 
-/// `ChallengeArea::ApplyDebuff(player, true)` (module doc).
+/// `ChallengeArea::ApplyDebuff(player, true)`.
 fn apply_debuff(
     commands: &mut Commands,
     data: &GameData,
@@ -450,8 +425,8 @@ fn apply_debuff(
     }
 }
 
-/// `Monster::InitialUpdate`'s challenge-area step: a monster entering the world takes the area of its spawn point
-/// in its own region's level (module doc).
+/// `Monster::InitialUpdate`'s challenge-area step: the area of the spawn point in the monster's
+/// own region's level.
 fn monster_challenge_area(
     mut commands: Commands,
     data: Res<GameData>,
@@ -474,7 +449,7 @@ fn monster_challenge_area(
     }
 }
 
-/// `Pet::UpdateSelf`'s challenge-area step (module doc).
+/// `Pet::UpdateSelf`'s challenge-area step.
 fn pet_challenge_area(
     mut commands: Commands,
     data: Res<GameData>,
@@ -504,8 +479,7 @@ fn pet_challenge_area(
     }
 }
 
-/// A pet's [`AreaRules`] came, changed or went (applied by the chain's sync point): its profile is rebuilt
-/// (`pets::refresh_profiles`).
+/// A pet's [`AreaRules`] came, changed or went: its profile is rebuilt.
 fn pet_profiles(
     mut changed: Query<&mut crate::pets::Pet, Changed<AreaRules>>,
     mut gone: RemovedComponents<AreaRules>,
@@ -521,8 +495,7 @@ fn pet_profiles(
     }
 }
 
-/// Keeps [`AreaRules`] (and the profile) in step with each character's [`InChallengeArea`] and the
-/// [`CombatRules`]: set when the area or the rules change, removed with the area.
+/// Keeps [`AreaRules`] (and the profile) in step with [`InChallengeArea`] and [`CombatRules`].
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn area_rules(
     mut commands: Commands,
@@ -552,7 +525,7 @@ fn area_rules(
         if !(area.is_changed() || rules.is_changed() || !has_rules) {
             continue;
         }
-        // A monster's skills (and profile rebuild) start a frame after it enters the world: wait for them.
+        // A monster's skills (and profile rebuild) start a frame after it spawns: wait.
         if monster.is_some() && ms.is_none() {
             continue;
         }

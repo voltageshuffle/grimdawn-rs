@@ -1,9 +1,8 @@
 //! Record access for the item code over any record source (normally the merged [`Database`]).
 //!
 //! [`ItemDb`] holds no records of its own: the source decides what a name means now.
-//! `Database::get` borrows the record decoded once per (archive, record) and follows the
-//! Crucible overlay, so an `ItemDb` from `GameData::item_db` serves the campaign's record or
-//! the overlay's as the session's mode changes. Lookups borrow: nothing is copied per call.
+//! `Database::get` follows the Crucible overlay, so an `ItemDb` from `GameData::item_db`
+//! serves the campaign's record or the overlay's as the session's mode changes.
 use gd_formats::arz::{RawValue, Record};
 use gd_formats::collections::HashMap;
 use gd_formats::vfs::{Database, normalize};
@@ -12,7 +11,7 @@ use std::sync::Arc;
 /// Anything that can lend decoded database records by name.
 pub trait RecordSource: Send + Sync {
     fn record(&self, name: &str) -> Option<&Record>;
-    /// Every record name (lower-case, `/` separators; `potions` scans them once).
+    /// Every record name (lower-case, `/` separators).
     fn names(&self) -> Vec<String> {
         Vec::new()
     }
@@ -65,7 +64,7 @@ impl ItemDb {
         Self { src }
     }
 
-    /// The record `name`, borrowed from the source (`None` for an empty name).
+    /// `None` for an empty name.
     pub fn get(&self, name: &str) -> Option<&Record> {
         if name.is_empty() {
             return None;
@@ -78,7 +77,7 @@ impl ItemDb {
     }
 }
 
-/// Engine `LoadTable` accessors (the semantics the item code relies on).
+/// Engine `LoadTable` accessors.
 pub trait Fields {
     /// `GetFloat(name)`: first value, 0 when absent.
     fn float(&self, key: &str) -> f32;
@@ -90,7 +89,7 @@ pub trait Fields {
     /// `GetArray(name)` without the zero rule.
     fn raw_values(&self, key: &str) -> Vec<f32>;
     /// Entry `index` of [`Fields::raw_values`], clamped to the last one (`None` when there are
-    /// none), read in place.
+    /// none).
     fn value_at(&self, key: &str, index: usize) -> Option<f32>;
     /// `GetString(name)` ("" when absent).
     fn string(&self, key: &str) -> &str;

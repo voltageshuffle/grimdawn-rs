@@ -4,33 +4,16 @@
 //! ([`gd_formats::ui`]): UI scale factor from the resolution, window
 //! alignment, `round(pos × scale)` for child positions and `texture size ×
 //! scale` for bitmaps. Every widget becomes an absolutely positioned Bevy UI
-//! node under one root, spawned in the engine's draw order. The tree is
-//! rebuilt when the window size, panel state or another layout input changes;
-//! bar fills animate every frame. Overlays whose numbers change every few frames (cooldown wipes, buff sweeps,
-//! overhead and hover bars) are built per layout and animate their fills, wipes and texts in place
-//! ([`set_node_rect`], [`LiveText`]).
+//! node under one root, spawned in the engine's draw order.
 //!
 //! Blending: the engine blends UI in gamma space (its UNORM back buffer); so
-//! does the port: the UI is drawn into the frame while it holds gamma values
-//! and every UI shader writes colours and texels as given (`render/post.rs`,
-//! "UI"), so colours, tints and textures' own alpha need no correction. The
-//! additive and masked materials (`additive.rs`, `masked.rs`) do the same in
-//! their shaders.
+//! does the port, and every UI shader writes colours and texels as given.
 //!
-//! The UI only reads gameplay state and sends request messages (AGENTS.md): it never mutates
-//! `Inventory`, `Stash` or `PlayerProgress`, and gameplay state like the pause key's hold goes
-//! through a request (`gd_game_core::pause::PauseKey`, sent by the game menu and [`esc_dispatcher`],
-//! applied by `gd_game::pause::apply_pause_key` after the UI input). Presentation-adjacent options
-//! are the exception, written directly as the options window does (`options/input.rs`): the local
-//! map's zoom (`localmap::persist_zoom` → `GameOptions` `mapZoom` + `settings::store`) and the quest
-//! tracker's toggle (`quests::tracker_input` → `questwidgetopen`). Those only change how the UI
-//! looks and persist to the port's options file, so they stay direct writes.
+//! The UI only reads gameplay state and sends request messages (AGENTS.md). Exception: presentation
+//! options (the local map's zoom, the quest tracker's toggle) are written directly, as the options window does.
 //!
-//! The windows coupled to the binary's audio mixer, world streaming or menu scene (`credits`,
-//! `survival`, `options`, `localmap`, `riftmap`, `cinematic`, `view`, `mainmenu`, `quicktip`) stay in
-//! `grimdawn::ui`; the presentation state they share with the input systems is [`state`].
-// Bevy system parameters (queries with filters, param tuples) are long by nature; Bevy recommends
-// allowing this lint for them.
+//! The windows coupled to the binary's audio mixer, world streaming or menu scene stay in `grimdawn::ui`;
+//! the presentation state they share with the input systems is [`state`].
 #![allow(clippy::type_complexity)]
 pub mod achievements;
 pub mod altar;
@@ -78,8 +61,6 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::ui::{Widget, WindowDef};
 use gd_game_core::data::GameData;
-// The shared kit (builder, fonts, chrome, key bindings, play / input / HUD sets), imported privately
-// so the window modules keep their `super::` paths; callers outside `ui` use `gd_ui_kit::` directly.
 use gd_ui_kit::{
     HudSet, LiveText, RootFrame, TextAt, Ui, UiAssets, UiInputSet, UiPlaySet, contains, cursor_px,
     retire_roots, set_image_src, set_node_rect, spawn_frame_root, spawn_hud_overlay, spawn_root,
@@ -87,18 +68,16 @@ use gd_ui_kit::{
 use gd_ui_kit::{additive, confirm, keys, masked, text, tip, widgets};
 use text::FontCache;
 
-/// The player state the HUD and windows show: a view assembled each frame by
-/// [`view::collect`] from the gameplay state (empty until the player exists), published field by field
-/// where it changed (so it is `Changed` only then). The values that change most frames are in [`HudVitals`].
+/// The player state the HUD and windows show, assembled each frame by [`view::collect`] (empty until the
+/// player exists), published field by field where it changed. The values that change most frames are in
+/// [`HudVitals`].
 #[derive(Resource, Clone, PartialEq)]
 pub struct HudValues {
     /// Fraction of the current level's experience, 0..1.
     pub experience: f32,
     /// The Shattered Realm's floor progress of the player's region, 0..=1 (`Stat::EndlessProgress`).
     pub endless_progress: f32,
-    /// Total experience and the total that leaves the level
-    /// (`GetExperiencePoints` / `GetNextLevelExperience`), and whether the
-    /// level is the last (`IsMaxLevel`): the experience bar's rollover.
+    /// `GetExperiencePoints` / `GetNextLevelExperience` / `IsMaxLevel`: the experience bar's rollover.
     pub experience_points: u64,
     pub experience_next: u64,
     pub max_level: bool,
@@ -108,55 +87,42 @@ pub struct HudValues {
     /// Character-window numbers by field name without the `tabN` prefix
     /// (e.g. `StrengthNumber`); missing ones show 0.
     pub stats: std::collections::BTreeMap<String, String>,
-    /// The stats rows' rollover values by the same keys
-    /// (`gd_sim::sheet::numbers_and_rollovers`; `rollover.rs`).
+    /// The stats rows' rollover values by the same keys.
     pub rollovers: std::collections::BTreeMap<String, gd_sim::sheet::RollValues>,
-    /// The armour row's breakdown window (`gd_sim::sheet::armor_breakdown`;
-    /// `armor_window.rs`).
+    /// The armour row's breakdown window.
     pub armor: gd_sim::sheet::ArmorBreakdown,
-    /// The left / right mouse skill's damage lines (`gd_game::sheet_dps`
-    /// `SheetDps::breakdown`): the page II LMB / RMB rollovers.
+    /// The left / right mouse skill's damage lines: the page II LMB / RMB rollovers.
     pub skill_breakdown: [Vec<(bool, gd_sim::attributes::CombatType, f32, f32)>; 2],
     pub attribute_points: u32,
     pub skill_points: u32,
-    /// The class trees whose skills-window pane has its undo button enabled (`gd_game::points::SkillUndo`).
+    /// The class trees whose skills-window pane has its undo button enabled.
     pub skill_undo: Vec<String>,
-    /// The skills window is in reclamation mode (`reclamation.rs`).
     pub reclaim: Option<reclamation::ReclaimView>,
-    /// The devotion window's reclaim mode (`reclamation::DevotionReclaimView`).
     pub devotion_reclaim: Option<reclamation::DevotionReclaimView>,
-    /// The devotion window's undo button is enabled (`gd_game::devotion::DevotionUndo`).
     pub devotion_undo: bool,
-    /// The player's learned skills (skills window).
     pub skills: gd_sim::skills::SkillBook,
     /// Hotbar icons (bitmap paths) by save slot: 0–9 keys 1–0, 10/11 mouse.
     pub hotbar: Vec<Option<String>>,
     /// Hotbar row shown on the number slots (0, or 1 while Ctrl is held).
     pub hotbar_row: usize,
-    /// The hot slots' key labels by HUD master field (the bound keys,
-    /// `hud::slot_labels`; a rebind is a layout change).
+    /// The hot slots' key labels by HUD master field; a rebind is a layout change.
     pub hotbar_labels: std::collections::BTreeMap<&'static str, String>,
-    /// Each living pet's portrait buff icons (bitmaps,
-    /// `gd_game::buff_bar::pet_icons`; `pets.rs`).
+    /// Each living pet's portrait buff icons.
     pub pet_buffs: Vec<(Entity, Vec<String>)>,
-    /// The hovered character's debuff icons (`view::target_strip`; `hover.rs`, `monsterBarsDebuffs`).
+    /// The hovered character's debuff icons (`monsterBarsDebuffs`).
     pub target_debuffs: Vec<status::TargetDebuff>,
-    /// The HUD teleport button shown (`gd_game::riftgates::portal_button`).
     pub teleport: Option<gd_game::riftgates::PortalButton>,
-    /// The HUD weapon-swap button works (`gd_game::weapon_sets`: set II was
-    /// chosen once in the character window).
+    /// Set II was chosen once in the character window.
     pub weapon_swap: bool,
-    /// The game-mode label's tags (`gd_rules::mode::Mode::label_tags_in`; `""` = unused slot).
+    /// `""` = unused slot.
     pub mode_tags: [&'static str; 2],
-    /// The area name tag at the player (the map's name sector; `hud.rs`).
+    /// The map's name sector at the player.
     pub area_tag: String,
-    /// The challenge area the player stands in, when it shows the HUD (`challenge.rs`).
+    /// The challenge area the player stands in, when it shows the HUD.
     pub challenge_area: Option<challenge::ChallengeHud>,
-    /// The player's faction reputation in save order (`PlayerFactions::list`; the factions window).
+    /// Save order.
     pub factions: Vec<gd_formats::save::gdc::Faction>,
-    /// The orb HUD's menu folder (`menufolder.rs`).
     pub menu_folder: menufolder::FolderView,
-    /// The HUD's options button (`hud::OptionsButton`).
     pub options_button: hud::OptionsButton,
 }
 
@@ -199,31 +165,26 @@ impl Default for HudValues {
     }
 }
 
-/// The player values that change most frames (life, energy, the hot slots' cooldowns, the buff bar's timers),
-/// written in place by [`view::collect`] every frame; their readers animate what they drive in place
-/// (`hud::animate_bars`, `hud::orb_texts`, `cooldown::draw`, `status::draw`, the overhead health).
+/// The player values that change most frames, written in place by [`view::collect`]; their readers
+/// animate in place.
 #[derive(Resource, Clone, PartialEq)]
 pub struct HudVitals {
     pub health: f32,
     pub health_max: f32,
     pub energy: f32,
     pub energy_max: f32,
-    /// Energy reserved by active auras (`Character::GetReserveMana`).
+    /// `Character::GetReserveMana`.
     pub energy_reserved: f32,
-    /// Current constitution and its limit (`GetCurrentConstitution` / `GetConstitutionLimit`, the `hudConstitutionBar`).
+    /// `GetCurrentConstitution` / `GetConstitutionLimit`.
     pub constitution: f32,
     pub constitution_max: f32,
-    /// Status icons above the hotbar (`status.rs`).
     pub status: Vec<status::StatusIcon>,
-    /// The shown hot slots' running cooldowns (`cooldown.rs`).
     pub cooldowns: Vec<cooldown::SlotCooldown>,
-    /// The value of the player's fixed duration-damage entry of type 61 (`DamageMultiplier`, applied by enemy skills'
-    /// `offensiveSlowDamageMult*`; 0: none); nonzero shows the "sundered" overlay (`survival.rs`).
+    /// The player's fixed duration-damage entry of type 61 (`DamageMultiplier`; 0: none); nonzero shows the
+    /// "sundered" overlay.
     pub damage_taken_debuff: f32,
-    /// The health-gain ("incoming heal") bar's ratio: `(life + PotionOverTime.life) / life_max`
-    /// clamped to 0..1 (`Character::GetPotentialLife`; `hud::Stat::HealthGain`).
+    /// `(life + PotionOverTime.life) / life_max` clamped to 0..1 (`Character::GetPotentialLife`).
     pub health_gain: f32,
-    /// The shown hot slots' state overlays (`hud::hot_slot_states`; `view::collect` fills them).
     pub hot_slots: Vec<hud::HotSlotState>,
 }
 
@@ -246,32 +207,27 @@ impl Default for HudVitals {
     }
 }
 
-/// Which windows are open (`I` / `C` toggle the character window).
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct UiPanels {
     pub character: bool,
-    /// Skills window (`S`) and its tab (1-based).
+    /// Skills window and its tab (1-based).
     pub skills: bool,
     pub skill_tab: u8,
-    /// The mastery (class tree) picked on each slot's selection pane: its pane shows in that slot until undone
-    /// there (`skills` module doc).
+    /// The mastery picked on each slot's selection pane: its pane shows in that slot until undone there.
     pub mastery_picks: [Option<String>; 2],
-    /// The mastery (`masteryMasteryButtons` index) the free slot's selection pane describes: the last one hovered
-    /// (`skills` module doc).
+    /// The mastery (`masteryMasteryButtons` index) the free slot's selection pane describes: the last hovered.
     pub mastery_hover: Option<u8>,
-    /// Character stats tab 1..=4 (tab pane shown inside the character window).
+    /// Character stats tab 1..=4.
     pub tab: u8,
-    /// Devotion window (`Y`).
     pub devotion: bool,
     /// Scroll offset (UI units) of the page II / III lists, by page.
     pub sheet_scroll: [f32; 4],
-    /// Collapsed list sections (header field names).
+    /// Header field names.
     pub sheet_collapsed: Vec<String>,
 }
 
 impl UiPanels {
-    /// Equal apart from the page II / III scroll (the lists scroll in place, `character::scroll_sheet`: a scroll
-    /// is not a reason to rebuild the character window).
+    /// Equal apart from the page II / III scroll (the lists scroll in place).
     fn same_but_scroll(&self, o: &Self) -> bool {
         let Self {
             character,
@@ -293,9 +249,8 @@ impl UiPanels {
     }
 }
 
-/// The HUD's separately built root groups: each has its own signature, so a change rebuilds only the
-/// groups that read it. Stacked in this order ([`ZIndex`] on the root), under the overlays that carry
-/// a `GlobalZIndex`.
+/// The HUD's separately built root groups, each with its own signature. Stacked in this order
+/// ([`ZIndex`] on the root), under the overlays that carry a `GlobalZIndex`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Group {
     Hud,
@@ -318,13 +273,11 @@ impl Group {
 #[derive(Component)]
 pub struct UiRoot(pub Group);
 
-/// A rebuilt UI tree waiting one frame (hidden) for layout and glyphs; then it
-/// replaces the previous tree of its group, so a rebuild never shows a half-built frame.
+/// A rebuilt UI tree waiting one frame (hidden) for layout and glyphs before replacing its group's tree.
 #[derive(Component)]
 pub struct UiFresh;
 
-/// Shows each group's fresh root and despawns the root it replaces. `rebuild` runs after this system
-/// and spawns at most one root per group per frame, so a group has at most one fresh root here.
+/// `rebuild` runs after this and spawns at most one root per group per frame.
 fn swap_fresh(
     mut commands: Commands,
     fresh: Query<(Entity, &UiRoot), With<UiFresh>>,
@@ -343,8 +296,7 @@ fn swap_fresh(
     }
 }
 
-/// What each group's last build read (owned copies, compared against the live values without
-/// cloning: [`Live`]). A group rebuilds when its own signature differs.
+/// What each group's last build read; a group rebuilds when its own signature differs.
 #[derive(Resource, Default)]
 struct Built {
     hud: Option<HudSig>,
@@ -354,25 +306,20 @@ struct Built {
     devotion: Option<DevotionSig>,
 }
 
-/// The live inputs of the signatures.
 struct Live<'a> {
-    /// The window size and the UI scale's bits (`UiAssets::scale`): a scale change in Options
-    /// rebuilds every group at the new scale, as a resize does (the HUD is never reopened).
+    /// The window size and the UI scale's bits.
     size: (UVec2, u32),
-    /// The font cache's tags generation (`FontCache::generation`): a mod or language swap reloads
-    /// the tags and rebuilds every group (the static tag-resolved labels are baked at build time).
+    /// `FontCache::generation`: tag-resolved labels are baked at build time.
     generation: u64,
     panels: &'a UiPanels,
     values: &'a HudValues,
     inventory: u64,
     trade: u64,
     trade_open: bool,
-    /// The open trade window's gold-derived looks (`trade::afford`): the cost's affordable colour
-    /// and the gold-gated action's enabled state. Gold itself is NOT a signature input (PERF-24).
+    /// The open trade window's gold-derived looks (`trade::afford`); gold itself is not a signature input.
     trade_afford: (bool, bool),
     potions: bool,
     loot_button: lootfilter::HudButton,
-    /// The factions and achievements windows are open (their classic HUD buttons are down).
     menu_down: [bool; 2],
     devotion: (u64, u64),
     classic_hud: bool,
@@ -382,7 +329,6 @@ impl Live<'_> {
     fn points(&self) -> (u32, u32) {
         (self.values.attribute_points, self.values.skill_points)
     }
-    /// What decides where the character and NPC windows sit (`docked`).
     fn docking(&self) -> (bool, bool, bool, u64) {
         (
             self.panels.character,
@@ -406,7 +352,6 @@ struct HudSig {
     hotbar: Vec<Option<String>>,
     hotbar_labels: std::collections::BTreeMap<&'static str, String>,
     loot_button: lootfilter::HudButton,
-    /// The factions and achievements windows are open (their classic HUD buttons are down).
     menu_down: [bool; 2],
     weapon_swap: bool,
     menu_folder: menufolder::FolderView,
@@ -458,9 +403,7 @@ impl HudSig {
     }
 }
 
-/// The character window's layout signature. Gold and the stats numbers are NOT here: they
-/// change without changing the layout (every pickup / kill / stat tick) and are redrawn in
-/// place by the window (`character.rs`), so a rebuild for them would be a rebuild storm.
+/// Gold and the stats numbers are not here: the window redraws them in place.
 #[derive(PartialEq)]
 struct CharacterSig {
     size: (UVec2, u32),
@@ -471,8 +414,7 @@ struct CharacterSig {
     inventory: u64,
     points: (u32, u32),
     skills: gd_sim::skills::SkillBook,
-    /// The mouse skills' names on page II (`list.SkillTag0/1`, the bound left / right hot slots):
-    /// drawn only at build, so a rebind rebuilds.
+    /// The mouse skills' names on page II (`list.SkillTag0/1`): drawn only at build.
     skill_tags: [Option<String>; 2],
 }
 
@@ -496,7 +438,6 @@ impl CharacterSig {
     }
     fn same(&self, l: &Live) -> bool {
         let v = l.values;
-        // Closed before and now: nothing is drawn, whatever the values do.
         if !self.panels.character && !l.panels.character && self.size == l.size {
             return true;
         }
@@ -516,11 +457,7 @@ impl CharacterSig {
     }
 }
 
-/// The trade window's layout signature. Gold is NOT here (PERF-24, as `CharacterSig`): a pickup
-/// changes no layout while the affordability looks hold. The gold-derived looks that ARE baked at
-/// build — the cost's red colour and the gold-gated action button — are keyed as the `afford` pair
-/// (`trade::afford`), so only a pickup that flips one rebuilds; the crafter's per-row craftable
-/// counts and the Illusionist's gold total animate in place (`trade::live_gold`).
+/// Gold is not here; the gold-derived looks baked at build are keyed as the `afford` pair.
 #[derive(PartialEq)]
 struct TradeSig {
     size: (UVec2, u32),
@@ -569,7 +506,7 @@ struct SkillsSig {
     hover: Option<u8>,
     undo: Vec<String>,
     skills: gd_sim::skills::SkillBook,
-    /// Reclamation mode and, in it, the money (its texts and the f8 flags).
+    /// Reclamation mode and, in it, the money.
     reclaim: Option<(reclamation::ReclaimView, u64)>,
 }
 
@@ -621,7 +558,7 @@ struct DevotionSig {
     version: (u64, u64),
     undo: bool,
     skills: gd_sim::skills::SkillBook,
-    /// The reclaim mode and, in it, the money (the sidebar's numbers, the star looks).
+    /// The reclaim mode and, in it, the money.
     reclaim: Option<(reclamation::DevotionReclaimView, u64)>,
 }
 
@@ -657,8 +594,7 @@ impl DevotionSig {
     }
 }
 
-/// The HUD rebuild chain ([`swap_fresh`] → [`rebuild`] → the bar animators), inside [`HudSet`]. The
-/// binary's `view::collect` fills [`HudValues`] / [`HudVitals`] before it (`.before(HudBuildSet)`).
+/// The HUD rebuild chain, inside [`HudSet`]; the binary's `view::collect` runs before it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HudBuildSet;
 
@@ -744,7 +680,7 @@ impl Plugin for UiPlugin {
         #[cfg(feature = "dev")]
         app.add_systems(PreStartup, open_panels);
         app
-            // Before the windows that reset the mouse (game menu, options; the main menu's after them).
+            // Before the windows that reset the mouse.
             .add_systems(
                 PreUpdate,
                 (widgets::play_button_sounds, keys::mouse_codes)
@@ -756,8 +692,7 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 (
-                    // After the window clicks (a modal box answers Esc first) and the pet input (Esc
-                    // clears the pet selection whatever the dispatcher then closes).
+                    // After the window clicks (a modal box answers Esc first) and the pet input.
                     esc_dispatcher
                         .after(window::WindowClicks)
                         .after(crate::state::pets::PetInputSet),
@@ -813,8 +748,6 @@ impl Plugin for UiPlugin {
     }
 }
 
-/// `GD_UI_OPEN` (hooks.rs) opens the inventory, character, skills or devotion window at start
-/// (`quests`, `potions`, `localmap`, `lootfilter`: their own modules).
 #[cfg(feature = "dev")]
 fn open_panels(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let Some(v) = hooks
@@ -845,11 +778,8 @@ fn open_panels(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     });
 }
 
-/// The font cache follows the data: tags loaded (and fonts and styles dropped) at startup and again whenever the
-/// mounted mod or the language changes (the base game, the Crucible, a custom game's mod; `GameData::tags` keeps
-/// one table per mod and language). The reload bumps `FontCache::generation` (every UI group rebuilds) and clears
-/// the hot slots' resolved key labels, which `view::collect` refills from the new tags (its refresh condition is
-/// "bindings changed or labels empty").
+/// Reloads the tags (dropping fonts and styles) at startup and whenever the mounted mod or language
+/// changes; bumps `FontCache::generation` and clears the hot slots' key labels for `view::collect` to refill.
 pub fn load_tags(
     data: Res<GameData>,
     mut fonts: ResMut<FontCache>,
@@ -882,17 +812,12 @@ fn toggle_panels(
     if bindings.just_pressed(keys::SKILLS, &keys) {
         windows.toggle(window::Window::Skills);
     }
-    // Esc is the shared dispatcher's ([`esc_dispatcher`]): it closes the frontmost window.
 }
 
-/// The one Escape dispatcher (the engine routes a key to the focused window only: the factions
-/// key `InGameUI::HandleKeyAction` case 52, `CursorHandlerEnchant::Escape` returning "consumed"; INFERENCE Esc follows
-/// the same focus model). It walks the open modals front-to-back (a confirmation over its window, the
-/// stack / pick / search boxes, the options window, the apply mode and the armed hot slot), then the focus
-/// stack of open windows — a window moves to the front when it opens — closes the first one found and
-/// consumes the press; with nothing open it opens the game menu. The PreUpdate input systems that swallow
-/// the keyboard (game menu, options, stack, devotion search) leave Escape alive for it
-/// ([`keys::reset_but_escape`]).
+/// The one Escape dispatcher (the engine routes a key to the focused window only: `InGameUI::HandleKeyAction`
+/// case 52, `CursorHandlerEnchant::Escape`; INFERENCE Esc follows the same focus model): the open modals
+/// front-to-back, then the focus stack of open windows; with nothing open it opens the game menu. The
+/// PreUpdate input systems that swallow the keyboard leave Escape alive for it ([`keys::reset_but_escape`]).
 #[allow(clippy::too_many_arguments)]
 fn esc_dispatcher(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -937,7 +862,6 @@ fn esc_dispatcher(
         focus.clear();
         *was = Default::default();
     }
-    // The focus stack: a window moves to the front when it opens, drops out when it closes.
     let now = windows.snapshot();
     for (i, w) in window::Window::ALL.into_iter().enumerate() {
         if now[i] && !was[i] {
@@ -952,18 +876,16 @@ fn esc_dispatcher(
         return;
     }
     let closed = 'close: {
-        // The hardcore Game Over box is over everything: Esc answers it and leaves the session (`death.rs`).
+        // The hardcore Game Over box: Esc leaves the session.
         if over.is_open() {
             exit.write(crate::state::exit::ExitToMenu);
             break 'close true;
         }
-        // The game menu's own confirmation is over everything else.
         if windows.menu.confirm.is_some() {
             windows.menu.confirm = None;
             break 'close true;
         }
-        // The options window (`Z_OPTIONS`) and the game menu (`Z_MENU`) are drawn over every
-        // modal box below (`Z_MODAL` / `Z_WINDOW`), which stay open under them: Esc closes the top.
+        // The options window and the game menu are drawn over every modal box below.
         if options.escape() {
             break 'close true;
         }
@@ -971,13 +893,11 @@ fn esc_dispatcher(
             windows.close(window::Window::GameMenu);
             break 'close true;
         }
-        // The trade window's dialog box (`crate::state::trade::Prompt`) or the Inventor's dismantle warning
-        // (`Trade::confirm`): Esc answers No.
+        // The trade window's dialog box or the Inventor's dismantle warning: Esc answers No.
         if windows.trade.prompt.is_some() || windows.trade.confirm {
             prompt_out.write(crate::state::trade::DismissPrompt);
             break 'close true;
         }
-        // The apply mode's questions (`apply.rs`): Esc answers No.
         if *confirm != apply::InvConfirm::None {
             *confirm = apply::InvConfirm::None;
             break 'close true;
@@ -1022,13 +942,12 @@ fn esc_dispatcher(
             potions.list = None;
             break 'close true;
         }
-        // The apply mode itself (no confirmation up): Esc ends it, the window stays.
+        // The apply mode itself: Esc ends it, the window stays.
         if inv.applying.is_some() {
             apply_out.write(gd_game_core::inventory::ApplyRequest::Cancel);
             break 'close true;
         }
-        // An armed hot slot drops before any window closes (the slot buttons take Esc,
-        // `UIPlayerHud::HandleEscape`, `hotbar_pick::disarm`).
+        // An armed hot slot drops before any window closes (`UIPlayerHud::HandleEscape`).
         if armed.0.is_some() {
             disarm_out.write(gd_game::hotbar::DisarmHotSlot);
             break 'close true;
@@ -1045,16 +964,14 @@ fn esc_dispatcher(
         false
     };
     if !closed {
-        // Nothing open: the game menu, as its key (it replaces the pause key's pause).
+        // Nothing open: the game menu (it replaces the pause key's pause).
         windows.menu.open = true;
         pause_out.write(gd_game_core::pause::PauseKey(Some(false)));
     }
     keys.clear_just_pressed(KeyCode::Escape);
 }
 
-/// Where the character window sits (`Ui::docked`: the x span of the window beside it): an NPC window
-/// and the inventory side by side, centred; the potions window and the inventory; else a lone
-/// character window centred. Only while the character window is open.
+/// The x span of the window beside the character window, only while it is open.
 fn docked(
     panels: &UiPanels,
     trade: &crate::state::trade::Trade,
@@ -1074,13 +991,12 @@ fn docked(
         let left = ((screen.x - tw.w - cw.w) * 0.5).max(0.0).round();
         Some((left, left + tw.w))
     } else if potions_open && let Some(pr) = potions::window_rect(data, screen, s) {
-        // The potions window and the inventory side by side (`potions.rs`).
         Some((pr.x, pr.x + pr.w))
     } else if !panels.skills
         && let Some(cm) = data.db.get(character::MASTER)
     {
-        // PORT: a lone character window opens centred (the record's
-        // `windowScreenAlignmentX Right` is only used beside the skills window).
+        // PORT: a lone character window opens centred (the record's `windowScreenAlignmentX Right` is only
+        // used beside the skills window).
         let cw = WindowDef::from_record(cm).screen_rect(screen.x, screen.y, s);
         Some((0.0, ((screen.x - cw.w) * 0.5).max(0.0).round()))
     } else {
@@ -1088,8 +1004,7 @@ fn docked(
     }
 }
 
-/// Builds the HUD's root groups ([`Group`]) whose signature changed; a closed window's group is
-/// despawned and its layout cache reset instead of built.
+/// Builds the groups whose signature changed; a closed window's group is despawned and its layout cache reset.
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
     mut commands: Commands,
@@ -1151,7 +1066,7 @@ fn rebuild(
     let s = assets.scale(size);
     let screen = Vec2::new(size.x as f32, size.y as f32);
     let spawn = |commands: &mut Commands, g: Group| {
-        // Even local z: the odd one between `Hud` and `Character` is the HUD overlays' ([`HUD_OVERLAY_Z`]).
+        // Even local z: the odd one between `Hud` and `Character` is [`HUD_OVERLAY_Z`].
         let z = 2 * Group::ALL.iter().position(|x| *x == g).unwrap_or(0) as i32;
         commands
             .spawn((
@@ -1216,7 +1131,6 @@ fn rebuild(
             let root = spawn(&mut commands, Group::Trade);
             let mut ui = ui!(root);
             ui.docked = docked(&panels, &trade, potions_open.open, &data, screen, s);
-            // `GD_REROLL`: every reroll kind is usable.
             #[cfg(feature = "dev")]
             let reroll_test = hooks.items.reroll.is_some();
             #[cfg(not(feature = "dev"))]
@@ -1260,7 +1174,7 @@ fn rebuild(
         match (&devotion, panels.devotion) {
             (Some(d), true) => {
                 if view.built_scroll != view.scroll {
-                    // Build bookkeeping, not a view change: devotion.rs readers key on `version`.
+                    // Not a view change: devotion.rs readers key on `version`.
                     let v = view.bypass_change_detection();
                     v.built_scroll = v.scroll;
                 }
@@ -1287,7 +1201,7 @@ fn rebuild(
     }
 }
 
-/// Resets the HUD and window state a session leaves (`exit/mod.rs`).
+/// Resets the HUD and window state a session leaves.
 pub fn reset_session(world: &mut World) {
     world.insert_resource(hud::HotbarRow::default());
     world.insert_resource(UiPanels::default());
@@ -1313,7 +1227,7 @@ pub fn reset_session(world: &mut World) {
     world.insert_resource(factions::FactionsLayout::default());
     world.insert_resource(achievements::AchievementsView::default());
     world.insert_resource(achievements::AchievementsLayout::default());
-    // Kept: gd-game's `Achievements` (the engine's AchievementManager lives for the process, `gd_game::achievements`).
+    // Kept: gd-game's `Achievements` (the engine's AchievementManager lives for the process).
     world.insert_resource(hud::LevelUpIndicator::default());
     world.insert_resource(menufolder::MenuFolder::default());
     world.insert_resource(crate::state::riftmap::RiftMapView::default());

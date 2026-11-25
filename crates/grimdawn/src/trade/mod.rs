@@ -2,12 +2,11 @@
 //!
 //! * Clicking an `NpcMerchant` walks to it and opens its market window
 //!   (`records/ui/vendors/vendor_mastertable.dbr`) next to the inventory. Reach, the market, its stock and
-//!   faction tiers are `gd_game::trade`'s (the interact order → `ServiceAnswer::Opened`), the tabs and
-//!   prices `gd_sim::items::market`'s. Left click buys into the bags; right click on a bag item sells
-//!   it into the buyback tab; a held item clicked on the window is sold (`gd_game::trade::SellHeld`).
-//!   Ctrl + left click on a stash stack opens the stack window (`ui/stack.rs`). The window opens on the
-//!   first stocked tab (`gd_sim::items::market::opening_tab`) unless the tab picked last
-//!   ([`Trade::vendor_tab`], any merchant) is stocked; empty tabs cannot be picked ([`vendor`]).
+//!   faction tiers are `gd_game::trade`'s, the tabs and prices `gd_sim::items::market`'s. Left click buys
+//!   into the bags; right click on a bag item sells it into the buyback tab; a held item clicked on the
+//!   window is sold. Ctrl + left click on a stash stack opens the stack window. The window opens on the
+//!   first stocked tab unless the tab picked last ([`Trade::vendor_tab`], any merchant) is stocked; empty
+//!   tabs cannot be picked.
 //! * The search boxes of the vendor, caravan and crafting windows: [`search`].
 //! * Clicking an `NpcCaravan` opens the personal stash (`records/ui/caravan/caravan_window.dbr`): its pages
 //!   come from and go back to the character file; the toggle button (`ToggleStashButton`) switches to the
@@ -106,10 +105,8 @@ fn boxed_items(trade: Res<Trade>, mut boxed: ResMut<gd_game::save::BoxedItems>) 
     }
 }
 
-/// Closes the window (the inventory window closed, the Illusionist's close button) with `ServiceRequest::Close`
-/// (the other windows' close buttons send it from `trade_clicks`),
-/// resets it on any `ServiceRequest::Close` (the UI's window manager sends them too), and shows what a
-/// `ServiceAnswer` says (the rules: `gd_game::trade`).
+/// Closes the window (the inventory window closed, the Illusionist's close button) with `ServiceRequest::Close`,
+/// resets it on any `ServiceRequest::Close`, and shows what a `ServiceAnswer` says.
 #[allow(clippy::too_many_arguments)]
 fn service_answers(
     mut commands: Commands,

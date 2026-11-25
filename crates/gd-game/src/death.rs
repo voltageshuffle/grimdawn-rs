@@ -1,38 +1,20 @@
-//! The death penalty: dying costs experience (`experienceformulas.dbr`
-//! `deathPenaltyEquation` with `playerLevel` = `currentPlayerLevel` = the
-//! player's level, `GameEngine::ResolveEquationVariable`; clamped
-//! to `deathPenaltyMin/Max`), registered for redemption
-//! (`GameEngine::RegisterExperienceLoss`). A gravestone
-//! (`records/ui/inworld/gravemarker.dbr`) marks the spot; using it gives back
-//! loss × `RedemptionMultiplier` (`PlayerExperienceRedemption`)
-//! and removes it; levels gained go through the same `progress::level_up` as kills / quests
-//! (ProfileDirty, life / energy refill, LeveledUp). Dying again replaces the stone and the registered loss.
+//! The death penalty: dying costs experience (`experienceformulas.dbr` `deathPenaltyEquation` at the player's
+//! level, clamped to `deathPenaltyMin/Max`), registered for redemption (`GameEngine::RegisterExperienceLoss`). A
+//! gravestone (`records/ui/inworld/gravemarker.dbr`) marks the spot; using it gives back loss ×
+//! `RedemptionMultiplier` and removes it; levels gained go through `progress::level_up`. Dying again replaces the
+//! stone and the registered loss.
 //!
-//! `Player::CharacterIsDying`: experience never drops below the
-//! start of the current level, and the registered loss is what was actually
-//! taken. The stone entity is kept in the level's saved state
-//! (`FixedItemGravestone::ShouldSaveState`, except inside Shattered Realm),
-//! but the registered loss lives only in `GameEngine` (nothing saves or
-//! restores it), so after a reload the stone gives nothing back. The port
-//! does not persist the stone either: it lasts the session.
+//! `Player::CharacterIsDying`: experience never drops below the start of the current level, and the registered
+//! loss is what was actually taken. The registered loss lives only in `GameEngine` (never saved), so after a
+//! reload the engine's stone gives nothing back. PORT: the stone is not persisted either: it lasts the session.
 //!
-//! Softcore characters come back at the current respawn point of the
-//! difficulty (`Player::GetClosestRespawnPoint`, called by
-//! `ControllerPlayer::DeathUpdate` and `ControllerPlayerStateRespawning::OnBegin`:
-//! the position of the entity of `Player::AddRespawnUID`'s current UID);
-//! `PlayerStart` holds that point (`riftgates` binds it, grimdawn's `session.rs` loads
-//! it) and `combat::dead_bodies` moves the body there. The game shows the
-//! stone, lets the player click it (the interact order, `player_orders::InteractTarget`) and shows Game Over.
+//! Softcore characters come back at the difficulty's current respawn point (`Player::GetClosestRespawnPoint`):
+//! `PlayerStart` holds that point and `combat::dead_bodies` moves the body there.
 //!
-//! Play stats: deaths (`PlayStats::IncrementDeaths`) count into the save's block 16
-//! ([`crate::play_stats::PlayCounts`], with the session's other counts).
-//! Hardcore (`ControllerPlayer::CharacterIsDying`):
-//! the penalty and the stone happen as usual (`Player::CharacterIsDying`
-//! does not look at the flag), the death count goes up, the game saves at
-//! once and shows the Game Over dialog (`tagGameOver`); there is no respawn.
-//! There is no "dead" save flag: the character list shows a hardcore
-//! character with a non-zero death count as dead (exe `CharacterList::Draw`, via
-//! `Player::IsHardcore` and `PlayStats::GetNumberOfDeaths`).
+//! Deaths count into the save's play stats ([`crate::play_stats::PlayCounts`]). Hardcore
+//! (`ControllerPlayer::CharacterIsDying`): the penalty and the stone happen as usual, the death count goes up, the
+//! game saves at once and shows the Game Over dialog (`tagGameOver`); no respawn. There is no "dead" save flag:
+//! the character list shows a hardcore character with a non-zero death count as dead.
 use bevy::prelude::*;
 use gd_game_core::combat::Dead;
 use gd_game_core::data::GameData;
@@ -102,9 +84,8 @@ pub fn death_penalty(db: &gd_formats::vfs::Database, level: i32) -> u64 {
     );
     v.clamp(lo, hi.max(lo)).max(0.0) as u64
 }
-/// The player died: the death penalty, and a gravestone where it fell
-/// holding the redeemable part (replacing an earlier one). The game shows
-/// the stone and, for hardcore characters, the Game Over dialog.
+/// The player died: the death penalty, and a gravestone where it fell holding the redeemable part (replacing an
+/// earlier one).
 #[allow(clippy::too_many_arguments)]
 pub fn on_death(
     mut commands: Commands,
@@ -143,8 +124,7 @@ pub fn on_death(
     for g in &graves {
         commands.entity(g).try_despawn();
     }
-    // `ControllerPlayer::CharacterIsDying`: no gravestone in the Crucible
-    // (`CreateGravestone` only when `GameInfo::GetMode() != 1`); the penalty above still applies.
+    // No gravestone in the Crucible (`CreateGravestone` only when `GameInfo::GetMode() != 1`).
     if redeem == 0 || choice.survival.is_some() {
         return;
     }
@@ -158,13 +138,11 @@ pub fn on_death(
     ));
 }
 
-// The grave's own params plus the level-up query and messages it passes to `progress::level_up`
-// (as `on_death` above).
 #[allow(clippy::too_many_arguments)]
 pub fn use_grave(
     mut commands: Commands,
     graves: Query<(&GlobalTransform, &Gravestone)>,
-    // (The player's radius comes from `sheet`: a second `Combatant` fetch here would conflict with it.)
+    // The player's radius comes from `sheet`: a second `Combatant` fetch would conflict with it.
     mut players: Query<
         (
             &Transform,
@@ -189,8 +167,6 @@ pub fn use_grave(
     let Ok((gt, g)) = graves.get(e) else {
         return;
     };
-    // Use range (`combat::fixed_use_range`): the player's radius + the gravemarker's (`actorRadius` 0) + its
-    // `usableRange` (2 m), 3D, +1 m at the walk's end.
     let range = gd_game_core::combat::fixed_use_range(
         data.db.get(GRAVE),
         player_radius,
@@ -236,13 +212,11 @@ pub fn use_grave(
     commands.entity(e).try_despawn();
 }
 
-/// `GD_DIE` / `GD_GOD` (hooks.rs).
 #[cfg(feature = "dev")]
 pub fn test_god(
     hooks: Res<gd_game_core::hooks::Hooks>,
     mut players: Query<&mut gd_game_core::combat::Combatant, (With<Player>, Without<Dead>)>,
 ) {
-    // `GD_LIFE_PCT`: held at that percent (after the god mode's refill, which it overrides).
     if let Some(pct) = hooks.gameplay.life_pct {
         for mut cb in &mut players {
             cb.life = cb.profile.sheet.life * pct * 0.01;
@@ -260,8 +234,6 @@ pub fn test_god(
     }
 }
 
-/// `GD_DIE=<secs>` (hooks.rs): the player dies once per session, that long into play, through the one death path
-/// (`combat::kill_me`).
 #[cfg(feature = "dev")]
 pub fn test_die(
     hooks: Res<gd_game_core::hooks::Hooks>,

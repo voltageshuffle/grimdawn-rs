@@ -58,7 +58,7 @@ impl UiMaterial for AdditiveMaterial {
     }
 }
 
-/// Materials shared by (image, 8-bit colour), so a rebuilt tree reuses bind groups.
+/// Materials shared by (image, 8-bit colour).
 #[derive(Resource, Default)]
 pub struct AdditiveCache(HashMap<(AssetId<Image>, [u8; 4]), Handle<AdditiveMaterial>>);
 

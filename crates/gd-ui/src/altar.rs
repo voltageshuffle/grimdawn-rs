@@ -48,11 +48,9 @@
 //!   (`tagAscensionAltarRemoveReagent`).
 //!
 //! PORT: the attribute lines are `gd_sim::items::tooltip::attribute_line` per merged attribute (the engine's
-//! `AttributePak::GetText` is not reversed) with the section title before them; the rollovers go
-//! through `tip::TipCanvas` with the style's delay ([`tooltip`]); the scroll windows scroll by the mouse wheel
-//! with no bar, in place ([`live`], the engine's scroll window class); hovering moves the row highlights and
-//! button looks in place; `removeItemSound` plays when a box is emptied; a box whose reagent count is short
-//! tints its quantity `insufficientMaterialColor`.
+//! `AttributePak::GetText` is not reversed) with the section title before them; the scroll windows scroll
+//! by the mouse wheel with no bar; `removeItemSound` plays when a box is emptied; a box whose reagent count
+//! is short tints its quantity `insufficientMaterialColor`.
 use super::contains;
 use crate::state::ascendant::AltarMenu;
 use crate::state::inventory::UiCapture;
@@ -109,7 +107,6 @@ impl Plugin for AltarUiPlugin {
     }
 }
 
-/// A button of the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Activate,
@@ -118,7 +115,6 @@ pub enum Part {
     Tab(u8),
 }
 
-/// What the cursor is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Button(Part),
@@ -149,8 +145,8 @@ impl AltarLayout {
         if let Some(b) = self.buttons.iter().find(|(r, _)| contains(r, p)) {
             return Some(Hit::Button(b.1));
         }
-        // The rows are kept at scroll 0 (the pane moves them); shift the pointer's row test the same way,
-        // and only inside the list pane (rows scrolled out of view are clipped, not hit).
+        // The rows are kept at scroll 0 (the pane moves them): shift the pointer's row test the same way,
+        // only inside the list pane.
         let dy = scroll[0] * self.s;
         if self.panes[0].is_some_and(|(c, _)| contains(&c, p))
             && let Some(i) = self
@@ -167,19 +163,19 @@ impl AltarLayout {
     }
 }
 
-/// A non-selected tab's hidden `bitmapNameInFocus` overlay ([`live`] shows the hovered one's).
+/// A non-selected tab's hidden `bitmapNameInFocus` overlay.
 #[derive(Component)]
 struct TabFocus(u8);
 
-/// A list row's hidden hover highlight ([`live`] shows the hovered row's; it pans with the list).
+/// A list row's hidden hover highlight (it pans with the list).
 #[derive(Component)]
 struct RowHover(usize);
 
-/// A confirm / cancel / close button quad: its part and enabled state ([`live`] swaps its look).
+/// A confirm / cancel / close button quad: its part and enabled state.
 #[derive(Component)]
 struct AltarButton(Part, bool);
 
-/// A scroll window's inner node ([`live`] moves it by `AltarMenu::scroll[pane]`).
+/// A scroll window's inner node (moved by `AltarMenu::scroll[pane]`).
 #[derive(Component)]
 struct AltarPane {
     pane: usize,
@@ -188,7 +184,7 @@ struct AltarPane {
     inv: f32,
 }
 
-/// The reagents of a tab's list (module doc): tab 0 the inclusive formulas', tab 1 the exclusive ones'.
+/// Tab 0 the inclusive formulas' reagents, tab 1 the exclusive ones'.
 pub fn list_reagents(db: &Database, tab: u8) -> Vec<String> {
     let Some(g) = db.get(gd_sim::ascendant::GAME_ASCENDANT) else {
         return Vec::new();
@@ -236,7 +232,7 @@ fn tag(tags: &TagTable, t: &str) -> String {
     tags.get(t).unwrap_or(t).to_owned()
 }
 
-/// The loot bonus lines of `levels` (module doc; `uv`: Ultimate Veteran).
+/// The loot bonus lines of `levels` (`uv`: Ultimate Veteran).
 pub fn loot_lines(
     db: &Database,
     tags: &TagTable,
@@ -280,7 +276,7 @@ pub fn loot_lines(
     out
 }
 
-/// The monster bonus lines of `levels` (module doc) at the session's `mode`.
+/// The monster bonus lines of `levels` at the session's `mode`.
 pub fn monster_lines(
     db: &Database,
     tags: &TagTable,
@@ -342,7 +338,6 @@ pub fn monster_lines(
     out
 }
 
-/// The display name of a reagent record.
 fn reagent_name(db: &Database, tags: &TagTable, reagent: &str) -> String {
     db.get(reagent)
         .and_then(|r| {
@@ -388,7 +383,6 @@ fn build(
     mut layout: ResMut<AltarLayout>,
     mut fresh: gd_game_core::session::NewSession,
     mut built: Local<Option<(UVec3, Offering, Option<Entity>, u8, Vec<u32>)>>,
-    // The formula reagents and their held counts at an inventory version.
     mut counts: Local<(Option<u64>, Vec<String>, Vec<u32>)>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -406,9 +400,7 @@ fn build(
         counts.0 = Some(inv.version);
     }
     let (all, held) = (&counts.1, &counts.2);
-    // Hover and scroll are not in the signature: `live` moves the panes, the highlights and the button
-    // looks, `tooltip` shows the hovered row's / box's rollover. Compared by reference, cloned on change.
-    // The size carries the UI scale (an applied UI Scale rebuilds).
+    // Hover and scroll are not in the signature: `live` and `tooltip` show them.
     let sk = size.extend(assets.scale(size).to_bits());
     let changed = !built.as_ref().is_some_and(|(s, offering, altar, tab, h)| {
         *s == sk
@@ -495,7 +487,6 @@ fn build(
         let text = tb.tag.as_deref().map(|t| tag(&tags, t)).unwrap_or_default();
         ui.text(&tb, o, &text);
     }
-    // Tabs: a radio group, the shown one down.
     for (i, key) in ["reagentTabButton1", "reagentTabButton2"]
         .into_iter()
         .enumerate()
@@ -529,7 +520,6 @@ fn build(
             layout.buttons.push((r, Part::Tab(tab)));
         }
     }
-    // The reagent list.
     let pane = |ui: &mut super::Ui, key: &str| -> Option<URect> {
         let w = ui.record(&field(key))?;
         let f = |k: &str| w.f32(k).unwrap_or(0.0);
@@ -617,7 +607,6 @@ fn build(
         }
         ui.root = outer;
     }
-    // Box glows (filled boxes), then the boxes and their quantities.
     for (i, (_, glow, _)) in BOXES.iter().enumerate() {
         if slot(&menu.offering, i).is_none() {
             continue;
@@ -723,7 +712,6 @@ fn build(
             layout.boxes.push((br, i));
         }
     }
-    // The bonus lists.
     let levels = formula_levels(db, &menu.offering.placed());
     let lists = [
         (
@@ -790,7 +778,6 @@ fn build(
         }
         ui.root = outer;
     }
-    // Buttons.
     let ready = at_altar && !menu.offering.placed().is_empty();
     for (key, part, enabled) in [
         ("confirmButton", Part::Activate, ready),
@@ -836,8 +823,6 @@ fn animate_glows(time: Res<Time<Real>>, mut glows: Query<(&Glow, &mut Node)>) {
     }
 }
 
-/// `GD_UI_OPEN=altar`: opens the window as the Altar Window key does, once (after the `GD_ALTAR_OFFER` activation
-/// when that hook is set).
 #[cfg(feature = "dev")]
 fn open_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -860,8 +845,7 @@ fn open_hook(
     menu.show(None, altar.reagents.clone());
 }
 
-/// Clicks on the window (module doc), the wheel over a scroll window; the `GD_ALTAR_OFFER` hook; the answer to
-/// an offer (accepted: the window hides). Esc closes it through the shared dispatcher (`ui::esc_dispatcher`).
+/// Clicks on the window, the wheel over a scroll window, the answer to an offer (accepted: the window hides).
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
     #[cfg(feature = "dev")] (hooks, mut scripted, mut fresh): (
@@ -915,7 +899,6 @@ pub fn clicks(
             });
         }
     };
-    // `GD_ALTAR_OFFER`: fill the boxes in order and activate, once.
     #[cfg(feature = "dev")]
     if menu.altar.is_some()
         && !*scripted
@@ -938,7 +921,6 @@ pub fn clicks(
         wheel.clear();
         return;
     }
-    // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Some(wr) = layout.window else {
         wheel.clear();
         return;
@@ -1011,8 +993,7 @@ pub fn clicks(
     }
 }
 
-/// The window's hover looks and scroll in place (no rebuild): the tab focus overlays, the row
-/// highlights, the button bitmaps and the three scroll panes.
+/// The tab focus overlays, row highlights, button bitmaps and scroll panes for the hover and scroll.
 #[allow(clippy::too_many_arguments)]
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
@@ -1056,8 +1037,7 @@ fn live(
     }
 }
 
-/// The hovered row's / box's rollover (module doc) through the shared `TipCanvas` with the style's
-/// delay — not drawn into the window build.
+/// The hovered row's / box's rollover through the shared `TipCanvas`.
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,

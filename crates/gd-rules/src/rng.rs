@@ -1,11 +1,9 @@
 //! The engine's random stream (`GAME::RandomUniform`), shared by every roll
 //! site: combat, loot, proxies, the Shattered Realm generator and the story
-//! Lua bindings. Kept in the rules leaf so gd-sim and gd-story draw from one
-//! generator without depending on each other.
+//! Lua bindings.
 
 /// `GAME::RandomUniform`: Park–Miller minimal standard generator
-/// (a = 16807, m = 2^31 - 1, Schrage with q = 127773, r = 2836), used in
-/// every roll site of `CombatManager`.
+/// (a = 16807, m = 2^31 - 1, Schrage with q = 127773, r = 2836).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rng(pub u32);
 

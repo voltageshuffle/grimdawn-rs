@@ -108,9 +108,8 @@ pub fn level_value(rec: &Record, field: &str, level_index: usize) -> Option<f32>
     last
 }
 
-/// Per-record parsed field equations ([`Record::derived`] slot 2): a field's equation string
-/// parsed once and shared by the record's clones. Bio, proxy and loot equations are otherwise
-/// re-parsed per spawn / roll. A parse failure is cached as `None`.
+/// Per-record parsed field equations ([`Record::derived`] slot 2); a parse failure is cached as
+/// `None`.
 #[derive(Default)]
 pub(crate) struct RecordExprs(
     parking_lot::Mutex<gd_formats::collections::HashMap<Box<str>, Option<std::sync::Arc<Expr>>>>,
@@ -196,8 +195,8 @@ impl LevelTable {
                 .or_else(|| rec.f32(k).map(|f| f as i32))
                 .unwrap_or(0)
         };
-        // `rates()` divides by these (bad data: a missing or non-positive
-        // increment would make every Life/Energy rate NaN or infinite).
+        // `rates()` divides by these: a missing or non-positive increment would make every
+        // Life/Energy rate NaN or infinite.
         for k in [
             "strengthIncrement",
             "dexterityIncrement",
@@ -244,9 +243,7 @@ impl LevelTable {
 
     /// Experience listed for `level` by `Player::DumpExperienceLevels`
     /// (`ExperienceLevelControl::GetExperienceForLevel`): `(int)(eq(playerLevel = level - 1) + 0.5)`,
-    /// i.e. the cumulative total needed to *reach* `level` (the
-    /// level-up loop `ExperienceLevelControl::AddExperience`; see
-    /// `progress::Progress::threshold`).
+    /// i.e. the cumulative total needed to *reach* `level`.
     pub fn experience_for_level(&self, level: i32) -> i64 {
         let pl = (level - 1) as f32;
         let v = self
@@ -275,8 +272,7 @@ pub struct CombatFormulas {
     /// / `DesignerCalculatePhysicalDamageBonus`).
     pub physical_damage_percentage: Option<Expr>,
     pub physical_damage_bonus: Option<Expr>,
-    /// `physcialDamageDefenseEquationDLEP` (protection >= damage). Note the
-    /// field-name typo is the engine's.
+    /// `physcialDamageDefenseEquationDLEP` (protection >= damage; the typo is the engine's).
     pub physical_defense_dlep: Option<Expr>,
     /// `physicalDamageDefenseEquationDGP` (damage > protection).
     pub physical_defense_dgp: Option<Expr>,
@@ -748,17 +744,12 @@ pub struct AllocatedPoints {
 }
 
 impl BioStore {
-    /// `Character::IncrementBase{Strength,Dexterity,Intelligence}`
-    /// add `*Increment` to the bio store. The life
-    /// and energy that come with a point are separate `IncrementBaseLife(n)` /
-    /// `IncrementBaseMana(n)` commands issued by the UI in Grim Dawn.exe with
-    /// `GetStrengthLifeIncrement()` etc. (the getters are only
-    /// exported for the exe; inside Game.dll only the `Character` constructor
-    /// touches those members).
+    /// `Character::IncrementBase{Strength,Dexterity,Intelligence}` add `*Increment` to the bio
+    /// store. The life and energy that come with a point are separate `IncrementBaseLife(n)` /
+    /// `IncrementBaseMana(n)` commands issued by the exe's UI.
     pub fn allocate(&mut self, levels: &LevelTable, pts: AllocatedPoints) {
-        // One command per point, each `value += (float)increment` (bad data:
-        // a corrupt save's counts are capped at MAX_ALLOCATED, far above any
-        // level-plus-quest total, so the per-point loop stays bounded).
+        // One command per point, each `value += (float)increment`; a corrupt save's counts are
+        // capped at MAX_ALLOCATED so the loop stays bounded.
         const MAX_ALLOCATED: u32 = 10_000;
         let b = &mut self.base.value;
         let mut add = |a: CharAttr, n: u32, inc: i32| {
@@ -800,7 +791,7 @@ pub struct CharacterSheet {
     /// each update (`CharacterBio::GetLifeRegenValue` / `GetManaRegenValue`
     /// at elapsedTime 1): the player's `playerresourcebehavior.dbr` equations
     /// ([`CharacterSheet::apply_player_regen`]), a creature's bio equation
-    /// ([`BioStore::life_regen_per_sec`], set by `actor::monster_full`); the
+    /// ([`BioStore::life_regen_per_sec`]); the
     /// raw attribute until one of them runs.
     pub life_regen_per_sec: f32,
     pub energy_regen_per_sec: f32,
@@ -839,7 +830,7 @@ pub struct CharacterSheet {
     /// ([`light_radius`]).
     pub light_radius: f32,
     /// A player's bio base values (zero for creatures), the split of the
-    /// character window's rollovers (`gd_sim::sheet::numbers_and_rollovers`).
+    /// character window's rollovers.
     pub base: BioBase,
 }
 
@@ -877,8 +868,7 @@ pub struct Contributions<'a> {
 
 /// Builds the final accumulator. Only the skill, item-set and equipment
 /// passes convert attribute gains to life/energy; game balance and mutators
-/// add raw values (only those three Character functions do the
-/// delta conversion).
+/// add raw values.
 pub fn accumulate(
     bio: &BioStore,
     rates: &AttributeRates,
@@ -998,10 +988,7 @@ impl CharacterSheet {
 
 /// The player light's radius: its record's `radius` (`Light::GetRadius`,
 /// kept by `Player::Load` in `Player.baseLightRadius`) × (1 + `characterLightRadius` total %
-/// / 100). `Player::UpdateSelf`: every update
-/// `Light::SetRadius(((GetValue(57) × 0.01) + 1) × base)`; it is the only
-/// consumer of attribute 57 besides the sheet. Nothing clamps it (a
-/// negative total shrinks the light).
+/// / 100) (`Player::UpdateSelf`). Nothing clamps it (a negative total shrinks the light).
 pub fn light_radius(base: f32, total_pct: f32) -> f32 {
     (total_pct * 0.01 + 1.0) * base
 }

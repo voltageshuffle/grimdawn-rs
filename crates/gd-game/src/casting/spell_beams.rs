@@ -1,32 +1,24 @@
 //! The rays of a channelled beam skill (`Skill_AttackSpellBeam`: Aether Ray): the skill's `BeamInfo` nodes on the
-//! caster ([`SpellBeams`]), their life (`gd_sim::beam`), fan, emit point, directions and lengths, every frame
-//! ([`spell_beams`]). grimdawn `beams.rs` draws them and their effects.
+//! caster ([`SpellBeams`]), their life, fan, emit point, directions and lengths, every frame ([`spell_beams`]).
 //!
-//! Game.dll `Skill_AttackSpellBeam::ActivateNow` (a node per cast: `beamDelay` for the main
-//! player only; the ray count and spread with the learned modifiers', `gd_sim::beam`), `UpdateBeams`:
-//! the emit point is the caster's `emitPointName` (default `L Hand`) attach point, re-read every frame; the heading
-//! is the caster's, its slope toward the aim point (the y of the normalised aim - emit) and ray k turned by the
-//! fan's angle k; the held cast's rays grow to `GetMaxBeamLength` (the ray of `maxRange` + 1 from 1 m
-//! behind the emit point, cut by the world and solid entities, minus 1, so never past `maxRange`). Stopping (the
-//! channel ended, `StopEmitting`) the node keeps its last directions while it retracts.
+//! Game.dll `Skill_AttackSpellBeam::ActivateNow` (a node per cast; `beamDelay` for the main player only),
+//! `UpdateBeams`: the emit point is the caster's `emitPointName` (default `L Hand`) attach point, re-read every
+//! frame; the heading is the caster's, its slope toward the aim point and ray k turned by the fan's angle k; the
+//! held cast's rays grow to `GetMaxBeamLength`. Stopping (`StopEmitting`) the node keeps its last directions while
+//! it retracts.
 //!
-//! Damage (`Update`, `GetTargets`): every `timeBetweenAttacks` / cast speed ms while the
-//! ribbons are in the world (`gd_sim::beam::SpellBeam::attack_due`), each ray's drawn ribbon (from its retract point,
-//! its grown length + 1.5 m) hits the foes within `beamThickness` of it, each foe once; so a growing or delayed beam
-//! does not reach past what is drawn. `ActivateNow` pays the energy once, then each strike of the held cast pays it
-//! and the channel ends when what is left is under the cost (`StopEmitting`).
-//! The hit test is `GetTargetsAroundRay` (`Combatant::around_ray`; `passThrough` 0: the nearest foe on the ray
-//! only, where the engine cuts the ray at it).
-//! PORT: the bind-pose emit point; the fan turns about the world up (the engine turns the emit frame, whose X is
-//! rebuilt from its attach Y axis and the heading, about that Y axis).
+//! Damage (`Update`, `GetTargets`): every `timeBetweenAttacks` / cast speed ms while the ribbons are in the world,
+//! each ray's drawn ribbon (from its retract point, its grown length + 1.5 m) hits the foes within `beamThickness`
+//! of it, each foe once (`GetTargetsAroundRay`; `passThrough` 0: the nearest foe only). `ActivateNow` pays the
+//! energy once, then each strike of the held cast pays it and the channel ends when what is left is under the cost.
+//! PORT: the bind-pose emit point; the fan turns about the world up (the engine turns the emit frame about its
+//! attach Y axis).
 use super::*;
 use gd_sim::beam::{SpellBeam, State, fan_angles};
 
-/// `GetMaxBeamLength` / `Skill_AttackSpellCone::GetMaxConeLength`: the ray from 1 m
-/// behind `emit` along `dir`, `range` + 1 long, cut at its first
-/// contact with the world (`World::GetIntersection`: terrain and level meshes) or a solid visible entity
-/// (`GetAllIntersections`), minus 1 and at least 0; and whether it was cut (a surface). Both are the physics world
-/// [`crate::collision::WorldCollision::segment_hit`] holds (its terrain and solid level objects).
+/// `GetMaxBeamLength` / `Skill_AttackSpellCone::GetMaxConeLength`: the ray from 1 m behind `emit` along `dir`,
+/// `range` + 1 long, cut at its first contact with the world or a solid visible entity, minus 1 and at least 0; and
+/// whether it was cut.
 pub fn max_beam_length(
     coll: &crate::collision::WorldCollision,
     emit: Vec3,
@@ -41,7 +33,6 @@ pub fn max_beam_length(
     }
 }
 
-/// Starts, stops and moves every caster's beam nodes (see the module doc).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn spell_beams(
     time: Res<Time>,
@@ -59,7 +50,7 @@ pub fn spell_beams(
         Option<&mut Caster>,
         Option<&gd_game_core::player::Loadout>,
     )>,
-    // `FilterInvalidTargets`: the caster's foes ([`crate::combat::Side::hits`]).
+    // `FilterInvalidTargets`: the caster's foes.
     foes: Query<
         (
             Entity,
@@ -104,7 +95,7 @@ pub fn spell_beams(
             } else {
                 0.0
             };
-            // `ActivateNow` pays the energy; short of it the channel ends (the retracting nodes still run below).
+            // `ActivateNow` pays the energy; short of it the channel ends.
             let cost = level_f(rec, "skillManaCost", ch.level_index);
             let paid = match caster.as_deref_mut() {
                 Some(c) if c.energy < cost => false,
@@ -226,17 +217,16 @@ pub fn spell_beams(
     }
 }
 
-/// The strike period (s) of a beam or cone (`class_fx`): `timeBetweenAttacks` (default 100 ms) / the spell-cast
-/// speed (`character`: the caster; none, a gone caster's cone: 1).
+/// The strike period (s) of a beam or cone: `timeBetweenAttacks` (default 100 ms) / the spell-cast speed
+/// (`character`: the caster; none: 1).
 pub(super) fn strike_period(rec: &Record, character: Option<&Character>) -> f32 {
     rec.f32("timeBetweenAttacks").unwrap_or(100.0)
         / 1000.0
         / character.map_or(1.0, |c| c.spell_speed.max(0.2))
 }
 
-/// `GetTargetsAroundRay` (`Combatant::around_ray`): the foes (`candidates`, already filtered by
-/// [`crate::combat::Side::hits`]) whose world box grown by `thick` the ray from `a` along `d` enters within `reach`
-/// metres; with `first_only` the nearest along it.
+/// `GetTargetsAroundRay`: the `candidates` whose world box grown by `thick` the ray from `a` along `d` enters within
+/// `reach` metres; with `first_only` the nearest along it.
 fn ray_targets(
     candidates: &[(Entity, &GlobalTransform, &Combatant)],
     a: Vec3,

@@ -1,7 +1,4 @@
-//! The merchant, stash and inventory windows only write requests
-//! (`gd_game::trade::{BuyRequest, SellRequest}`, `stash::StashRequest`,
-//! `inventory::InvRequest`); the gd-game systems apply them. The messages go
-//! through the schedule here.
+//! The merchant, stash and inventory windows only write requests; the gd-game systems apply them.
 use bevy::prelude::*;
 use gd_formats::inventory::{EquipSlot, Footprint, Sack, drop_cell};
 use gd_formats::save::item::Item;
@@ -39,7 +36,6 @@ fn shop(key: &str) -> Shop {
     }
 }
 
-/// The sword's real footprint.
 fn sword_size(g: &mut TestGame) -> Footprint {
     g.app
         .world_mut()
@@ -259,7 +255,7 @@ fn pick_up_drop_and_equip_requests() {
         Some(9001)
     );
     g.app.world_mut().resource_mut::<Inventory>().held = None;
-    // Right click on the slot with nothing held: nothing (no equipment has a secondary cursor handler).
+    // Right click on the slot with nothing held: nothing.
     let slot = |g: &mut TestGame, right: bool| {
         g.app.world_mut().write_message(InvRequest::Slot {
             slot: EquipSlot::MainHand,
@@ -283,8 +279,8 @@ fn pick_up_drop_and_equip_requests() {
     };
     slot(&mut g, true);
     assert_eq!(main_hand(&g), Some(9001), "a right click leaves it worn");
-    // Picked up from the slot, a right click on a bag cancels the move (`CursorHandlerItemMove::Cancel`): not a
-    // bag source, so `GiveItemToPlayer` equips it into the empty slot again.
+    // Picked up from the slot, a right click on a bag cancels the move: not a bag source, so it is
+    // equipped into the empty slot again.
     slot(&mut g, false);
     assert_eq!(main_hand(&g), None);
     bag_click(&mut g, Vec2::new(8.0, 5.0), true);
@@ -326,7 +322,7 @@ fn pick_up_drop_and_equip_requests() {
         Some((at.0, at.1, 9001)),
         "back at its own cell"
     );
-    // With an item held, a right click on a slot is a left one (no merchant: `SecondaryEquipActivate`).
+    // With an item held, a right click on a slot is a left one (no merchant).
     bag_click(
         &mut g,
         Vec2::new(at.0 as f32 + 0.5, at.1 as f32 + 0.5),
@@ -336,7 +332,7 @@ fn pick_up_drop_and_equip_requests() {
     assert_eq!(main_hand(&g), Some(9001));
     slot(&mut g, false);
     bag_click(&mut g, Vec2::new(4.0, 5.0), false);
-    // Right click on a bag item equips it (nothing held: a held item's handler takes the click first).
+    // Right click on a bag item equips it (nothing held).
     g.app.world_mut().resource_mut::<Inventory>().held = None;
     let inv = g.app.world().resource::<Inventory>();
     let cell = {

@@ -102,7 +102,7 @@ pub(super) fn local_map(
             gd_ui::window::despawn_all(&mut commands, &nodes.roots);
             win_state.layout = LocalLayout::default();
         }
-        // The map image stays (a few MB): opening again shows it at once, redrawing only what changed.
+        // The map image stays: opening again shows it at once.
         *built = LocalBuilt {
             cache: built.cache.take(),
             ..Default::default()
@@ -234,7 +234,6 @@ pub(super) fn local_map(
         (o.x + px.x) as f32,
         (o.y + px.y) as f32,
     );
-    // The tree: the root per window size, each layer on its own signature.
     let root = match nodes.roots.iter().next() {
         Some(r) if built.root == Some(size) => r,
         _ => {
@@ -295,7 +294,6 @@ pub(super) fn local_map(
             icon_node(&mut ui, img, *p, sz, *angle, 1.0);
         }
     }
-    // The window: frame, title, legend, buttons.
     let chrome_sig = (
         values.area_tag.clone(),
         win_state.legend_hover,
@@ -325,7 +323,6 @@ pub(super) fn local_map(
                 ui.text(&tb, o, &name);
             }
         }
-        // Legend, zoom buttons.
         let button = |ui: &mut Ui, path: &str, focus: bool, label: Option<&str>| -> Option<URect> {
             let b = ui.record(path)?;
             let up = b
@@ -352,7 +349,7 @@ pub(super) fn local_map(
             } else {
                 ui.quad(img, r, None, Color::WHITE);
             }
-            // The record's soundNameDown on press (ui/widgets.rs).
+            // The record's soundNameDown on press.
             ui.record_path_button_sound(r, path);
             Some(r)
         };

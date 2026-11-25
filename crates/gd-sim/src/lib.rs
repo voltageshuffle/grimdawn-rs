@@ -1,7 +1,7 @@
 //! Game rules, independent of rendering: stats, combat, skills, items, nav.
 //! The pure rules leaf (equations, game mode, factions, the engine RNG) is
 //! [`gd_rules`]; the story / Lua layer and Shattered Realm generator live in
-//! `gd_story`. Both compile in parallel with this crate.
+//! `gd_story`.
 pub mod actor;
 pub mod aim;
 pub mod anim;

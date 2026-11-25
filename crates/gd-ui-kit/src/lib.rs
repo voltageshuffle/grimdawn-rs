@@ -1,20 +1,14 @@
-//! The shared UI kit: the record-driven widget builder ([`Ui`], [`UiAssets`]), the font cache
-//! ([`text`]), the common chrome ([`widgets`], [`tip`], [`confirm`]), the adaptive layout helpers
-//! ([`layout`]), the key bindings ([`keys`]) and the additive / masked UI materials ([`additive`], [`masked`]).
+//! The shared UI kit: the record-driven widget builder ([`Ui`], [`UiAssets`]) and common chrome.
 //!
 //! Layout is computed in physical pixels with the engine's rules (`gd_formats::ui`): UI scale factor
 //! from the resolution, window alignment, `round(pos × scale)` for child positions and `texture size ×
 //! scale` for bitmaps. Every widget becomes an absolutely positioned Bevy UI node under one root,
-//! spawned in the engine's draw order. Overlays whose numbers change every few frames animate their
-//! fills, wipes and texts in place ([`set_node_rect`], [`LiveText`]).
+//! spawned in the engine's draw order.
 //!
-//! Blending: the engine blends UI in gamma space (its UNORM back buffer); so does the port: the UI is
-//! drawn into the frame while it holds gamma values and every UI shader writes colours and texels as
-//! given, so colours, tints and textures' own alpha need no correction. The additive and masked
-//! materials (`additive.rs`, `masked.rs`) do the same in their shaders.
+//! Blending: the engine blends UI in gamma space (its UNORM back buffer); so does the port, so
+//! colours, tints and textures' own alpha need no correction.
 //!
-//! The kit reads gameplay data only (`gd_game_core`); it sends no requests and mutates no gameplay
-//! state. The window open/close manager and the per-window state stay with the binary's windows.
+//! The kit reads gameplay data only; it sends no requests and mutates no gameplay state.
 pub mod additive;
 pub mod confirm;
 pub mod keys;
@@ -37,7 +31,6 @@ pub const MASTER: &str = "records/ui/hud/hud_orbmastertable.dbr";
 /// The HUD master table of the classic layout (`standardHUD`).
 pub const CLASSIC_MASTER: &str = "records/ui/hud/hud_mastertable.dbr";
 
-/// The table of the chosen layout (`standardHUD`).
 pub fn master(classic: bool) -> &'static str {
     if classic { CLASSIC_MASTER } else { MASTER }
 }
@@ -47,28 +40,23 @@ pub fn classic(options: Option<&gd_game_core::options::GameOptions>) -> bool {
     options.is_some_and(|o| o.flag("standardHUD"))
 }
 
-/// Window input systems (clicks, hotkeys that consume the mouse): after the inventory is initialised
-/// and synced, before the player's click-to-move and the casting / pet world clicks, so a click on a
-/// window never reaches the world.
+/// Window input systems: before the player's click-to-move and world clicks, so a click on a window
+/// never reaches the world.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UiInputSet;
 
-/// Everything that shows or reads the playing session (`AppState::InGame`): the HUD, windows, tooltips, hover
-/// and overlays. One run condition on the set (both `Update` and `PostUpdate`) instead of one per system;
-/// [`UiInputSet`] and [`HudSet`] are inside it.
+/// Everything that shows or reads the playing session (`AppState::InGame`); [`UiInputSet`] and
+/// [`HudSet`] are inside it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UiPlaySet;
 
-/// The HUD chain (`view::collect` → `rebuild` → tooltips, clock), after [`gd_game_core::inventory::InventorySet`]
-/// so a click's result is applied before the rebuild reads it (the icon moves on the click frame).
-/// What reads or extends the built HUD runs `.after(HudSet)`.
+/// The HUD chain, after [`gd_game_core::inventory::InventorySet`] so a click's result is applied
+/// before the rebuild reads it. What reads or extends the built HUD runs `.after(HudSet)`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HudSet;
 
-/// Whether the left mouse button was released this frame, from the raw
-/// messages. Windows that swallow input (`reset_all` on `ButtonInput`) can't
-/// use `just_released`: the reset drops the press from `pressed`, so the
-/// release a frame later is never recorded.
+/// Whether the left mouse button was released this frame, from the raw messages: after
+/// `ButtonInput::reset_all` the release is never recorded.
 pub fn left_released(clicks: &mut MessageReader<bevy::input::mouse::MouseButtonInput>) -> bool {
     // Reads every message (no short circuit), so none carries over a frame.
     clicks
@@ -78,14 +66,12 @@ pub fn left_released(clicks: &mut MessageReader<bevy::input::mouse::MouseButtonI
         > 0
 }
 
-/// Whether physical-px point `p` is inside `r` (half-open: the right and bottom edges are outside). The one hit test of
-/// every window; do not write another.
+/// Whether physical-px point `p` is inside `r` (half-open: the right and bottom edges are outside).
 pub fn contains(r: &gd_formats::ui::Rect, p: Vec2) -> bool {
     p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h
 }
 
-/// The pointer in physical px, `None` while it is outside the window. The one pointer read of every window; do not
-/// read `Window::cursor_position` beside it. (`GD_HOVER` sets the window's cursor in dev builds, grimdawn `dev`.)
+/// The pointer in physical px, `None` while it is outside the window.
 pub fn cursor_px(win: &Window) -> Option<Vec2> {
     win.cursor_position().map(|c| c * win.scale_factor())
 }
@@ -102,8 +88,7 @@ pub fn spawn_frame_root(
     root
 }
 
-/// Places an absolutely positioned node at `r` (screen px; `inv`: physical → logical), writing only what changed
-/// (an unchanged node stays out of the UI layout's change detection).
+/// Places an absolutely positioned node at `r` (screen px; `inv`: physical → logical), writing only what changed.
 pub fn set_node_rect(node: &mut Mut<Node>, r: URect, inv: f32) {
     let v = [r.x, r.y, r.w.max(0.0), r.h.max(0.0)].map(|p| Val::Px(p * inv));
     if [node.left, node.top, node.width, node.height] != v {
@@ -125,9 +110,8 @@ pub fn set_image_src(img: &mut Mut<ImageNode>, src: URect) {
     }
 }
 
-/// Where a [`LiveText`] draws: [`Ui::text_line_tinted`] with its top-left at `at` (with `centre`, `at.x` is the
-/// centre: the line starts half its truncated width left of it, as the overhead health text), or [`Ui::text`] in a
-/// record text box at `origin`.
+/// Where a [`LiveText`] draws: a line with its top-left at `at` (with `centre`, `at.x` is the centre), or
+/// a record text box at `origin`.
 #[derive(Clone)]
 pub enum TextAt {
     Line {
@@ -140,8 +124,7 @@ pub enum TextAt {
         tb: TextBox,
         origin: Vec2,
     },
-    /// [`Ui::text_colored`] in a record text box at `origin`: a style and an optional colour
-    /// override (the crafting list rows' name colour).
+    /// A style and an optional colour override.
     Colored {
         tb: TextBox,
         style: String,
@@ -150,9 +133,7 @@ pub enum TextAt {
     },
 }
 
-/// A text that changes more often than the layout around it (a countdown, a bar's numbers), redrawn in place: a
-/// node at its root's origin whose child is the text, respawned by [`LiveText::set`] when the text differs
-/// (nothing while empty). Spawned by [`Ui::live_text`].
+/// A text redrawn in place when it differs (nothing while empty); spawned by [`Ui::live_text`].
 #[derive(Component)]
 pub struct LiveText {
     at: TextAt,
@@ -239,19 +220,14 @@ impl Ui<'_, '_, '_> {
     }
 }
 
-/// The frame a rebuilt overlay's root was spawned. A freshly spawned UI
-/// root is not drawn on its first frame, so an overlay rebuilt every frame
-/// (the life text in a fight) would never show: [`retire_roots`] keeps the
-/// root being replaced until its successor is drawn.
+/// The frame a rebuilt overlay's root was spawned: a fresh UI root is not drawn on its first frame,
+/// so [`retire_roots`] keeps the root being replaced until its successor is drawn.
 #[derive(Component)]
 pub struct RootFrame(pub u32);
 
-/// Despawns an overlay's old roots: all of them when `clear`; else every
-/// root but the newest, once the newest has been drawn (spawned before
-/// `frame`) or when a new one replaces it (`replacing`). Returns the root
-/// that stays: an overlay updating its parts in place must only touch parts
-/// under it, as the others' despawn is queued (a [`LiveText`] under one
-/// would redraw into a despawned node).
+/// Despawns an overlay's old roots: all of them when `clear`; else every root but the newest, once
+/// the newest has been drawn (spawned before `frame`) or `replacing`. Returns the root that stays;
+/// an overlay updating parts in place must only touch parts under it (the others' despawn is queued).
 pub fn retire_roots(
     commands: &mut Commands,
     roots: impl Iterator<Item = (Entity, u32)>,
@@ -270,9 +246,7 @@ pub fn retire_roots(
     newest.filter(|_| !clear).map(|n| n.0)
 }
 
-/// The asset resources every [`Ui`] builder needs, as one system parameter: `assets.ui(..)` makes the build context (instead of a system
-/// listing four `ResMut`s and spelling out the struct). Direct access to the caches (`assets.fonts.tags`, ...) is for what a system
-/// does outside the `Ui`.
+/// The asset resources every [`Ui`] builder needs, as one system parameter.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct UiAssets<'w> {
     pub tex: ResMut<'w, Textures>,
@@ -284,7 +258,7 @@ pub struct UiAssets<'w> {
 }
 
 impl UiAssets<'_> {
-    /// `standardHUD` (part of the signature of every layout that reads the HUD's table).
+    /// `standardHUD`.
     pub fn classic_hud(&self) -> bool {
         classic(self.options.as_deref())
     }
@@ -338,9 +312,8 @@ pub fn spawn_root(commands: &mut Commands, marker: impl Bundle, z: i32) -> Entit
         .id()
 }
 
-/// The HUD overlays' local [`ZIndex`] (minimap, quest tracker, clock, pet portraits, Crucible /
-/// Shattered Realm panes, challenge banner): over the HUD group, under the Character / Trade / Skills /
-/// Devotion windows (even local z, `rebuild`) and every `GlobalZIndex` window.
+/// The HUD overlays' local [`ZIndex`]: over the HUD group, under the HUD-group windows (even local
+/// z) and every `GlobalZIndex` window.
 pub const HUD_OVERLAY_Z: i32 = 1;
 
 /// [`spawn_root`] for a HUD overlay: no `GlobalZIndex`, stacked among the HUD groups at [`HUD_OVERLAY_Z`].
@@ -368,7 +341,7 @@ pub struct Ui<'a, 'w, 's> {
     pub images: &'a mut Assets<Image>,
     pub fonts: &'a mut FontCache,
     pub font_assets: &'a mut Assets<Font>,
-    /// `standardHUD`: the HUD's layout comes from the classic master table ([`master`]).
+    /// `standardHUD`: the classic master table ([`master`]).
     pub classic_hud: bool,
     /// UI scale factor.
     pub s: f32,
@@ -377,13 +350,13 @@ pub struct Ui<'a, 'w, 's> {
     pub screen: Vec2,
     /// x of the open NPC window and of the inventory when docked together.
     pub docked: Option<(f32, f32)>,
-    /// The player's equip requirements: the item cells' unusable marks (`character::item_cell`). Set by the
-    /// builders that draw item cells; the default (level 1, no attributes) elsewhere.
+    /// The player's equip requirements for the item cells' unusable marks; the default (level 1, no
+    /// attributes) elsewhere.
     pub req: gd_game_core::inventory::Requirements,
 }
 
 impl Ui<'_, '_, '_> {
-    /// The HUD master table of the chosen layout (`hud.rs` module doc).
+    /// The HUD master table of the chosen layout.
     pub fn hud_master(&self) -> &'static str {
         master(self.classic_hud)
     }
@@ -403,7 +376,7 @@ impl Ui<'_, '_, '_> {
         self.record(path).map(|r| Widget::from_record(&r))
     }
 
-    /// Texture handle + pixel size (UI bitmaps are colour data shown as-is).
+    /// Texture handle + pixel size.
     pub fn image(&mut self, path: &str) -> Option<(Handle<Image>, UVec2)> {
         let h = self.tex.get(self.data, path, true, self.images)?;
         let size = self.images.get(&h).map(|i| i.size())?;
@@ -448,8 +421,7 @@ impl Ui<'_, '_, '_> {
         e
     }
 
-    /// Like [`Self::quad`] but the image fills `dst` whatever its aspect
-    /// (`ImageNode` keeps the image's aspect by default).
+    /// Like [`Self::quad`] but the image fills `dst` whatever its aspect.
     pub fn quad_stretch(&mut self, image: Handle<Image>, dst: URect, color: Color) -> Entity {
         let img = ImageNode::new(image)
             .with_color(color)
@@ -481,7 +453,7 @@ impl Ui<'_, '_, '_> {
     }
 
     /// A record's `Widget::Bitmap` field drawn at `origin` (`None` when the field is no bitmap or its texture
-    /// is missing). The one copy of that pattern.
+    /// is missing).
     pub fn bitmap_field(&mut self, rec: &str, origin: Vec2) -> Option<(Entity, URect)> {
         let Widget::Bitmap { bitmap, x, y } = self.widget(rec)? else {
             return None;
@@ -537,10 +509,8 @@ impl Ui<'_, '_, '_> {
             .text_width(self.data, self.font_assets, style_path, self.s, text)
     }
 
-    /// One line of `text` cut to `max_w` px with "..." (`UITextBox::Format` with its wrap flag 0 →
-    /// `UITextBox::TruncateLine`: the tracker's quest names, the options dropdowns' values and rows).
-    /// PORT: the cut is per character, the longest prefix that fits with the dots; a cut never splits a
-    /// `^X` colour code (a prefix ending in `^` is skipped).
+    /// One line of `text` cut to `max_w` px with "..." (`UITextBox::TruncateLine`).
+    /// PORT: the cut is per character; it never splits a `^X` colour code.
     pub fn truncate_line(&mut self, style: &str, max_w: f32, text: &str) -> String {
         if self.text_width(style, text) <= max_w {
             return text.to_owned();
@@ -549,16 +519,14 @@ impl Ui<'_, '_, '_> {
         if chars.is_empty() {
             return String::new();
         }
-        // A cut never splits a `^X` colour code: a prefix ending in `^` steps back to the code's
-        // start (the cut of `n`, never wider than `n` itself).
+        // A prefix ending in `^` steps back to the code's start.
         let cut = |mut n: usize| {
             while n > 0 && chars[n - 1] == '^' {
                 n -= 1;
             }
             n
         };
-        // The width grows with the prefix: binary-search the longest one that fits with the dots
-        // (log(n) measures, not one per character).
+        // Binary-search the longest prefix that fits with the dots.
         let mut fits = |n: usize| {
             let t = format!(
                 "{}...",
@@ -733,9 +701,8 @@ impl Ui<'_, '_, '_> {
         self.border_paths(&paths.each_ref().map(String::as_str), r, alpha);
     }
 
-    /// [`Self::border`] from the eight bitmaps' paths (upper left, upper
-    /// right, lower left, lower right, top, bottom, left, right): the pieces lie
-    /// outside `r` (`UIWindow::RenderBorder`).
+    /// [`Self::border`] from the eight bitmaps' paths (upper left, upper right, lower left, lower
+    /// right, top, bottom, left, right).
     pub fn border_paths(&mut self, paths: &[&str; 8], r: URect, alpha: f32) {
         let tex = self.border_textures(paths);
         let Some((_, uls)) = &tex[0] else {
@@ -804,8 +771,7 @@ impl Ui<'_, '_, '_> {
         self.draw_border(&tex, rects, alpha);
     }
 
-    /// The eight border bitmaps (an empty path → `None`), shared by [`Self::border_paths`] and
-    /// [`Self::border_over`].
+    /// The eight border bitmaps (an empty path → `None`).
     fn border_textures(&mut self, paths: &[&str; 8]) -> [Option<(Handle<Image>, UVec2)>; 8] {
         std::array::from_fn(|i| {
             let p = paths[i];
@@ -839,9 +805,8 @@ impl Ui<'_, '_, '_> {
         self.text_colored(tb, style_path, origin, text, None)
     }
 
-    /// [`Self::text_with_style`] with the text widget's colour override
-    /// (`color`: both glyph colours, as a text widget's `TextWidget.overrideColor` flag with its
-    /// colour `TextWidget.color` replaces the style's).
+    /// [`Self::text_with_style`] with the text widget's colour override (`TextWidget.overrideColor` /
+    /// `TextWidget.color` replaces both glyph colours).
     pub fn text_colored(
         &mut self,
         tb: &TextBox,
@@ -892,9 +857,8 @@ impl Ui<'_, '_, '_> {
                 let color = TextColor(Color::srgb(c[0], c[1], c[2]));
                 let lh = self.line_height(style_path);
                 let e = if bx.h <= lh * 1.5 {
-                    // One line (titles, dropdown values, rows): measure and pre-place by alignment
-                    // like the bitmap path; an auto-width node never word-wraps, so ellipsised
-                    // values stay on one line and centred titles stay centred.
+                    // One line: an auto-width node never word-wraps, so ellipsised values stay on
+                    // one line and centred titles stay centred.
                     let w = self.text_width(style_path, text);
                     let x = tb.align_x.place(bx.x, bx.w, w as i32);
                     let y = tb.align_y.place(bx.y, bx.h, lh as i32);

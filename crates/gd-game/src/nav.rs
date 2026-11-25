@@ -125,8 +125,9 @@ pub fn sync_obstacles(
     }
 }
 
-/// Works out the loaded layers' connectivity ([`NavWorld::settle`]) for at most 0.5 ms a frame until it is known, so
-/// a strict path search toward an unreachable goal fails at once.
+/// Works out the loaded layers' connectivity around the dynamic obstacles ([`NavWorld::settle`]) for at most 0.5 ms
+/// a frame until it is known, so a strict path search toward an unreachable goal (a closed gate's far side) fails
+/// at once.
 ///
 /// [`NavWorld::settle`]: gd_sim::nav::NavWorld::settle
 pub fn settle_connectivity(mut nav: ResMut<Nav>) {

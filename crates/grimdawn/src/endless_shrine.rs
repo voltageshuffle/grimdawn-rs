@@ -1,28 +1,19 @@
-//! The Shattered Realm's buff shrines, presentation side (`gd_game::endless::EndlessShrine`, which holds the
-//! rules; `EndlessBuffShrine`, a `StaticShrine` subclass).
+//! The Shattered Realm's buff shrines, presentation side (`gd_game::endless::EndlessShrine` holds the rules;
+//! `EndlessBuffShrine`, a `StaticShrine` subclass).
 //!
 //! Stock records (`records/endlessdungeon/shrines/buffshrine_01..05`): the model is `mesh` with the
-//! `baseTextures` of the colour (`CharAssets::spawn_record_model`); an unused shrine loops `dormantAnimation` and
-//! the `dormantLoopingEffect` (`endlessdungeonshrine_loop<colour>01`); using it plays `dormantToRestoredAnimation`
-//! and `dormantToRestoredSound`, then it stays in `restoredAnimation` (`shrine_endlessdungeon_used01a`); a
+//! `baseTextures` of the colour; an unused shrine loops `dormantAnimation` and the `dormantLoopingEffect`; using
+//! it plays `dormantToRestoredAnimation` and `dormantToRestoredSound`, then it stays in `restoredAnimation`; a
 //! shrine whose level streams back in used starts in that animation. The proxy's `proxyActivateSound` plays
-//! at the shrine's own coordinates (`StaticShrine::SetShrineState`, state 2, set by
-//! `StaticShrine::RunProxy` right after it runs its proxy: here, where the shrine appears).
-//! `EndlessBuffShrine::AppendDetailMapData`: the minimap's Custom nugget (type 19) is
-//! offered while the shrine's dungeon stamp is the running dungeon's and the record's hide flag
-//! (`EndlessBuffShrine.hideOnMap`) is
-//! clear, used or not: the symbol does not hide on use.
+//! at the shrine's own coordinates (`StaticShrine::SetShrineState`, state 2, set by `StaticShrine::RunProxy`).
+//! `EndlessBuffShrine::AppendDetailMapData`: the minimap's Custom nugget (type 19) is offered while the
+//! shrine's dungeon stamp is the running dungeon's and `EndlessBuffShrine.hideOnMap` is clear, used or not.
 //!
 //! The looping effects sit at the mesh attach point the record names (`dormantLoopingAttachment` /
-//! `restoredLoopingAttachment`, stock `FX`, 5.4 m up on the shrine mesh; the point has no parent bone). The stock
-//! records have no `dormantToRestoredEffect`, so `dormantToRestoredEffectAttachment` is unused.
-//! Engine.dll `Actor::Load` / `GraphicsMeshInstance::SetShaderParameters` /
-//! `GraphicsShader2::SetTexture`: the record's `glowTexture`
-//! overrides the glow of every material, bound by parameter name, so it shows only on a material whose shader has
-//! a `glowTexture`: on `shrine_endlessdungeon01a.msh` the first material (`standardglowskinned`, stock
-//! `_red_glo`) takes the colour's `_glo`; the energy (`distortadditiveskinned`) and used (`standardskinned`)
-//! materials have none. `spawn_record_model` applies it that way (`MaterialAssets::reshade`).
-//! The minimap symbol is `ui/localmap.rs`'.
+//! `restoredLoopingAttachment`, stock `FX`; the point has no parent bone). The stock records have no
+//! `dormantToRestoredEffect`, so `dormantToRestoredEffectAttachment` is unused.
+//! `Actor::Load` / `GraphicsShader2::SetTexture`: the record's `glowTexture` overrides the glow of every
+//! material, bound by parameter name, so it shows only on a material whose shader has a `glowTexture`.
 use bevy::prelude::*;
 use gd_game::endless::{EndlessShrine, ShrineProxyRan};
 use gd_render::character::CharAssets;
@@ -44,8 +35,8 @@ struct Look {
     fx: Option<Entity>,
 }
 
-/// Dresses a new shrine once its model is built (loaded in the background, `CharAssets::models_ready`): its
-/// [`Look`] goes on with the model, so [`looks`] starts its animation on a dressed shrine.
+/// Dresses a new shrine once its model is built: its [`Look`] goes on with the model, so [`looks`] starts its
+/// animation on a dressed shrine.
 fn dress(
     mut commands: Commands,
     new: Query<(Entity, &EndlessShrine), Without<Look>>,
@@ -116,7 +107,6 @@ fn looks(
             ("dormantLoopingEffect", "dormantLoopingAttachment")
         };
         if let Some(r) = rec.str(key).filter(|r| !r.is_empty()) {
-            // The record names the mesh attach point (`FX`); the shrine meshes' point has no parent bone.
             let at = rec
                 .str(attach)
                 .and_then(|name| skel?.msh.attach_point(name))

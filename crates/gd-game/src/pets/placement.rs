@@ -2,106 +2,66 @@
 //!
 //! ## `Skill_SpawnPet` ([`spawn_pet_set`])
 //!
-//! Game.dll `Skill_SpawnPet::ActivateNow` (also
-//! `Skill_SpawnMiniPet`, `Skill_SpawnQuestPet`, `Skill_SpawnPetMonster` and
-//! `Skill_AktaiosMirage`, which do not override it):
+//! `Skill_SpawnPet::ActivateNow` (also `Skill_SpawnMiniPet`, `Skill_SpawnQuestPet`,
+//! `Skill_SpawnPetMonster` and `Skill_AktaiosMirage`):
 //! - The count ([`gd_game_core::pets::placement::spawn_pet_count`]): `min(GetPetLimit(level) - live,
-//!   petBurstSpawn)` in unsigned 32-bit arithmetic (a limit of 0, or more
-//!   live than the limit, wraps to the full burst), live = the owner's pen
-//!   entries of this skill not dead; at least `Skill_SpawnPet.minBurst` (1, set by the
-//!   `Skill_SpawnPet` constructor; 0 by `Skill_SpawnPetMonster`'s
-//!   constructor). 0: nothing happens.
-//! - The radii ([`spawn_pet_radii`]): the caster's `Character::GetExtents`
-//!   and `GetPetExtents` (the `Skill.petObject`'s `GetExtents` +
-//!   2, none: 2), each times `GetExtentsMultiplier` (1, the mirage's
-//!   2); with "use the larger radius" (`Skill_SpawnPet::UseLargerRadius`: false, the mirage's true) both
-//!   become the larger.
-//! - `NavManager::FillPointSet(caster coords, 16, [caster, pet x count],
-//!   clear = true, random = false)` ([`gd_sim::pattern::fill_point_set`]): the
-//!   caster's own spot first, then one per summon; a radius that does not fit
-//!   empties the set and nothing spawns. No line of sight, no cast point: the
-//!   pets always come around the caster.
-//! - `GetNewCasterCoords` (virtual, base `Skill_SpawnPet`'s) drops the first point
-//!   (the caster stays; the mirage's own picks a spot,
-//!   `monster_skills::MIRAGE`); every point left is put on the floor and gets
-//!   a pet (`SpawnPet`) at it, except a quest pet's (`Skill_SpawnPet::IsQuestPetSkill`:
-//!   `Skill_SpawnQuestPet` true, else false), which goes to the cast point
-//!   instead, once per point.
+//!   petBurstSpawn)` in unsigned 32-bit arithmetic (a limit of 0, or more live than the limit, wraps to
+//!   the full burst), live = the owner's pen entries of this skill not dead; at least `minBurst` (1;
+//!   0 for `Skill_SpawnPetMonster`). 0: nothing happens.
+//! - The radii ([`spawn_pet_radii`]): the caster's `GetExtents` and `GetPetExtents` (the pet object's
+//!   `GetExtents` + 2, none: 2), each times `GetExtentsMultiplier` (1, the mirage's 2); with
+//!   `UseLargerRadius` (the mirage's) both become the larger.
+//! - `NavManager::FillPointSet(caster, 16, [caster, pet x count], clear, !random)`
+//!   ([`gd_sim::pattern::fill_point_set`]): the caster's own spot first, then one per summon; a radius
+//!   that does not fit empties the set and nothing spawns. No line of sight, no cast point.
+//! - `GetNewCasterCoords` drops the first point (the mirage's own picks a spot,
+//!   `monster_skills::MIRAGE`); every point left is put on the floor and gets a pet, except a quest
+//!   pet's (`IsQuestPetSkill`), which goes to the cast point instead, once per point.
 //!
 //! ## `Skill_MonsterGenerator` ([`generator_spots`])
 //!
-//! `Skill_MonsterGenerator::Update`: count = `min(petBurstSpawn,
-//! max(0, limit - live))` (signed: no minimum); the caster blocks its
-//! `Actor::GetRadius` (Engine.dll: the scale vector's
-//! length x `actorRadius`) at its coords (`BlockPoint`), then `FillPointSet(caster,
-//! 16, [GetPetExtents x count], true, false)`; each pet faces a random yaw
-//! (`rand() * 2 pi / 32767`, the port's RNG); the caster's radius is its
-//! `Combatant::radius`.
+//! `Skill_MonsterGenerator::Update`: count = `min(petBurstSpawn, max(0, limit - live))` (signed: no
+//! minimum); the caster blocks its `Actor::GetRadius` at its coords (`BlockPoint`), then
+//! `FillPointSet(caster, 16, [GetPetExtents x count], true, false)`; each pet faces a random yaw.
 //!
 //! ## `Skill_TargetedSpawnPet` ([`targeted_spots`])
 //!
-//! Game.dll `Skill_TargetedSpawnPet::ActivateNow`:
-//! - The centre: the cast point; with a target (`a4`) the target's coords;
-//!   with `selfTarget` the caster's and no target. It is raised by
-//!   half the caster's height. Unless the target passes `IsTargetInLOS`,
-//!   the centre `Skill::IsPointInLOS` and it lies on the path mesh,
-//!   it is pulled back along the caster → centre ray: at the first world
-//!   intersection `t` (`World::GetIntersection`), the caster itself when
-//!   `t <= GetPetExtents`, else `t - GetPetExtents` from the caster (no hit:
-//!   the same against the visible entities the ray meets); off every region:
-//!   nothing spawns.
-//! - The spacing: `petPadding` (`Load`) when > 0, else
-//!   `Skill::GetPetExtents` = the pet object's
-//!   `Character::GetExtents` + 2 ([`pet_extents`]: `pathingSize`
-//!   Small 0.5, Medium 1.0, Large 1.75, `Character::Load`; the object is made
-//!   from the level's spawn object by `Skill::PreLoadPet`, which
-//!   `SkillLevelChange` calls for every owner but a player copy
-//!   (`Player::IsCopy`), monsters included; none: 2). One per
-//!   summon: `petBurstSpawn` (`SkillProfile_Modifiers::Load`),
+//! `Skill_TargetedSpawnPet::ActivateNow`:
+//! - The centre: the cast point; with a target the target's coords; with `selfTarget` the caster's
+//!   and no target. Raised by half the caster's height. Unless the target passes `IsTargetInLOS`, the
+//!   centre `Skill::IsPointInLOS` and it lies on the path mesh, it is pulled back along the caster →
+//!   centre ray to the first world intersection `t` less `GetPetExtents` (the caster itself when
+//!   `t <= GetPetExtents`); off every region: nothing spawns.
+//! - The spacing: `petPadding` when > 0, else `GetPetExtents` ([`pet_extents`]; the pet object comes
+//!   from `Skill::PreLoadPet`, for every owner but a player copy). One per summon: `petBurstSpawn`,
 //!   0 counting as 1.
-//! - With a target and a `targetingMode` other than `Point` (`SkillProfile`),
-//!   or more than one summon: the target (`ResolveValidateTarget`)
-//!   blocks the centre for its `GetExtents` (`NavManager::BlockPoint`), then
-//!   `NavManager::FillPointSet(centre, 16, spacings, clear = true, random =
-//!   false)` packs the spots around it ([`gd_sim::pattern::fill_point_set_in`]);
-//!   any that does not fit empties the set and nothing spawns. So a summon
-//!   cast on a foe lands on the first ring clear of the foe's footprint.
-//!   Otherwise the one spot is the target's coords, else the centre.
-//! - Every spot is put on the floor (`TranslateToFloor`) and the pets are
-//!   spawned there together.
+//! - With a target and a `targetingMode` other than `Point`, or more than one summon: the target
+//!   blocks the centre for its `GetExtents` (`NavManager::BlockPoint`), then `FillPointSet(centre, 16,
+//!   spacings, clear, !random)` ([`gd_sim::pattern::fill_point_set_in`]); any that does not fit
+//!   empties the set. Otherwise the one spot is the target's coords, else the centre.
+//! - Every spot is put on the floor (`TranslateToFloor`).
 //!
 //! ## The hit spawners ([`hit_spots`])
 //!
-//! They summon where their attack lands, not at the cast; one spot per
-//! `petBurstSpawn` (0 counting as 1), each
-//! `GetPetExtents` apart, `FillPointSet(centre, 16, ..., clear, !random)`,
-//! every spot put on the floor:
-//! - `Skill_AttackSpellChaosSpawnPet` (Reap Spirit) `TargetResult`:
-//!   on any hit, around the target (the last validated one of
-//!   the list), each target blocking its `GetExtents` at its coords.
-//! - `Skill_AttackProjectileSpawnPet` `TargetInformation` (the
-//!   projectile's end): with a target hit and a `targetingMode` other than
-//!   `Point` the target blocks its `GetExtents` at the impact and the spots
-//!   pack around the impact; else one spot: the target's coords, without one
-//!   the impact's.
+//! They summon where their attack lands; one spot per `petBurstSpawn` (0 counting as 1), each
+//! `GetPetExtents` apart, `FillPointSet(centre, 16, ..., clear, !random)`, on the floor:
+//! - `Skill_AttackSpellChaosSpawnPet` (Reap Spirit) `TargetResult`: on any hit, around the last
+//!   validated target, each target blocking its `GetExtents`.
+//! - `Skill_AttackProjectileSpawnPet` `TargetInformation` (the projectile's end): with a target hit and
+//!   a `targetingMode` other than `Point` the target blocks its `GetExtents` and the spots pack around
+//!   the impact; else one spot: the target's coords, without one the impact's.
 //!
-//! PORT: only the spawn event's target blocks (a Reap Spirit beam that hit
-//! several foes leaves the others' footprints free).
-//!
-//! PORT (all classes): the nav probe stands in for the floor; the engine
-//! RNG of `RequestAndBlockNearPoint`'s start angle is the port's.
-//!
-//! PORT (targeted): no line-of-sight test and no world ray: a centre off the nav is
-//! pulled back to where the straight line from the caster leaves walkable
-//! ground ([`crate::nav::straight_move_point`]), less the spacing.
+//! PORT: only the spawn event's target blocks (a Reap Spirit beam that hit several foes leaves the
+//! others' footprints free). The nav probe stands in for the floor. Targeted: no line-of-sight test
+//! and no world ray: a centre off the nav is pulled back to where the straight line from the caster
+//! leaves walkable ground ([`crate::nav::straight_move_point`]), less the spacing.
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
 use gd_game_core::pets::placement::{MAX_DIST, pet_extents};
 
-/// `Skill_SpawnPet::ActivateNow`'s spawn-set radii (caster, each pet) for a
-/// skill of `class` cast by an owner of `GetExtents` `caster` (module docs).
+/// Spawn-set radii (caster, each pet) for a skill of `class` cast by an owner of `GetExtents` `caster`.
 pub fn spawn_pet_radii(class: &str, caster: f32, pet: Option<&Record>) -> (f32, f32) {
     let mirage = class == gd_game_core::monster_skills::MIRAGE;
     let mult = if mirage { 2.0 } else { 1.0 };
@@ -114,9 +74,7 @@ pub fn spawn_pet_radii(class: &str, caster: f32, pet: Option<&Record>) -> (f32, 
     }
 }
 
-/// `Skill_SpawnPet::ActivateNow`'s point set around the caster at `centre`:
-/// the caster's spot first, then `count` pet spots; empty when one does not
-/// fit (module docs).
+/// The caster's spot first, then `count` pet spots; empty when one does not fit.
 pub fn spawn_pet_set(nav: &Nav, centre: Vec3, radii: (f32, f32), count: u32) -> Vec<Vec3> {
     let mut r = vec![radii.1; count as usize + 1];
     r[0] = radii.0;
@@ -133,8 +91,7 @@ pub fn spawn_pet_set(nav: &Nav, centre: Vec3, radii: (f32, f32), count: u32) -> 
     .collect()
 }
 
-/// `Skill_MonsterGenerator::Update`'s spots: `count` of `GetPetExtents`
-/// `pet` around the caster at `centre`, clear of its `radius` (module docs).
+/// `count` of `GetPetExtents` `pet` around the caster at `centre`, clear of its `radius`.
 pub fn generator_spots(nav: &Nav, centre: Vec3, radius: f32, pet: f32, count: u32) -> Vec<Vec3> {
     let mut block = gd_sim::pattern::NavBlock::default();
     block.block_point(centre.x, centre.z, radius);
@@ -152,17 +109,14 @@ pub fn generator_spots(nav: &Nav, centre: Vec3, radius: f32, pet: f32, count: u3
     .collect()
 }
 
-/// The aim of one summon cast.
 pub struct Aim {
     pub caster: Vec3,
     pub point: Vec3,
-    /// The target's position and `GetExtents`.
+    /// Position and `GetExtents`.
     pub target: Option<(Vec3, f32)>,
 }
 
-/// The spots of a `Skill_TargetedSpawnPet` cast of `skill` spawning `burst`
-/// (its modifier-summed `petBurstSpawn`, 0 counting as 1) `pet`s (module docs);
-/// empty: nothing spawns.
+/// `burst` is the modifier-summed `petBurstSpawn` (0 counting as 1); empty: nothing spawns.
 pub fn targeted_spots(
     db: &Database,
     nav: &Nav,
@@ -220,7 +174,7 @@ pub fn targeted_spots(
     vec![at.with_y(floor(at.x, at.z, at.y).unwrap_or(at.y))]
 }
 
-/// The classes that summon where their attack lands ([`hit_spots`]).
+/// The classes that summon where their attack lands.
 pub fn spawns_on_hit(class: &str) -> bool {
     matches!(
         class,
@@ -228,9 +182,8 @@ pub fn spawns_on_hit(class: &str) -> bool {
     )
 }
 
-/// The spots of a hit spawner's summons (module docs): `at` the impact (a
-/// chaos beam's target position), `target` the foe hit with its
-/// `GetExtents`; empty: nothing spawns.
+/// `at` the impact (a chaos beam's target position), `target` the foe hit with its `GetExtents`; empty:
+/// nothing spawns.
 pub fn hit_spots(
     db: &Database,
     nav: &Nav,

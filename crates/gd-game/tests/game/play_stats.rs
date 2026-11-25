@@ -1,5 +1,5 @@
-//! Headless checks of the session's play stats (`gd_game::play_stats`): a boss kill, a one-shot chest and a
-//! health potion count, and the counts are in the save the next session loads.
+//! Headless checks of the session's play stats: a boss kill, a one-shot chest and a health potion
+//! count, and the counts are in the save the next session loads.
 use bevy::prelude::*;
 use gd_formats::inventory::Sack;
 use gd_formats::save::gdc::Gdc;
@@ -68,8 +68,8 @@ fn boss_chest_and_potion_count_and_survive_save_and_load() {
     let difficulty = g.app.world().resource::<GameMode>().0.difficulty;
     let before = g.app.world().resource::<LoadedCharacter>().0.stats.clone();
 
-    // The player's boss kill: a boss kill of the difficulty, its experience, and the greatest monster (a
-    // live body, so its life and mana are known).
+    // A boss kill of the difficulty, its experience, and the greatest monster (a live body, so its
+    // life and mana are known).
     let record = boss(&g);
     let body = g.spawn_monster(&record, 100, Vec3::new(6.0, 0.0, 0.0));
     g.step();

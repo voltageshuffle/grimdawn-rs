@@ -9,15 +9,11 @@
 //! string = u32 len + bytes, wstring = u32 len + 2*len, Vec3 = 12, UniqueId = 16,
 //! Coords = 48, WorldCoords = 64) and are not stored in the file.
 //!
-//! PORT: the game never has to guess a width: its readers (`IOStreamRead::
-//! StreamPropertyEx`, Engine.dll, and siblings) are called by each
-//! object's `StreamProperties` in a fixed order with typed arguments; each
-//! checks that the next key is the expected one (virtual `HandlePropertyTag`)
-//! and reads the width its C++ type implies. `formulas.gst` has that
-//! schema (`GameEngine::StreamPlayerFormulas`, Game.dll)
-//! and is read with it. For a file without one, the generic
-//! decoder picks the first candidate width (string, then 4/1/2/16/12/48/64
-//! bytes) after which the next key (or EOF) parses. Encoding writes the same
+//! The game's readers (`IOStreamRead::StreamPropertyEx` and siblings) are called by each object's
+//! `StreamProperties` in a fixed order with typed arguments, checking each key (`HandlePropertyTag`).
+//! `formulas.gst` is read with that schema (`GameEngine::StreamPlayerFormulas`).
+//! PORT: for a file without a schema, the generic decoder picks the first candidate width (string,
+//! then 4/1/2/16/12/48/64 bytes) after which the next key (or EOF) parses. Encoding writes the same
 //! bytes back, so the round trip is exact independent of the guess.
 use super::cipher::{bytes_to_string, string_to_bytes};
 use anyhow::{Result, bail};
@@ -110,10 +106,10 @@ fn expect_key(d: &[u8], p: &mut usize, expect: &str) -> Result<()> {
             Ok(())
         }
         Some((key, _)) => bail!(
-            "formulas.gst: expected {expect:?}, found {key:?} at {:#x}",
+            "formulas.gst: expected \"{expect}\", found \"{key}\" at {:#x}",
             *p
         ),
-        None => bail!("formulas.gst: expected {expect:?} at {:#x}", *p),
+        None => bail!("formulas.gst: expected \"{expect}\" at {:#x}", *p),
     }
 }
 
@@ -164,7 +160,7 @@ impl Tagged {
                 }
             }
             let Some((value, sz)) = chosen else {
-                bail!("cannot determine the value width of {key:?} at {p:#x}")
+                bail!("cannot determine the value width of \"{key}\" at {p:#x}")
             };
             entries.push(TagEntry { key, value });
             p += sz;
@@ -175,10 +171,7 @@ impl Tagged {
     /// Per `GameEngine::StreamPlayerFormulas` (Game.dll):
     /// `begin_block`, `formulasVersion` int, `numEntries` int, `expansionStatus`
     /// byte (version >= 3), then `numEntries` pairs of `itemName` string and
-    /// `formulaRead` int (version >= 2), `end_block`. The widths are the C++
-    /// types the game's reader passes, not a guess: with 20 entries the guess
-    /// reads `numEntries` as a string (20 bytes on lands the first `itemName`
-    /// key), and the `expansionStatus` byte reads as a ~2 KB string length.
+    /// `formulaRead` int (version >= 2), `end_block`.
     fn parse_formulas(d: &[u8]) -> Result<Self> {
         let mut p = 0;
         let mut entries = Vec::new();
@@ -367,8 +360,7 @@ impl Tagged {
 mod tests {
     use super::*;
 
-    /// `formulas.gst`: learned and forgotten blueprints survive an encode / parse with their count
-    /// (20 entries once made the width guess read `numEntries` as a string).
+    /// `formulas.gst`: learned and forgotten blueprints survive an encode / parse with their count.
     #[test]
     fn formulas_round_trip() {
         let name = |i: usize| format!("records/items/crafting/blueprints/{i:040}.dbr");

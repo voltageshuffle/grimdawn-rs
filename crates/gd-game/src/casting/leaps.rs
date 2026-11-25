@@ -16,8 +16,7 @@ pub(super) fn dispels(
                 dots: false,
             });
         }
-        // The caster's friends (`IsFriend`, the complement of `combat::Side::foe`), not hiding (the
-        // projectile's friend query, `FilterInvalidTargets`: `combat::Side::hits`).
+        // The caster's friends (`IsFriend`), not hiding (`FilterInvalidTargets`).
         let side = crate::combat::Side::lookup(&casters, d.caster, false);
         for (e, gt, v) in &sides {
             if (e == d.caster || (!v.hiding() && !side.foe(v.side.side_ref())))
@@ -64,8 +63,7 @@ pub(super) fn path_charges(
     for (e, mut tf, mut ch, mut c) in &mut q {
         let side = crate::combat::Side::lookup(&sides, e, c.hostile);
         c.left -= dt;
-        // The Charge clip's run (`crate::combat::charge_move`); without the clip (or a character) the move fails
-        // and the skill lands where the caster stands.
+        // The Charge clip's run; without the clip (or a character) the skill lands where the caster stands.
         let speed = match (c.speed, ch.as_deref_mut()) {
             (Some(s), _) => s,
             (None, Some(ch)) if !c.to.is_empty() => {
@@ -85,7 +83,6 @@ pub(super) fn path_charges(
                 0.0
             }
         };
-        // Reached waypoints snap the caster onto them.
         while let Some(w) = c.to.first().copied()
             && (w - tf.translation).with_y(0.0).length() <= speed * dt
             && c.left > 0.0
@@ -102,7 +99,6 @@ pub(super) fn path_charges(
                 Some(g) => tf.translation = Vec3::new(next.x, g, next.z),
                 None => c.left = 0.0,
             }
-            // `CrowdAgentMoved` (`crate::turning`).
             if let Some(ch) = ch.as_mut() {
                 ch.turn.moved(d.normalize_or_zero() * speed);
             }
@@ -173,9 +169,8 @@ pub(super) fn path_charges(
                 struck.push(t);
             }
         }
-        // The end radius: the ordinary secondaries on what it hit, then the
-        // special ones whatever it hit (`Skill_AttackRadiusLeap::TargetResult`;
-        // `Skill_AttackPathCharge::Update` on arrival).
+        // The end radius: the ordinary secondaries on what it hit, then the special ones whatever it hit
+        // (`Skill_AttackRadiusLeap::TargetResult`; `Skill_AttackPathCharge::Update` on arrival).
         activations.write_batch(crate::secondary::Activate::on_hits(
             e,
             &c.skill,
@@ -205,11 +200,8 @@ pub(super) fn path_charges(
     }
 }
 
-/// Requests the weapon trails of projectile `owner`: one [`gd_game_core::visuals::TrailRequest`] between its mesh's
-/// `Anchor1` / `Anchor2` and, when there, one between `Anchor3` / `Anchor4` (`trails::anchors_of`; no
-/// `Anchor1`, no trail), the anchors scaled by the model's `scale`. The mesh comes from the one mesh loader
-/// ([`gd_game_core::creature::BodyCache`], emptied with the mounted mod by `session::set_mod_data`), read in a queued
-/// command, so it applies with the caller's other commands.
+/// Requests the weapon trails of projectile `owner`: `Anchor1` / `Anchor2` and, when there, `Anchor3` /
+/// `Anchor4` of its mesh (no `Anchor1`, no trail), scaled by the model's `scale`.
 pub(super) fn weapon_trails(
     commands: &mut Commands,
     owner: Entity,
@@ -245,11 +237,9 @@ pub(super) fn weapon_trails(
     });
 }
 
-/// Where a move skill goes: toward `point`, at most `waveDistance` (default
-/// 10), along the nav path, which is given up (no move) when longer than
-/// `maxMoveRatio` × the straight distance (`Character::GetMoveToPoint`,
-/// see [`PathCharge`]). A teleport lands on the ground at the
-/// end point.
+/// Where a move skill goes: toward `point`, at most `waveDistance` (default 10), along the nav path,
+/// given up when longer than `maxMoveRatio` × the straight distance (`Character::GetMoveToPoint`).
+/// A teleport lands on the ground at the end point.
 pub(super) fn move_route(
     nav: &Nav,
     scratch: &mut gd_sim::nav::PathScratch,
@@ -294,9 +284,8 @@ pub(super) fn move_route(
     route
 }
 
-/// Starts, moves and ends [`Leap`]s. The route is fixed when the cast starts
-/// (the action's `Execute`); `StartJump` / `StopJump` / the animation's end
-/// switch the move on and off.
+/// Starts, moves and ends [`Leap`]s. The route is fixed when the cast starts; `StartJump` / `StopJump`
+/// / the animation's end switch the move on and off.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn leaps(
     mut commands: Commands,
@@ -312,14 +301,9 @@ pub(super) fn leaps(
         let Some(rec) = data.db.get(&cast.skill).filter(|r| is_leap(&r.class)) else {
             continue;
         };
-        // A Disengage (move type 5, set by its constructor) jumps AWAY from
-        // its target: `Character::GetMoveToPoint` takes the straight
-        // walkable point (`NavManager::FindStraightMovePointOnSlopes`) on the
-        // line from the caster directly away from the target, `waveDistance`
-        // out; the caster keeps facing the target (`JumpAttackAction::
-        // Execute` reverses the facing direction for it). A Leap
-        // (type 3) jumps toward the target. PORT: the straight-move query is
-        // the port's nav ground walk in 0.25 m steps.
+        // A Disengage (move type 5) jumps away from its target, `waveDistance` out
+        // (`NavManager::FindStraightMovePointOnSlopes`), still facing it; a Leap (type 3) jumps toward
+        // it. PORT: the straight-move query is a nav ground walk in 0.25 m steps.
         let goal = if rec.class == "Skill_AttackRadiusDisengage" {
             let away = (tf.translation - cast.point)
                 .with_y(0.0)
@@ -339,7 +323,7 @@ pub(super) fn leaps(
             cast.point
         };
         let to = move_route(&nav, &mut scratch, rec, tf.translation, goal, false);
-        // The target's distance (the clamped point, as `move_route`).
+        // Clamped as in `move_route`.
         let dist = (goal - tf.translation)
             .with_y(0.0)
             .length()
@@ -362,7 +346,6 @@ pub(super) fn leaps(
         };
         match ev.name.as_str() {
             "StartJump" if leap.scale.is_none() => {
-                // The jump animation's total root motion, forward component.
                 let z = ch.channel.current.as_ref().and_then(|c| {
                     let root = gd_sim::anim::root_motion_bone(&ch.body)?;
                     let keys = &c.anim.track(root)?.keys;

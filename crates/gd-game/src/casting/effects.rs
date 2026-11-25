@@ -1,7 +1,6 @@
 use super::*;
 
-/// Spawns a pak's effects on `owner` (replacing its earlier ones for the
-/// same skill: a re-applied buff restarts them, `SkillManager::AddCharFxPak`);
+/// Spawns a pak's effects on `owner`, replacing its earlier ones for the same skill (`SkillManager::AddCharFxPak`);
 /// returns the effect entities.
 pub(crate) fn spawn_pak_on(
     w: &mut World,
@@ -69,8 +68,7 @@ pub(crate) fn spawn_pak_on(
     out
 }
 
-/// Starts a buff's character effect pak on `owner` under `skill`;
-/// `toggled`: it comes from a toggled skill ([`BuffFx::toggled`]).
+/// Starts a buff's character effect pak on `owner` under `skill`; `toggled`: from a toggled skill.
 pub(crate) fn attach_buff_fx(
     commands: &mut Commands,
     data: &GameData,
@@ -88,13 +86,8 @@ pub(crate) fn attach_buff_fx(
     });
 }
 
-/// Timed self buffs run out — the one [`gd_game_core::skill_buffs::TimedBuffs`]
-/// store of every character (the player's on its `Loadout`, a monster's on
-/// its `MonsterSkills`, a pet's on its `Pet`): their effects go,
-/// `skillDeactivatedSound` plays at the caster
-/// (`crate::skill_buffs::timed_buffs_ended`), the profile rebuilds. A dead
-/// holder's are not run down: death stopped them (`crate::skill_buffs`'
-/// `stop_buffs_on_death`).
+/// Timed self buffs run out (every [`gd_game_core::skill_buffs::TimedBuffs`] store): their effects go,
+/// `skillDeactivatedSound` plays at the caster, the profile rebuilds. A dead holder's are not run down.
 pub(super) fn expire_buffs(
     mut commands: Commands,
     time: Res<Time>,
@@ -113,7 +106,7 @@ pub(super) fn expire_buffs(
         ),
         (
             Without<Dead>,
-            // Only the holders of a list: not every entity with a transform.
+            // Only the holders of a list.
             Or<(
                 With<Loadout>,
                 With<crate::monster_skills::MonsterSkills>,
@@ -124,9 +117,8 @@ pub(super) fn expire_buffs(
     fx: Query<(Entity, &BuffFx)>,
 ) {
     let dt = time.delta_secs();
-    // The countdown is not a change: only an expiry is (it rebuilds the profile). Ticking through
-    // `DerefMut` would flag `Loadout` / `MonsterSkills` / `Pet` changed every frame, and their `Changed`
-    // readers (pet profile refresh, toggles, auras, sheet DPS…) would rerun every frame.
+    // Tick bypassing change detection: only an expiry is a change, else every `Changed` reader of `Loadout` /
+    // `MonsterSkills` / `Pet` reruns each frame.
     for (e, tf, loadout, ms, pet, procs) in &mut q {
         let gone = if let Some(mut l) = loadout {
             // A life monitor's buff waits while life stays low (`Skill_PassiveOnLifeBuffSelf`'s `thresholdDuration`).

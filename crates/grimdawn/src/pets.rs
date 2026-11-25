@@ -1,29 +1,15 @@
 //! Pet order input. The Pet Attack skill needs none of its own: on a hotbar
-//! slot it is a `CastRequest` like any skill (`gd_game::pets::pet_commands`).
-//! Portraits and their stance menu: `ui::pets`.
+//! slot it is a `CastRequest` like any skill. Portraits and their stance menu: `ui::pets`.
 //!
-//! Selection, `Grim Dawn.exe` (the player input object's pet list,
-//! toggle `InGameUI::TogglePetSelection`, order `InGameUI::OrderSelectedPets`, clear
-//! `InGameUI::ClearPetSelection`, world click `InGameUI::HandleMouseEvent`, keys `InGameUI::HandleKeyEvent` /
-//! `UIPlayerHud::HandleKeyAction`): the selected
-//! pets are UI state ([`PetSelection`], in selection order). A pet of the
-//! player is toggled by a left click on its portrait, by a left click on the
-//! pet in the world while the Target Pet key is held (action 38
-//! `TargetPet`; Left Ctrl, scan code 29 in the reference `keybindings.txt`;
-//! such a click does nothing else), and by Select Pet 1–5 (actions 44–48,
-//! F2–F6: the n-th portrait); Select All Pets (action 49, F7) clears the
-//! selection and toggles the first five portraits. With pets selected, the
-//! next world left click orders each of them (one `PetCommand` per pet: the
-//! foe under the cursor is attacked, else they move to the ground point),
-//! clears the selection and does nothing else; Esc clears it. A selected pet
-//! would get the `gameengine.dbr` `petBannerName` banner (no stock record
-//! sets it) and play its `petAcknowledgeSound` (none set).
-//!
-//! `GD_PET_STANCE` (hooks.rs) sets every pet's stance once the first pet
-//! exists; at each of its times `GD_PET_ORDER`
-//! gives the selected pets (else the first portrait's) the order of a world
-//! click on the monster nearest the pet or at a point (the monster within
-//! 1.5 m of it, else the ground).
+//! Selection (`InGameUI::TogglePetSelection`, `InGameUI::OrderSelectedPets`, `InGameUI::ClearPetSelection`,
+//! `InGameUI::HandleMouseEvent`, `InGameUI::HandleKeyEvent` / `UIPlayerHud::HandleKeyAction`): the selected
+//! pets are UI state ([`PetSelection`], in selection order). A pet of the player is toggled by a left click on
+//! its portrait, by a left click on the pet in the world while the Target Pet key is held (action 38; such a
+//! click does nothing else), and by Select Pet 1–5 (actions 44–48: the n-th portrait); Select All Pets (action
+//! 49) clears the selection and toggles the first five portraits. With pets selected, the next world left click
+//! orders each of them (one `PetCommand` per pet: the foe under the cursor is attacked, else they move to the
+//! ground point), clears the selection and does nothing else; Esc clears it. A selected pet would get the
+//! `gameengine.dbr` `petBannerName` banner and play its `petAcknowledgeSound` (no stock record sets either).
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_game::nav::Nav;
@@ -54,7 +40,6 @@ impl Plugin for PetInputPlugin {
     }
 }
 
-/// `GD_PET_STANCE`: sets every pet's stance once the first pet exists.
 #[cfg(feature = "dev")]
 fn stance_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -89,7 +74,6 @@ fn stance_hook(
     }
 }
 
-/// Pet selection keys and world clicks (module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn world_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -120,8 +104,7 @@ pub fn world_input(
     ),
 ) {
     let Ok(owner) = players.single() else { return };
-    // What an order may attack: the characters the player's side calls foes (`gd_game::combat::Side::foe`:
-    // monsters without `Allied`, a pet a monster's convert joined).
+    // What an order may attack: the characters the player's side calls foes.
     let foes = || {
         monsters
             .iter()
@@ -156,7 +139,6 @@ pub fn world_input(
             selection.toggle(pet);
         }
     }
-    // `GD_PET_ORDER` (hooks.rs, module doc).
     #[cfg(feature = "dev")]
     let hook = hook.get_or_insert_with(|| hooks.ui.pet_order.clone());
     #[cfg(feature = "dev")]

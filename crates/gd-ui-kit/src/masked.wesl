@@ -11,8 +11,7 @@ struct MaskedParams {
 @group(1) @binding(3) var mask: texture_2d<f32>;
 @group(1) @binding(4) var mask_samp: sampler;
 
-// sRGB encode: the texel back to the gamma value it was given as (the UI target holds gamma values,
-// render/post.rs "UI").
+// sRGB encode (the UI target holds gamma values).
 fn enc(c: vec3<f32>) -> vec3<f32> {
     let x = max(c, vec3<f32>(0.0));
     return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), x * 12.92, x <= vec3<f32>(0.0031308));

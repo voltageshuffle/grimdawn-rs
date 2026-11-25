@@ -5,8 +5,7 @@
 //! the buff bar from `gd_game::buff_bar::PlayerIcons` and its `Afflictions`
 //! (kept in a [`BuffBar`]), the pets' portrait buff icons, the mode label from
 //! `GameMode`, the area name from the map's name sector at the player. Gameplay systems never
-//! write UI state; the windows read only this view (or the gameplay
-//! components directly), so they cannot drift from what the game uses.
+//! write UI state; the windows read only this view (or the gameplay components directly).
 use crate::afflictions::Afflictions;
 use bevy::prelude::*;
 use gd_game::sheet_dps::{SheetDps, SheetDpsValues};
@@ -51,9 +50,7 @@ pub struct BarCache {
 }
 
 /// One pet's portrait-icon inputs ([`gd_game::buff_bar::pet_icons`]): the icon list changes only
-/// when one of these moves. `Pet` and `DamageAuras` are marked changed every frame their timers
-/// tick (`gd_game::pets`, `gd_game::casting::auras`), so their change ticks cannot gate the
-/// recompute; the received buffs' can (an expiry only shrinks the list, hence the count).
+/// when one of these moves. `Pet` and `DamageAuras` change every frame their timers tick, so they cannot gate it.
 struct PetIconInputs {
     toggled: Vec<String>,
     buffs: Vec<String>,
@@ -106,12 +103,7 @@ fn put<T: PartialEq>(dst: &mut T, new: T) -> bool {
 }
 
 /// Fills [`HudValues`] and [`HudVitals`] from the sources they show; fields whose source does
-/// not exist yet keep their value.
-///
-/// Runs every frame, so nothing is rebuilt that did not change: [`HudValues`] is written field by field where a
-/// value differs (and marked changed only then), the sheet rows and the hotbar icons are recomputed when their
-/// inputs change (see [`SheetCache`]), and strings are compared before they are assigned. [`HudVitals`] (life,
-/// energy, cooldowns, the buff bar) is rewritten in place every frame.
+/// not exist yet keep their value. [`HudValues`] is written only where a value differs.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     data: Res<GameData>,
@@ -261,7 +253,7 @@ pub fn collect(
         );
     }
     let (state, portal, levels, at, story, pause, folder, (menu, options)) = &travel;
-    // The orb HUD's menu folder: its buttons hide under the game menu / options window (`menufolder.rs`).
+    // The orb HUD's menu folder: its buttons hide under the game menu / options window.
     changed |= put(
         &mut v.menu_folder,
         gd_ui::menufolder::FolderView {
@@ -282,14 +274,9 @@ pub fn collect(
         s.player.region.map_or(0.0, |r| s.endless.progress_of(r))
     });
     changed |= put(&mut v.endless_progress, endless);
-    // The area name: the name sector under the player, read from the player's
-    // own region's level (`Player::UpdateSelf`: sectors are
-    // read per region; the Shattered Realm's regions overlap main-world ground,
-    // so a lookup by position alone showed "Conclave of the Three" there).
-    // Engine.dll `AmbianceManager::Update` (the area name's
-    // writer: `GameEngine.areaNameTag`, read by `Engine::GetAreaNameTag`): every update it is
-    // the name sector's tag at the ambiance target (whatever its "show" flag),
-    // empty where there is no name sector. The target: `ui/cinematic.rs` `area_names`.
+    // The area name: the name sector's tag under the player, read from the player's own region's level
+    // (`Player::UpdateSelf`; the Shattered Realm's regions overlap main-world ground). `AmbianceManager::Update`:
+    // empty where there is no name sector, whatever its "show" flag.
     let region = story
         .as_ref()
         .and_then(|rt| rt.story.borrow().player.region);
@@ -306,7 +293,6 @@ pub fn collect(
             changed = true;
         }
     }
-    // The challenge area (`challenge.rs`).
     changed |= gd_ui::challenge::ChallengeHud::refresh(
         &mut v.challenge_area,
         &data,
@@ -315,10 +301,7 @@ pub fn collect(
     );
     if let (Some(state), Ok(tf)) = (state, at.single()) {
         // `UIPlayerHud::Update` (the options window or the game menu is up): the active button
-        // (`hudActiveTeleportButton`) hides; the plain one stays drawn, disabled for presses without the disabled
-        // bitmap (`ButtonStatic.disabled` set, `ButtonStatic.dimmed` clear: `ButtonStatic` draw `ButtonStatic::Render`
-        // draws the up bitmap), so it neither vanishes nor greys out (`riftmap::teleport_button` refuses the press
-        // while the menu is up).
+        // (`hudActiveTeleportButton`) hides; the plain one stays drawn with its up bitmap (`ButtonStatic::Render`).
         let unlocked = gd_game::riftgates::portal_unlocked(&data, story.as_deref());
         let teleport = gd_game::riftgates::portal_button(
             tf.translation,
@@ -386,9 +369,7 @@ pub fn collect(
                 .filter(|p| p.0.owner == me)
                 .min_by(|a, b| a.0.spawned_at.total_cmp(&b.0.spawned_at));
             let foes = session.last_foes(loaded.as_deref().map(|c| &c.0.stats), mode.0.difficulty);
-            // The resistance reduction reads the debuff list: recomputed only when the
-            // afflictions moved (their change tick; a timer's countdown alone is not a change,
-            // `gd_game::afflictions::tick`), as the target strip's cache does ([`StripSeen`]).
+            // Recomputed only when the afflictions' change tick moved (a countdown alone is not a change).
             let aff_tick = afflictions.as_ref().map(|a| a.last_changed());
             let red = cache
                 .0
@@ -403,8 +384,7 @@ pub fn collect(
                             .unwrap_or_default(),
                     )
                 });
-            // The key holds the profiles' `Arc`s, not their addresses: a freed address can be reused
-            // between two collects (a level-up rebuild, a pet resummon).
+            // The key holds the profiles' `Arc`s, not their addresses: a freed address can be reused.
             let sheet_changed = cache.0.as_ref().is_none_or(|(p, pet_p, d, f, (_, r))| {
                 !std::sync::Arc::ptr_eq(p, &cb.profile)
                     || match (pet_p, pet) {
@@ -442,11 +422,8 @@ pub fn collect(
                 v.armor.clone_from(&cache.3);
                 changed = true;
             }
-            // The rows the sheet and the play stats add are rebuilt when one of their inputs changed.
-            // `session.is_changed()` is true every frame (`play_stats::count_play_time` ticks `play_ms`), so
-            // the play stats are keyed on the values the rows read: the minute of play time, the counts
-            // and the rounded greatest damage. The greatest monster and the item levels come from the
-            // loaded stats / the loadout, whose change detection covers them.
+            // `session.is_changed()` is true every frame (`play_ms` ticks), so the play stat rows are keyed
+            // on the values they read.
             let ls = loaded.as_deref().map(|c| &c.0.stats);
             let stat_key = (
                 (ls.map_or(0, |p| p.play_time) + session.play_seconds) / 60,
@@ -549,9 +526,7 @@ pub fn collect(
             );
         }
         if let (Some(c), Some(l)) = (caster, loadout) {
-            // The summon records of the player's living pets: an inline buffer keeps the usual
-            // small pet count allocation-free (a `Local` cannot hold a slice borrowed from the
-            // pet query); more pets fall back to a Vec.
+            // The summon records of the player's living pets.
             let mut inline = [""; 16];
             let mut count = 0;
             for p in pets.iter().filter(|p| p.1.owner == me) {
@@ -587,7 +562,7 @@ pub fn collect(
                 .list(&data.db, &st, loadout_changed, &mut bar.listed);
             // The icon is the trackable icon (a `.tex`) or the record's up
             // bitmap (`SkillProfile::GetUpBitmapName`); none: no icon
-            // (`PlayerStatusIcons::AddIcon`). PORT: else its display record's. Resolved once per record.
+            // (`PlayerStatusIcons::AddIcon`). PORT: else its display record's.
             let bitmaps = &mut bar.bitmaps;
             bar.listed.retain_mut(|t| {
                 if t.icon.ends_with(".tex") {
@@ -623,8 +598,7 @@ pub fn collect(
                 &mut vitals.status,
             );
         }
-        // The pets' portrait icons: recomputed only when their inputs moved ([`PetIconInputs`]),
-        // compared before they are copied.
+        // The pets' portrait icons: recomputed only when their inputs moved ([`PetIconInputs`]).
         let mut n = 0;
         for (e, pet, da, ab) in pets.iter().filter(|p| p.1.owner == me) {
             let received = (
@@ -680,8 +654,7 @@ pub fn collect(
             strip_seen.strip = target_strip(&data.db, m, r.as_deref(), a.as_deref());
             strip_seen.src = src;
         } else if let Some(r) = &r {
-            // The countdowns run down without a change tick: refresh their text only when the
-            // shown second changes (no String per debuff per frame).
+            // The countdowns run down without a change tick: refresh their text when the shown second changes.
             for (k, d) in &mut strip_seen.strip {
                 if let Some(rec) = k.strip_prefix("s:")
                     && let Some(b) = r.list.iter().find(|b| b.buff.eq_ignore_ascii_case(rec))
@@ -695,8 +668,7 @@ pub fn collect(
         }
         strip_seen.merge();
     }
-    // Published in place: the strip's debuffs, compared before they are copied (no target: the
-    // retarget above cleared the strip).
+    // No target: the retarget above cleared the strip.
     let strip = &strip_seen.strip;
     if v.target_debuffs.len() != strip.len()
         || !v.target_debuffs.iter().eq(strip.iter().map(|e| &e.1))
@@ -705,7 +677,6 @@ pub fn collect(
         v.target_debuffs.extend(strip.iter().map(|e| e.1.clone()));
         changed = true;
     }
-    // `GD_SUNDERED` (hooks.rs): overrides the entry's value (a shot of the overlay without an enemy that applies it).
     #[cfg(feature = "dev")]
     if let Some(h) = hooks.ui.sundered {
         vitals.damage_taken_debuff = h;
@@ -715,9 +686,8 @@ pub fn collect(
     }
 }
 
-/// One shown hot slot's inputs that change only with the profile (a skill, gear, weapon or form change rebuilds
-/// it, minting a new `Arc`): computing them walks the skill trees for learned modifiers (`energy_cost`) and the
-/// worn items for granted skills, too costly for every slot every frame.
+/// One shown hot slot's inputs that change only with the profile (a skill, gear, weapon or form change mints a
+/// new `Arc`).
 pub struct HotStatic {
     field: &'static str,
     skill: String,
@@ -748,10 +718,8 @@ pub struct HotCache(
 /// The shown hot slots' state overlays ([`gd_ui::hud::HotSlotState`],
 /// `HotSlotOptionSkill::GetStatus` / `HotSlotButton::Update`): the active-toggle / low-energy blue
 /// highlight, the wrong-weapon red highlight, the unlearned dark rect, and the charged pool skills'
-/// charge count. The usability is the hot-slot tooltip's (`gd_sim::skill_tooltip::hot_state`). Per frame only
-/// the toggles, energy, cooldowns and charges are read; the rest comes from `cache` ([`HotStatic`]), rebuilt
-/// when its key moved or `inputs_changed` (the book, loadout, links or rules changed this frame). Written into
-/// `out` in place.
+/// charge count. The usability is the hot-slot tooltip's (`gd_sim::skill_tooltip::hot_state`). `cache`
+/// ([`HotStatic`]) is rebuilt when its key moved or `inputs_changed`.
 #[allow(clippy::too_many_arguments)]
 fn hot_slot_states(
     data: &GameData,
@@ -942,19 +910,10 @@ pub struct StripSeen {
 }
 
 impl StripSeen {
-    /// `PlayerStatusIcons::AddIcon` / `PlayerStatusIcons::AddDotIcon`: the widget keeps its icons; each update
-    /// refreshes an icon in place (same skill / same duration-damage type), appends the new ones at the end in the
-    /// update's order ([`target_strip`]) and drops the ones gone (state 2). So an icon keeps its place for as long as
-    /// it shows. A skill icon is keyed by its buff record (the engine's by the buff's object id: a buff made anew moves
-    /// to the end there; PORT). For the target change see [`StripSeen::retarget`]. `Grim Dawn.exe`
-    /// `InGameUI::HandleMouseEvent` / `InGameUI::Update` (the hover writes the widget's target,
-    /// `TargetInfoWidget.target`
-    /// through the monster bar's `MonsterBar.targetInfo`, and nothing else) and `PlayerStatusIcons::TickIcons` (an icon
-    /// not refreshed by an update goes to state 2: `SkillBuff`'s virtual `SkillBuff::KeepsTrackerIcon` is the stock
-    /// `return false`; the next update drops it): the widget keeps its icons across a target change. The old target's
-    /// skill icons are keyed by its buff objects, which the new target never refreshes, so they go; a duration-damage
-    /// icon is keyed by its type (`PlayerStatusIcons::AddDotIcon`), so one the new target also has keeps its place.
-    /// PORT: the dropped icons show one update less.
+    /// `PlayerStatusIcons::AddIcon` / `PlayerStatusIcons::AddDotIcon`: each update refreshes an icon in place (same
+    /// skill / same duration-damage type), appends the new ones in the update's order ([`target_strip`]) and drops
+    /// the ones gone, also across a target change (`PlayerStatusIcons::TickIcons`). PORT: a skill icon is keyed by
+    /// its buff record, not the buff's object id; the dropped icons show one update less.
     fn retarget(&mut self, target: Option<Entity>) {
         if self.target != target {
             self.target = target;
@@ -965,8 +924,8 @@ impl StripSeen {
         }
     }
 
-    /// Orders [`Self::strip`] by [`Self::keys`] in place (a shown icon keeps its place; the new
-    /// ones append in the update's order) and refreshes the keys — no per-frame Vec.
+    /// Orders [`Self::strip`] by [`Self::keys`] (a shown icon keeps its place; the new ones append in the
+    /// update's order) and refreshes the keys.
     fn merge(&mut self) {
         let mut n = 0;
         for i in 0..self.keys.len() {
@@ -1061,8 +1020,7 @@ pub fn target_strip(
 }
 
 /// The sheet rows that only change with the profile, the first pet or the
-/// DPS values (they run the damage accumulator: not every frame), and the
-/// hot slots / merged rows derived from them.
+/// DPS values, and the hot slots / merged rows derived from them.
 #[derive(Default)]
 pub struct SheetCache(
     /// The sheet's inputs: the player's and the pet's profile (held, compared with `Arc::ptr_eq`), the
@@ -1092,8 +1050,7 @@ pub struct SheetCache(
     HotCache,
 );
 
-/// Publishes `rows` into `dst` field-wise: only the rows that differ are written, the rest keep their
-/// `String`s.
+/// Publishes `rows` into `dst`: only the rows that differ are written.
 fn publish_rows(
     dst: &mut std::collections::BTreeMap<String, String>,
     rows: &std::collections::BTreeMap<String, String>,

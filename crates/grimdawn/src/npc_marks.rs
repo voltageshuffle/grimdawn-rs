@@ -1,27 +1,13 @@
-//! Presentation of the marks over NPCs (`gd_game::npc_marks::NpcMark`, which
-//! holds the rules): the mark's FX record is a `Punctuation` object, a plain
-//! mesh (`fx/meshfx/ui_*.msh`, its `baseTexture` override) spawned like any
-//! record model ([`gd_render::character::CharAssets::spawn_record_model`]).
-//! * `Entity::AttachPunctuation` (Engine.dll): the object
-//!   is created from the record and attached to the NPC's `Head` attach point;
-//!   `DetachPunctuation` destroys it. A new mark replaces the old one. A mesh
-//!   without a `Head` point (the bounty tables, `*_tablebounty*.msh`: only
-//!   candle / light points) attaches at the actor's origin:
-//!   `GraphicsMesh::GetAttachedCoords` returns the identity for an
-//!   unknown name, and `Actor::GetAttachedCoordsInRegion` scales that frame by
-//!   the actor's scale before placing it at the actor's coords.
-//! * `Npc::BillboardPunctuation` (Game.dll): every frame
-//!   the attach offset is set to a rotation about the vertical axis derived
-//!   from the camera's direction and a translation of (0, 3, 0) in the head
-//!   point's frame. PORT: the offset is 3 m straight up from the head point
-//!   (in world space, NPC scale applied) and the yaw faces the camera; the
-//!   engine's exact angle (acos of two horizontal vectors) was not decoded.
-//! * No distance fade, bobbing or fog rule exists in the engine for it; the
-//!   mesh's own `CreateEntity` effects, if any, come with the model.
-//! * The gem, `!` / `?` and most service meshes use `albedo.ssh`, whose deferred
-//!   pass is unlit (`render::material::FLAG_UNLIT`): drawn as the texel, so the
-//!   gem is an opaque grey square-topped pyramid in any light (lit, its top went
-//!   white in the sun over a dark, see-through-looking point).
+//! Presentation of the marks over NPCs (`gd_game::npc_marks::NpcMark`): the mark's FX record is a
+//! `Punctuation` object, a plain mesh (`fx/meshfx/ui_*.msh`) spawned like any record model.
+//! * `Entity::AttachPunctuation`: the object is attached to the NPC's `Head` attach point; a new mark replaces
+//!   the old one. A mesh without a `Head` point attaches at the actor's origin (`GraphicsMesh::GetAttachedCoords`
+//!   returns the identity for an unknown name; `Actor::GetAttachedCoordsInRegion` scales it by the actor's scale).
+//! * `Npc::BillboardPunctuation`: every frame the mark faces the camera, offset (0, 3, 0) in the head point's
+//!   frame. PORT: 3 m straight up in world space (NPC scale applied), yaw facing the camera; the engine's exact
+//!   angle was not decoded.
+//! * No distance fade, bobbing or fog rule.
+//! * `albedo.ssh` meshes draw unlit (`render::material::FLAG_UNLIT`).
 use bevy::prelude::*;
 use gd_game::npc_marks::NpcMark;
 use gd_game_core::character::Character;
@@ -37,17 +23,15 @@ impl Plugin for NpcMarksViewPlugin {
     }
 }
 
-/// The mark object of an NPC (a root entity, despawned with its mark or its NPC).
 #[derive(Component)]
 #[relationship(relationship_target = MarkObjects)]
 struct MarkOf(Entity);
 
-/// An NPC's mark objects ([`MarkOf`]).
 #[derive(Component)]
 #[relationship_target(relationship = MarkOf, linked_spawn)]
 struct MarkObjects(Vec<Entity>);
 
-/// (Re)creates mark objects for NPCs whose [`NpcMark`] changed or went (a despawned NPC's go with it).
+/// (Re)creates mark objects for NPCs whose [`NpcMark`] changed or went.
 fn dress_marks(
     mut commands: Commands,
     changed: Query<(Entity, &NpcMark, Option<&MarkObjects>), Changed<NpcMark>>,
@@ -81,11 +65,8 @@ fn dress_marks(
     }
 }
 
-/// Floats each mark over its NPC's head, facing the camera. Runs after
-/// propagation (the NPC's and camera's `GlobalTransform` are this frame's),
-/// so it writes the mark's `GlobalTransform` directly — and its mesh parts',
-/// which propagation has already computed from the old transform — to keep
-/// the mark on the NPC this frame instead of a frame behind.
+/// Floats each mark over its NPC's head, facing the camera. Runs after propagation, so it writes the mark's
+/// and its mesh parts' `GlobalTransform` directly to avoid a frame of lag.
 fn place_marks(
     mut objects: Query<(
         &MarkOf,
@@ -93,7 +74,6 @@ fn place_marks(
         &mut GlobalTransform,
         Option<&Children>,
     )>,
-    // (Disjoint from the marks and their parts, whose `GlobalTransform` is written.)
     npcs: Query<(&GlobalTransform, &Character), Without<MarkOf>>,
     cams: Query<&GlobalTransform, (With<GameCamera>, Without<MarkOf>)>,
     mut parts: Query<
@@ -116,8 +96,7 @@ fn place_marks(
             rotation: Quat::from_rotation_y(d.x.atan2(d.z)),
             scale: Vec3::splat(scale),
         };
-        // Written only when they moved: an unchanged write still flags the
-        // mark's and its parts' transforms changed for the renderer every frame.
+        // Written only when moved: a write flags the transforms changed for the renderer.
         tf.set_if_neq(t);
         let g = GlobalTransform::from(t);
         gt.set_if_neq(g);

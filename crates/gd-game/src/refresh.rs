@@ -1,66 +1,35 @@
-//! Cooldown and duration refreshes: a skill (in stock: `Skill_Modifier`s of
-//! the class trees and of gear, one `Skill_Transmuter`, two item
-//! `Skill_WPAttack_BasicAttack`s) with `refreshCooldownSkill` /
-//! `refreshDurationSkill` cuts another skill's cooldown or lengthens its
-//! running buff on a trigger.
+//! Cooldown and duration refreshes: a skill with `refreshCooldownSkill` / `refreshDurationSkill` cuts another
+//! skill's cooldown or lengthens its running buff on a trigger.
 //!
-//! Fields (`Skill::LoadResources` reads the names and triggers,
-//! gdx3 only; the profile's `SkillProfile_Modifiers::Load` the per-level values):
-//! `refreshCooldownSkill` / `refreshCooldownTrigger` /
-//! `refreshCooldownChance` (integer %) / `refreshCooldownAmount` (s), and
-//! `refreshDurationSkill` / `refreshDurationTrigger` /
-//! `refreshDurationChance` / `refreshDurationAmount` (s) /
-//! `refreshDurationMax` (s). Triggers in stock: `AttackEnemy`,
-//! `AttackEnemyCrit`, `HitByEnemy`, `Block`, `OnKill`.
+//! Fields (`Skill::LoadResources`, `SkillProfile_Modifiers::Load`): `refreshCooldownSkill` / `…Trigger` /
+//! `…Chance` (integer %) / `…Amount` (s), and `refreshDurationSkill` / `…Trigger` / `…Chance` / `…Amount` (s) /
+//! `…Max` (s). Triggers in stock: `AttackEnemy`, `AttackEnemyCrit`, `HitByEnemy`, `Block`, `OnKill`.
 //!
-//! `Skill::Install`: when the character's skill
-//! manager knows the named skill (`SkillManager::FindSkillId`, the player
-//! only: `RegisterRefreshSkillCooldown` / `…Duration`), it
-//! registers a `RefreshSkillCooldownController` /
-//! `RefreshSkillDurationController` with the chance and amount
-//! of the installing skill's level. Both are `SkillAutoCastController`s:
-//! the same trigger objects as the procs (`crate::autocast`, whose trigger
-//! events [`crate::autocast::Triggered`] this module reads), the same
-//! `AppraiseAndExecute`: a chance ≤ 0 always passes, else
-//! `RandomUniform(0, 100) ≤ chance`; no cooldown of their own (the action
-//! never sets its block flag for a non-zero amount).
+//! `Skill::Install`: when the player knows the named skill (`SkillManager::FindSkillId`), it registers a
+//! `RefreshSkillCooldownController` / `RefreshSkillDurationController` with the chance and amount of the installing
+//! skill's level. Both are `SkillAutoCastController`s with the procs' triggers ([`crate::autocast::Triggered`]) and
+//! `AppraiseAndExecute`: a chance ≤ 0 always passes, else `RandomUniform(0, 100) ≤ chance`; no cooldown of their own.
 //!
-//! Whose events count (controller type 2, a skill's): the controller's
-//! skill list is the installing modifier's parents (`Skill.parentSkills`, the base
-//! skill before it in the tree or the gear's `modifiedSkillName`,
-//! `SkillManager::CreateAndLoadSkill`), else the skill itself.
-//! `AttackingEnemy` / `EnemyDeath` take the
-//! attacking / killing skill when it is one of them, or granted by one
-//! (`IsGrantingSkill`: its buff, pool attack, secondary or
-//! sub-skill), or while one of them is active (`Skill.active`:
-//! [`gd_game_core::player::Loadout::skill_active`]): an aura's modifier fires on
-//! any attack while the aura runs. `HitByEnemy` (hits taken,
-//! blocks) needs one of them active. A refresh may fire from attacks of
-//! the skill it refreshes (`SkillServices_Character::AttackingEnemy`
-//! skips that only for procs).
+//! Whose events count: the controller's skill list is the installing modifier's parents (`Skill.parentSkills`),
+//! else the skill itself. `AttackingEnemy` / `EnemyDeath` take the attacking / killing skill when it is one of them,
+//! or granted by one (`IsGrantingSkill`), or while one of them is active
+//! ([`gd_game_core::player::Loadout::skill_active`]): an aura's modifier fires on any attack while the aura runs.
+//! `HitByEnemy` (hits taken, blocks) needs one of them active. A refresh may fire from attacks of the skill it
+//! refreshes.
 //!
-//! The effect (`RefreshSkillController::Execute`): a cooldown refresh is ready only while the
-//! skill cools down and runs `Skill::EndCooldown(amount × 1000 ms)`
-//! ([`gd_game_core::casting::Cooldowns::shorten`]: the time left only). A
-//! duration refresh is ready only while the skill's buff runs
-//! (`SkillManager::IsSkillBuffActive`) and sends the buff an update with
-//! the amount (`RefreshSkillDurationController::Update` → `SkillServices_Character::
-//! CreateUpdateSkillBuff` → `SkillBuff::AddTimeToLive`). The update does nothing unless the whole
-//! amount fits: time left + amount ≤ the buff's full duration (a life monitor's buff held at full by
-//! `thresholdDuration` waits for its countdown, `crate::autocast`), and the time left never passes the full
-//! duration. `refreshDurationMax` is a budget per buff instance (`Skill::GetRefreshDurationModifierData`, filled
-//! when the buff starts): the skill's own max under its own id, each registered modifier's under its parent, or
-//! summed under key 0 when the parent is a self buff (`SkillActivatedBuffSelf` / `Skill_PassiveOnHitBuffSelf` or
-//! derived, [`POOLED`]). An update from source `s` is cut to what is left of `s`'s entry and spends it, then to what
-//! is left of key 0's and spends that; a key with no entry cuts nothing. The source is the attacking skill for
-//! `AttackEnemy(Crit)` only (the action's `sourceSkill`, set by `AttackingEnemy`); other triggers pass none (key
-//! 0), so their extension is cut by the pool, which it spends twice.
+//! The effect (`RefreshSkillController::Execute`): a cooldown refresh is ready only while the skill cools down and
+//! runs `Skill::EndCooldown(amount × 1000 ms)` (the time left only). A duration refresh is ready only while the
+//! skill's buff runs and calls `SkillBuff::AddTimeToLive`, which does nothing unless the whole amount fits: time
+//! left + amount ≤ the buff's full duration. `refreshDurationMax` is a budget per buff instance
+//! (`Skill::GetRefreshDurationModifierData`, filled when the buff starts): the skill's own max under its own id,
+//! each registered modifier's under its parent, or summed under key 0 when the parent is a self buff ([`POOLED`]).
+//! An update from source `s` is cut to what is left of `s`'s entry and spends it, then to what is left of key 0's
+//! and spends that; a key with no entry cuts nothing. The source is the attacking skill for `AttackEnemy(Crit)`
+//! only; other triggers pass none (key 0), so their extension is cut by the pool, which it spends twice.
 //!
-//! PORT: `LowHealth` / `LowMana` refreshes are not raised (no stock record
-//! uses them; `crate::autocast` raises those only for its procs);
-//! the hits taken by a `Monster` the controller may ignore (`HitByEnemy`'s
-//! `IsMonster` / `IsPet` test) are not told apart; the budget's buff
-//! instance is told by its time left jumping up (a recast).
+//! PORT: `LowHealth` / `LowMana` refreshes are not raised (no stock record uses them); the hits taken by a
+//! `Monster` the controller may ignore are not told apart; the budget's buff instance is told by its time left
+//! jumping up (a recast).
 use crate::autocast::{Trigger, Triggered};
 use bevy::prelude::*;
 use gd_game_core::casting::Caster;
@@ -82,13 +51,11 @@ impl Plugin for RefreshPlugin {
     }
 }
 
-/// One registered refresh controller.
 #[derive(Clone, Debug)]
 struct Refresher {
     /// Duration (else cooldown).
     duration: bool,
-    /// The refreshed skill under its names (the record, its `buffSkillName`
-    /// profile: hot slot casts run, cool down and buff as either).
+    /// The refreshed skill under its names (the record, its `buffSkillName` profile).
     target: Vec<String>,
     trigger: Trigger,
     chance: f32,
@@ -103,7 +70,6 @@ struct Refresher {
 /// shared by the modifiers of self buffs).
 #[derive(Clone, Debug)]
 struct Budget {
-    /// The buff's entry name in `Loadout::buffs`.
     buff: String,
     /// Its time left after the last extension (a recast makes it jump up).
     seen: f32,
@@ -137,9 +103,8 @@ const POOLED: &[&str] = &[
     "SkillActivatedBuffSelf",
 ];
 
-/// The budget entries of a buff instance (`Skill::GetRefreshDurationModifierData`, filled when the buff starts):
-/// the target's own `refreshDurationMax` under its own name, then each registered modifier's under its parent, or
-/// summed under `""` when the parent is a self buff ([`POOLED`]).
+/// The budget entries of a buff instance: the target's own `refreshDurationMax` under its own name, then each
+/// registered modifier's under its parent, or summed under `""` when the parent is a self buff ([`POOLED`]).
 fn budget_entries(
     db: &gd_formats::vfs::Database,
     list: &[Refresher],
@@ -176,8 +141,7 @@ fn budget_entries(
     left
 }
 
-/// The player's refresh controllers and the budgets of the buffs they
-/// lengthened.
+/// The player's refresh controllers and the budgets of the buffs they lengthened.
 #[derive(Component, Default)]
 pub struct Refreshers {
     list: Vec<Refresher>,
@@ -262,8 +226,7 @@ fn collect_refreshers(
             &rebuilt
         }
     };
-    // Modifiers (learned and gear) with the skills they modify: the links
-    // key each wrapper under its profile name too.
+    // Modifiers (learned and gear) with the skills they modify.
     let mut mods: Vec<(String, usize, Vec<String>)> = Vec::new();
     for (parent, list) in &links.mods {
         for (m, li) in list {
@@ -281,8 +244,7 @@ fn collect_refreshers(
         .into_iter()
         .flat_map(|(m, li, parents)| controllers(db, loadout, effective, &m, li, parents))
         .collect();
-    // Skills granted by worn items (the barrelsmith guns' pool attacks):
-    // their own list is themselves.
+    // Skills granted by worn items: their own list is themselves.
     if let Some(inv) = &inv {
         let worn = inv.worn();
         let grants = gd_sim::skills::item_skill_grants(db, &worn);
@@ -309,7 +271,6 @@ fn collect_refreshers(
             ))
             .collect::<Vec<_>>()
     );
-    // The running buffs keep their budgets.
     match refreshers {
         Some(mut r) => r.list = list,
         None => {
@@ -413,8 +374,7 @@ fn apply_refreshes(
             let i = buff.expect("ready");
             let name = loadout.buffs.list[i].0.clone();
             let amount = r.amount.max(0.0);
-            // Only when the whole amount fits under the buff's full duration (a life monitor's buff held at full
-            // waits for its countdown).
+            // Only when the whole amount fits under the buff's full duration.
             let time_left = loadout.buffs.list[i].2;
             let full = loadout.buffs.full(&name).unwrap_or(time_left);
             if amount <= 0.0 || time_left + amount > full + 1e-4 {

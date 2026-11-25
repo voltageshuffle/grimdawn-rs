@@ -1,13 +1,7 @@
-//! PORT: the `maxFPS` frame limiter (the engine has no frame-rate cap option; `maxFPS` 0, the default,
-//! is uncapped). A `Last` system sleeps out the rest of the frame's budget (1 / `maxFPS`): the deadline
-//! advances by exactly one budget per frame, so the frame period holds the cap without drift, also with
-//! vsync off. A deadline already past means the frame overran its budget (a hitch, loading) — the sleep
-//! is skipped and the cadence re-phases from now, so no catch-up burst follows.
-//!
-//! Unfocused behaviour is untouched: `inactiveUpdateRate` pauses virtual time and sound
-//! (`gd_game_core::pause`, `gd_audio::mixer`), not frame delivery — the cap applies focused or not.
-//! The pacing phase is a `Local`, not session state: it self-corrects against `Instant::now()` every
-//! frame, so a session change needs no reset.
+//! PORT: the `maxFPS` frame limiter (the engine has no frame-rate cap option; 0, the default, is
+//! uncapped). A `Last` system sleeps out the rest of the frame's budget (1 / `maxFPS`); the deadline
+//! advances by one budget per frame. A deadline already past skips the sleep and re-phases from now,
+//! so no catch-up burst follows. The cap applies focused or not.
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use std::time::{Duration, Instant};
@@ -20,7 +14,6 @@ impl Plugin for FpsLimitPlugin {
     }
 }
 
-/// Sleeps until this frame's deadline (the previous one plus the budget), then schedules the next.
 fn pace(options: Res<GameOptions>, mut next: Local<Option<Instant>>) {
     let fps = options.int("maxFPS");
     if fps <= 0 {

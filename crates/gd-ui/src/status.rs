@@ -43,14 +43,10 @@
 //!
 //! PORT: a timed buff's total is the most time left seen since it appeared
 //! (the engine asks the skill, `TrackableTotalTime`), likewise a cooldown's;
-//! the sweep is a rasterised bitmap in 64 steps
-//! (the engine draws a triangle fan); a changed bar (icons, their shape or text colour) is a new node tree that
-//! replaces the old one once drawn (`retire_roots`), while the sweeps and texts change in place; the hover
-//! tooltip is the skill's tooltip (as on the hotbar), placed by the rollover window's mode 4 (centred below the
-//! icon, clamped to the screen; `tip::place_below`). Both tooltips hide while a window covers the bar / hotbar:
-//! the pause menu, the map / journal (`skills::Above`) and a registered window button / blocker in front of the
-//! rect (`widgets::frontmost`, as `rollover::hud_rollover`). The icons live in their own node tree (not
-//! [`super::UiRoot`]); their values are [`super::HudVitals::status`].
+//! the sweep is a rasterised bitmap in 64 steps (the engine draws a triangle fan).
+//! Hover tooltip: the skill's tooltip, rollover mode 4 (centred below the icon, clamped to the screen).
+//! Both tooltips hide while a window covers the bar / hotbar: the pause menu, the map / journal and a
+//! registered window button / blocker in front of the rect.
 use super::{HudValues, Ui};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -61,8 +57,7 @@ use gd_formats::ui::Rect as URect;
 use gd_game::buff_bar::{Track, Tracked};
 use gd_game_core::data::GameData;
 
-/// The master table's `hudPlayerStatusIcons` record: `orbhud/hud_playerstatusicons.dbr` or, with `standardHUD`,
-/// `hud_playerstatusicons.dbr` (`hud.rs` module doc).
+/// `orbhud/hud_playerstatusicons.dbr` or, with `standardHUD`, `hud_playerstatusicons.dbr`.
 fn record(ui: &Ui) -> Option<gd_formats::arz::Record> {
     let rec = ui
         .record(ui.hud_master())?
@@ -72,17 +67,13 @@ fn record(ui: &Ui) -> Option<gd_formats::arz::Record> {
 }
 
 /// An icon's size without `iconWidth` / `iconHeight` (the classic record has none): `PlayerStatusIcons::AddIcon`
-/// `SetSize(0, 0)`, and the bitmap's rect getter `UIBitmap::GetRect` then gives the texture's own size (stored by
-/// `SetTexture` `UIBitmap::SetTexture`); before a texture loads the rect is 32 × 32 (`UIBitmap::defaultRect`). Each
-/// icon steps the row by its own width (`PlayerStatusIcons::DrawArea`); that size is not UI-scaled (the record's spaces
-/// are). Stock skill icons are mostly 32 × 32 (some 34, 40, 52).
+/// `SetSize(0, 0)` makes `UIBitmap::GetRect` give the texture's own, unscaled size, 32 × 32 before it loads
+/// (`UIBitmap::defaultRect`).
 const UNLOADED_ICON: f32 = 32.0;
 
-/// Sweep steps of the rasterised overlay.
 const SWEEP_STEPS: u8 = 64;
 
-/// A duration-damage / debuff / crowd-control icon of the bar: its bitmap, seconds left, type and magnitude (the
-/// tooltip's numbers).
+/// A duration-damage / debuff / crowd-control icon.
 #[derive(Clone, Debug)]
 pub struct DotIcon {
     pub icon: &'static str,
@@ -91,44 +82,40 @@ pub struct DotIcon {
     pub magnitude: i32,
 }
 
-/// One icon of the target info widget's debuff strip (`monsterBarsDebuffs`): the bitmap and the red countdown
-/// (whole seconds + 1 while under 3 s of a timed debuff left, `PlayerStatusIcons::RefreshIcon` type 0).
+/// One icon of the target info widget's debuff strip (`monsterBarsDebuffs`): text as
+/// `PlayerStatusIcons::RefreshIcon` type 0.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TargetDebuff {
     pub icon: String,
     pub text: Option<String>,
 }
 
-/// One drawn icon (built by [`BuffBar::update`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusIcon {
-    /// Bitmap path.
     pub icon: String,
-    /// The skill whose tooltip it shows.
     pub tip: Option<String>,
     /// Area 2 (debuffs) rather than area 1 (buffs).
     pub debuff: bool,
     pub round: bool,
-    /// Text drawn on it: (text, charge colour rather than the red duration).
+    /// (text, charge colour rather than the red duration).
     pub text: Option<(String, bool)>,
     /// Elapsed part in [`SWEEP_STEPS`] steps (0: none) and whether it is a
     /// cooldown (`cooldownColor`) rather than a duration.
     pub sweep: (u8, bool),
     /// The combo charge icon (kind 2): multiplier (%) and ms left; its rollover is
-    /// the engine's own text (`PlayerStatusIcons::GetRolloverText`), not a skill's.
+    /// the engine's own text, not a skill's.
     pub combo: Option<(i64, i32)>,
-    /// A duration-damage icon (kind 1): type, magnitude and ms left (the tooltip, [`dot_lines`]).
+    /// A duration-damage icon (kind 1): type, magnitude and ms left.
     pub dot: Option<(gd_sim::attributes::CombatType, i32, i32)>,
-    /// A potion's absorb (type 4): the shield left (`Skill.absorbLeft`), for its tooltip line
-    /// (`gd_sim::skill_tooltip::potion_tracker_lines`).
+    /// A potion's absorb (type 4): `Skill.absorbLeft`.
     pub absorb: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum Phase {
-    /// Listed (state 0).
+    /// State 0.
     Shown,
-    /// A passive's cooldown after its buff (state 1).
+    /// State 1: a passive's cooldown after its buff.
     Cooldown,
 }
 
@@ -143,29 +130,24 @@ struct Entry {
     cooldown: String,
     phase: Phase,
     seen: bool,
-    /// Frames left to wait for a passive's cooldown (`StatusIcon.cooldownGrace`, 5).
+    /// `StatusIcon.cooldownGrace`, 5.
     grace: u8,
-    /// Seconds left / total (0: none).
+    /// 0: none.
     left: f32,
     total: f32,
     text: Option<(String, bool)>,
-    /// The combo charge icon: its multiplier (%).
     combo: Option<i64>,
-    /// A duration-damage icon: its type and magnitude.
     dot: Option<(gd_sim::attributes::CombatType, i32)>,
-    /// A potion's absorb left.
     absorb: Option<f32>,
 }
 
-/// The bar's icons in display order (the widget's two icon lists).
+/// Display order (the widget's two icon lists).
 #[derive(Default)]
 pub struct BuffBar(Vec<Entry>);
 
 impl BuffBar {
-    /// One frame: `listed` = the player's tracked skills, `dots` = active
-    /// duration-damage / debuff types (bitmap, seconds left), `cooldown` =
-    /// a skill's cooldown left; the drawn icons are written into `out` in place (an icon's strings keep their
-    /// buffers).
+    /// One frame: `listed` = the player's tracked skills, `dots` = active duration-damage / debuff types,
+    /// `cooldown` = a skill's cooldown left.
     pub fn update(
         &mut self,
         listed: &[Tracked],
@@ -238,7 +220,7 @@ impl BuffBar {
                 // `PlayerStatusIcons::RefreshIcon` type 4: left / total, no text.
                 Track::Gauge { left, total } => {
                     (e.left, e.total, e.text) = (left, total, None);
-                    // `CreateUITrackerText` prints `Skill.absorbLeft`, the shield left.
+                    // `CreateUITrackerText` prints `Skill.absorbLeft`.
                     e.absorb = Some(left);
                 }
                 // `PlayerStatusIcons::UpdateComboCharge`: the count, the time left against the most
@@ -379,7 +361,7 @@ impl BuffBar {
     }
 }
 
-/// Writes `n` as an icon's text, reusing its buffer (the counts change every frame: no allocation per frame).
+/// Writes `n` as an icon's text, reusing its buffer.
 fn set_count(text: &mut Option<(String, bool)>, n: impl std::fmt::Display, charge: bool) {
     use std::fmt::Write;
     let (s, c) = text.get_or_insert_with(Default::default);
@@ -388,10 +370,9 @@ fn set_count(text: &mut Option<(String, bool)>, n: impl std::fmt::Display, charg
     *c = charge;
 }
 
-/// The tooltip of a duration-damage / debuff / crowd-control icon (`PlayerStatusIcons::GetRolloverText` kind 1, its
-/// type tables): the type's name (class 46); with a magnitude, its description line
-/// (class 49: damage every second, reduction % or absolute, chance to miss, damage taken); then the seconds remaining
-/// (`tagDotTimeRemainingPrecise` under 1 s). Types without a name tag (the engine's others) have no tooltip.
+/// `PlayerStatusIcons::GetRolloverText` kind 1: the type's name (class 46); with a magnitude, its description
+/// line (class 49); then the seconds remaining (`tagDotTimeRemainingPrecise` under 1 s). Types without a name
+/// tag have no tooltip.
 pub fn dot_lines(
     fonts: &super::text::FontCache,
     ty: gd_sim::attributes::CombatType,
@@ -470,7 +451,7 @@ pub fn dot_lines(
     out
 }
 
-/// Texture of a duration-damage / debuff / crowd-control type (`PlayerStatusIcons::AddDotIcon`).
+/// `PlayerStatusIcons::AddDotIcon`.
 pub fn debuff_icon(ty: gd_sim::attributes::CombatType) -> Option<&'static str> {
     use gd_sim::attributes::CombatType as T;
     Some(match ty {
@@ -520,12 +501,10 @@ pub fn debuff_icon(ty: gd_sim::attributes::CombatType) -> Option<&'static str> {
 #[derive(Component)]
 pub struct StatusRoot;
 
-/// The drawn icons' screen rects (`layout`), in the drawn `HudVitals::status` order: [`draw`] writes them when
-/// it rebuilds the bar, [`buff_tooltip`] hit-tests them (PORT, a performance choice: no layout per frame).
+/// The drawn icons' screen rects, in `HudVitals::status` order, written by [`draw`] on rebuild.
 #[derive(Resource, Default)]
 pub struct StatusLayout(Vec<URect>);
 
-/// Screen rects of the icons (module docs: layout), in `icons` order.
 fn layout(ui: &mut Ui, icons: &[StatusIcon]) -> Vec<URect> {
     let mut out = vec![URect::new(0.0, 0.0, 0.0, 0.0); icons.len()];
     let (Some(rec), Some(origin)) = (record(ui), super::hud::portrait_origin(ui)) else {
@@ -539,7 +518,6 @@ fn layout(ui: &mut Ui, icons: &[StatusIcon]) -> Vec<URect> {
             let own = ui
                 .image(&i.icon)
                 .map_or(Vec2::splat(UNLOADED_ICON), |(_, s)| s.as_vec2());
-            // The texture's size is in its own pixels (not UI-scaled: the rect getter returns it as stored).
             let w = if rw > 0.0 { ui.sc(rw) } else { own.x };
             let h = if rh > 0.0 { ui.sc(rh) } else { own.y };
             (w, h)
@@ -639,7 +617,7 @@ fn sweep_image(w: u32, h: u32, step: u8, round: bool, color: [u8; 4]) -> Image {
     )
 }
 
-/// Sweep colours (the loader's defaults under the record's fields).
+/// The loader's defaults under the record's fields.
 fn sweep_colors(rec: &gd_formats::arz::Record) -> [[u8; 4]; 2] {
     let c = |p: &str, d: [f32; 4]| -> [u8; 4] {
         let k = ["r", "g", "b", "a"];
@@ -655,8 +633,7 @@ fn sweep_colors(rec: &gd_formats::arz::Record) -> [[u8; 4]; 2] {
     ]
 }
 
-/// An icon's sweep overlay, animated in place by [`draw`]: the icon's index in the bar, its size, shape and the
-/// record's two sweep colours.
+/// The icon's index in the bar, its size, shape and the record's two sweep colours.
 #[derive(Component)]
 pub struct IconSweep {
     index: usize,
@@ -665,12 +642,12 @@ pub struct IconSweep {
     colors: [[u8; 4]; 2],
 }
 
-/// An icon's text ([`super::LiveText`]), redrawn in place by [`draw`]: the icon's index in the bar.
+/// The icon's index in the bar.
 #[derive(Component)]
 pub struct IconText(usize);
 
 /// What the bar was built for: the window size, the UI scale (`f32` bits) and each icon's bitmap, area, shape
-/// and text colour (a charge count is white, a countdown red).
+/// and text colour.
 pub struct BarLayout {
     size: UVec2,
     scale: u32,
@@ -698,7 +675,6 @@ impl BarLayout {
     }
 }
 
-/// The sweep bitmap of `step` (cached per size, step, shape and colour).
 fn sweep_handle(
     sweeps: &mut HashMap<(u32, u32, u8, bool, bool), Handle<Image>>,
     images: &mut Assets<Image>,
@@ -721,13 +697,12 @@ fn sweep_handle(
         .clone()
 }
 
-/// The text of an icon (empty: none).
+/// Empty: none.
 fn icon_text(i: &StatusIcon) -> &str {
     i.text.as_ref().map_or("", |t| t.0.as_str())
 }
 
-/// Builds the bar when its icons (bitmap, area, shape, text colour) or the window change; every other frame
-/// swaps the sweep bitmaps and redraws the texts in place.
+/// Rebuilds the bar when its icons (bitmap, area, shape, text colour) or the window change.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut fresh: gd_game_core::session::NewSession,
@@ -752,7 +727,7 @@ pub fn draw(
         *last = None;
         sweeps.clear();
     }
-    // Bound the sweep cache: a resolution / UI-scale change mints a fresh full set (`AdditiveCache`'s rule).
+    // A resolution / UI-scale change mints a fresh full set (`AdditiveCache`'s rule).
     if sweeps.len() > 4096 {
         sweeps.clear();
     }
@@ -761,12 +736,10 @@ pub fn draw(
     if size.x == 0 || size.y == 0 {
         return;
     }
-    // `standardHUD` moves the bar: redraw.
     if std::mem::replace(&mut *classic, assets.classic_hud()) != *classic {
         *last = None;
     }
-    // The devotion window hides the buff bar (as in the real game). PORT: the engine's switch is
-    // not decompiled.
+    // The devotion window hides the buff bar. PORT: the engine's switch is not decompiled.
     let icons: &[StatusIcon] = if panels.devotion { &[] } else { &vitals.status };
     let scale = assets.scale(size).to_bits();
     let same = last.as_ref().is_some_and(|l| l.same(size, scale, icons));
@@ -801,7 +774,6 @@ pub fn draw(
                 Visibility::Hidden
             });
         }
-        // Only the kept root's texts: a retired root's despawn is queued (`retire_roots`).
         for (e, t, mut live) in &mut texts {
             if let Some(icon) = icons.get(t.0)
                 && kept == Some(parents.root_ancestor(e))
@@ -851,7 +823,6 @@ pub fn draw(
         if let Some((img, _)) = ui.image(&icon.icon) {
             ui.quad_stretch(img, r, Color::WHITE);
         }
-        // The sweep's node exists while the icon does (hidden at step 0), so a sweep starts in place.
         let sweep = IconSweep {
             index,
             size: (r.w as u32, r.h as u32),
@@ -890,15 +861,7 @@ pub fn draw(
     }
 }
 
-/// Hover tooltip of a buff-bar icon: the skill's tooltip
-/// (`gd_sim::skill_tooltip::skill_lines`), centred below the icon and
-/// clamped to the screen ([`super::tip::place_below`]), wrapped at the
-/// sample line's width ([`super::tip::Wrap::Sample`]), shown through the
-/// shared [`super::tip::TipCanvas`].
-/// A covering window suppresses it: the pause menu, the map / journal
-/// ([`super::skills::Above`]) and a registered window button / blocker in front
-/// of the icon ([`super::widgets::frontmost`], as `rollover::hud_rollover`).
-/// `GD_BUFF_HOVER=<n>` hovers the n-th icon (screenshots).
+/// Hover tooltip of a buff-bar icon (module doc).
 #[allow(clippy::too_many_arguments)]
 pub fn buff_tooltip(
     mut fresh: gd_game_core::session::NewSession,
@@ -934,9 +897,7 @@ pub fn buff_tooltip(
         return;
     }
     let rects = &built.0;
-    // A covering window hides the bar: the pause menu, the map / journal (`skills::Above`) and a
-    // registered window button / blocker in front of the icon (`widgets::frontmost`, as
-    // `rollover::hud_rollover`). `UiCapture` alone would also hide it over the HUD itself (`hud::capture`).
+    // Not `UiCapture`: it would also hide the tooltip over the HUD itself.
     let cursor = super::cursor_px(win).filter(|p| !pause.menu && !above.covers(*p));
     let front = cursor.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
@@ -956,8 +917,8 @@ pub fn buff_tooltip(
         let fonts = &canvas.assets.fonts;
         hit.and_then(|(i, r)| {
             // `PlayerStatusIcons::GetRolloverText` kind 2: tagHUDComboCharge (class 46), the multiplier line
-            // (49, when non-zero) and the time left (49; `…Precise` under 1000 ms). PORT: the
-            // stock text files lack both combo tags; the engine then shows the tag name.
+            // (49, when non-zero) and the time left (49; `…Precise` under 1000 ms). PORT: the stock text
+            // files lack both combo tags; the engine then shows the tag name.
             if let Some((mult, ms)) = i.combo {
                 use super::floating::format_text;
                 use gd_game_core::floating::TextArg;
@@ -1039,8 +1000,8 @@ pub fn buff_tooltip(
         return;
     };
     let lines = combo_lines.unwrap_or_else(|| {
-        // `Skill::CreateUITrackerText`: a skill with a
-        // `trackerOverride` tag shows only its name (class 46) and that text (class 47); 13 stock records have one.
+        // `Skill::CreateUITrackerText`: a skill with a `trackerOverride` tag shows only its name (class 46)
+        // and that text (class 47).
         if let Some(over) = canvas.data.db.get(&skill).and_then(|r| {
             r.str("trackerOverride")
                 .filter(|t| !t.is_empty())
@@ -1075,7 +1036,7 @@ pub fn buff_tooltip(
             pet_bonuses: &[],
         };
         // `PlayerStatusIcons::GetRolloverText` kind 0: the skill's heading (name 46, description 47); the parameter
-        // block only for a skill with `trackerShowDetail` (14 stock records, the potion modifier / shrine buffs).
+        // block only for a skill with `trackerShowDetail`.
         let detail = canvas
             .data
             .db
@@ -1099,10 +1060,8 @@ pub fn buff_tooltip(
     if lines.is_empty() {
         return;
     }
-    // `PlayerStatusIcons::GetRolloverText` → the HUD rollover window (`UISkillPane::HandleMouseEvent` hands the icon to
-    // `RolloverWindow::SetRollover`, which copies the request, `RolloverWindow::CopyRequest`): wrap mode 1
-    // (`RolloverRequest.wrapMode`) and placement mode 4 (`RolloverRequest.placement`) at the icon's rect
-    // (`RolloverRequest.rect`).
+    // `PlayerStatusIcons::GetRolloverText` → `RolloverWindow::SetRollover`: wrap mode 1, placement mode 4
+    // at the icon's rect.
     canvas.show_wrapped(
         super::tip::TipOwner::Buff,
         &lines,
@@ -1112,16 +1071,8 @@ pub fn buff_tooltip(
     );
 }
 
-/// Hover tooltip of a hotbar slot (`gd_sim::skill_tooltip::hot_slot_lines`: the heading, the current
-/// level and the usability line, `HotSlotOptionSkill::GetRolloverText`; the evade and potion
-/// slots the same text of their default skill, `default_hot_slot_lines`). The usability line reads
-/// `Skill.availability`, which `Skill::SetAvailability` keeps every frame (`gd_sim::skill_tooltip::hot_state`: the
-/// energy against `energy_cost` unless `ignores_energy`, the cooldown, the worn weapons by `SkillLinks::weapons_allow`).
-/// PORT: placed centred above the slot, bottom edge just over it.
-/// A covering window suppresses it: the pause menu, the map / journal
-/// ([`super::skills::Above`]) and a registered window button / blocker in front
-/// of the slot ([`super::widgets::frontmost`], as `rollover::hud_rollover`).
-/// `GD_HOT_HOVER=x,y` (physical px) fakes the cursor.
+/// Hover tooltip of a hotbar slot (`HotSlotOptionSkill::GetRolloverText`; the evade and potion slots show
+/// their default skill's). PORT: placed centred above the slot, bottom edge just over it.
 #[allow(clippy::too_many_arguments)]
 pub fn hotbar_tooltip(
     mut fresh: gd_game_core::session::NewSession,
@@ -1167,9 +1118,7 @@ pub fn hotbar_tooltip(
     if size.x == 0 || size.y == 0 {
         return;
     }
-    // A covering window hides the slots: the pause menu, the map / journal (`skills::Above`) and a
-    // registered window button / blocker in front of the slot (`widgets::frontmost`, as
-    // `rollover::hud_rollover`). `UiCapture` alone would also hide them over the HUD itself (`hud::capture`).
+    // Not `UiCapture`: it would also hide the tooltip over the HUD itself.
     let cursor = super::cursor_px(win);
     #[cfg(feature = "dev")]
     let cursor = hooks.ui.hot_hover.or(cursor);
@@ -1177,7 +1126,6 @@ pub fn hotbar_tooltip(
     let front = cursor.and_then(|p| super::widgets::frontmost(p, &button_sounds, &gz));
     let in_front = |r: &URect| front.is_none_or(|f| f.rect == *r);
 
-    // The slot under the cursor (the rects are the built HUD's, `hud::HudLayout`), then its skill.
     let row = values.hotbar_row * SLOT_ROW2;
     let hover = cursor.and_then(|p| {
         let over = |f: &str| {
@@ -1213,7 +1161,7 @@ pub fn hotbar_tooltip(
     let potion = hover
         .as_ref()
         .is_some_and(|(sk, _)| sk == HEALTH_POTION || sk == ENERGY_POTION);
-    // An unlearned slotted skill that worn gear grants (`Skill.grantedByItem`) or a form grants for a while: its level.
+    // An unlearned slotted skill granted by worn gear (`Skill.grantedByItem`) or a form: its level.
     let granted = hover
         .as_ref()
         .filter(|(sk, _)| !evade && !potion && values.skills.level(sk) == 0)
@@ -1272,7 +1220,7 @@ pub fn hotbar_tooltip(
     let (Some((skill, anchor)), Some(state)) = (hover, state) else {
         return;
     };
-    // PORT: the evade text (real HUD) shows the record's base numbers: no player scaling.
+    // PORT: the evade text shows the record's base numbers: no player scaling.
     let ctx = SkillTipCtx {
         db: &canvas.data.db,
         trees: &canvas.data.skill_trees(),

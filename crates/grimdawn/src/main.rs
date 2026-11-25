@@ -1,11 +1,9 @@
 //! Grim Dawn reimplementation on Bevy. Reads the user's installed game data.
 //!
-//! The game folder is found once at start ([`game_root`]) and mounted by [`data::DataPlugin`]: the
-//! `--game-dir <path>` argument (or `--game-dir=<path>`) when given, else (`dev` builds only) `GD_ROOT`,
-//! else the folder of the executable, then the working folder, as Grim Dawn finds its data next to
-//! itself. A folder is the install when it holds `database/database.arz` ([`data::find_install`]).
-// Bevy system parameters (queries with filters, param tuples) are long by
-// nature; Bevy recommends allowing this lint for them.
+//! The game folder ([`game_root`]): `--game-dir <path>` (or `--game-dir=<path>`) when given, else (`dev`
+//! builds only) `GD_ROOT`, else the folder of the executable, then the working folder. A folder is the install
+//! when it holds `database/database.arz` ([`data::find_install`]).
+// Bevy system parameters are long by nature; Bevy recommends allowing this lint for them.
 #![allow(clippy::type_complexity)]
 use gd_game::{afflictions, collision, combat, consumables, data};
 mod ascendant;
@@ -58,21 +56,16 @@ fn main() {
     let root = match game_root() {
         Ok(root) => root,
         Err(e) => {
-            // Before the app: no logger yet.
             eprintln!("error: {e}");
             std::process::exit(1);
         }
     };
-    // Dev builds: parsed once, first: the window below reads two of them, and the resource must exist before
-    // the plugins are built (plugin builds read it). A build without `dev` has no hooks.
+    // Before the plugins are built: plugin builds read the hooks.
     #[cfg(feature = "dev")]
     let hooks = gd_game_core::hooks::Hooks::from_env();
-    // The `device` option (int 7) picks the launch adapter: read the options file early (the same file
-    // `settings::load` reads at PreStartup), enumerate the wgpu adapters once and pass the choice to
-    // `WgpuSettings` below. PORT: applied at the NEXT launch only (no hot-swap); an out-of-range index
-    // keeps Bevy's default adapter. `WGPU_ADAPTER_NAME` still overrides the name (Bevy reads it itself).
+    // The `device` option (int 7) picks the launch adapter. PORT: applied at the next launch only; an
+    // out-of-range index keeps Bevy's default adapter.
     let options_file = gd_ui_kit::state::settings::path();
-    // `GD_OPTIONS`: another options file.
     #[cfg(feature = "dev")]
     let options_file = hooks
         .session
@@ -95,16 +88,13 @@ fn main() {
     };
     if let Some((name, backend)) = &adapter {
         wgpu_settings.adapter_name = Some(name.clone());
-        // The name match is a substring: restrict the backend too, so an adapter of another backend
-        // sharing the name cannot win.
+        // The name match is a substring: restrict the backend too.
         wgpu_settings.backends = Some(wgpu::Backends::from(*backend));
     }
-    // `GD_RES=1920x1080` e.g. to match a reference screenshot.
     let resolution: (u32, u32) = (1600, 900);
     #[cfg(feature = "dev")]
     let resolution = hooks.render.res.unwrap_or(resolution);
-    // Automated screenshot runs (`GD_SHOT`) must not block on vsync: a hidden window gets no frame callbacks
-    // from the compositor.
+    // A hidden window gets no frame callbacks from the compositor: no vsync for `GD_SHOT`.
     let present_mode = bevy::window::PresentMode::AutoVsync;
     #[cfg(feature = "dev")]
     let present_mode = if hooks.shot.path.is_some() {
@@ -112,7 +102,6 @@ fn main() {
     } else {
         present_mode
     };
-    // Debug: `GD_CLEAR=1` shows the clear colour as magenta (finds holes).
     let clear = Color::BLACK;
     #[cfg(feature = "dev")]
     let clear = if hooks.render.clear {
@@ -121,38 +110,37 @@ fn main() {
         clear
     };
     let mut app = App::new();
-    // `GD_SAVE_DIR`: the save folder (before `GameLogicPlugin`'s default).
     #[cfg(feature = "dev")]
     if let Some(d) = &hooks.session.save_dir {
         app.insert_resource(gd_game_core::session::SaveDir(d.into()));
     }
     #[cfg(feature = "dev")]
     app.insert_resource(hooks);
+    let plugins = DefaultPlugins
+        .set(bevy::render::RenderPlugin {
+            render_creation: wgpu_settings.into(),
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Grim Dawn (Rust/Bevy port)".into(),
+                resolution: resolution.into(),
+                present_mode,
+                ..default()
+            }),
+            ..default()
+        });
+    // A release build compiles every log macro out; `dev` (and the profiling build) keeps the logger.
+    // `tonemapping=error`: the doll and portrait cameras use `Tonemapping::None`.
+    #[cfg(any(debug_assertions, feature = "dev"))]
+    let plugins = plugins.set(bevy::log::LogPlugin {
+        filter: "wgpu=error,naga=warn,bevy_core_pipeline::tonemapping=error".into(),
+        ..default()
+    });
+    #[cfg(not(any(debug_assertions, feature = "dev")))]
+    let plugins = plugins.disable::<bevy::log::LogPlugin>();
     app.insert_resource(render_devices::RenderAdapters { entries: adapters })
-        .add_plugins(
-            DefaultPlugins
-                // The doll and portrait cameras carry the light rig in their `ColorGrading` with
-                // `Tonemapping::None` on purpose (`doll.rs` module doc); Bevy warns about that once per
-                // camera spawn. The module's only other warning is the same check for `DebandDither`,
-                // which the port never enables. (The default filter plus that module.)
-                .set(bevy::log::LogPlugin {
-                    filter: "wgpu=error,naga=warn,bevy_core_pipeline::tonemapping=error".into(),
-                    ..default()
-                })
-                .set(bevy::render::RenderPlugin {
-                    render_creation: wgpu_settings.into(),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Grim Dawn (Rust/Bevy port)".into(),
-                        resolution: resolution.into(),
-                        present_mode,
-                        ..default()
-                    }),
-                    ..default()
-                }),
-        )
+        .add_plugins(plugins)
         .add_plugins((
             data::DataPlugin { root },
             gd_game::GameLogicPlugin,
@@ -225,7 +213,8 @@ fn main() {
         .add_systems(PostStartup, place_camera)
         .insert_resource(ClearColor(clear))
         .add_systems(Update, follow_focus);
-    // The logger exists once DefaultPlugins are built (LogPlugin installs its subscriber in `build`).
+    // The logger exists once DefaultPlugins are built.
+    #[cfg(any(debug_assertions, feature = "dev"))]
     match &adapter {
         Some((name, backend)) => info!("render adapter: {name} ({backend:?})"),
         None => info!("render adapter: Bevy default"),
@@ -235,11 +224,8 @@ fn main() {
     app.run();
 }
 
-/// The Grim Dawn install the session mounts: `--game-dir <path>` / `--game-dir=<path>` when given (only
-/// that folder), else the first install among `GD_ROOT` (`dev` builds), the executable's folder and the
-/// working folder ([`data::find_install`]). The error names the folders tried and the option.
-/// PORT: the real game reads the install it runs from (Steam starts it in that folder); the port is
-/// built elsewhere, so it also takes the folder as an argument.
+/// The Grim Dawn install the session mounts (module doc). The error names the folders tried and the option.
+/// PORT: the real game reads the install it runs from; the port also takes the folder as an argument.
 fn game_root() -> Result<std::path::PathBuf, String> {
     use std::path::PathBuf;
     let mut given = None;

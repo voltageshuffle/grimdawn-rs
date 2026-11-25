@@ -1,7 +1,6 @@
 use super::*;
 
-/// A journal pane's scrolled inner node ([`crate::window::pane`]): [`journal_live`] moves it by
-/// `QuestJournal::scroll[pane]`, so scrolling does not rebuild the window.
+/// A journal pane's scrolled inner node, moved by `QuestJournal::scroll[pane]`.
 #[derive(Component)]
 pub(super) struct JournalScrolled {
     pub(super) pane: usize,
@@ -9,14 +8,11 @@ pub(super) struct JournalScrolled {
     pub(super) inv: f32,
 }
 
-/// A tree row's hover shade: [`journal_live`] shows the one whose key is `QuestJournal::hover`, so
-/// hovering does not rebuild the window.
+/// A tree row's hover shade, shown when its key is `QuestJournal::hover`.
 #[derive(Component)]
 pub(super) struct RowHover(pub(super) String);
 
-/// Scrolls the journal's panes and scroll bar thumbs and shows the hovered tree row in place (the
-/// pattern of `character::scroll_sheet`): `QuestJournal::scroll` / `hover` are not in `build_journal`'s
-/// signature, so a scroll or hover change moves these nodes instead of rebuilding the window.
+/// Scrolls the panes and thumbs and shows the hovered tree row without rebuilding the window.
 pub(super) fn journal_live(
     journal: Res<QuestJournal>,
     mut panes: Query<(&JournalScrolled, &mut Node), Without<ScrollThumb>>,
@@ -111,7 +107,6 @@ pub fn pack_items(sizes: &[Vec2], width: f32, spacing: f32) -> (Vec<Vec2>, f32) 
             }
             let k = nodes.len();
             if nh == f32::INFINITY {
-                // A new row: (row, below), the row split into (item, rest).
                 *height = y + h;
                 nodes.push(Node {
                     r: [x, y, nw, h],
@@ -215,7 +210,6 @@ pub(super) fn build_journal(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    // The tab's quests in the repository's order (no main-first sort).
     let completed = journal.completed;
     let listed = move |q: &&QuestEntry| {
         if completed {
@@ -224,7 +218,6 @@ pub(super) fn build_journal(
             q.in_progress()
         }
     };
-    // `GD_QUEST_SELECT`: selected once it is listed.
     #[cfg(feature = "dev")]
     if !*picked
         && let Some(name) = hooks.ui.quest_select.as_deref()
@@ -233,7 +226,6 @@ pub(super) fn build_journal(
         *picked = true;
         journal.selected = Some(q.id);
     }
-    // Keep a valid selection (the first quest of the tab).
     let sel = journal
         .selected
         .filter(|id| view.quests.iter().filter(listed).any(|q| q.id == *id))
@@ -241,7 +233,6 @@ pub(super) fn build_journal(
     if journal.selected != sel {
         journal.selected = sel;
     }
-    // Closed, and built closed: nothing to draw.
     if !journal.open && built.as_ref().is_some_and(|(_, _, j, ..)| !j.open) {
         return;
     }
@@ -254,8 +245,6 @@ pub(super) fn build_journal(
     });
     let generation = assets.fonts.generation;
     let sk = size.extend(assets.scale(size).to_bits());
-    // `scroll` and `hover` are not in the signature: `journal_live` moves the panes, the scroll bar
-    // thumbs and the hover shade in place, so a scroll or hover change does not rebuild the window.
     let same_journal = |j: &QuestJournal| {
         j.open == journal.open
             && j.completed == journal.completed
@@ -268,7 +257,6 @@ pub(super) fn build_journal(
             && j.collapsed == journal.collapsed
             && j.untracked == journal.untracked
     };
-    // The Help tab's text names the bound keys: a rebind rebuilds it.
     if size.x == 0
         || built.as_ref().is_some_and(|(s, v, j, n, d, b, g)| {
             *s == sk
@@ -336,7 +324,6 @@ pub(super) fn build_journal(
     let num = |r: &gd_formats::arz::Record, k: &str| r.f32(k).unwrap_or(0.0);
     let (jx, jy) = (ui.sc(num(&jr, "positionX")), ui.sc(num(&jr, "positionY")));
     let (lx, ly) = (ui.sc(num(&lr, "positionX")), ui.sc(num(&lr, "positionY")));
-    // Page backgrounds (the devotion page is one full-height page).
     for (pr, px, py) in [(&jr, jx, jy), (&lr, lx, ly)]
         .into_iter()
         .take(if journal.devotion { 1 } else { 2 })
@@ -351,7 +338,6 @@ pub(super) fn build_journal(
             );
         }
     }
-    // Tabs (help, active, completed, lore, devotion) and close button.
     for (i, k) in [
         "helpButton",
         "questButton",
@@ -488,8 +474,6 @@ pub(super) fn build_journal(
         .collect();
     let major = ui.sc(num(&jr, "majorRowHeight"));
     let minor = ui.sc(num(&jr, "minorRowHeight"));
-    // Description lines step by the style's font size
-    // (`QuestJournalPage::Rebuild`: its height is lines × the style's size).
     let desc_lh = ui
         .fonts
         .style(ui.data, &desc_style)
@@ -554,7 +538,6 @@ pub(super) fn build_journal(
                         y = y.max(y0 + ch);
                     }
                 }
-                // Rewards.
                 y += ui.sc(num(&jr, "rewardSectionSpacing"));
                 let header_y = y;
                 y += major;
@@ -720,7 +703,6 @@ pub(super) fn build_journal(
         num(&tree, "hoverColor.B") / 255.0,
         num(&tree, "hoverColor.A") / 255.0,
     );
-    // A tree row's hit rect and hover key for `clicks`, and its hover shade.
     let hover_node = |ui: &mut Ui, layout: &mut JournalLayout, key: String, y: f32, h: f32| {
         if let Some((img, _)) = node.clone() {
             let e = ui.quad_stretch(img, URect::new(tx + lpad, y, tree_w - rpad, h), hover_color);
@@ -751,7 +733,6 @@ pub(super) fn build_journal(
             groups.push(&q.group);
         }
     }
-    // A bitmap centred in a row at `x`; returns its rect.
     let centred = |ui: &mut Ui, img: &Option<(Handle<Image>, UVec2)>, x: f32, y: f32, h: f32| {
         let (img, s) = img.clone()?;
         let (w, bh) = (ui.sc(s.x as f32), ui.sc(s.y as f32));
@@ -774,7 +755,7 @@ pub(super) fn build_journal(
             layout.groups.push((r, g.to_owned()));
         }
         let glh = ui.line_height(&group_style);
-        // PORT: cut the group name to the tree's right edge (the tracker already truncates its names).
+        // PORT: cut the group name to the tree's right edge.
         let gname = ui.truncate_line(&group_style, (tx + tree_w - rpad - x).max(0.0), g);
         ui.text_line(
             &group_style,

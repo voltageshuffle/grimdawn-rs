@@ -1,24 +1,19 @@
 //! World streaming: levels of `world001.map` near the camera target are parsed
-//! on a background thread (terrain mesh, splat textures, object list); their GPU
-//! assets are then instantiated on the main thread a bounded slice per frame
-//! ([`spawn_levels`]), so crossing into a new area does not freeze the frame. A
-//! level counts as loaded only once fully spawned, so [`StreamedMap::area_ready`] (the
-//! initial load and teleports alike) waits for it. Far levels are despawned (at
-//! the end of the frame: `gd_game_core::levels::Unload`).
+//! on a background thread; their GPU assets are instantiated on the main thread a
+//! bounded slice per frame ([`spawn_levels`]). A level counts as loaded only once
+//! fully spawned, so [`StreamedMap::area_ready`] waits for it. Far levels despawn
+//! at the end of the frame (`gd_game_core::levels::Unload`).
 //!
-//! PORT: a level's object meshes all start loading in the background when its build lands
-//! (`ModelCache::model_ready`); [`spawn_levels`] spawns its objects in order as their models are built, then clips
-//! its decals in order, within [`SPAWN_BUDGET`] (~3 ms) a frame, at least one object or decal and at most one new
-//! level root a frame. While it spawns, the level holds every model already built ([`SpawnJob`]`::held`): the model
-//! cache only keeps its last `gd_game_core::weak_cache::RECENT` models warm, so a big level's early arrivals would go
-//! (and load again) before the cursor reaches them. A retextured / reshaded object and a decal wait for their
-//! textures and override shader in the background (`MaterialAssets::variant_ready`, `decal::textures_ready`)
-//! instead of decoding them on the spot.
+//! PORT: a level's object meshes all start loading in the background when its build lands;
+//! [`spawn_levels`] spawns its objects in order as their models are built, then clips its decals,
+//! within [`SPAWN_BUDGET`] a frame, at least one object or decal and at most one new level root a frame.
+//! While it spawns, the level holds every model already built ([`SpawnJob`]`::held`): the model cache
+//! only keeps its last `gd_game_core::weak_cache::RECENT` models warm. Retextured objects and decals
+//! wait for their textures and override shader in the background.
 //!
-//! An unloaded level's models and terrain layers linger ([`Lingering`]): held for [`LINGER`] after it goes, at most
-//! [`LINGER_LEVELS`] levels, so walking back over the unload radius finds them loaded. The engine releases a resource
-//! 5 s after its last user (`gd_game_core::weak_cache` module doc); PORT: longer here, since a whole level goes at once.
-//! Cleared at session end (`exit`) and when the mounted mod changes.
+//! An unloaded level's models and terrain layers linger ([`Lingering`]): held for [`LINGER`], at most
+//! [`LINGER_LEVELS`] levels. PORT: the engine releases a resource 5 s after its last user.
+//! Cleared at session end and when the mounted mod changes.
 //!
 //! Coordinates: Y-up, ~1 unit = 1 m, world = region origin +
 //! level-local position; entity rotation rows are the object's local axes.
@@ -44,7 +39,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Terrain material: the game's layer compositing + deferred lighting (render/terrain.rs).
+/// Terrain material: the game's layer compositing + deferred lighting.
 pub type TerrainMaterial = gd_render::render::terrain::GdTerrainMaterial;
 
 pub struct WorldPlugin;
@@ -56,13 +51,11 @@ impl Plugin for WorldPlugin {
             .init_resource::<TravelPreload>()
             .init_resource::<Lingering>()
             .add_systems(Startup, open_world)
-            // Before the unloaded roots despawn (`gd_game_core::levels::Unload`).
             .add_systems(
                 Last,
                 linger_unloaded.before(gd_game::levels::despawn_unloaded),
             )
-            // Nothing streams behind the main menu: levels stream once the session is ready, and only when the
-            // focus, the travel preload or the loaded set moved.
+            // Nothing streams behind the main menu.
             .add_systems(
                 Update,
                 (
@@ -90,53 +83,47 @@ pub struct StreamedMap {
     pub map: Arc<MapFile>,
     pending: HashMap<usize, Task<anyhow::Result<LevelCpu>>>,
     failed: HashSet<usize>,
-    /// Levels whose CPU build finished, spawning a slice per frame ([`spawn_levels`]).
     spawning: HashMap<usize, SpawnJob>,
 }
 
 use gd_game::nav::Nav;
 use gd_game_core::levels::{Levels, StreamFocus};
 
-/// A teleport's destination, loaded while the player is still at the start (the teleport activity's
-/// `RegionLoader`, `gd_game::teleport::TeleportActivity`): levels stream around it as around [`StreamFocus`] and none
-/// near it unloads. Set and cleared by `doors::travel_screen`. PORT: the levels within [`LOAD_RADIUS`] (the engine's: the
-/// regions in the player's view frustum there).
+/// A teleport's destination, loaded while the player is still at the start (`gd_game::teleport::TeleportActivity`):
+/// levels stream around it as around [`StreamFocus`] and none near it unloads. Set and cleared by
+/// `doors::travel_screen`. PORT: the levels within [`LOAD_RADIUS`] (the engine's: the regions in the view frustum).
 #[derive(Resource, Default)]
 pub struct TravelPreload(pub Option<Vec3>);
 
-/// How long an unloaded level's assets stay held ([`Lingering`]; module doc).
 const LINGER: Duration = Duration::from_secs(45);
 /// At most this many unloaded levels linger; the oldest goes first.
 const LINGER_LEVELS: usize = 8;
 
-/// The models and terrain layers of the levels unloaded in the last [`LINGER`] (module doc), oldest first.
+/// The models and terrain layers of the levels unloaded in the last [`LINGER`], oldest first.
 #[derive(Resource, Default)]
 pub struct Lingering {
-    /// The levels unloaded this frame, whose assets [`linger_unloaded`] takes before their roots despawn: the root
-    /// (a cancelled spawn may have none yet) and the models its spawn held ([`SpawnJob`]).
+    /// The levels unloaded this frame, taken by [`linger_unloaded`] before their roots despawn (a cancelled
+    /// spawn may have no root yet).
     unloaded: Vec<(Option<Entity>, Vec<Arc<model::ModelAsset>>)>,
     levels: VecDeque<Linger>,
-    /// Lingering levels let go so far (`heap.rs` trims after it moves).
+    /// Lingering levels let go so far.
     released: u64,
 }
 
-/// One unloaded level's held assets ([`Lingering`]).
 struct Linger {
-    /// Real time since startup when they go.
     until: Duration,
     _models: Vec<Arc<model::ModelAsset>>,
     _layers: Vec<gd_render::render::terrain::HeldLayers>,
 }
 
 impl Lingering {
-    /// Lingering levels let go so far: their assets were freed if nothing else holds them.
     pub fn released(&self) -> u64 {
         self.released
     }
 }
 
-/// `Last`: takes the models and terrain layers of the level roots unloaded this frame into [`Lingering`], and lets
-/// go the lingering levels past [`LINGER`] or beyond [`LINGER_LEVELS`] (all of them when the mounted mod changed).
+/// `Last`: takes the assets of the level roots unloaded this frame into [`Lingering`], and lets go the
+/// lingering levels past [`LINGER`] or beyond [`LINGER_LEVELS`] (all of them when the mounted mod changed).
 fn linger_unloaded(
     mut lingering: ResMut<Lingering>,
     children: Query<&Children>,
@@ -202,21 +189,19 @@ impl StreamedMap {
         Some(region_origin(r) + Vec3::from(sp.position))
     }
 
-    /// Levels are still building or spawning (`heap.rs` holds its trim until streaming settles).
+    /// Levels are still building or spawning.
     pub fn busy(&self) -> bool {
         !self.pending.is_empty() || !self.spawning.is_empty()
     }
 }
 
-/// The session's map, read from its archive entry (`MapFile::open_resource`).
-/// `gd_map` (`GD_MAP`, dev builds) selects another map resource (e.g. `levels/mainmenu/mainmenu_gdx3.map`).
+/// The session's map. `gd_map` (`GD_MAP`, dev builds) selects another map resource.
 fn open_world_map(
     data: &GameData,
     gd_map: Option<&str>,
     choice: &gd_game_core::session::Choice,
 ) -> anyhow::Result<MapFile> {
-    // A Crucible arena or a custom game's map (`Choice::map_path`, read through the mounted mod,
-    // `World::Load` opens it through the `FileSystem`), else `GD_MAP`, else the campaign's world.
+    // A Crucible arena or a custom game's map, else `GD_MAP`, else the campaign's world.
     let res = (choice.game_mode() != 0)
         .then(|| choice.map_path())
         .or(gd_map)
@@ -240,7 +225,7 @@ pub fn open_world(
     install_world(In(map), commands);
 }
 
-/// Installs an opened map as the session's world: its streaming state, level limits and map-derived resources.
+/// Installs an opened map as the session's world.
 fn install_world(In(map): In<MapFile>, mut commands: Commands) {
     info!(
         "world: {} regions, {} spawn points",
@@ -261,9 +246,7 @@ fn install_world(In(map): In<MapFile>, mut commands: Commands) {
         later.challenge.len()
     );
     let map = Arc::new(map);
-    // The save's `map.dat` needs the region ids (`gd_game_core::save::MapLayout`).
     commands.insert_resource(gd_game_core::save::MapLayout(map.clone()));
-    // The unique-entity rules read the map's own group list (`gd_game::unique`).
     commands.insert_resource(gd_game::unique::InstanceGroups(map.instance_groups.clone()));
     let world = StreamedMap {
         map,
@@ -278,8 +261,7 @@ fn install_world(In(map): In<MapFile>, mut commands: Commands) {
             .with_challenges(later.challenge)
             .with_damages(later.damage),
     );
-    // The patrol groups are this map's instance groups: `build_patrol_groups` reads them again from the new map
-    // (the campaign world opened behind the menu, then the arena or custom map of `open_session_map`).
+    // `build_patrol_groups` reads the instance groups again from the new map.
     commands.insert_resource(gd_game::patrol::PatrolGroups::default());
     commands.insert_resource(world);
 }
@@ -300,7 +282,6 @@ fn stream_levels(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut lingering: ResMut<Lingering>,
 ) {
-    // The test arena replaces the levels.
     #[cfg(feature = "dev")]
     if hooks.session.testworld.is_some() {
         return;
@@ -320,7 +301,7 @@ fn stream_levels(
                 .map_or(f32::MAX, |t| gd_game_core::levels::region_distance(r, t)),
         )
     };
-    // Loads: only the regions in the radius look at the bookkeeping (the map has thousands, a handful are near).
+    // Only the regions in the radius look at the bookkeeping.
     for (i, r) in map.regions.iter().enumerate() {
         if r.level_size == 0
             || dist(i) >= LOAD_RADIUS
@@ -339,11 +320,9 @@ fn stream_levels(
                 .spawn(async move { build_level(&map, &data, &layers, high, i) }),
         );
     }
-    // Unloads: only the levels held or loading. A build still in flight is for a level nobody wants now: dropping
-    // the task cancels it (else `finish_levels` spawns the whole level and the next frame unloads it again).
+    // Dropping a build still in flight cancels it.
     pending.retain(|&i, _| dist(i) <= UNLOAD_RADIUS);
-    // A spawn still in flight for a level nobody wants now: cancel it (its nav
-    // is in already; its partial root despawns in `Last`).
+    // Cancel an unwanted spawn in flight (its partial root despawns in `Last`).
     let cancel: Vec<usize> = spawning
         .keys()
         .copied()
@@ -356,15 +335,14 @@ fn stream_levels(
                     .entity(root)
                     .try_insert(gd_game_core::levels::Unload);
             }
-            // What it spawned and the models it held linger ([`Lingering`]).
             lingering.unloaded.push((job.root, job.held));
             nav.0.remove(i as u64);
-            // Its decal receivers may be registered already (decals clip after the objects).
+            // Its decal receivers may be registered already.
             receivers.remove_level(i);
         }
     }
-    // Read through `Deref` first: `remove` through `ResMut` marks `Levels` changed, and `cull_monsters` walks every
-    // level entity on a change.
+    // Read through `Deref` first: `remove` through `ResMut` marks `Levels` changed (`cull_monsters` walks every
+    // level entity on a change).
     let mut far: Vec<usize> = levels
         .loaded
         .keys()
@@ -374,7 +352,7 @@ fn stream_levels(
     far.sort_unstable();
     for i in far {
         if let Some(e) = levels.remove(i) {
-            // Despawned in `Last` (`gd_game_core::levels::Unload`), its assets lingering ([`Lingering`]).
+            // Despawned in `Last`.
             commands.entity(e).try_insert(gd_game_core::levels::Unload);
             lingering.unloaded.push((Some(e), Vec::new()));
             nav.0.remove(i as u64);
@@ -384,12 +362,10 @@ fn stream_levels(
     }
 }
 
-/// CPU-side result of loading one level.
 pub struct LevelCpu {
     index: usize,
     origin: Vec3,
     terrain: Option<gd_render::render::terrain::TerrainCpu>,
-    /// The terrain's material once spawned ([`spawn_level_root`]): the terrain patches share its layers.
     terrain_mat: Option<Handle<TerrainMaterial>>,
     objects: Vec<ObjectCpu>,
     nav: Vec<gd_sim::nav::NavLayer>,
@@ -404,21 +380,19 @@ pub struct LevelCpu {
     set_pieces: Vec<(u32, String, Vec3, f32, Option<[u32; 4]>)>,
     doors: Vec<(String, Transform, Option<[u32; 4]>)>,
     breakables: Vec<(u32, String, Transform)>,
-    /// `PhysicsDecoration` props: (record, transform) (`gd_game::physics_decoration::LevelPhysicsProps`).
+    /// `PhysicsDecoration` props: (record, transform).
     physics_props: Vec<(String, Transform)>,
     blockers: Vec<(String, Vec3)>,
     waypoints: Vec<(String, Vec3, [u32; 4])>,
     shrines: Vec<(String, Transform, [u32; 4])>,
     sounds: Vec<(String, Vec3)>,
     patrol_points: Vec<(String, Vec3, [u32; 4])>,
-    /// Gameplay objects placed in the level (`gd_game::monsters::placed_class`).
     placed: Vec<(u32, String, Transform)>,
     /// Map nuggets of objects nothing else spawns: `AreaOfInterest`s and
-    /// static scenery with a `mapNuggetType` (record, transform; `ui/localmap.rs`).
+    /// static scenery with a `mapNuggetType` (record, transform).
     map_points: Vec<(String, Transform)>,
-    /// Terrain heightfield for projectile collision (`collision.rs`).
     heights: Option<(u32, u32, Vec<f32>)>,
-    /// What the terrain and water are made of (footsteps, `collision.rs`).
+    /// What the terrain and water are made of.
     ground: gd_sim::surface::Ground,
 }
 
@@ -432,9 +406,8 @@ impl LevelCpu {
     }
 }
 
-/// A level `Decal` entity: its record, frame and terrain faces (`decal.rs`; a
-/// static decal: box half-extent max(width, height) × 0.5); `spawn_level`
-/// adds the mesh faces once the level's receivers are registered.
+/// A level `Decal` entity: its record, frame and terrain faces (a static decal: box half-extent
+/// max(width, height) × 0.5); `spawn_level` adds the mesh faces once the level's receivers are registered.
 struct DecalCpu {
     patch: gd_render::decal::DecalPatch,
     rec: gd_render::decal::DecalRecord,
@@ -445,19 +418,14 @@ struct DecalCpu {
     height: f32,
 }
 
-/// A scenery record's texture overrides, as `Actor::Load` applies them
-/// (see `CharAssets::spawn_record_model`): `baseTexture` /
-/// `bumpTexture` for every msh material, else `baseTextures[i]` /
-/// `bumpTextures[i]` (`;`-separated, per material; empty = keep). E.g. the
-/// village floor tiles (`floor1x_wood01`: the stone `housemodular_floorsquare`
-/// mesh with `housemodular_floorsquare_wood01.tex`).
+/// A scenery record's texture overrides, as `Actor::Load` applies them: `baseTexture` / `bumpTexture`
+/// for every msh material, else `baseTextures[i]` / `bumpTextures[i]` (`;`-separated, per material; empty = keep).
 struct Retex {
     base_all: Option<String>,
     bump_all: Option<String>,
     base: Vec<String>,
     bump: Vec<String>,
-    /// `shader` / `glowTexture` / `glowTextures`
-    /// ([`gd_render::render::material::Reshade`]).
+    /// `shader` / `glowTexture` / `glowTextures`.
     shader: Option<String>,
     glow_all: Option<String>,
     glow: Vec<String>,
@@ -491,7 +459,6 @@ impl Retex {
         .then_some(r)
     }
 
-    /// The shader / glow overrides of msh material `i`.
     fn reshade(&self, i: usize) -> gd_render::render::material::Reshade<'_> {
         gd_render::render::material::Reshade {
             shader: self.shader.as_deref(),
@@ -502,7 +469,6 @@ impl Retex {
         }
     }
 
-    /// (base, bump) of msh material `i`.
     fn of(&self, i: usize) -> (Option<&str>, Option<&str>) {
         (
             self.base_all
@@ -518,51 +484,36 @@ impl Retex {
 struct ObjectCpu {
     mesh: String,
     transform: Affine3A,
-    /// The record's texture overrides ([`Retex`]).
     retex: Option<Arc<Retex>>,
-    /// Gets a static physics body in the world (`collision.rs`).
     solid: bool,
-    /// Takes decals (`decal::receives_decals`).
     decals: bool,
     /// `maxTransparency` of an `allowTransparency` record (`see_through`).
     see_through: Option<f32>,
-    /// The record's `castsShadows` (default 1). Engine.dll
-    /// `Actor::Load` stores it at `Actor.castsShadows` (and the mesh instance's
-    /// `GraphicsMeshInstance.castsShadows`); `GraphicsMTRenderer::BuildShadowDirectional`
-    /// adds only actors with it set to the sun's shadow scene. In Devil's
-    /// Crossing: floors, weeds, bedrolls, camp clutter, candles, torches.
+    /// The record's `castsShadows` (default 1). `GraphicsMTRenderer::BuildShadowDirectional`
+    /// adds only actors with it set to the sun's shadow scene.
     casts_shadows: bool,
-    /// `SoundPeriodic` (`periodicSound` of a `Decoration`).
+    /// `periodicSound` of a `Decoration`.
     periodic: Option<gd_game_core::world::PeriodicSound>,
-    /// The record's animations (`decoration_anim`).
     anims: Option<crate::decoration_anim::DecorationAnims>,
-    /// A `Floater`'s bob (`decoration_anim`).
     floater: Option<crate::decoration_anim::Floater>,
-    /// A `Decoration` the hover names (`gd_game_core::world::Described`).
     described: Option<gd_game_core::world::Described>,
-    /// A `TerrainDecoration`'s painted terrain: (paint, `maxPaintableAngle`, rounded region-local x / z), drawn
-    /// over its upward faces (`render/terrain.rs`).
+    /// A `TerrainDecoration`'s painted terrain: (paint, `maxPaintableAngle`, rounded region-local x / z).
     patch: Option<(gd_formats::map::level::TerrainPatch, f32, Vec2)>,
 }
 
 impl ObjectCpu {
-    /// It animates (`decoration_anim`) or bobs: what its mesh creates is attached to it and follows its
-    /// posed bones (`fx::spawn_mesh_attachments`), not placed in the world.
+    /// It animates or bobs: what its mesh creates is attached to it and follows its posed bones.
     fn moves(&self) -> bool {
         self.anims.is_some() || self.floater.is_some()
     }
 }
 
-/// Static scenery classes. Everything else is either gameplay (spawners,
-/// creatures, items — instantiated by gameplay code) or an editor helper with
-/// a placeholder mesh (SoundObject, AreaOfInterest, ...).
+/// Static scenery classes. Everything else is either gameplay (instantiated by gameplay code) or an
+/// editor helper with a placeholder mesh.
 ///
-/// Left out on purpose (every stock map the game loads): `PlayerSpawnPoint` (one per
-/// map, at the map header's spawn point, which is what the port starts at; Game.dll
-/// `PlayerSpawnPoint::InitialUpdate` hides it outside the editor); `GridEntrance` /
-/// `GridEntranceDynamic` / `GridSystem`, `NpcWanderPoint`, `LightOfRaMarker` / `CerberusGeyserMarker`
-/// (placed in no stock map; no script or record names them, the markers' skills exist only as base
-/// templates).
+/// Left out: `PlayerSpawnPoint` (`PlayerSpawnPoint::InitialUpdate` hides it outside the editor);
+/// `GridEntrance` / `GridEntranceDynamic` / `GridSystem`, `NpcWanderPoint`, `LightOfRaMarker` /
+/// `CerberusGeyserMarker` (placed in no stock map).
 fn is_scenery_class(class: &str) -> bool {
     matches!(
         class,
@@ -582,7 +533,7 @@ fn build_decal(
     origin: Vec3,
 ) -> Option<DecalCpu> {
     let mut dec = gd_render::decal::DecalRecord::from_record(rec)?;
-    // PORT: a level decal's `life` is ignored (`decal.rs`).
+    // PORT: a level decal's `life` is ignored.
     dec.timing.life_ms = 0;
     // PORT: the entity's scale stretches the decal.
     let s = Vec3::from(e.scale());
@@ -615,35 +566,31 @@ fn build_decal(
     })
 }
 
-/// What a level entity's record places: resolved once per record id in [`build_level`].
 enum Placement {
     /// Nothing (a story NPC, an `Npc` subclass's other records, an unknown proxy).
     Skip,
-    /// An NPC without story hooks or a placed creature (`npcs`).
+    /// An NPC without story hooks or a placed creature.
     Npc,
-    /// A Shattered Realm proxy.
     Proxy,
-    /// Loot containers without story hooks (`chests.rs`), lore notes placed as items (gd-game `lore`) and the
-    /// food crates (`FixedItemShrine`, gd-game `chests`).
+    /// Loot containers without story hooks, lore notes placed as items and the food crates (`FixedItemShrine`).
     Chest,
     SetPiece,
     Door,
-    /// A breakable / a physics prop with the record's `scale` (used unless the entity has its own).
+    /// A breakable / a physics prop with the record's `scale`.
     Breakable(f32),
     PhysicsProp(f32),
     Blocker,
-    /// Riftgates, respawn points and the Chthonic rifts (`gd_game::riftgates::DynamicRift`).
+    /// Riftgates, respawn points and the Chthonic rifts.
     Waypoint,
     Shrine,
-    /// The Ascendant altar rides with the shrines (no uid needed).
+    /// The Ascendant altar.
     Altar,
     Sound,
     Patrol,
     AreaOfInterest,
-    /// Gameplay objects placed in the level (`gd_game::monsters::placed_class`).
     Placed,
     /// Anything else: a light / decal candidate (by its path) or scenery; `nugget`: static scenery with its own
-    /// map icon (dynamic obstacles: `Actor::AppendDetailMapData`).
+    /// map icon (`Actor::AppendDetailMapData`).
     Other {
         nugget: bool,
         light: bool,
@@ -652,7 +599,6 @@ enum Placement {
     },
 }
 
-/// A scenery record's facts every placement of it shares.
 struct SceneryRecord {
     mesh: String,
     scale: f32,
@@ -665,7 +611,6 @@ struct SceneryRecord {
     anims: Option<crate::decoration_anim::DecorationAnims>,
     floater: Option<crate::decoration_anim::Floater>,
     described: Option<gd_game_core::world::Described>,
-    /// A `TerrainDecoration`'s `maxPaintableAngle`.
     paintable: Option<f32>,
 }
 
@@ -674,10 +619,8 @@ impl SceneryRecord {
         if !is_scenery_class(&rec.class) {
             return None;
         }
-        // Engine.dll `Actor::InitialUpdate` → `Entity::SetPhysicsSimulation(1)` only when
-        // `IsStatic()` and `GetIsPartOfLevel()`: Game.dll `Decoration::IsStatic` is `!allowPathing`,
-        // `Decoration::GetIsPartOfLevel` is "no `description`". The other scenery classes keep the always-false
-        // `Entity` defaults (`Destructible` overrides IsStatic to false), so only a `Decoration` gets a body.
+        // `Actor::InitialUpdate` → `Entity::SetPhysicsSimulation(1)` only when `IsStatic()` (`Decoration`:
+        // `!allowPathing`) and `GetIsPartOfLevel()` (no `description`): only a `Decoration` gets a body.
         let solid = rec.class == "Decoration"
             && !rec.bool("allowPathing")
             && rec.str("description").is_none_or(str::is_empty);
@@ -701,17 +644,13 @@ impl SceneryRecord {
     }
 }
 
-/// What `rec_name` places (see [`Placement`]).
 fn classify(data: &GameData, rec_name: &str) -> Placement {
     let lower = rec_name.to_ascii_lowercase();
     let rec = data.db.get(rec_name);
     let story = |r: &gd_formats::arz::Record| gd_game::story_world::is_story_record(r);
-    // NPCs without story hooks (the story layer shows the others), and every other creature placed as a
-    // `Monster` (town guards, faction champions, the Dranghoul tribe, training dummies, floor-spike traps, the
-    // Loghorrean / Dermapteran queen / Master of Flesh bosses: placed only, no proxy or script spawns them):
-    // gd-game makes them monsters at their record's level that fight by faction (`monsters::is_fighter`,
-    // `placed_char_level`); `defaultTeamMajor` is not read by the game. Other records under `records/creatures/`
-    // (breakables) go on below.
+    // NPCs without story hooks, and every other creature placed as a `Monster`: gd-game makes them monsters at
+    // their record's level that fight by faction; `defaultTeamMajor` is not read by the game. Other records
+    // under `records/creatures/` (breakables) go on below.
     let npc_dir = lower.starts_with("records/creatures/npcs/");
     if npc_dir || lower.starts_with("records/creatures/") {
         if rec.is_some_and(|r| {
@@ -723,7 +662,7 @@ fn classify(data: &GameData, rec_name: &str) -> Placement {
             return Placement::Skip;
         }
     }
-    // The Shattered Realm's proxies (`ProxyEndless`, dormant until the generator activates them).
+    // `ProxyEndless`: dormant until the generator activates them.
     if lower.starts_with("records/proxies/") || lower.starts_with("records/endlessdungeon/proxies/")
     {
         return if rec
@@ -772,7 +711,6 @@ fn classify(data: &GameData, rec_name: &str) -> Placement {
     }
 }
 
-/// A level entity's frame: its rotation rows scaled by `scale`, at its region-local position.
 fn entity_affine(e: &gd_formats::map::level::Entity, origin: Vec3, scale: Vec3) -> Affine3A {
     let r = e.rotation;
     let basis = Mat3::from_cols(
@@ -790,7 +728,6 @@ fn entity_transform(e: &gd_formats::map::level::Entity, origin: Vec3, scale: Vec
     Transform::from_matrix(Mat4::from(entity_affine(e, origin, scale)))
 }
 
-/// The entity's own scale, else the record's.
 fn placed_scale(e: &gd_formats::map::level::Entity, record: f32) -> Vec3 {
     let s = Vec3::from(e.scale());
     if s == Vec3::ONE {
@@ -845,7 +782,6 @@ pub fn build_level(
                 let x = Vec3::new(r[0], r[1], r[2]).normalize_or(Vec3::X);
                 let z = Vec3::new(r[6], r[7], r[8]).normalize_or(Vec3::Z);
                 let rot = Quat::from_mat3(&Mat3::from_cols(x, Vec3::Y, z));
-                // The placement's scale replaces the record's (`gd_game::creature` module doc).
                 npcs.push((
                     ei as u32,
                     rec_name.to_owned(),
@@ -943,7 +879,7 @@ pub fn build_level(
                     continue;
                 }
                 let Some(s) = scenery else { continue };
-                // Engine.dll `TerrainPatch::CreateGeometry`: the paint's texel grid is
+                // `TerrainPatch::CreateGeometry`: the paint's texel grid is
                 // centred on floor(position + ½) in x / z.
                 let patch = s.paintable.and_then(|angle| {
                     let p = e.terrain_patch()?;
@@ -1032,9 +968,8 @@ pub fn build_level(
     })
 }
 
-/// Polls the background level builds; a finished one's nav is in at once, every mesh of its objects starts
-/// loading in the background (`ModelCache::model_ready`) and its GPU spawn is queued for [`spawn_levels`] (a
-/// bounded slice per frame), not built synchronously here.
+/// Polls the background level builds; a finished one's nav is in at once, its meshes start loading
+/// and its GPU spawn is queued for [`spawn_levels`].
 fn finish_levels(
     mut world: ResMut<StreamedMap>,
     mut nav: ResMut<Nav>,
@@ -1055,7 +990,6 @@ fn finish_levels(
         match r {
             Ok(mut cpu) => {
                 nav.0.add(i as u64, std::mem::take(&mut cpu.nav));
-                // Every mesh starts loading; the ones already built are held from now on ([`SpawnJob`]`::held`).
                 let (mut held, mut loading) = (Vec::new(), Vec::new());
                 let mut requested = HashSet::default();
                 for o in cpu
@@ -1094,8 +1028,8 @@ fn finish_levels(
     }
 }
 
-/// Debug switches for spawning a level: `GD_NO_DECALS` / `GD_NO_TERRAIN` leave the decals / the terrain out (dev
-/// builds; without `dev` the accessors are constant `false`).
+/// Debug switches: `GD_NO_DECALS` / `GD_NO_TERRAIN` leave the decals / the terrain out (constant `false`
+/// without `dev`).
 #[derive(Clone, Copy, Default)]
 pub struct LevelOpts {
     #[cfg(feature = "dev")]
@@ -1130,10 +1064,8 @@ impl LevelOpts {
     }
 }
 
-/// Spawns a built level under a new root. `gameplay`: the world's levels
-/// (their proxies, NPCs, chests, ... go to gd-game through `LevelProxies`, map
-/// points to the local map); without it only what is drawn (the main menu's
-/// scene, `render::menu`).
+/// Spawns a built level under a new root. `gameplay`: the world's levels (gameplay content goes to
+/// gd-game through `LevelProxies`); without it only what is drawn (the main menu's scene).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_level(
     mut cpu: LevelCpu,
@@ -1168,7 +1100,6 @@ pub fn spawn_level(
     if gameplay {
         attach_gameplay(commands, root, &mut cpu);
     }
-    // Built on the spot (`ModelCache::model`): the caller (the menu scene) takes the whole level at once.
     let mut acc = SpawnAcc::default();
     let terrain = cpu.terrain_mat.as_ref().map(|h| (h, cpu.origin));
     for o in &cpu.objects {
@@ -1199,7 +1130,6 @@ pub fn spawn_level(
     );
     let all = std::mem::take(&mut cpu.decals);
     let mut decals = if opts.no_decals() { Vec::new() } else { all }.into_iter();
-    // No budget here: the whole level at once.
     let far = Instant::now() + Duration::from_secs(3600);
     spawn_level_decals(
         &mut decals,
@@ -1224,8 +1154,7 @@ type SceneryBox = (String, Arc<gd_formats::msh::Mesh>, Affine3A);
 /// A line-of-sight box: (mesh, placement).
 type LosBox = (Arc<gd_formats::msh::Mesh>, Affine3A);
 
-/// The accumulators of the scenery object loop ([`spawn_level_objects`]), kept
-/// across the per-frame slices of a streaming spawn.
+/// The accumulators of the scenery object loop, kept across the per-frame slices of a streaming spawn.
 #[derive(Default)]
 struct SpawnAcc {
     phys: Vec<SceneryBox>,
@@ -1235,31 +1164,26 @@ struct SpawnAcc {
     nobj: usize,
 }
 
-/// A level whose CPU build finished and whose GPU spawn is spread over frames
-/// ([`spawn_levels`]): the root once made, the object cursor and accumulators, then the decals still to clip. It
-/// holds what it waits on (module doc): the models built so far, and the textures of the object or decal at the
-/// cursor already decoded.
+/// A level whose GPU spawn is spread over frames ([`spawn_levels`]): the root once made, the object cursor
+/// and accumulators, then the decals still to clip.
 pub(crate) struct SpawnJob {
     cpu: LevelCpu,
     sectors: Option<(Vec3, gd_formats::map::sector::SectorLayers)>,
     root: Option<Entity>,
     cursor: usize,
     acc: SpawnAcc,
-    /// The models of its objects already built, held until the level is spawned (its parts hold them then).
+    /// The models of its objects already built, held until the level is spawned.
     held: Vec<Arc<model::ModelAsset>>,
-    /// The meshes still loading in the background; each moves to `held` as it is built ([`spawn_levels`]).
+    /// The meshes still loading in the background; each moves to `held` as it is built.
     loading: Vec<String>,
-    /// The decoded textures of the object or decal waiting at the cursor (`MaterialAssets::variant_ready`,
-    /// `decal::textures_ready`); cleared once it spawns.
+    /// The decoded textures of the object or decal waiting at the cursor; cleared once it spawns.
     textures: Vec<Handle<Image>>,
-    /// The decals still to clip, in order; `None` until the objects are spawned and the receivers registered.
+    /// The decals still to clip; `None` until the objects are spawned and the receivers registered.
     decals: Option<std::vec::IntoIter<DecalCpu>>,
 }
 
-/// Hands a level's gameplay content to gd-game (`LevelProxies`: proxies, NPCs, chests, doors, …;
-/// `LevelPhysicsProps`). Only once the level is in `Levels` (the same frame as `Levels::add`): gd-game's cull
-/// systems unload whatever belongs to a level that is not loaded, so content handed over while the level is still
-/// streaming in slices was despawned as it appeared, and the root never repopulated.
+/// Hands a level's gameplay content to gd-game (`LevelProxies`, `LevelPhysicsProps`). Only once the level is
+/// in `Levels`: gd-game's cull systems unload whatever belongs to a level that is not loaded.
 fn attach_gameplay(commands: &mut Commands, root: Entity, cpu: &mut LevelCpu) {
     commands
         .entity(root)
@@ -1286,9 +1210,8 @@ fn attach_gameplay(commands: &mut Commands, root: Entity, cpu: &mut LevelCpu) {
         });
 }
 
-/// The level root and everything but the scenery objects: map points, terrain + grass, placed effects, water,
-/// lights. Consumes those fields of `cpu`, leaving the gameplay content for [`attach_gameplay`] and the objects /
-/// decals / collision for the slices.
+/// The level root and everything but the scenery objects. Consumes those fields of `cpu`, leaving the
+/// gameplay content for [`attach_gameplay`] and the objects / decals / collision for the slices.
 #[allow(clippy::too_many_arguments)]
 fn spawn_level_root(
     cpu: &mut LevelCpu,
@@ -1319,7 +1242,6 @@ fn spawn_level_root(
         commands.entity(root).add_child(e);
     }
     if let Some(mut t) = cpu.terrain.take().filter(|_| !opts.no_terrain()) {
-        // The terrain layers' grass (render/grass.rs): terrain-local blades.
         gd_render::render::grass::spawn(
             commands,
             root,
@@ -1331,11 +1253,9 @@ fn spawn_level_root(
             meshes,
             mats,
         );
-        // Its layer textures stay decoded for the next level builds while it is loaded.
         let held = std::mem::take(&mut t.held);
         let e = commands.spawn((held, Name::new("terrain layers"))).id();
         commands.entity(root).add_child(e);
-        // One entity per mesh chunk, sharing the level's material (render/terrain.rs).
         let (chunks, mat) = t.material(cpu.origin, images, &mats.defaults);
         let mat = terrain_mats.add(mat);
         cpu.terrain_mat = Some(mat.clone());
@@ -1345,7 +1265,6 @@ fn spawn_level_root(
                     Mesh3d(meshes.add(chunk.mesh)),
                     MeshMaterial3d(mat.clone()),
                     Transform::from_translation(cpu.origin),
-                    // The terrain only receives sun shadows (render/terrain.rs).
                     bevy::light::NotShadowCaster,
                     chunk.blocks,
                 ))
@@ -1370,12 +1289,9 @@ fn spawn_level_root(
     root
 }
 
-/// Spawns the scenery objects of `objects[*cursor..]` in order while their model is built, advancing the cursor
-/// and folding their collision / decal boxes into `acc`; one whose mesh cannot load is skipped. Stops at the first
-/// model still loading in the background (`ModelCache::model_ready`, retried next frame), at a retextured object
-/// whose textures or override shader are still loading ([`retex_ready`]; the decoded ones held in `held`), or once
-/// `deadline` has passed and `spawned` (this frame's objects across the levels) is not 0, so a frame always spawns
-/// one.
+/// Spawns the scenery objects of `objects[*cursor..]` in order while their model is built; one whose mesh
+/// cannot load is skipped. Stops at the first model or retexture still loading, or once `deadline` has
+/// passed and `spawned` (this frame's objects across the levels) is not 0.
 #[allow(clippy::too_many_arguments)]
 fn spawn_level_objects(
     objects: &[ObjectCpu],
@@ -1393,7 +1309,6 @@ fn spawn_level_objects(
     textures: &mut Textures,
     held: &mut Vec<Handle<Image>>,
     acc: &mut SpawnAcc,
-    // The level's terrain material and origin, and the terrain materials (the terrain patches).
     terrain: Option<(&Handle<TerrainMaterial>, Vec3)>,
     terrain_mats: &mut Assets<TerrainMaterial>,
 ) {
@@ -1405,7 +1320,7 @@ fn spawn_level_objects(
             model::Ready::Loading => return,
             model::Ready::Failed => {}
             model::Ready::Done(m) => {
-                // This check's holds replace the last one's only after it took them again (no duplicates).
+                // This check's holds replace the last one's only after it took them again.
                 let mut now = Vec::new();
                 let ready = retex_ready(o, &m, data, mats, textures, images, &mut now);
                 *held = now;
@@ -1434,8 +1349,8 @@ fn spawn_level_objects(
     }
 }
 
-/// Whether [`spawn_object`]'s retexture / reshade of `o` with model `m` decodes and analyses nothing on the game
-/// thread (`MaterialAssets::variant_ready` of each part); the decoded textures go into `held`.
+/// Whether [`spawn_object`]'s retexture / reshade of `o` is ready without decoding on the game thread;
+/// the decoded textures go into `held`.
 fn retex_ready(
     o: &ObjectCpu,
     m: &model::ModelAsset,
@@ -1470,7 +1385,6 @@ fn retex_ready(
     ready
 }
 
-/// Spawns one scenery object with its model `m` under `root`, folding its collision / decal boxes into `acc`.
 #[allow(clippy::too_many_arguments)]
 fn spawn_object(
     o: &ObjectCpu,
@@ -1536,7 +1450,6 @@ fn spawn_object(
             commands.entity(*p).insert(bevy::light::NotShadowCaster);
         }
     }
-    // A `TerrainDecoration`'s painted terrain over its upward faces (`render/terrain.rs`).
     if let (Some((paint, angle, centre)), Some((level_mat, origin))) = (&o.patch, terrain)
         && let Some(level) = terrain_mats.get(level_mat).cloned()
     {
@@ -1572,8 +1485,6 @@ fn spawn_object(
     if o.moves() {
         gd_render::fx::spawn_mesh_attachments(commands, data, m, e);
     } else {
-        // What the mesh of still scenery creates (`fx::mesh_creations`), placed in the world once: its
-        // effects and lights (candles, fire barrels, lanterns).
         for fx in gd_render::fx::mesh_attached(m, o.transform) {
             let id = gd_render::fx::spawn_placed(commands, &fx);
             commands.entity(root).add_child(id);
@@ -1593,7 +1504,6 @@ fn spawn_object(
         commands.entity(e).insert(d);
     }
     if let Some(mut f) = o.floater.clone() {
-        // The region box: the mesh box's corners through the placement (module doc of `decoration_anim`).
         let (lo, hi) = m.msh.bounding_box.unwrap_or_default();
         let (mut min, mut max) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
         for i in 0..8 {
@@ -1616,10 +1526,9 @@ fn spawn_object(
     commands.entity(root).add_child(e);
 }
 
-/// Clips and spawns the level's decals in order while `deadline` has not passed (at least one a frame), the
-/// receivers registered first ([`spawn_levels`]); true once none is left. With `held` (streaming), a decal whose
-/// textures are still decoding (`decal::textures_ready`) stops the slice until a later frame, the decoded ones held
-/// in `held`; without it (the menu scene's whole-level spawn) they decode on the spot.
+/// Clips and spawns the level's decals in order while `deadline` has not passed (at least one a frame);
+/// true once none is left. With `held` (streaming), a decal whose textures are still decoding stops the
+/// slice; without it they decode on the spot.
 #[allow(clippy::too_many_arguments)]
 fn spawn_level_decals(
     decals: &mut std::vec::IntoIter<DecalCpu>,
@@ -1641,7 +1550,7 @@ fn spawn_level_decals(
             return false;
         }
         if let (Some(held), Some(next)) = (held.as_deref_mut(), decals.as_slice().first()) {
-            // This check's holds replace the last one's only after it took them again (no duplicates).
+            // This check's holds replace the last one's only after it took them again.
             let mut now = Vec::new();
             let ready =
                 gd_render::decal::textures_ready(&next.rec, data, textures, images, &mut now);
@@ -1654,8 +1563,7 @@ fn spawn_level_decals(
             return true;
         };
         done += 1;
-        // A level decal takes the static meshes in its box (`decal.rs`; `Decal::InitialUpdate`: meshes of
-        // levels loaded later are not added).
+        // `Decal::InitialUpdate`: meshes of levels loaded later are not added.
         if !d.rec.terrain_only {
             receivers.gather(
                 &mut d.patch,
@@ -1669,7 +1577,6 @@ fn spawn_level_decals(
             continue;
         };
         let mesh = meshes.add(mesh);
-        // Level decals fade in / pulse and go at their `life` (`decal` module docs).
         let fade = d.rec.timing.animated().then_some(None);
         for e in gd_render::decal::spawn(
             commands, &d.rec, mesh, defaults, data, textures, images, decal_mats, fade,
@@ -1682,7 +1589,6 @@ fn spawn_level_decals(
     }
 }
 
-/// Adds the level's collision once its objects and decals are spawned.
 fn spawn_level_collision(
     index: usize,
     origin: Vec3,
@@ -1703,16 +1609,12 @@ fn spawn_level_collision(
     coll.add_ground(index, ground);
 }
 
-/// The streaming spawn's time a frame (module doc): [`spawn_levels`] stops spawning scenery objects and clipping
-/// decals once it has run this long (after at least one of each), so a fresh area's spawn is spread over frames
-/// instead of freezing one (the engine streams regions incrementally).
+/// The streaming spawn's time a frame: [`spawn_levels`] stops spawning objects and clipping decals once
+/// it has run this long (after at least one of each).
 const SPAWN_BUDGET: Duration = Duration::from_millis(3);
 
-/// Drains the streaming spawn queue ([`finish_levels`]) a bounded slice per
-/// frame: at most one new level root (terrain / grass / effects) plus the scenery objects whose models are built,
-/// in order, then the level's decals, within [`SPAWN_BUDGET`]; a level is marked loaded only
-/// when fully spawned, so `StreamedMap::area_ready` waits for it (initial load and
-/// teleports alike).
+/// Drains the streaming spawn queue a bounded slice per frame: at most one new level root plus the
+/// scenery objects whose models are built, in order, then the level's decals, within [`SPAWN_BUDGET`].
 #[allow(clippy::too_many_arguments)]
 fn spawn_levels(
     mut world: ResMut<StreamedMap>,
@@ -1747,7 +1649,6 @@ fn spawn_levels(
         let Some(job) = world.spawning.get_mut(&i) else {
             continue;
         };
-        // Each model of the level is held from the frame it is built (module doc).
         job.loading
             .retain(|p| match cache.model_ready(&data, &bodies, p) {
                 model::Ready::Done(m) => {
@@ -1758,11 +1659,10 @@ fn spawn_levels(
                 model::Ready::Failed => false,
             });
         if job.root.is_none() {
-            // One new level root per frame: its terrain / grass is a slice too.
             if base_done {
                 continue;
             }
-            // Its grass layers' textures decode in the background first (a new one would stall the root's frame).
+            // Its grass layers' textures decode in the background first.
             if let Some(t) = job.cpu.terrain.as_ref().filter(|_| !opts.no_terrain()) {
                 let mut ready = true;
                 for g in &t.grass.batches {
@@ -1811,7 +1711,6 @@ fn spawn_levels(
         if job.cursor < job.cpu.objects.len() {
             continue;
         }
-        // The objects are in: their decal receivers, then the decals a slice at a time.
         let decals = job.decals.get_or_insert_with(|| {
             receivers.add_level(
                 i,
@@ -1859,7 +1758,6 @@ fn spawn_levels(
     }
 }
 
-/// The map's patrol and proxy-patroller instance groups (`gd_game::patrol`).
 fn build_patrol_groups(world: Res<StreamedMap>, mut groups: ResMut<gd_game::patrol::PatrolGroups>) {
     if groups.built {
         return;
@@ -1887,11 +1785,8 @@ fn build_patrol_groups(world: Res<StreamedMap>, mut groups: ResMut<gd_game::patr
 }
 
 /// Opens a Crucible or custom game's map from the menu, before its session begins: the session's mod is
-/// mounted (`Engine::InitializeMod`; `Game::LoadModMap`: the save's `modName` mounted before
-/// `World::Load(mapPath)`), the map is opened, then the levels streamed behind the
-/// menu are dropped with their skeleton joints and the opened map installed (`install_world`). A mod that does
-/// not mount or a map it does not serve or that does not parse is an error that leaves the menu's world and
-/// the install as they were.
+/// mounted (`Game::LoadModMap`), the map is opened, then the menu's streamed levels are dropped and the
+/// opened map installed. On error the menu's world is left as it was.
 /// PORT: the engine reports "Couldn't load world" after unloading the old world; here the map is opened
 /// first.
 pub fn open_session_map(
@@ -1929,9 +1824,8 @@ pub fn open_session_map(
     Ok(())
 }
 
-/// Despawns the levels streamed so far: their roots, with their trees and the skeleton joints of the models in
-/// them (`model::Joints`), and the partial roots of the levels still spawning; their nav, collision and decal
-/// receivers go with them (the new map's levels reuse the region indices).
+/// Despawns the levels streamed so far, with their skeleton joints and the partial roots of the levels
+/// still spawning; their nav, collision and decal receivers go with them.
 fn drop_streamed_levels(world: &mut World) {
     let mut roots: Vec<Entity> = world
         .resource::<gd_game_core::levels::Levels>()

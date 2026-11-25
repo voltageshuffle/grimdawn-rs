@@ -1,80 +1,42 @@
-//! Devotion: points, devotion shrines and celestial powers (rules in
-//! `gd_sim::devotion`; the game shows the window and the shrines).
+//! Devotion: points, devotion shrines and celestial powers (rules in `gd_sim::devotion`).
 //!
-//! * Points: the bio's `devotion_points` (unspent) / `total_devotion`; the
-//!   story's `GiveDevotion` and restored shrines grant them, capped by
-//!   `maxDevotionPoints` (see `gd_sim::devotion`).
-//! * Shrines (`StaticShrine`): a shrine whose `<difficulty>Disabled` is set
-//!   does not exist on that difficulty (`StaticShrine::Load`
-//!   skips it). Using one already restored only says so
-//!   (`RequestToUse`: `Player::IsShrineUIDKnown`);
-//!   otherwise using it opens the shrine window ([`ShrineWindow`], see
-//!   "Shrine window" below). A shrine with a `<difficulty>MonsterSpawn`
-//!   proxy starts its fight when the window is accepted and is restored
-//!   when every monster of it is dead (`RunProxy` / `AllKilled`); one with
-//!   offerings (`<difficulty>Offering1..3`, one item each, read for the
-//!   current difficulty only, `StaticShrine::Load`) takes them.
-//!   Restoring gives `devotionPoints`, `<difficulty>XPReward` and the
-//!   `<difficulty>LootTable` container's drops (`HandleShrineReward`),
-//!   adds the uid to the restored and discovered lists (save block 17:
-//!   per difficulty [restored, discovered]) and switches to the restored
-//!   animation and looping effect.
-//! * Celestial powers: a taken power (a star skill whose profile record, a
-//!   wrapper's `buffSkillName`, has `templateAutoCast`)
-//!   is bound to a skill (save: the bound skill's `autocast_skill` /
-//!   `autocast_controller`) and gains the experience the player receives.
+//! * Points: the bio's `devotion_points` (unspent) / `total_devotion`; the story's `GiveDevotion` and restored
+//!   shrines grant them, capped by `maxDevotionPoints`.
+//! * Shrines (`StaticShrine`): one with `<difficulty>Disabled` does not exist on that difficulty. Using a restored
+//!   one only says so (`Player::IsShrineUIDKnown`); otherwise it opens the shrine window ([`ShrineWindow`]). A
+//!   shrine with a `<difficulty>MonsterSpawn` proxy starts its fight when the window is accepted and is restored
+//!   when every monster of it is dead (`RunProxy` / `AllKilled`); one with offerings (`<difficulty>Offering1..3`,
+//!   one item each) takes them. Restoring gives `devotionPoints`, `<difficulty>XPReward` and the
+//!   `<difficulty>LootTable` drops (`HandleShrineReward`), adds the uid to the restored and discovered lists (save
+//!   block 17) and switches to the restored animation and effect.
+//! * Celestial powers: a taken power (a star skill whose profile record has `templateAutoCast`) is bound to a skill
+//!   (save: the bound skill's `autocast_skill` / `autocast_controller`) and gains the experience the player
+//!   receives after its bonus % (`SkillManager::AddExperience`).
 //!
-//! A shrine counts as discovered within 50 m of the player
-//! (`StaticShrine::UpdateSelf` → `Player::AddDiscoveredShrineUID`; not
-//! `bindRadius`); a `<difficulty>Locked` shrine (`StaticShrine::Load`) stays
-//! locked until a quest script calls `shrine:SetLocked(false)`
-//! ([`story_devotion`]); the XP reward goes through
-//! `Character::ReceiveExperience` (Bonus source 2, as quest XP: story
-//! `GiveExperience` here, where the character's experience bonus % belongs);
-//! the loot is thrown one item at a time from the shrine's drop point
-//! (`StaticShrine::GetLootDropCoords` / `GetLootDropRadius`,
-//! `crate::loot::fixed_drop_point`); bound powers gain the same experience the character receives
-//! after its bonus % (`ReceiveExperience` → `SkillManager::AddExperience`)
-//! from every source but `ExperienceSource` 1, which kills (the monster's
-//! bonus), quests and shrines (2), notes and level gifts (0) do not use.
+//! A shrine counts as discovered within 50 m of the player (`StaticShrine::UpdateSelf`, not `bindRadius`); a
+//! `<difficulty>Locked` shrine stays locked until a quest script calls `shrine:SetLocked(false)`
+//! ([`story_devotion`]); the XP reward goes through `Character::ReceiveExperience` (source 2, as quest XP); the
+//! loot is thrown one item at a time from the shrine's drop point (`StaticShrine::GetLootDropCoords`).
 //!
-//! Shrine window (Game.dll / `Grim Dawn.exe`):
-//! * Using an unrestored shrine sends `EngageShrineRequest` (Game.dll
-//!   `EngageShrineRequest::Execute`): a locked shrine answers `tagShrineLocked`, one restored
-//!   for this player `tagShrineHostActivated`, one in use by another player
-//!   `tagShrineBusy`; otherwise `EngageShrineResponse` (`EngageShrineResponse::Execute`) posts
-//!   game event 60 with the shrine and `HasProxy`, and the game opens one
-//!   of two windows from `records/ui/shrine/shrine_table.dbr` (`hudShrineWindow`):
-//!   the "Ruined Shrine" offering window (loader `ShrineWindow::Load`) or, for a
-//!   shrine with a proxy, the "Desecrated Shrine" window (loader
-//!   `ShrineProxyWindow::Load`: `tagShrineConfirmProxy`, button `tagShrineButton02`),
-//!   whose button sends `StartShrineProxyToServer` → `RunProxy`
-//!   (`ShrineProxyWindow::OnButtonPress`).
-//! * The offering window's update (`ShrineWindow::Update`) counts each offering with
-//!   `Player::GetItemCountInStashes` (bags, then the material storage,
-//!   private stash and transfer stash), less the earlier slots asking for
-//!   the same item; a slot is filled when one is left ([`offering_slots`]).
-//!   Its "Offer" button is enabled only when every slot is filled; its
-//!   press (`ShrineWindow::OnOffer`) sends `CleanseShrineConfigCmd`, whose `Execute`
-//!   takes one of each offering in the same order (`TakeOfferings`:
-//!   `TakeItemFromCharacter`, `TakeItemFromReagents`, private stash,
-//!   transfer), then `StaticShrine::CleanseShrine` rewards the players
-//!   within `bindRadius` of it and switches it to restored.
-//! * Cancel and the close button only hide the window; it also closes
-//!   when the player is farther than the shrine's `GetUICloseDistance`
-//!   (`uiCloseDistance`, 3D, `ShrineWindow::Update`). Nothing is taken until "Offer".
-//! * Saving (the window's show handler `ShrineWindow::OnShow`): showing the
-//!   offering window calls `GameEngine::SetSaveEnabled(false)`; hiding it (only
-//!   when it was shown) calls `SetSaveEnabled(true)`, `AutoSave`,
-//!   `SaveTransferStash` and `SaveReagents`. Here [`save_disabled`] holds the
-//!   timed autosave back while the offering window is open and
-//!   [`shrine_autosave`] sends a `SaveRequest` when it closes (the port writes
-//!   the stash and reagents with every save). PORT: the proxy window's show
-//!   handler was not decompiled, so it neither blocks nor triggers saves; F5,
-//!   the menu's save and the quit save are the port's own and are not blocked.
-//!   The `bindRadius` check
-//!   is left out: a single player with the window open is always within
-//!   it (`uiCloseDistance` 7 m vs `bindRadius` 80 m on stock shrines).
+//! Shrine window:
+//! * Using an unrestored shrine sends `EngageShrineRequest`: a locked shrine answers `tagShrineLocked`, one
+//!   restored for this player `tagShrineHostActivated`, one in use `tagShrineBusy`; otherwise game event 60 opens
+//!   one of two windows (`records/ui/shrine/shrine_table.dbr`): the "Ruined Shrine" offering window or, for a
+//!   shrine with a proxy, the "Desecrated Shrine" window (`tagShrineConfirmProxy`, button `tagShrineButton02`),
+//!   whose button runs the proxy (`ShrineProxyWindow::OnButtonPress`).
+//! * The offering window (`ShrineWindow::Update`) counts each offering with `Player::GetItemCountInStashes` (bags,
+//!   material storage, private stash, transfer stash), less the earlier slots asking for the same item; a slot is
+//!   filled when one is left ([`offering_slots`]). "Offer" is enabled only when every slot is filled; its press
+//!   (`CleanseShrineConfigCmd`) takes one of each offering in the same order (`TakeOfferings`), then
+//!   `StaticShrine::CleanseShrine` rewards the players within `bindRadius` and restores it.
+//! * Cancel and the close button only hide the window; it also closes when the player is farther than the shrine's
+//!   `uiCloseDistance` (3D). Nothing is taken until "Offer".
+//! * Saving (`ShrineWindow::OnShow`): showing the offering window disables saving; hiding it re-enables it and
+//!   autosaves. Here [`save_disabled`] holds the timed autosave back while it is open and [`shrine_autosave`]
+//!   sends a `SaveRequest` when it closes. PORT: the proxy window's show handler was not decompiled, so it neither
+//!   blocks nor triggers saves; F5, the menu's save and the quit save are not blocked. The `bindRadius` check is
+//!   left out: the window's player is always within it (`uiCloseDistance` 7 m vs `bindRadius` 80 m on stock
+//!   shrines).
 use crate::movement::MovePath;
 use crate::nav::Nav;
 use bevy::prelude::*;
@@ -93,8 +55,8 @@ pub struct Binding {
     pub skill: String,
     pub power: String,
     pub controller: String,
-    /// The item skill instance bound (`player::ItemSkillKey` with `skill`); none for a learned skill or the plain
-    /// attack. The engine binds a `Skill` object, so two item skills of one record keep their own powers.
+    /// The item skill instance bound; none for a learned skill or the plain attack. Two item skills of one record
+    /// keep their own powers.
     pub item: Option<gd_game_core::player::ItemSkillSource>,
 }
 
@@ -105,20 +67,15 @@ pub struct DevotionState {
     pub total: u32,
     pub restored: Vec<Uid>,
     pub discovered: Vec<Uid>,
-    /// Monster totems cleared this session: not saved
-    /// (`MonsterShrine::RequestToUse` / `UpdateSelf` keep only the entity's
-    /// own state; unlike `StaticShrine::BindToLocalPlayer` they add no
-    /// player shrine uid).
+    /// Monster totems cleared this session: not saved (`MonsterShrine` adds no player shrine uid).
     pub totems_done: Vec<Uid>,
-    /// Devotion points refunded so far (save block 8
-    /// `devotion_reclamation_points_used`; prices the next refund).
+    /// Devotion points refunded so far (`devotion_reclamation_points_used`; prices the next refund).
     pub reclaimed: u32,
     /// Star skill (lower-case) → (devotion level, experience).
     pub powers: HashMap<String, (u32, u32)>,
     pub bindings: Vec<Binding>,
     pub data: Devotions,
-    /// Bumped on every change (UI, autocasts); the window's view is the
-    /// game's (`ui::devotion::DevotionView`).
+    /// Bumped on every change.
     pub version: u64,
 }
 
@@ -133,9 +90,7 @@ impl DevotionState {
         add
     }
 
-    /// A celestial power's devotion level (`Skill::GetDevotionLevel`,
-    /// `Skill.devotionLevel`: 0 until `SkillManager::AddExperience` raises it; 0 for any
-    /// other skill), which its buffs carry (`crate::skill_buffs`).
+    /// A celestial power's devotion level (`Skill.devotionLevel`; 0 for any other skill), which its buffs carry.
     pub fn devotion_level(&self, skill: &str) -> u32 {
         self.powers
             .get(&skill.to_ascii_lowercase())
@@ -156,8 +111,7 @@ impl DevotionState {
         skill: &str,
         item: Option<gd_game_core::player::ItemSkillSource>,
     ) -> bool {
-        // `templateAutoCast` of the power's profile record (a wrapper's
-        // `buffSkillName`: `Skill::LoadResources` reads it).
+        // `templateAutoCast` of the power's profile record (a wrapper's `buffSkillName`).
         let Some(controller) = gd_sim::skills::profile_record(db, power)
             .and_then(|r| r.str("templateAutoCast").map(str::to_owned))
             .filter(|c| !c.is_empty())
@@ -207,17 +161,14 @@ impl Plugin for DevotionRequestsPlugin {
     }
 }
 
-/// Spend a devotion point on star `star` of constellation `constellation` (refused in the reclaim
-/// mode, [`devotion_requests`]).
+/// Spend a devotion point on star `star` of `constellation` (refused in the reclaim mode).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct TakeStar {
     pub constellation: usize,
     pub star: usize,
 }
 
-/// Refund star `star` of constellation `constellation` (costs gold and
-/// aether, [`reclaim_cost`]); only in the devotion window's reclaim mode
-/// ([`devotion_requests`]).
+/// Refund star `star` of `constellation` (costs gold and aether, [`reclaim_cost`]); only in the reclaim mode.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RemoveStar {
     pub constellation: usize,
@@ -258,28 +209,13 @@ pub enum DevotionStep {
 
 /// Changes made in the open devotion window, in order.
 ///
-/// Devotion pane (GrimDawn.exe): the undo button is the pane's
-/// `undoButton` (click callback `DevotionWindow::OnButtonEvent`, sender `DevotionWindow.undoButton`). Each star
-/// counts the clicks made in the window (`DevotionStar.clickCount`; the pane's "something
-/// to undo" flag `DevotionWindow.canUndo` is set by any, `DevotionWindow::HandleStarClick`, and enables the button:
-/// `DevotionWindow::Update` disables it while clear); the window's total reclamation delta
-/// is `DevotionWindow.reclaimDelta`. Undo walks every star with a count: when the pane is in
-/// reclaim mode (`DevotionWindow.reclaimMode`, set while removing stars) it levels the skill up
-/// again and spends the points (`SubtractDevotionPoint`), otherwise it takes the
-/// skill away (`Skill::SetSkillLevel(0)`) and returns the points (`AddDevotionPoints`);
-/// it then calls `SkillManager::UseDevotionReclamationPoints(-removals)`, which
-/// lowers the refund count and gives back the gold and aether the removals cost
-/// (Game.dll `SkillManager::RefundDevotionReclamation`: negative count, cost of the tier at each lowered
-/// count), clears the counts, `canUndo` and `reclaimDelta`. It is all-or-nothing.
-/// Hiding the pane (`DevotionWindow::SetVisible` with 0: leaves reclaim mode; the tab switch
-/// asks `tagConfirmSkillChanges`, `DevotionWindow::ConfirmTabSwitch`, then `DevotionWindow::ClearPendingChanges`
-/// resets `canUndo` / `reclaimDelta`) makes the changes final.
-/// PORT: the engine has one pane-wide mode and unordered counts; here every
-/// click is a step undone newest first (same result for one mode). A refunded
-/// power's experience and bindings are restored (the engine keeps them on the
-/// skill), aether crystals return to the material storage; while that store is blocked (`crate::stash`
-/// module doc, `SharedFiles::accepts`) they go into the bags, and with no room there the undo is refused
-/// (error sound, nothing changes).
+/// `DevotionWindow`: the undo button is enabled while any star has clicks (`canUndo`). Undo walks every clicked
+/// star: in reclaim mode it re-takes the skill and spends the points, else it removes the skill and returns the
+/// points; then `SkillManager::UseDevotionReclamationPoints(-removals)` refunds the removals' gold and aether
+/// (`RefundDevotionReclamation`). All-or-nothing. Hiding the pane makes the changes final.
+/// PORT: the engine keeps unordered per-star counts; here every click is a step undone newest first (same result
+/// for one mode). A refunded power's experience and bindings are restored; aether crystals return to the material
+/// storage, or to the bags while it is blocked, and with no room there the undo is refused (error sound).
 #[derive(Resource, Default, Debug, Clone)]
 pub struct DevotionUndo(pub Vec<DevotionStep>);
 
@@ -312,7 +248,7 @@ pub fn reclaim_cost(db: &gd_formats::vfs::Database, reclaimed: u32) -> (u64, u32
 }
 
 /// The aether crystals the player holds in the bags, the stashes and the material storage
-/// (`Player::GetCurrentAether`, what a refund takes; the crystal is `gameengine.dbr` `aetherCrystal`).
+/// (`Player::GetCurrentAether`).
 pub fn aether_held(
     data: &GameData,
     inv: &gd_game_core::inventory::Inventory,
@@ -321,17 +257,11 @@ pub fn aether_held(
     gd_game_core::stash::count(data.engine().aether_crystal.as_slice(), inv, stash)
 }
 
-/// Applies the devotion window's requests: taking a star (a point, the
-/// constellation rules `Devotions::cannot_take`), refunding one (gold and
-/// aether crystals, `cannot_remove`), binding a power.
+/// Applies the devotion window's requests: taking a star, refunding one, binding a power.
 ///
-/// The window has two modes (GrimDawn.exe star click `DevotionWindow::OnStarClick`, pane flag
-/// `DevotionWindow.reclaimMode`): opened plainly, a left click takes a star and nothing refunds one (no other
-/// button reaches the stars, `DevotionWindow::HandleStarClick`); opened by a spirit guide (`crate::reclamation`,
-/// `SkillReclamation::devotion`) a left
-/// click on a taken star refunds it (`SkillManager::UseDevotionReclamationPoints(1)`, then the point back,
-/// `AddDevotionPoints`, a celestial power's binding dropped) and nothing takes one. So a [`TakeStar`] is
-/// refused in the mode and a [`RemoveStar`] outside it.
+/// `DevotionWindow::OnStarClick`: opened plainly, a left click takes a star; opened by a spirit guide (reclaim
+/// mode) it refunds a taken one (`UseDevotionReclamationPoints(1)`, the point back, a power's binding dropped). So a
+/// [`TakeStar`] is refused in the mode and a [`RemoveStar`] outside it.
 #[allow(clippy::too_many_arguments)]
 pub fn devotion_requests(
     mut commands: Commands,
@@ -346,7 +276,7 @@ pub fn devotion_requests(
     mut stash: Option<ResMut<gd_game_core::stash::Stash>>,
     mut progress: Option<ResMut<gd_game_core::progress::PlayerProgress>>,
     mut undo: ResMut<DevotionUndo>,
-    // Option: created with the player (`reclamation::init_reclamation`); without it nothing refunds.
+    // Option: created with the player; without it nothing refunds.
     reclaim: Option<Res<crate::reclamation::SkillReclamation>>,
 ) {
     let reclaiming = reclaim.is_some_and(|r| r.devotion_mode());
@@ -462,7 +392,7 @@ pub fn devotion_requests(
     }
 }
 
-/// The window's undo (see [`DevotionUndo`]) or its close.
+/// The window's undo or its close.
 #[allow(clippy::too_many_arguments)]
 pub fn undo_devotion(
     mut commands: Commands,
@@ -493,8 +423,8 @@ pub fn undo_devotion(
     {
         let engine = data.engine();
         let crystal = engine.aether_crystal.as_deref();
-        // The material storage takes the crystals back only while the save writes it (`crate::stash` module
-        // doc); else all of them go into the bags first, or the undo is refused.
+        // The material storage takes the crystals back only while the save writes it; else the bags, or the undo
+        // is refused.
         let mut to_storage = true;
         let aether: u32 = undo
             .0
@@ -600,9 +530,8 @@ impl Plugin for DevotionPlugin {
     }
 }
 
-/// The open shrine window: the shrine and whether it is the proxy
-/// ("Desecrated Shrine", Start) window rather than the offering one.
-/// `version` changes whenever it opens or closes.
+/// The open shrine window: the shrine and whether it is the proxy ("Desecrated Shrine") window. `version` changes
+/// whenever it opens or closes.
 #[derive(Resource, Default)]
 pub struct ShrineWindow {
     pub shrine: Option<Entity>,
@@ -618,8 +547,7 @@ impl ShrineWindow {
     }
 }
 
-/// Whether the offering window is open, which disables saving
-/// (`SetSaveEnabled(false)`, see the module doc).
+/// Whether the offering window is open, which disables saving.
 pub fn save_disabled(window: &ShrineWindow) -> bool {
     window.shrine.is_some() && !window.proxy
 }
@@ -646,21 +574,18 @@ pub fn shrine_autosave(
 /// The player's answer to the shrine window.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShrineRequest {
-    /// "Offer" (takes the offerings and restores the shrine; ignored unless
-    /// every slot is filled) or, for a proxy shrine, "Start" (its fight).
+    /// "Offer" (ignored unless every slot is filled) or, for a proxy shrine, "Start".
     Accept,
     /// Cancel, the close button, Esc.
     Cancel,
 }
 
-/// `CleanseShrine`: the offerings were taken; restore the shrine and pay
-/// its reward ([`shrine_fights`], which also does it when a fight ends).
+/// `CleanseShrine`: the offerings were taken; restore the shrine and pay its reward.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct ShrineCleansed(pub Entity);
 
-/// The window's three offering slots (`shrineBox1..3`): the offering of
-/// each (None: no offering, the slot is covered) and whether the player has
-/// it, counting each item once per slot asking for it (`ShrineWindow::Update`).
+/// The window's three offering slots: each one's offering (None: covered) and whether the player has it, counting
+/// each item once per slot asking for it (`ShrineWindow::Update`).
 pub fn offering_slots(
     sh: &Shrine,
     inv: &gd_game_core::inventory::Inventory,
@@ -687,8 +612,7 @@ pub fn offering_slots(
 /// `StaticShrine::UpdateSelf`: discovered within 50 m.
 const DISCOVER_RANGE: f32 = 50.0;
 
-/// A script's `shrine:SetLocked` on the shrine of `record` at `at` (the game
-/// resolves the story object).
+/// A script's `shrine:SetLocked` on the shrine of `record` at `at`.
 #[derive(Message, Clone, Debug)]
 pub struct ShrineLock {
     pub record: String,
@@ -701,12 +625,12 @@ pub struct ShrineLock {
 pub struct Shrine {
     pub uid: Uid,
     pub record: String,
-    /// `Actor::GetRadius` (`combat::get_radius`): the use range's and the hover pick's.
+    /// `Actor::GetRadius`: the use range's and the hover pick's.
     pub radius: f32,
-    /// The record's `usableRange` (`combat::fixed_usable_range`).
+    /// The record's `usableRange`.
     pub range: f32,
     pub points: u32,
-    /// `<difficulty>Offering1..3` (the window's slots 1–3).
+    /// `<difficulty>Offering1..3`.
     pub offerings: [Option<String>; 3],
     pub proxy: Option<String>,
     pub xp: u32,
@@ -720,19 +644,15 @@ pub struct Shrine {
 }
 
 impl Shrine {
-    /// `IsOfInterest`: `StaticShrine` while dormant
-    /// (state 1), 4, or restored (6) and not `<difficulty>Disabled` (a disabled
-    /// one is not spawned here), so not during its fight (2) or the restoring
-    /// animation (5); `MonsterShrine` only while dormant (state 1:
-    /// not fighting, not cleared).
+    /// `IsOfInterest`: `StaticShrine` while dormant (1), 4 or restored (6), not during its fight (2) or the
+    /// restoring animation (5); `MonsterShrine` only while dormant.
     pub fn is_of_interest(&self, state: Option<&DevotionState>) -> bool {
         self.fight.is_none()
             && !(self.totem && state.is_some_and(|s| s.totems_done.contains(&self.uid)))
     }
 }
 
-/// Spawns a shrine (None when disabled on this difficulty); the game
-/// dresses it.
+/// Spawns a shrine (None when disabled on this difficulty).
 pub fn spawn_shrine(
     commands: &mut Commands,
     db: &gd_formats::vfs::Database,
@@ -842,7 +762,7 @@ pub fn init_devotion(
                 });
             }
         }
-        // An item skill's binding (`player::item_skill_binding_restored`).
+        // An item skill's binding.
         for k in &g.skills.item_skills {
             if k.autocast_skill.is_empty() || k.autocast_controller.is_empty() {
                 continue;
@@ -867,11 +787,8 @@ pub fn init_devotion(
     commands.insert_resource(s);
 }
 
-/// Story grants, and the scripts' `shrine:SetLocked` (a shrine
-/// starts locked from `<difficulty>Locked`, `StaticShrine::Load`, and quest
-/// scripts unlock it, e.g. `homesteadquestoldarkovia.lua`). The script's
-/// object is matched to the level's shrine by record and position; the
-/// state is remembered for shrines streamed in later.
+/// Story grants, and the scripts' `shrine:SetLocked`. The script's object is matched to the level's shrine by record
+/// and position; the state is remembered for shrines streamed in later.
 #[allow(clippy::too_many_arguments)]
 pub fn story_devotion(
     mut fresh: gd_game_core::session::NewSession,
@@ -897,8 +814,7 @@ pub fn story_devotion(
                 "devotion: +{add} point(s) from the story ({} unspent)",
                 s.points
             );
-            // `ScriptableAction_GiveDevotion`: the points
-            // granted (clamped by the cap) as the headline, type 4; nothing when none were.
+            // `ScriptableAction_GiveDevotion`: the points granted as the headline, type 4; nothing when none were.
             if add > 0 {
                 let tag = if add == 1 {
                     "tagDevotionPointAwarded"
@@ -945,9 +861,8 @@ pub fn story_devotion(
     }
 }
 
-/// Bound celestial powers gain the experience the player receives: the growth of the session's
-/// `experience` since the last frame (`last` starts over with each session, so loading a character with
-/// more experience than the previous one is not a gain).
+/// Bound celestial powers gain the experience the player receives: the growth of the session's `experience` since
+/// the last frame (`last` restarts each session, so a loaded character's experience is not a gain).
 pub fn power_experience(
     p: Res<gd_game_core::progress::PlayerProgress>,
     mut s: ResMut<DevotionState>,
@@ -1039,9 +954,8 @@ pub fn discover_shrines(
     }
 }
 
-/// Within reach of the clicked shrine: say why it can't be used, or open
-/// its window (a monster totem starts its fight at once,
-/// `MonsterShrine::RequestToUse` has no window).
+/// Within reach of the clicked shrine: say why it can't be used, or open its window (a monster totem starts its
+/// fight at once).
 #[allow(clippy::too_many_arguments)]
 pub fn use_shrine(
     mut commands: Commands,
@@ -1070,7 +984,6 @@ pub fn use_shrine(
     let Ok((ptf, mut path, mut interact, pcb, ch)) = players.single_mut() else {
         return;
     };
-    // `GD_USE_SHRINE` (hooks.rs): use the nearest shrine within 40 m once (opens its window).
     #[cfg(feature = "dev")]
     if hooks.gameplay.use_shrine && !*tested && interact.0.is_none() {
         let near = shrines
@@ -1099,8 +1012,6 @@ pub fn use_shrine(
         return;
     };
     let at = gt.translation();
-    // Use range (`player_orders::usable_range`): player radius + shrine radius + `usableRange`, 3D, +1 m at the
-    // walk's end.
     let range = gd_game_core::player_orders::usable_range(
         pcb.radius,
         sh.radius,
@@ -1126,7 +1037,7 @@ pub fn use_shrine(
         } else {
             tag
         });
-        // The player's locked-shrine voice (`char_sounds::locked_vox`, `Player::PlayLockedShrineVox`).
+        // `Player::PlayLockedShrineVox`.
         if let Some(pak) =
             crate::char_sounds::locked_vox(&data, ch, crate::char_sounds::LockedKind::Shrine)
         {
@@ -1158,8 +1069,7 @@ pub fn use_shrine(
 /// What starting a shrine's proxy fight needs.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ShrineFights<'w> {
-    // Option (SystemParam): `start` does nothing without rules; the progress (else level 1) and the factions are
-    // optional input.
+    // Option (SystemParam): `start` does nothing without rules; progress (else level 1) and factions are optional.
     progress: Option<Res<'w, gd_game_core::progress::PlayerProgress>>,
     rules: Option<Res<'w, gd_game_core::rules::CombatRules>>,
     world: Res<'w, gd_game_core::levels::Levels>,
@@ -1206,11 +1116,9 @@ impl ShrineFights<'_> {
     }
 }
 
-/// The shrine window's requests: "Offer" takes one of each offering (only
-/// when every slot is filled) and restores the shrine, "Start" starts a
-/// proxy shrine's fight, Cancel closes it. The window also closes when the
-/// player walks farther than the shrine's `uiCloseDistance` or the shrine
-/// leaves the world.
+/// The shrine window's requests: "Offer" takes one of each offering and restores the shrine, "Start" starts a
+/// proxy shrine's fight, Cancel closes it. The window also closes when the player walks farther than the shrine's
+/// `uiCloseDistance` or the shrine leaves the world.
 #[allow(clippy::too_many_arguments)]
 pub fn shrine_requests(
     mut commands: Commands,
@@ -1341,7 +1249,7 @@ fn give_reward(
     }
     let Some(loot) = &sh.loot else { return };
     let Some(rec) = data.db.get(loot) else { return };
-    // PORT: the shrine's region is not carried here (engine source not traced): position lookup.
+    // PORT: the shrine's region is not carried here (not traced): position lookup.
     let limits = world.and_then(|w| w.level_limits(None, at, difficulty));
     let level = gd_sim::items::loot::container_level(rec, player_level, difficulty, limits, 0);
     let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
@@ -1350,8 +1258,7 @@ fn give_reward(
         "devotion: shrine loot (level {level}): {} items",
         drops.len()
     );
-    // `StaticShrine::CleanseShrine` (`StaticShrine.dropper`: toss, one per release) from
-    // `StaticShrine::GetLootDropCoords` / `GetLootDropRadius` (`crate::loot` doc).
+    // `StaticShrine::CleanseShrine`: tossed one per release from `GetLootDropCoords` / `GetLootDropRadius`.
     let srec = data.db.get(&sh.record);
     let body = srec
         .as_ref()

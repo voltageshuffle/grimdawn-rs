@@ -1,14 +1,10 @@
 //! Game data access: the layered archive VFS and merged database, with the session's mod mounted
-//! over them ([`GameData::set_mod`]: the Crucible or a custom game's user mod), and the rules derived
-//! from the records once per mounted database ([`GameData::skill_trees`], [`GameData::engine`]; the
-//! engine's managers hold these, here they are lazy caches `set_mod` drops).
+//! over them ([`GameData::set_mod`]), and the rules derived from the records as lazy caches
+//! `set_mod` drops ([`GameData::skill_trees`], [`GameData::engine`]).
 //!
-//! The localisation language ([`GameData::set_language`], the `language` option) selects the tags'
-//! `text_<code>/` archive ([`GameData::tags`]); the UI follows it live, while the story snapshots its
-//! tags, the quest / dialog text overrides (`text_<code>/<basename>.txt`) and the `language.def`
-//! paging separators once per session (`gd_game::story::setup_story`), so they follow on the next
-//! session. The `intro.txt` video subtitles are `grimdawn::video`'s. PORT: CJK font word-wrap
-//! (`language.def` `wordmode`) is out of scope.
+//! The localisation language ([`GameData::set_language`]) selects the tags' `text_<code>/` archive
+//! ([`GameData::tags`]); the UI follows it live, the story snapshots its text once per session.
+//! PORT: CJK font word-wrap (`language.def` `wordmode`) is out of scope.
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::text::{LANGUAGES, Language, TagTable};
@@ -23,17 +19,13 @@ use std::sync::Arc;
 pub struct GameData {
     pub vfs: Arc<Vfs>,
     pub db: Arc<Database>,
-    /// The localisation tags by mounted mod ("" = none) and language, each read on first use
-    /// ([`GameData::tags`]).
+    /// By mounted mod ("" = none) and language.
     tags: Arc<Mutex<HashMap<String, HashMap<String, Arc<TagTable>>>>>,
-    /// The localisation language's archive code ([`LANGUAGES`]; "en" default), from the `language` option.
+    /// Archive code ([`LANGUAGES`]; "en" default).
     language: String,
-    /// The factions packs built so far, one shared `Arc` per `factions` record
-    /// ([`crate::monsters::FactionPack::shared`]); dropped when the mod changes.
+    /// [`crate::monsters::FactionPack::shared`]'s cache.
     packs: Packs,
-    /// [`Self::skill_trees`]; dropped when the mod changes.
     trees: Lazy<SkillTrees>,
-    /// [`Self::engine`]; dropped when the mod changes.
     engine: Lazy<crate::rules::GameEngineRules>,
 }
 
@@ -47,25 +39,23 @@ fn lazy<T>(cell: &Lazy<T>, load: impl FnOnce() -> T) -> Arc<T> {
 }
 
 impl GameData {
-    /// The cache of [`crate::monsters::FactionPack::shared`].
     pub(crate) fn packs(&self) -> &Packs {
         &self.packs
     }
 
-    /// The class and potion trees of the mounted data ([`SkillTrees`]), built once per mod.
+    /// The class and potion trees of the mounted data.
     pub fn skill_trees(&self) -> Arc<SkillTrees> {
         lazy(&self.trees, || SkillTrees::load(&self.db))
     }
 
-    /// `records/game/gameengine.dbr` of the mounted data, parsed once per mod.
+    /// `records/game/gameengine.dbr` of the mounted data.
     pub fn engine(&self) -> Arc<crate::rules::GameEngineRules> {
         lazy(&self.engine, || {
             crate::rules::GameEngineRules::load(&self.db)
         })
     }
 
-    /// Record access for the item code ([`ItemDb`]) over the mounted database: an `Arc` clone
-    /// of [`Self::db`], so it follows the mounted mod; nothing is cached.
+    /// An `Arc` clone of [`Self::db`]; nothing is cached.
     pub fn item_db(&self) -> ItemDb {
         ItemDb::new(self.db.clone())
     }
@@ -83,11 +73,9 @@ impl GameData {
         })
     }
 
-    /// Mounts the mod `name` over the install for the whole process (`Engine::InitializeMod`: its
-    /// records, scripts and maps win), or with `None` goes back to the install
-    /// (`Engine::RemoveModDirectory`). A session sets it before anything reads the data. A mod
-    /// that fails to mount leaves the install. A `.arz` in the mod's database folder other than
-    /// `<name>.arz` is not loaded (as in the engine) and is warned about.
+    /// Mounts the mod `name` over the install (`Engine::InitializeMod`), or with `None` goes back to
+    /// the install (`Engine::RemoveModDirectory`). A mod that fails to mount leaves the install. Only
+    /// `<name>.arz` of the mod's database folder is loaded, as in the engine.
     pub fn set_mod(&self, name: Option<&str>) -> anyhow::Result<()> {
         let mounted = match name {
             None => {
@@ -112,16 +100,14 @@ impl GameData {
                     self.db.remove_mod();
                 }),
         };
-        // Drop after the swap (a failed mount swapped back to the install): a reader that
-        // refilled a cache while the mount ran built from the old data, and nothing would
-        // clear it again.
+        // Drop after the swap: a reader that refilled a cache during the mount built from old data.
         self.packs.lock().clear();
         self.trees.lock().take();
         self.engine.lock().take();
         mounted
     }
 
-    /// The mounted mod's name (`None`: the install alone).
+    /// `None`: the install alone.
     pub fn active_mod(&self) -> Option<&str> {
         self.vfs.active_mod()
     }
@@ -131,16 +117,13 @@ impl GameData {
         &self.vfs.root
     }
 
-    /// The localisation language's archive code ([`LANGUAGES`]; "en" default).
+    /// Archive code ([`LANGUAGES`]; "en" default).
     pub fn language(&self) -> String {
         self.language.clone()
     }
 
-    /// Sets the localisation language from its archive code; an unknown code, or one whose
-    /// `text_<code>/` tag files are not mounted (a mod-only language after its mod unmounted),
-    /// falls back to "en" (the engine's `LocalizationManager::Load` keeps the install's default
-    /// for an unsupported language). The tag tables are keyed by language ([`Self::tags`]), so
-    /// nothing is dropped.
+    /// Sets the localisation language from its archive code; an unknown or unmounted code falls back
+    /// to "en" (`LocalizationManager::Load`).
     pub fn set_language(&mut self, code: &str) {
         let code = LANGUAGES
             .iter()
@@ -152,7 +135,6 @@ impl GameData {
         }
     }
 
-    /// Whether the VFS serves `text_<code>/` tag files (the install's or the mounted mod's).
     fn text_mounted(&self, code: &str) -> bool {
         let prefix = format!("text_{code}/");
         self.vfs
@@ -160,9 +142,8 @@ impl GameData {
             .any(|p| p.starts_with(&prefix) && TagTable::is_tag_file(p))
     }
 
-    /// The languages this install offers: the [`LANGUAGES`] entries whose `text_<code>/` tag files
-    /// are mounted in the VFS (the `Text_*.arc` present), as the engine's dropdown lists them
-    /// (Grim Dawn.exe `OptionsWindow::Load` via `GetNumLanguages` / `IsLanguageSupported`).
+    /// The [`LANGUAGES`] whose `text_<code>/` tag files are mounted (`OptionsWindow::Load` via
+    /// `IsLanguageSupported`).
     pub fn available_languages(&self) -> Vec<&'static Language> {
         let mut mounted: HashSet<&str> = HashSet::default();
         for p in self.vfs.paths() {
@@ -180,9 +161,7 @@ impl GameData {
     }
 
     /// The localisation tags (`text_<language>/`) of the mounted data, loaded once per mod and
-    /// language and shared by the story, the UI and the rules that sort by name. A language
-    /// whose tag files are not mounted (a mod-only language after its mod unmounted) reads the
-    /// install default's ("en"), so the menu never shows raw tag keys ([`Self::set_language`]).
+    /// language. An unmounted language reads "en" ([`Self::set_language`]).
     pub fn tags(&self) -> Arc<TagTable> {
         let stamp = self.vfs.mod_stamp();
         let mod_key = self.active_mod().unwrap_or("");
@@ -214,8 +193,7 @@ impl GameData {
             }
         }
         let tags = Arc::new(tags);
-        // The mount may have swapped mid-build (even away and back): cache only when the stamp
-        // is unchanged, so the key still names the data the files were read from; else rebuild next call.
+        // The mount may have swapped mid-build: cache only when the stamp is unchanged.
         if self.vfs.mod_stamp() == stamp {
             tables
                 .entry(mod_key.to_owned())
@@ -226,19 +204,16 @@ impl GameData {
     }
 }
 
-/// The render caches' synchronous drop on a mod swap: gd-render's `ModelPlugin` registers its
-/// `model::drop_on_mod_change` system here, and `gd_game::session::set_mod_data` runs it in the
-/// same call, so no frame serves the old mod's models / textures between the mount and the next
-/// `First` (gd-game cannot depend on gd-render; the system id is the link).
+/// The render caches' synchronous drop on a mod swap: gd-render registers its system here and
+/// `gd_game::session::set_mod_data` runs it in the same call (gd-game cannot depend on gd-render).
 #[derive(Resource)]
 pub struct ModCacheDrop(pub bevy::ecs::system::SystemId);
 
-/// The file that marks a Grim Dawn install: the base game's database (the first one
-/// [`Database::open`] reads).
+/// The base game's database (the first one [`Database::open`] reads).
 pub const INSTALL_MARKER: &str = "database/database.arz";
 
 /// The first of `candidates` that holds a Grim Dawn install ([`INSTALL_MARKER`]), else every
-/// candidate tried (in order, for the error message).
+/// candidate tried, in order.
 pub fn find_install(
     candidates: impl IntoIterator<Item = PathBuf>,
 ) -> Result<PathBuf, Vec<PathBuf>> {

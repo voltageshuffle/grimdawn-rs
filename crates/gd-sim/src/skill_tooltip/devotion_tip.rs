@@ -67,9 +67,8 @@ pub struct DevotionTip {
 /// `GetAffinityBitmap` icons). In the reclaim mode (`a6`, [`DevotionTip::reclaim`]): no
 /// `MaxSkillLevelReached` stop, no next level, and the reclaim line ([`DevReclaim`], class 52, the
 /// price line 51) ends the tooltip instead of the status and the bonus. PORT: a celestial power is a skill with an
-/// auto-cast controller (`SkillAutoCastController.kind == 3` / `Skill.isAutoCastChild`); the blank lines follow the
-/// real tooltip; the chance is not reduced by cooldown reduction
-/// (`CalculateNewChanceToRun` only runs for item skills with `Skill.autoCastKind == 3`).
+/// auto-cast controller (`SkillAutoCastController.kind == 3` / `Skill.isAutoCastChild`); the chance is not reduced
+/// by cooldown reduction (`CalculateNewChanceToRun` only runs for item skills with `Skill.autoCastKind == 3`).
 pub fn devotion_lines(ctx: &SkillTipCtx, skill: &str, tip: &DevotionTip) -> Vec<TextLine> {
     // The profile record (a wrapper's `buffSkillName`): levels, controller,
     // pet bonus.

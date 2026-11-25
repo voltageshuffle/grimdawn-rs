@@ -1,10 +1,10 @@
-//! `GD_SHOT` (hooks.rs): save a screenshot after `GD_SHOT_FRAMES` (default 120)
+//! `GD_SHOT`: save a screenshot after `GD_SHOT_FRAMES` (default 120)
 //! frames or `GD_SHOT_SECS` (default 90) seconds, whichever comes first, then
 //! exit. With `GD_SHOT_ON=<text>` the capture is tied to an event instead:
 //! the first cast skill or spawned effect whose record contains `text`
 //! ([`notify`]), plus `GD_SHOT_DELAY` seconds (comma list for several
-//! shots: `x.png` → `x-0.png`, `x-1.png`, ...; default 0.3). Lets tools verify rendering without a human. A watchdog thread ends
-//! the process if the frame loop stalls (e.g. a throttled, occluded window).
+//! shots: `x.png` → `x-0.png`, `x-1.png`, ...; default 0.3). A watchdog thread ends
+//! the process if the frame loop stalls.
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
@@ -25,7 +25,6 @@ struct Shot {
 
 impl Plugin for AutoShotPlugin {
     fn build(&self, app: &mut App) {
-        // PORT: a plugin `build` starts the watchdog thread and decides whether the systems exist;
         // `main` inserts the hooks before the plugins.
         let hooks = app
             .world()
@@ -59,8 +58,8 @@ impl Plugin for AutoShotPlugin {
     }
 }
 
-/// Unattended runs must not block on presentation: compositors throttle
-/// occluded windows (~1 frame/s), which stalls FIFO swapchains.
+/// Unattended runs must not block on presentation: compositors throttle occluded windows, which stalls FIFO
+/// swapchains.
 fn no_vsync(mut windows: Query<&mut Window>) {
     for mut w in &mut windows {
         w.present_mode = bevy::window::PresentMode::AutoNoVsync;

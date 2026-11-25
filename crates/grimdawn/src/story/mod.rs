@@ -1,8 +1,5 @@
-//! Story glue: the app side of the story runtime (`gd_game::story`, its world objects
-//! `gd_game::story_world`). Talking to NPCs (clicks / the Interact key, requests to
-//! `gd_game::conversation`) and the models of plain story objects
-//! (`gd_game_core::visuals::DecorationRequest`, [`dress_story_objects`]). The conversation window is
-//! `ui::dialog`, the quest tracker and journal `ui::quests`, the notifications `ui::notify`.
+//! Story glue: the app side of the story runtime (`gd_game::story`). Talking to NPCs and the models of plain
+//! story objects ([`dress_story_objects`]).
 //!
 //! Clicking a story NPC (or the Interact key) is the player's interact order (`gd_game::player_orders`), which
 //! walks to it and talks ([`talk_input`]). Dev builds: `GD_STORY_AUTOTALK` plays conversations automatically
@@ -40,11 +37,9 @@ impl Plugin for StoryPlugin {
 pub use gd_game_core::story::{StoryActor, StoryRuntime};
 use gd_game_core::visuals::DecorationRequest;
 
-/// Plain story objects get their record's model, the mesh's `CreateEntity` effects and lights (Engine.dll
-/// `Actor::CreateAttachmentsFromMesh`, every actor: the Devil's Crossing forge's flames and coal light, the cook's
-/// campfire and lanterns are quest assets a token swap creates) and the record's animations (the repaired Devil's
-/// Crossing windmill's spin). The model loads in the background (`CharAssets::model_ready`): an object whose model
-/// is still loading waits ([`DecorationPending`]) and is dressed on a later frame.
+/// Plain story objects get their record's model, the mesh's `CreateEntity` effects and lights
+/// (`Actor::CreateAttachmentsFromMesh`) and the record's animations. An object whose model is still loading
+/// waits ([`DecorationPending`]).
 fn dress_story_objects(
     mut commands: Commands,
     new: Query<
@@ -79,17 +74,13 @@ fn dress_story_objects(
     }
 }
 
-/// A story object whose model is still loading ([`dress_story_objects`]).
 #[derive(Component)]
 struct DecorationPending;
 
-/// Story NPCs the player can click to talk to, by id: Grim Dawn.exe mouse handler
-/// takes any `Npc` under the cursor that `Npc::IsAvailableForConversations` (the story object's flag), and
-/// `ControllerPlayerState::DefaultRequestNpcAction` → `TalkToNpc` → `Npc::OnPlayerInteract` → `Npc::Converse` needs
-/// no speech: without one the NPC greets (`gd_game::trade::NpcSay::Greet`). A plain `Npc` record is clickable so;
-/// the service classes (`NpcMerchant`, ...) open their service through `crate::trade` instead, and talk here only
-/// with a speech (`NpcMerchant::Converse`), as do non-`Npc` story actors. PORT: `Npc::Converse`'s 1 s talk cooldown
-/// (`+4608`, checked by `IsAvailableForConversations`) is not kept.
+/// Story NPCs the player can click to talk to, by id: any `Npc` that `Npc::IsAvailableForConversations`;
+/// `Npc::Converse` needs no speech (without one the NPC greets). The service classes (`NpcMerchant`, ...) open
+/// their service through `crate::trade` instead, and talk here only with a speech (`NpcMerchant::Converse`), as
+/// do non-`Npc` story actors. PORT: `Npc::Converse`'s 1 s talk cooldown is not kept.
 fn can_talk(db: &gd_formats::vfs::Database, story: &Story, id: u32) -> bool {
     story.entities.get(id).is_some_and(|o| {
         o.in_world
@@ -107,18 +98,14 @@ fn has_speech(story: &Story, id: u32) -> bool {
         .is_some_and(|c| story.has_speech(c))
 }
 
-/// A story NPC's `Actor::GetRadius` (`gd_game_core::combat::get_radius`: `actorRadius` x the record's `scale` x
-/// sqrt(3), the engine's default `actorRadius` when absent), the radius `NearTarget` and the walk use.
+/// A story NPC's `Actor::GetRadius` (`gd_game_core::combat::get_radius`), the radius `NearTarget` and the walk use.
 fn npc_radius(data: &GameData, story: &Story, id: u32) -> f32 {
     let rec = story.entities.get(id).and_then(|o| data.db.get(&o.record));
     gd_game_core::combat::get_radius(rec, gd_game_core::combat::ACTOR_RADIUS)
 }
 
-/// Talking: a click on a story NPC (or the Interact key) is the player's interact order
-/// (`gd_game::player_orders::InteractTarget`), which walks to it; this talks when it is in talk range
-/// ([`gd_game::conversation::in_talk_range`]) or the walk has ended (`DefaultRequestNpcAction` /
-/// `ControllerPlayerStateMoveToNpc::EndOfPathReached`). Answers: the window (`ui::dialog`), keys `1`–`9`; Esc
-/// closes it via the UI dispatcher.
+/// Talks to the interact order's NPC (`gd_game::player_orders::InteractTarget`) when in talk range or the walk
+/// has ended (`ControllerPlayerStateMoveToNpc::EndOfPathReached`). Answers: keys `1`–`9`.
 fn talk_input(
     rt: Option<NonSend<StoryRuntime>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -139,8 +126,8 @@ fn talk_input(
     use gd_game::conversation::{ConversationRequest as Req, in_talk_range};
     let Some(rt) = rt else { return };
     if let Some(view) = &conv.view {
-        // A page before the last offers only the window's "Continue". PORT: the digit keys (1 continues, 1 to 9 pick
-        // a response) are the port's; the conversation window's key handling is not decompiled.
+        // PORT: the digit keys (1 continues, 1 to 9 pick a response) are the port's; the conversation window's
+        // key handling is not decompiled.
         if !view.on_last_page() {
             if keys.just_pressed(KeyCode::Digit1) {
                 out.write(Req::NextPage);
@@ -171,8 +158,7 @@ fn talk_input(
     let Ok((ptf, mut path, cb, mut interact)) = players.single_mut() else {
         return;
     };
-    // The interact order's NPC target: talk when in range or the walk ended; else the walk goes on
-    // (`apply_orders` set the path). A target that is not a talkable NPC is another use system's (leave it).
+    // A target that is not a talkable NPC is another use system's.
     let Some((_, a, gt)) = interact.0.and_then(|e| actors.get(e).ok()) else {
         return;
     };
@@ -188,11 +174,10 @@ fn talk_input(
     }
 }
 
-/// `GD_STORY_*` (hooks.rs), before [`talk_input`]: with `GD_STORY_AUTOTALK` the open window is answered (first
-/// Accept, else the first response) and the nearest talkable NPC in talk range is talked to once; with
-/// `GD_STORY_TALK` the player walks to the nearest talkable NPC within 40 m and talks (once to each NPC id whose
-/// window opened; a swapped NPC is a new one); with a list of record texts, an NPC matching an earlier text first,
-/// within 80 m (the Shattered Realm's post-boss NPC can stand ~50 m from the boss room's entrance).
+/// `GD_STORY_*`, before [`talk_input`]: with `GD_STORY_AUTOTALK` the open window is answered (first Accept, else
+/// the first response) and the nearest talkable NPC in talk range is talked to once; with `GD_STORY_TALK` the
+/// player walks to the nearest talkable NPC within 40 m and talks (once per NPC id); with a list of record
+/// texts, an NPC matching an earlier text first, within 80 m.
 #[cfg(feature = "dev")]
 #[allow(clippy::too_many_arguments)]
 fn test_talk(
@@ -230,7 +215,6 @@ fn test_talk(
     }
     let Some(rt) = rt else { return };
     if let Some(view) = &conv.view {
-        // The test talk is done with an NPC once its window opened.
         test_talk.0.insert(view.npc);
         if !auto {
             return;
@@ -253,7 +237,6 @@ fn test_talk(
     let Ok((ptf, mut path, cb, mut interact)) = players.single_mut() else {
         return;
     };
-    // A pending interact order is `talk_input`'s.
     if interact.0.is_some() {
         return;
     }
@@ -282,7 +265,7 @@ fn test_talk(
             .iter()
             .filter(|(_, a, gt)| {
                 !test_talk.0.contains(&a.0)
-                    // A talk that opened nothing (the NPC was made untalkable that frame) is retried after 2 s.
+                    // A talk that opened nothing is retried after 2 s.
                     && test_talk
                         .1
                         .is_none_or(|(id, t)| id != a.0 || time.elapsed_secs() - t > 2.0)
@@ -309,7 +292,7 @@ fn test_talk(
             out.write(Req::Talk(a.0));
         } else {
             interact.0 = Some(e);
-            // No nav path: a straight move, not a talk from afar that `run_conversations` closes at once (PORT).
+            // PORT: no nav path: a straight move, not a talk from afar that `run_conversations` closes at once.
             path.points = gd_game::chests::path_near(
                 &nav.0,
                 &mut scratch,

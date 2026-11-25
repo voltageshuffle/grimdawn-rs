@@ -1,7 +1,6 @@
-//! Headless checks of the inventor's and blacksmith's transactions:
-//! crafting pays and takes reagents, dismantling needs gold and Dynamite,
-//! salvaging returns the component, a seed reroll pays its plan, a set
-//! piece converts. No frames needed: one game runs every check in turn.
+//! Headless checks of the inventor's and blacksmith's transactions: crafting pays and takes reagents,
+//! dismantling needs gold and Dynamite, salvaging returns the component, a seed reroll pays its plan, a set
+//! piece converts.
 use bevy::prelude::*;
 use gd_formats::save::item::Item;
 use gd_game::crafting::{Refusal, SalvageKind, craft, dismantle_item, salvage_item};
@@ -281,8 +280,7 @@ fn convert_makes_another_set_piece(g: &mut TestGame) {
                 .count()
         };
         let bagged = in_bags(inv);
-        // The new piece goes into the tab's slot (`GiveSetItemToCharacter` -> the HUD's convert slot), never
-        // the bags: full bags do not matter.
+        // The new piece goes into the convert slot (`GiveSetItemToCharacter`), never the bags.
         let same =
             convert_item(data, item(head), false, true, 54, gold, inv, stash).map(|(_, made)| {
                 (

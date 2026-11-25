@@ -44,11 +44,10 @@
 //! (`topGuardBand`, `height`) with a vertical scroll bar when the content is taller (`verticalScrollbar`,
 //! `scrollbarPositionAdjust` / `scrollbarSizeAdjust`, `UIScrollWindow::Load`). The tabs list the repository's quests
 //! with a task in progress / completed ones (a task complete, none in progress), grouped by `Quest2` group in the order
-//! of the groups' first quests; the first is selected by default. Details in [`build_journal`]. Scroll bars: arrows,
-//! track pages, repeat and thumb drag in the shared widget ([`super::window::Bar::press`] /
-//! [`super::window::bar_held`]). The window title (`windowTitle`, a `textstaticstring.tpl` with only `textTag`
+//! of the groups' first quests; the first is selected by default. The window title (`windowTitle`, a
+//! `textstaticstring.tpl` with only `textTag`
 //! `quest2windowtitle`, loaded by `QuestWindow::Load` and drawn by `QuestWindow::Draw`) has no style or text box, so
-//! its draw (`UITextStaticString::Draw`) shows nothing: the real window has no title (as the reference shot). The lore
+//! its draw (`UITextStaticString::Draw`) shows nothing: the real window has no title. The lore
 //! page: [`codex_pages`]; the devotion page: [`devotion_page`]; a note read opens the lore page at it ([`lore_read`]).
 //! Help page ([`help_pages`]), `Grim Dawn.exe`: the index (`helpIndex`, loader `HelpIndex::Load`, rebuild
 //! `HelpIndex::Rebuild` from the journal refresh `QuestWindow::Refresh`) lists every distinct record of its
@@ -56,11 +55,7 @@
 //! `NuggetArray` nugget, sorted, rows `entryNameText` in `helpindextree.dbr`; with nothing shown the first entry is
 //! selected. The page (`helpPage`, loader `HelpPage::Load`: `contentX` / `contentY` / `contentWidth`; content
 //! `HelpPage::SetContent`) lays out the page's nuggets (`TopSpacing`, `Image`, `TextTag`, `TextCentering`, `TextStyle`,
-//! `keyOperation`, `altPage`). Hooks (hooks.rs): `GD_UI_TAB` 0 help, 2 completed, 3 lore, 4 devotion; `GD_QUEST_SCROLL`
-//! scrolls the upper page; `GD_QUEST_SELECT` / `GD_LORE_SELECT` / `GD_HELP_SELECT` select an entry.
-//!
-//! Sounds: the journal's tabs and close button and the tracker's toggle register their record sounds
-//! (`Ui::record_button_sound`, `ui/widgets.rs`).
+//! `keyOperation`, `altPage`).
 mod journal;
 mod lore;
 mod tracker;
@@ -84,8 +79,7 @@ use tracker::*;
 pub const TRACKER: &str = "records/ui/quest/questwidget.dbr";
 pub const JOURNAL: &str = "records/ingameui/questwindow/questwindow.dbr";
 
-/// The quest UI chain after `collect` (the binary's `ui::quests::collect` fills [`QuestView`] from the
-/// story log and the streamed map's quest list before it, `.before(QuestSet)`).
+/// The quest UI chain after `collect`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QuestSet;
 
@@ -115,7 +109,6 @@ impl Plugin for QuestUiPlugin {
     }
 }
 
-/// `GD_UI_OPEN=quests` opens the journal at start (`GD_UI_TAB=2`: the completed quests).
 #[cfg(feature = "dev")]
 fn open_journal(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     if hooks.ui.open.as_deref() != Some("quests") {
@@ -144,7 +137,6 @@ pub struct TaskView {
     pub state: u32,
     /// Completed after being in progress (`Quest2Task::WasInProgress`).
     pub finished: bool,
-    /// Objectives with text: (text, satisfied).
     pub objectives: Vec<(String, bool)>,
     /// Reward events: their texts, and the items of `GiveItem` actions of
     /// those without text (`QuestJournalPage::AddRewards`).
@@ -172,39 +164,32 @@ impl QuestEntry {
 }
 
 /// The quests the player has started (a task in progress or complete), in
-/// the quest repository's order (`QuestDefs::repository_order`). Written
-/// only by [`collect`].
+/// the quest repository's order (`QuestDefs::repository_order`).
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct QuestView {
     pub quests: Vec<QuestEntry>,
 }
 
-/// The journal window: open, tab (completed quests), selected quest id,
-/// collapsed groups, untracked quests (PORT: not saved) and the two panes'
-/// scroll offsets (px: journal, log).
+/// The journal window state. PORT: untracked quests are not saved.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct QuestJournal {
     pub open: bool,
     pub completed: bool,
-    /// The lore page (Codex tab) and its selected note (record path).
     pub lore: bool,
     pub note: Option<String>,
-    /// The devotion page (Devotion tab, [`devotion_page`]).
     pub devotion: bool,
-    /// The help page (Help tab, [`help_pages`]) and its selected tutorial page (record path).
     pub help: bool,
     pub help_page: Option<String>,
     pub selected: Option<u32>,
     pub collapsed: Vec<String>,
     pub untracked: Vec<u32>,
     pub scroll: [f32; 2],
-    /// The quest tree row under the mouse (`q<id>` / `g<group>`), drawn in
-    /// `hoverColor`.
+    /// The quest tree row under the mouse (`q<id>` / `g<group>`).
     pub hover: Option<String>,
 }
 
 impl QuestJournal {
-    /// Opens the Help tab on a tutorial page record (the quick tip's click, `TipManager::OnTipClick`).
+    /// Opens the Help tab on a tutorial page record (`TipManager::OnTipClick`).
     pub fn open_help(&mut self, page: &str) {
         self.open = true;
         self.help = true;
@@ -215,8 +200,7 @@ impl QuestJournal {
         self.scroll[0] = 0.0;
     }
 
-    /// Shows tab `i` (help, active, completed, lore, devotion): a press of its tab button. Another tab than the one
-    /// shown drops the selection, the hover and the scroll.
+    /// Shows tab `i` (help, active, completed, lore, devotion); another tab drops the selection, hover and scroll.
     pub fn select_tab(&mut self, i: usize) {
         if self.help != (i == 0)
             || self.completed != (i == 2)
@@ -234,38 +218,30 @@ impl QuestJournal {
     }
 }
 
-/// The built journal (physical px) for clicks.
 #[derive(Resource, Default)]
 pub struct JournalLayout {
     window: Option<URect>,
-    /// The UI scale it was built at.
     s: f32,
     close: Option<URect>,
-    /// Help, active, completed, lore and devotion tabs.
     tabs: [Option<URect>; 5],
     rows: Vec<(URect, u32)>,
-    /// Lore note and help page rows (record path).
     notes: Vec<(URect, String)>,
-    /// Group expand / contract bitmaps.
     groups: Vec<(URect, String)>,
     /// Every tree row and its hover key (`RowHover`: `q<id>`, `n<record>`, `g<group>`).
     hovers: Vec<(URect, String)>,
-    /// Quest track bitmaps.
     tracks: Vec<(URect, u32)>,
     /// The panes (journal, log) and how far each can scroll.
     panes: [(URect, f32); 2],
-    /// Each pane's scroll bar.
     bars: [Option<Bar>; 2],
 }
 
 impl JournalLayout {
-    /// The built journal window contains `p` (physical px).
     pub fn covers(&self, p: Vec2) -> bool {
         self.window.is_some_and(|r| super::contains(&r, p))
     }
 }
 
-/// The tracker's toggle button fade (module doc; `QuestTracker::Update`'s state:
+/// The tracker's toggle button fade (`QuestTracker::Update`'s state:
 /// 0 start, 1 held, 2 falling, 3 rising, 4 at the minimum) and its rects.
 #[derive(Resource)]
 pub struct TrackerFade {
@@ -275,8 +251,8 @@ pub struct TrackerFade {
     hover: bool,
     title: Option<URect>,
     button: Option<URect>,
-    /// The tracker's top-left once dragged (physical px; the session's only),
-    /// the drag's grab offset, and the drawn size (width, height).
+    /// The tracker's top-left once dragged (physical px; session only),
+    /// the drag's grab offset, and the drawn size.
     pos: Option<Vec2>,
     grab: Option<Vec2>,
     size: Vec2,
@@ -298,12 +274,10 @@ impl Default for TrackerFade {
     }
 }
 
-/// The tracker shows (`Options` `questwidgetopen`).
 fn tracker_open(options: &gd_game_core::options::GameOptions) -> bool {
     options.flag("questwidgetopen")
 }
 
-/// The fade, the title hover and the toggle button (module doc).
 fn tracker_input(
     time: Res<Time<Real>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -341,7 +315,6 @@ fn tracker_input(
         }
         _ => {}
     }
-    // The game menu / Options holds the cursor: no hover, no fade-in.
     let p = window
         .single()
         .ok()
@@ -355,9 +328,7 @@ fn tracker_input(
     if fade.hover != over_button {
         fade.hover = over_button;
     }
-    // Dragging by the title (`QuestTracker::HandleMouseEvent`, only while the tracker shows): a
-    // press on the title line grabs it, moving keeps the grab offset with the
-    // tracker inside the screen and holds the fade 5 s, a release lets go.
+    // Dragging by the title (`QuestTracker::HandleMouseEvent`, only while the tracker shows).
     if !open || !buttons.pressed(MouseButton::Left) {
         fade.grab = None;
     }
@@ -388,11 +359,8 @@ fn tracker_input(
     }
 }
 
-/// The Codex key (`super::keys::CODEX`, Q by default) toggles the journal. The Help key (`super::keys::HELP`, H by
-/// default) toggles it too and shows its Help tab: HUD key action `UIPlayerHud::HandleKeyAction` case 8 flips the
-/// journal's visibility (`UIPlayerHud.questWindow`, the quest window, loader `QuestWindow::Load`), presses its
-/// `helpButton` tab (`QuestWindow.helpButton`, through its button manager `QuestWindow.buttonManager`) and rebuilds the
-/// help index (`HelpIndex::Rebuild`); no other window closes.
+/// The Codex key toggles the journal; the Help key toggles it on its Help tab
+/// (`UIPlayerHud::HandleKeyAction` case 8; no other window closes).
 fn toggle(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<super::keys::KeyBindings>,
@@ -405,16 +373,11 @@ fn toggle(
         journal.open = !journal.open;
         journal.select_tab(0);
     }
-    // Esc closes the journal through the shared dispatcher (`ui::esc_dispatcher`).
 }
 
-/// A lore note was read (`gd_game::lore::LoreNoteRead`, the engine's event
-/// 61): GrimDawn.exe `QuestWindow::OnLoreNoteEvent` (a new note plays the record's
-/// `loreCollectedSound`, the note's page is shown and the tree rebuilt) and
-/// Game.dll `ItemNote::Use` (the `tagLoreBonus` / `ExperienceFormat` notice
-/// for the bonus: `ShowCinematicText` type 5, sent as `CinematicText` kind 5).
-/// PORT: the journal opens on the lore page at the note (`ItemNote::Use` /
-/// `PlayerInventoryCtrl::UseItem` call the game UI's slot 5, not decompiled).
+/// A lore note was read: `QuestWindow::OnLoreNoteEvent` (a new note plays `loreCollectedSound`)
+/// and `ItemNote::Use` (the `tagLoreBonus` notice, `CinematicText` kind 5).
+/// PORT: the journal opens on the lore page at the note (the engine's slot 5 call is not decompiled).
 fn lore_read(
     mut events: MessageReader<gd_game::lore::LoreNoteRead>,
     mut journal: ResMut<QuestJournal>,
@@ -459,17 +422,14 @@ struct TrackerRoot;
 #[derive(Component)]
 struct JournalRoot;
 
-/// The tracker's quests: in progress, main quests first, else in the view's order (`QuestTracker::CompareQuests`'s
-/// stable sort). The caller drops the untracked ones.
+/// The tracker's quests: in progress, main quests first, else in the view's order
+/// (`QuestTracker::CompareQuests`'s stable sort).
 fn tracked(view: &QuestView) -> impl Iterator<Item = &QuestEntry> {
     let main = view.quests.iter().filter(|q| q.main && q.in_progress());
     main.chain(view.quests.iter().filter(|q| !q.main && q.in_progress()))
 }
 
-/// Journal clicks: tabs, group expand bitmaps, track bitmaps, quest rows,
-/// the close button, the scroll bars (module doc); the wheel scrolls the
-/// pane under the mouse (int(120 × 0.2 × UI scale) px a notch); the hovered tree
-/// row; the window takes the mouse.
+/// Journal clicks, the wheel (int(120 × 0.2 × UI scale) px a notch) and the hovered tree row.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -479,7 +439,6 @@ fn clicks(
     mut journal: ResMut<QuestJournal>,
     mut capture: ResMut<UiCapture>,
     time: Res<Time<Real>>,
-    // (pane, arrow step or thumb grab offset, held ms) of a held scroll bar.
     mut held: Local<Option<(usize, BarHold)>>,
     pause: Res<gd_game_core::pause::GamePause>,
 ) {
@@ -488,15 +447,13 @@ fn clicks(
         *held = None;
         return;
     };
-    // A rebuild can shorten a pane (a collapsed group, a shorter text): keep
-    // the scroll within its content.
+    // A rebuild can shorten a pane: keep the scroll within its content.
     for (i, (_, max)) in layout.panes.iter().enumerate() {
         if journal.scroll[i] > *max {
             journal.scroll[i] = *max;
         }
     }
     if pause.menu {
-        // Modal: the game menu / Options takes wheel, hover and presses.
         wheel.clear();
         *held = None;
         if journal.hover.is_some() {
@@ -509,7 +466,6 @@ fn clicks(
     };
     let inside = |r: &URect| super::contains(r, p);
     let s = layout.s;
-    // A held arrow repeats; a held thumb follows the mouse.
     if !buttons.pressed(MouseButton::Left) {
         *held = None;
     }
@@ -537,7 +493,6 @@ fn clicks(
         return;
     }
     capture.0 = true;
-    // The hovered tree row's key, copied only when it changes.
     let hover = if inside(&layout.panes[1].0) {
         let q = Vec2::new(p.x, p.y + journal.scroll[1]);
         layout
@@ -580,7 +535,6 @@ fn clicks(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    // Clicks inside a pane are on its scrolled content.
     let shifted = |i: usize| Vec2::new(p.x, p.y + journal.scroll[i]);
     let hit = |r: &URect, q: Vec2| super::contains(r, q);
     let in_log = inside(&layout.panes[1].0);
@@ -593,7 +547,6 @@ fn clicks(
     {
         journal.select_tab(i);
     } else if !in_log {
-        // Nothing clickable on the upper page.
     } else if let Some((_, g)) = layout.groups.iter().find(|(r, _)| hit(r, shifted(1))) {
         let g = g.clone();
         if let Some(i) = journal.collapsed.iter().position(|c| *c == g) {
@@ -629,17 +582,9 @@ fn clicks(
     }
 }
 
-/// A quest event's shown text (`Quest2Event::GetText`, Game.dll): the authored
-/// text when the event has no action; otherwise always the first action's `Localize(text)`, which only
-/// the `Give*` amounts implement and only for the text `*` (`ScriptableAction_GiveTribute::Localize`,
-/// `_GiveMoney`, `_GiveExperience`, `_GiveLevel`, `_GiveSkillPoint`, `_GiveAttribPoint`, `_GiveDevotion`): their
-/// `tagActionGive*` line with the amount (Tribute: `tagActionGiveTribute` for 1, else `…Tributes`; the
-/// others one tag whatever the amount). Any other first action, or another text, gives an empty line
-/// (so an authored text next to an action, e.g. `bq_wg08`'s "Slay Reynar, the Loathed", is not shown).
-/// No stock quest authors `*` (nor gives Tribute: the stock `GiveTribute`s are conversation spends), so the
-/// Tribute line shows only for mods. Tribute has no floating text: `ScriptableAction_GiveTribute::Execute` and
-/// `Character::AddTribute` send nothing but GameEvent 63 (the Crucible pane's glow and sound,
-/// `ui/survival.rs`), and the exe uses no `tagActionGive*` tag.
+/// A quest event's shown text (`Quest2Event::GetText`): the authored text when the event has no
+/// action; otherwise the first action's `Localize(text)`, which only the `Give*` amounts implement
+/// and only for the text `*` (their `tagActionGive*` line with the amount); anything else is empty.
 pub fn event_text(fonts: &FontCache, text: String, actions: &[gd_formats::qst::Action]) -> String {
     use gd_formats::qst::Action as A;
     let Some(first) = actions.first() else {

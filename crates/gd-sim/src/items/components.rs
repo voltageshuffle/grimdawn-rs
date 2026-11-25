@@ -1,12 +1,10 @@
 //! Components (`ItemRelic`) socketed into equipment.
 //!
-//! (Game.dll): `ItemRelic::ItemUseFilter` maps the
-//! target item's class to one of the component's flags (`ItemRelic::Load`
-//! field names); an item that already has a component takes no
-//! other (`ItemRelic::CanRelicBeUsedOn`, rules and the apply
-//! mode in `gd_game::inventory`); partial components (`var1` shards
-//! below `completedRelicLevel`) combine only with the same record
-//! (`TestCompatibility`) and cannot be socketed.
+//! (Game.dll): `ItemRelic::ItemUseFilter` maps the target item's class to one
+//! of the component's flags (`ItemRelic::Load` field names); an item that
+//! already has a component takes no other (`ItemRelic::CanRelicBeUsedOn`);
+//! partial components (`var1` shards below `completedRelicLevel`) combine only
+//! with the same record (`TestCompatibility`) and cannot be socketed.
 use super::ItemDb;
 use super::loot::RANDOMIZER_ENTRIES;
 use gd_formats::arz::Record;
@@ -50,32 +48,21 @@ pub fn shards_needed(component: &Record) -> u32 {
     component.i32("completedRelicLevel").unwrap_or(1).max(1) as u32
 }
 
-/// Whether a component item (`var1` shards) is complete. The
-/// constructor sets relic level 1 (`ItemRelic::ItemRelic`), `ItemRelic::InitializeItem`
-/// replaces it with `var1` only when non-zero, and
-/// `ItemRelic::IsComplete` is level ≥ `completedRelicLevel`
-/// (1 on every stock component, so 0 reads as complete there).
+/// Whether a component item (`var1` shards) is complete (`ItemRelic::IsComplete`:
+/// level ≥ `completedRelicLevel`; a `var1` of 0 counts as level 1).
 pub fn is_complete(component: &Record, var1: u32) -> bool {
     var1.max(1) >= shards_needed(component)
 }
 
-/// Whether `component` may go into an item of `item_class`.
 pub fn fits(component: &Record, item_class: &str) -> bool {
     component.class == "ItemRelic" && class_flag(item_class).is_some_and(|f| component.bool(f))
 }
 
-/// The completion bonus a socketed component brings: none. In
-/// Game.dll only `ItemArtifact::Load` reads `bonusTableName` (the component
-/// records' entries are leftovers); `ItemRelic::Load` does not,
-/// and `ItemEquipment::AddRelic(ItemRelic*)` copies the
-/// component's own replica bonus field, which only `ItemArtifact::
-/// InitializeItem` fills. For a relic (`ItemArtifact`) the bonus is one
-/// weighted pick from its `bonusTableName` (a `LootRandomizerTable`), level
-/// limits ignored (`ItemArtifact::InitializeItem`:
-/// `r % (total + 1)`, first cumulative weight ≥ r; the total and the running
-/// sum are unsigned 32-bit and wrap, and a total of `u32::MAX` divides by 1).
-/// The table loads through `LootRandomizerTable::ManualLoad`, so only its
-/// first [`RANDOMIZER_ENTRIES`] entries count.
+/// The completion bonus of a relic (`ItemArtifact`); components get none
+/// (`ItemRelic::Load` ignores `bonusTableName`). One weighted pick from
+/// `bonusTableName`, level limits ignored (`ItemArtifact::InitializeItem`:
+/// `r % (total + 1)`, first cumulative weight ≥ r, u32 wrapping); only the
+/// first [`RANDOMIZER_ENTRIES`] entries count (`LootRandomizerTable::ManualLoad`).
 pub fn roll_bonus(db: &ItemDb, component: &Record, rng: &mut Rng) -> String {
     if component.class != "ItemArtifact" {
         return String::new();

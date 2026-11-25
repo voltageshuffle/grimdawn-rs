@@ -51,8 +51,7 @@ fn monsters(g: &mut TestGame) -> Vec<(Entity, Monster)> {
 
 #[test]
 fn proxies_spawn_their_monsters_once() {
-    // Seed 4 rolls a pack from the proxy's pool (rolls are seeded; this
-    // proxy's pool may roll nothing, as seeds 1-3 do).
+    // Seed 4 rolls a pack from the proxy's pool (seeds 1-3 roll nothing).
     let Some(mut g) = TestGame::new_character_seeded(4) else {
         return;
     };
@@ -61,7 +60,7 @@ fn proxies_spawn_their_monsters_once() {
     let root = level_with_proxy(&mut g, 3);
     g.step();
     assert!(g.app.world().get::<LevelPopulated>(root).is_some());
-    // The monsters come once their meshes and clips are parsed in the background (`spawn_level_monsters`).
+    // The monsters come once their meshes and clips are parsed in the background.
     let rolled_alive = g.app.world().resource::<ProxyStates>().0[&(3, 7)].len();
     assert!(rolled_alive > 0, "the proxy rolled nothing");
     let spawned = |w: &mut World| {

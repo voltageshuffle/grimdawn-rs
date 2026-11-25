@@ -3,14 +3,9 @@
 //! `options.txt` format (`gd_game_core::options`). Read before start-up into
 //! [`GameOptions`]; written by the options window's Apply.
 //!
-//! `GD_OPTIONS` (hooks.rs) reads another options file instead; Apply still
-//! writes the port's own file only.
-//!
-//! The `language` option ([`apply_language`]) selects the localisation tags and fonts live
-//! (`gd_game_core::data::GameData::set_language`); the story snapshots its tags, the quest / dialog text
-//! overrides (`text_<code>/<basename>.txt`) and the `language.def` paging separators per session
-//! (`gd_game::story::setup_story`), so they follow on the next session. The `intro.txt` video subtitles are
-//! `video.rs`'s. PORT: CJK font word-wrap (`language.def` `wordmode`) is out of scope.
+//! The `language` option ([`apply_language`]) selects the localisation tags and fonts live; the story
+//! snapshots its tags, text overrides and paging separators per session, so they follow on the next
+//! session. PORT: CJK font word-wrap (`language.def` `wordmode`) is not implemented.
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use gd_ui_kit::state::settings::{UiScaleOption, path};
@@ -31,7 +26,6 @@ fn load(
     mut grass: ResMut<gd_render::render::grass::GrassQuality>,
     mut data: ResMut<gd_game_core::data::GameData>,
 ) {
-    // `GD_OPTIONS` (hooks.rs): another options file.
     #[cfg(feature = "dev")]
     let file = hooks
         .session
@@ -66,11 +60,8 @@ fn language_code(options: &GameOptions) -> &'static str {
         .map_or("en", |l| l.code)
 }
 
-/// The `language` option: the engine reads it at start-up (`LocalizationManager::Load`); the port
-/// also follows it live on Apply — the UI's tags and fonts switch with it (`ui::load_tags` reloads
-/// them and every UI group rebuilds). The story snapshots its tags, quest / dialog text overrides
-/// and paging separators per session (`gd_game::story::setup_story`), so they follow on the next
-/// session (module doc).
+/// The `language` option. PORT: the engine reads it at start-up only (`LocalizationManager::Load`); the
+/// port also follows it live on Apply.
 fn apply_language(
     options: Option<Res<GameOptions>>,
     mut data: ResMut<gd_game_core::data::GameData>,
@@ -81,11 +72,11 @@ fn apply_language(
     data.set_language(language_code(&options));
 }
 
-/// The video options this port honours (`GraphicsEngine::UpdateFromOptions` runs every frame):
-/// `syncToRefresh` is vsync; `screenMode` and `resolution` (see [`window_mode`],
-/// [`window_size`]); `textureQuality` (mip reduction, read by newly loaded textures: `textures.rs`); `shadowQuality` /
-/// `shadows` (`render/shadow.rs`); `detailLevel`'s terrain quality (grass of levels built from now on, `render/grass.rs`); `weatherEnabled` / `weatherQuality` (`weather.rs`, read every frame). `fxaa` (`render/post.rs`, every frame); `softParticles` (`weather.rs`). `antiAliasing` is not stored: it has no effect in the engine's
-/// deferred renderer (`GraphicsEngine::BuildDeviceSettings` zeroes the sample count, `render/post.rs`); the options this port does not use keep their file lines (`gd_game_core::options`). Elsewhere: `lightingQuality` (`render/light_rig.rs`, `render/point_shadow.rs`, `render/env.rs`), `detailObjects` (decals: `decal.rs`, `casting.rs`), `ambientocclusion` (`render/post.rs`), `hdrLighting` / `advancedEffects` (`render/env.rs`), `reflectionQuality` (the water's planar reflection, `render/reflection.rs`), `uiScale` ([`apply_ui_scale`]). PORT: with no options file the engine defaults apply on frame 1 (`GameOptions` is default-initialized), so the first run is fullscreen at `screenMode` 0 with the resolution auto-detected from the effective primary monitor ([`primary_monitor`], engine parity), not a windowed placeholder; screenshot runs and `GD_RES` keep their window.
+/// The video options (`GraphicsEngine::UpdateFromOptions` runs every frame): `syncToRefresh` is vsync;
+/// `screenMode` and `resolution` (see [`window_mode`], [`window_size`]). `antiAliasing` has no effect in the
+/// engine's deferred renderer (`GraphicsEngine::BuildDeviceSettings` zeroes the sample count).
+/// With no options file the engine defaults apply: fullscreen at `screenMode` 0 with the resolution
+/// auto-detected from [`primary_monitor`].
 fn apply_video(
     options: Option<Res<GameOptions>>,
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -102,7 +93,6 @@ fn apply_video(
         return;
     };
     apply_quality(&options, &mut grass);
-    // `GD_SHOT` (hooks.rs): a screenshot run keeps the window as `main` made it.
     #[cfg(feature = "dev")]
     if hooks.shot.path.is_some() {
         return;
@@ -117,15 +107,15 @@ fn apply_video(
         Some(gd_formats::options::Value::Vec2(w, h)) => window_size(*w, *h),
         _ => None,
     }
-    // The factory default (0, 0) or an out-of-clamp size falls back to the effective primary monitor's physical
-    // size ([`primary_monitor`], the engine's fallback); with no monitor (headless) the window keeps its size.
+    // The factory default (0, 0) or an out-of-clamp size falls back to the primary monitor's physical size
+    // (the engine's fallback); with no monitor the window keeps its size.
     .or_else(|| {
         primary_monitor(&monitors).map(|m| {
             let s = m.physical_size();
             (s.x, s.y)
         })
     });
-    // Mode and size are set when they change (not on every options change: a window the player resized by hand keeps its size).
+    // Only on change: a window the player resized by hand keeps its size.
     let changed = *applied != Some((screen_mode, size));
     *applied = Some((screen_mode, size));
     for mut w in &mut windows {
@@ -136,7 +126,6 @@ fn apply_video(
             continue;
         }
         let mode = window_mode(screen_mode);
-        // `GD_RES` (hooks.rs) keeps its size.
         #[cfg(feature = "dev")]
         let keep_size = hooks.render.res.is_some();
         #[cfg(not(feature = "dev"))]
@@ -154,12 +143,10 @@ fn apply_video(
     }
 }
 
-/// The options applied live on every change. `GraphicsEngine::UpdateFromOptions` (every frame:
-/// texture reduction, detail level) and `RenderDevice` sampler setup (anisotropy from `anisotropicFiltering`, applied
-/// every frame), `Engine::SetFxQualityModifier` (called on a fxQuality pick, Grim Dawn.exe
-/// `OptionsWindow::HandleVideoPick` case 5).
-/// PORT: textures already loaded keep the sampler (anisotropy) and mip reduction they were created with, emitters
-/// already running keep their density; the engine unloads all resources / reads the values every frame.
+/// The options applied live on every change (`GraphicsEngine::UpdateFromOptions`, `RenderDevice` sampler
+/// anisotropy, `Engine::SetFxQualityModifier`).
+/// PORT: textures already loaded keep their anisotropy and mip reduction, running emitters keep their
+/// density; the engine reads the values every frame.
 fn apply_quality(options: &GameOptions, grass: &mut gd_render::render::grass::GrassQuality) {
     use gd_formats::options::Value;
     gd_render::textures::set_anisotropy(options.int("anisotropicFiltering"));
@@ -177,11 +164,8 @@ fn apply_quality(options: &GameOptions, grass: &mut gd_render::render::grass::Gr
     }
 }
 
-/// `screenMode` as a window mode. Grim Dawn.exe `Game::Initialize` / `Game::MainLoop`: 0 is exclusive
-/// fullscreen, 1 a decorated
-/// window, 2 a borderless window at monitor size (anything else counts as 0 in the engine's `v == 1` / `(v & ~2) == 0` tests:
-/// 1 windowed, 2 borderless, the rest fullscreen). PORT: exclusive fullscreen keeps the monitor's current video mode (the
-/// back buffer is the monitor size, not `resolution`; Wayland has no mode switching and Bevy falls back to borderless).
+/// `screenMode` as a window mode (`Game::Initialize` / `Game::MainLoop`): 1 windowed, 2 borderless at monitor
+/// size, anything else exclusive fullscreen. PORT: exclusive fullscreen keeps the monitor's current video mode.
 pub fn window_mode(screen_mode: i32) -> bevy::window::WindowMode {
     use bevy::window::{MonitorSelection, VideoModeSelection, WindowMode};
     match screen_mode {
@@ -191,20 +175,15 @@ pub fn window_mode(screen_mode: i32) -> bevy::window::WindowMode {
     }
 }
 
-/// The `resolution` option (Int2 0, width and height) as a window size; `None` for the factory default (0, 0) or a
-/// size outside the clamp — [`apply_video`] then uses the effective primary monitor's physical size
-/// ([`primary_monitor`], the engine's fallback), keeping the window's size when there is no monitor.
+/// The `resolution` option (Int2 0) as a window size; `None` for the factory default (0, 0) or a size outside
+/// the clamp.
 pub fn window_size(width: i32, height: i32) -> Option<(u32, u32)> {
     ((640..=16384).contains(&width) && (480..=16384).contains(&height))
         .then_some((width as u32, height as u32))
 }
 
-/// The effective primary monitor: the `PrimaryMonitor`-marked one when the platform reports it, else the first
-/// monitor in a stable order (top-left-most `physical_position`, then entity).
-/// PORT: Wayland exposes no primary monitor — winit's `primary_monitor()` returns None, so bevy_winit marks no
-/// entity `PrimaryMonitor` and a `With<PrimaryMonitor>` query is empty there; the engine's "primary monitor" is a
-/// Windows concept. The deterministic fallback keeps the resolution list / auto-detect working on a Wayland
-/// session (and is unchanged where a primary monitor exists).
+/// The effective primary monitor: the `PrimaryMonitor`-marked one, else the first monitor in a stable order
+/// (top-left-most `physical_position`, then entity). PORT: Wayland reports no primary monitor.
 pub fn primary_monitor<'a>(
     monitors: &'a Query<(
         Entity,

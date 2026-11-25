@@ -1,32 +1,22 @@
-//! Loot containers (`FixedItemContainer`) and food crates (`FixedItemShrine`, gd-game `chests`): chests placed in levels, chests
-//! from proxy accessory pools (`gd_sim::proxy::run_proxy`) and script chests
-//! (story objects of class Chest). A click is the player's interact order (`gd_game::player_orders`), which
-//! walks over and opens it: the open animation plays and its loot and gold drop around it
-//! (`gd_sim::items::loot::container_drops` / `container_level`). Opened chests
-//! stay open for the session; the port never writes saves.
+//! Loot containers (`FixedItemContainer`) and food crates (`FixedItemShrine`): chests placed in levels, chests
+//! from proxy accessory pools and script chests (story objects of class Chest). A click is the player's interact
+//! order, which walks over and opens it: the open animation plays and its loot and gold drop around it. Opened
+//! chests stay open for the session.
 //!
-//! The chest opens when the player's centre is within player
-//! radius + chest radius + `usableRange` (0 when absent) + 1 m of the
-//! chest's (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`,
-//! straight-line distance); a chest whose record has `locked`
-//! only plays its locked sound until unlocked (`FixedItem::RequestToUse`,
-//! `FixedItem::Load` reads `locked` for every fixed item; `SetLock`). Loot
-//! is thrown from the chest's drop point (`gd_game::chests`, `gd_game::loot` doc).
+//! The chest opens when the player's centre is within player radius + chest radius + `usableRange` (0 when
+//! absent) + 1 m of the chest's (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`, straight-line
+//! distance); a chest whose record has `locked` only plays its locked sound until unlocked
+//! (`FixedItem::RequestToUse`, `SetLock`).
 //!
-//! A chest's model sits on its entity: the level / set-piece / proxy
-//! transform is the model root, the skinned parts are drawn from joints
-//! posed in world space from it (`model::animate_skeletons`; every stock
-//! container mesh's bind box is centred within 0.8 m of its pivot, posed
-//! joints within 1.5 m). The hover pick (`hover.rs`, a sphere of `actorRadius` + 0.5 m around the pivot + 0.5 m
-//! up) chooses the chest the interact order targets; the use itself is `gd_game::chests::open_chests`.
+//! A chest's model sits on its entity: the level / set-piece / proxy transform is the model root, the skinned
+//! parts are drawn from joints posed in world space from it. The hover pick (a sphere of `actorRadius` + 0.5 m
+//! around the pivot + 0.5 m up) chooses the chest the interact order targets.
 //!
-//! A container's effects (`FixedItemContainer::UpdateSelf`, [`chest_effects`]): the
-//! record's `IdleEffect` (the loot chests' glow and twinkle) is created and attached at the container's origin
-//! while it is not open; its `LockedEffect` is attached while it is locked and stops emitting where it is when
-//! the lock goes (the radius lock, gd-game `chests`). An open container (state 3) counts 1000 ms down (the
-//! ctor's timer), then every attached `EffectEntity` stops emitting: the idle effect and the mesh's own
-//! `CreateEntity` ones (`fx::spawn_mesh_attachments`: the lore objects' and corpses' glow). One loaded open
-//! counts from its first update.
+//! A container's effects (`FixedItemContainer::UpdateSelf`, [`chest_effects`]): the record's `IdleEffect` is
+//! created and attached at the container's origin while it is not open; its `LockedEffect` is attached while it
+//! is locked and stops emitting where it is when the lock goes. An open container (state 3) counts 1000 ms down,
+//! then every attached `EffectEntity` stops emitting: the idle effect and the mesh's own `CreateEntity` ones. One
+//! loaded open counts from its first update.
 use bevy::prelude::*;
 pub use gd_game::chests::{Chest, open_chests};
 use gd_render::character::CharAssets;
@@ -47,11 +37,8 @@ impl Plugin for ChestsPlugin {
     }
 }
 
-/// New chests get their model (with the record's texture overrides,
-/// `CharAssets::spawn_record_model`) and their idle animation (an opened one
-/// rests at the end of its open animation) once those are loaded (`CharAssets::record_ready`,
-/// `AnimCache::ready`: in the background, so a streamed-in level's chests never load them on the game thread);
-/// opening one plays it.
+/// New chests get their model (with the record's texture overrides) and their idle animation (an opened one
+/// rests at the end of its open animation) once those are loaded in the background; opening one plays it.
 fn dress_chests(
     mut commands: Commands,
     new: Query<(Entity, &Chest), Without<gd_render::character::RecordDressed>>,
@@ -114,8 +101,8 @@ fn dress_chests(
                 attach_effect(&mut commands, e, record);
             }
         }
-        // A food crate's idle effect (`FixedItemShrine::StartIdleEffect`, gd-game `chests`): it runs until the
-        // crate is used, then stops emitting where it is.
+        // A food crate's idle effect (`FixedItemShrine::StartIdleEffect`): it runs until the crate is used, then
+        // stops emitting where it is.
         if chest.shrine
             && !chest.opened
             && let Some(record) = rec.str("IdleLoopingEffect")
@@ -156,16 +143,14 @@ fn dress_chests(
     }
 }
 
-/// The chest's open animation has been started.
 #[derive(Component)]
 struct ShownOpen;
 
-/// A food crate's running idle effect.
 #[derive(Component)]
 struct ShrineIdleFx(Entity);
 
-/// A container's effect state (module doc): the running `LockedEffect`, and the seconds an open one still waits
-/// before its attached effects stop.
+/// A container's effect state: the running `LockedEffect`, and the seconds an open one still waits before its
+/// attached effects stop.
 #[derive(Component)]
 struct ChestFx {
     locked: Option<Entity>,
@@ -185,7 +170,7 @@ fn attach_effect(commands: &mut Commands, chest: Entity, record: &str) -> Entity
     fx
 }
 
-/// The containers' locked effect and the stop of an open one's attached effects (module doc).
+/// The containers' locked effect and the stop of an open one's attached effects.
 fn chest_effects(
     time: Res<Time>,
     mut commands: Commands,
@@ -233,8 +218,7 @@ fn chest_effects(
 }
 
 /// The animation (and speed field) of opening: a chest's `openAnimation`, a food crate's
-/// `idleToActiveAnimation` (`FixedItemShrine::GoIdleToActive`; no stock crate has an active or dormant one,
-/// so it rests at the end).
+/// `idleToActiveAnimation` (`FixedItemShrine::GoIdleToActive`).
 fn open_animation(chest: &Chest) -> (&'static str, &'static str) {
     if chest.shrine {
         ("idleToActiveAnimation", "idleToActiveAnimationSpeed")

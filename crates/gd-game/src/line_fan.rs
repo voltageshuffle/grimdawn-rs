@@ -1,89 +1,51 @@
-//! `Skill_AttackLineFan` (Beronath's frontal cones, the Questing Beast's ice
-//! cracks, the Beronath claw item skills): a fan of lines that crack out
-//! along the ground from the caster, hit what each line's growing reach
+//! `Skill_AttackLineFan` (Beronath's frontal cones, the Questing Beast's ice cracks, the Beronath claw item
+//! skills): a fan of lines that crack out along the ground from the caster, hit what each line's growing reach
 //! covers, and burst along their whole length when their life ends.
 //!
-//! Game.dll, `Skill_AttackLineFan`:
-//! - `Load` (class-level, not per level): `useTargetDir`,
-//!   `useHandLaunch`, `followTerrain`, `launchAttachPointName`,
-//!   `attackWidth`, `lineLength`, `segmentLengthMin` / `…Max`,
-//!   `segmentRotationMin` / `…Max` (degrees), `travelTime` (× 1000 → int
-//!   ms), `fxMeshDistance`, `explosionDistance`, `launchOffset`,
-//!   `alternateLaunchRotation`, `explosionDamageScale` (× 100: a damage
-//!   percentage), `textureWidthStart` / `…Middle` / `…End`, `trailEffect`
-//!   (a `TrailEffect`), `endEffect`, `fxMesh`, `explosionEffect`,
-//!   `startSound`, `endSound`, `loopSound`; `lifeTime` is a per-level list
-//!   (the line's life, `lifeTime[min(level, n) − 1]` × 1000 ms). The speed
-//!   is `lineLength` × 1000 / travel ms (0 without a travel time). The
-//!   number of lines and the fan angle are `skillTargetNumber` (0 → 1) and
-//!   `skillTargetAngle` with the learned modifiers' (`GetSkillModifierData`,
-//!   read in `TargetResult`).
-//! - `ActivateNow` (Forgotten Gods content only:
-//!   `Engine::IsExpansion3Loaded`): the fan's coordinates are the caster's
-//!   (with `useHandLaunch` the hand's attach point, `GetCoordsFromCallback`;
-//!   else the `launchAttachPointName` point when named); `useTargetDir` with
-//!   a target turns them to look at it (when the horizontal direction is not
-//!   zero); with neither launch point, or with `followTerrain`, they go on
-//!   the floor and 0.1 m up; then `launchOffset` along the heading. It sends
-//!   an attack with no targets, whose `TargetResult` pays the
-//!   mana, starts the cooldown and creates the fan: when another fan of this
-//!   skill is still alive (`Skill_AttackLineFan.liveFans` not empty) the whole fan is turned
-//!   `alternateLaunchRotation`° about +Y (Beronath's second scrape); line i of
-//!   n heads at `−angle / 2 + i × step` (`step` = angle / (n − 1), angle / n
-//!   for a full circle; one line: straight ahead). Each line gets its trail
-//!   at its start (anchors `GetTextureWidth(0)` wide across it) and its
-//!   `endEffect` there, emitting; then `startSound` plays at the fan's
-//!   coordinates and `loopSound` starts there.
-//! - `Update`, per line each frame (rotations: about +Y,
-//!   `Game::RotationAboutY` with the angle in degrees × π / 180; a positive angle
-//!   turns +Z toward +X):
-//!   - while its travel time lasts: the tip moves speed × dt along its own
-//!     heading (`followTerrain`: put on the floor, 0.1 m up), the end effect
-//!     with it. When the tip is a segment length (first 0.125–0.25 m, then
-//!     random in `segmentLength*`) from the last segment point, or the
-//!     travel ends, a segment is laid: the tip's heading becomes the line's
-//!     start heading turned by a random `segmentRotation*` (so the crack
-//!     wanders about a straight course), the trail's anchors are set across
-//!     the tip `GetTextureWidth(distance)` wide (`textureWidthStart` →
-//!     `…Middle` over the first half of `lineLength`, `…Middle` → `…End` over
-//!     the rest, `GetTextureWidth`) and the trail moves there. Every
-//!     `fxMeshDistance` travelled an `fxMesh` drops at the tip; every
-//!     `explosionDistance` the tip's coordinates are kept as an explosion
-//!     point. Then `GetTargetsAroundRay` from the line's start along its
-//!     start heading, as long as the tip's straight distance from the start,
-//!     `attackWidth` wide: the targets the fan has not hit yet (one list for
-//!     all its lines: a foe is hit once per fan while the lines travel) are
-//!     added to that list and attacked at the tip's coordinates.
-//!   - its life counts down from the start (travel or not); when it runs
-//!     out: `GetTargetsAroundRay` from the start along the start heading,
-//!     the full `lineLength`, `attackWidth` wide, every target (the fan's
-//!     list is not checked: what the line hit is hit again) attacked at the
-//!     start's coordinates as an explosion (`AttackInfo.isExplosion`). Then
-//!     `explosionEffect` plays at each explosion point (self-removing), the
-//!     end effect stops, the trail fades (`StartFade` + `Liberate`); the
-//!     fan's first line to end fades the loop sound (250 ms) and plays
-//!     `endSound` at its tip. The line is done; the fan goes once all are.
-//!     `StopSkill` ends every line at once, without the burst.
+//! - `Load` (class-level): `useTargetDir`, `useHandLaunch`, `followTerrain`, `launchAttachPointName`,
+//!   `attackWidth`, `lineLength`, `segmentLengthMin` / `…Max`, `segmentRotationMin` / `…Max` (degrees),
+//!   `travelTime` (× 1000 → int ms), `fxMeshDistance`, `explosionDistance`, `launchOffset`,
+//!   `alternateLaunchRotation`, `explosionDamageScale` (× 100: a damage percentage), `textureWidthStart` /
+//!   `…Middle` / `…End`, `trailEffect`, `endEffect`, `fxMesh`, `explosionEffect`, `startSound`, `endSound`,
+//!   `loopSound`; `lifeTime` is per level (`lifeTime[min(level, n) − 1]` × 1000 ms). The speed is `lineLength` ×
+//!   1000 / travel ms (0 without a travel time). The number of lines and the fan angle are `skillTargetNumber`
+//!   (0 → 1) and `skillTargetAngle` with the learned modifiers'.
+//! - `ActivateNow` (Forgotten Gods only): the fan's coordinates are the caster's (with `useHandLaunch` the hand's
+//!   attach point, else the `launchAttachPointName` point when named); `useTargetDir` with a target turns them to
+//!   it (when the horizontal direction is not zero); with neither launch point, or with `followTerrain`, they go
+//!   on the floor and 0.1 m up; then `launchOffset` along the heading. Its `TargetResult` pays the mana, starts the
+//!   cooldown and creates the fan: when another fan of this skill is still alive the whole fan is turned
+//!   `alternateLaunchRotation`° about +Y; line i of n heads at `−angle / 2 + i × step` (`step` = angle / (n − 1),
+//!   angle / n for a full circle; one line: straight ahead). Each line gets its trail and `endEffect` at its
+//!   start; then `startSound` plays at the fan's coordinates and `loopSound` starts there.
+//! - `Update`, per line each frame (rotations about +Y, degrees; a positive angle turns +Z toward +X):
+//!   - while its travel time lasts: the tip moves speed × dt along its own heading (`followTerrain`: on the
+//!     floor, 0.1 m up), the end effect with it. When the tip is a segment length (first 0.125–0.25 m, then
+//!     random in `segmentLength*`) from the last segment point, or the travel ends, a segment is laid: the tip's
+//!     heading becomes the line's start heading turned by a random `segmentRotation*`, and the trail's anchors
+//!     are set across the tip `GetTextureWidth(distance)` wide (`textureWidthStart` → `…Middle` over the first
+//!     half of `lineLength`, `…Middle` → `…End` over the rest). Every `fxMeshDistance` travelled an `fxMesh`
+//!     drops at the tip; every `explosionDistance` the tip's coordinates are kept as an explosion point. Then
+//!     `GetTargetsAroundRay` from the start along the start heading, as long as the tip's distance from the
+//!     start, `attackWidth` wide: targets the fan has not hit yet (one list for all its lines) are added and
+//!     attacked at the tip's coordinates.
+//!   - its life counts down from the start; when it runs out: `GetTargetsAroundRay` over the full `lineLength`,
+//!     every target (the fan's list is not checked) attacked at the start's coordinates as an explosion. Then
+//!     `explosionEffect` plays at each explosion point, the end effect stops, the trail fades; the fan's first
+//!     line to end fades the loop sound (250 ms) and plays `endSound` at its tip. The fan goes once all lines
+//!     are done. `StopSkill` ends every line at once, without the burst.
 //!   - No wall, door or line of sight stops a line.
-//! - `TargetResult` with targets: per target `CollectCombatParameters` with
-//!   the explosion's damage percentage (`explosionDamageScale` × 100, 0 =
-//!   100 % for travel hits and for records without one), the rag doll,
-//!   `CreateTargetFx` and `PlayHitSound` at the target, the attack; then the
-//!   secondaries on that list at the attack's coordinates.
-//! - `GameEngine::GetTargetsAroundRay` → Engine.dll
-//!   `World::GetEntitiesAroundRay`: an entity whose bounds,
-//!   grown by the width on every side, the ray meets within its length.
+//! - `TargetResult` with targets: per target the explosion's damage percentage (`explosionDamageScale` × 100, 0
+//!   = 100 % for travel hits and for records without one), the rag doll, `CreateTargetFx` and `PlayHitSound`, the
+//!   attack; then the secondaries at the attack's coordinates.
+//! - `World::GetEntitiesAroundRay`: an entity whose bounds, grown by the width on every side, the ray meets
+//!   within its length.
 //!
-//! PORT: the hand / named launch points are their bind-pose positions, the
-//! hand that of RightHandHit (the cast's callback is not kept); the
-//! segment hit test is `GetTargetsAroundRay` with `attackWidth`
-//! (`crate::secondary::beam_targets`); the
-//! segment rotations and lengths draw from the gameplay stream (`gd_game_core::rng`, seeded with the session; the
-//! engine's `RandomUniformLocked` stream); `fxMesh` (an `FxMesh`) drops as an
-//! [`FxMeshRequest`](gd_game_core::visuals::FxMeshRequest) the renderer shows; the travel's end puts
+//! PORT: the hand / named launch points are their bind-pose positions, the hand that of RightHandHit; the
+//! segment rotations and lengths draw from the gameplay stream; `fxMesh` drops as an
+//! [`FxMeshRequest`](gd_game_core::visuals::FxMeshRequest); the travel's end puts
 //! [`StartPulse`](gd_game_core::visuals::StartPulse) on the trail. The renderer draws each line's trail from its
-//! [`TrailAnchor`] entity (a `TrailRequest` owner) and fades it on
-//! `StopEmitting`.
+//! [`TrailAnchor`] entity and fades it on `StopEmitting`.
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_game_core::casting::SkillHit;
@@ -104,7 +66,7 @@ impl Plugin for LineFanPlugin {
     }
 }
 
-/// A line-fan cast fired (`casting.rs`): its `TargetResult` with no targets.
+/// A line-fan cast fired: its `TargetResult` with no targets.
 #[derive(Message, Clone, Debug)]
 pub struct Launch {
     pub caster: Entity,
@@ -112,38 +74,33 @@ pub struct Launch {
     pub level_index: usize,
     pub parent: Option<(String, usize)>,
     pub hostile: bool,
-    /// `skillTargetAngle` (degrees) and `skillTargetNumber`, with the
-    /// learned modifiers'.
+    /// `skillTargetAngle` (degrees) and `skillTargetNumber`, with the learned modifiers'.
     pub angle: f32,
     pub number: u32,
     /// `lifeTime` at the cast's level (s).
     pub life: f32,
-    /// The validated target's position (`useTargetDir`).
+    /// `useTargetDir`.
     pub target: Option<Vec3>,
 }
 
-/// One line of a fan.
 #[derive(Debug, Clone)]
 pub struct Line {
-    /// Where it starts and its start heading (unit, the targeting ray).
+    /// The start and its unit heading (the targeting ray).
     pub start: Vec3,
     pub dir: Vec3,
-    /// The tip and the heading it moves along (the start heading turned by
-    /// the last segment's rotation).
+    /// The tip and its heading: the start heading turned by the last segment's rotation.
     pub tip: Vec3,
     pub heading: Vec3,
-    /// Distance travelled (`LineFanLine.distance`).
     pub dist: f32,
     /// Travel time and life left (s).
     pub travel: f32,
     pub life: f32,
-    /// Explosion points: (position, heading) of the tip.
+    /// (position, heading) of the tip.
     pub explosions: Vec<(Vec3, Vec3)>,
     pub done: bool,
     last_segment: Vec3,
     next_segment: f32,
     last_explosion: f32,
-    /// Distance at the last `fxMesh` drop.
     last_mesh: f32,
     /// The trail's anchor frame and the trail entity; the end effects.
     anchor: Option<Entity>,
@@ -151,8 +108,7 @@ pub struct Line {
     tip_fx: Vec<Entity>,
 }
 
-/// A fan of travelling lines (the gameplay state; the renderer reads its
-/// lines' [`TrailAnchor`] and effect entities).
+/// A fan of travelling lines (the renderer reads its lines' [`TrailAnchor`] and effect entities).
 #[derive(Component, Debug, Clone)]
 pub struct LineFan {
     pub caster: Entity,
@@ -164,34 +120,30 @@ pub struct LineFan {
     pub width: f32,
     pub length: f32,
     pub speed: f32,
-    /// Damage scale of the burst (`explosionDamageScale`, 0 → 1).
+    /// `explosionDamageScale`, 0 → 1.
     pub explosion_scale: f32,
     pub lines: Vec<Line>,
-    /// Foes hit by the travelling lines (each once per fan).
+    /// Foes hit by the travelling lines, each once per fan.
     pub hit: Vec<Entity>,
     follow_terrain: bool,
     segment_length: (f32, f32),
     segment_rotation: (f32, f32),
     texture_width: [f32; 3],
     explosion_spacing: f32,
-    /// `fxMesh` (an `FxMesh` record) dropped at the tip every `fxMeshDistance` travelled.
     fx_mesh: Option<(String, f32)>,
     trail: bool,
     explosion_fx: Option<String>,
     end_sound: Option<String>,
-    /// The playing `loopSound` (a [`SoundLoop`](gd_game_core::visuals::SoundLoop)).
     loop_sound: Option<Entity>,
     ended: bool,
 }
 
-/// A line's trail anchor frame (a `TrailRequest` owner): at the last
-/// segment point, turned to the tip's heading, scaled across (x) to the
+/// A line's trail anchor frame: at the last segment point, turned to the tip's heading, scaled across (x) to the
 /// trail's width there; the trail's edges are its local ±0.5 x.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrailAnchor;
 
-/// The headings of a fan's lines, degrees from straight ahead
-/// (`TargetResult`).
+/// Degrees from straight ahead (`TargetResult`).
 pub fn fan_angles(angle: f32, number: u32) -> Vec<f32> {
     let n = number.max(1);
     let (step, first) = if n > 1 {
@@ -220,12 +172,12 @@ pub fn texture_width(w: [f32; 3], length: f32, d: f32) -> f32 {
     d / length * (b - a) + a
 }
 
-/// `v` turned `deg` degrees about +Y (+Z toward +X for a positive angle).
+/// +Z toward +X for a positive angle.
 fn turn(v: Vec3, deg: f32) -> Vec3 {
     Quat::from_rotation_y(deg.to_radians()) * v
 }
 
-/// Floor height under `p` (the nav mesh, else the terrain, else `p`'s).
+/// The nav mesh, else the terrain, else `p`'s.
 fn floor(nav: &Nav, coll: &crate::collision::WorldCollision, p: Vec3) -> f32 {
     nav.0
         .ground([p.x, p.y + 0.5, p.z])
@@ -233,7 +185,6 @@ fn floor(nav: &Nav, coll: &crate::collision::WorldCollision, p: Vec3) -> f32 {
         .unwrap_or(p.y)
 }
 
-/// A frame at `at`, facing `heading` (+Z), `width` across.
 fn frame(at: Vec3, heading: Vec3, width: f32) -> Transform {
     Transform::from_translation(at)
         .with_rotation(Quat::from_rotation_y(heading.x.atan2(heading.z)))
@@ -252,10 +203,8 @@ fn create(
     let rec = data.db.get(&l.skill)?;
     let f = |k: &str| rec.f32(k).unwrap_or(0.0);
     let facing = gd_game_core::character::facing_flat(caster_tf);
-    // The launch point (module docs): `useHandLaunch` the hand of the cast's callback
-    // (`GetCoordsFromCallback`: RightHandHit → `R Hand`, LeftHandHit → `L Hand`), else the named
-    // point (`Actor::GetAttachedCoords`), else the caster; its position only. PORT: the
-    // point's bind pose (as `crate::waves`), and the callback is taken as RightHandHit.
+    // `useHandLaunch` the hand of the cast's callback, else the named point, else the caster; its position
+    // only. PORT: the point's bind pose, and the callback is taken as RightHandHit.
     let named = rec.str("launchAttachPointName").filter(|n| !n.is_empty());
     let hand = rec.bool("useHandLaunch");
     let mut origin = match (hand, named) {
@@ -386,7 +335,6 @@ fn create(
     })
 }
 
-/// An emitting effect (its pak's effects) to move with a tip.
 fn effect_entities(
     commands: &mut Commands,
     data: &GameData,
@@ -413,13 +361,11 @@ fn effect_entities(
         .collect()
 }
 
-/// A uniform draw in `a..b` from the gameplay stream (`gd_game_core::rng`).
 fn range((a, b): (f32, f32)) -> f32 {
     a + gd_game_core::rng::f32() * (b - a)
 }
 
-/// Creates the cast fans, moves the lines, hits what they reach and bursts
-/// them at the end of their life.
+/// Creates the cast fans, moves the lines, hits what they reach and bursts them at the end of their life.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update(
     mut commands: Commands,
@@ -509,7 +455,6 @@ fn update(
                 );
                 let line = &mut fan.lines[i];
                 line.travel -= dt;
-                // `Update`: the travel's end starts the trail's pulse (`TrailEffect::StartPulse`).
                 if line.travel <= 0.0
                     && let Some(t) = line.trail
                 {
@@ -541,7 +486,6 @@ fn update(
                     line.last_segment = line.tip;
                     line.next_segment = range(seg_len);
                 }
-                // Every `fxMeshDistance` travelled an `FxMesh` drops at the tip (`FxMeshRequest`: the presentation shows it).
                 if let Some((m, d)) = &fan.fx_mesh
                     && *d > 0.0
                     && line.dist - line.last_mesh > *d

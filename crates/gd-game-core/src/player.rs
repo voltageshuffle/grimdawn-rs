@@ -1,57 +1,27 @@
 //! The player character's build and the values derived from it.
 //!
-//! Raw state: [`Loadout`] (worn gear, bio attributes, spent points, learned
-//! skills, active buffs) and [`PlayerProgress`](crate::progress::PlayerProgress)
-//! (level, experience, unspent points, gold). Derived state, each computed by
-//! one system here and read by everyone else:
-//! - [`EffectiveSkills`]: the skill book with the equipment's `+N` skill
-//!   bonuses (`gd_game::player::derive_effective_skills`); the skills window, tooltips,
-//!   casting and pets all show / use these levels.
-//! - the player's [`Combatant`] profile, rebuilt when marked [`ProfileDirty`]
-//!   (`gd_game::player::rebuild_profile`).
+//! Raw state: [`Loadout`] (worn gear, bio attributes, spent points, learned skills, active buffs) and
+//! [`PlayerProgress`](crate::progress::PlayerProgress) (level, experience, unspent points, gold). Derived state,
+//! each computed by one system and read by everyone else:
+//! - [`EffectiveSkills`]: the skill book with the equipment's `+N` skill bonuses;
+//! - the player's [`Combatant`] profile, rebuilt when marked [`ProfileDirty`].
 //!
-//! Item toggles (`Skill_BuffSelfToggled` / `…RadiusToggled` /
-//! `…AttackRadiusToggled` / `Skill_OnHitAttackRadius` as an item's
-//! `itemSkillName`, ~60 stock records; Game.dll):
-//! - an item's skills are created on equip (`SkillManager::AddItemSkills`:
-//!   a new skill object, or the weapon set's cached one, into
-//!   the item list `SkillManager.itemSkills`, item flag `Skill.isItemSkill`) with the active flag clear, and
-//!   `SkillManager::Update` runs `AutoActivateNow` (a virtual)
-//!   on the item list as on the learned list for the main player:
-//!   a toggle that is off, enabled, an auto toggle (`Skill.autoToggle`), with
-//!   qualifying weapons / hand state and an `ExclusiveSkillCheck` switches on
-//!   (`Skill_BuffSelfToggled`, `Skill_BuffRadiusToggled`,
-//!   `Skill_BuffAttackRadiusToggled`,
-//!   `Skill_OnHitAttackRadius`), at no cost. So a worn item
-//!   toggle is on unless stopped (death, a dispel: `SkillBook::inactive` /
-//!   `dispelled`, as learned ones, until the auto toggle,
-//!   `crate::skill_buffs` docs, auto toggles) or its record is already on
-//!   from another worn item (`Skill_BuffRadiusToggled`'s test of
-//!   `SkillManager::IsItemSkillActive`; the port lists each
-//!   record once, [`Loadout::item_toggles`]). No hot slot holds an auto
-//!   toggle (`gd_game::hotbar` docs), so the user never switches one off.
-//! - while on it counts like a learned toggle: `SkillManager::GetCharAttributes`
-//!   runs `CollectPassiveCharAttributes` over the item list too (stats and energy
-//!   reserve, [`Loadout::profile_with`]); radius auras pulse
-//!   (`gd_game::auras`), damage auras tick (`casting::DamageAuras`), the buff
-//!   bar, the toggle effects and `Skill_OnHitAttackRadius`'s proc see it.
-//! - unequipped (`gd_game::player::unequipped_toggles`): `RemoveItemSkills`
-//!   starts the cooldown of an active one, `StopSkill`s and uninstalls it;
-//!   it stops every other item skill it removes too, so an item-granted
-//!   summon's pets die (`gd_game::pets::StopSummonSkill`).
-//! - the save keeps no item toggle state (the skills block's item entries are
-//!   name, auto-cast skill / controller, slot and item, `SkillManager::
-//!   WriteProperties`), so a loaded one comes on again.
+//! Item toggles (`Skill_BuffSelfToggled` / `…RadiusToggled` / `…AttackRadiusToggled` / `Skill_OnHitAttackRadius` as
+//! an item's `itemSkillName`; Game.dll):
+//! - an item's skills are created on equip (`SkillManager::AddItemSkills`) inactive, and `SkillManager::Update` runs
+//!   `AutoActivateNow` on them for the main player: an off, enabled auto toggle with qualifying weapons and an
+//!   `ExclusiveSkillCheck` switches on at no cost. So a worn item toggle is on unless stopped (death, a dispel, as
+//!   learned ones) or its record is already on from another worn item (the port lists each record once,
+//!   [`Loadout::item_toggles`]). No hot slot holds an auto toggle.
+//! - while on it counts like a learned toggle (`SkillManager::GetCharAttributes` runs
+//!   `CollectPassiveCharAttributes` over the item list too, [`Loadout::profile_with`]).
+//! - unequipped: `RemoveItemSkills` starts the cooldown of an active one, `StopSkill`s and uninstalls it; it stops
+//!   every other item skill it removes too, so an item-granted summon's pets die.
+//! - the save keeps no item toggle state (`SkillManager::WriteProperties`), so a loaded one comes on again.
+//! - a worn set's skill (`itemSkillName` on the `ItemSet` record) is an item skill too (`AddItemSkills` with the
+//!   set's id); a piece coming off removes it.
 //!
-//! - a worn set's skill (`itemSkillName` on the `ItemSet` record, granted
-//!   at a piece count, `gd_sim::items::sets` docs) is an item skill too
-//!   (`AddItemSkills` with the set's id): a toggle among them is an item
-//!   toggle, the others hot slot / auto-cast skills like an item's
-//!   ([`gd_sim::skills::item_skill_grants`]); a piece coming off removes it
-//!   (`RemoveItemSkills`, as above).
-//!
-//! PORT: an item toggle's weapon requirements are not tested (no stock item
-//! toggle has any); the learned toggles' weapon rule is `weapon_pool`'s.
+//! PORT: an item toggle's weapon requirements are not tested (no stock item toggle has any).
 use crate::combat::Combatant;
 use crate::data::GameData;
 use bevy::prelude::*;
@@ -60,7 +30,6 @@ use gd_formats::save::item::Item;
 use gd_formats::vfs::Database;
 use gd_sim::skills::{SkillBook, SkillTrees};
 
-/// Player input and movement (combat runs after it).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerSet;
 
@@ -69,12 +38,9 @@ pub struct PlayerSet;
 pub struct Player;
 
 /// The keyboard movement's controller direction (`ControllerPlayer.controllerDirection`, horizontal, normalised) and
-/// length (`ControllerPlayer.movementLength`: 1, or 1.414 for a diagonal; 0 with no movement key held), set every
-/// frame by the keyboard movement (`SetControllerDirection` / `SetControllerMovementLength`, `Grim Dawn.exe`
-/// `InGameUI::Update`), and Keyboard Only's aim direction
-/// (`InGameUI.aimDirection`: the last direction a key gave, kept
-/// when the keys are let go; zero before the first). Written by the game's input only; read by the skill aim
-/// (`gd_game::casting::keyboard_aim`), the evade and the controller targeting (`gd_game::controller_target`).
+/// length (`ControllerPlayer.movementLength`: 1, or 1.414 for a diagonal; 0 with no key held), set every frame by
+/// `InGameUI::Update`, and Keyboard Only's aim direction (`InGameUI.aimDirection`: the last direction a key gave,
+/// kept when the keys are let go; zero before the first). Written by the game's input only.
 #[derive(Component, Default, Clone, Copy, Debug, PartialEq)]
 pub struct ControllerDirection {
     pub dir: Vec3,
@@ -82,8 +48,7 @@ pub struct ControllerDirection {
     pub aim: Vec3,
 }
 
-/// Marks the player for a profile rebuild from its `Loadout` (attribute or
-/// skill points spent); life keeps its fraction.
+/// Marks the player for a profile rebuild from its `Loadout`; life keeps its fraction.
 #[derive(Component)]
 pub struct ProfileDirty;
 
@@ -104,13 +69,10 @@ pub fn player_record(female: bool) -> &'static str {
     }
 }
 
-/// Splits a saved bio `[physique, cunning, spirit, life, energy]` into the base without the spent attribute
-/// points, and those points: per attribute `(saved − initial) / increment` rounded down (at most 10 000, the
-/// bad-data bound of `BioStore::allocate`), the initial values being the pc record's `characterStrength` /
-/// `characterDexterity` / `characterIntelligence` (what `CharacterBio::ResetAttributePoints` goes back to,
-/// `gd_game::points` module doc). Each point's increment and its life / energy share
-/// ([`gd_sim::stats::BioStore::allocate`]) come off the base, so adding the points back (the profile, the save's
-/// fold) gives the saved values again.
+/// Splits a saved bio `[physique, cunning, spirit, life, energy]` into the base without the spent attribute points,
+/// and those points: per attribute `(saved − initial) / increment` rounded down (at most 10 000), the initial values
+/// being the pc record's `characterStrength` / `characterDexterity` / `characterIntelligence`. Adding the points
+/// back gives the saved values again.
 pub fn split_bio(
     db: &Database,
     levels: &gd_sim::stats::LevelTable,
@@ -150,8 +112,8 @@ pub fn split_bio(
     (base, a)
 }
 
-/// A new character's starting gear (item records) from the player record's
-/// `loot<Slot>Item1` with a non-zero `chanceToEquip<Slot>`.
+/// A new character's starting gear (item records) from the player record's `loot<Slot>Item1` with a non-zero
+/// `chanceToEquip<Slot>`.
 pub fn starting_gear(db: &Database, female: bool) -> Vec<String> {
     let rec = db.get(player_record(female));
     let mut out = Vec::new();
@@ -190,15 +152,14 @@ pub fn equipped_items(gdc: &Gdc) -> Vec<Item> {
         .collect()
 }
 
-/// `EquipmentCtrl::GetEquippedLocation` of the save's 12 equipment slots, in
-/// `EquipmentCtrl::WriteProperties` order (members 4, 6, 12, 14, 16, 22, 18, 20, 24, 26, 8, 10). A weapon set's
-/// two slots are 9 and 10, the second set's (the save's `weapons[1]`) also setting [`ALT_WEAPON_SET`].
+/// `EquipmentCtrl::GetEquippedLocation` of the save's 12 equipment slots, in `EquipmentCtrl::WriteProperties` order.
+/// A weapon set's two slots are 9 and 10, the second set's also setting [`ALT_WEAPON_SET`].
 const EQUIP_LOCATIONS: [u32; 12] = [1, 2, 3, 4, 5, 8, 6, 7, 12, 13, 14, 11];
-/// The location word's alternate weapon set bit (`SkillManager::WriteProperties`).
+/// `SkillManager::WriteProperties`.
 pub const ALT_WEAPON_SET: u32 = 0x8000_0000;
 
-/// The item `record` / `seed` (the port's item identity, [`ItemSkillSource`]) as a save holds it: its record
-/// and location word (0 in a bag or stash page, `GetEquippedLocation` finding it in no slot); none once gone.
+/// The item `record` / `seed` as a save holds it: its record and location word (0 in a bag or stash page); none
+/// once gone.
 fn item_location<'a>(gdc: &'a Gdc, record: &str, seed: u32) -> Option<(&'a str, u32)> {
     let is = |it: &Item| it.seed == seed && it.base_name.eq_ignore_ascii_case(record);
     let inv = gdc.inventory.data.as_ref()?;
@@ -229,19 +190,14 @@ fn item_location<'a>(gdc: &'a Gdc, record: &str, seed: u32) -> Option<(&'a str, 
         .map(|(it, l)| (it.base_name.as_str(), l))
 }
 
-/// An item skill instance (the engine's `Skill` object in `SkillManager.itemSkills` / `SkillManager.itemSkillCache`):
-/// its record and source.
+/// An item skill instance (the engine's `Skill` in `SkillManager.itemSkills` / `itemSkillCache`): its record and
+/// source.
 pub type ItemSkillKey = (String, ItemSkillSource);
 
 /// The worn items' and sets' item skills in the order the engine creates them on putting `items` on one by one
-/// (`EquipmentCtrl::ReadProperties` restores the save's slots in order, each attached one
-/// at once through `RestoreItem` → `Player::AttachItemAction` → `EquipManager::AttachItemAction` → the item's
-/// `AttachItem`; `ItemEquipment::AttachItem` adds the item's
-/// own skills (`ItemSkillAugment::GrantItemSkills`), then on the set's count change its set skill
-/// (`ItemSet::SkillAugmentInstall`,
-/// which regrants it, so a set's skill follows its last piece), then the component's
-/// (`ItemRelic::InstallOnCharacter`) and the augment's). PORT: within the item's own records and its
-/// component / augment, the port's record order (`gd_sim::skills::item_skill_grants`).
+/// (`EquipmentCtrl::ReadProperties` → … → `ItemEquipment::AttachItem`): the item's own skills, then on the set's
+/// count change its set skill (`ItemSet::SkillAugmentInstall` regrants it, so a set's skill follows its last piece),
+/// then the component's and the augment's. PORT: within one item, the port's record order.
 fn attach_order(db: &Database, items: &[Item]) -> Vec<ItemSkillKey> {
     let sets = gd_sim::items::sets::set_skills(db, items);
     let set_of = |it: &Item| {
@@ -284,13 +240,10 @@ fn attach_order(db: &Database, items: &[Item]) -> Vec<ItemSkillKey> {
     out
 }
 
-/// The save's item skill list (`SkillManager::WriteProperties`): every item skill bound to a
-/// celestial power (`Skill.celestialPower`), the worn items' and
-/// sets' (`SkillManager.itemSkills`, `worn`: [`Loadout::worn_item_skills`]) then the cache's
-/// (`SkillManager.itemSkillCache`), each as skill record, power, its
-/// controller, location word and the item's record (an item that still exists: `EquipmentCtrl::GetEquippedLocation`,
-/// bit 31 for the second weapon set) or else the set name (`Skill::GetItemSetName`, empty for an item's skill;
-/// location 0). `bound` gives an instance's (power, controller).
+/// The save's item skill list (`SkillManager::WriteProperties`): every item skill bound to a celestial power, the
+/// worn ones (`worn`) then the cache's, each as skill record, power, controller, location word and the item's
+/// record (bit 31 for the second weapon set), or else the set name (location 0). `bound` gives an instance's
+/// (power, controller).
 pub fn bound_item_skills(
     gdc: &Gdc,
     worn: &[ItemSkillKey],
@@ -320,10 +273,9 @@ pub fn bound_item_skills(
         .collect()
 }
 
-/// The worn item skill a saved entry's binding comes back on (`SkillManager::ReadProperties`):
-/// `FindItemSkillIdByItem` looks for a worn item's skill of that
-/// record equipped at that location and weapon set, or a set's skill of that set name; then the item skill
-/// cache (`FindCachedItemSkillIdbyItem`), empty on load, so a cached skill's binding is dropped.
+/// The worn item skill a saved entry's binding comes back on (`SkillManager::ReadProperties`): a worn item's skill
+/// of that record at that location and weapon set, or a set's skill of that set name. The cache is empty on load,
+/// so a cached skill's binding is dropped.
 pub fn item_skill_binding_restored(
     db: &Database,
     gdc: &Gdc,
@@ -344,13 +296,11 @@ pub fn item_skill_binding_restored(
         .map(|(_, src)| src)
 }
 
-/// The learned skills of a save (or an empty book for a new character),
-/// with the always-present potion skills (`gd_sim::potions::ensure_skills`).
+/// The learned skills of a save (or an empty book for a new character), with the always-present potion skills.
 pub fn skill_book_from_save(db: &Database, gdc: Option<&Gdc>) -> SkillBook {
     let mut skills = SkillBook {
         bonus: Default::default(),
-        // Locked skills (`unk_205`) and potion containers' unlock levels
-        // (`sublevel`), see `gd_sim::potions`.
+        // Locked skills (`unk_205`) and potion containers' unlock levels (`sublevel`).
         locked: gdc
             .map(|g| {
                 g.skills
@@ -404,43 +354,35 @@ pub fn skill_book_from_save(db: &Database, gdc: Option<&Gdc>) -> SkillBook {
     skills
 }
 
-/// What the player's combat profile is built from: worn gear and the bio
-/// base values (save) — rebuilt at a new level on level-up.
+/// What the player's combat profile is built from: worn gear and the bio base values (save).
 #[derive(Component, Clone)]
 pub struct Loadout {
     pub female: bool,
     pub items: Vec<Item>,
-    /// The bio base Physique / Cunning / Spirit / Life / Energy without the spent attribute points (the save's
-    /// values less [`Self::allocated`]'s share, [`Self::from_save`]); None for a new character (the pc record's).
+    /// The bio base Physique / Cunning / Spirit / Life / Energy without the spent attribute points; None for a new
+    /// character (the pc record's).
     pub bio: Option<[f32; 5]>,
-    /// Every attribute point spent, the save's and this session's, on top of `bio`: the one count the profile,
-    /// the save (`gd_game::save`, folded back into the bio) and the attribute reset (`gd_game::points`) read.
+    /// Every attribute point spent, the save's and this session's, on top of `bio`.
     pub allocated: gd_sim::stats::AllocatedPoints,
-    /// The learned skills (points spent; no equipment bonuses: those are
-    /// [`EffectiveSkills`]).
+    /// The learned skills (points spent; no equipment bonuses).
     pub skills: SkillBook,
-    /// The timed self buffs (the shared [`crate::skill_buffs::TimedBuffs`]
-    /// store): their stats derive from it at the profile rebuild
-    /// ([`Self::profile_with`]); a shapeshift form is an entry with no end.
+    /// The timed self buffs; a shapeshift form is an entry with no end.
     pub buffs: crate::skill_buffs::TimedBuffs,
-    /// Skills granted for a while with their level (a shapeshift form's,
-    /// `shapeshift.rs`).
+    /// Skills granted for a while with their level (a shapeshift form's).
     pub granted: Vec<(String, u32)>,
     /// An active form: (its skill, `allowedSkillTypes`).
     pub form: Option<(String, Vec<String>)>,
-    /// The item skill cache (`SkillManager.itemSkillCache`, [`Self::set_items`]): skills of items taken off this
-    /// session, left at level 0, each with where it came from.
+    /// `SkillManager.itemSkillCache`: skills of items taken off this session, left at level 0.
     pub item_skill_cache: Vec<CachedItemSkill>,
     /// The worn items' and sets' item skills (`SkillManager.itemSkills`) in the order the engine created them: the
-    /// load's attach order ([`attach_order`]), then each skill put on later appended ([`Self::set_items`]).
+    /// load's [`attach_order`], then each skill put on later appended.
     pub worn_item_skills: Vec<ItemSkillKey>,
 }
 
-/// Where an item skill came from ([`Loadout::set_items`]: what `RetrieveCachedItemSkill` matches).
+/// Where an item skill came from (what `RetrieveCachedItemSkill` matches).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemSkillSource {
-    /// A worn item, by its record and seed: the port's identity of the engine's item object (the cached skill
-    /// keeps the item's id; that item, equipped where the item put on goes, is the item put on).
+    /// A worn item, by its record and seed (the port's identity of the engine's item object).
     Item { record: String, seed: u32 },
     /// A worn set's skill, by the set record (`Skill::GetItemSetName`).
     Set(String),
@@ -453,7 +395,7 @@ pub struct CachedItemSkill {
     pub source: ItemSkillSource,
 }
 
-/// The worn items' and sets' skill grants (`gd_sim::skills::item_skill_grants`) with their sources.
+/// The worn items' and sets' skill grants with their sources.
 pub fn sourced_grants(
     db: &Database,
     items: &[Item],
@@ -476,9 +418,8 @@ pub fn sourced_grants(
 }
 
 impl Loadout {
-    /// A character's loadout from its save (or a new character's starting
-    /// gear and empty book), with `skills` as learned. The save's bio holds the spent attribute points
-    /// (`BioStore::allocate`); they are split off into [`Self::allocated`] ([`split_bio`]).
+    /// A character's loadout from its save (or a new character's starting gear and empty book), with `skills` as
+    /// learned. The save bio's spent attribute points are split off into [`Self::allocated`] ([`split_bio`]).
     pub fn from_save(
         db: &Database,
         levels: &gd_sim::stats::LevelTable,
@@ -539,20 +480,13 @@ impl Loadout {
             .map(|(_, src)| src.clone())
     }
 
-    /// Puts on the worn items `items`. `SkillManager::RemoveItemSkills`: the skills of an
-    /// item taken off are set to level 0 and, for a player that is not a copy (`Player::IsCopy`), moved into the
-    /// item skill cache (`SkillManager.itemSkillCache`) instead of destroyed. `AddItemSkills` first asks
-    /// `RetrieveCachedItemSkill` for each skill of an item
-    /// (or set) put on, which takes out the first cached skill of that name whose source matches: the cached
-    /// skill's item (`Skill.itemId`, its object id) still exists, has the record of the item put on and is itself
-    /// equipped at the location and weapon set being filled (`EquipmentCtrl::GetEquippedLocation`), i.e. it is
-    /// that same item coming back; once its item is gone, the set name (`Skill::GetItemSetName`) against the
-    /// name passed, which only a set's skill matches ([`ItemSkillSource`]). So a skill of another copy of the
-    /// record stays cached. The devotion window's skill-select list offers the cache
-    /// (`Character::GetItemSkillCache`), greyed (`grimdawn` `ui/devotion.rs`).
-    /// A cached or worn item skill bound to a celestial power goes into the save ([`bound_item_skills`]). The
-    /// worn ones keep their creation order ([`Self::worn_item_skills`]): a skill taken off leaves it, one put on
-    /// is appended in [`attach_order`], as is a set's skill regranted on a count change (`SkillAugmentInstall`).
+    /// Puts on the worn items `items`. `SkillManager::RemoveItemSkills`: the skills of an item taken off are set to
+    /// level 0 and, for a player that is not a copy, moved into the item skill cache. `AddItemSkills` first asks
+    /// `RetrieveCachedItemSkill` for each skill of an item (or set) put on, which takes out the first cached skill of
+    /// that name whose source matches: the same item coming back to the same location and weapon set, or, once its
+    /// item is gone, the set name (only a set's skill matches). So a skill of another copy of the record stays
+    /// cached. The worn ones keep their creation order: a skill taken off leaves it, one put on is appended in
+    /// [`attach_order`], as is a set's skill regranted on a count change.
     pub fn set_items(&mut self, db: &Database, items: Vec<Item>) {
         let old = sourced_grants(db, &self.items);
         let new = sourced_grants(db, &items);
@@ -603,15 +537,9 @@ impl Loadout {
         self.items = items;
     }
 
-    /// The skill's active byte (`Skill.active`, in `SkillActiveState`;
-    /// `Skill::ReceiveActiveUpdate` stores it). It is
-    /// set while a timed buff or a shapeshift form runs (`buffs`, cleared when
-    /// it ends) and for a learned toggle (`Skill_*Toggled`,
-    /// `Skill_OnHitAttackRadius`) that is switched on (`skills.inactive`,
-    /// the save's `skill_active`) and not stopped by a dispel
-    /// (`skills.dispelled`); likewise a worn item's toggle
-    /// ([`Self::item_toggles`], module docs: item toggles). The port keeps
-    /// those two stores rather than a byte on each skill.
+    /// The skill's active byte (`Skill.active`): set while a timed buff or a shapeshift form runs and for a learned
+    /// or worn-item toggle that is switched on and not dispelled. The port keeps `buffs` / `skills.inactive` /
+    /// `skills.dispelled` rather than a byte on each skill.
     pub fn skill_active(&self, db: &Database, skill: &str) -> bool {
         self.buffs.running(skill)
             || ((self.skills.level(skill) > 0 || self.grants_skill(db, skill))
@@ -621,10 +549,7 @@ impl Loadout {
                     .is_some_and(|r| gd_sim::skills::is_toggle(&r.class)))
     }
 
-    /// The worn items' and sets' toggles (`itemSkillName` of a
-    /// `Skill_*Toggled` / `Skill_OnHitAttackRadius` class,
-    /// [`gd_sim::skills::item_skill_grants`]) that are not also learned, each
-    /// once with its granted level, on or off (module docs: item toggles).
+    /// The worn items' and sets' toggles that are not also learned, each once with its granted level, on or off.
     pub fn item_toggles(&self, db: &Database) -> Vec<(String, u32)> {
         let grants = gd_sim::skills::item_skill_grants(db, &self.items);
         let mut out: Vec<(String, u32)> = Vec::new();
@@ -645,23 +570,17 @@ impl Loadout {
         out
     }
 
-    /// The learned skills followed by the worn items' toggles
-    /// ([`Self::item_toggles`]): (record, level; learned: the points spent).
+    /// The learned skills followed by the worn items' toggles: (record, level).
     pub fn skills_and_item_toggles(&self, db: &Database) -> Vec<(String, u32)> {
         let mut v = self.skills.skills.clone();
         v.extend(self.item_toggles(db));
         v
     }
 
-    /// The character stats of the item toggles that are on
-    /// ([`Self::item_toggles`], `SkillManager::GetCharAttributes`
-    /// runs the item list's `CollectPassiveCharAttributes` like the learned ones'):
-    /// the self and radius toggles and `Skill_OnHitAttackRadius` as
-    /// [`SkillBook::stat_sources`] takes the learned ones (a radius aura's
-    /// buff record with it); a damage aura (`Skill_BuffAttackRadiusToggled`,
-    /// `CollectPassiveCharAttributes`: its char and penalty
-    /// stores while on) only its `character*` fields (PORT: that prefix is
-    /// taken as the two stores' fields), its reserve among them.
+    /// The character stats of the item toggles that are on (`SkillManager::GetCharAttributes` runs the item list's
+    /// `CollectPassiveCharAttributes` like the learned ones'): self and radius toggles and `Skill_OnHitAttackRadius`
+    /// as [`SkillBook::stat_sources`] takes the learned ones; a damage aura only its `character*` fields (PORT: that
+    /// prefix is taken as its char and penalty stores' fields), its reserve among them.
     fn item_toggle_stats(
         &self,
         db: &Database,
@@ -702,16 +621,14 @@ impl Loadout {
         out
     }
 
-    /// The learned skills with the worn equipment's skill bonuses: the one
-    /// definition of the player's effective skill levels ([`EffectiveSkills`]
-    /// holds the current result).
+    /// The learned skills with the worn equipment's skill bonuses: the one definition of the player's effective
+    /// skill levels.
     pub fn effective_skills(&self, db: &Database, trees: &SkillTrees) -> SkillBook {
         self.skills.with_item_bonuses(db, trees, &self.items)
     }
 
-    /// The character's dual-wield mask ([`gd_sim::skills::dual_mask`]): its learned skills, the worn items' and
-    /// sets' skills (`item_gunslinger` on chests c003 / c034: `SkillManager::Update` walks the item
-    /// list too) and a form's granted skills.
+    /// The character's dual-wield mask: its learned skills, the worn items' and sets' skills (`SkillManager::Update`
+    /// walks the item list too) and a form's granted skills.
     pub fn dual_mask(&self, db: &Database) -> u32 {
         let learned = self.skills.skills.iter().map(|(s, l)| (s.as_str(), *l));
         let items = gd_sim::skills::item_skill_grants(db, &self.items);
@@ -720,11 +637,9 @@ impl Loadout {
         gd_sim::skills::dual_mask(db, learned.chain(items).chain(granted))
     }
 
-    /// Effective level of a skill for the player: the learned level with
-    /// item bonuses, an item-granted skill's level or a form's granted
-    /// level, whichever is highest; default skills
-    /// (`records/skills/default/`) are always level 1. `effective` is the
-    /// player's current [`EffectiveSkills`] (its item grants included).
+    /// Effective level of a skill for the player: the highest of the learned level with item bonuses, an
+    /// item-granted skill's level and a form's granted level; default skills (`records/skills/default/`) are always
+    /// level 1. `effective` is the player's current [`EffectiveSkills`].
     pub fn skill_level(&self, db: &Database, effective: &SkillBook, skill: &str) -> u32 {
         if is_default_skill(skill) {
             return 1;
@@ -749,15 +664,13 @@ impl Loadout {
             .any(|g| g.skill.eq_ignore_ascii_case(skill))
     }
 
-    /// An item skill (`Skill.isItemSkill`, set by `SkillManager::AddItemSkills` / `Skill::SetAsItemSkill`): a
-    /// skill the worn gear grants that the book has not learned (the learned one is a skill object of its own).
-    /// `Skill::GetManaCost` takes its cost unreduced (`gd_sim::actor::skill_energy_cost`).
+    /// An item skill (`Skill.isItemSkill`): a skill the worn gear grants that the book has not learned.
+    /// `Skill::GetManaCost` takes its cost unreduced.
     pub fn is_item_skill(&self, db: &Database, skill: &str) -> bool {
         self.skills.level(skill) == 0 && self.grants_skill(db, skill)
     }
 
-    /// Combat profile at `level` from the resolved equipment (affixes and
-    /// seeds included).
+    /// Combat profile at `level` from the resolved equipment.
     pub fn profile(
         &self,
         data: &GameData,
@@ -767,9 +680,8 @@ impl Loadout {
         self.profile_with(data, rules, level, None, None)
     }
 
-    /// [`Loadout::profile`] plus the buffs allies' auras keep on the player
-    /// (`auras.rs`) and the charged `Skill_WeaponPool_ChargedScaling`s' passive part
-    /// ([`gd_sim::skills::charged_scaling_passive`], `charges`).
+    /// [`Loadout::profile`] plus the buffs allies' auras keep on the player and the charged
+    /// `Skill_WeaponPool_ChargedScaling`s' passive part (`charges`).
     pub fn profile_with(
         &self,
         data: &GameData,
@@ -811,8 +723,8 @@ impl Loadout {
         Some(p)
     }
 
-    /// The learned `Skill_WeaponPool_ChargedScaling`s with charges (`charges`) of the effective `book`:
-    /// (skill, passive records, their offensive modifiers), [`gd_sim::skills::charged_scaling_passive`].
+    /// The learned `Skill_WeaponPool_ChargedScaling`s with charges (`charges`) of the effective `book`: (skill,
+    /// passive records, their offensive modifiers).
     #[allow(clippy::type_complexity)]
     fn charged_passives(
         db: &Database,
@@ -853,10 +765,9 @@ impl Loadout {
     }
 
     /// `SkillManager::GetActiveLifeCost` / `GetActiveManaCost`: [`gd_sim::actor::active_cost`] summed over the
-    /// active `SkillActivatedBuffSelf` skills: the learned and item toggles that are on (their profile at the
-    /// effective level of `book`, with the learned modifiers) and the running timed buffs ([`Self::buffs`]: each
-    /// entry is already the cast's profile record, its learned modifiers follow as entries of their own). PORT:
-    /// the gear skill modifiers (`Skill.gearModifiers`) are not summed (no stock modifier has an active cost).
+    /// active `SkillActivatedBuffSelf` skills: the learned and item toggles that are on (at the effective level of
+    /// `book`, with the learned modifiers) and the running timed buffs ([`Self::buffs`]). PORT: the gear skill
+    /// modifiers are not summed (no stock modifier has an active cost).
     fn active_costs(&self, db: &Database, trees: &SkillTrees, book: &SkillBook) -> [f32; 2] {
         use gd_sim::actor::active_cost;
         let buff_self = |class: &str| gd_sim::skills::class_info(class).buff_self;
@@ -892,8 +803,8 @@ impl Loadout {
             add(active_cost(&prof, level as usize - 1, &mods));
         }
         for (r, li) in self.buffs.stat_records(db) {
-            // A running buff's stat record is its profile: its own record (a
-            // `SkillActivatedBuffSelf`), a wrapper's buff record, or a learned modifier.
+            // A running buff's stat record is its profile: its own record, a wrapper's buff record, or a learned
+            // modifier.
             if buff_self(&r.class)
                 || r.class.starts_with("SkillBuff_")
                 || gd_sim::skills::is_modifier_class(&r.class)
@@ -905,27 +816,21 @@ impl Loadout {
     }
 }
 
-/// What spawning a player builds from the save (or a new character): the shared construction of the game's
-/// `spawn_player` and the headless `gd_game::testing` one. `unlock` adds the skills the account and the dev hooks
-/// grant before the loadout is built (the game's account unlocks live in grimdawn).
+/// What spawning a player builds from the save (or a new character), shared by the game and the test harness.
 pub struct SpawnData {
     pub female: bool,
-    /// The worn items' look records (the body's equipment).
+    /// The worn items' look records.
     pub equipment: Vec<String>,
     pub bundle: (Player, Combatant, Loadout),
 }
 
-/// The player's skill book with equipment bonuses applied
-/// ([`Loadout::effective_skills`]): what every reader shows and uses as the
-/// player's skill levels. Kept current by `gd_game::player::derive_effective_skills`.
+/// The player's skill book with equipment bonuses applied ([`Loadout::effective_skills`]): what every reader uses
+/// as the player's skill levels.
 #[derive(Component, Clone, Default, PartialEq, Deref)]
 pub struct EffectiveSkills(pub SkillBook);
 
-/// The worn items' toggles of the player ([`Loadout::item_toggles`]:
-/// record, level), the worn sets' piece counts
-/// ([`gd_sim::items::sets::worn_sets`]) and every item / set skill that is
-/// not also learned, kept by `gd_game::player::unequipped_toggles` to see one leave with
-/// its item or a set's count change.
+/// The worn items' toggles of the player (record, level), the worn sets' piece counts and every item / set skill
+/// that is not also learned, kept to see one leave with its item or a set's count change.
 #[derive(Component, Clone, Default, PartialEq, Debug)]
 pub struct ItemToggles(
     pub Vec<(String, u32)>,

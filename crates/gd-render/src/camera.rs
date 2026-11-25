@@ -1,6 +1,5 @@
 //! The game camera's view: `GAME::WorldCamera` (vertical FOV 30°, near 1, far 250) orbiting a target, with the
-//! distance/pitch limits from `records/game/gameengine.dbr`, its placement and the shake. The input that moves it
-//! (zoom, rotation, follow) is `camera_input.rs`'s. (Game.dll `GameCamera`):
+//! distance/pitch limits from `records/game/gameengine.dbr`, its placement and the shake (Game.dll `GameCamera`):
 //! - Defaults (`GameEngine::LoadFromDatabase`, `GameCamera::ResetToDefaults`, also run by
 //!   `GameEngine::ExitPlayingMode`): distance `CameraDistanceDefault`, yaw 50° (0.8726646 rad), the pitch of that distance.
 //! - The pitch follows the distance (`GameCamera::UpdatePitch`, [`pitch_for`]): linear from
@@ -34,7 +33,7 @@ pub struct GameCamera {
 
 /// `GameCamera::GetTarget`: the look-at point is the target raised 1 m.
 pub const TARGET_RAISE: f32 = 1.0;
-/// `GameCamera::ResetToDefaults`: the start yaw, 50°.
+/// `GameCamera::ResetToDefaults`: 50°.
 pub const DEFAULT_YAW: f32 = 0.872_664_6;
 
 /// `GameCamera::UpdatePitch`: the pitch (radians) at distance `d` (module doc).
@@ -78,9 +77,7 @@ impl Plugin for CameraPlugin {
     }
 }
 
-/// The world camera's projection (module doc). `WorldCamera::WorldCamera`:
-/// fov 0.5236 (30°), near 1, far 250 (copied to `WorldCamera.farPlane` by `WorldCamera::Update`; Game.dll never
-/// changes it).
+/// `WorldCamera::WorldCamera`: fov 30°, near 1, far 250 (Game.dll never changes it).
 pub fn world_projection() -> PerspectiveProjection {
     PerspectiveProjection {
         fov: std::f32::consts::FRAC_PI_6,
@@ -117,7 +114,7 @@ fn spawn_camera(mut commands: Commands, data: Res<GameData>) {
     ));
 }
 
-/// Test hooks: GD_CAM_YAW=<degrees> overrides the starting yaw, GD_CAM_DIST the starting distance (unclamped).
+/// GD_CAM_YAW=<degrees> overrides the starting yaw, GD_CAM_DIST the starting distance (unclamped).
 #[cfg(feature = "dev")]
 fn camera_hooks(hooks: Res<gd_game_core::hooks::Hooks>, mut cams: Query<&mut GameCamera>) {
     for mut cam in &mut cams {
@@ -131,8 +128,7 @@ fn camera_hooks(hooks: Res<gd_game_core::hooks::Hooks>, mut cams: Query<&mut Gam
     }
 }
 
-/// `GameEngine::ExitPlayingMode` → `GameCamera::ResetToDefaults`: a session's end puts the camera back to its start
-/// distance and yaw (`exit.rs`).
+/// `GameEngine::ExitPlayingMode` → `GameCamera::ResetToDefaults`.
 pub fn reset_cameras(world: &mut World) {
     let mut q = world.query::<&mut GameCamera>();
     for mut c in q.iter_mut(world) {
@@ -141,7 +137,6 @@ pub fn reset_cameras(world: &mut World) {
 }
 
 impl GameCamera {
-    /// `ResetToDefaults`: the default distance and yaw, no zoom under way, no rotation.
     pub fn reset_to_defaults(&mut self) {
         self.distance = self.distance_default;
         self.yaw = DEFAULT_YAW;
@@ -158,7 +153,6 @@ impl GameCamera {
         self.wanted_yaw = DEFAULT_YAW;
     }
 
-    /// The pitch of the current distance ([`pitch_for`]).
     pub fn pitch(&self) -> f32 {
         pitch_for(
             self.distance,
@@ -167,12 +161,10 @@ impl GameCamera {
         )
     }
 
-    /// The point the camera looks at: the target raised [`TARGET_RAISE`].
     pub fn look_at(&self) -> Vec3 {
         self.target + Vec3::Y * TARGET_RAISE
     }
 
-    /// The eye position: `distance` from [`GameCamera::look_at`] along yaw / pitch.
     pub fn eye(&self) -> Vec3 {
         let pitch = self.pitch();
         self.look_at()
@@ -186,7 +178,6 @@ impl GameCamera {
 
 pub fn apply_camera(mut cams: Query<(&GameCamera, &mut Transform)>) {
     for (cam, mut t) in &mut cams {
-        // A still camera leaves its transform unmarked (no propagation or frustum update downstream).
         t.set_if_neq(Transform::from_translation(cam.eye()).looking_at(cam.look_at(), Vec3::Y));
     }
 }

@@ -43,11 +43,8 @@
 //!   mode it never opens); opening another window closes it.
 //!
 //! PORT: the info text sits at the info scroll window's origin (its widget has no record); the name box height is
-//! its record height; the 400 px reward wrap is UI-scaled; the scroll windows are the journal's
-//! (`window::pane` / `scrollbar_live`). The faction name and the bar texts truncate to their box / bar, and the
-//! row pitch follows the content (name + bar) rather than the item texture's height, so long localised labels and
-//! swapped bitmaps flow instead of overflowing (UX over parity). Hooks (hooks.rs): `GD_UI_OPEN=factions`,
-//! `GD_FACTION_SELECT=<row>`, `GD_FACTION_HOVER=bar|tier<n>|row<n>|rowbar<n>|booster<n>`.
+//! its record height; the 400 px reward wrap is UI-scaled. The faction name and the bar texts truncate to their
+//! box / bar, and the row pitch follows the content (name + bar) rather than the item texture's height.
 use super::Ui;
 use super::contains;
 use super::window::Rebuild;
@@ -91,59 +88,55 @@ impl Plugin for FactionsUiPlugin {
     }
 }
 
-/// UI-only state: open, the selected row (`FactionWindow.selectedRow`: none = the first), the list's and the info box's
+/// UI-only state: the selected row (`FactionWindow.selectedRow`: none = the first), the list's and the info box's
 /// scroll.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct FactionsView {
     pub open: bool,
     pub selected: Option<usize>,
     pub scroll: [f32; 2],
-    /// `GD_FACTION_HOVER` (hooks.rs), copied by [`test_hooks`]: [`hovered`] reports that part.
     #[cfg(feature = "dev")]
     pub hover_hook: Option<String>,
 }
 
-/// A hit area of the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Close,
-    /// A list row (its list item).
     Row(usize),
     RowBar(usize),
     /// A row's booster mark (`true`: the positive one).
     Booster(usize, bool),
     LargeBar,
-    /// A tier mark of the large bar, by its hover index (1..4).
+    /// By its hover index (1..4).
     Tier(u8),
 }
 
-/// A scroll window of the built window (screen px).
+/// Screen px.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Pane {
     pub clip: URect,
     pub max: f32,
 }
 
-/// The built window (physical px). Empty while it is closed.
+/// Physical px. Empty while closed.
 #[derive(Resource, Default)]
 pub struct FactionsLayout {
     pub window: Option<URect>,
-    /// Close button, tier marks, large bar (in hit-test order).
+    /// In hit-test order.
     parts: Vec<(URect, Part)>,
     /// List parts at scroll 0 (boosters before the bar before the row).
     rows: Vec<(URect, Part)>,
-    /// The list (0) and the info box (1).
     pub panes: [Option<Pane>; 2],
     bars: [Option<super::window::Bar>; 2],
     /// Rollover lines (style, text, wrapped) per part.
     tips: Vec<(Part, Vec<(String, String, bool)>)>,
-    /// The row bars whose text switches to numbers under the cursor (not full).
+    /// Not full.
     numbered: Vec<usize>,
     version: u64,
 }
 
 impl FactionsLayout {
-    /// The part under `p` (screen px), the list scrolled by `scroll`.
+    /// Screen px, the list scrolled by `scroll`.
     pub fn part_at(&self, p: Vec2, scroll: f32) -> Option<Part> {
         if let Some((_, part)) = self.parts.iter().find(|(r, _)| contains(r, p)) {
             return Some(*part);
@@ -159,7 +152,6 @@ impl FactionsLayout {
             .map(|(_, part)| *part)
     }
 
-    /// The centre of a named part (`GD_FACTION_HOVER`), screen px at `scroll`.
     #[cfg(feature = "dev")]
     fn named(&self, name: &str, scroll: f32) -> Option<(Part, Vec2)> {
         let n = |k: &str| name.strip_prefix(k).and_then(|v| v.parse::<usize>().ok());
@@ -188,13 +180,12 @@ impl FactionsLayout {
             .map(|c| (want, c))
     }
 
-    /// The rollover lines of `part`.
     pub fn tip(&self, part: Part) -> Option<&Vec<(String, String, bool)>> {
         self.tips.iter().find(|(p, _)| *p == part).map(|(_, l)| l)
     }
 }
 
-/// The hovered part and the pointer (`GD_FACTION_HOVER`, else `GD_HOVER` / the cursor), while the window is built.
+/// The hovered part and the pointer, while the window is built.
 pub fn hovered(layout: &FactionsLayout, view: &FactionsView, win: &Window) -> Option<(Part, Vec2)> {
     layout.window?;
     #[cfg(feature = "dev")]
@@ -211,7 +202,7 @@ struct FactionsRoot;
 #[derive(Component)]
 struct BarsRoot;
 
-/// The scrolled child of a scroll window ([`super::window::pane`]): `pane` 0 the list, 1 the info box.
+/// `pane` 0 the list, 1 the info box.
 #[derive(Component)]
 struct Scrolled {
     pane: usize,
@@ -219,23 +210,20 @@ struct Scrolled {
     inv: f32,
 }
 
-/// The hovered row's highlight (moved by [`live`]).
 #[derive(Component)]
 struct HoverMark;
 
-/// A row bar's text: the label, or the numbers shown under the cursor.
 #[derive(Component)]
 struct BarText {
     row: usize,
     numbers: bool,
 }
 
-/// The close button's `bitmapNameInFocus`.
 #[derive(Component)]
 struct CloseFocus;
 
-/// The rows in the engine's order: (faction index, localised name), sorted by UTF-16 code units (later equal names
-/// replace earlier ones), shown ones only.
+/// The shown rows in the engine's order: (faction index, localised name), sorted by UTF-16 code units (later
+/// equal names replace earlier ones).
 fn rows(
     fonts: &super::text::FontCache,
     list: &[Faction],
@@ -319,8 +307,7 @@ pub(super) fn pane_rects(ui: &Ui, sw: &gd_formats::arz::Record, o: Vec2) -> (URe
     (window, clip)
 }
 
-/// A `BarGraph` (`bargraph.tpl`) at `at` (px): the empty bitmap, the full one stretched into the filled width
-/// (`UIBar::Render`); returns its rect.
+/// A `BarGraph` (`bargraph.tpl`) at `at` (px) (`UIBar::Render`); returns its rect.
 fn draw_bar(ui: &mut Ui, bar: &gd_formats::ui::BarGraph, at: Vec2, frac: f32) -> Option<URect> {
     let empty = bar.empty.as_deref().and_then(|p| ui.image(p));
     let full = bar.full.as_deref().and_then(|p| ui.image(p));
@@ -357,7 +344,7 @@ fn numbers(v: &BarValue) -> String {
     format!("{a}/{b}")
 }
 
-/// The large bar's rollover for hover index `h` (module doc; `FactionWindow::UpdateBars`).
+/// `FactionWindow::UpdateBars`.
 fn standing_lines(
     ui: &mut Ui,
     levels: &Levels,
@@ -441,8 +428,6 @@ fn standing_lines(
     out
 }
 
-/// `GD_UI_OPEN` / `GD_FACTION_SELECT` / `GD_FACTION_HOVER` (hooks.rs): the window once the player exists, on that
-/// row; the hovered part.
 #[cfg(feature = "dev")]
 fn test_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -467,9 +452,8 @@ fn test_hooks(
     }
 }
 
-/// The factions window key (action 52; key handler `InGameUI::HandleKeyAction` case 52): in game mode (no window open)
-/// it opens the window; in UI mode (some window open) it only closes the factions window, when that is the one
-/// open, and does nothing while another window has the focus.
+/// Action 52 (`InGameUI::HandleKeyAction`): opens the window with no window open, else only closes it when it is
+/// the open one.
 fn toggle_key(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<super::keys::KeyBindings>,
@@ -482,9 +466,8 @@ fn toggle_key(
     }
 }
 
-/// The window's open/close watcher: opening it applies the one policy ([`super::window::WindowPolicy`],
-/// `UIPlayerHud::CloseWindows` from the button and the key); a window the policy excludes opening closes it
-/// (their openers call `UIPlayerHud::ClosePanels`, which hides `UIPlayerHud.factionWindow`).
+/// The window's open/close watcher: opening it applies the [`super::window::WindowPolicy`]
+/// (`UIPlayerHud::CloseWindows`); a window the policy excludes opening closes it (`UIPlayerHud::ClosePanels`).
 fn exclusive(
     mut windows: super::window::Windows,
     policy: Res<super::window::WindowPolicy>,
@@ -515,7 +498,6 @@ fn build(
     bar_roots: Query<Entity, With<BarsRoot>>,
     mut layout: ResMut<FactionsLayout>,
     mut fresh: gd_game_core::session::NewSession,
-    // The built signature, compared with the live values by reference (the faction list is copied on a rebuild only).
     mut built: Local<Option<(UVec3, bool, Option<usize>, Vec<Faction>, u64)>>,
     mut built_bars: Local<Rebuild<u64>>,
     mut assets: gd_ui_kit::UiAssets,
@@ -526,7 +508,6 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    // The UI scale too: an applied UI Scale rebuilds the window at the new size.
     let sk = size.extend(assets.scale(size).to_bits());
     if size.x == 0 {
         return;
@@ -567,13 +548,12 @@ fn build(
             draw(&mut ui, &values.factions, view.selected, &mut layout);
         }
     }
-    // The scroll bars follow the scroll (the panes' content moves in place, [`live`]).
     for (i, p) in layout.panes.iter().enumerate() {
         if let Some(p) = p {
             view.scroll[i] = view.scroll[i].clamp(0.0, p.max);
         }
     }
-    // The scroll is not keyed: `live` moves the thumbs in place.
+    // The scroll is not keyed: `live` moves the thumbs.
     let bar_sig = layout.version;
     if !built_bars.changed(bar_sig) {
         return;
@@ -619,7 +599,7 @@ fn build(
     }
 }
 
-/// Draws the open window; the selected row is clamped to the rows (none: the first, `FactionWindow::UpdateBars`).
+/// The selected row is clamped to the rows (none: the first, `FactionWindow::UpdateBars`).
 fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut FactionsLayout) {
     use gd_sim::items::tooltip::Arg;
     let (Some(rec), Some(gf)) = (
@@ -641,7 +621,6 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
     let bitmap =
         |ui: &mut Ui, f: &str, at: Vec2, image: Option<&str>| bitmap_icon(ui, &field(f), at, image);
     let text_rec = |ui: &mut Ui, f: &str| ui.record(&field(f)).map(|t| TextBox::from_record(&t));
-    // The selected faction's sources (module doc).
     let detail = sel.map(|row| rows[row].0);
     let sources: Vec<String> = detail
         .map(|i| {
@@ -734,7 +713,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
                 }
             }
         }
-        // The large bar and its overlay, the tier marks' hit areas (tested first, `FactionWindow::HandleMouse`).
+        // The tier marks' hit areas are tested first (`FactionWindow::HandleMouse`).
         let big = gd_rules::faction::large_bar(&levels, v);
         let (bar_f, overlay_f, tiers): (&str, &str, &[(&str, u8)]) =
             if big.kind == BarKind::Negative {
@@ -786,7 +765,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
         }
         bitmap(ui, overlay_f, o, None);
     }
-    // The list (loader `FactionWindow::Load` row layout, module doc).
+    // Row layout: `FactionWindow::Load`.
     let outer = ui.root;
     if let Some(sw) = ui.record(&field("factionScrollWindow")) {
         let (_, clip) = pane_rects(ui, &sw, o);
@@ -876,8 +855,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
                 }
                 None => (at.y, 0.0),
             };
-            // Row pitch follows the content (name + bar), not the item texture's height, so a swapped
-            // bitmap never clips the bar below it (PORT: stock pitches by the texture).
+            // PORT: row pitch follows the content (name + bar); stock pitches by the item texture.
             let mut row_bottom = (ir.y + ir.h).max(name_y + name_h);
             let below = name_y + name_h + 2.0 * s;
             let v = value(*i);
@@ -917,7 +895,7 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
             }
             c = row_bottom - clip.y + 2.0 * s;
         }
-        // The selection's and the hovered row's highlights (`FactionWindow::Render`).
+        // `FactionWindow::Render`.
         if let Some((tex, _)) = ui.image(HIGHLIGHT) {
             let [r, g, b] = HIGHLIGHT_RGB;
             if let Some(ir) = sel.and_then(|row| {
@@ -945,7 +923,6 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
         });
         ui.root = outer;
     }
-    // The info box: the faction's `Info` text wrapped at `factionInfoBoxWidth`.
     if let (Some(sw), Some(i)) = (ui.record(&field("factionInfoBox")), detail) {
         let (_, clip) = pane_rects(ui, &sw, o);
         let inner = super::window::pane(ui, clip, 0.0);
@@ -973,7 +950,6 @@ fn draw(ui: &mut Ui, factions: &[Faction], selected: Option<usize>, layout: &mut
         });
         ui.root = outer;
     }
-    // The close button (its in-focus bitmap shown by [`live`]).
     if let Some(Widget::Button { up, over, x, y, .. }) = ui.widget(&field("factionCloseButton")) {
         if let Some((_, cr)) = up.as_deref().and_then(|u| ui.bitmap(u, x, y, o)) {
             layout.parts.insert(0, (cr, Part::Close));
@@ -996,8 +972,7 @@ fn bitmap_icon(ui: &mut Ui, rec: &str, at: Vec2, icon: Option<&str>) -> Option<U
     ui.bitmap(path, x, y, at).map(|(_, r)| r)
 }
 
-/// Per frame, without a rebuild: the panes' scroll, the hovered row's highlight, the hovered row bar's numbers and
-/// the close button's focus bitmap.
+/// The panes' scroll, the hovered row's highlight, the hovered row bar's numbers and the close button's focus bitmap.
 #[allow(clippy::too_many_arguments)]
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
@@ -1039,7 +1014,6 @@ fn live(
     }
     let Ok(win) = window.single() else { return };
     let inv = 1.0 / win.scale_factor();
-    // The game menu / Options holds the cursor: no hover under it.
     let hover = hovered(&layout, &view, win)
         .filter(|_| !pause.menu)
         .map(|(p, _)| p);
@@ -1090,7 +1064,7 @@ fn live(
     }
 }
 
-/// Clicks, the wheel and the scroll bars (mouse `FactionWindow::HandleMouse`; the scroll windows as `potions.rs`).
+/// Clicks, the wheel and the scroll bars (`FactionWindow::HandleMouse`).
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1112,12 +1086,10 @@ fn clicks(
         return;
     };
     if pause.menu {
-        // Modal: the game menu / Options takes the wheel and presses.
         wheel.clear();
         *held = None;
         return;
     }
-    // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
     let Some(p) = super::cursor_px(win) else {
         return;

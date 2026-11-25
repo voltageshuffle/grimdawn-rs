@@ -3,9 +3,7 @@
 //! random stream ([`Rng`]). No Bevy, no I/O beyond reading a [`gd_formats`]
 //! record.
 //!
-//! Shared by the two big consumers — gd-sim (combat, items, proxies) and
-//! gd-story (quests, Lua, the Shattered Realm generator) — so they use these
-//! rules without depending on each other and compile in parallel.
+//! Shared by gd-sim and gd-story so neither depends on the other.
 //! Layering: `gd-formats → gd-rules → {gd-sim ∥ gd-story}`.
 pub mod expr;
 pub mod faction;

@@ -1,7 +1,7 @@
 //! Projectile trails (`projectileWeaponTrail` → a `WeaponTrail` record):
 //! a ribbon through the recent positions of two anchor points, textured with
-//! `Texture` (additive `trailadditive.ssh`: texture × vertex colour, nothing
-//! more, per its ps_1_1 code), coloured by `Red/Green/Blue/Alpha256`.
+//! `Texture` (additive `trailadditive.ssh`: texture × vertex colour),
+//! coloured by `Red/Green/Blue/Alpha256`.
 //!
 //! Engine.dll `TrailEffect` (`Load`, `InternalUpdate`, `ScaleSegments`, `DecrementAlpha`,
 //! `CleanSegmentList`, `RenderPass`):
@@ -22,33 +22,21 @@
 //! The anchors are the projectile mesh's `Anchor1`/`Anchor2` attach points
 //! (`Anchor3`/`Anchor4` for a second trail): `ProjectileBase::CountWeaponTrails`
 //! (Game.dll) makes no trail without `Anchor1`, `WeaponTrail::GetAnchorPoints`
-//! (Engine.dll) reads them every update ([`Trail::with_anchors`],
-//! `gd_game_core::visuals::anchors_of`); a mesh with `Anchor3` gets a second trail between
-//! `Anchor3`/`Anchor4`. The projectile spawner (`casting.rs`) gives every
-//! trail its mesh's anchors and makes none without `Anchor1`. PORT: a trail
-//! created without anchors (no caller does) falls back to a camera-facing
-//! ribbon `width` wide through the owner's position.
+//! (Engine.dll) reads them every update ([`Trail::with_anchors`]). PORT: a trail
+//! created without anchors falls back to a camera-facing ribbon `width` wide
+//! through the owner's position.
 //!
-//! `TrailEffect::StartFade` sets the fade flag (`TrailEffect.fading`, the
-//! record's `FadeAlpha`), `Liberate` stops new segments (`TrailEffect.liberated`):
-//! gameplay asks for both with `StopEmitting` on the trail entity
-//! (`gd_game::line_fan`). A let-go trail destroys itself once it has fewer
-//! than two segments (`TrailEffect::UpdateSelf`: `TrailEffect.liberated` and
-//! segment count < 2 → `ObjectManager::DestroyObjectEx` on itself). A trail
-//! that was not let go is an attached entity of its owner (`Entity::Attach`
-//! in `ProjectileBase::SwitchWeaponTrail` and the weapon's),
-//! and `ObjectManager::DestroyObjectEx` detaches and
-//! destroys every attached entity with the entity itself
-//! (`ProjectileBase::DeleteProjectile` ends there; no code
-//! stops or fades the projectile's trails first): it goes at once with its
-//! owner, segments and all ([`ended`]). `StartPulse` starts the alpha pulse
-//! (`pulseAlphaMin` / `…Max` / `…CycleTime`, `PulseAlpha` in the update; the
-//! `StartPulse` component, a line fan's line at the end of its travel).
+//! `TrailEffect::StartFade` sets the fade flag (`TrailEffect.fading`), `Liberate` stops new segments
+//! (`TrailEffect.liberated`): gameplay asks for both with `StopEmitting` on the trail entity. A let-go trail
+//! destroys itself once it has fewer than two segments (`TrailEffect::UpdateSelf`). Any other trail is an attached
+//! entity of its owner (`ProjectileBase::SwitchWeaponTrail`) and `ObjectManager::DestroyObjectEx` destroys it with
+//! the owner, segments and all, without a fade ([`ended`]). `StartPulse` starts the alpha pulse
+//! (`pulseAlphaMin` / `…Max` / `…CycleTime`, `PulseAlpha` in the update).
 //!
 //! Weapon trails (`Weapon::SwitchWeaponTrail`, Game.dll): the
 //! weapon record's `weaponTrail` (or its weapon enchantment's), attached to
 //! the weapon with its mesh's `Anchor1`/`Anchor2`; it adds segments only
-//! between `Start` and `Stop` ([`Trail::start`], driven by `fx::enchant`).
+//! between `Start` and `Stop` ([`Trail::start`]).
 use bevy::prelude::*;
 use gd_formats::msh::AttachPoint;
 use std::collections::VecDeque;
@@ -89,15 +77,11 @@ pub struct Trail {
     pub width: f32,
     /// `Anchor1`/`Anchor2` in the owner's local space.
     pub anchors: Option<(Vec3, Vec3)>,
-    /// Attach points of the owner character's body, posed each update
-    /// instead of fixed `anchors` (a character's unarmed trail, `fx::enchant`).
-    /// The names, kept to re-resolve when a form swap replaces the body mesh.
+    /// Attach point names on the owner character's posed body, used instead of `anchors` (a character's unarmed
+    /// trail).
     pub points: Option<(String, String)>,
-    /// `points` resolved on the body mesh they were read from (at spawn,
-    /// [`Trail::with_points`]): no per-frame attach-point name scan.
     resolved: Option<ResolvedPoints>,
-    /// Adding segments (`TrailEffect::Start` / `Stop`): a weapon's trail
-    /// runs only during a swing (`fx::enchant`); a projectile's always.
+    /// Adding segments (`TrailEffect::Start` / `Stop`).
     active: bool,
     /// Newest first.
     segments: VecDeque<Segment>,
@@ -113,9 +97,8 @@ struct ResolvedPoints {
 }
 
 struct TrailState {
-    /// Made once the ribbon first has 2+ segments (an empty `Mesh` asset is never added: the allocator warns about
-    /// it every frame), then kept: a persistent grow-only mesh rewritten in place (no per-frame replacement), the
-    /// entity hidden while fewer than 2 segments are left (a weapon's trail between swings).
+    /// Made once the ribbon first has 2+ segments (an empty `Mesh` asset makes the allocator warn every frame); the
+    /// entity is hidden while fewer than 2 are left.
     mesh: Option<Handle<Mesh>>,
     /// The mesh's capacity in segments (grow-only, power of two).
     cap: usize,
@@ -134,7 +117,6 @@ struct TrailState {
     pulsing: Option<(f32, bool)>,
 }
 
-/// Reused scratch for the ribbon's vertex / index data ([`update_trails`]).
 #[derive(Default)]
 struct TrailScratch {
     pos: Vec<[f32; 3]>,
@@ -157,10 +139,8 @@ impl Trail {
             state: None,
         }
     }
-    /// Starts adding segments again. `TrailEffect::Start` (Engine.dll) only refreshes the
-    /// bounding box and sets the emitting flag (`TrailEffect.emitting`): the previous swing's segments stay, still
-    /// fading, and the
-    /// new ribbon joins on to them.
+    /// Starts adding segments again. `TrailEffect::Start` only sets `TrailEffect.emitting`: the previous swing's
+    /// segments stay, still fading, and the new ribbon joins on to them.
     pub fn start(&mut self) {
         self.active = true;
     }
@@ -177,15 +157,13 @@ impl Trail {
         self.active = false;
         self
     }
-    /// Use these owner-local anchor points as the ribbon's edges.
+    /// Owner-local anchor points as the ribbon's edges.
     pub fn with_anchors(mut self, anchors: (Vec3, Vec3)) -> Self {
         self.anchors = Some(anchors);
         self
     }
-    /// Use these attach points of the owner character's posed body as the
-    /// ribbon's edges (`WeaponTrail::GetAnchorPoints` reads the actor's attach
-    /// point coords every update). Resolved on `body` once here; a form swap
-    /// that replaces the mesh re-resolves the names.
+    /// Attach points of the owner character's posed body as the ribbon's edges (`WeaponTrail::GetAnchorPoints`
+    /// reads the actor's attach point coords every update).
     pub fn with_points(mut self, body: &Arc<gd_formats::msh::Mesh>, a: &str, b: &str) -> Self {
         self.resolved = Some(ResolvedPoints {
             body: body.clone(),
@@ -197,15 +175,12 @@ impl Trail {
     }
 }
 
-/// The trail is over and its entity goes (with it the mesh and material,
-/// whose only handles it holds). Module doc: a let-go one (`StopEmitting`)
-/// once fewer than two segments are left, wherever its owner is; any other
-/// one together with its owner.
+/// Whether the trail's entity goes (module doc): a let-go one (`StopEmitting`) once fewer than two segments are left,
+/// any other one together with its owner.
 fn ended(owner_alive: bool, let_go: bool, segments: usize) -> bool {
     if let_go { segments < 2 } else { !owner_alive }
 }
 
-// The reused ribbon scratch is a system Local alongside the queries and assets.
 #[allow(clippy::too_many_arguments)]
 fn update_trails(
     mut commands: Commands,
@@ -285,10 +260,8 @@ fn update_trails(
                 pulsing: None,
             });
         }
-        // Gameplay ended it (`StopEmitting`: a line fan's line,
-        // `TrailEffect::StartFade` + `Liberate`): no more segments, and the
-        // ones there fade whatever `FadeAlpha` says (`StartFade` sets the
-        // fade flag `TrailEffect.fading` that `DecrementAlpha` / `CleanSegmentList` test).
+        // `StopEmitting` (`TrailEffect::StartFade` + `Liberate`): no more segments, and the ones there fade whatever
+        // `FadeAlpha` says.
         if stopped {
             t.active = false;
             if let Some(s) = &mut t.state {
@@ -414,8 +387,6 @@ fn update_trails(
         }
         vis.set_if_neq(Visibility::Inherited);
         let n = t.segments.len();
-        // Grow the persistent mesh only when the ribbon outgrows it; otherwise
-        // rewrite its attributes in place (no asset replacement / re-upload).
         let cap = {
             let st = t.state.as_mut().unwrap();
             if st.mesh.is_none() || st.cap < n {
@@ -480,8 +451,7 @@ fn update_trails(
                 .idx
                 .extend_from_slice(&[a, a + 1, a + 2, a + 1, a + 3, a + 2]);
         }
-        // Pad to capacity with degenerate (zero-index) triangles; the unused
-        // vertices keep the last position so the mesh's AABB stays on the ribbon.
+        // Pad with degenerate triangles; the unused vertices keep the last position so the AABB stays on the ribbon.
         let last = scratch.pos[n * 2 - 1];
         scratch.pos.resize(cap * 2, last);
         scratch.uv.resize(cap * 2, [0.0; 2]);

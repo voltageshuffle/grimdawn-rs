@@ -38,14 +38,12 @@ fn ground(g: &mut TestGame) -> Vec<(Entity, Vec3)> {
         .collect()
 }
 
-/// Gold within 4 m is picked up; 12 m away it stays.
 #[test]
 fn gold_nearby_is_picked_up() {
     let Some((mut g, _)) = game() else { return };
     let before = g.progress().gold;
     drop(&mut g, Vec3::new(1.0, 0.0, 0.0), Vec::new(), &[25]);
-    // The scan runs every 50 ms (`Player::kAutoPickupPeriod`), from the
-    // release (250 ms) and the pick-up delay (750 ms) on.
+    // Past the release (250 ms) and the pick-up delay (750 ms).
     for _ in 0..150 {
         g.step();
         if g.progress().gold != before {
@@ -54,7 +52,7 @@ fn gold_nearby_is_picked_up() {
     }
     assert_eq!(g.app.world().resource::<PlayerProgress>().gold, before + 25);
     assert!(ground(&mut g).is_empty());
-    // "+25 Iron" floats up from the player (`Character::TakeBonus`, event 27).
+    // "+25 Iron" floats up from the player.
     let texts: Vec<_> = g
         .app
         .world()
@@ -86,7 +84,6 @@ fn gold_nearby_is_picked_up() {
     assert_eq!(ground(&mut g).len(), 1);
 }
 
-/// Clicking an item (its target + a path) walks over and bags it.
 #[test]
 fn targeted_item_goes_to_the_bags() {
     let Some((mut g, p)) = game() else { return };
@@ -102,7 +99,6 @@ fn targeted_item_goes_to_the_bags() {
         }],
         &[],
     );
-    // Thrown: lands after ~0.9 s.
     g.steps(60);
     let (e, at) = ground(&mut g)[0];
     let have = g.app.world().resource::<Inventory>().count_by_record(rec);

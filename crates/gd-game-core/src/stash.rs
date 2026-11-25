@@ -1,30 +1,16 @@
-//! The account's stash, blacksmith materials and learned blueprints (the
-//! game loads and saves them). The shared files are the hardcore twins (`.gsh`) for a hardcore character
-//! ([`shared_path`], `GameEngine::GetSharedSavePath`): its transfer stash is its own; a new transfer
-//! file gets the expansion flags [`LOADED_EXPANSIONS`].
+//! The account's stash, blacksmith materials and learned blueprints. A hardcore character uses the
+//! `.gsh` shared files ([`shared_path`], `GameEngine::GetSharedSavePath`); a new transfer file gets
+//! [`LOADED_EXPANSIONS`].
 //!
-//! Move reagents ([`DepositReagents`], the character window's
-//! `reagentDepositButton`): `PlayerInventoryCtrl::DepositReagents`
-//! (Game.dll) runs `InventorySack::DepositSackIntoReagents` on every
-//! sack (main bag and extra bags, not the worn items): each item whose record
-//! has `craftingMaterial` set (`Item::Load`, `Item.craftingMaterial`) goes into the
-//! material storage (`GameEngine::AddItemToReagents`: a store keyed by record
-//! name, the stack added to the stored count; no capacity, it never refuses)
-//! and is removed from the sack; when anything moved, `GameEngine::SaveReagents`.
-//! PORT: `reagents.gst` is written with the next save (`save.rs`), not at once.
+//! Move reagents ([`DepositReagents`]): `PlayerInventoryCtrl::DepositReagents` (Game.dll) runs
+//! `InventorySack::DepositSackIntoReagents` on every bag (not worn items): each `craftingMaterial`
+//! item goes into the material storage (`GameEngine::AddItemToReagents`: keyed by record, no
+//! capacity) and leaves the sack. PORT: `reagents.gst` is written with the next save, not at once.
 //!
-//! A shared store the save will not write ([`SharedFiles`]: unreadable at load and not set aside) refuses
-//! deposits (PORT, [`SharedFiles::accepts`]): placing, quick-moving or storing an item into a blocked transfer
-//! stash or material storage, and the reagent deposit button, are answered like a refused transfer
-//! ([`QuickActionError`] with its notification) and change nothing, so nothing goes where it would be lost.
-//! Taking items out stays allowed (the unsaved store then still holds them: a duplicate, never a loss).
-//!
-//! The per-character map files (`quests.gdd`, `conversations.gdd`, `map.fow`) get the same guard
-//! ([`read_guarded`]: `story.rs` / `fog.rs` load, `save.rs` write): one the load could not read is set
-//! aside to `.bak` and never rewritten from the empty runtime, so a transient I/O error or a
-//! version-rejected file is not a permanent quest / fog wipe.
-//!
-//! Shift + left click on a bag item with the caravan open ([`StashRequest::QuickMove`]): [`quick_move`].
+//! PORT: a shared store the save will not write ([`SharedFiles::accepts`]) refuses deposits like a
+//! refused transfer ([`QuickActionError`]), so nothing goes where it would be lost; taking out stays
+//! allowed. The per-character map files (`quests.gdd`, `conversations.gdd`, `map.fow`) get the same
+//! guard ([`read_guarded`]): an unreadable one is set aside to `.bak` and never rewritten from empty.
 use crate::inventory::Inventory;
 use bevy::prelude::*;
 use gd_formats::inventory::{Footprint, Sack};
@@ -38,21 +24,20 @@ pub struct Stash {
     pub transfer: Vec<Sack<Item>>,
     /// The loaded `transfer.gst` (header kept when saving).
     pub transfer_file: gd_formats::save::gst::Transfer,
-    /// The blacksmith's material storage (`reagents.gst`).
+    /// `reagents.gst`.
     pub materials: gd_formats::save::gst::Reagents,
-    /// Learned blueprints and the `formulas.gst` file (the `itemName` records).
+    /// Learned blueprints and the `formulas.gst` file.
     pub formulas: gd_formats::save::tagged::Tagged,
-    /// Stash items of the files that found no cell on load (`inventory::place_saved`), `true` = the
-    /// transfer stash: written back at their saved page and cell (`to_sacks`).
+    /// Stash items that found no cell on load, `true` = transfer stash: written back at their saved
+    /// page and cell.
     pub unplaced: Vec<(bool, crate::inventory::Unplaced)>,
-    /// Per page, the layout its sort button starts with ([`StashRequest::Sort`]), `[personal, transfer]`
-    /// (`StashTab.sortCounts`; a page past the end is at 0). Session state, never saved.
+    /// Per page, the layout its sort button starts with, `[personal, transfer]` (`StashTab.sortCounts`).
+    /// Never saved.
     pub sort_layouts: [Vec<u32>; 2],
 }
 
 impl Stash {
-    /// Learns a blueprint (using an `ItemArtifactFormula` item); false when
-    /// it was known already.
+    /// Learns a blueprint; false when it was known already.
     pub fn learn(&mut self, record: &str) -> bool {
         self.formulas.learn_formula(record)
     }
@@ -154,16 +139,12 @@ pub const STASH_W: u32 = 10;
 
 pub const STASH_H: u32 = 19;
 
-/// The expansion flags a shared file is written with (`GameEngine::WritePlayerTransfer`:
-/// on every write, 1 / 2 / 4 for `IsExpansion1/2/3Loaded`). PORT: the port always mounts the
-/// three expansions (`gd_formats::vfs`), so all three are set.
+/// The expansion flags a shared file is written with (`GameEngine::WritePlayerTransfer`: 1 / 2 / 4
+/// for `IsExpansion1/2/3Loaded`). PORT: the port always mounts all three.
 pub const LOADED_EXPANSIONS: u8 = 7;
 
-/// Where an account-wide file ([`Shared`]: `transfer`, `reagents`, `formulas`, `transmutes`; `.gsh` for a
-/// hardcore character, [`Shared::file_name`]) is read from: the shared folder (`Choice::shared_save_dir`:
-/// `save/`, or `save/<mod>/` in a custom game) of the loaded character's save tree
-/// (`save/main/_<name>/player.gdc` → `save/`; read only), else the port's. Always written to the port's
-/// (`Choice::shared_file`, `save.rs`).
+/// Where an account-wide file ([`Shared`]) is read from: the shared folder (`Choice::shared_save_dir`)
+/// of the loaded character's save tree, else the port's. Always written to the port's.
 pub fn shared_path(
     choice: &crate::session::Choice,
     save_dir: &crate::session::SaveDir,
@@ -179,23 +160,20 @@ pub fn shared_path(
         .unwrap_or_else(|| in_tree(save_dir))
 }
 
-/// Save files this process must not write: a shared store ([`read_shared`]) or a per-character map file
-/// (`quests.gdd`, `conversations.gdd`, `map.fow`; [`read_guarded`]) that could not be read (I/O error,
-/// truncated, a format this port does not parse) and could not be moved aside either. Keyed by the write
-/// target and brought up to date by every read, so it needs no session reset.
+/// Save files this process must not write: a shared store or per-character map file that could not
+/// be read and could not be moved aside either. Keyed by the write target and refreshed by every
+/// read, so it needs no session reset.
 #[derive(Resource, Default)]
 pub struct SharedFiles {
     blocked: Vec<std::path::PathBuf>,
 }
 
 impl SharedFiles {
-    /// The save may write `target` (`save.rs` `write_shared`).
     pub fn writable(&self, target: &std::path::Path) -> bool {
         !self.blocked.iter().any(|p| p == target)
     }
 
-    /// The store of `file` (transfer stash, material storage) takes deposits: only while the save writes it
-    /// (module doc).
+    /// The store of `file` takes deposits: only while the save writes it.
     pub fn accepts(
         &self,
         choice: &crate::session::Choice,
@@ -206,7 +184,6 @@ impl SharedFiles {
     }
 }
 
-/// Reads the account-wide file `file` ([`shared_path`]) under the save guard ([`read_guarded`]).
 pub fn read_shared<T>(
     shared: &mut SharedFiles,
     choice: &crate::session::Choice,
@@ -219,12 +196,9 @@ pub fn read_shared<T>(
     read_guarded(shared, &path, &target, parse)
 }
 
-/// Reads `path` under the save guard. `None` = start from a new empty file: right when the file is
-/// absent. When it exists but cannot be read or parsed, the user's data must survive this session's
-/// saves: whatever sits at the write `target` (the port's save folder) is renamed to `<file>.bak`
-/// (`.bak1`, ... when taken) before anything can be written there; if that fails the target is blocked
-/// ([`SharedFiles`]) and the saves skip it. The shared stores ([`read_shared`]) and the per-character
-/// map files (`story.rs`, `fog.rs`) both read through here. PORT: the engine's handling of an unreadable
+/// Reads `path` under the save guard. `None` = start from a new empty file. An existing file that
+/// cannot be read or parsed has its write `target` renamed to `<file>.bak` (`.bak1`, ...) first; if
+/// that fails the target is blocked ([`SharedFiles`]). PORT: the engine's handling of an unreadable
 /// save file is not traced.
 pub fn read_guarded<T>(
     files: &mut SharedFiles,
@@ -279,8 +253,7 @@ fn set_aside(target: &std::path::Path) -> std::io::Result<Option<std::path::Path
     Ok(Some(bak))
 }
 
-/// File sacks to stash pages ([`crate::inventory::place_saved`]); the items no page holds go to `unplaced`
-/// flagged `transfer`.
+/// File sacks to stash pages; items no page holds go to `unplaced` flagged `transfer`.
 pub fn to_pages(
     sacks: &[gd_formats::save::item::StashSack],
     inv: &mut Inventory,
@@ -309,11 +282,9 @@ pub fn to_pages(
     pages
 }
 
-/// The page size of a file sack: a zero dimension is the default page (`STASH_W` / `STASH_H`) — the
-/// engine writes a fresh character's empty stash sack as 0×0 (`new_character`) and reads it back at the
-/// default size. Personal pages are fixed-size by game rules, so a 1×1 personal page (what a 0×0 sack
-/// became before this fix, persisted by `to_sacks`) is healed to the default too; a transfer page keeps
-/// its saved size. PORT: the engine's exact reading of a 0 / 1×1 sack is not traced.
+/// The page size of a file sack: a zero dimension is the default page (the engine writes a fresh
+/// character's empty stash sack as 0×0). A 1×1 personal page is healed to the default too; a transfer
+/// page keeps its saved size. PORT: the engine's reading of a 0 / 1×1 sack is not traced.
 fn page_size(width: u32, height: u32, transfer: bool) -> (u32, u32) {
     let w = if width == 0 { STASH_W } else { width };
     let h = if height == 0 { STASH_H } else { height };
@@ -324,13 +295,11 @@ fn page_size(width: u32, height: u32, transfer: bool) -> (u32, u32) {
     }
 }
 
-/// Move every crafting material from the bags into the material storage
-/// (module doc).
+/// Move every crafting material from the bags into the material storage.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct DepositReagents;
 
-/// Moves the bags' `craftingMaterial` items into `stash.materials`; returns
-/// how many items (stacks) moved.
+/// Returns how many items (stacks) moved.
 pub fn deposit_reagents_now(
     db: &gd_formats::vfs::Database,
     inv: &mut Inventory,
@@ -359,8 +328,8 @@ pub fn deposit_reagents_now(
     moved
 }
 
-/// Stash pages back to file sacks, keeping each old sack's id, flags and name; the load's `unplaced` items
-/// ([`Stash::unplaced`]) go back to their page at their saved cell.
+/// Stash pages back to file sacks, keeping each old sack's id, flags and name; `unplaced` items go
+/// back to their saved cell.
 pub fn to_sacks<'a>(
     old: &[gd_formats::save::item::StashSack],
     pages: &[Sack<Item>],
@@ -418,8 +387,7 @@ pub fn page_cost(window: &gd_formats::arz::Record, pages: usize) -> Option<u64> 
     costs.get(pages).map(|c| *c as u64)
 }
 
-/// What the next page of the personal (`transfer`: the transfer) stash costs: [`page_cost`] of the caravan
-/// window's `StashWindow` / `TransferWindow`; `None` when no more can be bought.
+/// [`page_cost`] of the caravan window's `StashWindow` / `TransferWindow`.
 pub fn next_page_cost(
     db: &gd_formats::vfs::Database,
     stash: &Stash,
@@ -436,55 +404,40 @@ pub fn next_page_cost(
     page_cost(window, stash.view(transfer).len())
 }
 
-/// The caravan window's clicks, resolved by the UI from its layout;
-/// `gd_game::stash::apply_stash_requests` applies them and answers with a
-/// `gd_game::trade::TradeDone` (the window rebuilds). `page` is
-/// the shown page (clamped to the pages there are).
+/// The caravan window's clicks, resolved by the UI; answered with a `gd_game::trade::TradeDone`.
+/// `page` is the shown page (clamped).
 #[derive(Message, Clone, Debug)]
 pub enum StashRequest {
-    /// Left click on cell `cell` of the page: pick up / place / swap with
-    /// the held item (`cursor`: in cells from the grid's top-left,
-    /// [`drop_cell`](gd_formats::inventory::drop_cell)).
+    /// Left click on cell `cell` of the page: pick up / place / swap with the held item (`cursor`: in
+    /// cells from the grid's top-left).
     Click {
         transfer: bool,
         page: usize,
         cell: (u32, u32),
         cursor: Vec2,
     },
-    /// The page's sort button (the caravan's `StashTab::SortSelectedSack` → `InventorySack::Sort`, layouts and
-    /// retry: `gd_formats::inventory` module doc). It starts with the page's [`Stash::sort_layouts`] and adds
-    /// the retries that moved nothing to it, but not the press itself: a messy page is sorted in the page's
-    /// current layout, an already sorted one goes on to the next layout that moves anything.
+    /// The page's sort button (`StashTab::SortSelectedSack` → `InventorySack::Sort`). Starts with the
+    /// page's [`Stash::sort_layouts`] and adds the retries that moved nothing, not the press: a messy
+    /// page sorts in its current layout, a sorted one goes on to the next layout that moves anything.
     Sort { transfer: bool, page: usize },
-    /// The buy-a-page tab, sent once the player answered Yes to the window's question (GrimDawn.exe
-    /// caravan click `CaravanWindow::PromptBuy`: gold below [`page_cost`] → an Ok box `tagTransferError01`, else
-    /// the Yes / No box `tagTransferPurchase01`, both with the cost; Yes → `CaravanWindow::OnBuyPageYes` /
-    /// `CaravanWindow::BuyPage`): pays
-    /// the cost and appends a page, the answer names it; still short of gold, it refuses with
-    /// `tagTransferError01` (`gd_game::trade::TradeRefused`), as the Yes handlers do.
+    /// The buy-a-page tab, sent after Yes (`CaravanWindow::PromptBuy` → `CaravanWindow::BuyPage`):
+    /// pays and appends a page; still short of gold, it refuses with `tagTransferError01`.
     BuyPage { transfer: bool },
-    /// Left click on the material box of `record` (transfer view): stores
-    /// the held stack of it, or takes one (`shift`: a stack, straight into
-    /// the bags) to the cursor. GrimDawn.exe caravan window click
-    /// `CaravanWindow::OnMaterialClick`: a left click puts one on the cursor; with Shift a
-    /// stack of up to `gameiteminfo.dbr` `itemMaxStackSize`
-    /// (`GameEngine::GetItemMaxStackSize`) goes straight into the bags when
-    /// they have room. (A right click uses a stored component / augment on
-    /// an item; not done.)
+    /// Left click on the material box of `record` (`CaravanWindow::OnMaterialClick`): stores the held
+    /// stack, or takes one to the cursor; `shift`: a stack of up to `itemMaxStackSize` straight into
+    /// the bags. Right click (use on an item) is not ported.
     Material { record: String, shift: bool },
     /// Test hook `GD_TRANSFER`: the first personal stash item to the transfer stash.
     TestTransfer,
-    /// Shift + left click on the bag item at `cell` of `bag` while the caravan window is open: into the shown
-    /// page `page` of the personal stash, or with the transfer view (`transfer`) into the material storage or
-    /// page `page` of the transfer stash ([`quick_move`], the rules are there).
+    /// Shift + left click on the bag item at `cell` of `bag` with the caravan open ([`quick_move`]).
     QuickMove {
         transfer: bool,
         page: usize,
         bag: usize,
         cell: (u32, u32),
     },
-    /// Shift + left click on the worn item of equipment slot `slot` (index into `crate::inventory::SLOTS`) while
-    /// the caravan window is open ([`quick_move_worn`]).
+    /// Shift + left click on the worn item of slot `slot` (index into `crate::inventory::SLOTS`)
+    /// ([`quick_move_worn`]).
     QuickMoveWorn {
         transfer: bool,
         page: usize,
@@ -492,40 +445,31 @@ pub enum StashRequest {
     },
 }
 
-/// A refused bag quick action: `GameEngine::PlayErrorSound` (the `gameengine.dbr` `genericErrorSound`,
-/// `GameEngine::LoadFromDatabase` / `PlayErrorSound`, 2D), with `notify` first the
-/// `tagTransferStashError` UI notification (`AddUINotification` type 0; GrimDawn.exe
-/// `BagWidget_HandleMouseEvent`). Sent by [`quick_move`] and by the UI for the item-slot windows.
+/// A refused bag quick action: `GameEngine::PlayErrorSound`, with `notify` first the
+/// `tagTransferStashError` notification (`BagWidget_HandleMouseEvent`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct QuickActionError {
     pub notify: bool,
 }
 
-/// What [`quick_move`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuickMove {
-    /// The item left the bag (the engine then plays its `Item::PlayDropSound`, [`ui_drop_sound`]).
+    /// The item left the bag (the engine then plays `Item::PlayDropSound`, [`ui_drop_sound`]).
     Moved,
-    /// The page had no room for (the rest of) it: the error sound; what merged onto the page's stacks stays
-    /// merged, the bag keeps the rest (`SendUpdateItemStack`).
+    /// The page had no room for (the rest of) it: error sound; merged stacks stay merged.
     Full,
-    /// Not allowed in the transfer stash: notification + error sound, nothing changes.
+    /// Not allowed in the transfer stash: notification + error sound.
     Refused,
 }
 
-/// Shift + left click on a bag item with the caravan window open (GrimDawn.exe
-/// `BagWidget_HandleMouseEvent`, the Shift + caravan branch; Game.dll):
-/// * personal view (`!GameEngine::IsTransferOpen`): `Player::AddItemToPrivateStash(GetSelectedStashSackNumber)`;
-/// * transfer view: `GameEngine::AddItemToReagents` first (only a `craftingMaterial` item;
-///   into the material storage as [`deposit_reagents_now`], never refused), else when
-///   `Item::CanBePlacedInTransferStash` (not `soulbound` and not a material, no
-///   subclass overrides it) `GameEngine::AddItemToTransfer(GetSelectedTransferSackNumber)`, else
+/// Shift + left click on a bag item with the caravan open (`BagWidget_HandleMouseEvent`, Game.dll):
+/// * personal view: `Player::AddItemToPrivateStash(GetSelectedStashSackNumber)`;
+/// * transfer view: `GameEngine::AddItemToReagents` for a `craftingMaterial`, else when
+///   `Item::CanBePlacedInTransferStash` (not soulbound, not a material) `AddItemToTransfer`, else
 ///   [`QuickMove::Refused`].
 ///
-/// Both adds are the same: the item first goes onto the not-full stacks of its record on that one page
-/// (`InventorySack::GetNotFullItem` + `IncrementStack`, repeated while some is left, [`crate::stack::merge_into`]),
-/// the rest is placed as a new item (`InventorySack::AddItem`, auto placement) or the add fails. `page` is the
-/// page shown (the selected sack), clamped to the pages there are. None: no item there.
+/// An add first fills the record's not-full stacks on that page ([`crate::stack::merge_into`]), then
+/// places the rest as a new item or fails. None: no item there.
 pub fn quick_move(
     db: &gd_formats::vfs::Database,
     inv: &mut Inventory,
@@ -590,13 +534,9 @@ pub fn quick_move(
     Some(QuickMove::Moved)
 }
 
-/// Shift + left click on a worn item with the caravan window open (GrimDawn.exe equipment slot handler
-/// `EquipSlotWidget::HandleMouseEvent`, left press with Shift while the caravan is shown): personal view
-/// `Player::AddItemToPrivateStash(GetSelectedStashSackNumber, id, false)`; transfer view, when
-/// `Item::CanBePlacedInTransferStash` (not soulbound, not a material), `AddItemToTransfer` into the selected
-/// transfer sack, else [`QuickMove::Refused`] (`tagTransferStashError` + error sound). No material storage branch
-/// and no sound of its own; added -> `EquipmentCtrl::RemoveItem`; not added (page full) -> nothing at all.
-/// The add is [`quick_move`]'s (stacks of the record first, then auto placement). None: the slot is empty.
+/// Shift + left click on a worn item with the caravan open (`EquipSlotWidget::HandleMouseEvent`): as
+/// [`quick_move`] but no material storage branch and no sound of its own; not added (page full) →
+/// nothing at all. None: the slot is empty.
 pub fn quick_move_worn(
     db: &gd_formats::vfs::Database,
     inv: &mut Inventory,
@@ -634,9 +574,8 @@ pub fn quick_move_worn(
     Some(QuickMove::Moved)
 }
 
-/// `Item::PlayDropSound` (the 2D UI sound of `Item.dropSound`): `Item::Load`:
-/// the record's `brokenDropSound` (default `records/sounds/ui/spak_itemdropbrokendefault.dbr`) for a
-/// Broken `itemClassification`, else its `dropSound`.
+/// `Item::PlayDropSound`: the record's `brokenDropSound` (default
+/// `records/sounds/ui/spak_itemdropbrokendefault.dbr`) for a Broken item, else its `dropSound`.
 pub fn ui_drop_sound(db: &gd_formats::vfs::Database, item: &Item) -> Option<String> {
     let rec = db.get(&item.base_name)?;
     let broken = gd_sim::items::Classification::parse(rec.str("itemClassification").unwrap_or(""))
@@ -662,22 +601,22 @@ fn engine_sound(data: &crate::data::GameData, field: &str) -> Option<String> {
         .filter(|p| !p.is_empty())
 }
 
-/// `GameEngine::PlayErrorSound`'s sound: the `gameengine.dbr` `genericErrorSound` ([`QuickActionError`]).
+/// `GameEngine::PlayErrorSound`: `genericErrorSound`.
 pub fn error_sound(data: &crate::data::GameData) -> Option<String> {
     engine_sound(data, "genericErrorSound")
 }
 
-/// `GameEngine::PlayMarketPurchaseSound`: the `gameengine.dbr` `marketPurchaseSound` (a buy).
+/// `GameEngine::PlayMarketPurchaseSound`: `marketPurchaseSound`.
 pub fn market_purchase_sound(data: &crate::data::GameData) -> Option<String> {
     engine_sound(data, "marketPurchaseSound")
 }
 
-/// `GameEngine::PlayMarketSaleSound`: the `gameengine.dbr` `marketSaleSound` (a sale).
+/// `GameEngine::PlayMarketSaleSound`: `marketSaleSound`.
 pub fn market_sale_sound(data: &crate::data::GameData) -> Option<String> {
     engine_sound(data, "marketSaleSound")
 }
 
-/// The blueprint learn sound: the `gameengine.dbr` `learnFormulaSoundName` (`ItemArtifactFormula::Use`).
+/// The blueprint learn sound: `learnFormulaSoundName` (`ItemArtifactFormula::Use`).
 pub fn learn_formula_sound(data: &crate::data::GameData) -> Option<String> {
     engine_sound(data, "learnFormulaSoundName")
 }

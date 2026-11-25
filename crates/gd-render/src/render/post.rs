@@ -12,7 +12,7 @@
 //! linear (colours converted from sRGB on extraction, `_srgb` textures decoded on sampling), so [`patch_ui_shaders`]
 //! rewrites their sources to sRGB-encode what they write: `ui.wesl` encodes the node colour and the texel separately
 //! (their product is then the engine's colour × texel), the gradient / box-shadow / slice shaders their result; the
-//! port's UI materials (`ui/additive.wesl`, `ui/masked.wesl`, `doll.wesl`) do the same themselves. One full-screen
+//! port's own UI materials do the same themselves. One full-screen
 //! pass (Rgba16Float, the frame copy of `post_process_write`). PORT: the float frame does not clamp between UI draws
 //! (the UNORM back buffer does; only additive draws can exceed 1, clamped once at the end); the patch matches the
 //! shaders' text, so a Bevy update that changes it falls back to wrapping the fragment (warned once if not even that).
@@ -30,15 +30,14 @@
 //! `GraphicsCanvas_Blur8Tap` blurs it (gain 1, spread `Engine.ssaoBlurSpread` = 1: the 8-tap blur below, vertical
 //! into w × h/2, horizontal into w/2 × h/2) and ssao.ssh
 //! `render` (renderPS: a plain sample) multiplies it onto the light target (blend Dst / Zero, the states of
-//! multiplyscroll*.ssh). So it only darkens: flat ground ~4 % on average (about half the reflected samples land
-//! farther), creases and the feet of walls up to 30 %. The engine's rotation vectors depend on the `rand()`
+//! multiplyscroll*.ssh). So it only darkens. The engine's rotation vectors depend on the `rand()`
 //! state at device creation (PORT: the first 16 of a seed-1 `rand()` stream). PORT: the depth taps are filtered by
 //! hand (bilinear, as the engine's sampler). PORT: the occlusion is created and blurred at half size (rotation
 //! vectors tiled one per half-size texel, the blur's taps half a texel apart: the engine's full-size pixel spread)
 //! and upsampled bilinearly by `render`. [`apply_ssao`] runs between Bevy's opaque pass (the engine's deferred
 //! lights) and its transparent pass, so as in the engine the forward passes (water, blended meshes, effects) are
 //! neither occluded nor part of the depth it reads. The decals' base layer and the grass fringe, which the engine
-//! blends into the G-buffer, are drawn before it (`gbuffer_blend.rs`), so they are occluded (a few % on flat ground).
+//! blends into the G-buffer, are drawn before it, so they are occluded.
 //!
 //! Fog, `GraphicsDeferredRenderer::RenderFog` and
 //! deferred.ssh `fog` (fogPS, SrcAlpha / OneMinusSrcAlpha), drawn by
@@ -50,9 +49,8 @@
 //! was drawn, a = max(sat((z − start)·inv)·density, sat((h − start)·inv)·
 //! density) for the depth (view depth z) and height (world height h) fog,
 //! inv = 1 / (end − start) (`SetDepthFogParams` / `SetHeightFogParams`),
-//! colour = fog colour ([`super::env::Ambiance`]: the camera clamp keeps the
-//! depth fog behind the player: at Devil's Crossing a blue-grey haze over the
-//! upper part of the screen, as in the real game's fog-on shots). [`fog_and_glow`] draws it in the engine's
+//! colour = fog colour ([`super::env::Ambiance`]; the camera clamp keeps the
+//! depth fog behind the player). [`fog_and_glow`] draws it in the engine's
 //! place: after the scene passes (particles, decals, blended meshes), before the scene glow and the distortion,
 //! blended onto the frame as the engine does.
 //!
@@ -60,7 +58,7 @@
 //! `hdrLightingFactor`), Engine.dll: `GraphicsDeferredRenderer::RenderFinalScene` then lights and draws the whole
 //! scene (ambient, lights, forward passes, fog, glow) into `GraphicsDeferredRenderer.hdrTarget`, a float target
 //! (format 13 = R16G16B16A16_FLOAT, `CreateRenderTargets`), instead of the back buffer; the lights are
-//! scaled by `GetHdrLightingFactor` (render/env.rs `HDR_LIGHTING_FACTOR`). `GraphicsMTRenderer::Render`
+//! scaled by `GetHdrLightingFactor`. `GraphicsMTRenderer::Render`
 //! then calls `PerformTonemapping` (a virtual) before `RenderPostEffects`: a
 //! fullscreen deferred.ssh `tonemap` (tonemapPS) from that target into the back buffer: per channel, with
 //! l = log2 c, x = 0.2314·l + ½, t = x / 1.5: y = 1.5·(t³ − 2t² + t) − ½·(2t³ − 3t² + 1), or 0.2314·l
@@ -97,11 +95,12 @@
 //!    drawn (cleared depth) take the blur. PORT: no frame copy: the downsample grades the 2 × 2 scene
 //!    texels itself and averages them, the depth of field grades its base colour inline (not quantised
 //!    to 8 bits first).
-//! 4. FXAA (`GraphicsMTRenderer.fxaa`, [`Fxaa`]: `SetFXAAEnabled(deferredrendering && device generation 7 / 8 && fxaa), the port always renders deferred so it is `fxaa``, Grim
-//!    Dawn.exe `Ui::ApplyVideoOptions` every frame, so the option applies live), `GraphicsCanvas::ApplyFXAA`,
+//! 4. FXAA (`GraphicsMTRenderer.fxaa`, [`Fxaa`]: `SetFXAAEnabled(deferredrendering && device generation 7 / 8 &&
+//!    fxaa)`, always `fxaa` here as the port renders deferred; Grim Dawn.exe `Ui::ApplyVideoOptions` every frame, so
+//!    the option applies live), `GraphicsCanvas::ApplyFXAA`,
 //!    the last call of `RenderPostEffects` and not gated by `advancedEffects`: the frame is
 //!    copied into a full-size temporary (format 2) and postprocessing/fxaa.ssh `normal` draws it back with
-//!    `pixelSize` = 1 / its size (gd_post.wesl `fxaa`, transcribed from the shader's DXBC). PORT: the colour-blind
+//!    `pixelSize` = 1 / its size. PORT: the colour-blind
 //!    remap (`Display::Render`, after the world render) is applied before it, in the grading.
 //!
 //! Multisampling (`antiAliasing`: the literal sample count, 0 / 1 off), Engine.dll
@@ -143,9 +142,9 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
     CachedRenderPipelineId, ColorTargetState, ColorWrites, DynamicUniformBuffer, FragmentState,
     LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-    ShaderType, StoreOp, TextureDescriptor, TextureDimension, TextureSampleType, TextureUsages,
-    TextureView,
+    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
+    ShaderStages, ShaderType, StoreOp, TextureDescriptor, TextureDimension, TextureSampleType,
+    TextureUsages, TextureView,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
@@ -161,7 +160,7 @@ use gd_formats::collections::HashMap;
 
 const POST_SHADER: &str = "embedded://gd_render/render/shaders/gd_post.wesl";
 const GLOW_BLUR_SHADER: &str = "embedded://gd_render/render/shaders/gd_glow_blur.wesl";
-/// Bloom temporaries (engine format 2; see the module doc).
+/// Bloom temporaries (engine format 2).
 const BLOOM_FORMAT: bevy::render::render_resource::TextureFormat =
     bevy::render::render_resource::TextureFormat::Rgba8Unorm;
 
@@ -195,7 +194,9 @@ impl Plugin for PostPlugin {
                 Render,
                 (
                     prepare_post_textures.in_set(RenderSystems::PrepareResources),
-                    (prepare_glow_blur, hold_composite).in_set(RenderSystems::PrepareBindGroups),
+                    (hold_composite, prepare_glow_blur)
+                        .chain()
+                        .in_set(RenderSystems::PrepareBindGroups),
                     restore_composite.in_set(RenderSystems::Cleanup),
                 ),
             )
@@ -205,6 +206,10 @@ impl Plugin for PostPlugin {
                     apply_ssao
                         .in_set(SsaoSet)
                         .after(main_opaque_pass_3d)
+                        .before(main_transparent_pass_3d)
+                        .in_set(Core3dSystems::MainPass),
+                    blur_scene_glow
+                        .after(SsaoSet)
                         .before(main_transparent_pass_3d)
                         .in_set(Core3dSystems::MainPass),
                     fog_and_glow
@@ -220,8 +225,7 @@ impl Plugin for PostPlugin {
     }
 }
 
-/// The final-image parameters of a main camera ([`super::env::Ambiance`],
-/// written by `env::update_env`; module doc).
+/// The final-image parameters of a main camera, from [`super::env::Ambiance`].
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType, Default, PartialEq, Debug)]
 #[extract_app(RenderApp)]
 pub struct GammaOut {
@@ -246,9 +250,9 @@ pub struct GammaOut {
     pub remap_r: Vec4,
     pub remap_g: Vec4,
     pub remap_b: Vec4,
-    /// x: 1 = `hdrLighting`'s tone map runs (module doc).
+    /// x: 1 = `hdrLighting`'s tone map runs.
     pub hdr: Vec4,
-    /// Ambient occlusion (module doc): 1 = on, ssaoStrength, ssaoScale, zFar.
+    /// Ambient occlusion: 1 = on, ssaoStrength, ssaoScale, zFar.
     pub ao: Vec4,
     /// The fullscreen gamma ramp ([`GammaOut::with_gamma_ramp`]): 2c, 2b − 1, 1 / g, 1 = on.
     pub gamma_ramp: Vec4,
@@ -349,8 +353,7 @@ impl VideoOptions {
 }
 
 /// `GraphicsMTRenderer::SetFXAAEnabled` (`GraphicsMTRenderer.fxaa`) on a main camera: on with the `fxaa` option (the
-/// engine also needs `deferredrendering`, always on here), Grim Dawn.exe `Ui::ApplyVideoOptions` (every frame, module
-/// doc).
+/// engine also needs `deferredrendering`, always on here), read every frame (`Ui::ApplyVideoOptions`).
 #[derive(Component, ExtractComponent, Clone, Copy, PartialEq, Debug)]
 #[extract_app(RenderApp)]
 pub struct Fxaa(pub bool);
@@ -435,8 +438,7 @@ fn setup_cameras(
             Hdr,
             Tonemapping::None,
             DebandDither::Disabled,
-            // `GraphicsEngine::BuildDeviceSettings`: the deferred renderer zeroes the device's multisample count
-            // (module doc).
+            // `GraphicsEngine::BuildDeviceSettings`: the deferred renderer zeroes the device's multisample count.
             Msaa::Off,
             GammaOut::default(),
             Fxaa(true),
@@ -463,10 +465,13 @@ pub(crate) struct PostPipelines {
     ao_apply: CachedRenderPipelineId,
     dof_gamma: CachedRenderPipelineId,
     fxaa: CachedRenderPipelineId,
-    /// The glow blur ([`blur_glow`]): its layout and the vertical / horizontal passes; not part of
-    /// [`Self::ready`] (glow views carry no [`GammaOut`]).
+    /// The glow blur ([`blur_glow`], [`blur_scene_glow`]): its layouts and the vertical / horizontal passes; not
+    /// part of [`Self::ready`] (glow views carry no [`GammaOut`]). `glow_v_occluded` is the vertical pass of the
+    /// scene glow, with the glow view's and the scene's depth (`glow_occluded_layout`).
     glow_layout: BindGroupLayoutDescriptor,
+    glow_occluded_layout: BindGroupLayoutDescriptor,
     glow_v: CachedRenderPipelineId,
+    glow_v_occluded: CachedRenderPipelineId,
     glow_h: CachedRenderPipelineId,
 }
 
@@ -572,8 +577,28 @@ fn init_post_pipelines(
             ),
         ),
     );
+    // The same, then the glow view's depth and the scene's.
+    let glow_occluded_layout = BindGroupLayoutDescriptor::new(
+        "gd_glow_blur_occluded_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                uniform_buffer::<GlowParams>(true),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                bevy::render::render_resource::binding_types::sampler(
+                    SamplerBindingType::Filtering,
+                ),
+                texture_depth_2d(),
+                texture_depth_2d(),
+            ),
+        ),
+    );
     let glow_shader: Handle<Shader> = assets.load(GLOW_BLUR_SHADER);
-    let glow_pipe = |label: &'static str, entry: &'static str, targets: usize| {
+    let glow_pipe = |label: &'static str,
+                     entry: &'static str,
+                     layout: &BindGroupLayoutDescriptor,
+                     targets: usize| {
         let target = Some(ColorTargetState {
             format: GLOW_FORMAT,
             blend: None,
@@ -581,7 +606,7 @@ fn init_post_pipelines(
         });
         cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some(label.into()),
-            layout: vec![glow_layout.clone()],
+            layout: vec![layout.clone()],
             vertex: fullscreen.to_vertex_state(),
             fragment: Some(FragmentState {
                 shader: glow_shader.clone(),
@@ -592,8 +617,14 @@ fn init_post_pipelines(
             ..default()
         })
     };
-    let glow_v = glow_pipe("gd_glow_blur_v", "blur_v", 2);
-    let glow_h = glow_pipe("gd_glow_blur_h", "blur_h", 1);
+    let glow_v = glow_pipe("gd_glow_blur_v", "blur_v", &glow_layout, 2);
+    let glow_v_occluded = glow_pipe(
+        "gd_glow_blur_v_occluded",
+        "blur_v_occluded",
+        &glow_occluded_layout,
+        2,
+    );
+    let glow_h = glow_pipe("gd_glow_blur_h", "blur_h", &glow_layout, 1);
     commands.insert_resource(PostPipelines {
         layout,
         sampler,
@@ -613,7 +644,9 @@ fn init_post_pipelines(
         dof_gamma,
         fxaa,
         glow_layout,
+        glow_occluded_layout,
         glow_v,
+        glow_v_occluded,
         glow_h,
     });
 }
@@ -784,10 +817,8 @@ impl<'a> PostBindings<'a> {
     }
 }
 
-/// `ApplySSAO` (module doc): create (reads only the depth), blur, multiply onto the light target. Runs between the
+/// `ApplySSAO`: create (reads only the depth), blur, multiply onto the light target. Runs between the
 /// opaque pass (the engine's deferred lights) and the transparent one, so the forward passes are not occluded.
-/// `GraphicsDeferredRenderer::RenderFinalScene`: ApplySSAO after the lights, before the
-/// forward groups (water, alpha-blended meshes, effects).
 fn apply_ssao(
     view: ViewQuery<(
         &ViewTarget,
@@ -830,8 +861,7 @@ fn apply_ssao(
     ) else {
         return;
     };
-    // PORT: the occlusion is created and blurred at half size (the engine creates it full size and
-    // blurs into w × h/2 then w/2 × h/2); the blur keeps the engine's full-size pixel steps.
+    // PORT: created and blurred at half size; the blur keeps the engine's full-size pixel steps.
     let [_, _, bh, _, ao, ao_v, _] = &textures.0;
     let (a, av, any) = (&ao.default_view, &ao_v.default_view, &bh.default_view);
     b.run(
@@ -926,7 +956,7 @@ fn post_chain(
         &bh.default_view,
         &dof_blur.default_view,
     );
-    // At most the 3 bloom, 2 depth of field and the FXAA passes (no per-frame allocation).
+    // At most the 3 bloom, 2 depth of field and the FXAA passes.
     let mut passes = [(finish, source, bh, hot, last_dst); 6];
     let mut n = 0;
     let mut push = |p| {
@@ -939,8 +969,6 @@ fn post_chain(
         push((blur_h, bv, hot, hot, bh));
     }
     if settings.dof.w > 0.5 {
-        // PORT: no graded full-size frame copy; the downsample and the depth of field grade the
-        // scene themselves (the base colour is not quantised to 8 bits first).
         push((downsample, source, bh, hot, blur));
         push((dof, source, bh, blur, last_dst));
     } else {
@@ -958,15 +986,18 @@ fn post_chain(
 struct CompositeEntities {
     /// Every composite's main-world entity (held out of the [`GammaOut`] views' transparent pass).
     entities: Vec<MainEntity>,
-    /// The visible composites' glow target, half-size blur target and parameters.
-    blurs: Vec<(AssetId<Image>, AssetId<Image>, GlowParams)>,
+    /// The visible composites' entity, glow target, half-size blur target and parameters.
+    blurs: Vec<(MainEntity, AssetId<Image>, AssetId<Image>, GlowParams)>,
     uniforms: DynamicUniformBuffer<GlowParams>,
     passes: Vec<GlowBlurPasses>,
 }
 
-/// One composite's blur, run by the view that renders its glow target ([`blur_glow`]).
+/// One composite's blur: run by the [`GammaOut`] view that draws the composite ([`blur_scene_glow`]), else by the
+/// view that renders its glow target ([`blur_glow`]).
 struct GlowBlurPasses {
     glow: AssetId<Image>,
+    /// The [`GammaOut`] view that draws the composite; its vertical pass drops the glow that view's depth hides.
+    view: Option<RetainedViewEntity>,
     offset: u32,
     /// The vertical pass's bind group and its two w × h/2 targets (scene glow, outline).
     vertical: (BindGroup, [CachedTexture; 2]),
@@ -988,18 +1019,23 @@ fn extract_composite(
             && let Some(mat) = mats.get(&m.0)
             && let Some(blurred) = &mat.blurred
         {
-            set.blurs.push((mat.glow.id(), blurred.id(), mat.params));
+            set.blurs
+                .push((e.into(), mat.glow.id(), blurred.id(), mat.params));
         }
     }
 }
 
+/// After [`hold_composite`]: a composite a [`GammaOut`] view holds is blurred by that view, occluded by its depth.
 fn prepare_glow_blur(
     mut set: ResMut<CompositeEntities>,
-    pipelines: Option<Res<PostPipelines>>,
-    pipeline_cache: Res<PipelineCache>,
-    images: Res<RenderAssets<GpuImage>>,
-    mut textures: ResMut<TextureCache>,
+    (pipelines, pipeline_cache): (Option<Res<PostPipelines>>, Res<PipelineCache>),
+    (images, mut textures): (Res<RenderAssets<GpuImage>>, ResMut<TextureCache>),
     (device, queue): (Res<RenderDevice>, Res<RenderQueue>),
+    (held, scenes, views): (
+        Res<HeldComposite>,
+        Query<(&ExtractedView, &ViewDepthStencilTexture), With<GammaOut>>,
+        Query<(&ExtractedCamera, &ViewDepthStencilTexture)>,
+    ),
     mut offsets: Local<Vec<u32>>,
 ) {
     let CompositeEntities {
@@ -1017,7 +1053,7 @@ fn prepare_glow_blur(
     }
     uniforms.clear();
     offsets.clear();
-    offsets.extend(blurs.iter().map(|b| uniforms.push(&b.2)));
+    offsets.extend(blurs.iter().map(|b| uniforms.push(&b.3)));
     uniforms.write_buffer(&device, &queue);
     let Some(uniform) = uniforms.binding() else {
         return;
@@ -1030,7 +1066,14 @@ fn prepare_glow_blur(
             &BindGroupEntries::sequential((uniform.clone(), a, b, &p.sampler)),
         )
     };
-    for (&(glow, blurred, _), &offset) in blurs.iter().zip(offsets.iter()) {
+    let occluded_layout = pipeline_cache.get_bind_group_layout(&p.glow_occluded_layout);
+    let depth = |d: &ViewDepthStencilTexture| {
+        d.attachment
+            .depth_stencil_views()
+            .depth_only_view()
+            .cloned()
+    };
+    for (&(composite, glow, blurred, _), &offset) in blurs.iter().zip(offsets.iter()) {
         let (Some(src), Some(out)) = (images.get(glow), images.get(blurred)) else {
             continue;
         };
@@ -1053,13 +1096,42 @@ fn prepare_glow_blur(
             textures.get(&device, desc.clone()),
             textures.get(&device, desc),
         ];
+        // The view holding the composite, its depth and the glow view's.
+        let occluded = held
+            .0
+            .iter()
+            .find(|(_, phase)| phase.items.keys().any(|k| k.1 == composite))
+            .and_then(|(view, _)| {
+                let scene = scenes
+                    .iter()
+                    .find(|(v, _)| v.retained_view_entity == *view)?
+                    .1;
+                let own = views.iter().find_map(|(c, d)| match &c.target {
+                    Some(NormalizedRenderTarget::Image(t)) if t.handle.id() == glow => Some(d),
+                    _ => None,
+                })?;
+                Some((*view, depth(own)?, depth(scene)?))
+            });
+        let vertical = match &occluded {
+            Some((_, own, scene)) => device.create_bind_group(
+                "gd_glow_blur_v_occluded",
+                &occluded_layout,
+                &BindGroupEntries::sequential((
+                    uniform.clone(),
+                    &src.texture_view,
+                    &src.texture_view,
+                    &p.sampler,
+                    own,
+                    scene,
+                )),
+            ),
+            None => bind("gd_glow_blur_v", &src.texture_view, &src.texture_view),
+        };
         passes.push(GlowBlurPasses {
             glow,
+            view: occluded.map(|o| o.0),
             offset,
-            vertical: (
-                bind("gd_glow_blur_v", &src.texture_view, &src.texture_view),
-                v.clone(),
-            ),
+            vertical: (vertical, v.clone()),
             horizontal: (
                 bind("gd_glow_blur_h", &v[0].default_view, &v[1].default_view),
                 out.texture_view.clone(),
@@ -1068,7 +1140,7 @@ fn prepare_glow_blur(
     }
 }
 
-/// The glow blur (module doc, "Scene glow"): once a glow view has rendered its target, the
+/// The glow blur of the composites no [`GammaOut`] view blurs: once a glow view has rendered its target, the
 /// vertical pass of each composite reading it into w × h/2, the horizontal one into the half-size
 /// target the composite samples.
 fn blur_glow(
@@ -1090,10 +1162,49 @@ fn blur_glow(
     ) else {
         return;
     };
+    let jobs = set
+        .passes
+        .iter()
+        .filter(|j| j.view.is_none() && j.glow == target.handle.id());
+    run_glow_blur(&mut ctx, jobs, v, h);
+}
+
+/// The scene glow's blur, by the [`GammaOut`] view that draws its composite ([`GlowBlurPasses::view`]). The engine's
+/// glow is a G-buffer target, so the scene hides it; the port's glow view draws only the glowing models, so the
+/// vertical pass drops each glow texel this view's depth has a nearer surface at. After the opaque passes (with
+/// the G-buffer blends, `gbuffer_blend`), before the transparent pass: the G-buffer's depth.
+fn blur_scene_glow(
+    view: ViewQuery<&ExtractedView, With<GammaOut>>,
+    set: Res<CompositeEntities>,
+    pipelines: Option<Res<PostPipelines>>,
+    cache: Res<PipelineCache>,
+    mut ctx: RenderContext,
+) {
+    let view = view.into_inner().retained_view_entity;
+    let Some(p) = pipelines.as_deref() else {
+        return;
+    };
+    let (Some(v), Some(h)) = (
+        cache.get_render_pipeline(p.glow_v_occluded),
+        cache.get_render_pipeline(p.glow_h),
+    ) else {
+        return;
+    };
+    let jobs = set.passes.iter().filter(|j| j.view == Some(view));
+    run_glow_blur(&mut ctx, jobs, v, h);
+}
+
+/// Each blur's vertical pass with `v`, then its horizontal pass with `h`.
+fn run_glow_blur<'a>(
+    ctx: &mut RenderContext,
+    jobs: impl Iterator<Item = &'a GlowBlurPasses>,
+    v: &RenderPipeline,
+    h: &RenderPipeline,
+) {
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     let time = diagnostics.time_span(ctx.command_encoder(), "gd_glow_blur");
-    for job in set.passes.iter().filter(|j| j.glow == target.handle.id()) {
+    for job in jobs {
         let (vb, vt) = &job.vertical;
         let (hb, ht) = &job.horizontal;
         let vertical = [replaced(&vt[0].default_view), replaced(&vt[1].default_view)];
@@ -1168,8 +1279,7 @@ fn restore_composite(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut held: ResMut<HeldComposite>,
 ) {
-    // Back for the next frame's queue and batching; keep the now-empty maps for reuse,
-    // dropping only views that are gone.
+    // Drops only views that are gone.
     held.0.retain(|view, composite| {
         let Some(p) = phases.get_mut(view) else {
             return false;
@@ -1180,12 +1290,11 @@ fn restore_composite(
     });
 }
 
-/// The engine's fog and scene glow, in `RenderFinalScene`'s order (module doc):
+/// The engine's fog and scene glow, in `RenderFinalScene`'s order:
 /// the fog over the finished scene passes (particles, decals, blended meshes),
 /// then the glow composite added over the fog — before the distortion
-/// (`super::distort::draw_distortion`, the engine's `RenderPostObjects`) and the
-/// rest of the post chain. The composite is held out of the transparent pass
-/// ([`hold_composite`]) and drawn here.
+/// (the engine's `RenderPostObjects`) and the rest of the post chain. The composite is held out of the
+/// transparent pass ([`hold_composite`]) and drawn here.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fog_and_glow(
     world: &World,
@@ -1252,7 +1361,7 @@ pub(crate) fn fog_and_glow(
 }
 
 /// After Bevy's UI pass: the frame (gamma values, the UI blended over them as on the engine's back buffer) →
-/// linear for the sRGB swapchain (module doc, "UI").
+/// linear for the sRGB swapchain.
 fn ui_to_linear(
     view: ViewQuery<(
         &ViewTarget,
@@ -1355,7 +1464,7 @@ fn patch_ui_shaders(handles: Res<UiShaders>, mut shaders: ResMut<Assets<Shader>>
         }) else {
             continue;
         };
-        // `gamma_ui_source` puts the mark first: no scan of the whole source each frame.
+        // `gamma_ui_source` puts the mark first.
         if src.starts_with(UI_GAMMA_MARK) {
             continue;
         }
@@ -1372,7 +1481,7 @@ fn patch_ui_shaders(handles: Res<UiShaders>, mut shaders: ResMut<Assets<Shader>>
     }
 }
 
-/// A Bevy UI shader made to write gamma values (module doc, "UI"). `ui.wesl` (nodes, images, text) encodes the
+/// A Bevy UI shader made to write gamma values. `ui.wesl` (nodes, images, text) encodes the
 /// node colour and the texel separately (`gd_gamma(colour) · gd_gamma(texel)`: the engine's colour × texture on
 /// raw values); the others' `fragment` is wrapped, its linear result encoded. `None` without a `fragment` entry.
 fn gamma_ui_source(src: &str) -> Option<String> {
@@ -1423,10 +1532,11 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // half-size target, composited additively (postprocessing/glow.ssh `normal`).
 //
 // Here a second camera renders the same view into a full-size float image with
-// the materials in "glow only" mode (marked by its exposure); right after that
-// view, [`blur_glow`] runs the engine's two passes over it (gd_glow_blur.wesl:
-// vertical into w × h/2, horizontal into w/2 × h/2), and a fullscreen triangle
-// on the main camera adds the half-size result, bilinearly upsampled, before GammaOut.
+// the materials in "glow only" mode (marked by its exposure); the engine's two passes
+// run over it (gd_glow_blur.wesl: vertical into w × h/2, horizontal into w/2 × h/2), and a fullscreen triangle
+// on the main camera adds the half-size result, bilinearly upsampled, before GammaOut. The main camera runs
+// the passes ([`blur_scene_glow`]) after its opaque passes, before its transparent pass; a composite no
+// [`GammaOut`] view draws (a conversation portrait's) is blurred right after its glow view ([`blur_glow`]).
 //
 // Hover outline, per GraphicsDeferredRenderer::RenderFinalScene
 // (after RenderSceneGlow / RenderPostObjects): the outlined
@@ -1451,8 +1561,8 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // nothing (the depth test), blended occluders write no depth and hide nothing.
 //
 // Here the glow view's alpha holds that mask: every depth-writing surface
-// leaves 0 and the outlined parts' copies (`GdMaterial::outline_mask`, spawned
-// by hover.rs, in the glow view only) draw their palette class (1 / 2 / 3)
+// leaves 0 and the outlined parts' copies (`GdMaterial::outline_mask`, in the
+// glow view only) draw their palette class (1 / 2 / 3)
 // after them, with the passes' states. The vertical pass decodes the texels'
 // class colours before it blends them (8 texel loads 1 texel apart, which is
 // where the engine's bilinear taps land), the horizontal pass blends the
@@ -1462,19 +1572,18 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // horizontal one); the targets are float, not format 2, so values are not
 // clamped between the passes.
 //
-// PORT (performance, a deliberate difference): the glow view, its blur and the
-// composite run only while they have something to draw ([`gate_glow`]): an
-// outline is shown, or a part on [`GLOW_LAYER`] lies in the main camera's
+// PORT: the glow view, its blur and the composite run only while they have something to draw ([`gate_glow`]):
+// an outline is shown, or a part on [`GLOW_LAYER`] lies in the main camera's
 // frustum (by its previous frame's inherited visibility, so a glow shown or
 // hidden by `Visibility` alone starts a frame late). The engine always runs
 // ApplyGlow. The glow view's output reads no lights, so it has no light clusters.
 //
-// PORT (performance, a deliberate difference): the glow view draws only the
-// models that glow ([`sync_glow_layers`]), not the whole scene as black
-// occluders, which cost a second draw of every mesh. So scene glow and the
-// hover outline are not hidden by other objects (a glowing or outlined
-// object behind a wall or tree shows its glow / halo through it); a model's
-// own parts still occlude each other.
+// PORT: the glow view draws only the models that glow ([`sync_glow_layers`]), not the whole scene as black
+// occluders. The scene glow's vertical pass drops instead each glow texel where the main view's depth (the
+// G-buffer's: opaque passes and G-buffer blends) has a surface more than 0.1 % of the distance in front of the
+// glow view's; a texel without glow-view depth (only blended glow, a decal's glow layer) is kept. The hover
+// outline is not hidden by other objects (an outlined object behind a wall or tree shows its halo through it);
+// a model's own parts still occlude each other.
 //
 // The composite is drawn by [`fog_and_glow`] after the fog and before the
 // distortion (the engine's RenderSceneGlow, between RenderFog and
@@ -1566,7 +1675,7 @@ pub struct GlowCamera {
     composite: Entity,
 }
 
-/// The glow composite's and the blur's uniform (gd_glow.wesl, gd_glow_blur.wesl).
+/// The glow composite's and the blur's uniform.
 #[derive(ShaderType, Clone, Copy, Debug, Default)]
 pub struct GlowParams {
     /// x: scene glow gain (0.75²), y: its tap spacing in texels (4), z: outline gain (1.25²), w unused.
@@ -1605,7 +1714,7 @@ impl GlowComposite {
     }
 }
 
-/// The composite's fullscreen triangle (clip-space positions; see gd_glow.wesl).
+/// The composite's fullscreen triangle (clip-space positions).
 pub fn fullscreen_triangle() -> Mesh {
     Mesh::new(
         bevy::mesh::PrimitiveTopology::TriangleList,
@@ -1693,7 +1802,7 @@ impl Plugin for GlowPlugin {
     }
 }
 
-/// The outline pass's palette this frame (`hover.rs`): the colour of each mask class 1, 2, 3 (the outlined parts'
+/// The outline pass's palette this frame: the colour of each mask class 1, 2, 3 (the outlined parts'
 /// `GdParams::outline.w`; zero: no part of that class). Each part's mask holds its class, so objects of different
 /// outline colours share the pass (`Actor::SetOutlineColor` per actor).
 #[derive(Resource, Default, PartialEq)]
@@ -1717,8 +1826,8 @@ fn sync_outline(
     }
 }
 
-/// Runs the glow view and shows its composite only while they have something to draw (the glow
-/// section's PORT): an outline is shown, or a part on [`GLOW_LAYER`] lies in the main camera's frustum.
+/// Runs the glow view and shows its composite only while they have something to draw: an outline is shown, or a
+/// part on [`GLOW_LAYER`] lies in the main camera's frustum.
 /// Before the visibility pass, so the glow view's visible set and the composite's visibility follow
 /// in the same frame; the parts' inherited visibility is the previous frame's.
 fn gate_glow(
@@ -1819,7 +1928,13 @@ fn setup_glow(
         .id();
     commands.spawn((
         GlowCamera { composite },
-        Camera3d::default(),
+        // Its depth is sampled by the scene glow's blur ([`blur_scene_glow`]).
+        Camera3d {
+            depth_texture_usages: (TextureUsages::RENDER_ATTACHMENT
+                | TextureUsages::TEXTURE_BINDING)
+                .into(),
+            ..default()
+        },
         // Alpha 0: the outline mask starts empty.
         Camera {
             order: -1,
@@ -1848,9 +1963,7 @@ fn setup_glow(
 }
 
 /// The glow view follows the main camera: same transform and projection,
-/// and a target of the same size. (A target left at the start-up window size
-/// gives the glow camera another aspect ratio once the window is resized, so
-/// glow and outlines land away from their objects.)
+/// and a target of the same size (else glow and outlines land away from their objects after a resize).
 fn sync_glow_camera(
     mains: Query<
         (&Camera, &GlobalTransform, Ref<Projection>),
@@ -1873,7 +1986,6 @@ fn sync_glow_camera(
         return;
     };
     for (mut t, mut g, mut p, target) in &mut glow {
-        // Unchanged values stay unmarked (no re-extract / frustum update for a still camera).
         t.set_if_neq(gt.compute_transform());
         g.set_if_neq(*gt);
         if proj.is_changed() {

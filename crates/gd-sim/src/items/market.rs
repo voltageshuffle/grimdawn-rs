@@ -96,24 +96,16 @@ pub const TIER_CATEGORIES: [Category; 4] = [
 pub const FACTION_STATIC: Category = ("marketStaticTable", Some("Static"));
 
 /// The market record of an `NpcMerchant` on `difficulty` (0 Normal, 1 Elite, 2 Ultimate).
-/// `NpcMerchant::Load`: `marketFileName[GameInfo::GetDifficulty()]` through
-/// `LoadTableBinary::GetArrayValue` (Engine.dll), which clamps the index to the last entry (no challenge term: Ultimate Veteran reads the
-/// Ultimate entry). Stock:
-/// the Shattered Realm's reward merchants (`merchant_reward_02..05`) list one table per difficulty, and only the
-/// Ultimate one (`merchanttbl_reward_0Nu`) sells the Shattered set (`lt_shatteredset_*`).
+/// `NpcMerchant::Load`: `marketFileName[GameInfo::GetDifficulty()]`, index clamped to the
+/// last entry (`LoadTableBinary::GetArrayValue`; Ultimate Veteran reads the Ultimate entry).
 pub fn market_file(npc: &Record, difficulty: usize) -> Option<&str> {
     let list = npc.strs("marketFileName");
     list.get(difficulty.min(list.len().checked_sub(1)?))
         .copied()
 }
 
-/// The market's stock rolled with `params` (at its `parent_level`).
-///
-/// No Broken items: `Refresh` calls `SetNoBrokenItems(true, false)` on each
-/// category's table and sets no randomizer weight modifiers (
-/// `MarketMiniMart::Refresh`; `LootBase` constructs with zero modifiers and
-/// the altar flag on), so `brokenOnly` is 0 and the other weights are the
-/// tables' own.
+/// The market's stock rolled with `params` (at its `parent_level`). No Broken items and
+/// no randomizer weight modifiers (`MarketMiniMart::Refresh`: `SetNoBrokenItems(true, false)`).
 pub fn roll_market(
     db: &ItemDb,
     market: &Record,
@@ -123,7 +115,7 @@ pub fn roll_market(
     roll_categories(db, market, &CATEGORIES, params, rng)
 }
 
-/// The stock of `record` over `categories` (see the module docs).
+/// The stock of `record` over `categories`.
 pub fn roll_categories(
     db: &ItemDb,
     record: &Record,
@@ -158,7 +150,7 @@ fn refresh(
     let (lo, hi) = (count("Min"), count("Max").max(count("Min")));
     // `MarketMiniMart::Refresh`: int arithmetic, wrapping.
     let span = hi.wrapping_sub(lo).wrapping_add(1) as u32;
-    // Bad data guard: a huge `marketNum*Max` would loop for minutes.
+    // Bad-data guard: a huge `marketNum*Max` would loop for minutes.
     let n = lo.wrapping_add((rng.next() % span) as i32).min(1000);
     let Some(first) = record.str(field).filter(|s| !s.is_empty()) else {
         return Vec::new();
@@ -369,19 +361,15 @@ pub fn opening_tab(pages: &[Sack<Item>], tab: usize) -> usize {
 }
 
 /// Whether a market tab can be picked: an empty page's button is disabled
-/// and drawn dimmed (window update `MarketWindow::Update`: every frame,
-/// each tab button whose `GetMarketInventorySack` is empty gets its
-/// disabled flags, `UIButton.disabled` / `UIButton.dimmed`; draw in the module doc of `ui/trade.rs`).
+/// and dimmed (`MarketWindow::Update`: `GetMarketInventorySack` empty →
+/// `UIButton.disabled` / `UIButton.dimmed`).
 pub fn tab_enabled(pages: &[Sack<Item>], tab: usize) -> bool {
     pages.get(tab).is_some_and(|p| !p.items.is_empty())
 }
 
 /// What the vendor search finds in a market: per tab, the grid cells of the
-/// matching items. (grid `UIInventoryGrid::ApplySearch`, every window update,
-/// [`search_matches`]): with a non-empty query the
-/// shown page's items are split into matches and the rest (the grid marks
-/// both, see `ui/trade.rs`), and every other tab whose sack has a match
-/// (`InventorySack::SearchItems`) is listed for its button's highlight.
+/// matching items (`UIInventoryGrid::ApplySearch`, [`search_matches`]); tabs whose
+/// sack has a match (`InventorySack::SearchItems`) get their button highlighted.
 /// `lines` gives an item's search lines ([`search_line`]).
 pub fn search_market(
     pages: &[Sack<Item>],

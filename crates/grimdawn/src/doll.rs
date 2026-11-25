@@ -1,65 +1,49 @@
 //! Paper doll: the player's model in its current equipment, rendered into a
 //! window's 3D view (the character window's `characterView`, the
-//! Illusionist's), a second view of the player's look, not a second copy of
-//! gameplay state: its item list is read each frame from
+//! Illusionist's). Its item list is read each frame from
 //! `gd_game_core::inventory::Inventory::equipped` (each item drawn with its
 //! illusion, `look_record`) and the sex from the player's `Loadout`; the body
 //! is rebuilt when that list changes.
 //!
-//! Grim Dawn.exe `UISceneView` (loader `UISceneView::Load`, render
-//! `UISceneView::Render`): the record gives the view rect (`x y xSize ySize`, UI
-//! scaled), `cameraFov` (degrees, vertical: `Camera::GetSubCameraToScreenMatrix`,
-//! Engine.dll, takes tan(fov / 2) for the height and
-//! viewport w / h × the camera aspect × tan(fov / 2) for the width; the render
-//! builds a fresh `Camera` per frame, aspect 1, and a viewport of the record
-//! rect's size (w, h truncated to int; at (x, y) + window origin, or (0, 0) in
-//! a texture surface), so the projection is Bevy's vertical-fov perspective
-//! over the view rect), `targetPointName` (an attach point of the entity
-//! replacing `targetPoint`; empty in both stock views), `cameraNearPlane`,
-//! `cameraFarPlane`, `targetPoint`, `targetOffset`, `lightDirection`
-//! (normalised; towards the light, as `AmbianceManager::GetLightDirection`),
+//! `UISceneView::Load` / `UISceneView::Render`: the record gives the view rect
+//! (`x y xSize ySize`, UI scaled), `cameraFov` (degrees, vertical, aspect 1 over
+//! the view rect: `Camera::GetSubCameraToScreenMatrix`), `targetPointName` (an
+//! attach point replacing `targetPoint`; empty in both stock views),
+//! `cameraNearPlane`, `cameraFarPlane`, `targetPoint`, `targetOffset`,
+//! `lightDirection` (towards the light, as `AmbianceManager::GetLightDirection`),
 //! `lightColor`, `skyAmbientColor`, `groundAmbientColor`, `backgroundTexture`,
 //! `backgroundColor`, `worldLighting` / `worldBackground` (off in both stock
 //! doll views). Each frame: R = rotation about Y by the view's angle; eye =
 //! targetPoint + R·targetOffset looking at targetPoint (up +Y); one
-//! directional light along R·lightDirection (so the light turns with the
-//! camera) with the record's colour, sky / ground ambient from the record;
-//! post effects, depth pass, shadows, fog and light rigs off; the clear colour
-//! `backgroundColor` and the background texture drawn over the viewport
-//! (`GraphicsMTRenderer::RenderBackground`, white, "normal" style); the entity drawn is a `GAME::Paperdoll` (Game.dll)
-//! in its own 20 m region (`__PaperDollRegion`) at the origin, facing +Z.
-//! `Paperdoll::SetCharacter` / `SyncItems` copy the character's mesh and its
-//! `EquipManager` items (the active weapon set), `UpdateIdleAnimation` loops
-//! one pick of the hand state's long idle (see [`long_idle`]);
-//! `SetItemAppearance` swaps one slot's look (the Illusionist previews its
-//! pending picks that way, `UIIllusionist::PreviewItem` / `UIIllusionist::UpdatePreview`).
+//! directional light along R·lightDirection with the record's colour, sky /
+//! ground ambient from the record; post effects, depth pass, shadows, fog and
+//! light rigs off; clear colour `backgroundColor` and the background texture
+//! over the viewport (`GraphicsMTRenderer::RenderBackground`); the entity is a
+//! `GAME::Paperdoll` in its own 20 m region (`__PaperDollRegion`) at the origin,
+//! facing +Z. `Paperdoll::SetCharacter` / `SyncItems` copy the character's mesh
+//! and its `EquipManager` items (the active weapon set), `UpdateIdleAnimation`
+//! loops the long idle ([`long_idle`]); `SetItemAppearance` swaps one slot's look
+//! (`UIIllusionist::PreviewItem` / `UIIllusionist::UpdatePreview`).
 //!
-//! Rotation (character window `UICharacterWindow::HandleRotateButtons` / `UICharacterWindow::HandleViewMouse` /
-//! `UICharacterWindow::UpdateRotation`, state reset to 0 when the window closes, `InventoryWindow::OnHide`): while
-//! a rotate
+//! Rotation (`UICharacterWindow::HandleRotateButtons` / `HandleViewMouse` /
+//! `UpdateRotation`, reset to 0 on `InventoryWindow::OnHide`): while a rotate
 //! button is held, every 25 ms the angle += 0.15 rad (left) / −= 0.15 (right),
 //! mod 2π; dragging with the left button pressed in the view: angle −=
 //! Δx · 0.01 per pixel; the wheel over the view: angle −= wheel · 0.1.
-//! The main menu's character turns by its own drag rule ([`menu_drag`]).
+//! The main menu's character turns by [`menu_drag`].
 //!
 //! Port: a second camera per view renders the doll's render layer into an
 //! image ([`DollView::layer`]) drawn by a UI material that shows its
-//! gamma-space colours as they are (`doll.wesl`; the UI target holds gamma values). The light rig
-//! rides in that camera's `ColorGrading` (read by `gd_standard.wesl`
-//! `shade_doll`: gain = light colour, lift = sky, gamma = ground, contrast =
-//! direction to the light, exposure 1 marks the view): Bevy's directional
-//! lights belong to the world's sun code (env.rs / shadow.rs).
-//! PORT: the background: the reference shots show the window behind the doll
-//! (character window ~4–10 / 255, the Illusionist's ~15, no trace of the light
-//! `character_characterviewbackground.tex`), so the view clears to transparent
-//! and is drawn over the window; why the engine's texture draw does not show
-//! is unchecked. The worn items' mesh effects are drawn on the doll's layer
-//! (`fx::items`); the rotate buttons show their down / in-focus bitmaps
-//! ([`rotate_looks`]); the
-//! doll wears the active weapon set (`equipped`, `gd_game::weapon_sets`), so
-//! a swap rebuilds it; a held item clicked on the character window's doll goes
-//! to its slot (`CharacterWindowScene::HandleItemClick`, `crate::inventory::doll_slots`). While the
-//! player is shifted the doll wears the form with its armour on ([`doll_forms`]).
+//! gamma-space colours as they are (`doll.wesl`). The light rig rides in that
+//! camera's `ColorGrading` (read by `gd_standard.wesl` `shade_doll`: gain =
+//! light colour, lift = sky, gamma = ground, contrast = direction to the light,
+//! exposure 1 marks the view).
+//! PORT: the view clears to transparent and is drawn over the window (the
+//! engine's background texture draw does not show; why is unchecked). Worn
+//! items' mesh effects are drawn on the doll's layer (`fx::items`); a held item
+//! clicked on the character window's doll goes to its slot
+//! (`CharacterWindowScene::HandleItemClick`). While the player is shifted the
+//! doll wears the form with its armour on ([`doll_forms`]).
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
@@ -105,7 +89,6 @@ pub use gd_render::character::{DollBody, DollView};
 
 const VIEWS: [DollView; 3] = [DollView::Character, DollView::Illusionist, DollView::Menu];
 
-/// The rotate buttons, drag and wheel (module doc).
 fn rotate_input(
     mut dolls: ResMut<Dolls>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -116,7 +99,7 @@ fn rotate_input(
     let cursor = window.single().ok().and_then(gd_ui_kit::cursor_px);
     let notches: f32 = wheel.read().map(|e| e.y.signum()).sum();
     let dt = time.delta_secs() * 1000.0;
-    // The menu's character turns by `menu_drag` (the menu swallows `ButtonInput`).
+    // The menu swallows `ButtonInput`: its character turns by `menu_drag`.
     for d in dolls
         .0
         .iter_mut()
@@ -164,15 +147,12 @@ fn rotate_input(
     }
 }
 
-/// Turning the main menu's character by dragging (Grim Dawn.exe main menu input `MainMenu::HandleMouseEvent` and
-/// `MainMenu::SetCharacterRotation`): with no window open over the menu (its sub-windows `MainMenu.subWindows`) and the
-/// press not taken by the menu's widgets (`MainMenu.widgetTookPress`), a left-button press sets the drag flag
-/// and the last x; each mouse move while it is set turns the character by `(x − last x) · 0.01` rad
-/// (angle += dyaw, the angle added to the record's `mmPlayerRotation` Y: R(X)·R(Y, ry + angle)·R(Z)); the
-/// release clears it, wherever it happens. The angle resets to 0 when a character is (re)selected
-/// (`MainMenu::SelectCharacter`, see `sync_dolls`). The menu swallows `ButtonInput`, so this reads the raw button
-/// messages. PORT: "taken by a widget" is a press on one of the menu's hit rects ([`crate::menu::MenuLayout`]);
-/// the action-0 rotation (`v · 0.1`, `MainMenu::RotateCharacter`; its key / wheel binding unchecked) is not ported.
+/// Turning the main menu's character by dragging (`MainMenu::HandleMouseEvent` /
+/// `MainMenu::SetCharacterRotation`): with no sub-window open and the press not taken by the menu's widgets,
+/// a left-button press starts the drag; each mouse move turns the character by `(x − last x) · 0.01` rad
+/// on the record's `mmPlayerRotation` Y; the release ends it, wherever it happens. Reads raw button messages.
+/// PORT: "taken by a widget" is a press on a [`crate::menu::MenuLayout`] rect; the action-0 rotation
+/// (`MainMenu::RotateCharacter`; its binding unchecked) is not ported.
 #[allow(clippy::too_many_arguments)]
 fn menu_drag(
     mut dolls: ResMut<Dolls>,
@@ -213,9 +193,8 @@ fn menu_drag(
     }
 }
 
-/// The rotate buttons' `ButtonStatic` looks (`ButtonStatic::Render`): the
-/// down bitmap while held, the in-focus bitmap while hovered, else the up
-/// bitmap the window drew; drawn over the window as an overlay node.
+/// The rotate buttons' `ButtonStatic` looks (`ButtonStatic::Render`): down
+/// while held, in-focus while hovered; drawn over the window as an overlay node.
 fn rotate_looks(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     mut commands: Commands,
@@ -223,8 +202,6 @@ fn rotate_looks(
     window: Query<&Window, With<PrimaryWindow>>,
 ) {
     let Ok(win) = window.single() else { return };
-    // Cursor `GD_HOVER=x,y` (logical px) and test hook `GD_DOLL_HOLD=0|1`, which shows the left / right
-    // button held.
     let cursor = gd_ui_kit::cursor_px(win);
     #[cfg(feature = "dev")]
     let held = hooks.render.doll_hold;
@@ -279,8 +256,7 @@ fn rotate_looks(
     }
 }
 
-/// The looks `view` shows: the worn items (Illusionist: with the pending
-/// picks), each with its illusion.
+/// The worn items (Illusionist: with the pending picks), each with its illusion.
 fn looks(
     view: DollView,
     inv: &gd_game_core::inventory::Inventory,
@@ -339,9 +315,6 @@ fn sync_dolls(
         if !open {
             d.shown = false;
         }
-        // The look list is built only when something it reads changed (the
-        // inventory, the illusionist's picks, the doll's own state); the
-        // per-frame check must not build or clone it.
         let stale = match (d.shown, view, female, inv.as_deref()) {
             (false, ..) => d.look.is_some(),
             (true, DollView::Menu, ..) => d.preset != d.look,
@@ -367,7 +340,7 @@ fn sync_dolls(
                     }
                     commands.entity(b).try_despawn();
                 }
-                // The menu's character: `Actor::SetScale(mmPlayerScale)` replaces the record's scale.
+                // `Actor::SetScale(mmPlayerScale)` replaces the record's scale.
                 let place = match (view, &scene) {
                     (DollView::Menu, Some(s)) => Some(s.view.player),
                     _ => None,
@@ -383,16 +356,14 @@ fn sync_dolls(
                     if let Some(b) = d.body {
                         commands
                             .entity(b)
-                            .insert((Name::new(format!("doll {view:?}")), DollBody(view)));
+                            .insert((Name::new(format!("doll {}", view.name())), DollBody(view)));
                         if let Some(tf) = place {
                             commands.entity(b).insert((tf, GlobalTransform::from(tf)));
                         }
                     }
                 }
                 d.look = want;
-                // A (re)selected menu character faces the record's way (`MainMenu::SelectCharacter` turns it by 0
-                // after
-                // creating it: the angle restarts at 0).
+                // `MainMenu::SelectCharacter`: a (re)selected menu character restarts at angle 0.
                 if view == DollView::Menu {
                     d.rotation = 0.0;
                     d.drag = None;
@@ -400,7 +371,7 @@ fn sync_dolls(
             }
         }
         if view == DollView::Menu {
-            // `menu_drag`'s angle on the record's Y rotation: R(X, rx)·R(Y, ry + angle)·R(Z, rz).
+            // R(X, rx)·R(Y, ry + angle)·R(Z, rz).
             if let (Some(s), Some(mut t)) = (&scene, d.body.and_then(|b| menu_body.get_mut(b).ok()))
             {
                 let (rz, ry, rx) = s.view.player.rotation.to_euler(EulerRot::ZYX);
@@ -408,7 +379,6 @@ fn sync_dolls(
                 if t.rotation != r {
                     t.rotation = r;
                 }
-                // Another record's scene (the options' Apply reloads it, `render/menu.rs`): its place.
                 let p = &s.view.player;
                 if (t.translation, t.scale) != (p.translation, p.scale) {
                     (t.translation, t.scale) = (p.translation, p.scale);
@@ -467,7 +437,7 @@ fn sync_dolls(
                             proj,
                             grading,
                             tf,
-                            Name::new(format!("doll camera {view:?}")),
+                            Name::new(format!("doll camera {}", view.name())),
                         ))
                         .id(),
                 );
@@ -476,8 +446,7 @@ fn sync_dolls(
     }
 }
 
-/// Puts every mesh of a doll on its view's layer only (spawned parts get the
-/// world's layers) and out of the sun's shadow.
+/// Puts every mesh of a doll on its view's layer only and out of the sun's shadow.
 fn keep_layers(
     mut commands: Commands,
     dolls: Query<(Entity, &DollBody, &Body)>,
@@ -504,31 +473,19 @@ fn keep_layers(
 }
 
 /// The character window's and the Illusionist's dolls wear the player's
-/// shapeshift form. `Paperdoll::SyncMesh` (every
-/// `UpdateSelf`): when the character's mesh instance (`GetMeshInstance`: the
-/// override mesh while shifted) is not the doll's, the doll takes its file,
-/// base scale and base / bump textures and plays from the character's
-/// override animation set (`Character.overrideAnimationSet`, else its own). Only the doll's own mesh
-/// changes: the human head mesh goes, the copied items and default pieces
-/// (`SyncItems`, `SetupDefaultEquip`) stay attached
-/// and the doll is a plain actor (`Entity::AddAttachedEntitiesToScene`, no
-/// `SetHideEquipment`), so all of them are drawn over the form:
-/// - each frame an item is placed by name: `Entity::GetCoords` =
-///   the doll's `GetAttachedCoordsInRegion` for the name given by
-///   `AttachItem` (`character::slot_point`, a missing point is
-///   the identity). The weapons go to the form's `R Hand` / `L Hand`; the
-///   stock forms have `Head` too, (0, 0.5, 0) on the were forms, (0, 1.74,
-///   0.54) on the beaver, none on the direwolf and wendigo, and the head
-///   slot rises with it; none has a `Chest`, `Legs`... point.
-/// - an armour mesh is skinned by bone name
-///   (`gd_sim::anim::pose_abs_attached_into`): the were, beaver and wendigo rigs
-///   share only `Target_CTRL` with human armour, so the armour keeps its bind
-///   pose and does not follow the form's animation; the direwolf's rig shares
-///   25 bones and animates those.
+/// shapeshift form (`Paperdoll::SyncMesh`): the doll takes the override mesh's
+/// file, scale and textures and plays its override animation set
+/// (`Character.overrideAnimationSet`). The human head mesh goes; items and
+/// default pieces (`SyncItems`, `SetupDefaultEquip`) stay attached and drawn:
+/// - items are placed by attach point name (`character::slot_point`, missing =
+///   identity); weapons go to the form's `R Hand` / `L Hand`; stock forms have
+///   `Head` on the were forms and the beaver only; none has `Chest`, `Legs`...
+/// - armour is skinned by bone name (`gd_sim::anim::pose_abs_attached_into`):
+///   only the direwolf rig shares bones (25) with human armour; the others keep
+///   the bind pose.
 ///
 /// PORT: a shifted doll's worn effects on a head piece stay at the actor's
-/// frame (`fx::items`), without the `Head` lift. The menu's character is no
-/// live character: it never shifts.
+/// frame (`fx::items`), without the `Head` lift. The menu's character never shifts.
 fn doll_forms(
     players: Query<
         &gd_render::character::Character,
@@ -554,13 +511,10 @@ fn doll_forms(
 }
 
 /// The doll loops its hand state's long idle (`Paperdoll::UpdateIdleAnimation`:
-/// the set's `LongIdle` slot (16 + 8 · type, `AnimationSet.slots`) as `LongIdleAction::Execute`
-/// reads it), not the world's attack idle. One variant is picked
-/// (`AnimationSlot::PickVariant`) when the hand state changes and played looped
-/// (`Actor::PlayAnimation(0, anim, loop = true, 1.0, 0)`), so the clip
-/// repeats until the hand state (here: the rebuilt body) changes. Port: started
-/// as a scripted animation and switched to looping; its first wrap ends the
-/// scripted state, and the idle state keeps the playing long idle.
+/// the set's `LongIdle` slot, 16 + 8 · type), not the world's attack idle. One
+/// variant is picked (`AnimationSlot::PickVariant`) when the hand state changes
+/// and played looped. Port: started as a scripted animation and switched to
+/// looping; its first wrap ends the scripted state.
 fn long_idle(mut dolls: Query<(&DollBody, &mut gd_render::character::Character)>) {
     for (body, mut c) in &mut dolls {
         if body.0 == DollView::Menu {
@@ -576,10 +530,9 @@ fn long_idle(mut dolls: Query<(&DollBody, &mut gd_render::character::Character)>
     }
 }
 
-/// The main menu hero's idle (`ControllerPlayerStateMenuIdle` -> `MenuIdleAction`, Game.dll
-/// `MenuIdleAction::MenuIdleAction` / `Execute` / `AnimationCallback`): the character idles in
-/// [`gd_game_core::character::IdleMode::Menu`] (`MenuIdle` looped, a `MenuFidget` at a loop's end once the transition
-/// timer is up), driven by the character's own idle machine.
+/// `ControllerPlayerStateMenuIdle` / `MenuIdleAction::Execute`: the character idles in
+/// [`gd_game_core::character::IdleMode::Menu`] (`MenuIdle` looped, a `MenuFidget` at a loop's end once the
+/// transition timer is up).
 fn menu_idle(mut dolls: Query<(&DollBody, &mut gd_render::character::Character)>) {
     use gd_game_core::character::{CharState, IdleMode};
     for (body, mut c) in &mut dolls {

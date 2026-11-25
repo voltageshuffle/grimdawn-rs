@@ -1,13 +1,11 @@
 //! The altar window's state ([`AltarMenu`]): the binary's `ascendant.rs` opens it, `gd_ui::altar` draws it.
 use bevy::prelude::*;
 
-/// The altar window's state (`ui::altar` draws it, its clicks change it).
 #[derive(Resource, Default)]
 pub struct AltarMenu {
     pub open: bool,
-    /// The altar it was opened at (`AltarWindow.altarId`): the reagent list and the boxes take clicks and the
-    /// activate button can be pressed. `None` (opened by the Altar Window key): a view of the boxes as activated
-    /// (the binary's `ascendant::altar_key`).
+    /// The altar it was opened at (`AltarWindow.altarId`); `None` (opened by the Altar Window key): a view of the
+    /// boxes as activated.
     pub altar: Option<Entity>,
     /// The boxes (the offering in progress, or the activated one in the view).
     pub offering: gd_game_core::ascendant::Offering,

@@ -8,17 +8,16 @@
 //   directional = (sat(N·L)·albedo + sat(V·R)^power·specular)·lightColor·shadow, R = 2(N·L)N − L
 //   point       = (sat(N·L̂)·albedo [+ sat(V·R)^power·specular])·lightColor·shadow·max(1 − (d/r)², 0)
 //                 (pointPS / pointSpecularPS; the specular one per light: not at lightingQuality low, nor
-//                 for a light in simple mode; the y of the light's entry after the lights, render/env.rs;
-//                 re-checked 2026-11-11 against the deferred.ssh bytecode: pointSpecularPS's specular is
+//                 for a light in simple mode; pointSpecularPS's specular is
 //                 directionalPS's, power = 2^(10.5·material.y), colour = the specular target, no extra factor;
 //                 RenderDeferredPointLight's specularPower / specularIntensity have no shader parameter)
-//   light rig   = the same for the character's own lights (render/light_rig.rs, rig_lights)
+//   light rig   = the same for the character's own lights
 //   glow        = glow.rgb·glow.a added on top.
-// Re-checked 2026-10-30 (directionalPS / directionalAmbientPS / pointPS): plain
+// directionalPS / directionalAmbientPS / pointPS: plain
 // sat(N·L), no wrap or half-Lambert, no shadow intensity; the sun shadow is a
 // 4-tap binary compare of bilinear depth at ±½·shadowBluriness (= softness 1.5, World ctor,
 // never set, / shadow map size: 1536 at shadowQuality medium, `GraphicsEngine::GetShadowMapSizes`),
-// i.e. ±0.75 texel, on the engine's LiSPSM map (render/shadow.rs, sun_shadow).
+// i.e. ±0.75 texel, on the engine's LiSPSM map.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::VertexOutput;
 @if(PREPASS_PIPELINE)
@@ -66,14 +65,14 @@ const FLAG_ALPHA_TEST: u32 = 16u;
 const FLAG_HAS_TANGENTS: u32 = 32u;
 const FLAG_GLOW_SCROLL_ALPHA: u32 = 64u;
 const FLAG_DISSOLVE: u32 = 128u;
-// The deferred pass writes material.x = 0 (albedo.ssh, render/material.rs FLAG_UNLIT).
+// The deferred pass writes material.x = 0 (albedo.ssh).
 const FLAG_UNLIT: u32 = 256u;
-// iceyskinned.ssh deferredPS: albedo = lerp(base, iceyTexture (detail slot), fade.w) (render/material.rs FLAG_ICEY).
+// iceyskinned.ssh deferredPS: albedo = lerp(base, iceyTexture (detail slot), fade.w).
 const FLAG_ICEY: u32 = 512u;
 const FLAG_VERTEX_COLOR: u32 = 1024u;
 const FLAG_GLACIAL: u32 = 2048u;
 const FLAG_VERTEX_ALPHA: u32 = 4096u;
-// bonefadeskinned.ssh (render/material.rs FLAG_BONE_FADE): fade.x holds the bone fade factor.
+// bonefadeskinned.ssh: fade.x holds the bone fade factor.
 const FLAG_BONE_FADE: u32 = 8192u;
 // standardblended* deferredPS: base.a · blendedGlobalFadeFactor tested against 0.1 (fade.x).
 const FLAG_BLENDED_FADE: u32 = 16384u;
@@ -91,10 +90,10 @@ const FLAG_BLENDED_FADE: u32 = 16384u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var snow_smp: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(11) var snow_nrm_tex: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(12) var snow_nrm_smp: sampler;
-// Environment (render/env.rs EnvGpu): [0] sun dir (toward light) + enabled,
-// [1] sun colour + shadow intensity (unused, render/env.rs), [2] sky ambient, [3] ground ambient + light count,
+// Environment (`EnvGpu`): [0] sun dir (toward light) + enabled,
+// [1] sun colour + shadow intensity (unused), [2] sky ambient, [3] ground ambient + light count,
 // [4] x: the light buffer's clamp (1 = the UNORM back buffer; hdrLighting: the float
-// target, no clamp; render/env.rs), y: 1 = point lights with specular, then 2 vec4 per point
+// target, no clamp), y: 1 = point lights with specular, then 2 vec4 per point
 // light (pos+radius, colour).
 @group(constants::MATERIAL_BIND_GROUP) @binding(13) var<storage, read> env: array<vec4<f32>>;
 
@@ -103,8 +102,8 @@ fn has(f: u32) -> bool {
 }
 
 /// The `standarddissolve*` shaders' cut (their DirectX11 `deferredPS` / `lightShadowPS`):
-/// d = dissolveTexture.r − dissolveValue + 0.5, drop the texel when base.a · d < 0.5 (FLAG_DISSOLVE,
-/// monsters.rs). The `emissiveStyle` edge is added in `fragment` (black for the ambush); their sun
+/// d = dissolveTexture.r − dissolveValue + 0.5, drop the texel when base.a · d < 0.5 (FLAG_DISSOLVE).
+/// The `emissiveStyle` edge is added in `fragment` (black for the ambush); their sun
 /// `depthMapPS` has no cut.
 fn dissolved(uv: vec2<f32>, a: f32) -> bool {
     if !has(FLAG_DISSOLVE) {
@@ -156,21 +155,21 @@ fn fragment(in: VertexOutput) {
     prepass_discard(in);
 }
 
-/// The glow camera (post.rs) is marked by its exposure (ev100 0 → 0.83;
+/// The glow camera is marked by its exposure (ev100 0 → 0.83;
 /// the main camera keeps Bevy's default ≈ 0.001, unused by these shaders).
 @if(!PREPASS_PIPELINE)
 fn is_glow_view() -> bool {
     return view.exposure > 0.1;
 }
 
-/// The water reflection camera (render/reflection.rs) is marked by its exposure
+/// The water reflection camera is marked by its exposure
 /// (ev100 −2 → 3.33); it also exceeds the glow threshold, so test it first.
 @if(!PREPASS_PIPELINE)
 fn is_reflection_view() -> bool {
     return view.exposure > 2.0;
 }
 
-/// A paper-doll view (doll.rs): its `UISceneView` light rig rides in the
+/// A paper-doll view: its `UISceneView` light rig rides in the
 /// camera's colour grading (exposure 1 marks it).
 @if(!PREPASS_PIPELINE)
 fn is_doll_view() -> bool {
@@ -195,10 +194,10 @@ fn shade_doll(p: vec4<f32>, N: vec3<f32>, albedo: vec3<f32>, ambient_add: f32, s
     return c;
 }
 
-/// Glow-view alpha, the outline mask (post.rs): opaque passes leave 0 (the
+/// Glow-view alpha, the outline mask: opaque passes leave 0 (the
 /// masks of the outlined parts come after them, `outline.w`). Blended passes
-/// keep the target's alpha (their pipeline's alpha blend is dst-only,
-/// material.rs) and return their colour blend factor.
+/// keep the target's alpha (their pipeline's alpha blend is dst-only)
+/// and return their colour blend factor.
 @if(!PREPASS_PIPELINE)
 fn glow_view_alpha(blend_alpha: f32) -> f32 {
 @if(GD_BLENDED) {
@@ -209,8 +208,7 @@ fn glow_view_alpha(blend_alpha: f32) -> f32 {
 }
 }
 
-/// The sun shadow the way deferred.ssh `directionalPS` tests it
-/// (render/shadow.rs, which builds the engine's LiSPSM map): 4 bilinear taps at
+/// The sun shadow the way deferred.ssh `directionalPS` tests it: 4 bilinear taps at
 /// ±½·shadowBluriness in a plus, ¼ each, lit unless the stored depth is
 /// nearer than the receiver's + shadowBias (−0.001). The same function is in
 /// gd_terrain.wesl / gd_standard.wesl / decal.wesl.
@@ -260,7 +258,7 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
     let z = 1.0 - saturate(1.0 - ndc.z + SHADOW_BIAS);
     let size = vec2<i32>(textureDimensions(directional_shadow_textures));
     let layer = i32((*light).depth_texture_base_index);
-    // texel_size carries ½·shadowBluriness in map UV (render/shadow.rs).
+    // texel_size carries ½·shadowBluriness in map UV.
     let o = (*light).cascades[0].texel_size;
     let taps = array<vec2<f32>, 4>(vec2<f32>(-o, 0.0), vec2<f32>(o, 0.0), vec2<f32>(0.0, -o), vec2<f32>(0.0, o));
     var lit = 0.0;
@@ -270,12 +268,11 @@ fn sun_shadow(p: vec4<f32>) -> f32 {
             lit += 0.25;
         }
     }
-    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its
-    // statistics text (render/shadow.rs).
+    // No shadow intensity: AmbianceManager's (env[1].w) only feeds its statistics text.
     return lit;
 }
 
-/// The point-light shadow of deferred.ssh `pointPS` (render/point_shadow.rs):
+/// The point-light shadow of deferred.ssh `pointPS`:
 /// the engine's paraboloid uv of the light→pixel direction (light frame rows
 /// (−1,0,0), (0,1,0), (0,0,−1): uv = (0.5 + 0.5 s, 0.5 − 0.5 t), s, t =
 /// (q.x, q.z) / (q.y − 1)), 4 taps at ±½·shadowBluriness in a plus, ¼ each, lit
@@ -353,7 +350,7 @@ fn spec_term(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
     return exp2(log2(max(saturate(dot(V, R)), 1e-8)) * power);
 }
 
-/// The character's light rig (render/light_rig.rs): the lights of the pixel's cluster whose `radius`
+/// The character's light rig: the lights of the pixel's cluster whose `radius`
 /// carries the mesh tag's light group (+ 0.5: specular), drawn like `pointPS` / `pointSpecularPS`
 /// (the engine's `pointGrouped` stencil test).
 @if(!PREPASS_PIPELINE && GD_TAGGED)
@@ -427,7 +424,6 @@ fn shade_points(p: vec4<f32>, N: vec3<f32>, albedo: vec3<f32>, spec: vec3<f32>, 
     let n_lights = u32(env[3].w);
     for (var i = 0u; i < n_lights; i++) {
         let lp = env[5u + 2u * i];
-        // FireLights step their colour on the CPU (world::Flicker).
         let lc = env[6u + 2u * i];
         let lv = lp.xyz - p.xyz;
         let dist = length(lv);
@@ -437,7 +433,7 @@ fn shade_points(p: vec4<f32>, N: vec3<f32>, albedo: vec3<f32>, spec: vec3<f32>, 
             let sh = point_shadow(lp.xyz, p.xyz, extra.x);
             let L = lv / dist;
             var t = saturate(dot(N, L)) * albedo;
-            // pointSpecularPS: per light (lightingQuality, simple mode; render/env.rs).
+            // pointSpecularPS: per light (lightingQuality, simple mode).
             if extra.y > 0.5 {
                 t += spec_term(N, L, V, power) * spec;
             }
@@ -478,7 +474,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var base = textureSample(base_tex, base_smp, uv);
     let texel_a = base.a;
-    // FLAG_VERTEX_COLOR (material.rs): the `*vertexcolor*` / `*vertcolor*` deferredPS take base.a · vcol.a and tint
+    // FLAG_VERTEX_COLOR: the `*vertexcolor*` / `*vertcolor*` deferredPS take base.a · vcol.a and tint
     // the albedo by vcol.rgb, after the snow blend (snowvertcolor); FLAG_VERTEX_ALPHA: base.a · vcol.r.
     var vcol = vec3<f32>(1.0);
 @if(VERTEX_COLORS) {
@@ -495,15 +491,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         if base.a < 0.01 {
             discard;
         }
-        // alpha: the outline's palette class (post.rs).
+        // alpha: the outline's palette class.
         out.color = vec4<f32>(0.0, 0.0, 0.0, material.outline.w);
         return out;
     }
-    // fade.y: the alpha-test reference (0.5; grass 0.65 / 0.35, render/grass.rs).
+    // fade.y: the alpha-test reference (0.5; grass 0.65 / 0.35).
     if has(FLAG_ALPHA_TEST) && base.a < material.fade.y {
         discard;
     }
-    // fade.x: a faded scenery part's opacity o (see_through.rs): the "…T.ssh"
+    // fade.x: a faded scenery part's opacity o: the "…T.ssh"
     // `depthStyle` pass writes the depth of the texels with base alpha ≥ 0.5,
     // the lit pass draws on that depth (EQUAL) at alpha o, not at all at o = 0.
     let fade = material.fade.x;
@@ -550,7 +546,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var nrm = textureSample(bump_tex, bump_smp, uv);
     var power = material.specular.w;
 
-    // Tangent frame (T, −B, N), B = sign·(N×T) as stored by model.rs.
+    // Tangent frame (T, −B, N), B = sign·(N×T).
     var Nv = normalize(in.world_normal);
     var T = vec3<f32>(1.0, 0.0, 0.0);
     var Bn = vec3<f32>(0.0, 0.0, 1.0);
@@ -613,7 +609,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     base = vec4<f32>(base.rgb * vcol, base.a);
     var albedo = min(base.rgb * dc2 * dc2, vec3<f32>(1.0));
     if has(FLAG_GLACIAL) {
-        // standard*glacial deferredVS / deferredPS (render/material.rs FLAG_GLACIAL).
+        // standard*glacial deferredVS / deferredPS.
         var g = vec3<f32>(1.0);
 @if(GD_TAGGED) {
         let h = in.world_position.y - mesh_functions::get_world_from_local(in.instance_index)[3].y;
@@ -651,7 +647,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         N = vec3<f32>(-1.0);
         spec = vec3<f32>(0.0);
     }
-    // reflectionStyle (render/reflection.rs): base × (sat(N·L)·sun + hemisphere
+    // reflectionStyle: base × (sat(N·L)·sun + hemisphere
     // ambient), alpha base.a; no point lights, shadows, specular or glow.
     if is_reflection_view() {
         let hemi = mix(env[3].rgb, env[2].rgb, N.y * 0.5 + 0.5);
@@ -663,14 +659,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         return out;
     }
 
-    // A character's mesh tag (render/light_rig.rs): its light group and ambient highlight (diffuseColor.w).
+    // A character's mesh tag: its light group and ambient highlight (diffuseColor.w).
     var group = 0u;
     var highlight = 0.0;
 @if(GD_TAGGED) {
     let tag = mesh_functions::get_tag(in.instance_index);
     group = tag & 0xFFFFu;
     highlight = f32((tag >> 16u) & 0x7FFFu) * 0.001;
-    // The highlight flag (bit 31, `light_rig::mesh_tag`): + 0.25; the portrait clears it before drawing (ui/dialog.rs).
+    // The highlight flag (bit 31, `light_rig::mesh_tag`): + 0.25.
     if (tag >> 31u) != 0u && !is_doll_view() {
         highlight += 0.25;
     }
@@ -700,15 +696,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         }
         glow = g.rgb * ga;
     }
-    // The `standarddissolve*` `emissiveStyle` pass (its emissiveVS / emissivePS, SrcAlpha / One,
-    // monsters.rs): where the texel is not cut yet (n > v), (0.25 − sat(n − v)) · dissolveColor · 4 · the
+    // The `standarddissolve*` `emissiveStyle` pass (its emissiveVS / emissivePS, SrcAlpha / One):
+    // where the texel is not cut yet (n > v), (0.25 − sat(n − v)) · dissolveColor · 4 · the
     // dissolve texture at uv·2 + (cos, sin)(time / 2) — a glow at the edge, a darkening further in.
     if has(FLAG_DISSOLVE) {
         let x = saturate(textureSample(detail_tex, detail_smp, uv).r - material.fade.z);
         let n2 = textureSample(detail_tex, detail_smp, uv * 2.0 + vec2<f32>(cos(t * 0.5), sin(t * 0.5))).rgb;
         c = max(c + select(vec3<f32>(0.0), (0.25 - x) * material.dissolve.rgb * n2 * 4.0, x > 0.0), vec3<f32>(0.0));
     }
-    // The glow view renders only the glow buffer for the blur (post.rs).
+    // The glow view renders only the glow buffer for the blur.
     if is_glow_view() {
         // The engine's glow target is the G-buffer's UNORM format 2 (CreateRenderTargets): at most 1.
         out.color = vec4<f32>(clamp(glow, vec3<f32>(0.0), vec3<f32>(1.0)), glow_view_alpha(fade));

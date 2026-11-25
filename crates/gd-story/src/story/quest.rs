@@ -12,10 +12,8 @@
 //! * Every 500 ms each active task runs `Update`: per objective, evaluate its
 //!   conditions (all/any). Objective state 0 → 1/2 without running actions;
 //!   2 → 1 runs the objective's actions; 1 → 2 whenever it stops holding.
-//!   When no objective is in state 2 the task completes. (`Quest2Task::Update`:
-//!   the conditions' changed flag `ScriptableConditionCollection.changed` only gates the
-//!   objective-changed UI event; transitions and completion run on the
-//!   evaluated result, so the port keeps no such flag.)
+//!   When no objective is in state 2 the task completes. (The conditions' changed flag
+//!   `ScriptableConditionCollection.changed` only gates the objective-changed UI event: not ported.)
 //!   Objectives with no condition list... have none (`Update` returns early for
 //!   tasks without objectives, so those only complete explicitly).
 //! * `Complete`: state 3; if it was in progress the reward events run. An
@@ -24,11 +22,8 @@
 //! * Condition type 17 ("manual") is always false: such objectives are
 //!   completed by a `CompleteQuestTask` action (conversations, Lua).
 //!
-//! PORT: the engine evaluates an incentive/reward event's `LuaScript` conditions live at event
-//! execution. The port pre-evaluates them on the 500 ms tick (only AVAILABLE tasks' incentives and
-//! IN_PROGRESS tasks' rewards) and refreshes them again at every script-host entry point that may
-//! begin or complete a task (`lua::ScriptHost`), so an event reads results at most one entry point
-//! old; a begin/complete nested inside another event's actions reads that entry point's results.
+//! PORT: the engine evaluates an incentive/reward event's `LuaScript` conditions live at event execution; the port
+//! pre-evaluates them on the 500 ms tick and at every script-host entry point that may begin or complete a task.
 use super::Story;
 use super::state::{DIFFICULTIES, Effect, MAX_TRIBUTE};
 use gd_formats::collections::{HashMap, HashSet};
@@ -79,17 +74,9 @@ impl QuestDefs {
         self.by_id.get(&id).copied()
     }
 
-    /// The repository's quest order (what `Quest2Repository::GetQuests`
-    /// returns, so the tracker's and the journal's order), as indices into
-    /// [`Self::list`]. Game.dll `Quest2Repository::LoadQuests`
-    /// / `GetQuests`: the quests are loaded in
-    /// the world's quest-file order (`World::GetQuestFile`, the `.map`
-    /// header list) into an MSVC `std::unordered_map<u32 id, Quest2*>`
-    /// (a later file with an id already loaded is dropped) and returned in
-    /// that map's iteration order. PORT: we return the load order instead of
-    /// emulating the MSVC bucket iteration — display order only, deterministic
-    /// and O(n). Quests the map does not list follow in [`Self::list`] order
-    /// (the engine never loads them).
+    /// The `Quest2Repository::GetQuests` order (tracker and journal), as indices into [`Self::list`]: the world's
+    /// quest-file order (`World::GetQuestFile`), a later duplicate id dropped. PORT: load order, not the MSVC
+    /// `unordered_map` iteration order; quests the map does not list follow in [`Self::list`] order.
     pub fn repository_order(&self, map_quests: &[String]) -> Vec<usize> {
         let mut seen = vec![false; self.list.len()];
         let mut ins: Vec<(u32, usize)> = Vec::new();
@@ -232,8 +219,7 @@ pub struct QuestLog {
     /// Begun tasks, polled by `update` (quest index, task index).
     pub active: Vec<(usize, usize)>,
     pub timer_ms: i32,
-    /// PORT: bumped whenever a task state, an objective's satisfied flag or a counter changes — the UI's change
-    /// signal (`grimdawn::ui::quests::collect` rebuilds its view only when it moves).
+    /// PORT: bumped whenever a task state, an objective's satisfied flag or a counter changes (the UI's change signal).
     pub revision: u64,
     /// The quests whose [`QuestRt::changed`] is set, checked by `update_quests` (unordered).
     changed_quests: Vec<usize>,
@@ -243,8 +229,7 @@ pub struct QuestLog {
     lua_rewards: Vec<Vec<Vec<Arc<LuaCond>>>>,
     /// `[quest][task]`: the `LuaScript` conditions of the task's objectives (unique keys).
     lua_objectives: Vec<Vec<Vec<Arc<LuaCond>>>>,
-    /// `[quest][task][objective]`: each condition entry's [`lua_key`] (0 for a non-Lua entry),
-    /// aligned with the entry list so objective evaluation carries the key instead of re-hashing.
+    /// `[quest][task][objective]`: each condition entry's [`lua_key`] (0 for a non-Lua entry).
     lua_objective_keys: Vec<Vec<Vec<Vec<u64>>>>,
 }
 
@@ -345,7 +330,6 @@ impl QuestLog {
             lua_objective_keys,
         }
     }
-    /// Sets quest `qi`'s [`QuestRt::changed`].
     fn mark_changed(&mut self, qi: usize) {
         self.revision += 1;
         if !std::mem::replace(&mut self.rt[qi].changed, true) {
@@ -452,7 +436,7 @@ pub struct LuaCond {
 }
 
 /// The key under which a Lua condition's result is cached (`Story::lua_results`): a hash of the function and its
-/// raw arguments (`DefaultHasher::new` has fixed keys, so it is the same every run).
+/// raw arguments, stable across runs.
 pub fn lua_key(function: &str, args: &[LuaArg]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::hash::DefaultHasher::new();
@@ -483,8 +467,7 @@ pub(crate) fn collect_lua_conds(
     }
 }
 
-/// The [`lua_key`] of each entry of `conds` (0 for a non-`LuaScript` entry), aligned with the
-/// entry list ([`QuestLog::lua_objective_keys`]).
+/// The [`lua_key`] of each entry of `conds` (0 for a non-`LuaScript` entry).
 fn cond_lua_keys(conds: Option<&Conditions>) -> Vec<u64> {
     conds
         .iter()
@@ -750,15 +733,10 @@ impl Story {
         (self.game.difficulty as usize).min(DIFFICULTIES - 1)
     }
 
-    /// The progress an objective's text shows, `(done, needed)`, from its
-    /// first condition (Game.dll `Quest2Objective::GetText`: `Read` keeps the
-    /// first condition in `Quest2Objective.firstCondition` and its
-    /// `ScriptableCondition::Localize` rewrites the text): kill counters (types 10,
-    /// 16, 28, 29: `tagConditionHasKilled` "{%t0} ({%d1}/{%d2})") and item
-    /// counts (type 9, `tagConditionHasItem`), the done part capped at the
-    /// needed count. Other conditions keep the text as is. PORT: type 15's
-    /// `tagQuestObjectiveUsedQuestItem*` texts are not shown (no shipped
-    /// quest uses it).
+    /// The progress an objective's text shows, `(done, needed)`, from its first condition
+    /// (`Quest2Objective::GetText`): kill counters (types 10, 16, 28, 29: `tagConditionHasKilled`
+    /// "{%t0} ({%d1}/{%d2})") and item counts (type 9, `tagConditionHasItem`), the done part capped at the
+    /// needed count. PORT: type 15's `tagQuestObjectiveUsedQuestItem*` texts are not shown.
     pub fn objective_progress(&self, qi: usize, ti: usize, oi: usize) -> Option<(u32, u32)> {
         let obj = self
             .quests
@@ -949,8 +927,7 @@ impl Story {
             Condition::KillClassification { count, .. } | Condition::KillFaction { count, .. } => {
                 cmp.compare(counter, *count)
             }
-            // type 13 `Evaluate` = `xor al,al`; no stock quest or conversation uses it
-            // (by design: no stock caller), `Manual` is only satisfied by script.
+            // type 13 `Evaluate` = `xor al,al`; `Manual` is only satisfied by script.
             Condition::False13 { .. } | Condition::Manual => false,
             Condition::CheckRandomValue { name, value } => {
                 self.random_values.get(name) == Some(value)
@@ -1023,8 +1000,7 @@ impl Story {
     }
 
     /// The Lua conditions of the quest events that can run now: AVAILABLE tasks' incentives
-    /// (run at begin) and IN_PROGRESS tasks' rewards (run at complete). The script host refreshes
-    /// these at its entry points so an event reads live results (module doc PORT).
+    /// (run at begin) and IN_PROGRESS tasks' rewards (run at complete).
     pub fn event_lua_conditions(&self) -> Vec<Arc<LuaCond>> {
         let mut seen = HashSet::default();
         let mut out = Vec::new();

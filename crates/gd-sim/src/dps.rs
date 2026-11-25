@@ -83,8 +83,7 @@ pub fn finish(dps: f32, cooldown: f32, cooldown_reduction: f32) -> f32 {
 /// duration (`GetAnimSpeed` of its Attack slot: frames / fps / record speed,
 /// mean of the variants). `attack_speed` is `Character::GetAttackSpeed`,
 /// `base_attack_speed` the record's `characterAttackSpeed` × (1 + modifier %).
-/// 0 when either divisor is not positive (bad data: a missing attack animation
-/// or a zero `characterAttackSpeed` would make it infinite or NaN).
+/// 0 when either divisor is not positive.
 pub fn weapon_rate(attack_speed: f32, base_attack_speed: f32, attack_duration: f32) -> f32 {
     if base_attack_speed <= 0.0 || attack_duration <= 0.0 {
         return 0.0;
@@ -95,7 +94,7 @@ pub fn weapon_rate(attack_speed: f32, base_attack_speed: f32, attack_duration: f
 /// Spells' uses per second (`SkillAttackInfo.usesPerSecond`, `CalculateSkillDps`): the
 /// spell cast speed × the frame rate over the length of the cast animation
 /// (`GetHitCallbackPoint` returns `GetLength` and `GetFrameRate`); `None`
-/// when the animation is missing (the rate then stays what it was).
+/// when the animation is missing.
 pub fn spell_rate(cast_speed: f32, frames: u32, fps: u32) -> Option<f32> {
     (frames != 0 && fps != 0).then_some(fps as f32 / frames as f32 * cast_speed)
 }

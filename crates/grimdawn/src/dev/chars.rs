@@ -2,8 +2,7 @@
 //! (`player:male:<item>,<item>` for explicit gear; `creature:<record>:<variant>`), lined up on a ground
 //! plane far from the world's levels. `GD_CHAR_KEYS=1`: keys 1–4 switch all characters to idle / run /
 //! attack / death; `GD_CHAR_STATE` sets the initial state and `GD_CHAR_HOLD=<0..1>` freezes attacks at that
-//! fraction (for screenshots; both read by `gd_game::character`). `GD_CHAR_CAM` / `GD_CHAR_YAW`: the camera's
-//! distance and yaw.
+//! fraction. `GD_CHAR_CAM` / `GD_CHAR_YAW`: the camera's distance and yaw.
 use bevy::prelude::*;
 use gd_game::character::drive_characters;
 use gd_game_core::hooks::Hooks;
@@ -95,8 +94,8 @@ fn scene(
     commands.insert_resource(super::SceneCamera);
 }
 
-/// `GD_CHAR_KEYS` (hooks.rs): keys 1-4 force every character into idle/run/attack/death. Off by default: 1-0 are
-/// the hotbar keys.
+/// `GD_CHAR_KEYS`: keys 1-4 force every character into idle/run/attack/death. Off by default: 1-0 are the
+/// hotbar keys.
 fn keys(
     hooks: Res<Hooks>,
     keys: Res<ButtonInput<KeyCode>>,

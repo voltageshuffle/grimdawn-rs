@@ -16,7 +16,7 @@
 //! What it remembers: the mode, the difficulty, Veteran (`challenge`), the Crucible arena (`survival_index` into the
 //! menu's arena list, plus the level / mod names), the Custom mod (matched by mod name and level name in the menu's
 //! mod list; not found keeps mode 2 without a selection), the selected character and the multiplayer settings.
-//! Not verified: what the two menu words mean, whether the Random arena is stored as its resolved index (it is read
+//! Unknown: what the two menu words mean, whether the Random arena is stored as its resolved index (it is read
 //! back by `survival_index` only).
 use super::cipher::{bytes_to_string, string_to_bytes};
 use crate::util::Reader;

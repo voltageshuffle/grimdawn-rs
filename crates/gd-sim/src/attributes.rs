@@ -90,9 +90,7 @@ pub enum CharAttr {
 pub const CHAR_ATTR_SLOTS: usize = 58;
 
 impl CharAttr {
-    /// Every type in id order: `ALL[id - 1]`. The length is the last id, so a
-    /// variant added after it fails to compile until it is listed; the const
-    /// check below fails the build on a gap or a misplaced entry.
+    /// Every type in id order: `ALL[id - 1]`.
     pub const ALL: [CharAttr; CharAttr::LightRadius as usize] = [
         Self::Physique,
         Self::Cunning,
@@ -249,8 +247,7 @@ pub enum CombatType {
 }
 
 impl CombatType {
-    /// Every type in id order: `ALL[id - 1]` (length and order checked as
-    /// for [`CharAttr::ALL`]).
+    /// Every type in id order: `ALL[id - 1]`.
     pub const ALL: [CombatType; CombatType::CrowdControlMaxResist as usize] = [
         Self::PhysicalPierce,
         Self::Physical,
@@ -321,6 +318,77 @@ impl CombatType {
 
     pub fn from_id(id: u8) -> Option<CombatType> {
         Self::ALL.get(usize::from(id).checked_sub(1)?).copied()
+    }
+
+    /// The `tagCharStats<name>` tag key.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PhysicalPierce => "PhysicalPierce",
+            Self::Physical => "Physical",
+            Self::PierceRatio => "PierceRatio",
+            Self::Pierce => "Pierce",
+            Self::Cold => "Cold",
+            Self::Fire => "Fire",
+            Self::Acid => "Acid",
+            Self::Lightning => "Lightning",
+            Self::Vitality => "Vitality",
+            Self::Chaos => "Chaos",
+            Self::Aether => "Aether",
+            Self::ManaBurn => "ManaBurn",
+            Self::Disruption => "Disruption",
+            Self::PercentCurrentLife => "PercentCurrentLife",
+            Self::Bleeding => "Bleeding",
+            Self::TotalSpeed => "TotalSpeed",
+            Self::AttackSpeed => "AttackSpeed",
+            Self::CastSpeed => "CastSpeed",
+            Self::RunSpeed => "RunSpeed",
+            Self::LifeLeech => "LifeLeech",
+            Self::ManaLeech => "ManaLeech",
+            Self::OffensiveAbility => "OffensiveAbility",
+            Self::DefensiveAbility => "DefensiveAbility",
+            Self::OffensiveReduction => "OffensiveReduction",
+            Self::DefensiveReduction => "DefensiveReduction",
+            Self::Fumble => "Fumble",
+            Self::ProjectileFumble => "ProjectileFumble",
+            Self::TotalDamageReductionPercent => "TotalDamageReductionPercent",
+            Self::TotalDamageReductionAbsolute => "TotalDamageReductionAbsolute",
+            Self::PhysicalDamageReductionPercent => "PhysicalDamageReductionPercent",
+            Self::ElementalDamageReductionPercent => "ElementalDamageReductionPercent",
+            Self::TotalResistanceReductionPercent => "TotalResistanceReductionPercent",
+            Self::TotalResistanceReductionAbsolute => "TotalResistanceReductionAbsolute",
+            Self::PhysicalResistanceReductionPercent => "PhysicalResistanceReductionPercent",
+            Self::PhysicalResistanceReductionAbsolute => "PhysicalResistanceReductionAbsolute",
+            Self::ElementalResistanceReductionPercent => "ElementalResistanceReductionPercent",
+            Self::ElementalResistanceReductionAbsolute => "ElementalResistanceReductionAbsolute",
+            Self::AbsorptionProtection => "AbsorptionProtection",
+            Self::Absorption => "Absorption",
+            Self::Protection => "Protection",
+            Self::ArmorRating => "ArmorRating",
+            Self::Stun => "Stun",
+            Self::Sleep => "Sleep",
+            Self::Trap => "Trap",
+            Self::Freeze => "Freeze",
+            Self::Petrify => "Petrify",
+            Self::Immobilize => "Immobilize",
+            Self::Knockdown => "Knockdown",
+            Self::TakeHit => "TakeHit",
+            Self::Taunt => "Taunt",
+            Self::Convert => "Convert",
+            Self::Fear => "Fear",
+            Self::Confusion => "Confusion",
+            Self::CrowdControl => "CrowdControl",
+            Self::BlockModifier => "BlockModifier",
+            Self::BlockAmountModifier => "BlockAmountModifier",
+            Self::Reflect => "Reflect",
+            Self::Elemental => "Elemental",
+            Self::CritDamageModifier => "CritDamageModifier",
+            Self::TotalDamageModifier => "TotalDamageModifier",
+            Self::DamageMultiplier => "DamageMultiplier",
+            Self::ManaBurnRatio => "ManaBurnRatio",
+            Self::ReflectionResist => "ReflectionResist",
+            Self::AllMaxResist => "AllMaxResist",
+            Self::CrowdControlMaxResist => "CrowdControlMaxResist",
+        }
     }
 
     /// The "elemental" test used by resistance reduction:
@@ -470,7 +538,7 @@ impl FieldDef {
             ratio: None,
         }
     }
-    /// A single-value attribute ([`crate::catalog`] table constructors below).
+    /// A single-value attribute.
     pub(crate) const fn value(
         family: AttrFamily,
         class: &'static str,
@@ -752,11 +820,8 @@ pub fn family(f: AttrFamily) -> std::slice::Iter<'static, FieldDef> {
 /// [`FIELDS`] entry, in table order, with a field equal to `field` ignoring
 /// ASCII case.
 pub fn lookup(field: &str) -> Option<&'static FieldDef> {
-    // Every (field, entry) pair keyed by the field's case-folded hash, sorted
-    // by it: a lookup compares integers, then only the few equal-hash names.
-    // The sort is stable, so equal fields keep table order and the first match
-    // is the first entry in table order. (Profile builds call this for every
-    // field of every record they add.)
+    // Every (field, entry) pair keyed by the field's case-folded hash; the stable sort keeps equal fields in table
+    // order, so the first match is the first entry in table order.
     static INDEX: LazyLock<Vec<(u64, &'static str, &'static FieldDef)>> = LazyLock::new(|| {
         let mut v: Vec<_> = FIELDS
             .iter()
@@ -790,8 +855,6 @@ pub fn class_def(class: &str) -> Option<&'static FieldDef> {
 }
 
 /// FNV-1a of `s` ASCII-lowercased: equal for names equal ignoring ASCII case.
-/// An internal index key, no engine parity claim; FNV keeps the case fold
-/// allocation-free on the lookup path.
 fn folded_hash(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ b.to_ascii_lowercase() as u64).wrapping_mul(0x0000_0100_0000_01b3)

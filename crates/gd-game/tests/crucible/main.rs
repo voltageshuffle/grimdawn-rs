@@ -1,6 +1,5 @@
 //! Crucible sessions (`TestGame::crucible`): their own test binary, since a Crucible session turns the data
-//! overlay on for the binary's shared `GameData` (every test here runs in the Crucible).
-//! `cargo test -p gd-game --test crucible`.
+//! overlay on for the binary's shared `GameData`.
 use bevy::prelude::*;
 use gd_game::conversation::{Conversation, ConversationRequest};
 use gd_game::testing::TestGame;
@@ -192,8 +191,7 @@ fn the_devotion_purchase() {
         let d = g.app.world().resource::<gd_game::devotion::DevotionState>();
         (d.points, d.total)
     };
-    // Pin the price tier: the character's devotion history must not decide whether this test
-    // asserts (a character past 40 points ever earned would silently skip it).
+    // Pin the price tier: a character past 40 points ever earned would silently skip the asserts.
     g.app
         .world_mut()
         .resource_mut::<gd_game::devotion::DevotionState>()

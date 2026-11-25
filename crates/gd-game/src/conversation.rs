@@ -1,39 +1,18 @@
-//! Conversations with NPCs: opening, answering and closing the conversation
-//! window. The story runtime ([`gd_game_core::story::StoryRuntime`], `gd_story::story`
-//! dialogs) decides what is said; this module owns the open conversation
-//! ([`Conversation`]) and applies the player's [`ConversationRequest`]s.
-//! The game draws the window from [`Conversation::view`] and sends requests.
+//! Conversations with NPCs: the open conversation ([`Conversation`]) and the player's
+//! [`ConversationRequest`]s. The story runtime decides what is said.
 //!
-//! * Talk range: `ControllerPlayerState::DefaultRequestNpcAction`
-//!   (Game.dll): clicking an NPC talks at once when
-//!   `Character::NearTarget(npc, 3.0)` holds (3D distance of the origins
-//!   ≤ player radius + NPC radius + 3 m, [`in_talk_range`]); otherwise the
-//!   player walks to it (`MoveToNpc`) and talks when the path ends
-//!   (`ControllerPlayerStateMoveToNpc::EndOfPathReached` → `TalkToNpc`,
-//!   whatever the distance then). `Npc::Converse` opens the window only when
-//!   the conversation has an available speech.
-//! * Closing: the window's update `Grim Dawn.exe` `ConversationWindow::Update`: it
-//!   closes when the NPC or the player is gone, when the 3D distance between
-//!   them exceeds the NPC's `GetUICloseDistance` (`uiCloseDistance` of its
-//!   record, 5 m when missing or ≤ 0, Engine.dll `Actor::GetUICloseDistance`;
-//!   [`close_distance`]), or after 150 s without input
-//!   (`Engine::IsUserIdle(150000)`; PORT: not checked). The window's close
-//!   slot (`ConversationWindow::OnCloseSlot`, used for Esc / the close button) and the "End
-//!   Conversation" button close it without running actions
-//!   ([`ConversationRequest::Close`]).
-//! * Voice-overs: the window's step update `Grim Dawn.exe`
-//!   `ConversationWindow::UpdateStep`: each speech shown (opening, a Continue / link reply) stops
-//!   the previous speech's VO (`ConversationStep::StopVO`, the step kept at
-//!   `ConversationWindow.currentStep`) and plays its own (`PlayVO`, [`DialogView::voice`]); the
-//!   window's close (`ConversationWindow::Close`: Esc / close button / End, Accept /
-//!   Decline / End replies and no speech left through `UpdateStep`, walking
-//!   away / the NPC gone through the update `ConversationWindow::Update`) stops it. Nothing
-//!   waits for the voice: the text and replies show at once, a page
-//!   "Continue" neither restarts nor stops it, and the voice runs to its end
-//!   while the window stays open. [`Conversation::line`] numbers the speeches
-//!   shown; the game's audio plays [`DialogView::voice`] of each new line.
-//! * PORT: the window's 0.5 s fade in / out (`ConversationWindow.fade`, `dt × 0.002`) is not
-//!   modelled; it opens and closes at once.
+//! * Talk range (`ControllerPlayerState::DefaultRequestNpcAction`): clicking an NPC talks at once when
+//!   `Character::NearTarget(npc, 3.0)` holds ([`in_talk_range`], 3D); otherwise the player walks to it and
+//!   talks when the path ends, whatever the distance then. `Npc::Converse` opens the window only when the
+//!   conversation has an available speech.
+//! * Closing (`ConversationWindow::Update`): when the NPC or the player is gone, or their 3D distance
+//!   exceeds [`close_distance`], or after 150 s without input (PORT: not checked). The close slot (Esc,
+//!   close button) and "End Conversation" close it without running actions.
+//! * Voice-overs (`ConversationWindow::UpdateStep`): each speech shown stops the previous VO
+//!   (`ConversationStep::StopVO`) and plays its own ([`DialogView::voice`]); closing stops it. Nothing waits
+//!   for the voice, and a page "Continue" neither restarts nor stops it. [`Conversation::line`] numbers the
+//!   speeches shown.
+//! * PORT: the window's 0.5 s fade in / out is not modelled.
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 use gd_game_core::player::Player;
@@ -55,45 +34,34 @@ impl Plugin for ConversationPlugin {
     }
 }
 
-/// The player's requests to the conversation window.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub enum ConversationRequest {
-    /// Talk to a story NPC (object id); opens its conversation when it has
-    /// an available speech. Ignored while a conversation is open.
+    /// Talk to a story NPC (object id). Ignored while a conversation is open.
     Talk(u32),
-    /// Pick a response by its step index ([`DialogView::responses`]);
-    /// [`DialogView::END`] is the window's own "End Conversation".
+    /// Pick a response by its step index; [`DialogView::END`] is the window's own "End Conversation".
     Choose(u32),
-    /// The page "Continue" button (a speech longer than one page).
+    /// The page "Continue" button.
     NextPage,
-    /// Close the window (Esc, its close button).
     Close,
 }
 
-/// The open conversation: what the window shows. `version` changes with
-/// every change of `view` (the window rebuilds on it).
+/// The open conversation. `version` changes with every change of `view`.
 #[derive(Resource, Default)]
 pub struct Conversation {
     pub view: Option<DialogView>,
     pub version: u64,
-    /// The NPC's faction icon while the window is open
-    /// ([`crate::factions::faction_icon`], taken when it opens:
-    /// `ConversationWindow::Layout` reads the NPC's
+    /// The NPC's faction icon, taken when the window opens (`ConversationWindow::Layout`:
     /// `GetVisibleFaction`).
     pub faction_icon: Option<String>,
-    /// The NPC's conversation has a quest step the player's standing with
-    /// the NPC's faction locks (`Story::locked_quest_faction`, taken when it
-    /// opens: `ConversationWindow::Open`, PORT: the engine also re-runs it from two
-    /// window virtuals, not decompiled): the window shows the locked-quests
-    /// icon instead of the faction icon.
+    /// The player's standing locks a quest step of the conversation (`Story::locked_quest_faction`, taken
+    /// at `ConversationWindow::Open`; PORT: the engine also re-runs it from two window virtuals, not
+    /// decompiled): the window shows the locked-quests icon instead of the faction icon.
     pub locked_quests: bool,
-    /// The faction icon's hover tooltip (taken when the window opens, PORT: the engine builds it on hover).
+    /// The faction icon's tooltip, taken when the window opens (PORT: the engine builds it on hover).
     pub faction_tip: Option<crate::factions::FactionTip>,
-    /// Number of the speech shown: changes with every speech the window
-    /// shows (`PlayVO`), not with its pages; the voice-over of `view` belongs
-    /// to this line.
+    /// Changes with every speech shown (`PlayVO`), not with its pages.
     pub line: u64,
-    /// The NPC's [`close_distance`], taken when the window opens.
+    /// Taken when the window opens.
     close_distance: f32,
 }
 
@@ -122,8 +90,7 @@ pub fn close_distance(rec: Option<&gd_formats::arz::Record>) -> f32 {
         .unwrap_or(5.0)
 }
 
-/// Applies the requests, then closes the window when the player walked away
-/// from the NPC or the NPC left the world.
+/// Applies the requests, then closes the window when the player walked away or the NPC left.
 #[allow(clippy::too_many_arguments)]
 pub fn run_conversations(
     rt: Option<NonSend<StoryRuntime>>,
@@ -144,7 +111,7 @@ pub fn run_conversations(
         match (r, conv.view.clone()) {
             (ConversationRequest::Talk(npc), None) => {
                 let v = rt.host.talk(*npc);
-                // `Npc::Converse` with no speech to give: the NPC's own greeting (`crate::trade::NpcSay::Greet`).
+                // `Npc::Converse` with no speech to give: the NPC's own greeting.
                 if v.is_none()
                     && let Some((e, _)) = ids.iter().find(|(_, a)| a.0 == *npc)
                 {
@@ -219,7 +186,6 @@ pub fn run_conversations(
     }
 }
 
-/// Conversations run: what shows or answers them orders around `Run`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConversationStage {
     Run,

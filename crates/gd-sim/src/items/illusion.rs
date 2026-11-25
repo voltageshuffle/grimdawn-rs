@@ -15,9 +15,8 @@
 //! - List order ([`sort_key`]): comparator `TransmuteWindow::CompareAppearances`: the three
 //!   `records/items/transmutes/invisible_*` first, then by classification,
 //!   item level, then the full display name (`GetGameDescription` without
-//!   colour: `Armor::GetGameDescription` joins quality, style and base tags,
-//!   so "Empowered Skytear Hat" precedes "Praetorian Faceguard";
-//!   `naming::record_description`), all ascending, UTF-16 code unit order.
+//!   colour: `Armor::GetGameDescription` joins quality, style and base tags),
+//!   all ascending, UTF-16 code unit order.
 //! - Gender: page builder `TransmuteWindow::BuildPage` skips a look when
 //!   `Item::IsMaleCompatible` is false: `preventMaleTransmute` set and the
 //!   look's gender (the main player's, `AddItemToTransmutes` calls
@@ -159,7 +158,7 @@ const LOOK_FIELDS: [&str; 16] = [
     "shader",
 ];
 
-/// `HasMatchingAppearance` of two records (see the module doc).
+/// `HasMatchingAppearance` of two records.
 pub fn same_look(a_name: &str, a: &Record, b_name: &str, b: &Record) -> bool {
     if a_name.eq_ignore_ascii_case(b_name) {
         return true;

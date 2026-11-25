@@ -1,13 +1,8 @@
 //! Headless gameplay: the game's state and rules as Bevy ECS components,
 //! resources and systems, with no rendering, windows, audio or input.
+//! Rules: `docs/architecture.md`.
 //!
-//! Layering and the rules (one source per value, UI only reads and sends
-//! requests): `docs/architecture.md`.
-//!
-//! [`GameLogicPlugin`] adds everything that runs headless; tests build an
-//! `App` with `MinimalPlugins` + this plugin (see [`testing`]).
-// Bevy system parameters (queries with filters, param tuples) are long by
-// nature; Bevy recommends allowing this lint for them.
+//! Tests build an `App` with `MinimalPlugins` + [`GameLogicPlugin`] (see [`testing`]).
 #![allow(clippy::type_complexity)]
 pub mod achievements;
 pub mod afflictions;

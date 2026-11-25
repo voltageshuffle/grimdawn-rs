@@ -1,8 +1,8 @@
 use super::*;
 use std::cell::RefCell;
 
-/// Pet orders and stance changes (module docs): the Pet Attack skill's
-/// hotbar casts, [`PetCommand`] and [`SetPetStance`].
+/// Pet orders and stance changes: the Pet Attack skill's hotbar casts, [`PetCommand`] and
+/// [`SetPetStance`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pet_commands(
     mut commands: Commands,
@@ -16,10 +16,8 @@ pub(super) fn pet_commands(
     casters: Query<(Entity, &gd_game_core::casting::Caster), (With<Player>, Without<Dead>)>,
     mut stances: Query<&mut PetStances>,
     leaders: Query<&Transform, Without<Pet>>,
-    // The characters an order may name as its foe (`FactionManager::IsFoe` of the player's side, as
-    // `ControllerPlayer::HandlePetAction` tests it): hostile monsters and a convert's pets, not a guard or an
-    // allied monster (a click on one is a move order for a selected pet; the Pet Attack skill's attack request
-    // is refused by `IsEnemyValid`).
+    // An order's foe: `FactionManager::IsFoe` of the player's side (`ControllerPlayer::HandlePetAction`),
+    // so not a guard or an allied monster.
     monsters: Query<
         (&Transform, crate::combat::SideData),
         (
@@ -41,8 +39,7 @@ pub(super) fn pet_commands(
 ) {
     let slots = crate::melee::Slots::new(&mut slot_q, &scratch);
     let mut list: Vec<PetCommand> = Vec::new();
-    // The Pet Attack skill on the hotbar: the cursor's monster, else its
-    // ground point (`Skill_PetAttack::GetValidTarget`).
+    // `Skill_PetAttack::GetValidTarget`: the cursor's monster, else its ground point.
     for req in casts.read() {
         let Ok((owner, caster)) = casters.single() else {
             continue;
@@ -77,16 +74,12 @@ pub(super) fn pet_commands(
             if pet.owner != cmd.owner || cmd.pet.is_some_and(|p| p != e) {
                 continue;
             }
-            // Only a pet the player leads takes his orders (`Monster::GetLeader`, the monster a convert joined
-            // it to while that lasts, `combat::JoinedPack`): `Skill_PetAttack::GetValidTarget`
-            // and `ControllerPlayer::HandlePetAction` send none to it, and the
-            // states' `DefaultRequestAttackResponse` / `DefaultRequestMoveResponse` refuse a sender that is
-            // not its leader.
+            // Only a pet the player leads takes his orders (`Monster::GetLeader`; a convert's
+            // `combat::JoinedPack` takes over): the request responses refuse any other sender.
             if joined.is_some() {
                 debug!("pet {e}: order ignored while a convert holds it");
                 continue;
             }
-            // The Startup state refuses a player's orders.
             if pet.startup {
                 debug!("pet {e}: order ignored in the Startup state");
                 continue;
@@ -95,8 +88,8 @@ pub(super) fn pet_commands(
             if cmd.pet.is_some() && cmd.target == Some(e) {
                 continue;
             }
-            // The skill attacks whatever it targets (the pet refuses a
-            // non-foe); the selected pet attacks a foe, else moves.
+            // The skill attacks whatever it targets (the pet refuses a non-foe); the selected pet
+            // attacks a foe, else moves.
             let attack = if cmd.pet.is_none() {
                 cmd.target.map(|_| foe)
             } else {
@@ -130,8 +123,7 @@ pub(super) fn pet_commands(
         let Ok((e, _, mut pet, mut cb, _)) = pets.get_mut(req.pet) else {
             continue;
         };
-        // `Player::SetPetControllerType`, then `Monster::UseController` (no leader test,
-        // so a converted pet changes stance too).
+        // `Player::SetPetControllerType`, then `Monster::UseController` (no leader test).
         match stances.get_mut(pet.owner) {
             Ok(mut s) => s.set(&pet.summon, req.stance),
             Err(_) => {
@@ -147,8 +139,7 @@ pub(super) fn pet_commands(
     }
 }
 
-/// `DefaultRequestAttackResponse` (module docs): `foe` is at `at` (None:
-/// gone); `leader` is the owner's position (the pursuit range's home).
+/// `DefaultRequestAttackResponse`: `foe` is at `at` (None: gone); `leader` is the pursuit range's home.
 pub(super) fn request_attack(
     pet: &mut Pet,
     cb: &mut Combatant,
@@ -176,15 +167,14 @@ pub(super) fn request_attack(
     if !pet.anger.iter().any(|a| a.0 == foe) {
         pet.anger.push((foe, 0.0));
     }
-    // "Pursue" it from the start.
+    // "Pursue" from the start.
     pet.melee.leave(slots, e);
     pet.path.clear();
     pet.following = false;
     cb.target = Some(foe);
 }
 
-/// `DefaultRequestMoveResponse` (module docs): forget the fight and run to
-/// `point`; an unreachable point leaves it idle.
+/// `DefaultRequestMoveResponse`: forget the fight and run to `point`; unreachable leaves it idle.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn request_move(
     pet: &mut Pet,
@@ -222,8 +212,8 @@ pub(super) fn request_move(
     );
 }
 
-/// `Monster::UseController`: the pet runs on the stance's controller, its
-/// AI started afresh; false when the record names no such controller.
+/// `Monster::UseController`: the pet runs on the stance's controller, its AI started afresh; false
+/// when the record names no such controller.
 pub(super) fn apply_stance(
     data: &GameData,
     pet: &mut Pet,
@@ -251,13 +241,9 @@ pub(super) fn apply_stance(
     true
 }
 
-/// `ControllerCombat::KillMe` on a pet (the Disband menu, its time to live
-/// running out): it dies like any character, through the one death path
-/// (`combat::kill_me` → `combat::kill`; its body goes per its record's
-/// `deleteBehavior`, `combat::corpse_time`) and its dying skill goes off
-/// ([`pet_dying_skills`]; module docs). The life, target and death state are
-/// written at once too: the kill runs with the frame's commands, and the
-/// systems before them must not act for a pet that is going.
+/// `ControllerCombat::KillMe` on a pet: it dies through the one death path (`combat::kill_me`) and its
+/// dying skill goes off. Life, target and death state are written at once so the systems before the
+/// frame's commands do not act for a pet that is going.
 pub(super) fn kill_me(commands: &mut Commands, e: Entity, cb: &mut Combatant, ch: &mut Character) {
     cb.life = 0.0;
     cb.target = None;
@@ -265,8 +251,7 @@ pub(super) fn kill_me(commands: &mut Commands, e: Entity, cb: &mut Combatant, ch
     crate::combat::kill_me(commands, e);
 }
 
-/// `KillMe(overkillOnDismiss)`: the kill of an expiry, `StopSkill` and
-/// `KillExtraPets` (module docs).
+/// `KillMe(overkillOnDismiss)`: the kill of an expiry, `StopSkill` and `KillExtraPets`.
 pub(super) fn dismiss(
     commands: &mut Commands,
     e: Entity,
@@ -280,11 +265,8 @@ pub(super) fn dismiss(
     kill_me(commands, e, cb, ch);
 }
 
-/// `Monster::UnJoinLeader(false)` on a quest pet (pen helper
-/// `PetPen::ReleaseEntry` mode 2, module docs): the pet stays alive with
-/// the owner's faction it got in `JoinMe`; it loses its banner
-/// (`RemoveConvertBanner`), its leader (`SetLeader` of the saved leader, 0
-/// for a spawned pet) and its anger list and target, and leaves the pen.
+/// `Monster::UnJoinLeader(false)` on a quest pet (`PetPen::ReleaseEntry` mode 2): it stays alive
+/// with the owner's faction; it loses banner, leader, anger and target, and leaves the pen.
 /// PORT: the leaderless pet stands still ([`ReleasedQuestPet`]).
 pub(super) fn release_quest_pet(commands: &mut Commands, e: Entity, cb: &mut Combatant) {
     cb.target = None;
@@ -294,11 +276,9 @@ pub(super) fn release_quest_pet(commands: &mut Commands, e: Entity, cb: &mut Com
         .try_insert(ReleasedQuestPet);
 }
 
-/// `Skill_SpawnPet::StopSkill` (module docs): a [`StopSummonSkill`] kills the
-/// owner's live pets of that skill; so does the owner's death (`ImDead`
-/// stops every skill). A quest pet (`Skill_SpawnQuestPet`) is
-/// killed only on the owner's death (mode 0); with the owner alive the stop
-/// is mode 2: [`release_quest_pet`].
+/// `Skill_SpawnPet::StopSkill`: a [`StopSummonSkill`] or the owner's death kills the owner's live pets
+/// of that skill. A quest pet is killed only on the owner's death; with the owner alive:
+/// [`release_quest_pet`].
 pub(super) fn stop_summon_skills(
     mut commands: Commands,
     mut stops: MessageReader<StopSummonSkill>,
@@ -322,9 +302,7 @@ pub(super) fn stop_summon_skills(
     }
 }
 
-/// [`Pet::time_to_live`] counts down with the game's time
-/// (`ControllerMonster::Update`); at 0 the pet dies
-/// (`KillMe(overkillOnDismiss)`, module docs).
+/// [`Pet::time_to_live`] counts down with game time (`ControllerMonster::Update`); at 0 the pet dies.
 pub(super) fn expire_pets(
     mut commands: Commands,
     time: Res<Time>,
@@ -343,10 +321,7 @@ pub(super) fn expire_pets(
     }
 }
 
-/// [`DisbandPet`] (the portrait menu, flag false) and [`ReleasePet`]:
-/// `ReleasePetConfigCmd::Execute`: overkill = remaining
-/// life >= max life x gibThreshold, the flag marks [`SuppressDyingSkill`],
-/// then `KillMe(overkill)` (module docs).
+/// [`DisbandPet`] (flag false) and [`ReleasePet`]: `ReleasePetConfigCmd::Execute`.
 pub(super) fn disband_pets(
     mut commands: Commands,
     mut disband: MessageReader<DisbandPet>,
@@ -379,16 +354,13 @@ pub(super) fn disband_pets(
     }
 }
 
-/// The skill bonuses that came off the player's worn gear in one equipment change (module docs: Release), sent by
+/// The skill bonuses that came off the player's worn gear in one equipment change, sent by
 /// `crate::inventory::sync_equipment`: names lower-case, each with a level other than 0.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct AugmentsRemoved {
     pub owner: Entity,
-    /// `augmentSkillName{n}`.
     pub skills: Vec<String>,
-    /// `augmentMasteryName{n}`.
     pub masteries: Vec<String>,
-    /// An `augmentAllLevel`.
     pub all: bool,
 }
 
@@ -398,8 +370,7 @@ impl AugmentsRemoved {
     }
 }
 
-/// The records of a worn item that hold skill bonuses, each its own container (`ItemEquipment::DetachItem`,
-/// `ItemRelic::RemoveFromCharacter`, `ItemEnchantment::RemoveFromCharacter`; the same list as
+/// The records of a worn item that hold skill bonuses, each its own container (same list as
 /// `gd_sim::skills::item_skill_bonuses`).
 fn bonus_records(it: &gd_formats::save::item::Item) -> [&String; 8] {
     [
@@ -414,10 +385,9 @@ fn bonus_records(it: &gd_formats::save::item::Item) -> [&String; 8] {
     ]
 }
 
-/// What came off when the worn items went from `old` to `new` (module docs: Release): every bonus record of an item
-/// no longer worn, or replaced on one still worn (an item is the same by record and seed, the port's identity of
-/// the engine's item object), at level index 0; and each set whose piece count changed, at every count it leaves
-/// (`SkillAugmentInstall` / `SkillAugmentRemove` remove the previous count's bonuses at each attach / detach).
+/// What came off when the worn items went from `old` to `new`: every bonus record of an item no
+/// longer worn or replaced (same record and seed = same item), at level index 0; and each set whose
+/// piece count changed, at every count it leaves (`SkillAugmentInstall` / `SkillAugmentRemove`).
 pub fn removed_augments(
     db: &gd_formats::vfs::Database,
     owner: Entity,
@@ -484,8 +454,8 @@ pub fn removed_augments(
     out
 }
 
-/// Whether the removed bonuses `r` release the pet summoned by `summon` (module docs: Release): `book` the owner's
-/// learned skills (`SkillManager::FindSkillId`'s list), `links` its modifiers / secondaries by base skill.
+/// Whether the removed bonuses `r` release the pet summoned by `summon`: `book` the owner's learned
+/// skills, `links` its modifiers / secondaries by base skill.
 pub fn released_by_augments(
     trees: &gd_sim::skills::SkillTrees,
     book: &gd_sim::skills::SkillBook,
@@ -495,8 +465,7 @@ pub fn released_by_augments(
 ) -> bool {
     let has = |s: &str| book.skills.iter().any(|(n, _)| n.eq_ignore_ascii_case(s));
     let summon = summon.to_ascii_lowercase();
-    // `Skill::ReleasePets`: the skill's own pets and its base skills' (`Skill.baseSkills`: the skill a modifier or
-    // secondary hangs on).
+    // `Skill::ReleasePets`: the skill's own pets and its base skills' (`Skill.baseSkills`).
     let hangs_on_summon = |s: &str| {
         links.is_some_and(|l| {
             [&l.mods, &l.secondaries].iter().any(|m| {
@@ -511,7 +480,7 @@ pub fn released_by_augments(
     {
         return true;
     }
-    // `PetPen::ReleaseMasteryPets`: the pets of that mastery's skills (`Skill.mastery`).
+    // `PetPen::ReleaseMasteryPets`.
     if r.masteries.iter().any(|m| has(m))
         && let Some(m) = trees
             .trees
@@ -528,8 +497,8 @@ pub fn released_by_augments(
     r.all && has(&summon)
 }
 
-/// [`AugmentsRemoved`]: each matching pet of the owner's ordinary pen (no quest pet) is released with the
-/// suppress flag ([`ReleasePet`], module docs: Release).
+/// [`AugmentsRemoved`]: each matching pet of the owner's ordinary pen is released with the suppress
+/// flag.
 pub(super) fn release_augment_pets(
     data: Res<GameData>,
     mut removed: MessageReader<AugmentsRemoved>,
@@ -557,13 +526,8 @@ pub(super) fn release_augment_pets(
     }
 }
 
-/// A pet's dying skill (pets run the monster states, so
-/// `ControllerMonsterStateDying::OnBegin` →
-/// `StartDyingSkill` casts `dyingSkillName` at once where it
-/// died unless `Character::ShouldSuppressDyingSkill`, `Character.dyingSkillSuppressed`): Elemental
-/// Seeker's Elemental Blast, the Gaze of Dreeg's Caustic Eruption, after
-/// their `SkillActivated_Suicide` special (`combat::Suicide`), their time
-/// to live running out or a Disband alike (module docs).
+/// A pet's dying skill: `ControllerMonsterStateDying::OnBegin` → `StartDyingSkill` casts
+/// `dyingSkillName` where it died unless `Character::ShouldSuppressDyingSkill`.
 pub(super) fn pet_dying_skills(
     mut procs: MessageWriter<gd_game_core::casting::ProcCast>,
     q: Query<(Entity, &Transform, &Pet), (Added<Dead>, Without<SuppressDyingSkill>)>,
@@ -590,22 +554,20 @@ pub(super) fn pet_dying_skills(
 pub use gd_sim::skills::spawn_time_to_live;
 
 impl Pet {
-    /// Where it is walking to (`Character::GetPathTarget`): its path's end.
+    /// `Character::GetPathTarget`: its path's end.
     pub fn path_target(&self) -> Option<Vec3> {
         self.path.last().copied()
     }
 
-    /// The pet record.
     pub fn record(&self) -> &str {
         &self.record
     }
 
-    /// The controller in use.
     pub fn stance(&self) -> Stance {
         self.stance
     }
 
-    /// The commanded enemy, if any.
+    /// The commanded enemy.
     pub fn most_hated(&self) -> Option<Entity> {
         self.most_hated
     }
@@ -620,19 +582,16 @@ impl Pet {
         &self.buffs.list
     }
 
-    /// The timed-buff store (`casting::expire_buffs` ticks it).
     pub(crate) fn buffs_mut(&mut self) -> &mut gd_game_core::skill_buffs::TimedBuffs {
         &mut self.buffs
     }
 
-    /// A timed buff starts (or starts again) on it.
     pub fn add_buff(&mut self, skill: &str, li: usize, secs: f32) {
         self.buffs.add(skill, li, secs);
         self.dirty = true;
     }
 
-    /// Its skill `skill` is active (`Skill.active`): a toggle switched on or a timed buff running (a damage
-    /// aura is in its `DamageAuras`; `crate::autocast`, skill-level autocasts).
+    /// `Skill.active`: a toggle switched on or a timed buff running.
     pub(crate) fn skill_running(&self, skill: &str) -> bool {
         self.toggled
             .iter()
@@ -641,10 +600,9 @@ impl Pet {
             .any(|s| s.eq_ignore_ascii_case(skill))
     }
 
-    /// Dispelled (`crate::skill_buffs::DispelOn`): its timed buffs end and
-    /// its switched-on toggles switch off (`DispellSelfBuff` → `StopSkill`),
-    /// but those `keep` names (`notDispelable`); a toggle comes back only
-    /// when its AI uses it again. The ended ones.
+    /// Dispelled (`DispellSelfBuff` → `StopSkill`): timed buffs end and toggles switch off, except
+    /// `keep` names (`notDispelable`); a toggle comes back only when its AI uses it again. Returns the
+    /// ended ones.
     pub fn dispel(&mut self, keep: impl Fn(&str) -> bool) -> Vec<String> {
         let gone: Vec<String> = self
             .buffs
@@ -663,8 +621,7 @@ impl Pet {
         gone
     }
 
-    /// Its auras on (`auras.rs`; it is its own target): switched-on radius
-    /// toggles and running `Skill_BuffRadius` buffs.
+    /// Its auras (it is its own target): switched-on radius toggles and running `Skill_BuffRadius` buffs.
     pub fn emissions(&self, db: &gd_formats::vfs::Database) -> Vec<crate::auras::Emission> {
         let toggles = self.toggled.iter().filter(|(s, _)| {
             db.get(s)
@@ -683,9 +640,8 @@ impl Pet {
             .collect()
     }
 
-    /// The stats of its switched-on toggles and timed buffs other than radius
-    /// buffs (those reach it as aura buffs): each record and its
-    /// `buffSkillName` record.
+    /// The stats of its toggles and timed buffs other than radius buffs (those reach it as aura
+    /// buffs): each record and its `buffSkillName` record.
     pub(super) fn self_stats(
         &self,
         db: &gd_formats::vfs::Database,
@@ -712,9 +668,7 @@ impl Pet {
         out
     }
 
-    /// Every buff skill on it, for the character sheet's pet rows
-    /// (`SkillManager::GetBuffSkill` list): its own toggles / timed buffs
-    /// ([`Pet::self_stats`]) and the aura buffs it received.
+    /// Every buff skill on it (`SkillManager::GetBuffSkill` list): its own and the aura buffs received.
     pub fn buff_stats(
         &self,
         db: &gd_formats::vfs::Database,
@@ -727,9 +681,7 @@ impl Pet {
         out
     }
 
-    /// `ChooseBestBuffSelfSkill`: the first self buff not on yet (a toggle
-    /// not switched on, a timed buff not running): (skill, level index, a
-    /// toggle).
+    /// `ChooseBestBuffSelfSkill`: the first self buff not on yet: (skill, level index, a toggle).
     pub(super) fn next_self_buff(&self) -> Option<(String, usize, bool)> {
         self.buff_self
             .iter()
@@ -744,12 +696,10 @@ impl Pet {
             .cloned()
     }
 
-    /// Not cooling down (`Skill` ready check).
     pub(super) fn ready(&self, skill: &str) -> bool {
         !self.cooldowns.iter().any(|c| c.0 == skill)
     }
 
-    /// A skill was used: its `skillCooldownTime` at that level starts.
     pub(super) fn used(&mut self, data: &GameData, cb: &Combatant, skill: &str, li: usize) {
         let cd = data.db.get(skill).map_or(0.0, |r| {
             crate::casting::cooldown_for(
@@ -764,8 +714,8 @@ impl Pet {
         }
     }
 
-    /// Disruption (`SkillManager::ApplyCooldownDamage`, `combat::influence`): its skills that disruption reaches
-    /// cool down for `secs` unless they already do for longer.
+    /// Disruption (`SkillManager::ApplyCooldownDamage`): its skills that disruption reaches cool down
+    /// for `secs` unless they already do for longer.
     pub(crate) fn disrupt(&mut self, db: &gd_formats::vfs::Database, secs: f32) {
         let mut names: Vec<String> = self.specials.iter().map(|s| s.skill.clone()).collect();
         names.extend(self.primary.iter().map(|a| a.skill.clone()));

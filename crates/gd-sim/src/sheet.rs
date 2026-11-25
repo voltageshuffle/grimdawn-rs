@@ -1,9 +1,8 @@
 //! The character window's numbers (stats tab and the page II / III lists),
 //! as the strings the exe stores per field.
 //!
-//! Values of the page II / III lists (`tab2ListBox`, `tab3ListBox`; row
-//! order and layout are in the game's `ui/character.rs`), from the
-//! exe's update functions (`CharacterWindow::UpdatePage2`, `CharacterWindow::UpdatePage3`).
+//! Values of the page II / III lists (`tab2ListBox`, `tab3ListBox`), from
+//! `CharacterWindow::UpdatePage2` / `CharacterWindow::UpdatePage3`.
 //! Every row comes from the source the combat uses:
 //! - damage rows: `Player::CalculateDamageValues(true)` +
 //!   `CollectDamageValues(type, duration)` = [`actor::sheet_damage`] (the
@@ -253,7 +252,7 @@ fn retaliation_values(v: &[crate::combat::Damage], ty: T, dot: Option<f32>) -> (
     })
 }
 
-/// The page II / III list values (module docs), the hands' damage already collected.
+/// The page II / III list values, the hands' damage already collected.
 fn list_values(
     p: &Profile,
     rules: &Rules,
@@ -266,7 +265,6 @@ fn list_values(
     let mut put = |k: &str, v: String| {
         m.insert(format!("list.{k}"), v);
     };
-    // Page II, "Character" section.
     // `CharacterWindow::UpdatePage2`: the speed rows are the capped speed over the
     // bio's base speed (`CalculateAttackSpeed(0)`, `GetRunSpeed(1)`/GetValue(14),
     // `GetSpellCastSpeed`/GetValue(16)), rounded `floor(x + 0.5)`.
@@ -317,9 +315,8 @@ fn list_values(
                 .clamp(0.0, 100.0),
         ),
     );
-    // Damage rows (module docs). A dual wielder's left hand has its own
-    // accumulator (`Player::CalculateDamageValues`); `CharacterWindow::CombineHandDamage`
-    // combines the two hands.
+    // A dual wielder's left hand has its own accumulator (`Player::CalculateDamageValues`);
+    // `CharacterWindow::CombineHandDamage` combines the two hands.
     let sum = |ty: T, dot: Option<f32>| hd.row(ty, dot);
     let mods = actor::DisplayModifiers::new(p);
     for &(stem, ty, dot) in DAMAGE_ROWS {
@@ -411,7 +408,7 @@ fn list_values(
             v.min(max).min(100.0)
         };
         put(k, pct(shown));
-        // The rollover's over-maximum amount (as for page I, `numbers`).
+        // The rollover's over-maximum amount.
         put(
             &format!("over.{k}"),
             format!("{}", if v >= max { (v - max).max(0.0) } else { 0.0 }),
@@ -464,8 +461,7 @@ pub fn resistance_reduction(debuffs: &actor::Debuffs) -> ReductionInfo {
 /// `defensiveCrowdControlMaxResist` (stun, freeze, petrify, trap,
 /// `DefenseAttributeDefenseCap_CrowdControl::AddToAccumulator`).
 /// `CombatAttributeAccumulator::ProcessDefense` applies every cap entry to the matching
-/// defenses (`ModifyDefenseCap` adds it to the cap bonus) before they
-/// process — combat and the sheet take the same bonus.
+/// defenses (`ModifyDefenseCap` adds it to the cap bonus) before they process.
 pub fn resistance_cap_bonus(p: &Profile, ty: T) -> f32 {
     use crate::attributes::{AttrFamily, family};
     let tot = |k: &str| p.totals.get(k).copied().unwrap_or(0.0);
@@ -493,8 +489,7 @@ pub fn resistance_cap_bonus(p: &Profile, ty: T) -> f32 {
 }
 
 /// The % modifier of a resistance type: its own `defensive<X>Modifier`
-/// total, plus `defensiveElementalModifier` for fire, cold and lightning (the
-/// elemental group expands as the resistances do, `stats::expand_resistances`).
+/// total, plus `defensiveElementalModifier` for fire, cold and lightning.
 /// `Defense::process` adds |value| × it %.
 pub fn resistance_modifier(p: &Profile, ty: T) -> f32 {
     use crate::attributes::{AttrFamily, family};
@@ -509,8 +504,7 @@ pub fn resistance_modifier(p: &Profile, ty: T) -> f32 {
 /// One resistance defense as `GetAllDefenseAttributes` builds it: the %
 /// modifier ([`resistance_modifier`]), the cap bonus
 /// ([`resistance_cap_bonus`]) and the restricted flag
-/// (`crate::combat::restricted_resistance`). The one builder of the combat
-/// defender (`actor::defender`) and the sheet's resistance rows.
+/// (`crate::combat::restricted_resistance`); shared by the combat defender and the sheet.
 pub fn resistance_defense(p: &Profile, ty: T, value: f32) -> Defense {
     Defense::Resistance {
         ty,
@@ -586,8 +580,7 @@ pub fn resistance(p: &Profile, rules: &Rules, reduction: &ReductionInfo, t: T) -
     }
 }
 
-/// The character window's numbers and rollovers together: the hands' damage (the costly part
-/// of both) is collected once.
+/// The character window's numbers and rollovers together.
 pub fn numbers_and_rollovers(
     p: &Profile,
     rules: &Rules,
@@ -827,7 +820,7 @@ pub fn stat_rows(st: &SheetStats) -> BTreeMap<String, String> {
 /// The values of one stats row's rollover, as the page updates store them
 /// in the rollover objects (Grim Dawn.exe): `lines[0]` = line 1's
 /// two values (`StatRollover.line1Values`), `lines[k]` = line k + 1's (`StatRollover.lineValues[k − 1]`).
-/// The text classes (`ui/rollover.rs`) pick a line's `LineNFormatTag`
+/// The text classes pick a line's `LineNFormatTag`
 /// when its second value is non-zero, else `LineNFormatTag2` with the first
 /// only. `name`: line 2's text instead of its values (the Offensive /
 /// Defensive Ability rollovers' last foe, `CharacterWindow::SetLastFoeRollover` sets the flag
@@ -848,7 +841,7 @@ pub struct RollValues {
 /// (`PlayStats::GetLastMonsterHit` / `GetLastMonsterHitBy` of the current
 /// difficulty): the monster's description tag (empty: none) and, recorded
 /// with it, its Defensive Ability resp. the attack's Offensive Ability
-/// (`CombatManager::RecordHit`, `gd_game::death`).
+/// (`CombatManager::RecordHit`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LastFoes {
     pub hit: (String, f32),
@@ -914,9 +907,8 @@ fn hand_lines(right: (f32, f32), left: (f32, f32)) -> RollValues {
 }
 
 /// The stats rows' rollover values (keys as [`numbers`]); the rows whose
-/// rollover only shows the row's own number are not here (`ui/rollover.rs`
-/// reads those from the row). `weapon_hands`: the weapon attack's main /
-/// off-hand damage per hit (`gd_game::sheet_dps`). Grim Dawn.exe
+/// rollover only shows the row's own number are not here. `weapon_hands`: the weapon attack's
+/// main / off-hand damage per hit. Grim Dawn.exe
 /// `CharacterWindow::UpdatePage1` (page I) and `CharacterWindow::UpdatePage2` (page II):
 /// - Life / Energy: (base, `trunc(total)` − base) resp. (base, total − base);
 /// - Physique / Cunning / Spirit: line 1 (base, total − base); line 2
@@ -1071,7 +1063,6 @@ fn rollovers(
         "ManaNumber",
         &[(b.attributes[4], s.energy - b.attributes[4])],
     );
-    // Offensive / Defensive Ability against the last foes.
     let pth_line = |pth: f32| (pth.clamp(0.0, 100.0), 0.0);
     // `Character::DesignerCalculateCriticalChance`.
     let crit_line = |pth: f32| {
@@ -1102,7 +1093,6 @@ fn rollovers(
             crit_line(da_pth),
         ],
     );
-    // Page II regeneration rows.
     let life_base = rules.regen.life_value(b.regen[0], s.physique, s.spirit);
     let mana_base = rules.regen.mana_value(b.regen[1], s.physique, s.spirit);
     for (k, base, now, cost) in [
@@ -1124,7 +1114,7 @@ fn rollovers(
             m.get_mut(k).unwrap().format = Some("tagRollFormat16".into());
         }
     }
-    // Speeds (percent of the bio's base speed).
+    // Percent of the bio's base speed.
     let pct_of = |n: usize, v: f32| v / p.base_speeds[n].max(f32::EPSILON) * 100.0;
     let rnd = |v: f32| (v + 0.5).floor();
     let cap = |n: usize| pct_of(n, p.speed_caps[n].max);
@@ -1149,7 +1139,6 @@ fn rollovers(
         "list.RunSpeed",
         &[(run_cap.min(run), (run - run_cap).max(0.0)), (run_cap, 0.0)],
     );
-    // Damage rows per hand.
     for &(stem, ty, dot) in DAMAGE_ROWS {
         let (r, l) = hd.hands(ty, dot);
         m.insert(format!("list.{stem}AbsDmg"), hand_lines(r, l));
@@ -1228,8 +1217,8 @@ pub const ARMOR_REGIONS: [crate::stats::Region; 6] = {
     [R::Head, R::Torso, R::Arms, R::Legs, R::Feet, R::Shoulders]
 };
 
-/// [`ArmorBreakdown`] of a profile: its defender's armour entries (`actor::build_defenses`, the ones
-/// combat applies), each processed as `Defense::process` does before the reduction.
+/// [`ArmorBreakdown`] of a profile: its defender's armour entries, each processed as
+/// `Defense::process` does before the reduction.
 pub fn armor_breakdown(p: &Profile, rules: &Rules) -> ArmorBreakdown {
     let floor = |v: f32| (v + 0.5).floor() as i32;
     // (region, armour, absorption) per entry; region None = the general armour.

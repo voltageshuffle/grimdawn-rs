@@ -27,17 +27,15 @@ impl ScriptHost {
         self.eval_lua_conds(&pending);
     }
 
-    /// Refreshes the Lua conditions of the quest events that can run now (AVAILABLE tasks'
-    /// incentives, IN_PROGRESS tasks' rewards) so a begin/complete reached from this entry point
-    /// reads live results, not the 500 ms tick's (quest module doc PORT).
+    /// Refreshes the Lua conditions of the quest events that can run now (AVAILABLE tasks' incentives,
+    /// IN_PROGRESS tasks' rewards) so a begin/complete from this entry point reads live results.
     pub(super) fn eval_event_lua_conditions(&self) {
         let conds = self.ctx.story.borrow().event_lua_conditions();
         self.eval_lua_conds(&conds);
     }
 
-    /// One frame: quests (with Lua conditions), update registrations, area
-    /// triggers against the player, queued Lua actions; all in one budget
-    /// scope (PORT, see `INSTRUCTION_BUDGET`).
+    /// One frame: quests (with Lua conditions), update registrations, area triggers against the player,
+    /// queued Lua actions; all in one budget scope.
     pub fn update(&self, dt_ms: i32) {
         let _scope = self.ctx.enter_scope();
         {
@@ -79,9 +77,8 @@ impl ScriptHost {
             .update_triggers(dt_ms, &mut calls);
         for h in hooked {
             self.eval_event_lua_conditions();
-            // `shouldTrigger` (`AreaTrigger::ShouldTrigger` → `AreaTrigger::CallHook`):
-            // called with the entity's object id, accepted only on a boolean true; a Lua error, a
-            // missing function or any other result rejects (the engine logs the error, as `call` does).
+            // `AreaTrigger::ShouldTrigger` → `AreaTrigger::CallHook`: accepted only on a boolean true; an error,
+            // a missing function or any other result rejects.
             let accepted = h
                 .inside
                 .into_iter()
@@ -108,8 +105,7 @@ impl ScriptHost {
         self.run_queued();
     }
 
-    /// A world object came into existence (level streamed in or host spawn):
-    /// registers it (class/conversation from its record, triggers for
+    /// A world object came into existence: registers it (class/conversation from its record, triggers for
     /// `BoxTrigger`s) and calls its `onAddToWorld` hook with the object id.
     pub fn add_object(&self, id: u32, record: &str, coords: Coords) {
         let env = &self.ctx.env;
@@ -118,10 +114,7 @@ impl ScriptHost {
         let conversation = env
             .record_field(&rec, "conversation")
             .filter(|s| !s.is_empty());
-        // The object's own lock / open state starts from its record, as the
-        // host's object does (`IsLocked` / `IsOpen` read it; doors spawned
-        // after a script's `Open` / `SetLocked` take it from here). A
-        // `FixedItemDoor` reads no `open` (`gd_game::doors`).
+        // The lock / open state starts from the record; a `FixedItemDoor` reads no `open`.
         let flag = |k: &str| env.record_field(&rec, k).is_some_and(|v| v.trim() == "1");
         let item_door = env.record_field(&rec, "Class").as_deref() == Some("FixedItemDoor");
         self.ctx.story.borrow_mut().entities.insert(WorldObject {
@@ -138,10 +131,8 @@ impl ScriptHost {
             available_for_conversation: true,
             scripted: false,
         });
-        // A level-placed proxy publishes its state like a script-placed one
-        // (`Proxy.SetCoords`, `obj.rs`): `delayedRun` holds it back until
-        // `Proxy:Run()`, else it is active — its pool spawns and `AllKilled`
-        // is false until the host reports its monsters dead.
+        // A level-placed proxy publishes its state like a script-placed one: `delayedRun` holds it back until
+        // `Proxy:Run()`, else it is active and `AllKilled` is false until the host reports its monsters dead.
         if class == ObjClass::Proxy {
             let mut s = self.ctx.story.borrow_mut();
             if env
@@ -158,11 +149,8 @@ impl ScriptHost {
             let t = AreaTrigger::from_record(id, &rec, coords, &get);
             self.ctx.story.borrow_mut().triggers.push(t);
         }
-        // `onAddToWorld`, then `onInitialUpdate` (the locked Korvan rifts
-        // unlock and open there). Engine.dll `Entity::LoadScriptHooks` (the
-        // entity hook pack's loader): event 0 `onAddToWorld`, 2
-        // `onInitialUpdate`. PORT: the engine fires the latter on the
-        // object's first update (caller not located); here right after.
+        // `Entity::LoadScriptHooks`: event 0 `onAddToWorld`, 2 `onInitialUpdate`. PORT: the engine fires the
+        // latter on the object's first update (caller not located); here right after.
         for hook in ["onAddToWorld", "onInitialUpdate"] {
             if let Some(f) = env.record_field(&rec, hook).filter(|s| !s.is_empty()) {
                 self.eval_event_lua_conditions();
@@ -172,9 +160,8 @@ impl ScriptHost {
         self.run_queued();
     }
 
-    /// Streamed out: the record's `onRemoveFromWorld` then `onDestroy` hooks, then forget it. Engine.dll
-    /// `Region::UnloadLevel` → `Level::UnloadEntities` (each entity's `OnUnload`: `onRemoveFromWorld`), then
-    /// `Level::Unload` → `Level::DestroyAllEntities` (`DestroyObjectEx` → `Entity::~Entity`: `onDestroy`).
+    /// Streamed out: the record's `onRemoveFromWorld` then `onDestroy` hooks, then forget it
+    /// (`Level::UnloadEntities`, then `Level::DestroyAllEntities`).
     pub fn remove_object(&self, id: u32) {
         let rec = self
             .ctx
@@ -230,12 +217,8 @@ impl ScriptHost {
         }
     }
 
-    /// A use of a door or lever: its `onInteract` hook with (object id, user
-    /// id). Returns whether the hook returned boolean `true`, which makes the
-    /// use stop there (`FixedDoor::RequestToUse` /
-    /// `FixedLever::RequestToUse`, Game.dll, via
-    /// `Entity::RunUseHook`: the hook runs first on every use, two arguments, one
-    /// result, "handled" only for a boolean true).
+    /// A use of a door or lever: its `onInteract` hook with (object id, user id). Returns whether the hook
+    /// returned boolean `true`, which stops the use (`Entity::RunUseHook`).
     pub fn interact_hook(&self, id: u32) -> bool {
         let (rec, user) = {
             let s = self.ctx.story.borrow();
@@ -273,8 +256,7 @@ impl ScriptHost {
         }
     }
 
-    /// Only the object's `onDie` hook (a host that counts every creature
-    /// kill with `Story::on_kill` itself).
+    /// Only the object's `onDie` hook (for a host that calls `Story::on_kill` itself).
     pub fn on_died(&self, id: u32) {
         self.object_hook(id, "onDie");
     }
@@ -292,8 +274,8 @@ impl ScriptHost {
         }
     }
 
-    /// Player interacts with an NPC: Lua conditions of its conversation are
-    /// evaluated, then the first available speech is shown.
+    /// Player interacts with an NPC: its conversation's Lua conditions are evaluated, then the first available
+    /// speech is shown.
     pub fn talk(&self, npc: u32) -> Option<crate::story::DialogView> {
         self.eval_conversation_lua(npc);
         self.eval_event_lua_conditions();

@@ -12,11 +12,7 @@
 //!   post chain (bloom, enhancement), the UI blends over the gamma values,
 //!   then the frame is converted gamma → linear, which the sRGB swapchain
 //!   turns back into the original gamma value.
-//! - Every view draws directly, the shadow views included
-//!   ([`no_indirect_drawing`]): Bevy's indirect path rebuilds its preprocessing
-//!   bind groups and instance buffers per view and phase each frame, about half
-//!   the render schedule in a busy scene, and the scene is CPU-bound there, not
-//!   on draw calls.
+//! - Every view draws directly, the shadow views included ([`no_indirect_drawing`]).
 pub mod backdrop;
 pub mod distort;
 pub mod env;
@@ -92,7 +88,6 @@ impl Plugin for GdRenderPlugin {
                     .run_if(resource_exists::<gd_game_core::options::GameOptions>),
             ),
         );
-        // The grass offset fields go to the GPU as writes into their shared buffer (grass.rs `GrassOffsets`).
         if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render_app
                 .init_resource::<grass::ExtractedGrassWrites>()
@@ -100,9 +95,8 @@ impl Plugin for GdRenderPlugin {
                     bevy::render::ExtractSchedule,
                     (
                         grass::extract_offsets,
-                        // Before the cameras read the mode: a first frame extracted in culling mode leaves the
-                        // views' retained work-item buffers indirect while the next frame's `NoIndirectDrawing`
-                        // selects the direct preprocess pipeline (wgpu bind group mismatch, quits at startup).
+                        // Before the cameras read the mode: a first frame extracted in culling mode leaves
+                        // indirect work-item buffers the direct pipeline then mismatches (wgpu error at startup).
                         no_indirect_drawing.before(bevy::render::camera::extract_cameras),
                     ),
                 )
@@ -114,9 +108,8 @@ impl Plugin for GdRenderPlugin {
     }
 }
 
-/// Caps Bevy's GPU preprocessing below indirect drawing / GPU culling for every
-/// view (module doc). A per-camera `NoIndirectDrawing` does not reach the point
-/// lights' shadow views, which follow this device-wide mode.
+/// Caps Bevy's GPU preprocessing below indirect drawing / GPU culling for every view. A per-camera
+/// `NoIndirectDrawing` does not reach the point lights' shadow views.
 fn no_indirect_drawing(
     support: Option<ResMut<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>>,
 ) {
@@ -129,7 +122,7 @@ fn no_indirect_drawing(
 }
 
 /// Whether a render-world copy of the main-world entities marked `T` (holding `len` entries) is stale: some `T`
-/// was added or changed, or the count differs (a removal). Lets the extract systems skip their rebuild.
+/// was added or changed, or the count differs (a removal).
 pub(crate) fn marked_changed<T: Component>(len: usize, parts: &Query<(Entity, Ref<T>)>) -> bool {
     let mut n = 0;
     for (_, t) in parts {
@@ -154,7 +147,6 @@ pub struct GdDefaults {
     /// 1×1 depth 0 (reverse Z: infinitely far): the terrain's `depthTexture` below quality 3.
     pub depth: Handle<Image>,
     pub env: Handle<ShaderBuffer>,
-    /// The grass offset fields' buffer ([`grass::GrassOffsets`]).
     pub grass: Handle<ShaderBuffer>,
 }
 

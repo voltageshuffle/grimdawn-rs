@@ -1,5 +1,4 @@
-//! The stash systems: initialization, reagent deposits and the stash request
-//! handler (the stash data and pure moves are [`gd_game_core::stash`]).
+//! The stash systems: initialization, reagent deposits and the stash request handler.
 use bevy::prelude::*;
 use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::Shared;
@@ -74,8 +73,7 @@ pub fn init_stash(
         gd_formats::save::tagged::Tagged::parse(b)
     })
     .unwrap_or_else(gd_formats::save::tagged::Tagged::new_formulas);
-    // `GameEngine::StreamPlayerFormulas`: an invalid formula (missing record or
-    // `gd_sim::items::crafting::formula_valid` false) is not added to the learned set.
+    // `GameEngine::StreamPlayerFormulas`: an invalid formula is not added to the learned set.
     let dropped = formulas.retain_formulas(|r| {
         data.db
             .get(r)
@@ -100,7 +98,6 @@ pub fn init_stash(
     });
 }
 
-/// The bags and the stash both exist.
 fn has_bags_and_stash(inv: Option<Res<Inventory>>, stash: Option<Res<Stash>>) -> bool {
     inv.is_some() && stash.is_some()
 }
@@ -160,7 +157,6 @@ fn deposit_reagents(
     debug!("stash: {n} reagent stacks moved to the material storage");
 }
 
-/// [`QuickActionError`] to its notification and sound.
 fn quick_action_errors(
     mut msgs: MessageReader<QuickActionError>,
     data: Res<gd_game_core::data::GameData>,
@@ -196,7 +192,7 @@ fn apply_stash_requests(
         Res<gd_game_core::session::SaveDir>,
     ),
 ) {
-    // A store the save does not write takes no deposits (module doc).
+    // A store the save does not write takes no deposits.
     let transfer_open = shared.accepts(&choice, &save_dir, Shared::Transfer);
     let reagents_open = shared.accepts(&choice, &save_dir, Shared::Reagents);
     for m in msgs.read() {
@@ -277,7 +273,7 @@ fn apply_stash_requests(
                 cursor,
             } => {
                 // `Item::CanBePlacedInTransferStash`: a soulbound item or a material stays on the cursor; so does
-                // anything while the transfer stash is not saved (module doc).
+                // anything while the transfer stash is not saved.
                 if *transfer
                     && inv.held.as_ref().is_some_and(|h| {
                         !transfer_open
@@ -289,7 +285,6 @@ fn apply_stash_requests(
                     error.write(QuickActionError { notify: true });
                     continue;
                 }
-                // A held stack onto a stack of its record (`gd_game_core::stack::place_stacking`).
                 let max = inv.held.as_ref().map_or(1, |h| {
                     gd_game_core::stack::max_of(&inv, h, gd_game_core::stack::engine_max(&data.db))
                 });
@@ -307,8 +302,7 @@ fn apply_stash_requests(
                         let drop = ui_drop_sound(&data.db, &h);
                         match gd_game_core::stack::place_stacking(page, h, size, *cursor, max) {
                             Ok(under) => {
-                                // The placed item's origin no longer applies; a swapped-in
-                                // item has no cell to go back to (a cancel gives it).
+                                // A swapped-in item has no cell to go back to.
                                 inv.held_from = None;
                                 inv.held = under;
                                 if let Some(pak) = drop {
@@ -357,7 +351,7 @@ fn apply_stash_requests(
                 let sorted = gd_formats::inventory::sort_sack(page, first, |it| {
                     gd_game_core::inventory::sort_key(&inv, &tags, it)
                 });
-                // `StashTab::SortSelectedSack`: the count moves by the retries only (`StashRequest::Sort`).
+                // `StashTab::SortSelectedSack`: the count moves by the retries only.
                 stash.sort_layouts[*transfer as usize][i] = first.wrapping_add(sorted.unwrap_or(4));
                 if sorted.is_some() {
                     done.write(Default::default());
@@ -391,7 +385,7 @@ fn apply_stash_requests(
                     .find(|e| e.record.eq_ignore_ascii_case(record))
                     .map_or(0, |e| e.count);
                 match inv.held.take() {
-                    // Store a held stack of this material (not into a store the save skips: module doc).
+                    // Not into a store the save skips.
                     Some(h) if h.base_name.eq_ignore_ascii_case(record) && !reagents_open => {
                         inv.held = Some(h);
                         error.write(QuickActionError { notify: true });
@@ -404,7 +398,6 @@ fn apply_stash_requests(
                         store_material(&mut stash.materials, record, h.stack_count.max(1));
                     }
                     Some(h) => inv.held = Some(h),
-                    // Take from the store.
                     None if have > 0 => {
                         let take = if *shift {
                             gd_game_core::stack::engine_max(&data.db).min(have)
@@ -459,7 +452,6 @@ fn apply_stash_requests(
                         .unwrap_or(Footprint { w: 1, h: 1 });
                     let ok = stash.transfer[0].add(p.item.clone(), size);
                     if ok.is_none() {
-                        // No room: back to the first page that takes it.
                         let _ = stash
                             .pages
                             .iter_mut()

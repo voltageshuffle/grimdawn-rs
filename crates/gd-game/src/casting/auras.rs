@@ -1,9 +1,7 @@
 use super::*;
 
-/// The player's damage toggles (`Skill_BuffAttackRadiusToggled`, learned or
-/// a worn item's, `crate::player` docs: item toggles) as its
-/// [`DamageAuras`] while they are on (`Loadout::skill_active`); a timed aura
-/// keeps running. An aura that stays on keeps its tick timer.
+/// The player's damage toggles (`Skill_BuffAttackRadiusToggled`, learned or a worn item's) as its [`DamageAuras`]
+/// while they are on; a timed aura keeps running. An aura that stays on keeps its tick timer.
 pub(super) fn player_damage_toggles(
     mut commands: Commands,
     data: Res<GameData>,
@@ -96,8 +94,7 @@ pub(super) fn damage_auras(
     mut hits: MessageWriter<SkillHit>,
 ) {
     let dt = time.delta_secs();
-    // The bodies, indexed at the first pass (`combat::grid`: candidates in `all`'s order, so the target list and
-    // the shuffle's draws over it are the full scan's).
+    // Indexed at the first pass; candidates in `all`'s order keep the shuffle's draws the full scan's.
     let mut bodies = None;
     let mut near = Vec::new();
     for (e, gt, mut auras) in &mut q {
@@ -148,8 +145,8 @@ pub(super) fn damage_auras(
                     scale: 1.0,
                     projectile: false,
                 });
-                // `SkillActivated::CameraShake` per bolt: `Player::SendCameraShakeEvent` is the player's
-                // own shake, a monster's / pet's `Actor` event shakes only a camera that sees it.
+                // `SkillActivated::CameraShake` per bolt: the player's own shake, or an `Actor` event that shakes
+                // only a camera that sees it.
                 if let Some((secs, amp)) = a.shake {
                     commands.write_message(gd_game_core::visuals::CameraShake {
                         ms: (secs * 1000.0).trunc(),
@@ -170,14 +167,10 @@ pub(super) fn damage_auras(
     }
 }
 
-/// The life / energy part of a skill's `GAME::Bonus`, as the skill bonuses fill it from the profile
-/// (`GetSkillModifierData`: the record at the level plus its modifiers') and give it with
-/// `Character::TakeBonus(bonus, slow = false)`: `Skill_BuffRadius::TargetResult` (the
-/// activation's pass), `Skill_BuffOther::TargetResult`, `Skill_GiveBonus::TargetResult`
-/// and `Skill_BuffSelfToggled::ReceiveActiveUpdate` (a self buff going on) copy
-/// `skillLifeBonus`, `skillLifePercent`, `skillLifePercentSlow`, `skillManaBonus`,
-/// `skillManaPercent`, `skillManaPercentSlow` (as loaded by `SkillProfile_Modifiers::Load`)
-/// into `Bonus.life` … `Bonus.manaPercentSlow`. A held buff's periodic one is [`Bonus::buff_duration`].
+/// The life / energy part of a skill's `GAME::Bonus` (`GetSkillModifierData`: the record at the level plus its
+/// modifiers'), given with `Character::TakeBonus(bonus, slow = false)` by `Skill_BuffRadius::TargetResult`,
+/// `Skill_BuffOther::TargetResult`, `Skill_GiveBonus::TargetResult` and `Skill_BuffSelfToggled::ReceiveActiveUpdate`.
+/// A held buff's periodic one is [`Bonus::buff_duration`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bonus {
     pub life: f32,
@@ -189,7 +182,7 @@ pub struct Bonus {
 }
 
 impl Bonus {
-    /// The skill bonus from the profile's fields (`f`: the record's value at the level plus its modifiers').
+    /// `f`: the record's value at the level plus its modifiers'.
     pub fn of(f: impl Fn(&str) -> f32) -> Self {
         Self {
             life: f("skillLifeBonus"),
@@ -201,7 +194,6 @@ impl Bonus {
         }
     }
 
-    /// [`Bonus::of`] for record `rec` at `li` with the modifier records `mods`.
     pub fn of_record(
         db: &gd_formats::vfs::Database,
         rec: &Record,
@@ -215,11 +207,9 @@ impl Bonus {
         Self::of(|k| level_f(rec, k, li) + mods.iter().map(|(r, l)| level_f(r, k, *l)).sum::<f32>())
     }
 
-    /// A held buff's bonus every 1000 ms: `SkillBuff::Update` (a buff another character put
-    /// here, `SkillBuff.bonusTimer`, 0 at creation so the first comes at once) and `Skill_BuffSelfToggled::Update`
-    /// (a self buff while on, `Skill_BuffSelfToggled.bonusTimer`, zeroed by `ReceiveActiveUpdate`) give the profile's
-    /// `skillLifeBonusBuffDuration` and `skillLifePercentBuffDuration` as `Bonus.life` / `Bonus.lifePercent` (flat,
-    /// %), when either is non-zero.
+    /// A held buff's bonus every 1000 ms (`SkillBuff::Update`, first at once; `Skill_BuffSelfToggled::Update`,
+    /// timer zeroed by `ReceiveActiveUpdate`): `skillLifeBonusBuffDuration` / `skillLifePercentBuffDuration`, when
+    /// either is non-zero.
     pub fn buff_duration(f: impl Fn(&str) -> f32) -> Self {
         Self {
             life: f("skillLifeBonusBuffDuration"),
@@ -232,10 +222,9 @@ impl Bonus {
         *self == Self::default()
     }
 
-    /// `CharacterBio::TakeBonus` with `slow = false`: life + % of max life × (1 +
-    /// healing increase + % healing increase), energy + % of max energy, + the flat energy, life + flat × (1 +
-    /// healing increase), + the slow % of max life × (1 + healing increase) and energy + the slow % of max
-    /// energy (at once: only `slow = true`, the charge potions', fills the restore pools); each capped at the
+    /// `CharacterBio::TakeBonus` with `slow = false`: life + % of max life × (1 + healing increase + % healing
+    /// increase), energy + % of max energy, + the flat energy, life + flat × (1 + healing increase), + the slow %
+    /// of max life × (1 + healing increase) and energy + the slow % of max energy, all at once; each capped at the
     /// maximum. `energy`: the holder's current energy (monsters keep none here).
     pub fn apply(
         &self,
@@ -255,7 +244,7 @@ impl Bonus {
         }
     }
 
-    /// [`Bonus::apply`] on `who` (its `Combatant` life, its `Caster` / `Pet` energy); nothing on the dead.
+    /// Nothing on the dead.
     pub fn apply_to(&self, w: &mut World, who: Entity) {
         if self.is_zero() || w.get::<Dead>(who).is_some() {
             return;
@@ -279,7 +268,6 @@ impl Bonus {
         }
     }
 
-    /// [`Bonus::apply_to`] once the frame's commands run.
     pub fn queue(self, commands: &mut Commands, who: Entity) {
         if !self.is_zero() {
             commands.queue(move |w: &mut World| self.apply_to(w, who));
@@ -287,8 +275,7 @@ impl Bonus {
     }
 }
 
-/// The player's switched-on toggles at their effective level ([`self_buff_heals`]; `effective` the
-/// player's [`gd_game_core::player::EffectiveSkills`]).
+/// The player's switched-on toggles at their effective level.
 fn loadout_toggles(
     db: &gd_formats::vfs::Database,
     l: &Loadout,
@@ -304,10 +291,9 @@ fn loadout_toggles(
     out
 }
 
-/// `Skill_BuffSelfToggled::Update`: while a self buff is on, every 1000 ms (the
-/// first in the update after it went on, `ReceiveActiveUpdate` zeroes the timer) its holder takes the
-/// profile's [`Bonus::buff_duration`] (the record with the caster's modifiers of it). The running self buffs:
-/// the player's timed buffs and switched-on self toggles, a monster's / pet's timed buffs and toggles.
+/// `Skill_BuffSelfToggled::Update`: while a self buff is on, every 1000 ms (the first in the update after it went
+/// on) its holder takes [`Bonus::buff_duration`]. Runs for the player's timed buffs and switched-on self toggles,
+/// a monster's / pet's timed buffs and toggles.
 #[allow(clippy::type_complexity)]
 pub(super) fn self_buff_heals(
     mut commands: Commands,
@@ -339,9 +325,7 @@ pub(super) fn self_buff_heals(
     let dt = time.delta_secs();
     let db = &data.db;
     for (e, loadout, effective, links, ms, pet, heals, mut toggle_cache) in &mut q {
-        // The player's switched-on toggles are cached (the book clone and item
-        // scan run only when the loadout changed); the timed buffs and a
-        // monster's / pet's toggles are read fresh.
+        // The player's switched-on toggles are cached until the loadout changes.
         let fresh_toggles: Vec<(String, usize)>;
         let loadout_on: &[(String, usize)] = match (loadout.as_deref(), effective.as_deref()) {
             (Some(l), Some(eff)) => match toggle_cache.as_mut() {
@@ -384,9 +368,8 @@ pub(super) fn self_buff_heals(
                     .map(|(s, li)| (s.as_str(), *li)),
             )
             .collect();
-        // A buff record another character put in the timed list (a monster's buff-other on the player) is a
-        // `SkillBuff` (`SkillBuff::Update`, the same bonus); so is the player's own radius buff, which the
-        // engine's pass puts on the player too (`crate::auras`: the port keeps it here).
+        // A buff another character put in the timed list is a `SkillBuff` (same bonus); so is the player's own
+        // radius buff, which the engine's pass puts on the player too.
         on.retain(|(s, _)| {
             db.get(s).is_some_and(|r| {
                 is_self_buff_class(&r.class)
@@ -436,7 +419,6 @@ pub(super) fn self_buff_heals(
     }
 }
 
-/// Timed filters run out ([`Shield::left`]).
 pub(super) fn shields(time: Res<Time>, mut q: Query<&mut Shields>) {
     let dt = time.delta_secs();
     for mut s in &mut q {

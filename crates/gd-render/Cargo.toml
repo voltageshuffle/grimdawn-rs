@@ -8,14 +8,12 @@ description = "Grim Dawn's look on Bevy: the game's shading, lighting and post c
 license = "MIT"
 
 [features]
-# Dev builds: the `GD_*` hook reads and the dev-gated render code (the `GD_FPS` effect counters, fx/mod.rs).
-# grimdawn's `dev` forwards here; the hooks resource is gd-game-core's, which this forwards to.
+# Dev builds: the `GD_*` hook reads and the dev-gated render code (`GD_FPS` effect counters).
 dev = ["gd-game-core/dev"]
 
 [dependencies]
 anyhow = "1.0.104"
-# Only what the port uses (no glTF, animation, gizmos, picking, scenes, UI widgets, sprites or Bevy's default
-# font: the game draws its own models, animation, cursor and fonts). grimdawn adds audio.
+# No glTF, animation, gizmos, picking, scenes, UI widgets, sprites or default font: the game draws its own.
 bevy = {
   version = "0.20",
   default-features = false,

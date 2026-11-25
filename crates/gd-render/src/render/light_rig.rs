@@ -20,7 +20,7 @@
 //! - Drawing (`GraphicsDeferredRenderer::RenderDeferredPointLight`): a grouped light is the
 //!   `pointGrouped` / `pointSpecularGrouped` technique, the same `pointPS` / `pointSpecularPS` maths as a level
 //!   light under a stencil test against the group, which only the group's meshes write: a rig lights its own
-//!   character's pixels only. Colour × the HDR factor with `hdrLighting` (`render/env.rs`).
+//!   character's pixels only. Colour × the HDR factor with `hdrLighting`.
 //! - The ambient highlight (`Character::GetAmbientHighlight`, the mesh's `GraphicsMeshInstance.ambientHighlight` that
 //!   `GraphicsMeshInstance::SetShaderParameters` sends as `diffuseColor.w`, the ambient add): 0 for a character
 //!   with a rig at `lightingQuality` >= 1, else its `lqLightingHighlight` (0.3 on most monsters, 0.5 on the
@@ -32,19 +32,17 @@
 //!   `SetHighlight(true)` even with `targetOutline` off; `InGameUI::ClearHoverTarget` / `InGameUI::SetHoverTarget`
 //!   clear it). A hovered NPC that is not `IsOfInterest` skips that call (`InGameUI::HandleMouseEvent`): named,
 //!   neither outlined nor highlighted.
-//!   So on the hover target that has an outline
-//!   colour (`gd_render::hover::HoverGlow`, grimdawn `hover.rs`). Shaded as deferred.ssh `ambientPS` /
+//!   So on the hover target that has an outline colour. Shaded as deferred.ssh `ambientPS` /
 //!   `directionalAmbientPS` do (the `deferredPS` writes `diffuseColor.w` to the material target's z): albedo ×
 //!   (hemisphere ambient + it). A non-character actor's base is 0
 //!   (`Actor::GetAmbientHighlight`: its attach parent's, else 0). The ground label manager
 //!   (`UIWorldDescManager`) sets it too: on every item whose label it lists (`UIWorldDescManager::ListLabel`
 //!   from the frustum scan `UIWorldDescManager::ScanFrustum`, with `EnableOutline(true)`), again on the selected
 //!   label's item (`UIWorldDescManager::Update`), and clears both on the last frame's list before the next scan
-//!   (`UIWorldDescManager::ClearHighlights`), so on the listed items (`gd_render::hover::LabelGlow`).
+//!   (`UIWorldDescManager::ClearHighlights`), so on the listed items.
 //! - The rest of `lightingQuality`: 0 sets `GraphicsEngine::UseLowQualityLighting`
 //!   (`GraphicsEngine.lowQualityLighting`, `UpdateFromOptions`), which draws level lights without specular
-//!   (`Light::AddToScene`: `GraphicsLight.specular` = !low quality; `render/env.rs`); 3 gives the player light a
-//!   shadow (`render/env.rs`).
+//!   (`Light::AddToScene`: `GraphicsLight.specular` = !low quality); 3 gives the player light a shadow.
 //!
 //! - Scene types (Engine.dll `GraphicsMTRenderer::CreateScene` callers): 0 = the world scene
 //!   (`CreateBuildSceneJob`, so the main menu's world too: the menu hero gets `playerlightrig.dbr`) and
@@ -165,7 +163,6 @@ pub fn lighting_quality(options: &gd_game_core::options::GameOptions) -> u32 {
     }
 }
 
-/// A character's rig state ([`load_rigs`]).
 #[derive(Component)]
 pub struct CharacterLighting {
     rig: Option<Arc<LightRig>>,
@@ -173,7 +170,7 @@ pub struct CharacterLighting {
     lq_highlight: f32,
     /// The scene light group (1..=65535).
     group: u32,
-    /// The tag its meshes carry ([`mesh_tag`]).
+    /// The tag its meshes carry ([`mesh_tag`]); `u32::MAX` until placed.
     tag: u32,
 }
 
@@ -188,15 +185,14 @@ pub struct RigLight(pub Entity);
 pub struct RigLights(Vec<Entity>);
 
 /// The `MeshTag` of a character's meshes: the light group (0 = none, bits 0-15), the base ambient highlight
-/// (bits 16-30, × 1000) and the actor's highlight flag (bit 31: `Actor::AddToScene`'s + 0.25, added by gd_standard.wesl in the world view only; the
-/// conversation portrait clears the flag before it draws the NPC, `ui/dialog.rs`).
+/// (bits 16-30, × 1000) and the actor's highlight flag (bit 31: `Actor::AddToScene`'s + 0.25, world view only).
 pub fn mesh_tag(group: u32, highlight: f32, hovered: bool) -> u32 {
     (group & 0xFFFF)
         | (((highlight * 1000.0).round().clamp(0.0, 32767.0) as u32) << 16)
         | (u32::from(hovered) << 31)
 }
 
-/// Whether a character is in the world scene: everyone but the paper dolls (the menu hero is; module docs).
+/// Whether a character is in the world scene: everyone but the paper dolls (the menu hero is).
 fn in_world_scene(doll: Option<&DollBody>) -> bool {
     doll.is_none_or(|d| d.0.own_layer().is_none())
 }
@@ -393,16 +389,15 @@ fn tag_meshes(
 }
 
 /// The hover highlight of the objects that are not characters (`Actor::GetAmbientHighlight` is 0 for them, so the
-/// tag is the highlight alone): the hovered one (container, door, shrine, riftgate, breakable) and the ground items
-/// with a listed label (module doc). Characters take it in their own tag ([`place_rig_lights`]). Applied every
-/// frame, as an item's or object's meshes may appear after it got the highlight.
+/// tag is the highlight alone): the hovered one and the ground items with a listed label. Characters take it in
+/// their own tag ([`place_rig_lights`]). Applied every frame, as meshes may appear after the highlight.
 fn highlight_objects(
     mut commands: Commands,
     glow: Query<Entity, Or<(With<HoverGlow>, With<LabelGlow>)>>,
     chars: Query<(), With<CharacterLighting>>,
     meshes: Query<Option<&MeshTag>, With<Mesh3d>>,
     children: Query<&Children>,
-    // Last frame's highlighted objects, then this frame's (kept to reuse their buffers).
+    // Last frame's highlighted objects, then this frame's.
     mut lists: Local<[Vec<Entity>; 2]>,
 ) {
     let [last, now] = &mut *lists;

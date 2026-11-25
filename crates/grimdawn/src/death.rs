@@ -2,13 +2,9 @@
 //! clicking it, and the hardcore Game Over dialog. The rules (penalty,
 //! redemption, play stats) are `gd_game::death`.
 //!
-//! The Game Over dialog is the dialog manager's ok box (`ui/confirm.rs`, `tagGameOver`), as the engine opens
-//! it (`ControllerPlayer::CharacterIsDying`: `DialogManager::AddDialog` with the
-//! OK-only layout and the localised, genderised `tagGameOver`; the exe draws the Ok button of
-//! `prompt_manager.dbr` for it, `PromptManager::LoadOkButton` / `PromptManager::DrawOkButton`). Answering it — Ok,
-//! close or Esc — leaves the
-//! session ([`gd_ui::state::exit::ExitToMenu`]): the engine's `DeathUpdate` hands the response to the UI interface
-//! and the dead hardcore character cannot continue; the character list shows it as dead (`session::is_dead`).
+//! The Game Over dialog is the dialog manager's OK-only box with the genderised `tagGameOver`
+//! (`ControllerPlayer::CharacterIsDying` → `DialogManager::AddDialog`). Answering it (Ok, close or Esc) leaves the
+//! session ([`gd_ui::state::exit::ExitToMenu`]); the character list shows the character as dead (`session::is_dead`).
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 pub use gd_game::death::*;

@@ -1,17 +1,9 @@
-//! The Yes / No confirmation box of the dialog manager (`prompt_manager.dbr`), centred on the screen: the loot filter's Defaults
-//! question, the inventory's reagent / sort questions (`apply.rs`), the game menu's Exit / Quit question (`gamemenu.rs`), the
-//! Inventor's dismantle warning and the vendor / caravan windows' boxes (`gd_ui::trade`, `gd_ui::state::trade::Prompt`) are this one box (or
-//! its Ok variant); each window only chooses the question, tracks which part is
-//! hovered, and reads the returned rects.
+//! The Yes / No (or Ok) confirmation box of the dialog manager (`prompt_manager.dbr`), centred on the
+//! screen; each window only chooses the question, tracks which part is hovered, and reads the
+//! returned rects.
 //!
-//! PORT: the box texture has a black square in its top-right corner: the slot of the window close button. `prompt_manager.dbr` has
-//! no close field (only Yes / Ok / No), but its folder holds `prompt_buttonwindowclose.dbr`, which the engine's dialog window must
-//! draw there; a click answers the box No and plays `soundNameDown` (how the engine answers a close button of the dialog manager
-//! was not decompiled). The Yes / No buttons show `bitmapNameInFocus` while hovered.
-//!
-//! The box's looks can move in place: every button quad carries [`ConfirmLook`] (its state bitmaps), and
-//! [`apply_look`] swaps them per frame — a window whose box is its own rebuild group (the loot filter's
-//! Defaults question, the reclaim mode's message) keeps the hover / press out of its signature.
+//! PORT: the box texture's top-right black square is taken as the slot of
+//! `prompt_buttonwindowclose.dbr`; a click answers No (the engine's close handling was not decompiled).
 use super::Ui;
 use bevy::prelude::*;
 use gd_formats::ui::{Rect as URect, TextAlign, TextBox};
@@ -21,7 +13,6 @@ const PROMPT: &str = "records/ui/generic/promptbox/prompt_manager.dbr";
 const PROMPT_TEXT: &str = "records/ui/generic/promptbox/prompt_text.dbr";
 const CLOSE: &str = "records/ui/generic/promptbox/prompt_buttonwindowclose.dbr";
 
-/// A part of the box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Yes,
@@ -29,10 +20,9 @@ pub enum Hit {
     Close,
 }
 
-/// What the box shows of the mouse: the hovered part and whether the left button is down on it (the close button's down bitmap).
+/// The hovered part and whether the left button is down on it (the close button's down bitmap).
 pub type Look = (Option<Hit>, bool);
 
-/// The box's parts (physical px) as drawn.
 #[derive(Clone, Copy)]
 pub struct ConfirmRects {
     pub yes: URect,
@@ -41,7 +31,6 @@ pub struct ConfirmRects {
 }
 
 impl ConfirmRects {
-    /// The part under `p`.
     pub fn hit(&self, p: Vec2) -> Option<Hit> {
         if super::contains(&self.yes, p) {
             Some(Hit::Yes)
@@ -54,18 +43,16 @@ impl ConfirmRects {
         }
     }
 
-    /// The [`Look`] for the cursor (`pressed`: the left button is down).
     pub fn look(&self, cursor: Option<Vec2>, pressed: bool) -> Look {
         let hit = cursor.and_then(|p| self.hit(p));
         (hit, hit.is_some() && pressed)
     }
 }
 
-/// A box button's state bitmaps on its quad ([`apply_look`] swaps them in place): the up bitmap as drawn,
-/// `bitmapNameInFocus` hovered, `bitmapNameDown` hovered and pressed (the close button).
+/// A box button's state bitmaps: up, `bitmapNameInFocus` hovered, `bitmapNameDown` pressed (close).
 #[derive(Component)]
 pub struct ConfirmLook {
-    /// The box root it belongs to (one box per root; the game menu draws one per look layer).
+    /// One box per root.
     pub root: Entity,
     pub hit: Hit,
     up: Handle<Image>,
@@ -73,8 +60,7 @@ pub struct ConfirmLook {
     down: Option<Handle<Image>>,
 }
 
-/// Shows the box's [`Look`] in place (no rebuild): the hovered part's focus bitmap, the close button's
-/// down bitmap while pressed. Only the buttons of `root` (the caller's box).
+/// Shows the box's [`Look`] in place (no rebuild), on the buttons of `root` only.
 pub fn apply_look(root: Entity, look: Look, looks: &mut Query<(&ConfirmLook, &mut ImageNode)>) {
     for (l, mut img) in looks.iter_mut() {
         if l.root != root {
@@ -93,11 +79,7 @@ pub fn apply_look(root: Entity, look: Look, looks: &mut Query<(&ConfirmLook, &mu
     }
 }
 
-/// A box button (`ButtonStaticText`) with its top-left at `pos`: its bitmap by the look (as
-/// `widgets::static_button`, always enabled), the width auto-grown to fit the label
-/// ([`widgets::button_width`]), the label centred, its record sound — and [`ConfirmLook`] on the quad
-/// for [`apply_look`]. (The box needs the quad entity to swap its bitmap in place; `static_button`
-/// returns only the rect.)
+/// A box button (`ButtonStaticText`) with its top-left at `pos`, with [`ConfirmLook`] on its quad.
 fn box_button(
     ui: &mut Ui,
     rec: &gd_formats::arz::Record,
@@ -138,24 +120,20 @@ fn box_button(
     if let (Some(style), Some(t)) = (rec.str("style"), text) {
         super::widgets::label(ui, r, style, TextAlign::Center, &t);
     }
-    // Yes / No sound on the press; the close button's sound is its handler's ([`close_sound`]).
+    // The close button's sound is its handler's ([`close_sound`]).
     if hit != Hit::Close {
         ui.record_button_sound(r, rec);
     }
     Some(r)
 }
 
-/// The close button's press sound (`soundNameDown` of its record).
 pub fn close_sound(data: &GameData) -> Option<String> {
     data.db.get(CLOSE)?.str("soundNameDown").map(str::to_owned)
 }
 
-/// The box's frame, question, close slot and buttons, sized to their content: the height grows so the
-/// wrapped question never runs into the buttons (which keep their stock bottom margin), and the width
-/// grows so a long localised button label fits (the row stays centred). `buttons` are the record field
-/// names and their [`Hit`]s, left to right. Returns the button rects (in order) and the close rect.
-/// PORT: the stock box is fixed at its background texture's size; here it follows the content (UX over
-/// parity). The button row is centred (the stock Ok sits 2 px left of centre).
+/// The box's frame, question, close slot and buttons; returns the button rects (in order) and the
+/// close rect. PORT: the stock box is fixed at its texture's size; here it grows to fit the
+/// question and the button labels, and the button row is centred (the stock Ok sits 2 px left).
 fn frame(
     ui: &mut Ui,
     text: &str,
@@ -168,7 +146,6 @@ fn frame(
         .map(str::to_owned)
         .and_then(|p| ui.image(&p))?;
     let (w0, h0) = (ui.sc(sz.x as f32), ui.sc(sz.y as f32));
-    // Load and measure the buttons: auto width, texture height, record y (for the bottom margin).
     struct Btn {
         rec: gd_formats::arz::Record,
         hit: Hit,
@@ -197,7 +174,6 @@ fn frame(
             y,
         });
     }
-    // The wrapped question's height; grow the box when it overflows the record text box.
     let tb = ui.record(PROMPT_TEXT).map(|t| TextBox::from_record(&t));
     let mut grow = 0.0;
     if let Some(tb) = &tb
@@ -207,7 +183,7 @@ fn frame(
         let text_h = ui.wrap_lines(style, bw, text).len() as f32 * ui.line_height(style);
         grow = (text_h - ui.sc(tb.rect.h)).max(0.0);
     }
-    // Centre the button row; grow the box width when the row exceeds the texture (stock side margin).
+    // Grow the box width when the row exceeds the texture (stock side margin).
     let gap = ui.sc(4.0);
     let row_w: f32 =
         btns.iter().map(|b| b.w).sum::<f32>() + gap * btns.len().saturating_sub(1) as f32;
@@ -219,10 +195,9 @@ fn frame(
         ((ui.screen.y - h) * 0.5).round(),
     );
     ui.quad_stretch(bg, URect::new(o.x, o.y, w, h), Color::WHITE);
-    // The question takes every click while up: block the sounds (and `frontmost` presses) of every
-    // button behind it, full screen, not only under the box.
+    // Block every button behind the question, full screen.
     ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
-    // Close: top-right, keeping its record offset from the right edge as the box widens.
+    // Close: keeps its record offset from the right edge as the box widens.
     let close = ui.record(CLOSE).and_then(|c| {
         let cx = ui.sc(c.f32("bitmapPositionX").unwrap_or(0.0));
         let cy = ui.sc(c.f32("bitmapPositionY").unwrap_or(0.0));
@@ -251,7 +226,7 @@ fn frame(
             y += lh;
         }
     }
-    // Buttons: centred row, anchored to the stock bottom margin (pushed down by `grow`).
+    // Anchored to the stock bottom margin (pushed down by `grow`).
     let btn_h = btns.first().map(|b| b.h).unwrap_or(0.0);
     let bottom = btns.first().map(|b| h0 - b.y - b.h).unwrap_or(0.0);
     let by = o.y + h - bottom - btn_h;
@@ -264,26 +239,25 @@ fn frame(
     Some((rects, close))
 }
 
-/// Draws the message box with its one Ok button (the `OkButton` of `prompt_manager.dbr`; [`Look`]'s `Yes` is the
-/// Ok button): returns the Ok and close rects.
+/// The message box with its one Ok button ([`Look`]'s `Yes`): returns the Ok and close rects.
 pub fn ok_box(ui: &mut Ui, tag: &str, look: Look) -> Option<(URect, Option<URect>)> {
     let text = ui.fonts.tag(tag).to_string();
     ok_text(ui, &text, look)
 }
 
-/// [`ok_box`] showing `text` (a tag already localised and filled).
+/// `text`: already localised and filled.
 pub fn ok_text(ui: &mut Ui, text: &str, look: Look) -> Option<(URect, Option<URect>)> {
     let (rects, close) = frame(ui, text, look, &[("OkButton", Hit::Yes)])?;
     Some((rects.into_iter().next()?, close))
 }
 
-/// Draws the box: `tag` is the question's text tag; returns the rects of its parts (None when a record is missing).
+/// `tag` is the question's text tag; `None` when a record is missing.
 pub fn confirm_box(ui: &mut Ui, tag: &str, look: Look) -> Option<ConfirmRects> {
     let text = ui.fonts.tag(tag).to_string();
     confirm_text(ui, &text, look)
 }
 
-/// [`confirm_box`] asking `text` (a tag already localised and filled).
+/// `text`: already localised and filled.
 pub fn confirm_text(ui: &mut Ui, text: &str, look: Look) -> Option<ConfirmRects> {
     let (rects, close) = frame(
         ui,

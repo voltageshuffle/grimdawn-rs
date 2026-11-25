@@ -49,12 +49,10 @@
 //! in the kill adjustment handed to `HandleFaction` → `FactionPack::Adjust`
 //! → `FactionPack::AdjustValue`, which scales every change
 //! (gain or loss, after the faction's own gain/loss multiplier) by
-//! `1 + mod` when the mod is positive. `doubleRareWeightModifier` scales the dyn-table rare/rare weight
-//! (`items::loot`). The engine's affix swap and loot-table override lists
-//! (`SetAscendantPrefixOverride` ... `SetAscendantLootTableOverride`) are
-//! never filled in the shipped Game.dll (no callers), so they
-//! are left out. `luaToken` (Voidmarked / roguelike chests) is kept for
-//! Lua.
+//! `1 + mod` when the mod is positive. `doubleRareWeightModifier` scales the dyn-table rare/rare
+//! weight. The engine's affix swap and loot-table override lists
+//! (`SetAscendantPrefixOverride` ... `SetAscendantLootTableOverride`) have no callers in
+//! Game.dll: not ported. `luaToken` (Voidmarked / roguelike chests) is kept for Lua.
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
 use gd_rules::Rng;
@@ -95,7 +93,6 @@ pub struct Ascendant {
     /// `luaToken` → the formula's level (`AddAscendantAltarToken`, set
     /// not summed), read by Lua `Game.GetAscendantTokenModifier`.
     pub tokens: Vec<(String, u32)>,
-    /// `gameascendant.dbr`, parsed on first use; reset with the session.
     tables: std::sync::OnceLock<Tables>,
 }
 
@@ -190,7 +187,7 @@ impl Tables {
             _ if v == var => Some(value),
             _ => None,
         });
-        // (bad data: a NaN / infinite result would pass every `<= chance` roll.)
+        // A NaN / infinite result would pass every `<= chance` roll.
         if v.is_finite() { v.max(0.0) } else { 0.0 }
     }
 
@@ -356,10 +353,8 @@ pub fn monster_paks(
         .collect()
 }
 
-/// The column of a Shattered Realm ruleset's `difficultyAdjustment*` pak for `dungeons_generated` (the tier).
-/// `CharAttributeVal::AddToAccumulator`: the
-/// engine's index `i` is 1-based, `A[min(i - 1, len - 1)]` (a lookup past the table's end takes its last row, no
-/// wrap), and `i == 0` contributes nothing (`None`). The caller's column clamp is `stats::level_value`'s.
+/// The column of a Shattered Realm ruleset's `difficultyAdjustment*` pak for `dungeons_generated`
+/// (`CharAttributeVal::AddToAccumulator`: 1-based, 0 contributes nothing).
 pub fn adjustment_column(dungeons_generated: u32) -> Option<usize> {
     (dungeons_generated as usize).checked_sub(1)
 }
@@ -534,11 +529,8 @@ pub fn reroll_affix(
     use crate::items::db::Fields;
     let panel = db.get(REROLL_PANEL)?;
     let table = panel.string(reroll_table_field(item_class)?);
-    // exe `InventorWindow::RollAffix` / resolver `InventorWindow::ResolveLevelEquation`: `itemLevel` is
-    // the item's level (the stock equation is just that); the game also
-    // offers parentLevel = character level, averagePlayerLevel,
-    // gameDifficulty and min/maxPlayerLevel = numberOfPlayers = 1, not
-    // provided here.
+    // `InventorWindow::ResolveLevelEquation`: only `itemLevel` is provided (the engine also
+    // offers parentLevel, averagePlayerLevel, gameDifficulty, min/maxPlayerLevel, numberOfPlayers).
     let level = Expr::parse(panel.string("targetLevelEquation")).map_or(item_level as f32, |e| {
         e.eval(&|v| {
             v.eq_ignore_ascii_case("itemLevel")
@@ -677,8 +669,7 @@ fn ascended_affix(
     if let Some(t) = affix_tables.get(i) {
         list.push((t.to_string(), f.int("affixWeight")));
     }
-    // (bad data: the engine's int sum; i64 and ≥ 0 so huge / negative
-    // weights neither overflow nor wrap the modulus.)
+    // i64 and ≥ 0 so huge / negative weights neither overflow nor wrap the modulus.
     let total = list.iter().map(|l| l.1 as i64).sum::<i64>().max(0);
     let roll = (rng.next() as u64 % (total as u64 + 1)) as i64;
     let mut acc = 0i64;

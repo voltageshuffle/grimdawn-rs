@@ -37,11 +37,8 @@
 //! `Destructible::UpdateSelf` / `BreakApart`:
 //! the pieces lie for `rubbleLife`, then every dynamic piece
 //! bone's transparency is `remaining / rubbleFade` (`SetBoneTransparancies`),
-//! which `bonefadeskinned.ssh` draws as `base.a · factor` (render/material.rs
-//! `FLAG_BONE_FADE`), while the static ones stay opaque; the port fades the
-//! mesh's `bonefadeskinned` materials the same way (one factor per material,
-//! so the static pieces fade with the rest and the broken mesh goes once
-//! faded).
+//! which `bonefadeskinned.ssh` draws as `base.a · factor`, while the static ones stay opaque.
+//! PORT: one factor per material, so the static pieces fade with the rest and the broken mesh goes once faded.
 //!
 //! PORT: the broken mesh loads in the background (`CharAssets::model_ready`); one not built at the break is
 //! spawned on a later frame ([`PendingDebris`]), while the break sound and effects play at once.
@@ -75,8 +72,7 @@ impl Plugin for BreakablesPlugin {
 }
 
 /// New breakables get their model (with the record's texture overrides,
-/// `CharAssets::spawn_record_model`) once it is loaded (`CharAssets::record_ready`; loaded in the background, so a
-/// streamed-in level's breakables never build their models on the game thread).
+/// `CharAssets::spawn_record_model`) once it is loaded in the background (`CharAssets::record_ready`).
 fn dress_breakables(
     mut commands: Commands,
     new: Query<(Entity, &Breakable), Without<gd_render::character::RecordDressed>>,
@@ -136,8 +132,7 @@ struct Debris {
     /// The model's part entities (their materials take the rubble fade).
     parts: Vec<Entity>,
     /// The fade materials: per-instance copies of the parts' `bonefadeskinned`
-    /// materials ([`FLAG_BONE_FADE`]), made once when the fade starts
-    /// (`fly_debris`); `Some([])` when the mesh has none (it stays opaque).
+    /// materials ([`FLAG_BONE_FADE`]), made when the fade starts; `Some([])` when the mesh has none (it stays opaque).
     faded: Option<Vec<Handle<GdMaterial>>>,
 }
 
@@ -300,7 +295,7 @@ fn fly_debris(
             if steps == 0 || p.still >= SLEEP_TIME {
                 continue;
             }
-            // The world near the box and where this frame's steps can take it (`gd_game::loot::toss_flight`).
+            // The world near the box and where this frame's steps can take it.
             let span = steps as f32 * drop_body::STEP;
             let (lo, hi) = body.aabb();
             let reach = Vec3::splat(drop_body::CONTACT_THRESHOLD + 0.1)
@@ -310,7 +305,7 @@ fn fly_debris(
             tris.clear();
             coll.triangles_near(lo, hi, &mut tris);
             tris.sort_by_key(|t| t.owner);
-            // No collision loaded there: a floor at the nav ground under the box (as `gd_game::ragdoll::floor`).
+            // No collision loaded there: a floor at the nav ground under the box.
             let c = Vec3::from(body.pos);
             if tris.is_empty()
                 && let Some(y) = nav.0.ground([c.x, c.y + 0.5, c.z])
@@ -548,8 +543,7 @@ fn spawn_broken(
     };
     commands.entity(ne).try_insert(debris);
     // The broken pieces cast sun shadows only with the record's `brokenCastShadows` (default 0):
-    // `Destructible::PhysicsSetup` / `ReplicateBreakApart` (Game.dll) set `Actor::SetCastsShadows` from it
-    // once there are pieces (render/shadow.rs: casters need `Actor.castsShadow`).
+    // `Destructible::PhysicsSetup` / `ReplicateBreakApart` set `Actor::SetCastsShadows` from it.
     if rec.i32("brokenCastShadows").unwrap_or(0) == 0 {
         for p in parts {
             commands.entity(p).try_insert(bevy::light::NotShadowCaster);
@@ -557,8 +551,6 @@ fn spawn_broken(
     }
 }
 
-/// `GD_DEBRIS_TEST` (hooks.rs): the record's debris 2 m in
-/// front of the player every 3 s.
 #[cfg(feature = "dev")]
 fn test_debris(
     hooks: Res<gd_game_core::hooks::Hooks>,

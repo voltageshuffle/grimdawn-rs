@@ -1,6 +1,5 @@
 //! How a container throws its drops onto the ground: start point, toss
-//! velocity, ballistic flight and the drop timing (the presentation and the
-//! ECS side: `gd_game::loot`).
+//! velocity, ballistic flight and the drop timing.
 //!
 //! Game.dll loot dropper (`ItemDropper::Update`, shared by monsters,
 //! destructibles, chests and shrines):

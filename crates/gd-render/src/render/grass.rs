@@ -41,15 +41,14 @@
 //!   opaque; `deferred` those with alpha ≥ 0.35, blended SrcAlpha / InvSrcAlpha
 //!   with depth test `Less` (so only around the base pass's texels); cull none,
 //!   albedo = the blade texel, normal +Y. The vertex program (every pass) bends
-//!   the blade (gd_wind.wesl): h = 1 − v, a = sin(x + time)·h·windStrength,
+//!   the blade: h = 1 − v, a = sin(x + time)·h·windStrength,
 //!   b = sin(z + time + 0.5)·h·windStrength, x += 0.075a + 0.025b,
 //!   z += 0.025a + 0.075b; then the offset field d (characters pushing blades)
 //!   moves xz by h·d and lowers y by H − √(H² − |h·d|²), H = `bladeHeight`.
 //!   `TerrainType::SetGrassShaderParams`: `windStrength` = the
 //!   `WeatherManager` wind strength (PORT: carried in the entity's `MeshTag`; `WeatherManager.windStrength`,
 //!   `GetWindStrength`: 1 by default, the weather's eased 1..3 factor) when `affectedByWind`, else 0.
-//! - The grass is part of the terrain, which casts no sun shadow
-//!   (render/terrain.rs).
+//! - The grass is part of the terrain, which casts no sun shadow.
 //!
 //! - The offset field (`GrassObject`, [`GrassField`]): per terrain
 //!   block `int(w / s)` × `int(h / s)` points `s` (the spacing) apart from its
@@ -67,7 +66,7 @@
 //!   layer `affectedByWind`, else disturbance only), then steps each point with
 //!   h = min(dt, 0.05 s): hold −= h; unheld: wind velocity = (v − 50·offset·h)·0.91;
 //!   wind offset = clamp(v·h + offset, ±0.5); disturbance velocity = (v −
-//!   50·offset·h)·0.95, offset likewise. The VS applies it (gd_wind.wesl, UV_1).
+//!   50·offset·h)·0.95, offset likewise. The VS applies it (UV_1).
 //! - Characters push the blades aside ([`character_disturbances`],
 //!   Game.dll `CharacterMovementManager::Update`: each update of a
 //!   character in action state Move (5), Walk (6), Jump (19), 20 or Evade (21)
@@ -80,34 +79,31 @@
 //!   every point 0.0001 ≤ d < r from it gets disturbance velocity +=
 //!   (dx, dz) / d · strength · (1 − d / r) (outwards), clamped to ±2, no hold; the
 //!   same rectangle growth and 5000 ms timer as the wind.
-//!   The message is [`gd_game_core::visuals::PointDisturbance`]; its water half
-//!   (`Water::CreateRipple`) is `water.rs`'s. The other callers (all
-//!   Game.dll, falloff on):
-//!   - `FxPak::OnAddToLevel`: `disturbanceRadius` > 0.0001, strength
-//!     5, splash 0 (`gd_game_core::visuals::spawn_fx`);
+//!   The message is [`gd_game_core::visuals::PointDisturbance`]; its water half is `Water::CreateRipple`. The other
+//!   callers (all Game.dll, falloff on):
+//!   - `FxPak::OnAddToLevel`: `disturbanceRadius` > 0.0001, strength 5, splash 0;
 //!   - `Destructible::CollisionCallback`: a debris piece's contact
 //!     at most every 250 ms, radius 1, strength √(|v|² + |ω|²), splash 2 on water
-//!     (surface 7), else 0 (`breakables.rs`);
+//!     (surface 7), else 0;
 //!   - `Floater::UpdateSelf`: each bob turn, radius |the region box's
-//!     half extents|, strength 1, splash 0 (`gd_world::decoration_anim`);
+//!     half extents|, strength 1, splash 0;
 //!   - `World::CreateLineDisturbance` (a wave's front each frame,
-//!     strength 2, splash 0: `gd_game::waves`): radius-1 point disturbances 1 m
+//!     strength 2, splash 0): radius-1 point disturbances 1 m
 //!     apart along the line ([`line_disturbances`]);
 //!   - `Skill_AttackLine::Update` (each `hitPeriod` at the travelling
-//!     point, radius `attackRadius`, strength 5, splash 1: `gd_game::casting::attack_line`);
+//!     point, radius `attackRadius`, strength 5, splash 1);
 //!   - not ported: `Character::CollisionCallback` (ragdolls: radius 1, strength
 //!     the impact speed; the port has none), and `Fx::AnimationCallback` ("DisplaceGrass", radius
 //!     the `FxMesh`'s `disturbanceRadius`, strength 5: no stock `FxMesh` animation
 //!     has that callback, only creature ones, which `Fx` never plays).
 //!
 //! PORT: the block box's height is its ground's range; one
-//! mesh per layer and 4 × 4 blocks ([`CHUNK`]); the blended pass is drawn before SSAO with the decals (render/gbuffer_blend.rs);
+//! mesh per layer and 4 × 4 blocks ([`CHUNK`]); the blended pass is drawn before SSAO with the decals;
 //! no alpha to coverage (no MSAA); `clutterMesh` (5 stock records) not placed;
 //! the base layer's opacity is 255 everywhere. The offsets are not written into the
 //! blade vertices: every loaded field lives in one storage buffer ([`GrassOffsets`]), a
 //! blade vertex's `UV_1` holds its point's index there, and each frame only the animated
-//! blocks' points are written to the GPU (rewriting the meshes made Bevy re-extract and
-//! re-allocate every animated chunk each frame: a third of the frame time in a gust).
+//! blocks' points are written to the GPU.
 use super::material::MaterialAssets;
 use crate::textures::Textures;
 use bevy::asset::RenderAssetUsages;
@@ -127,8 +123,8 @@ const LOW_SPACING: f32 = 1.16;
 /// The lowest blades that grow at the low terrain quality.
 const LOW_MIN_HEIGHT: f32 = 1.65;
 
-/// The terrain quality is above 0 (`detailLevel` not "low"; module doc). Like
-/// `textureQuality`, a render setting read by what is built from now on; grimdawn's `settings.rs` writes it.
+/// The terrain quality is above 0 (`detailLevel` not "low"). Like `textureQuality`, read by what is built from now
+/// on.
 #[derive(Resource)]
 pub struct GrassQuality(pub bool);
 
@@ -316,11 +312,10 @@ pub struct TerrainGrass {
     field: GrassField,
 }
 
-/// Blocks per side of a mesh chunk. PORT: the engine keeps buffers per terrain block; the port merges 4 × 4 blocks
-/// so that an offset change re-uploads a chunk, not the level.
+/// Blocks per side of a mesh chunk. PORT: the engine keeps buffers per terrain block.
 const CHUNK: u32 = 4;
 
-/// All grass of a terrain at the terrain quality `high` (module doc), one
+/// All grass of a terrain at the terrain quality `high`, one
 /// batch per grass layer and chunk.
 pub fn build(t: &Terrain, data: &GameData, high: bool) -> TerrainGrass {
     let spacing = if high { SPACING } else { LOW_SPACING };
@@ -359,8 +354,7 @@ pub fn build(t: &Terrain, data: &GameData, high: bool) -> TerrainGrass {
                         [b, b + 1, b + 2, b, b + 2, b + 3]
                     })
                     .collect();
-                // Kept in the main world: UV_1 gets the blades' indices into `GrassOffsets` once the field has its
-                // range there (`grass_offsets`).
+                // UV_1 gets the blades' indices into `GrassOffsets` once the field has its range there.
                 let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all())
                     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
                     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n])
@@ -384,7 +378,7 @@ pub fn build(t: &Terrain, data: &GameData, high: bool) -> TerrainGrass {
 #[derive(Component)]
 pub struct GrassWind(pub bool);
 
-/// Spawns each batch's two passes (module doc) and the terrain's offset field under the level `root`.
+/// Spawns each batch's two passes and the terrain's offset field under the level `root`.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
     commands: &mut Commands,
@@ -399,7 +393,7 @@ pub fn spawn(
 ) {
     let mut field = grass.field;
     field.origin = origin;
-    // One material pair per layer texture, shared by its chunks and by every level (`MaterialAssets::grass`).
+    // One material pair per layer texture, shared by its chunks and by every level.
     for g in grass.batches {
         let mesh = meshes.add(g.mesh);
         for fringe in [false, true] {
@@ -438,9 +432,7 @@ pub fn spawn(
 
 /// `SetGrassShaderParams`' `windStrength`: the weather's wind strength (1
 /// without weather) on the layers `affectedByWind`, 0 on the others. PORT: the
-/// f32 bits ride in the entity's `MeshTag` (the mesh uniform, read by
-/// gd_wind.wesl), not the material bind group, so an eased weather wind updates
-/// no material. Only new chunks are written while the strength holds.
+/// f32 bits ride in the entity's `MeshTag`, not the material bind group.
 pub fn grass_wind(
     weather: Option<Res<crate::render::weather::WeatherState>>,
     mut grass: ParamSet<(
@@ -463,7 +455,7 @@ pub fn grass_wind(
     }
 }
 
-/// `Terrain::CreateGrassWind(pos, dir, radius, strength, falloff)` (world space; module doc).
+/// `Terrain::CreateGrassWind(pos, dir, radius, strength, falloff)` (world space).
 #[derive(Clone, Copy, Debug)]
 pub struct GrassWindPush {
     pub pos: Vec3,
@@ -478,17 +470,15 @@ use gd_game_core::visuals::PointDisturbance;
 /// Game.dll `CharacterMovementManager::Update`'s strength (`Game::MoveDisturbanceStrength`).
 const MOVE_STRENGTH: f32 = 3.0;
 
-/// A character's grass-disturbance facts, derived once by [`character_disturbances`]
-/// instead of a database lookup per mover per frame: the `GetExtents` radius (the record is fixed
-/// for the character's life) and a memo of the last cast skill's leap-class verdict, re-derived
-/// only when the cast skill changes.
+/// A character's grass-disturbance facts: the `GetExtents` radius and a memo of the last cast skill's
+/// leap-class verdict.
 #[derive(Component)]
 pub struct MoveDisturbance {
     radius: f32,
     leap: Option<(String, bool)>,
 }
 
-/// Game.dll `CharacterMovementManager::Update` (module doc): every update of a character in
+/// Game.dll `CharacterMovementManager::Update`: every update of a character in
 /// action state Move, Walk, Jump, Evade (or the unnamed 20) disturbs the grass at its coords with its
 /// `GetExtents` radius, strength 3, falloff on, splash 1 for the player, else 0 (its ms timer is reset to 1, so it
 /// fires each update). Jump (19) is a leap's: `JumpAttackAction::Execute` →
@@ -518,7 +508,6 @@ pub fn character_disturbances(
         if !moving_state && !matches!(c.state, CharState::Cast) {
             continue;
         }
-        // The record radius is derived once per character (the record is fixed), not per frame.
         let radius = match dist.as_mut() {
             Some(d) => d.radius,
             None => {
@@ -567,7 +556,7 @@ pub fn character_disturbances(
     }
 }
 
-/// `World::CreateLineDisturbance`: its point disturbances (module doc), for the grass and the water.
+/// `World::CreateLineDisturbance`: its point disturbances, for the grass and the water.
 pub fn line_disturbances(
     mut lines: MessageReader<gd_game_core::visuals::LineDisturbance>,
     mut out: MessageWriter<PointDisturbance>,
@@ -618,7 +607,7 @@ struct FieldMesh {
     index: Vec<u32>,
 }
 
-/// The offset fields of a terrain's blocks and the meshes that read them (module doc).
+/// The offset fields of a terrain's blocks and the meshes that read them.
 #[derive(Component, Default)]
 pub struct GrassField {
     /// World position of the terrain's corner.
@@ -634,7 +623,7 @@ pub struct GrassField {
     blocks_x: u32,
     blocks_z: u32,
     /// The terrain's max xz corner and the ground height range over all blocks, for
-    /// rejecting a push that meets no block. Derived once in [`Self::layout`].
+    /// rejecting a push that meets no block.
     extent: Vec2,
     heights: (f32, f32),
 }
@@ -704,7 +693,7 @@ impl GrassField {
     fn push_points(&mut self, p: Vec3, r: f32, mut push: impl FnMut(&mut FieldPoint, Vec2, f32)) {
         let s = self.spacing;
         let inv = 1.0 / s;
-        // Walk only the grid cells that can meet the push cube, not every block.
+        // The grid cells that can meet the push cube.
         // Block (i, j) spans x [9i, min(9i+9, w−1)] (z likewise); the −1 slackens the lower
         // bound for the clipped edge block — the exact box test below still gates each one.
         let bx = self.blocks_x as i32;
@@ -758,8 +747,8 @@ impl GrassField {
     }
 
     /// Whether a push at terrain-local `p` with radius `r` can meet any block: the cube
-    /// against the field's whole box (skip a far field without walking its blocks).
-    /// A superset of the per-block tests, so it never rejects a push that moves a point.
+    /// against the field's whole box. A superset of the per-block tests, so it never rejects a push that moves a
+    /// point.
     fn touches(&self, p: Vec3, r: f32) -> bool {
         let centre_y = (self.heights.0 + self.heights.1) * 0.5;
         let half_y = (self.heights.1 - self.heights.0) * 0.5;
@@ -770,7 +759,7 @@ impl GrassField {
             && (p.y - centre_y).abs() <= half_y + r
     }
 
-    /// `Terrain::CreateGrassWind` → `GrassObject::AddWind` (module doc).
+    /// `Terrain::CreateGrassWind` → `GrassObject::AddWind`.
     fn add_wind(&mut self, p: Vec3, w: &GrassWindPush) {
         let r = w.radius;
         self.push_points(p, r, |pt, _, d| {
@@ -787,7 +776,7 @@ impl GrassField {
         });
     }
 
-    /// `Terrain::CreateGrassDisturbance` → `GrassObject::AddDisturbance` (module doc):
+    /// `Terrain::CreateGrassDisturbance` → `GrassObject::AddDisturbance`:
     /// points 0.0001 ≤ d < r get disturbance velocity += (dx, dz) / d · strength (· (1 − d / r) with the falloff),
     /// clamped to ±2; no hold.
     fn add_disturbance(&mut self, p: Vec3, g: &PointDisturbance) {
@@ -841,7 +830,7 @@ const POINT_BYTES: u64 = 16;
 const FIRST_CAPACITY: u32 = 1 << 16;
 
 /// The offset fields of every loaded terrain in one storage buffer that every grass material reads (binding 14 of
-/// [`super::GdMaterial`], gd_wind.wesl): a blade vertex's `UV_1` is (its point's index in the buffer, 1 when its
+/// [`super::GdMaterial`]): a blade vertex's `UV_1` is (its point's index in the buffer, 1 when its
 /// layer is `affectedByWind`). Each field holds a range ([`GrassField::base`]); `writes` are the frame's changed
 /// points, which the render world copies into the GPU buffer ([`write_offsets`]). A despawned field's range is
 /// released by [`release_field`].
@@ -1007,8 +996,7 @@ pub fn grass_offsets(
     hits.clear();
     hits.extend(disturbances.read().copied());
     let disturbances = &*hits;
-    // Whole milliseconds with the remainder carried (render/lights.rs
-    // `update_fire_lights`), so the wind is not slow at high refresh.
+    // Whole milliseconds with the remainder carried, so the wind is not slow at high refresh.
     let ms = time.delta_secs() * 1000.0 + *carry;
     let dt_ms = ms.floor();
     *carry = ms - dt_ms;
@@ -1052,7 +1040,7 @@ pub fn grass_offsets(
     }
 }
 
-/// [`GrassOffsets`]' writes of the frame, in the render world (buffers reused across frames).
+/// [`GrassOffsets`]' writes of the frame, in the render world.
 #[derive(Resource, Default)]
 pub struct ExtractedGrassWrites {
     buffer: Option<AssetId<ShaderBuffer>>,

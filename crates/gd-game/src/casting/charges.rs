@@ -1,7 +1,7 @@
 use super::*;
 
-/// The [`Charge`] is a monster's Pursue warm-up: its AI moves it (`combat::monster_ai`), its pace's clip at the
-/// warmed-up rate (`crate::combat::charge_move` with `bonus` and `cap`), and ends it with the Pursue's move.
+/// The [`Charge`] is a monster's Pursue warm-up: its AI moves it, its pace's clip at the warmed-up rate (`bonus`,
+/// `cap`), and ends it with the Pursue's move.
 #[derive(Component)]
 pub struct ChargePursuit {
     pub skill: String,
@@ -11,17 +11,11 @@ pub struct ChargePursuit {
 }
 
 /// A monster's Pursue warms up the weapon charge it pursues to use; false (nothing done) for any other skill.
-/// `ControllerMonsterStatePursue::OnBegin` runs `ControllerAI::MoveTo` with the chosen
-/// skill: Run (animation 5) at `GetRunSpeed` for a weapon charge (move type 1; the Charge animation at 1.0 is
-/// move type 2's, `Skill_AttackPathCharge`). `MoveToAction::Execute` then calls the skill's
-/// `Skill::WarmUpStart`: `Skill_AttackWeaponCharge::WarmUpStart` sets the push-through flag and
-/// the charge start (`MaxSkillDistance`'s, [`ChargeStarts`]), and `Skill_AttackWeapon::WarmUpStart`,
-/// when the profile allows a warm-up, plays the warm-up sound and effects ([`WarmUp`]) and starts the cooldown;
-/// true sets the warm-up flag and `ForceSpeedUpdate`s the run (`crate::combat::charge_move`). The hit is the Attack
-/// state's use of the skill at the path's end (`AttackAction`).
-/// The warm-up ends with the move (`MoveToAction::Finish`: `WarmUpEnd`): the path's end (Attack), a
-/// re-chosen skill's new Pursue, another state. PORT: the cooldown starts at the AI's use as for every monster
-/// skill (`monster_skills`).
+/// `ControllerMonsterStatePursue::OnBegin` runs `ControllerAI::MoveTo` with the skill: Run at `GetRunSpeed` for a
+/// weapon charge. `MoveToAction::Execute` then calls `Skill_AttackWeaponCharge::WarmUpStart` (push-through flag,
+/// the charge start) and `Skill_AttackWeapon::WarmUpStart` (warm-up sound and effects, cooldown start), and
+/// `ForceSpeedUpdate`s the run. The hit is the Attack state's use of the skill at the path's end; the warm-up ends
+/// with the move (`MoveToAction::Finish`). PORT: the cooldown starts at the AI's use as for every monster skill.
 pub fn begin_pursuit_charge(
     commands: &mut Commands,
     data: &GameData,
@@ -143,7 +137,6 @@ pub(super) fn charges(
             commands.entity(e).try_remove::<Charge>();
             continue;
         }
-        // Re-path towards the moving target now and then.
         c.repath -= dt;
         if c.repath <= 0.0 || c.path.is_empty() {
             c.repath = 0.25;
@@ -194,7 +187,7 @@ pub(super) fn charges(
                 budget = 0.0;
             }
         }
-        // `CrowdAgentMoved`: the charger turns toward where it runs (`crate::turning`).
+        // `CrowdAgentMoved`: the charger turns toward where it runs.
         if let Some(d) = c
             .path
             .first()

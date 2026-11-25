@@ -1,8 +1,7 @@
 //! The HUD's notification widget (`records/ui/generic/notifications/notification_manager.dbr`, loaded by the HUD
 //! loader `UIPlayerHud::Load` into `UIPlayerHud.notificationWidget`; load `NotificationWidget::Load`, update
 //! `NotificationWidget::Update`, draw `NotificationWidget::Render` /
-//! `NotificationWidget::RenderText`). The queue and its timing are gd-game's ([`gd_game::notify`]); this draws the one
-//!shown.
+//! `NotificationWidget::RenderText`). The queue and its timing are gd-game's ([`gd_game::notify`]).
 //!
 //! There: the window rect comes from the record's `windowDefault*` fields (stock: 500 × 0 px, centred,
 //! 100 px above the screen's centre, `WindowDef`); the lines are drawn centred on the window's centre, the block of
@@ -30,8 +29,7 @@ impl Plugin for NotifyPlugin {
 #[derive(Component)]
 struct NotifyRoot;
 
-/// Draws the shown notification; built once per (text, screen) in a [`FadeGroup`], the fade alpha
-/// moved in place ([`Fader`]), not by a rebuild per alpha step.
+/// Draws the shown notification in a [`FadeGroup`], the fade alpha moved by [`Fader`].
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
@@ -52,7 +50,6 @@ fn show(
     let shown = rt.as_ref().and_then(|r| r.notices.current());
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    // The text compared in place: no copy per frame while a notification shows.
     let same = match (&*drawn, shown) {
         (Some((t, s)), Some((text, _))) => t == text && *s == size,
         (None, None) => true,

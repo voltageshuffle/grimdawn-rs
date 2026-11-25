@@ -1,4 +1,4 @@
-//! Crucible host (`gd_game::survival` module docs): the Merit difficulty unlock and the arena's save folder.
+//! Crucible host (`gd_game::survival`): the Merit difficulty unlock and the arena's save folder.
 use bevy::prelude::*;
 use gd_game::testing::TestGame;
 
@@ -50,7 +50,6 @@ fn a_merit_unlocks_the_crucible_difficulty() {
 
 /// A Crucible session saves its story state into the arena's own folder
 /// (`maps_survivalworld_a.map/<Difficulty>/`, `GetDifficultyFolder`), never the campaign's.
-/// The write goes to the test's own temp save dir.
 #[test]
 fn crucible_story_state_saves_into_the_arena_folder() {
     use gd_formats::save::gdd::Quests;

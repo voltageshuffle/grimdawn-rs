@@ -6,7 +6,7 @@
 //! `SkillManager::SelectWeaponPoolSkill` for a pool skill and
 //! runs that skill's action with the pool skill as its parent
 //! (`Skill_WPAttack.parentSkillId`); `Skill_WPAttack` adds the parent's
-//! damage and multiplies its weapon % by the parent's (`actor::SkillUse`).
+//! damage and multiplies its weapon % by the parent's.
 //! The selection ([`select`]): learned, available pool skills with
 //! a chance weight (`Skill_WPAttack::GetChanceWeight`: `skillChanceWeight`
 //! at the level; with the third expansion the modifier-summed total) below

@@ -1,9 +1,7 @@
-//! The casting data: attach-point geometry (the cast systems are gd-game's
-//! `casting`).
+//! The casting data (the cast systems are gd-game's `casting`).
 use bevy::prelude::*;
 
-/// Bind-pose position of a named mesh attach point in the character's space
-/// (the parent bone's bind transform × the point's frame).
+/// Bind-pose position of a named mesh attach point in the character's space.
 pub fn attach_point_bind(body: &gd_formats::msh::Mesh, name: &str) -> Option<bevy::math::Vec3> {
     let p = body.attach_point(name)?;
     let parent = p
@@ -12,28 +10,20 @@ pub fn attach_point_bind(body: &gd_formats::msh::Mesh, name: &str) -> Option<bev
     Some(bevy::math::Vec3::from(parent.mul(&p.coords).origin))
 }
 
-/// A character's damage-absorbing combat filters, in the order they were added: `CombatManager::AddCombatFilter`
-/// appends a filter to the manager's list (`CombatManager.filters`) unless it is in it already, and
-/// `CombatManager::ApplyDamage` runs every filter of the list in turn on each damage application (each type of a
-/// hit and each DoT tick, `gd_sim::combat::Absorb`). Each skill is its own filter, so a recast keeps its place.
-/// Every `gd_game::combat::Combatant` has one (empty: no absorb).
+/// A character's damage-absorbing combat filters, in the order they were added (`CombatManager::AddCombatFilter`);
+/// `CombatManager::ApplyDamage` runs each in turn on each damage application. Each skill is its own filter, so a
+/// recast keeps its place.
 #[derive(Component, Default, Debug, Clone)]
 pub struct Shields(pub Vec<Shield>);
 
 /// One filter of [`Shields`]: its skill (or buff) record, absorb and seconds left.
 ///
 /// - [`ShieldKind::Buff`]: a self buff's damage absorption (`damageAbsorptionPercent` %, then `damageAbsorption`
-///   flat, a pool for `Skill_BuffSelfShield` that ends the shield when spent) for the types the skill's
-///   `…DamageQualifier` flags list (none = all). `Skill_BuffSelfToggled::ModifyDamage`,
-///   `Skill_BuffSelfShield::ModifyDamage`, `SkillProfile::LoadProfile`. Ends with `skillActiveDuration` when the
-///   buff has one, or when the skill stops (`skill_buffs::stop_shields`).
-/// - [`ShieldKind::Potion`]: a charge potion's absorb (`absorbShieldPercentHealth`, see `gd_game::casting::HEALTH_POTION`), the
-///   potion skill's own filter, with the pool it started with. That makes the potion trackable while the pool
-///   lasts (`Skill_ChargePotion::IsTrackable`: absorb left (`Skill_ChargePotion.absorbLeft`) > 0;
-///   `TrackableRemainingTime` / `TrackableTotalTime` = absorb left / the amount of the last potion
-///   (`Skill_ChargePotion.lastAmount`), both reset by each potion in
-///   `TargetResult`).
-/// - [`ShieldKind::Shrine`]: a Shattered Realm shrine buff's (`gd_game::endless::shrine_shield`).
+///   flat, a pool for `Skill_BuffSelfShield` that ends the shield when spent) for the types its
+///   `…DamageQualifier` flags list (none = all). Ends with `skillActiveDuration` or when the skill stops.
+/// - [`ShieldKind::Potion`]: a charge potion's absorb (`absorbShieldPercentHealth`), trackable while the pool
+///   lasts (`Skill_ChargePotion::IsTrackable`: absorb left / the last potion's amount).
+/// - [`ShieldKind::Shrine`]: a Shattered Realm shrine buff's.
 #[derive(Debug, Clone)]
 pub struct Shield {
     pub skill: String,
@@ -63,19 +53,17 @@ impl Shields {
         }
     }
 
-    /// The potion's filter, if one is on.
     pub fn potion(&self) -> Option<&Shield> {
         self.0
             .iter()
             .find(|s| matches!(s.kind, ShieldKind::Potion(_)))
     }
 
-    /// Each filter in turn on one damage application (`ApplyDamage`).
+    /// `ApplyDamage`.
     pub fn filter(&mut self, ty: gd_sim::attributes::CombatType, v: f32) -> f32 {
         self.0.iter_mut().fold(v, |v, s| s.absorb.filter(ty, v))
     }
 
-    /// Drops the spent pools.
     pub fn drop_spent(&mut self) {
         if self.0.iter().any(|s| s.absorb.spent()) {
             self.0.retain(|s| !s.absorb.spent());
@@ -95,60 +83,47 @@ use gd_formats::arz::Record;
 use gd_formats::collections::HashMap;
 use gd_sim::beam::SpellBeam;
 
-/// Hotbar slots of a save bar (`slots_per_bar` 47): 0–9 keys 1–0, 10 left
-/// mouse, 12 right mouse, 11 / 13 the left / right mouse of the alternate
-/// weapon set, 24 / 25 the health / energy potions, 46 evade
-/// (`PlayerHotSlotCtrl::GetPrimarySlot` / `GetSecondarySlot` /
-/// `GetHealthPotionSlot` / `GetManaPotionSlot` / `GetEvadeSlot`);
-/// 14–23 the second row's keys. Keys 1–0 (keybinding actions 9–18) fire
-/// whichever row the HUD shows, flipped by ToggleHotSlotBar (action 43)
-/// (`UIPlayerHud::HandleKey` / `UIPlayerHud::PressHotSlotButton`, names mapped by
-/// `KeyBindings::GetActionByName`; grimdawn
-/// `ui::hud::HotbarRow`).
+/// Hotbar slots of a save bar (47): 0–9 keys 1–0, 10 left mouse, 12 right mouse, 11 / 13 the left / right mouse
+/// of the alternate weapon set, 24 / 25 the health / energy potions, 46 evade; 14–23 the second row's keys.
+/// Keys 1–0 fire whichever row the HUD shows, flipped by ToggleHotSlotBar (`UIPlayerHud::PressHotSlotButton`).
 pub const SLOT_LEFT: usize = 10;
 pub const SLOT_RIGHT: usize = 12;
 pub const SLOT_ROW2: usize = 14;
 pub const SLOTS: usize = 24;
 pub const DEFAULT_ATTACK: &str = "records/skills/default/defaultweaponattack.dbr";
 
-/// The player's main hand holds a ranged weapon: weapon attacks fire its
-/// `basicProjectileName` (a projectile record: `projectileVelocity`,
-/// `projectileDistance`) at the target instead of hitting in melee reach.
+/// The player's main hand holds a ranged weapon: weapon attacks fire its `basicProjectileName`.
 #[derive(Component, Clone, Debug)]
 pub struct RangedWeapon {
     pub projectile: String,
-    /// Attack range: ranged weapons use the Long profile
-    /// (`SkillManager::Update` via `GetWeaponRangeProfile`)
-    /// — `longRange` + the 0.5 tolerance; the game adds both
+    /// The Long range profile (`GetWeaponRangeProfile`): `longRange` + the 0.5 tolerance; the game adds both
     /// radii on top (`Character::GetTargetDistance`).
     pub reach: f32,
 }
 
-/// A skill hit landing on `target` (applied by `combat::apply_hits`).
+/// Applied by `combat::apply_hits`.
 #[derive(Message, Clone, Debug)]
 pub struct SkillHit {
     pub attacker: Entity,
     pub target: Entity,
     pub skill: String,
     pub level_index: usize,
-    /// The weapon-pool skill a pool attack runs under (`weapon_pool.rs`).
+    /// The weapon-pool skill a pool attack runs under.
     pub parent: Option<(String, usize)>,
-    /// Scale of the hit's damage (projectile range falloff,
-    /// `gd_sim::actor::range_scale`); 1 otherwise.
+    /// Projectile range falloff (`gd_sim::actor::range_scale`); 1 otherwise.
     pub scale: f32,
-    /// A projectile's hit (`TakeAttack` style 2: projectile block, deflect).
+    /// `TakeAttack` style 2: projectile block, deflect.
     pub projectile: bool,
 }
 
-/// A summon cast fired (spawned by `pets.rs`).
+/// A summon cast fired.
 #[derive(Message, Clone, Debug)]
 pub struct SpawnPet {
     pub owner: Entity,
     pub skill: String,
     pub level_index: usize,
     pub point: Vec3,
-    /// The cast's target (`ActivateNow`'s target id): a `Skill_TargetedSpawnPet`
-    /// packs its summons around it (`pets::placement`).
+    /// `ActivateNow`'s target id: a `Skill_TargetedSpawnPet` packs its summons around it.
     pub target: Option<Entity>,
 }
 
@@ -160,61 +135,43 @@ pub enum Kind {
     Projectile,
     Drop,
     Buff,
-    /// Summons (`Skill_TargetedSpawnPet`, `Skill_SpawnPet`): `pets.rs`.
+    /// `Skill_TargetedSpawnPet`, `Skill_SpawnPet`, ….
     Pet,
-    /// `Skill_AttackWave` / `Skill_WPAttack_AttackWave`: a travelling,
-    /// widening band (`gd_game::waves`).
+    /// `Skill_AttackWave`: a travelling, widening band.
     Wave,
-    /// `Skill_AttackLineFan`: a fan of travelling lines that burst at the
-    /// end of their life (`gd_game::line_fan`).
+    /// `Skill_AttackLineFan`: a fan of travelling lines that burst at the end of their life.
     LineFan,
-    /// `Skill_AttackLine`: a point travelling at the target that hits around it every period
-    /// (`gd_game::casting::AttackLine`).
+    /// `Skill_AttackLine`: a point travelling at the target that hits around it every period.
     Line,
-    /// `Skill_BuffAttackRadiusDrop` (Devastation): `projectileLaunchNumber`
-    /// drops every `skillTargetInterval` for `skillActiveDuration` within
-    /// `skillTargetRadius` of the point.
+    /// `Skill_BuffAttackRadiusDrop` (Devastation): `projectileLaunchNumber` drops every `skillTargetInterval`
+    /// for `skillActiveDuration` within `skillTargetRadius` of the point.
     Storm,
-    /// `Skill_AttackProjectileAreaEffect` (Sigil of Destruction): an area of
-    /// `projectileExplosionRadius` at the point hitting every
-    /// `targetInterval` ms of its projectile
-    /// (`ProjectileAreaEffect::UpdateSelf`) for `skillActiveDuration`.
+    /// `Skill_AttackProjectileAreaEffect` (Sigil of Destruction): an area of `projectileExplosionRadius` at the
+    /// point hitting every `targetInterval` ms (`ProjectileAreaEffect::UpdateSelf`) for `skillActiveDuration`.
     Area,
-    /// `Skill_CharonGeysers`: areas at the level's geyser markers around the
-    /// caster (`gd_game::geysers`).
+    /// `Skill_CharonGeysers`: areas at the level's geyser markers around the caster.
     Geysers,
-    /// `Skill_AttackPattern`: delayed spots around a centre that run the
-    /// skill's secondaries (`gd_game::patterns`).
+    /// `Skill_AttackPattern`: delayed spots around a centre that run the skill's secondaries.
     Pattern,
-    /// `Skill_TurretFireControl`: the caster's turrets around it use a
-    /// special (`gd_game::turrets`).
+    /// `Skill_TurretFireControl`: the caster's turrets around it use a special.
     TurretFire,
-    /// `Skill_AttackSpellBeam` (Aether Ray): channelled while held ([`Channel`]).
+    /// `SkillChanneled` subclasses: channelled while held ([`Channel`]).
     Beam,
-    /// Toggled skills (`Skill_Buff{Self,Radius}Toggled`, …): a use flips
-    /// them (`Loadout.skills.inactive`); the player's are auto toggles, on
-    /// by themselves (`crate::skill_buffs` docs, auto toggles).
+    /// Toggled skills: a use flips them; the player's are auto toggles.
     Toggle,
-    /// `Skill_AttackChain`: the target, then jumps (`sparkMaxNumber`,
-    /// `sparkGap`, `sparkChance`) to the nearest unhit foes, with a
-    /// `lightningName` bolt between each: each of the `sparkMaxNumber` jumps
-    /// rolls `sparkChance` (a miss spends the jump) and picks a random unhit
-    /// foe in the gap (`Skill_AttackChain::ActivateNow`,
-    /// `GameEngine::PickObject`).
+    /// `Skill_AttackChain::ActivateNow`: the target, then each of the `sparkMaxNumber` jumps rolls
+    /// `sparkChance` (a miss spends the jump) and picks a random unhit foe within `sparkGap`, with a
+    /// `lightningName` bolt between each.
     Chain,
-    /// `Skill_AttackPathCharge` (Vire's Might): a dash to the point, then a
-    /// radius hit ([`PathCharge`]).
+    /// `Skill_AttackPathCharge` and leaps / teleports: a dash to the point, then a radius hit ([`PathCharge`]).
     PathCharge,
-    /// `Skill_DispelMagic` (Nullification): around the point
-    /// (`projectileExplosionRadius`), see [`Dispel`].
+    /// `Skill_DispelMagic` (Nullification): around the point (`projectileExplosionRadius`).
     Dispel,
-    /// Instant effects on the caster: `Skill_GiveBonus` (life / energy),
-    /// `Skill_RefreshCooldown`.
+    /// Instant effects on the caster: `Skill_GiveBonus`, `Skill_RefreshCooldown`.
     Instant,
-    /// `Skill_Shapeshift`: toggles the form (`shapeshift.rs`).
+    /// `Skill_Shapeshift`: toggles the form.
     Shapeshift,
-    /// `Skill_AttackSpellReflectLink` (Mark of Torment): a link to the
-    /// target (`gd_game::reflect_link`).
+    /// `Skill_AttackSpellReflectLink` (Mark of Torment): a link to the target.
     ReflectLink,
     Unsupported,
 }
@@ -223,12 +180,8 @@ pub fn kind_of(rec: &Record) -> Kind {
     let c = rec.class.as_str();
     match c {
         "Skill_WPAttack_BasicAttack" => Kind::Weapon,
-        // The kick (`gd_game::hotbar::kicks_breakable`): a melee attack with the
-        // record's own `weaponDamagePct` and flat offense, no weapon pool
-        // (`Skill_Kick::TargetResult`).
+        // `Skill_Kick::TargetResult`: the record's own `weaponDamagePct` and flat offense, no weapon pool.
         "Skill_Kick" => Kind::Weapon,
-        // Weapon-pool skills (Fire Strike, Cadence…): weapon attacks that roll
-        // the pool (`weapon_pool.rs`).
         _ if c.starts_with("Skill_WeaponPool") => Kind::Weapon,
         _ if c.starts_with("Skill_WPAttack") || c.starts_with("Skill_AttackWeapon") => Kind::Weapon,
         "Skill_AttackProjectileDrop" => Kind::Drop,
@@ -237,24 +190,19 @@ pub fn kind_of(rec: &Record) -> Kind {
         "Skill_CharonGeysers" => Kind::Geysers,
         "Skill_TurretFireControl" => Kind::TurretFire,
         "Skill_AttackPattern" => Kind::Pattern,
-        // Channelled skills (`SkillChanneled` subclasses, RTTI).
         "Skill_AttackSpellBeam"
         | "Skill_AttackSpellCone"
         | "Skill_AttackSpellDrain"
         | "Skill_AttackRadiusGrow"
         | "Skill_AttackRadiusSpin" => Kind::Beam,
-        // Leaps and teleports: a fast move to the point, then the radius.
         "Skill_AttackRadiusLeap"
         | "Skill_AttackRadiusDisengage"
         | "Skill_AttackRadiusTeleport"
         | "Skill_AttackSpellTeleportSelf" => Kind::PathCharge,
-        // Spells on the target: the target foe alone, no radius
-        // (`Skill_AttackSpellChaos::ActivateNow` needs a foe,
-        // `TargetResult` hits it). See `single_target`.
+        // The target foe alone, no radius (`Skill_AttackSpellChaos::ActivateNow` needs a foe).
         "Skill_AttackSpellChaos" | "Skill_AttackSpellChaosSpawnPet" => Kind::TargetRadius,
         "Skill_AttackLineFan" => Kind::LineFan,
         "Skill_AttackLine" => Kind::Line,
-        // Self buffs (`Skill_BuffSelfDuration` / `…Toggled` subclasses).
         "Skill_BuffSelfImmobilize" | "Skill_BuffSelfShield" | "Skill_BuffAttackRadiusLightning" => {
             Kind::Buff
         }
@@ -264,28 +212,18 @@ pub fn kind_of(rec: &Record) -> Kind {
         "Skill_DispelMagic" => Kind::Dispel,
         "Skill_AttackPathCharge" => Kind::PathCharge,
         "Skill_AttackChain" => Kind::Chain,
-        // A direct spell on the target (item skills such as Domination): the
-        // target entity alone (`Skill_AttackSpell::ActivateNow`
-        // lists just it). See `single_target`.
+        // The target entity alone (`Skill_AttackSpell::ActivateNow` lists just it).
         "Skill_AttackSpell" => Kind::TargetRadius,
-        // A `Skill_AttackSpell` that swaps places with its target first (see
-        // `gd_game::casting::swap_places`).
+        // Swaps places with its target first.
         "Skill_AttackSpellTeleport" => Kind::TargetRadius,
         // A timed damaging aura: a buff plus [`DamageAura`]s for its duration.
         "Skill_BuffAttackRadiusDuration" => Kind::Buff,
         _ if gd_sim::skills::is_toggle(c) => Kind::Toggle,
         _ if c.starts_with("Skill_AttackRadiusLightning") => Kind::TargetRadius,
-        // Point-blank attack buffs (Chilling Surge) hit around the caster.
         "Skill_AttackBuffRadius" if rec.bool("pointBlank") => Kind::SelfRadius,
         "Skill_AttackBuffRadius" => Kind::TargetRadius,
-        // A debuff on the target (Bloody Pox): hits around the target point
-        // (radius 1 m without `skillTargetRadius`).
+        // Hits around the target point (1 m without `skillTargetRadius`).
         "Skill_AttackBuff" => Kind::TargetRadius,
-        // Monster summons and generators spawn through `SpawnPet` too.
-        // `Skill_SpawnMiniPet` is a `Skill_SpawnPet` with its own pet limit
-        // (`pets.rs` module docs).
-        // `Skill_AktaiosMirage` is a `Skill_SpawnPet` that also moves its
-        // caster (`monster_skills::MIRAGE`).
         "Skill_TargetedSpawnPet"
         | "Skill_SpawnPet"
         | "Skill_SpawnMiniPet"
@@ -295,57 +233,40 @@ pub fn kind_of(rec: &Record) -> Kind {
         "Skill_AttackWave" => Kind::Wave,
         "Skill_AttackRadius" => Kind::SelfRadius,
         _ if c.starts_with("Skill_AttackProjectile") => Kind::Projectile,
-        // `Skill_BuffSelfSick` is a `Skill_BuffSelfDuration` (its stuns:
-        // `crate::afflictions` module docs).
         "Skill_BuffSelfDuration" | "Skill_BuffSelfSick" | "Skill_BuffRadius" => Kind::Buff,
-        // A self buff that also grows the caster (`gd_game::colossus`).
         "Skill_BuffSelfColossus" => Kind::Buff,
         _ => Kind::Unsupported,
     }
 }
 
-/// Running cooldowns by skill (or scroll key): seconds left, the total
-/// they started with and the skill's cooldown charges. The engine's `Skill`
-/// keeps the timers (`Skill.cooldownLeft`, `Skill.cooldownTotal` ms; a refresh shortens only
-/// the left time): the hotbar's wipe is `1 − left / total`
-/// (`Skill::GetCooldownCompletion`, `GetCooldownRemaining`,
-/// `GetCooldownTotal`).
+/// Running cooldowns by skill (or scroll key): seconds left, the total they started with and the skill's
+/// cooldown charges (`Skill.cooldownLeft` / `cooldownTotal`; a refresh shortens only the left time).
 ///
-/// Charges (`cooldownCharges`, modifier-summed;
-/// `Skill::StartCooldown` / `EndCooldown`): a use
-/// spends one charge and starts the cooldown only while none runs; each
-/// finished cooldown gives a charge back and starts the next while charges
-/// are still spent (`SetChargeCooldown`, `UpdateCooldownCharges`, the potion
-/// rule generalized). A skill is usable while it has an unspent charge and no
-/// disruption's cooldown runs on it ([`Self::replace`]: a disrupted skill
-/// waits it out whatever charges it has left).
-/// `StartCooldown` treats a cooldown of 0.1 s or less as none.
+/// Charges (`cooldownCharges`, modifier-summed; `Skill::StartCooldown` / `EndCooldown`): a use spends one charge
+/// and starts the cooldown only while none runs; each finished cooldown gives a charge back and starts the next
+/// while charges are still spent (`SetChargeCooldown`). A skill is usable while it has an unspent charge and no
+/// disruption's cooldown runs on it ([`Self::replace`]). `StartCooldown` treats 0.1 s or less as none.
 #[derive(Clone, Debug, Default)]
 pub struct Cooldowns(HashMap<String, Cooldown>);
 
-/// One skill's running cooldown and its charge state ([`Cooldowns`]).
 #[derive(Clone, Debug)]
 struct Cooldown {
     left: f32,
     total: f32,
     /// Charges spent: each running cooldown holds one.
     used: u32,
-    /// The modifier-summed `cooldownCharges` (1: an ordinary skill).
+    /// The modifier-summed `cooldownCharges`.
     max: u32,
-    /// A disruption's cooldown ([`Cooldowns::replace`]) runs: the skill is
-    /// unusable until it ends, whatever charges are left.
+    /// A disruption's cooldown runs: the skill is unusable until it ends, whatever charges are left.
     disrupted: bool,
 }
 
 impl Cooldowns {
-    /// `Skill::StartCooldown` without charges (scrolls, an item
-    /// toggle's re-arm): [`Self::start`] with one charge.
+    /// [`Self::start`] with one charge (scrolls, an item toggle's re-arm).
     pub fn insert(&mut self, skill: String, secs: f32) {
         self.start(skill, secs, 1);
     }
-    /// `Skill::StartCooldown`: a cooldown of 0.1 s
-    /// or less is none; else a charge is spent and the timer starts only
-    /// while none runs (a running one keeps its time, the charge is held).
+    /// `Skill::StartCooldown`: a charge is spent and the timer starts only while none runs.
     pub fn start(&mut self, skill: String, secs: f32, charges: u32) {
         if secs <= 0.1 {
             return;
@@ -365,19 +286,16 @@ impl Cooldowns {
             c.total = secs;
         }
     }
-    /// Whether the skill can be used: no disruption runs, and no cooldown runs
-    /// or a charge is left.
+    /// No disruption runs, and no cooldown runs or a charge is left.
     pub fn usable(&self, skill: &str) -> bool {
         self.0
             .get(skill)
             .is_none_or(|c| !c.disrupted && c.used < c.max)
     }
-    /// Seconds left.
     pub fn get(&self, skill: &str) -> Option<&f32> {
         self.0.get(skill).map(|c| &c.left)
     }
-    /// Seconds left of `skill`'s cooldown, case-insensitive (the proc
-    /// stores' keys).
+    /// Case-insensitive (the proc stores' keys).
     pub fn left_of(&self, skill: &str) -> Option<f32> {
         self.0
             .iter()
@@ -387,7 +305,7 @@ impl Cooldowns {
     pub fn contains_key(&self, skill: &str) -> bool {
         self.0.contains_key(skill)
     }
-    /// Elapsed part, 0..1 (`Skill::GetCooldownCompletion`).
+    /// 0..1 (`Skill::GetCooldownCompletion`).
     pub fn completion(&self, skill: &str) -> Option<f32> {
         self.0.get(skill).map(|c| {
             if c.total > 0.0 {
@@ -397,9 +315,7 @@ impl Cooldowns {
             }
         })
     }
-    /// `Skill::EndCooldown(ms)`: `secs` off the
-    /// time left of `skill`'s cooldown (any of `names`), the total kept; at
-    /// 0 a charge comes back and the next starts while charges are spent.
+    /// `Skill::EndCooldown(ms)`: `secs` off the time left of the cooldown of any of `names`, the total kept.
     /// False when none runs.
     pub fn shorten(&mut self, names: &[String], secs: f32) -> bool {
         let Some(k) = self
@@ -415,14 +331,12 @@ impl Cooldowns {
         Self::end(&mut self.0, &k);
         true
     }
-    /// Whether any of `names` cools down.
     pub fn any_of(&self, names: &[String]) -> bool {
         self.0
             .keys()
             .any(|k| names.iter().any(|n| n.eq_ignore_ascii_case(k)))
     }
-    /// Runs every cooldown down by `dt`; a finished one gives its charge
-    /// back and starts the next while charges are spent (`EndCooldown`).
+    /// A finished cooldown gives its charge back (`EndCooldown`).
     pub fn tick(&mut self, dt: f32) {
         let mut ended = Vec::new();
         for (k, c) in &mut self.0 {
@@ -435,11 +349,8 @@ impl Cooldowns {
             Self::end(&mut self.0, &k);
         }
     }
-    /// A cooldown reached 0: a charge comes back; while charges are still
-    /// spent the next cooldown starts (`SetChargeCooldown`), else the entry
-    /// ends. A disruption's cooldown ([`Self::replace`]) holds no charge of
-    /// its own: it ends the block and returns only the charge of the cooldown
-    /// it replaced, if one ran.
+    /// A cooldown reached 0: a charge comes back; while charges are still spent the next cooldown starts
+    /// (`SetChargeCooldown`), else the entry ends. A disruption's cooldown holds no charge of its own.
     fn end(map: &mut HashMap<String, Cooldown>, k: &str) {
         let Some(c) = map.get_mut(k) else { return };
         if c.left > 0.0 {
@@ -453,10 +364,8 @@ impl Cooldowns {
             map.remove(k);
         }
     }
-    /// `SkillManager::RefreshCooldown`: every
-    /// running cooldown's time left shortens by `secs` (`EndCooldown`), the
-    /// `except` keys skipped (the caster's own skill; the item list's
-    /// potions); a finished one returns its charge as [`Self::shorten`] does.
+    /// `SkillManager::RefreshCooldown`: every running cooldown shortens by `secs` (`EndCooldown`), the `except`
+    /// keys skipped (the caster's own skill; the item list's potions).
     pub fn refresh_all(&mut self, secs: f32, except: &[String]) {
         let keys: Vec<String> = self
             .0
@@ -471,11 +380,9 @@ impl Cooldowns {
             Self::end(&mut self.0, &k);
         }
     }
-    /// `Skill::ReplaceCooldownTime(ms, 0)` (disruption's): `skill` cools down for `secs`
-    /// unless its running cooldown has more left; the total becomes `secs` too. The charge state stays. PORT: a
-    /// replaced cooldown blocks the skill until it ends, charges left or not (a disrupted skill can't be used; how
-    /// the engine's charge check reads a replaced cooldown is not traced); a running cooldown with more left keeps
-    /// its time and its charges.
+    /// `Skill::ReplaceCooldownTime(ms, 0)` (disruption's): `skill` cools down for `secs` unless its running
+    /// cooldown has more left. PORT: a replaced cooldown blocks the skill until it ends, charges left or not (how
+    /// the engine's charge check reads a replaced cooldown is not traced).
     pub fn replace(&mut self, skill: &str, secs: f32) {
         if secs <= 0.0 {
             return;
@@ -515,35 +422,26 @@ pub fn replace_cooldown(list: &mut Vec<(String, f32)>, skill: &str, secs: f32) {
     }
 }
 
-/// The player's hotbar, energy and cooldowns. The timed self buffs are
-/// `gd_game::player::Loadout::buffs` (`crate::skill_buffs::TimedBuffs`, the
-/// one store player / monster / pet share).
+/// The player's hotbar, energy and cooldowns.
 #[derive(Component, Clone)]
 pub struct Caster {
-    /// Save hotbar slots (see [`SLOT_LEFT`]).
+    /// See [`SLOT_LEFT`].
     pub slots: [Option<String>; SLOTS],
     pub energy: f32,
     pub cooldowns: Cooldowns,
-    /// The hotbar pages of the skill sets that are not displayed
-    /// (`PlayerHotSlotCtrl`'s per-set `SkillSet` map, key = set id; the
-    /// save's `bars`, `WriteProperties` writes every page).
-    /// `slots` is the displayed page, of set [`Caster::shown`].
+    /// The hotbar pages of the skill sets that are not displayed (`PlayerHotSlotCtrl`'s per-set `SkillSet` map,
+    /// key = set id); `slots` is the displayed page, of set [`Caster::shown`].
     pub sets: std::collections::BTreeMap<i32, [Option<String>; SLOTS]>,
-    /// The active skill set (`PlayerHotSlotCtrl.activeSkillSet`; 0 = the default set,
-    /// `kDefaultSkillSet`).
+    /// `PlayerHotSlotCtrl.activeSkillSet` (0 = `kDefaultSkillSet`).
     pub set: i32,
-    /// The displayed skill set, whose page `slots` is: [`Caster::set`] unless Show Alternate Hot Slot Set shows
-    /// another page ([`Caster::next_displayed_set`]). `PlayerHotSlotCtrl::GetDisplayedSkillSetIndex`
-    /// (`PlayerHotSlotCtrl.displayedSkillSet`, 0 = the active set's) and `GetDisplayedSkillSet`: every slot read, use
-    /// and bind (`GetHotSlotOption`, `ActivateHotSlot`, `SetHotSlot`, the mouse slots) goes to the displayed page.
+    /// `PlayerHotSlotCtrl.displayedSkillSet`: [`Caster::set`] unless Show Alternate Hot Slot Set shows another
+    /// page. Every slot read, use and bind goes to the displayed page.
     pub shown: i32,
 }
 
 impl Caster {
-    /// `PlayerHotSlotCtrl::SetActiveSkillSet`: shows the page
-    /// of set `id`, creating an empty one on first use (returns true then).
-    /// The displayed page goes back to the active set's (`PlayerHotSlotCtrl::Update`: a new
-    /// active set clears the displayed one, `PlayerHotSlotCtrl.displayedSkillSet`).
+    /// `PlayerHotSlotCtrl::SetActiveSkillSet`: shows the page of set `id` (true when it was created); the
+    /// displayed page goes back to the active set's.
     pub fn set_active_set(&mut self, id: i32) -> bool {
         if id == self.set {
             return false;
@@ -552,7 +450,7 @@ impl Caster {
         self.show_page(id)
     }
 
-    /// `slots` becomes set `id`'s page (an empty one when it has none: returns true then).
+    /// True when set `id` had no page.
     fn show_page(&mut self, id: i32) -> bool {
         if id == self.shown {
             return false;
@@ -569,11 +467,8 @@ impl Caster {
         }
     }
 
-    /// Shows the page of the next set that has one, after the last the active set's.
-    /// `PlayerHotSlotCtrl::NextDisplayedSkillSet`: the set map's entry after the displayed
-    /// id (`PlayerHotSlotCtrl.displayedSkillSet`), past the end 0 (= the active set's page); no entry for the
-    /// displayed id, no change. The HUD calls
-    /// it only while the active set is 0 (`ui::hud`).
+    /// `PlayerHotSlotCtrl::NextDisplayedSkillSet`: the set map's entry after the displayed id, past the end the
+    /// active set's page.
     pub fn next_displayed_set(&mut self) {
         let next = self
             .sets
@@ -585,12 +480,12 @@ impl Caster {
         self.show_page(next);
     }
 
-    /// The active set's page again. `PlayerHotSlotCtrl::ResetDisplayedSkillSet` (`displayedSkillSet` = 0).
+    /// `PlayerHotSlotCtrl::ResetDisplayedSkillSet`.
     pub fn reset_displayed_set(&mut self) {
         self.show_page(self.set);
     }
 
-    /// Every page with its set id (the displayed one included), for saving.
+    /// The displayed one included.
     pub fn pages(&self) -> Vec<(i32, &[Option<String>; SLOTS])> {
         let mut v: Vec<_> = self.sets.iter().map(|(k, p)| (*k, p)).collect();
         v.push((self.shown, &self.slots));
@@ -606,7 +501,6 @@ pub struct ProcCast {
     pub cast: Casting,
 }
 
-/// A cast in progress, fired on the animation's hit callback.
 #[derive(Component, Clone)]
 pub struct Casting {
     pub skill: String,
@@ -616,26 +510,19 @@ pub struct Casting {
     pub target: Option<Entity>,
     /// Cast by a monster: hits the player and their pets, not monsters.
     pub hostile: bool,
-    /// The weapon-pool skill a pool attack runs under (`weapon_pool.rs`).
+    /// The weapon-pool skill a pool attack runs under.
     pub parent: Option<(String, usize)>,
 }
 
-/// A weapon charge's warm-up paid its cost and started its cooldown
-/// (`try_cast`'s `Use::Request` walk, `WarmUpStart`); the cast it arrives at
-/// fires without paying again (`Skill_AttackWeaponCharge::ActivateNow`
-/// bumps the hit iteration, only the first pays). It names the
-/// skill's cast record ([`Casting::skill`]): only that cast, reached by the
-/// charge's own arrival (`Use::ArrivedWarm`), skips the payment. `fire_casts`
-/// takes it off as the cast fires; a cut-short charge keeps what it paid, and
-/// whatever replaces or cancels its move (another walk or cast, a move
-/// order, a stun, death) drops the marker.
+/// A weapon charge's warm-up paid its cost and started its cooldown; the cast it arrives at
+/// (`Use::ArrivedWarm`, naming [`Casting::skill`]) fires without paying again
+/// (`Skill_AttackWeaponCharge::ActivateNow`: only the first hit iteration pays). Whatever replaces or cancels
+/// its move drops the marker.
 #[derive(Component)]
 pub struct WarmPaid(pub String);
 
-/// The cast whose animation may still be playing after its hit fired it: a
-/// later swipe callback of that animation still belongs to the skill
-/// (`crate::combat_sounds::swipe_action`; 181 stock animations swipe after
-/// their first hit).
+/// The cast whose animation may still be playing after its hit fired it: a later swipe callback of that
+/// animation still belongs to the skill.
 #[derive(Component, Clone, Debug)]
 pub struct LastCast {
     pub skill: String,
@@ -643,22 +530,19 @@ pub struct LastCast {
     pub anim: gd_sim::anim::AnimType,
 }
 
-/// Marks a player whose left-click skill is a spell: clicked monsters are
-/// attacked by casting it (`combat::player_attack` stays out of it).
+/// A player whose left-click skill is a spell: clicked monsters are attacked by casting it.
 #[derive(Component)]
 pub struct SpellAttacker;
 
-/// What learned modifiers add to a projectile skill: `projectilePiercing`
-/// (Destabilization) and further fragment sets (`Skill_ProjectileModifier`
-/// `projectileFragmentsName`, e.g. Replicating Missile's aether fragments);
-/// and the cast's modifier visual overrides (`crate::skill_fx`).
+/// What learned modifiers add to a projectile skill: `projectilePiercing`, further fragment sets
+/// (`Skill_ProjectileModifier` `projectileFragmentsName`) and visual overrides.
 #[derive(Clone, Default, Debug)]
 pub struct ProjMods {
     pub pierce: f32,
     pub fragments: Vec<(String, u32, u32)>,
-    /// The skill's fragments when a modifier overrides them (`crate::skill_fx::fragments_name`).
+    /// The skill's fragments when a modifier overrides them.
     pub fragments_name: Option<String>,
-    /// Effects added to the projectile (`SkillActivated::AddProjectileEffects`, `crate::skill_fx::projectile_fx`).
+    /// `SkillActivated::AddProjectileEffects`.
     pub effects: Vec<String>,
 }
 
@@ -695,8 +579,7 @@ pub fn level_f(rec: &Record, k: &str, li: usize) -> f32 {
     gd_sim::stats::level_value(rec, k, li).unwrap_or(0.0)
 }
 
-/// Any skill but the default attack on the left button is cast on every
-/// attack (spells, and weapon skills such as Fire Strike).
+/// Any skill but the default attack on the left button is cast on every attack.
 pub fn spell_left(data: &GameData, caster: &Caster) -> bool {
     caster.slots[SLOT_LEFT]
         .as_deref()
@@ -705,29 +588,20 @@ pub fn spell_left(data: &GameData, caster: &Caster) -> bool {
         .is_some_and(|r| kind_of(r) != Kind::Unsupported)
 }
 
-/// Use a hotbar slot (the game sends it for keys and mouse buttons): at
-/// `target` (the character under the cursor: a foe, or one's own pet) or the
-/// ground `point`; `force` is Shift + left button (attack in place);
-/// `scripted` marks test-hook casts (their channels end after 2 s).
+/// Use a hotbar slot: at `target` (the character under the cursor: a foe, or one's own pet) or the ground
+/// `point`; `force` is Shift + left button (attack in place); `scripted` marks test-hook casts (their channels
+/// end after 2 s).
 ///
-/// The aim by the skill's [`TargetType`](gd_sim::skills::TargetType),
-/// `ControllerPlayerState::DefaultRequestSkillAction` (its
-/// target is the combat enemy for enemy and location skills, the combat ally
-/// for ally skills, the player for self skills; the controller's enemy / ally
-/// are the foe / friend under the cursor, the player never one, `InGameUIActorCapture::CollectCandidates`):
-/// - `Ally` (`Skill_GiveBonus`, `Skill_BuffOther`): the friend under the
-///   cursor, else the request fails (`Skill_GiveBonus::GetValidTarget`:
-///   a projectile skill takes any target; one in the world
-///   passes; else `Skill::GetValidFriendTarget` with radius 0
-///   (in `DefaultRequestSkillAction`) finds none): no cast, no cost, a heal key over the
-///   ground does nothing;
-/// - `Enemy` with a friend under the cursor and no foe: refused
-///   (`Skill::CanTargetFriendAsEnemy`, false for every class), silently;
+/// The aim by the skill's [`TargetType`](gd_sim::skills::TargetType)
+/// (`ControllerPlayerState::DefaultRequestSkillAction`):
+/// - `Ally`: the friend under the cursor, else the request fails (`Skill_GiveBonus::GetValidTarget`): no
+///   cast, no cost;
+/// - `Enemy` with a friend under the cursor and no foe: refused silently (`Skill::CanTargetFriendAsEnemy`);
 /// - otherwise the foe (if any) and the point;
-/// - then the spell family's `SkillActivatedSpell::GetValidTarget`
-///   ([`gd_sim::skills::request_aim`]): a `targetingMode` `Point` or
-///   ground-only spell drops the foe, any other is refused without a foe.
-///   PORT: the friend is one's own living pet.
+/// - then `SkillActivatedSpell::GetValidTarget` ([`gd_sim::skills::request_aim`]): a `targetingMode` `Point`
+///   or ground-only spell drops the foe, any other is refused without a foe.
+///
+/// PORT: the friend is one's own living pet.
 #[derive(Message, Clone, Debug)]
 pub struct CastRequest {
     pub slot: usize,
@@ -737,95 +611,62 @@ pub struct CastRequest {
     pub scripted: bool,
 }
 
-/// A press on a pet portrait with a hot slot armed (`grimdawn` `ui/pets`):
-/// the armed slot's skill is requested on the pet (`gd_game::hotbar` takes the
-/// armed slot and turns it into a [`CastRequest`] at the pet).
+/// A press on a pet portrait with a hot slot armed: the armed slot's skill is requested on the pet.
 ///
-/// `PlayerPortrait::HandleMouseEvent` (`Grim Dawn.exe`, the portrait's mouse handler)
-/// and Game.dll: with `PlayerHotSlotCtrl::IsAnySlotActive` (a slot armed,
-/// `SkillSet.activeSlot`) and the hot slots not disabled (`PlayerHotSlotCtrl.disableHotSlotsOverride`,
-/// `SetDisableHotSlotsOverride`), a left or right press on the portrait's
-/// frame rect sets the pet as the controller's combat ally, clears its
-/// combat enemy and runs `ControllerPlayer::HandleActionFromMouse` at the
-/// pet's coordinates with the pet's id; its first step,
-/// `ControllerPlayerState::ActivateSuperSkill`, takes (and
-/// clears) the armed slot and requests its skill
-/// (`DefaultRequestSkillAction`), which aims it by the skill's
-/// [`TargetType`](gd_sim::skills::TargetType) like any request
-/// (`gd_game::casting::cast_requests`). PORT: the friend is the player's own pet (single
-/// player has no party frames).
+/// `PlayerPortrait::HandleMouseEvent`: with a slot armed and the hot slots not disabled, a left or right press
+/// sets the pet as the controller's combat ally, clears its combat enemy and runs
+/// `ControllerPlayer::HandleActionFromMouse` at the pet; `ActivateSuperSkill` takes (and clears) the armed slot
+/// and requests its skill, aimed like any request. PORT: the friend is the player's own pet (no party frames).
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct CastOnAlly {
     pub ally: Entity,
 }
 
-/// The wrapper skill a hot slot cast ran as its `buffSkillName` record
-/// (`Casting::skill` is `buff`): what `SkillActivated::ApplyBuffOnTarget`'s
-/// `CastBuff` / `CastDebuf` triggers classify (`gd_game::autocast`). The last
-/// use's, instant ones included; the pending animated cast's cooldown key is
-/// [`CastCooldownKey`].
+/// The wrapper skill a hot slot cast ran as its `buffSkillName` record (`Casting::skill` is `buff`): what the
+/// `CastBuff` / `CastDebuf` triggers classify. The last use's, instant ones included.
 #[derive(Component, Clone, Debug)]
 pub struct CastWrapper {
     pub buff: String,
     pub wrapper: String,
 }
 
-/// The wrapper a pending animated hot slot cast ([`Casting`] with `skill` =
-/// `buff`) runs under: its cooldown's key and its item-skill check at the fire
-/// (`fire_casts`; `gd_game::casting::try_cast` checks it, the hotbar shows it). Set with the
-/// [`Casting`] only, so an instant cast during the animation does not change it.
+/// The wrapper a pending animated hot slot cast runs under: its cooldown's key and its item-skill check at the
+/// fire. Set with the [`Casting`] only, so an instant cast during the animation does not change it.
 #[derive(Component, Clone, Debug)]
 pub struct CastCooldownKey(pub CastWrapper);
 
-/// A hot slot skill was pressed while it cooled down (`Player::PlaySkillCooldownVox` and the UI's
-/// `tagSkillNotReady` text).
+/// `Player::PlaySkillCooldownVox` and the UI's `tagSkillNotReady` text.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct SkillNotReady;
 
-/// A channelled skill (`SkillChanneled` subclasses): it ticks
-/// every `timeBetweenAttacks` ms (default 100 for every class), ÷ cast
-/// speed (Spin: ÷ attack speed, `Skill_AttackRadiusSpin::Update`);
-/// each tick pays the full `skillManaCost` and the channel
-/// stops when the energy left is under it (`Skill_AttackSpellBeam::Update`);
-/// releasing the key ends it (`SkillChanneled::Update`'s
-/// timer, re-armed by every tick). The tick timer is the
-/// engine's (the same in all five `Update`s: Spin,
-/// Grow, Drain, Cone, Beam):
-/// `timer -= frame ms; if timer <= 0 { timer =
-/// (int)(timeBetweenAttacks / speed); tick }`, so a tick re-arms the whole
-/// period (what the frame overshot is dropped) and there is one tick per
-/// update at most: the rate follows the frame time by design, don't "fix"
-/// it. PORT: the period is not cut to whole ms. Death and a stun end the
-/// channel (`gd_game::casting::stop_skills`). A test cast channels for
-/// 2 s. The beam turns to the cursor at once (the game's
-/// `rotationSpeedMultiplier` turn rate is not done); its rays, strikes and
-/// energy are `gd_game::casting::spell_beams`', the ribbons and effects grimdawn `beams.rs`'.
-/// A cone's strikes, energy and target are its cone entry's (`class_fx::ConeFx`); each re-request retargets it
-/// (`Skill_AttackSpellCone::GetValidTarget`: the request's target, [`Channel::target`]).
+/// A channelled skill (`SkillChanneled` subclasses): it ticks every `timeBetweenAttacks` ms (default 100) ÷ cast
+/// speed (Spin: ÷ attack speed); each tick pays the full `skillManaCost` and the channel stops when the energy
+/// left is under it; releasing the key ends it. The engine's timer (all five `Update`s): `timer -= frame ms; if
+/// timer <= 0 { timer = (int)(timeBetweenAttacks / speed); tick }`: the overshoot is dropped and there is one
+/// tick per update at most, so the rate follows the frame time; don't "fix" it. PORT: the period is not cut to
+/// whole ms; the beam turns to the cursor at once. Death and a stun end the channel. A cone's strikes, energy
+/// and target are its cone entry's; each re-request retargets it (`Skill_AttackSpellCone::GetValidTarget`).
 #[derive(Component)]
 pub struct Channel {
     pub skill: String,
     pub level_index: usize,
-    /// The hotbar slot it was started from.
     pub slot: usize,
     pub tick: f32,
     pub scripted: bool,
-    /// The slot's key / button is still held (set by the game's input).
+    /// Set by the game's input.
     pub input_held: bool,
     /// The cursor's ground point (set by the game's input).
     pub input_aim: Option<Vec3>,
-    /// The point the channel aims at this frame (the cursor's, or the keyboard modes' `keyboard_aim`): a beam's
-    /// slope (`gd_game::casting::spell_beams`).
+    /// The point the channel aims at this frame: a beam's slope.
     pub aim: Option<Vec3>,
-    /// Seconds channelled (Winds of Asterkarn's growth).
+    /// Seconds channelled (a grow's radius).
     pub held: f32,
-    /// The targeted foe: a drain's; a cone's, re-read from each re-request (the cursor's character; scripted: the
-    /// nearest foe).
+    /// A drain's foe; a cone's, re-read from each re-request.
     pub target: Option<Entity>,
 }
 
-/// A grow channel's radius after `held` seconds (`Skill_AttackRadiusGrow::Update`): `skillTargetRadius`
-/// plus `radiusIncrement` per `timeBetweenGrow` ms (default 100) ÷ cast speed, up to `explosionRadius`.
+/// `Skill_AttackRadiusGrow::Update`: `skillTargetRadius` plus `radiusIncrement` per `timeBetweenGrow` ms
+/// (default 100) ÷ cast speed, up to `explosionRadius`.
 pub fn grow_radius(rec: &Record, li: usize, held: f32, spell_speed: f32) -> f32 {
     let r = level_f(rec, "skillTargetRadius", li).max(1.0);
     let steps = (held * 1000.0 * spell_speed.max(0.2)
@@ -835,11 +676,9 @@ pub fn grow_radius(rec: &Record, li: usize, held: f32, spell_speed: f32) -> f32 
         .min(rec.f32("explosionRadius").unwrap_or(r).max(r))
 }
 
-/// The cone's frustum (`Skill_AttackSpellCone::GetTargets` → `Skill_AttackSpellCone::BuildFrustum`): the near face
-/// at `near`, the far face at `far`, each `w0` / `w1` wide along the caster's `right` axis and `h` high along its
-/// `up` axis; the near / far planes face the caster's forward `fwd`, the four sides join the faces' edges. True when
-/// the box `b` meets it. PORT: `GetTargetsInFrustum` against the foe's world box (a plane test: the box's centre
-/// within each plane's distance plus the box's projected half extent).
+/// The cone's frustum (`Skill_AttackSpellCone::BuildFrustum`): the near face at `near`, the far face at `far`,
+/// each `w0` / `w1` wide along `right` and `h` high along `up`, facing `fwd`. True when the box `b` meets it.
+/// PORT: a plane test against the foe's world box.
 #[allow(clippy::too_many_arguments)]
 pub fn cone_frustum_meets_box(
     near: Vec3,
@@ -872,7 +711,7 @@ pub fn cone_frustum_meets_box(
     planes.iter().all(|(n, p)| (c - *p).dot(*n) <= reach(*n))
 }
 
-/// The `GD_CAST` script: `state` (a `Local` of the calling system) holds the start time and the entries left.
+/// `state` (a `Local` of the calling system) holds the start time and the entries left.
 #[cfg(feature = "dev")]
 pub fn test_cast(
     state: &mut Option<(std::time::Instant, Vec<(f32, usize)>)>,
@@ -884,9 +723,8 @@ pub fn test_cast(
     Some(st.1.remove(i).1)
 }
 
-/// A skill's own part of `Skill::GetTotalSkillAttribute` (see `gd_game::casting::cast_requests`): `k` over
-/// its record and modifiers (each gated by its `{k}Chance`, a fresh roll per call), plus |that| ×
-/// the same sum of `{k}Modifier` %.
+/// A skill's own part of `Skill::GetTotalSkillAttribute`: `k` over its record and modifiers (each gated by its
+/// `{k}Chance`, a fresh roll per call), plus |that| × the same sum of `{k}Modifier` %.
 pub fn own_skill_attribute<'a>(
     recs: impl Iterator<Item = (&'a Record, usize)> + Clone,
     k: &str,
@@ -908,33 +746,30 @@ pub fn own_skill_attribute<'a>(
     own + own.abs() * own_pct * 0.01
 }
 
-/// The beam nodes of a caster's channelled beam skill, the held cast's last (`Skill_AttackSpellBeam.beamNodes` list).
+/// `Skill_AttackSpellBeam.beamNodes`: the held cast's last.
 #[derive(Component, Default)]
 pub struct SpellBeams(pub Vec<BeamNode>);
 
-/// One cast's rays.
 pub struct BeamNode {
     /// Unique per caster (the drawing's key).
     pub id: u64,
     pub skill: String,
     pub level_index: usize,
     pub beam: SpellBeam,
-    /// The fan's turn of each ray (radians).
+    /// Radians.
     pub angles: Vec<f32>,
     /// The heading with its slope (kept while retracting): the start effect sits at `emit + heading * retract`.
     pub heading: Vec3,
-    /// The emit point this frame.
     pub emit: Vec3,
-    /// Each ray's direction this frame.
     pub dirs: Vec<Vec3>,
     /// Each ray meets a surface at its longest (its ground effect emits).
     pub surface: Vec<bool>,
-    /// `beamName`, `startEffect`, `endEffect` as `ActivateNow` resolved them (`crate::skill_fx::beam_effects`).
+    /// `beamName`, `startEffect`, `endEffect` as `ActivateNow` resolved them.
     pub effects: [Option<String>; 3],
 }
 
 impl BeamNode {
-    /// Ray `k`'s drawn segment: from the retract point to its far end.
+    /// From the retract point to the ray's far end.
     pub fn segment(&self, k: usize) -> (Vec3, Vec3) {
         let d = self.dirs[k];
         (
@@ -944,7 +779,7 @@ impl BeamNode {
     }
 }
 
-/// The skill's ray count and spread (degrees) at `li`, with the learned modifiers' (`GetSkillModifierData`).
+/// Ray count and spread (degrees), with the learned modifiers' (`GetSkillModifierData`).
 pub fn fan(data: &GameData, rec: &Record, li: usize, mods: &[(String, usize)]) -> (usize, f32) {
     let sum = |k: &str| {
         level_f(rec, k, li)
@@ -956,25 +791,22 @@ pub fn fan(data: &GameData, rec: &Record, li: usize, mods: &[(String, usize)]) -
     ((sum("beamNumber") as usize).max(1), sum("beamAngle"))
 }
 
-/// One chaos skill cast in flight (`Skill_AttackSpellChaos`'s entry): its own entity.
+/// One `Skill_AttackSpellChaos` cast in flight: its own entity.
 #[derive(Component, Clone, Debug)]
 pub struct ChaosBeam {
     pub caster: Entity,
     pub target: Entity,
     pub skill: String,
     pub level_index: usize,
-    /// The weapon-pool parent the hit runs under ([`SkillHit::parent`]).
     pub parent: Option<(String, usize)>,
-    /// The `ChaosBeam` record drawn.
     pub beam: String,
     /// The caster's `R Hand` when the beam was created (`None` before the first update).
     pub start: Option<Vec3>,
-    /// The far end: the target's `Target` point while it is followed.
+    /// The target's `Target` point while it is followed.
     pub end: Vec3,
-    /// Metres the head / tail travelled from `start`.
     pub head: f32,
     pub tail: f32,
-    /// The drawn part (`SetTopBottomPercent`): fractions of the way from `start`.
+    /// `SetTopBottomPercent`: fractions of the way from `start`.
     pub top: f32,
     pub bottom: f32,
     /// The head arrived or the target went (state 2).
@@ -1007,9 +839,8 @@ impl ChaosBeam {
         }
     }
 
-    /// One `Update` step of `dt` s after the creation (states 1 and 2); `target`: its `Target` point and whether it
-    /// is alive, if it still resolves. Returns `(arrived, done)`: the head arrived this step (the hit), the beam
-    /// is done (state 3).
+    /// One `Update` step (states 1 and 2); `target`: its `Target` point and whether it is alive, if it still
+    /// resolves. Returns `(arrived, done)`: the head arrived this step (the hit), the beam is done (state 3).
     pub fn step(
         &mut self,
         dt: f32,
@@ -1052,13 +883,9 @@ impl ChaosBeam {
     }
 }
 
-/// Nullification (`Skill_DispelMagic::TargetResult`): foes in
-/// the radius take the skill (its debuff) and lose their
-/// self buffs (`SkillManager::DispelSkillBuffs`), except skills
-/// flagged `notDispelable`; everyone on the caster's side in the radius
-/// (the caster too) loses their skill debuffs (`DispelSkillDeBuffs`)
-/// and, with `dispelDamageOverTime`, their damage over time
-/// (`crate::skill_buffs::DispelOn`). `skillActiveDuration` is unused.
+/// `Skill_DispelMagic::TargetResult`: foes in the radius take the skill and lose their self buffs except
+/// `notDispelable` ones; the caster's side in the radius loses its skill debuffs and, with `dots`, its damage
+/// over time. `skillActiveDuration` is unused.
 #[derive(Message, Clone)]
 pub struct Dispel {
     pub caster: Entity,
@@ -1068,30 +895,19 @@ pub struct Dispel {
     pub dots: bool,
 }
 
-/// `Skill_AttackPathCharge` in flight (Vire's Might): runs straight to the
-/// point (`waveDistance` at most) and hits
-/// every foe within `skillTargetRadius` × `endRadiusMultiplier` there. On
-/// the way, every `timeBetweenAttacks` ms (default 100) it hits the foes
-/// within `skillTargetRadius` of the caster not hit yet, each once
-/// (`Skill_AttackPathCharge::Load` / `Update`). Walls: the move
-/// follows a nav path, and fails (the skill lands where the caster stands)
-/// when that path is longer than `maxMoveRatio` × the straight distance
-/// (`Character::GetMoveToPoint` passes `SkillProfile`'s
-/// `maxMoveRatio` to `CharacterMovementManager::FindPath`).
-/// The run: the skill moves nothing itself (`ActivateNow`,
-/// `Update`, `WarmUpStart`: no move); its move
-/// is the controller's move type 2 one (ChargeToUseSkill, a monster's Pursue):
-/// the Charge clip at speed factor 1, at the warmed-up run speed when the
-/// warm-up started (`skillAllowsWarmUp`), `crate::combat::charge_move`. A set
-/// without the Charge slot does not move. PORT: the run follows the cast.
+/// `Skill_AttackPathCharge` in flight (Vire's Might): runs straight to the point (`waveDistance` at most) and hits
+/// every foe within `skillTargetRadius` × `endRadiusMultiplier` there; on the way, every `timeBetweenAttacks` ms
+/// (default 100) it hits each foe within `skillTargetRadius` once. The move follows a nav path and fails when
+/// that path is longer than `maxMoveRatio` × the straight distance (`CharacterMovementManager::FindPath`). The
+/// run is the controller's ChargeToUseSkill move: the Charge clip at speed factor 1 (a set without it does not
+/// move), warmed-up with `skillAllowsWarmUp`. PORT: the run follows the cast.
 #[derive(Component)]
 pub struct PathCharge {
-    /// Nav waypoints left to the end point.
+    /// Nav waypoints left.
     pub to: Vec<Vec3>,
-    /// Fixed speed (m/s, a teleport's), or `None`: the Charge clip's run (`crate::combat::charge_move`).
+    /// Fixed speed (m/s, a teleport's), or `None`: the Charge clip's run.
     pub speed: Option<f32>,
-    /// The warm-up started (`skillAllowsWarmUp`): the run is at the warmed-up run speed with this
-    /// `characterRunSpeedModifier` %.
+    /// `skillAllowsWarmUp`: the run is at the warmed-up run speed with `bonus` `characterRunSpeedModifier` %.
     pub warm: bool,
     pub bonus: f32,
     pub skill: String,
@@ -1099,24 +915,19 @@ pub struct PathCharge {
     pub radius: f32,
     pub hostile: bool,
     pub left: f32,
-    /// Where the caster stood when it started ([`ChargeStarts`]).
+    /// [`ChargeStarts`].
     pub start: Vec3,
-    /// Hits along the way (`Skill_AttackPathCharge` only): radius (0 =
-    /// none), seconds between, seconds to the next, foes already hit.
+    /// `Skill_AttackPathCharge` only: radius (0 = none), seconds between, seconds to the next, foes already hit.
     pub path: (f32, f32, f32, Vec<Entity>),
-    /// `Skill_AttackPathCharge` only: `secondarySkillDistance` (`Load`) and the spot the special secondaries
-    /// last went off (`Skill_AttackPathCharge.lastSecondarySpot`, the start: `WarmUpStart`). `Update`: each frame
-    /// of the run, once the caster is that far (flat) from the spot, the spot
-    /// moves to it and `SpecialActivateSecondarySkills` runs there with no
-    /// targets (a distance of 0: every frame).
+    /// `Skill_AttackPathCharge` only: `secondarySkillDistance` and the spot the special secondaries last went off
+    /// (`lastSecondarySpot`). Once the caster is that far (flat) from the spot, the spot moves to it and
+    /// `SpecialActivateSecondarySkills` runs there (a distance of 0: every frame).
     pub secondaries: Option<(f32, Vec3)>,
-    /// The arrival's radius effect, resolved at the cast (`crate::skill_fx::radius_effect`: `fxChanges`
-    /// over the level's `radiusEffectName`).
+    /// Resolved at the cast (`fxChanges` over the level's `radiusEffectName`).
     pub radius_fx: Option<String>,
 }
 
-/// Leap classes: `Skill_AttackRadiusLeap` and `Skill_AttackRadiusDisengage`
-/// (derived from it).
+/// `Skill_AttackRadiusLeap` and `Skill_AttackRadiusDisengage` (derived from it).
 pub fn is_leap(class: &str) -> bool {
     matches!(
         class,
@@ -1124,36 +935,22 @@ pub fn is_leap(class: &str) -> bool {
     )
 }
 
-/// A leap in progress (`Skill_AttackRadiusLeap` / `…Disengage`), per
-/// Game.dll / Engine.dll: the skill's action is a `JumpAttackAction`
-/// whose `Execute` calls `Character::JumpToUseSkill`.
-/// That stores the start and the target (both put on the
-/// floor) and sets the character's movement modifier to
-/// `d / |z|`: `d` the horizontal start→target distance, `z` the jump
-/// animation's total root-motion-bone translation (last key − first,
-/// `GraphicsAnim::GetBoneCoords`), through the bone's bind matrix, forward
-/// component (the frame-timing factor it also computes cancels out). The
-/// animation's `StartJump` callback starts a `CharacterMovementManager::
-/// MoveTo` to the target, `StopJump` stops it (`JumpAttackAction::
-/// AnimationCallback`). While moving, the crowd agent's speed is
-/// the actor's motion — the root-motion velocity of the frame
-/// (`AnimChannel::Update` → `Actor::UpdateSelf`) — times that modifier
-/// (`Character::CrowdAgentUpdate`), so the jump covers `d`
-/// over the animation's root-motion curve, at its pace. The hit is the
-/// animation's hit callback (`fire_casts`).
+/// A leap in progress: `JumpAttackAction::Execute` → `Character::JumpToUseSkill` sets the movement modifier to
+/// `d / |z|`: `d` the horizontal start→target distance, `z` the jump animation's total root-motion-bone forward
+/// translation (`GraphicsAnim::GetBoneCoords`, through the bone's bind matrix). `StartJump` starts the move to the
+/// target, `StopJump` stops it; while moving the speed is the frame's root-motion velocity times the modifier
+/// (`Character::CrowdAgentUpdate`), so the jump covers `d` over the animation's curve. The hit is the
+/// animation's hit callback.
 #[derive(Component)]
 pub struct Leap {
-    /// Nav waypoints left to the target.
     pub to: Vec<Vec3>,
-    /// Horizontal start→target distance (`JumpToUseSkill`).
     pub dist: f32,
-    /// The movement modifier, set at `StartJump`; `None` before it.
+    /// Set at `StartJump`.
     pub scale: Option<f32>,
 }
 
 impl Leap {
-    /// A jump along `to` covering `dist` (also used by the evade, which is
-    /// the same `JumpToUseSkill` movement, `evade.rs`).
+    /// Also the evade's (the same `JumpToUseSkill` movement).
     pub fn new(to: Vec<Vec3>, dist: f32) -> Self {
         Self {
             to,
@@ -1163,8 +960,7 @@ impl Leap {
     }
 }
 
-/// A pak's effects with their attach points (the record itself when it is
-/// an effect, not a pak).
+/// A pak's effects with their attach points (the record itself when it is an effect, not a pak).
 pub fn pak_effects(data: &GameData, pak: &str) -> Vec<(String, Option<String>)> {
     let Some(rec) = data.db.get(pak) else {
         return Vec::new();
@@ -1186,9 +982,8 @@ pub fn pak_effects(data: &GameData, pak: &str) -> Vec<(String, Option<String>)> 
             )
         })
         .collect();
-    // `CharFxPak::LoadMesh`: its `meshEffectNames` (`FxMesh` records, `"mesh:"` marks them here) ride the character
-    // too, at the record's `attachPoint`, else its origin (`PFxManager::AddMeshEffect`:
-    // `Attach(effect, identity, attachPoint)`).
+    // `CharFxPak::LoadMesh`: its `meshEffectNames` ride the character too, at the record's `attachPoint`, else its
+    // origin (`PFxManager::AddMeshEffect`).
     out.extend(rec.strs_iter("meshEffectNames").map(|m| {
         let point = data
             .db
@@ -1200,10 +995,9 @@ pub fn pak_effects(data: &GameData, pak: &str) -> Vec<(String, Option<String>)> 
     out
 }
 
-/// Marks an `FxMesh` record among a pak's effect names ([`pak_effects`]).
+/// Marks an `FxMesh` record among a pak's effect names.
 pub const MESH_PREFIX: &str = "mesh:";
 
-/// The `CharFxPak` records' `startSound`, `activeSound` and `stopSound`.
 pub fn char_pak_sounds(data: &GameData, paks: &[String]) -> Vec<[Option<String>; 3]> {
     let field = |r: &Record, k: &str| r.str(k).filter(|s| !s.is_empty()).map(str::to_owned);
     paks.iter()
@@ -1218,10 +1012,8 @@ pub fn char_pak_sounds(data: &GameData, paks: &[String]) -> Vec<[Option<String>;
         .collect()
 }
 
-/// `CharFxPak::Start` and what `CharFxPak::Stop` does when the
-/// pak's first effect goes (`crate::combat_sounds` module doc): the pak's
-/// sounds for a character effect started on `owner`. The loop and the stop
-/// sound hang from that effect entity.
+/// `CharFxPak::Start` / `Stop`: the pak's sounds for a character effect started on `owner`; the loop and the stop
+/// sound hang from the pak's first effect entity.
 pub fn start_char_pak_sounds(
     w: &mut World,
     sounds: &[[Option<String>; 3]],
@@ -1256,63 +1048,46 @@ pub fn start_char_pak_sounds(
     }
 }
 
-/// `Skill_BuffSelfImmobilize` (Blade Barrier) roots its caster by refreshing a short hold while it runs.
-/// Game.dll `Skill_BuffSelfImmobilize::Update`: after `Skill_BuffSelfDuration::Update`,
-/// while the skill is active (`Skill.active`) the frame's ms come off its timer (`Skill_BuffSelfImmobilize.holdTimer`:
-/// 0 from the constructor, never reset by an activation); at ≤ 0 the timer is re-armed with
-/// `Skill_BuffSelfImmobilize.holdPeriod` (100 ms) and the holder gets `DurationDamageManager::AddFixedDamage(47 =
-/// immobilize, 1.0, min(holdCap = 0.25 s, time left × 0.001))` (`Skill_BuffSelfImmobilize.holdCap`; the time left
-/// in ms is `Skill_BuffSelfDuration.timeLeft`; a fixed entry: the duration is replaced,
-/// `crate::afflictions::Afflictions::hold`), then
-/// `EndAttack`. So the hold lasts while the buff runs and ends within 0.25 s of its stop, whatever stops it
-/// (expiry, a dispel, death). Inserted at the first cast (`gd_game::casting::fire_casts`); the running buff is the caster's buff
-/// list entry (`gd_game::player::Loadout::buffs`, `MonsterSkills::buffs`; no stock pet record has the class).
+/// `Skill_BuffSelfImmobilize::Update` (Blade Barrier): while the skill is active the frame's ms come off
+/// `holdTimer` (0 from the constructor, never reset by an activation); at ≤ 0 it re-arms with `holdPeriod` and the
+/// holder gets `AddFixedDamage(immobilize, 1.0, min(holdCap, time left))`, so the hold ends within 0.25 s of the
+/// buff's stop, whatever stops it. Inserted at the first cast.
 #[derive(Component, Debug)]
 pub struct ImmobilizeRefresh {
     /// The skill under its buff list name.
     pub skill: String,
-    /// `Skill_BuffSelfImmobilize.holdTimer`, seconds.
+    /// `holdTimer`, seconds.
     pub timer: f32,
 }
 
-/// [`ImmobilizeRefresh`]'s re-arm (`Skill_BuffSelfImmobilize.holdPeriod` = 100 ms, the constructor).
+/// `Skill_BuffSelfImmobilize.holdPeriod`.
 pub const IMMOBILIZE_PERIOD_SECS: f32 = 0.1;
 
-/// [`ImmobilizeRefresh`]'s hold cap (`Skill_BuffSelfImmobilize.holdCap` = 0.25 s, the constructor).
+/// `Skill_BuffSelfImmobilize.holdCap`.
 pub const IMMOBILIZE_HOLD_SECS: f32 = 0.25;
 
-/// Damaging auras (`Skill_BuffAttackRadiusToggled`: blade swarm, blight
-/// fumes, undeath aura …): every 1000 ms (`Update`, interval
-/// set to 1000 by the constructor) the skill hits every foe within
-/// `skillTargetRadius` of its owner. Pets and monsters that have the skill
-/// keep it on: their AI casts it as a buffSelf skill
-/// (`ControllerMonster::ChooseBestBuffSelfSkill`, skipped once
-/// active) and a toggle never runs out; the port starts it on,
-/// without that first cast.
+/// Damaging auras (`Skill_BuffAttackRadiusToggled`): every 1000 ms the skill hits every foe within
+/// `skillTargetRadius` of its owner. Pets and monsters keep it on (their AI casts it as a buffSelf skill and a
+/// toggle never runs out); PORT: the port starts it on, without that first cast.
 pub struct DamageAura {
     pub skill: String,
     pub level_index: usize,
     pub radius: f32,
     pub hostile: bool,
     pub timer: f32,
-    /// Seconds left for a timed aura (`Skill_BuffAttackRadiusDuration`).
+    /// A timed aura's (`Skill_BuffAttackRadiusDuration`).
     pub left: Option<f32>,
-    /// Seconds between ticks (1, or `skillTargetInterval` for the lightning
-    /// storm `Skill_BuffAttackRadiusLightning`).
+    /// 1, or `skillTargetInterval` for the lightning storm (`Skill_BuffAttackRadiusLightning`).
     pub interval: f32,
-    /// The storm hits only `skillTargetNumber` foes per tick (random ones:
-    /// the radius list is shuffled and cut,
-    /// `Skill_BuffAttackRadiusLightning::Update`), each with a
-    /// `lightningName` bolt from the owner.
+    /// The storm hits `skillTargetNumber` random foes per tick (`Skill_BuffAttackRadiusLightning::Update`), each
+    /// with a `lightningName` bolt from the owner.
     pub max_targets: Option<usize>,
     pub bolt: Option<String>,
-    /// The storm's `cameraShakeDurationSecs` / `cameraShakeAmplitude`, sent per bolt
-    /// (`SkillActivated::CameraShake`, `Skill_BuffAttackRadiusLightning::Update`).
+    /// `cameraShakeDurationSecs` / `cameraShakeAmplitude`, sent per bolt.
     pub shake: Option<(f32, f32)>,
 }
 
 impl DamageAura {
-    /// The aura's skill record (read by the HUD, `buff_bar::pet_icons`).
     pub fn skill(&self) -> &str {
         &self.skill
     }
@@ -1357,10 +1132,8 @@ impl DamageAura {
 pub struct DamageAuras(pub Vec<DamageAura>);
 
 impl DamageAuras {
-    /// Dispelled (`crate::skill_buffs::DispelOn`): the damage auras stop
-    /// (`Skill_BuffAttackRadiusToggled::StopSkill`, also the timed and
-    /// lightning ones' class) but those `keep` names (`notDispelable`). The
-    /// stopped ones.
+    /// `Skill_BuffAttackRadiusToggled::StopSkill`: all but those `keep` names (`notDispelable`) stop; returns
+    /// the stopped ones.
     pub fn dispel(&mut self, keep: impl Fn(&str) -> bool) -> Vec<String> {
         let gone: Vec<String> = self
             .0
@@ -1373,19 +1146,15 @@ impl DamageAuras {
     }
 }
 
-/// Life from a bonus (`CharacterBio::TakeBonus` / `GetBonusLifeAmount`):
-/// flat × (1 + `characterHealIncreasePercent` %) plus % of max
-/// life × (1 + that + `characterPercentHealIncreaseModifier` %); energy is
-/// not scaled. The over-time % uses only the first.
+/// `CharacterBio::GetBonusLifeAmount`: flat × (1 + `characterHealIncreasePercent` %) plus % of max life × (1 +
+/// that + `characterPercentHealIncreaseModifier` %). The over-time % uses only the first.
 pub fn bonus_life(sheet: &gd_sim::stats::CharacterSheet, flat: f32, pct: f32) -> f32 {
     let h = sheet.heal_increase * 0.01;
     flat * (1.0 + h)
         + (sheet.life * pct * 0.01 * (1.0 + h + sheet.percent_heal_increase * 0.01)).max(0.0)
 }
 
-/// `Skill_BuffSelfToggled` and the classes deriving from it (RTTI: `…Colossus`, `…Duration`, `…Immobilize`,
-/// `…Invulnerable`, `…Shield`, `…Sick`, `Skill_Shapeshift`), whose `Update` gives the self buff's
-/// `gd_game::casting::Bonus::buff_duration` every second while it is on.
+/// `Skill_BuffSelfToggled` and its subclasses, whose `Update` gives the self buff's bonus every second while on.
 pub fn is_self_buff_class(class: &str) -> bool {
     matches!(
         class,
@@ -1400,20 +1169,15 @@ pub fn is_self_buff_class(class: &str) -> bool {
     )
 }
 
-/// Seconds to each running self buff's next `gd_game::casting::Bonus::buff_duration` (`Skill_BuffSelfToggled.bonusTimer`).
+/// Seconds to each running self buff's next bonus (`Skill_BuffSelfToggled.bonusTimer`).
 #[derive(Component, Default, Debug)]
 pub struct SelfBuffHeals(pub Vec<(String, f32)>);
 
-/// The player's switched-on self-buff toggles from the book and worn items
-/// (`gd_game::casting::self_buff_heals`), cached: reading them clones the skill book and scans
-/// the items, so it runs only when the `gd_game::player::Loadout` changed. The timed buffs are
-/// read fresh each frame (their remaining time ticks down).
+/// The player's switched-on self-buff toggles from the book and worn items, recomputed when the loadout changes.
 #[derive(Component, Default)]
 pub struct SelfBuffToggles(pub Vec<(String, usize)>);
 
-/// `<type>DamageQualifier` flags of a skill record → damage types
-/// (`SkillProfile::LoadProfile`: elemental = fire, cold,
-/// lightning).
+/// `SkillProfile::LoadProfile`: elemental = fire, cold, lightning.
 pub fn qualifying_types(rec: &Record) -> Vec<gd_sim::attributes::CombatType> {
     use gd_sim::attributes::CombatType as T;
     let mut v = Vec::new();
@@ -1444,41 +1208,21 @@ pub fn qualifying_types(rec: &Record) -> Vec<gd_sim::attributes::CombatType> {
     v
 }
 
-/// The charge potions (`Skill_ChargePotion`): keys R (health) and E
-/// (energy) — the default keybindings bind scan codes 19/18 to
-/// actions 30/29 (`KeyBindings::GetActionByName` maps action 29 to
-/// DrinkManaPotion and 30 DrinkHealthPotion).
+/// The charge potions (`Skill_ChargePotion`), keys R (health) and E (energy).
 ///
-/// `Skill_ChargePotion::TargetResult`: the potion's
-/// own fields go to `Character::TakeBonus` as a slow bonus, so
-/// (`CharacterBio::TakeBonus`) `skillLifePercent` % of max life (× the
-/// healing bonuses) and `skillManaBonus` + `skillManaPercent` % of max energy
-/// land at once, while `skillLifeBonus` and `skillLifePercentSlow` % (× the
-/// healing increase) and `skillManaPercentSlow` % fill a restore pool. Each
-/// learned `Skill_PotionModifier` adds its own fields the same way, scaled by
-/// the potency 1 + (`modifierPotency` + `potionTransfusion`) % summed over the
-/// potion and its containers / modifiers (`SkillProfile_Modifiers`,
-/// `GetSkillModifierData`). `potionInfusion` % moves the potion's instant
-/// parts into the pool, raised by that %; `potionTransfusion` drops the
-/// potion's own restore. `absorbShieldPercentHealth` % × potency of max life
-/// is a damage-absorbing shield (a combat filter for the potion's qualifying
-/// damage types, none listed = every type: `Skill_ChargePotion::ModifyDamage`)
-/// that lasts until used up (`Update` drops the filter once
-/// spent), a new potion refilling it. The pools drain at max life /
-/// `healthFeedRate` s and (max − reserved) energy / `manaFeedRate` s, held to
-/// `…OverStorageLimit` × that max (`playerresourcebehavior.dbr`, read by
-/// `CharacterBio::Load`, drained in `CharacterBio::Update`).
-/// `cooldownCharges` uses are the shared [`Cooldowns`] charge rule
-/// (`Skill::StartCooldown`, `SetChargeCooldown`, `UpdateCooldownCharges`):
-/// a drink spends a charge, the cooldown starts only while none
-/// runs, each finished one returns a charge and starts the next. Secondary potion modifiers
-/// (explosive, electrified, buffs) fire on use (`secondary.rs`). Hook
-/// `GD_POTION` (hooks.rs).
+/// `Skill_ChargePotion::TargetResult` → `CharacterBio::TakeBonus`: `skillLifePercent` % of max life (× the
+/// healing bonuses) and `skillManaBonus` + `skillManaPercent` % of max energy land at once, while
+/// `skillLifeBonus`, `skillLifePercentSlow` % and `skillManaPercentSlow` % fill a restore pool. Each learned
+/// `Skill_PotionModifier` adds its own fields the same way, scaled by the potency 1 + (`modifierPotency` +
+/// `potionTransfusion`) %. `potionInfusion` % moves the instant parts into the pool, raised by that %;
+/// `potionTransfusion` drops the potion's own restore. `absorbShieldPercentHealth` % × potency of max life is an
+/// absorb shield for the qualifying types until used up. The pools drain at max / `healthFeedRate` s and
+/// (max − reserved) / `manaFeedRate` s, held to `…OverStorageLimit` × that max. `cooldownCharges` follow the
+/// [`Cooldowns`] charge rule.
 pub const HEALTH_POTION: &str = "records/skills/default/defaulthealthpotion.dbr";
 pub const ENERGY_POTION: &str = "records/skills/default/defaultmanapotion.dbr";
 
-/// The potion restore pools (life, energy) still to drain into the
-/// character (`CharacterBio` slow life / energy).
+/// The potion restore pools (`CharacterBio` slow life / energy).
 #[derive(Component, Default)]
 pub struct PotionOverTime {
     pub life: f32,
@@ -1498,23 +1242,17 @@ pub fn resource_behavior(data: &GameData) -> (f32, f32, f32, f32) {
     )
 }
 
-/// Drink a potion (the game sends it for the R / E keys).
+/// Drink a potion (R / E).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsePotion {
     Health,
     Energy,
 }
 
-/// `Skill::GetMoveTypeStateString` is "MoveToUseSkill" for these: the
-/// player walks until within the skill's usable distance before casting.
-/// `ControllerPlayerState::DefaultRequestSkillAction` (mouse
-/// movement): a skill walks when its range profile is Melee, it
-/// has `forceMovement`, or the `classicCasting` option is on; any other
-/// ranged-profile skill casts at once and clamps in `try_cast`. Self-cast
-/// kinds have no distance; weapon attacks are the combat system's.
-/// `classic` is the `classicCasting` option (default off: `Options::Options`); `gate` is
-/// the engine's extra clause of `DefaultRequestSkillAction`: with `movementType` 1 and no
-/// target object, or `movementType` 2, only weapon charges walk into range (see [`Walk`]).
+/// `ControllerPlayerState::DefaultRequestSkillAction` ("MoveToUseSkill"): a skill walks within its usable
+/// distance before casting when its range profile is Melee, it has `forceMovement`, or `classicCasting` is on;
+/// any other ranged-profile skill casts at once and clamps in `try_cast`. With the [`Walk`] gate closed, only
+/// weapon charges walk.
 pub fn walks_into_range(rec: &Record, kind: Kind, walk: Walk) -> bool {
     if !walk.gate {
         return gd_sim::skills::is_weapon_charge(&rec.class);
@@ -1537,8 +1275,7 @@ pub fn walks_into_range(rec: &Record, kind: Kind, walk: Walk) -> bool {
             || walk.classic)
 }
 
-/// The walking rule's inputs: the `classicCasting` option and the keyboard-movement gate
-/// (`(InputMode != 0 || movementType != 1 || targetId != 0) && movementType != 2`; the port has no gamepad input mode).
+/// `gate`: `(InputMode != 0 || movementType != 1 || targetId != 0) && movementType != 2` (no gamepad input mode).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Walk {
     pub classic: bool,
@@ -1554,103 +1291,51 @@ impl Walk {
     }
 }
 
-/// Move type 2 (`Skill_AttackPathCharge`): `Skill::GetMoveTypeStateString`
-/// is "ChargeToUseSkill", so the out-of-range walk is a
-/// charge (`gd_game::movement::MoveToUseSkill::charging`). Weapon charges (Blitz, Shadow
-/// Strike: `gd_sim::skills::is_weapon_charge`) have move type 1, but
-/// `DefaultRequestSkillAction` renames their "MoveToUseSkill"
-/// to "ChargeToUseSkill", and being Melee-profile they walk into
-/// range like any melee skill; see [`warms_up`].
+/// "ChargeToUseSkill": `Skill_AttackPathCharge` (move type 2) and the weapon charges (renamed by
+/// `DefaultRequestSkillAction`; see [`warms_up`]).
 pub fn charges_to_range(rec: &Record) -> bool {
     rec.class == "Skill_AttackPathCharge" || gd_sim::skills::is_weapon_charge(&rec.class)
 }
 
-/// How `gd_game::casting::try_cast` is reached.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Use {
     /// A fresh request (hotbar key, held left click).
     Request,
-    /// The end of a `MoveToUseSkill` / ChargeToUseSkill move (no new walk).
+    /// The end of a `MoveToUseSkill` / ChargeToUseSkill move.
     Arrived,
-    /// The end of a charge whose warm-up already paid ([`warms_up`]).
+    /// The end of a charge whose warm-up already paid.
     ArrivedWarm,
 }
 
-/// The weapon skills' warm-up (`Skill_AttackWeapon::WarmUpStart`,
-/// run by `MoveToAction::Execute` as a ChargeToUseSkill move
-/// starts): when the skill is enabled and its profile allows a
-/// warm-up (`skillAllowsWarmUp`, every player weapon charge), it plays the
-/// warm-up FX (`warmUpEffectName`), starts the cooldown, pays
-/// `GetManaCost` and flags the warm-up as active (`Skill.warmUpActive` / `Skill.warmUpPaid`);
-/// `Skill_AttackWeaponCharge::WarmUpStart` first sets the
-/// push-through flag and stores the start (`MaxSkillDistance`), Blink's
-/// also hides the caster. The move then runs at the warm-up
-/// run speed (`gd_sim::skills::warmup_run_multiplier`). The move's end
-/// (`MoveToAction::Finish`) calls `WarmUpEnd`: the FX stops,
-/// and unless the target is a living character (or a breakable) the skill
-/// is cancelled (`Cancel`). Reaching the target starts
-/// UseSkill (`EndOfPathReached`) and the attack itself pays
-/// nothing more: `Skill_AttackWeaponCharge::ActivateNow`
-/// bumps the hit iteration when the warm-up was active, and only the first
-/// iteration pays and starts the cooldown (`SkillManager::
-/// SkillTargetResult`). It also runs the learned
-/// `Skill_MeleeModifier`s only then (no stock record has one). A charge cut short (target dead:
-/// `OnUpdate` → Idle; stun; a move order) keeps what it paid.
-/// The warm-up's presentation is [`WarmUp`]. PORT: the push-through (the
-/// port's player does not collide with characters) is not done.
+/// The weapon skills' warm-up (`Skill_AttackWeapon::WarmUpStart` as a ChargeToUseSkill move starts): with
+/// `skillAllowsWarmUp` it plays the warm-up FX, starts the cooldown, pays `GetManaCost` and flags the warm-up
+/// active; the move runs at the warm-up run speed (`gd_sim::skills::warmup_run_multiplier`). The move's end
+/// (`WarmUpEnd`) stops the FX and cancels the skill unless the target is a living character (or a breakable).
+/// The attack itself pays nothing more: `Skill_AttackWeaponCharge::ActivateNow` bumps the hit iteration and only
+/// the first pays. A charge cut short keeps what it paid. PORT: the push-through is not done (the port's player
+/// does not collide with characters).
 pub fn warms_up(rec: &Record) -> bool {
     gd_sim::skills::is_weapon_charge(&rec.class) && rec.bool("skillAllowsWarmUp")
 }
 
-/// A weapon skill's warm-up running on its caster: from `WarmUpStart` to
-/// `WarmUpEnd` (the ChargeToUseSkill move, [`warms_up`]). Game.dll:
-/// - `Skill_AttackWeapon::WarmUpStart` plays `skillWarmUpSound`
-///   at the caster (`Skill.warmUpSound`, `Skill::PlayWarmUpSound`), then
-///   `Skill::CreateWarmUpFx` starts the level's
-///   `warmupFxPakName` entry (level − 1 clamped to the list)
-///   at the caster's coordinates, in the world (it stays where it started),
-///   then `Skill::WarmUpEffect(caster, true)`: the first time,
-///   `Character::AddParticleEffect(warmUpEffectName, warmUpEffectAttachPoint)`
-///   (the handle is kept in `Skill.warmUpEffectHandle`), then
-///   `StartParticleEffect`. It goes with the caster, at the attach point.
-/// - `Skill_AttackWeapon::WarmUpEnd` (warm-up active only):
-///   `WarmUpEffect(caster, false)` → `StopParticleEffect` →
-///   `EffectEntity::StopEmitting` (`PFxManager::StopParticleEffect`): the
-///   effect's live particles finish; the world pak plays on.
-/// - `Skill_AttackWeaponBlink::WarmUpStart`: when the warm-up
-///   became active, `SetVisibility(false)` on the caster
-///   ([`crate::visuals::Hidden`]); its `WarmUpEnd` override
-///   shows it again (`SetVisibility(true)`, unconditionally).
-/// - Modifiers (`gd_game::casting::warm_up_modifiers`): `CreateWarmUpFx` then calls each
-///   `Skill_Modifier` of the skill's learned list (`Skill.modifiers`, `AddModifier`) and
-///   then of its gear list (`Skill.itemSkillModifiers`, `AddToItemSkillModifiers`),
-///   the same `Skill::CreateWarmUpFx` on the modifier: its own
-///   `warmupFxPakName` at its level starts too (no enabled check, so every
-///   one adds to the skill's, an off gear modifier's too:
-///   `gd_game::weapon_pool::SkillLinks::off_mods`). `WarmUpEffect` first asks the gear list, then
-///   the learned one: the first modifier that `IsSkillEnabled`
-///   and whose own `WarmUpEffect` returns true, i.e. has a
-///   `warmUpEffectName` (with its own `warmUpEffectAttachPoint`), wears its
-///   effect instead of the skill's; none: the skill's own. The end goes the
-///   same way, so the modifier's effect is the one stopped. The sound is the
-///   skill's only (`WarmUpStart` plays only its own `Skill.warmUpSound`). Stock: the Vire's
-///   Might gear modifiers (`viremight_warmuploop_<type>fx01`, no attach
-///   point).
-/// - `Skill_AttackPathCharge::WarmUpStart` (Vire's Might) sets
-///   its run up (push-through flag, start coordinates, `Skill_AttackPathCharge.pathActive`)
-///   and ends in `Skill_AttackWeapon::WarmUpStart`, its `WarmUpEnd`
-///   in `WarmUpEffect(caster, false)` while the warm-up was
-///   active (`Skill.warmUpActive`).
+/// A weapon skill's warm-up running on its caster, from `WarmUpStart` to `WarmUpEnd`:
+/// - `Skill_AttackWeapon::WarmUpStart` plays `skillWarmUpSound`, starts the level's `warmupFxPakName` entry in
+///   the world at the caster (`Skill::CreateWarmUpFx`), then `Skill::WarmUpEffect(caster, true)`: the
+///   `warmUpEffectName` effect on the caster at `warmUpEffectAttachPoint`.
+/// - `WarmUpEnd` (warm-up active only): `StopParticleEffect`: the effect's live particles finish; the world pak
+///   plays on.
+/// - `Skill_AttackWeaponBlink`: hides the caster while warm ([`crate::visuals::Hidden`]); its `WarmUpEnd` shows
+///   it again, unconditionally.
+/// - Modifiers: `CreateWarmUpFx` also starts each learned then gear `Skill_Modifier`'s own `warmupFxPakName`
+///   (no enabled check: an off gear modifier's too). `WarmUpEffect` asks the gear list, then the learned one:
+///   the first enabled modifier with a `warmUpEffectName` wears its effect instead of the skill's. The sound is
+///   the skill's only.
+/// - `Skill_AttackPathCharge::WarmUpStart` sets its run up and ends in `Skill_AttackWeapon::WarmUpStart`.
 ///
-/// The move that carries the warm-up: the player's ChargeToUseSkill
-/// (`gd_game::movement::MoveToUseSkill::warm_up`), a monster's or pet's Pursue to its chosen
-/// weapon charge (`gd_game::casting::begin_pursuit_charge`, `MoveToAction` with the skill, as
-/// the engine), or a [`Charge`] / [`PathCharge`] run after the cast. PORT: the
-/// run after the cast stands for the move before it (a use within the
-/// skill's range out of weapon reach, an AI hit whose target stepped out of
-/// reach, every path charge); a fresh effect entity per warm-up (the engine
-/// restarts the kept one); an effect without an attach point sits where the
-/// port's other unattached character effects do.
+/// The move that carries it: the player's ChargeToUseSkill, a monster's or pet's Pursue to its chosen weapon
+/// charge, or a [`Charge`] / [`PathCharge`] run after the cast. PORT: the run after the cast stands for the move
+/// before it (a use within range out of weapon reach, an AI hit whose target stepped out of reach, every path
+/// charge); a fresh effect entity per warm-up (the engine restarts the kept one).
 #[derive(Component)]
 pub struct WarmUp {
     pub skill: String,
@@ -1658,28 +1343,16 @@ pub struct WarmUp {
     pub fx: Vec<Entity>,
 }
 
-/// `Skill_AttackWeaponCharge` / `Skill_AttackWeaponBlink` warmed up: the
-/// caster pushes through characters (`WarmUpStart` sets
-/// `Character::SetPathingPushThru`'s flag) and runs at its warmed-up run
-/// speed (`crate::combat::charge_move`). Two forms:
-/// - a monster's Pursue to the weapon charge it chose (`gd_game::casting::ChargePursuit`):
-///   its AI moves it, on the Run clip at the warmed-up rate, and its Attack
-///   uses the skill at the end of the path (the engine's warm-up move, see
-///   `gd_game::casting::begin_pursuit_charge`);
-/// - a dash after the cast (the port's: a use within the skill's range out of
-///   weapon reach, a monster's or pet's hit whose target stepped out of
-///   reach): the caster paths to the target, the player on the Charge clip
-///   (ChargeToUseSkill), an AI on the Run clip, at the warmed-up rate, stops
-///   at reach and hits it on arrival.
+/// `Skill_AttackWeaponCharge` / `Skill_AttackWeaponBlink` warmed up: the caster pushes through characters
+/// (`Character::SetPathingPushThru`) and runs at its warmed-up run speed. Two forms:
+/// - a monster's Pursue to the weapon charge it chose: its AI moves it on the Run clip and its Attack uses the
+///   skill at the end of the path;
+/// - a dash after the cast (PORT, see [`WarmUp`]): the caster paths to the target (the player on the Charge
+///   clip, an AI on the Run clip), stops at reach and hits it on arrival.
 ///
-/// The dash gives up once it has run
-/// farther from its start than the target is plus `maxDistanceBuffer`
-/// (`Skill_AttackWeaponCharge::MaxSkillDistance`, asked by the
-/// controller's `MaxSkillDistance`; no check when the buffer is 0); no time
-/// limit. A blink hides the caster meanwhile (`Skill_AttackWeaponBlink::
-/// WarmUpStart`). It ends without its hit when the target dies (`ControllerPlayerStateChargeToUseSkill::
-/// OnUpdate` → Idle, and `WarmUpEnd` cancels the skill unless the target is a living character or a
-/// breakable: [`warms_up`]) and when the caster dies or is stunned (`gd_game::casting::stop_skills`). The skill's
+/// The dash gives up once it has run farther from its start than the target is plus `maxDistanceBuffer`
+/// (`Skill_AttackWeaponCharge::MaxSkillDistance`; no check when 0); no time limit. It ends without its hit when
+/// the target dies (`WarmUpEnd` cancels, [`warms_up`]) or the caster dies or is stunned. PORT: the skill's
 /// `skillTargetNumber` / `skillTargetAngle` sweep along the way is not done.
 #[derive(Component)]
 pub struct Charge {
@@ -1695,8 +1368,7 @@ pub struct Charge {
 }
 
 impl Charge {
-    /// The warmed-up charge of `skill` (level index `li`, its `characterRunSpeedModifier` % `bonus`) from `at` at
-    /// `target`.
+    /// `bonus`: its `characterRunSpeedModifier` %.
     pub fn new(rec: &Record, skill: &str, li: usize, bonus: f32, at: Vec3, target: Entity) -> Self {
         Charge {
             target,
@@ -1711,25 +1383,17 @@ impl Charge {
     }
 }
 
-/// Where each charge skill of a character last started (`Skill_AttackWeaponCharge`,
-/// `...Blink`, `Skill_AttackPathCharge`): `WarmUpStart` stores the caster's
-/// coordinates at `Skill_AttackWeaponCharge.chargeStart`, which `MaxSkillDistance` measures from.
-/// Per skill (record name) as each skill object has its own copy.
-/// PORT: a dash's when it starts to move, not at the warm-up start (the
-/// caster stands still in between); a monster's Pursue warm-up's at its start.
+/// Where each charge skill of a character last started (`Skill_AttackWeaponCharge.chargeStart`, set by
+/// `WarmUpStart`), which `MaxSkillDistance` measures from. PORT: a dash's when it starts to move, not at the
+/// warm-up start; a monster's Pursue warm-up's at its start.
 #[derive(Component, Default)]
 pub struct ChargeStarts(pub HashMap<String, Vec3>);
 
-/// A Devastation-like rain of drops ([`Kind::Storm`]): every `skillTargetInterval`
-/// around the cast point (`targetingMode` `Point`) or else around the
-/// caster where it stands then (`Skill_BuffAttackRadiusDrop::Update`;
-/// `gd_sim::skills::TargetingMode`): trap and
-/// obelisk firestorms, Valaxteria's. Each tick drops `projectileLaunchNumber`
-/// (0 → 1) projectiles: the landing radius is `1 + rand·(skillTargetRadius − 1)`
-/// (an annulus, no drops within 1 m), the launch point is the landing spot at
-/// `dropHeight ± dropVariation` plus a `dropRadius` disc offset (`Skill_BuffAttackRadiusDrop::DropLaunchPoint`),
-/// and each flies back to its landing spot at its own
-/// `projectileVelocity` (`ProjectileBase::MoveStraightLine`).
+/// A Devastation-like rain of drops (`Skill_BuffAttackRadiusDrop::Update`): every `skillTargetInterval` around
+/// the cast point (`targetingMode` `Point`) or else around the caster where it stands then. Each tick drops
+/// `projectileLaunchNumber` (0 → 1) projectiles at [`storm_landing`] spots, launched from `dropHeight ±
+/// dropVariation` plus a `dropRadius` disc offset (`DropLaunchPoint`), each flying straight to its spot at its own
+/// `projectileVelocity`.
 #[derive(Component)]
 pub struct Storm {
     pub cast: Casting,
@@ -1741,57 +1405,30 @@ pub struct Storm {
     pub per_tick: usize,
     pub radius: f32,
     pub height: f32,
-    /// `dropVariation`: the launch height is `height` ± this (`Skill_BuffAttackRadiusDrop::DropLaunchPoint`).
+    /// `dropVariation`: the launch height is `height` ± this.
     pub drop_variation: f32,
-    /// `dropRadius`: an extra uniform-disc sideways offset of the launch point.
+    /// `dropRadius`: a uniform-disc sideways offset of the launch point.
     pub drop_radius: f32,
     pub explosion: f32,
     pub attacker: Entity,
 }
 
-/// The landing offset of one storm drop (`Skill_BuffAttackRadiusDrop::Update`):
-/// the radius is `1 + u·(radius − 1)` — an annulus, no drop within
-/// 1 m of the centre, densest near the inner edge — at the angle `a` (radians).
+/// `Skill_BuffAttackRadiusDrop::Update`: the radius is `1 + u·(radius − 1)` (an annulus, no drop within 1 m) at
+/// the angle `a` (radians).
 pub fn storm_landing(radius: f32, u: f32, a: f32) -> Vec3 {
     let r = 1.0 + u * (radius - 1.0).max(0.0);
     Vec3::new(a.sin() * r, 0.0, a.cos() * r)
 }
 
-/// A radius whose `expansionTime` (`SkillProfile.expansionTime`, s; `SkillProfile::GetRadiusTime`
-/// gives it x 1000) is above 0: the radius grows from its centre
-/// to its full size over that time and each foe is hit as it reaches it. Two
-/// classes do this:
-/// - `Skill_AttackRadius`: `ActivateNow` records {elapsed 0,
-///   time = `expansionTime` x 1000 whole ms, radius, the caster's coords, no
-///   one hit} (the Primary secondaries run at once on the full radius,
-///   `fire.rs`). Each attack's `TargetResult` then runs the special pair; the
-///   `Skill_AttackRadius.warmingUp` check in `ActivateNow` is the warm-up flag guarding
-///   `SendSkillActiveUpdate` (no attack), so a radius that hits nothing runs
-///   no special pair.
-/// - `SkillSecondary_AttackRadius`: `ActivateNow` records the
-///   same at the activation point (the first target's coords when it is
-///   valid, `secondary.rs`); its `TargetResult` hits and runs the
-///   ordinary pair only (`ActivateSecondarySkills`, no special pair).
+/// A radius whose `expansionTime` (s) is above 0 grows from its centre to its full size over that time, hitting
+/// each foe as it reaches it:
+/// - `Skill_AttackRadius`: the Primary secondaries run at once on the full radius; each attack runs the special
+///   pair, so a radius that hits nothing runs no special pair.
+/// - `SkillSecondary_AttackRadius`: at the activation point; its attacks run the ordinary pair only.
 ///
-/// `Update` (`Skill_AttackRadius::Update` / `SkillSecondary_AttackRadius::Update`, the same code), per frame: an entry
-/// already past its time goes; else the frame's time is added and the radius
-/// is `full x elapsed / time` (full once past it); the foes in it
-/// (`GetTargetsInRadius`) not hit yet form one attack (the hits, the ordinary
-/// secondaries on them), none: nothing. So the far edge is hit
-/// `expansionTime` after the cast.
-///
-/// No other class grows its hits (every `GetRadiusTime` caller and
-/// inline read of `SkillProfile.expansionTime`): `Skill_AttackRadiusLeap` / `Teleport` /
-/// `Skill_AttackBuffRadius` / `Skill_AttackPathCharge` / `Skill_AttackRadius`
-/// pass it only to `CreateVisualEffect` (the ring fx's time);
-/// `SkillSecondary_OnKillAttackRadius::OnEnemyDeath` and
-/// `Skill_OnHitAttackRadius::OnHitActivation` store it but take
-/// the full-radius list at once, and their `Update`s attack every valid entry
-/// on the next frame (the time only paces the debug sphere / list clear);
-/// the lightning radii (`Skill_AttackRadiusLightning` /
-/// `SkillSecondary_AttackRadiusLightning` / `Skill_AttackRadiusLightning2`)
-/// store it beside their bolt, but hit when the bolt finishes or its 5000 ms
-/// cap runs out. The debuff radii never read it.
+/// `Update`, per frame: an entry past its time goes; else the radius is `full × elapsed / time` and the foes in
+/// it not hit yet form one attack. No other class grows its hits (the others pass `expansionTime` only to the
+/// ring fx or pace a debug sphere).
 #[derive(Component)]
 pub struct ExpandingRadius {
     pub cast: Casting,
@@ -1805,32 +1442,29 @@ pub struct ExpandingRadius {
     pub special: bool,
 }
 
-/// The height of the cone's damage frustum (`Skill_AttackSpellCone.frustumHeight`, set to 5.0 by the constructor
-/// and read by nothing else).
+/// `Skill_AttackSpellCone.frustumHeight` (set by the constructor, never changed).
 pub const CONE_HEIGHT: f32 = 5.0;
 
-/// A cone entry (`Skill_AttackSpellCone`'s cone list, its own entity): created by the activation, it starts its
-/// effect after the delay, grows, strikes and retracts (module doc). The one source of the cone's length.
+/// A `Skill_AttackSpellCone` cone list entry, its own entity: it starts its effect after the delay, grows, strikes
+/// and retracts. The one source of the cone's length.
 #[derive(Component, Debug)]
 pub struct ConeFx {
     pub owner: Entity,
     pub skill: String,
     pub level_index: usize,
-    /// The cone effect record (`coneName` / `fxChanges`, resolved by the activation).
+    /// `coneName` / `fxChanges`, resolved by the activation.
     pub record: String,
-    /// The effect entity once emitting (state 2).
+    /// Once emitting (state 2).
     pub effect: Option<Entity>,
     /// Seconds before it starts emitting (state 1).
     pub delay: f32,
-    /// Seconds to the next strike.
     pub tick: f32,
     /// The grown length and the retract (m), `travelSpeed`.
     pub len: f32,
     pub retract: Option<f32>,
     pub speed: f32,
-    /// The last placement (frozen once retracting): the emit point, the aim point (`Skill_AttackSpellCone.aimPoint`),
-    /// the effect's rotation,
-    /// the caster's rotation and `GetMaxConeLength`.
+    /// The last placement (frozen once retracting): the emit point, `aimPoint`, the effect's rotation, the caster's
+    /// rotation and `GetMaxConeLength`.
     pub emit: Vec3,
     pub aim: Vec3,
     pub rotation: Quat,
@@ -1839,8 +1473,7 @@ pub struct ConeFx {
 }
 
 impl ConeFx {
-    /// One retracting update of `dt` s (state 4: `dt` ms × 0.002 × `travelSpeed`): true when the retract reached
-    /// the length (state 5).
+    /// State 4 (`dt` ms × 0.002 × `travelSpeed`): true when the retract reached the length (state 5).
     pub fn retract(&mut self, dt: f32) -> bool {
         let r = self.retract.get_or_insert(0.0);
         *r += dt * 2.0 * self.speed;
@@ -1851,10 +1484,9 @@ impl ConeFx {
         false
     }
 
-    /// The damage frustum (`GetTargets`): from `emit + dir * retract` to `emit + dir * len` along `dir`
-    /// = the normalised aim - emit, `startWidth` wide at the near face and the width the length reached at the far
-    /// one (`startWidth + len / maxRange * (endWidth - startWidth)`), [`CONE_HEIGHT`] high, faced along the
-    /// caster's axes. `foe_box` meets it.
+    /// `GetTargets`: from `emit + dir * retract` to `emit + dir * len`, `startWidth` wide at the near face and
+    /// `startWidth + len / maxRange * (endWidth - startWidth)` at the far one, [`CONE_HEIGHT`] high, faced along
+    /// the caster's axes.
     pub fn strikes(&self, rec: &Record, foe_box: &gd_sim::bounds::Aabb) -> bool {
         let li = self.level_index;
         let (w0, w1, range) = (
@@ -1881,7 +1513,7 @@ impl ConeFx {
         )
     }
 
-    /// One running update (state 2): the length grows `travelSpeed` m/s up to `max` (`GetMaxConeLength`).
+    /// State 2: the length grows `travelSpeed` m/s up to `max` (`GetMaxConeLength`).
     pub fn grow(&mut self, dt: f32, max: f32) {
         if self.len < max {
             self.len += dt * self.speed;
@@ -1892,21 +1524,21 @@ impl ConeFx {
     }
 }
 
-/// The cone's slope: the y of the normalised `aim - emit` (`Update` / `GetMaxConeLength`).
+/// The y of the normalised `aim - emit` (`Update` / `GetMaxConeLength`).
 pub fn cone_slope(emit: Vec3, aim: Vec3) -> f32 {
     (aim - emit).normalize_or_zero().y
 }
 
-/// The cone's rotation: the caster's with its forward turned up to `slope` (module doc, PORT).
+/// The caster's rotation with its forward turned up to `slope`.
 pub fn cone_rotation(caster: Quat, slope: f32) -> Quat {
     caster * Quat::from_rotation_x(-slope.atan())
 }
 
-/// The running channel's base visual on its caster (module doc).
+/// The running channel's base visual on its caster.
 #[derive(Component, Debug)]
 pub struct ChannelFx {
     pub skill: String,
-    /// The effect entity, once created (a cone: its [`ConeFx`] entry).
+    /// Once created (a cone: its [`ConeFx`] entry).
     pub fx: Option<Entity>,
     /// Grow: the step shown.
     pub step: Option<usize>,
@@ -1945,7 +1577,6 @@ pub fn spawn_on(
     f
 }
 
-/// The [`RangedWeapon`] of a weapon record, if it is a ranged one.
 pub fn ranged_weapon(data: &GameData, weapon: &str) -> Option<RangedWeapon> {
     let r = data.db.get(weapon).filter(|r| r.class.contains("Ranged"))?;
     let p = r.str("basicProjectileName")?.to_owned();

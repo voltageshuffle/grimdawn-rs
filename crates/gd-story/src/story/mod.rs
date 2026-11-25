@@ -30,27 +30,21 @@ use std::sync::Arc;
 pub struct Story {
     pub quests: QuestLog,
     pub dialogs: Dialogs,
-    /// The session language's sentence separators for dialog paging
-    /// (`text_<code>/language.def`, `LocalizationManager::GetSentenceSeperators`);
-    /// [`dialog::SENTENCE_SEPARATORS`] until the host sets it
-    /// (`gd_game::story::setup_story` reads the language's def).
+    /// Dialog paging separators (`LocalizationManager::GetSentenceSeperators`);
+    /// [`dialog::SENTENCE_SEPARATORS`] until the host sets it.
     pub separators: String,
     pub player: Player,
     pub game: GameInfo,
     pub entities: Entities,
     pub triggers: Vec<AreaTrigger>,
-    /// The area-trigger candidate snapshot (the player and the living story monsters), rebuilt
-    /// every frame into reused buffers; while it holds unchanged, empty armed triggers skip
-    /// collection ([`AreaTrigger::last_gen`]).
+    /// The area-trigger candidates (the player and the living story monsters), rebuilt every frame;
+    /// while unchanged, empty armed triggers skip collection ([`AreaTrigger::last_gen`]).
     trigger_candidates: Vec<trigger::Candidate>,
-    /// The rebuild scratch, swapped with `trigger_candidates` when the set changes.
     trigger_next: Vec<trigger::Candidate>,
-    /// Bumped whenever the candidate snapshot changes.
+    /// Bumped whenever `trigger_candidates` changes.
     trigger_gen: u64,
-    /// A reused inside buffer passed between collections ([`AreaTrigger::fire`] returns the old one).
     trigger_spare: Vec<u32>,
     pub effects: Vec<Effect>,
-    /// What the host published for the Lua queries (see [`HostFacts`]).
     pub host_facts: HostFacts,
     /// Lua functions queued by actions; run by the script host.
     pub lua_calls: Vec<LuaCall>,
@@ -66,12 +60,11 @@ pub struct Story {
     pub log_lines: Vec<String>,
     /// The Shattered Realm's running state (`Game.GenerateEndlessDungeon`).
     pub endless: state::Endless,
-    /// Builds the generator's view of the world map (the host closes over the map): the fallback
-    /// for a `GenerateEndlessDungeon` before the host pre-built it (`gd_game::endless::sync_endless`
-    /// does at session load).
+    /// Builds the generator's view of the world map: the fallback for a `GenerateEndlessDungeon`
+    /// before the host pre-built it.
     pub endless_provider: Option<Box<dyn Fn() -> crate::endless::EndlessMap>>,
-    /// The session's random stream (`gd_game::story::setup_story` seeds it): `GenerateRandomValue` shuffles, the
-    /// random-speech pick and the Shattered Realm generator. PORT: one stream for the engine's CRT `rand()` draws.
+    /// `GenerateRandomValue` shuffles, the random-speech pick and the Shattered Realm generator.
+    /// PORT: one stream for the engine's CRT `rand()` draws.
     pub rng: gd_rules::Rng,
 }
 
@@ -124,8 +117,8 @@ impl Story {
     /// `srand(FNV-1a of the name followed by the engine value `GameEngine.randomSeed`)`; the index
     /// starts at -1 and each execution steps it to the next entry, wrapping to 0, so no value repeats until the
     /// list is used up. `CheckRandomValue` reads the entry at the index ([`Self::random_values`]; none for an
-    /// empty list). PORT: the list is built on the first execution instead of at quest load (same list: the first
-    /// action's range), and shuffled (Fisher–Yates) with [`Self::rng`].
+    /// empty list). PORT: the list is built on the first execution, not at quest load, and shuffled
+    /// (Fisher–Yates) with [`Self::rng`].
     pub fn random_value(&mut self, name: &str, min: u32, max: u32) {
         if !self.random_lists.contains_key(name) {
             let (lo, hi) = (min as i32 as i64, max as i32 as i64);
@@ -164,19 +157,16 @@ impl Story {
             && !(o.class == ObjClass::Proxy && self.host_facts.proxies_delayed.contains(&o.id))
     }
 
-    /// Advances the area triggers by `dt_ms` against the detectable entities: the player and the living
-    /// story monsters in the world (class `Monster`: a `Monsters` trigger's candidates; their position is
-    /// the host's, mirrored into the coords). The hook calls to make are pushed to `calls`. A trigger that
-    /// collected entities its `shouldTrigger` hook must accept first ([`AreaTrigger::hook`]) is returned
-    /// instead: the script host asks the hook and ends its step with [`Self::fire_trigger`].
+    /// Advances the area triggers by `dt_ms` against the player and the living story monsters. Hook
+    /// calls are pushed to `calls`. A trigger whose `shouldTrigger` hook must accept its entities first
+    /// is returned instead; the script host ends its step with [`Self::fire_trigger`].
     pub fn update_triggers(
         &mut self,
         dt_ms: i32,
         calls: &mut Vec<TriggerCall>,
     ) -> Vec<trigger::Hooked> {
         let mut hooked = Vec::new();
-        // Rebuild the snapshot into the reused scratch; a changed set advances the generation
-        // (positions do not change between a trigger's collection and its step).
+        // A changed set advances the generation.
         self.trigger_next.clear();
         self.trigger_next
             .push((self.player.id, self.player.position));
@@ -207,8 +197,7 @@ impl Story {
             if !t.tick(dt_ms) {
                 continue;
             }
-            // Armed and empty, and the last collection under this same snapshot found nobody:
-            // collecting again would only fire a no-op step (trigger module doc).
+            // Armed and empty, and the last collection under this snapshot found nobody: a no-op step.
             if t.state == 1 && t.inside.is_empty() && t.last_empty && t.last_gen == generation {
                 continue;
             }
@@ -229,8 +218,7 @@ impl Story {
         hooked
     }
 
-    /// Ends the step of a [`trigger::Hooked`] trigger with the entities its hook accepted (a trigger the
-    /// hook removed does nothing).
+    /// Ends the step of a [`trigger::Hooked`] trigger with the entities its hook accepted.
     pub fn fire_trigger(&mut self, id: u32, inside: Vec<u32>, calls: &mut Vec<TriggerCall>) {
         if let Some(t) = self.triggers.iter_mut().find(|t| t.id == id) {
             self.trigger_spare = t.fire(inside, calls);

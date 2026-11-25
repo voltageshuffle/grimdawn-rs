@@ -42,9 +42,7 @@ pub fn collect(
         let Some(world) = world else { return };
         *order = log.defs.repository_order(&world.map.quests);
     }
-    // The log's revision (`QuestLog::revision`), the item counts' sources and the tags generation (a language swap
-    // re-localises the texts): nothing the view shows can change without one of them, so the hash below (a walk of
-    // every task and objective) runs only when one moves.
+    // Nothing the view shows changes without one of these, so the hash below runs only when one moves.
     let key = (
         log.revision,
         inv.as_ref().map_or(0, |i| i.version),
@@ -57,9 +55,8 @@ pub fn collect(
     }
     *inputs = Some(key);
     let d = story.difficulty();
-    // The view is rebuilt (many strings) only when what it shows changed: a hash of the tags generation and the log's
-    // task / objective states and counters, the only inputs besides the fixed texts. The counts (`objective_progress`,
-    // an inventory and stash scan per item objective) only of the quests the view lists: a task in progress or done.
+    // The view is rebuilt only when this hash changes. The counts only of the quests the view lists: a task in
+    // progress or done.
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (d, fonts.generation).hash(&mut h);
     for &qi in order.iter() {

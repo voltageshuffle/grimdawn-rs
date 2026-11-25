@@ -56,7 +56,7 @@ pub enum Turned {
     Reached(f32),
 }
 
-/// One tick of `Character::RotateTowards` (module doc) for a character whose facing is `yaw` (radians from +Z
+/// One tick of `Character::RotateTowards` for a character whose facing is `yaw` (radians from +Z
 /// toward +X, the facing `(sin yaw, 0, cos yaw)`), turning toward `dir` (any length) over `dt_ms`.
 pub fn rotate_towards(
     yaw: f32,

@@ -20,7 +20,6 @@ fn pick_list_bind_use_and_save() {
     };
     let p = g.spawn_player();
     g.steps(2);
-    // A learned skill.
     g.get_mut::<Loadout>(p)
         .skills
         .skills

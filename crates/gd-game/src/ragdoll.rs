@@ -2,36 +2,27 @@
 //!
 //! The motion: every attack that reaches the damage step of `CombatManager::TakeAttack` (a hit, its
 //! multiplier above 0, blocked or not) stores its `PhysicsMotion` on the defender (`Character::SetRagdollData`;
-//! not while the defender is knocked down, action state 9), so a death by a later damage over time
-//! throws the body as the last hit did ([`RagdollMotion`], [`store_motion`]):
-//! - its direction, effect and amplification are the attack skill's (`Skill::InitRagDollData`,
+//! not while knocked down), so a death by a later damage over time throws the body as the last hit did
+//! ([`RagdollMotion`], [`store_motion`]):
+//! - direction, effect and amplification are the attack skill's (`Skill::InitRagDollData`,
 //!   [`attack_motion`]): `ragDollDirection` Push (also when unset) from the attack's origin to the defender, Pull
 //!   the other way, None nothing; plus `ragDollPush` Left / Right (the attacker's ±x axis) and
-//!   `ragDollElevation` Upward / Downward (±3 up), normalised (`PhysicsUtil::GetDirectionVec` / `GetPushVec` /
-//!   `GetElevationVec`, Engine.dll). The effect is `ragDollEffect`, else the
-//!   `RagDollData` `effectType` of the clip the attacker plays (`Skill::CaptureAnimationRagDollInfo`;
-//!   `PhysicsUtil::GetEffectEnum`, Engine.dll: Crumple, Random, anything else TakeHit,
-//!   [`RagdollEffect`]). The amplification is the level's `ragDollAmplification`
-//!   (`SkillProfile::GetRagDollAmplification`), × (clamp(0.5 − d / r, 0, 0.5) + 0.5) for a skill
-//!   with a `projectileExplosionRadius` r, d from the attack's origin. A plain swing is the default weapon
-//!   attack's (`gd_game_core::casting::DEFAULT_ATTACK`); a retaliation or reflection carries the `ParametersCombat`
-//!   default (TakeHit straight up, amplification 1; `ParametersCombat::ParametersCombat`).
-//! - its strength is `combatformulas.dbr` `physicsStrengthEquation` of the attack's absolute `damage` and the
-//!   defender's `maxLife`, clamped to `physicsStrengthMin` .. `physicsStrengthMax` (stock 7 .. 15,
-//!   [`physics_strength`]).
+//!   `ragDollElevation` Upward / Downward (±3 up), normalised. The effect is `ragDollEffect`, else the
+//!   `RagDollData` `effectType` of the clip the attacker plays. The amplification is the level's
+//!   `ragDollAmplification`, × (clamp(0.5 − d / r, 0, 0.5) + 0.5) for a skill with a
+//!   `projectileExplosionRadius` r. A plain swing is the default weapon attack's; a retaliation or
+//!   reflection carries the `ParametersCombat` default.
+//! - strength is `physicsStrengthEquation` of the attack's absolute `damage` and the defender's `maxLife`,
+//!   clamped to `physicsStrengthMin` .. `physicsStrengthMax` ([`physics_strength`]).
 //! - the defender's record overrides: `overrideRagdollBehavior` the effect, a non-zero `overrideRagdollSpeed` the
-//!   strength ([`RagdollMotion::overridden`]).
+//!   strength.
 //!
-//! The death (`DefaultDeathHandler::Execute`, [`death_ragdolls`]): unless it gibs (overkill, a
-//! `gibEffect` and the `gore` option), a character with `ragdollPhysics` (default on), in the render preload
-//! frustum (`Entity::InRenderPreLoadFrustum`, [`RagdollView`]), whose mesh has ragdoll bodies
-//! (`Actor::HasRigidBodyData`, the MIF's `RigidBodyDescription` blocks), without `doLateCrumple`, while fewer than
-//! [`MAX_ACTIVE`] ragdolls run (`GameEngine::AllowRagdolls`; `Character::SetPhysicsSimulation`
-//! counts every simulation 3, knockdowns too) is thrown ([`Ragdoll`]). A `doLateCrumple` one is
-//! thrown at its death clip's `ragDoll` callback instead (`DefaultDeathHandler::AnimationCallback`:
-//! Crumple, straight up at strength 1, or the record's overrides; no cap, [`late_crumples`]). Whatever happens, a
-//! body dying outside the preload frustum is made invisible, the player's excepted (`SetVisibility(false)`,
-//! [`gd_game_core::visuals::Hidden`]).
+//! The death (`DefaultDeathHandler::Execute`, [`death_ragdolls`]): unless it gibs, a character with
+//! `ragdollPhysics` (default on), in the render preload frustum ([`RagdollView`]), whose mesh has ragdoll
+//! bodies (`Actor::HasRigidBodyData`), without `doLateCrumple`, while fewer than [`MAX_ACTIVE`] ragdolls run
+//! (knockdowns count) is thrown ([`Ragdoll`]). A `doLateCrumple` one is thrown at its death clip's `ragDoll`
+//! callback instead (Crumple, straight up at strength 1, or the record's overrides; no cap,
+//! [`late_crumples`]). A body dying outside the preload frustum is made invisible, the player's excepted.
 //!
 //! The throw (`Character::PhysicsSetup`) starts every body of the mesh with
 //! - TakeHit: the direction × s with s = clamp(max(amplification, 1) × strength, 3, 12), plus 0.33 s up, plus a
@@ -39,37 +30,26 @@
 //! - Random: ±5 on x and z, 3 up;
 //! - Crumple: the character's motion × 0.8, at most 4.5 m/s;
 //!
-//! and a living one (a knockdown) thrown TakeHit first checks its flight on the path mesh: the strength drops to
-//! the share of the straight move that is left when the move stops more than 1 m short, to 0 off the mesh
-//! ([`reach`]). The simulation ends (`Character::PhysicsUpdate`, `DefaultDeathHandler::Update`)
-//! when the body rests, is hidden, after the 10 s countdown ([`MAX_SECONDS`]) or the record's
-//! `physicsTimeLimit` (the player's 2.5 s). A living one stays on the path mesh (`FindStraightMovePoint` each
-//! update, [`slide_stays`]). Both straight moves are the nav's ([`crate::nav::straight_move_point`]): Detour's
-//! raycast over the tile cache's mesh, so a closed door or another dynamic obstacle stops the body as it stops a
-//! walk. The world is the loot's (`gd_sim::drop_body`: 1/60 s steps, gravity 14, restitution 0 so nothing
-//! bounces, a contact's friction the product, here the bodies' mass-weighted `friction` × the world's 1).
-//! A body's first ground contact plays the character's `bodyFallSound` when its mesh flags it `playFallSound`
-//! (`Character::CollisionCallback` → `PlayBodyFallSound`; no stock mesh sets it, so
-//! stock ragdolls land silently), and a dying body's contacts (action state 18, the die action) drop its
-//! `ragdollDecal` at most once a second, not on water ([`BodyDecal`]).
+//! and a living one (a knockdown) thrown TakeHit first checks its flight on the path mesh ([`reach`]). The
+//! simulation ends when the body rests, is hidden, after [`MAX_SECONDS`] or the record's `physicsTimeLimit`.
+//! A living one stays on the path mesh ([`slide_stays`]); both checks use
+//! [`crate::nav::straight_move_point`], so a closed door stops the body as it stops a walk. The world is
+//! `gd_sim::drop_body`'s (restitution 0). The first ground contact plays `bodyFallSound` when the mesh flags
+//! `playFallSound` (no stock mesh does), and a dying body's contacts drop its `ragdollDecal` at most once a
+//! second, not on water ([`BodyDecal`]).
 //!
-//! PORT (a lightweight ragdoll): the bodies move as one: its velocity is their mass-weighted mean, its yaw rate
-//! the vertical angular momentum of their spread over their moment, and the pose stays the clip's (the death
-//! clip, or the get-up clip's first frame while knocked down): the body is thrown, slides and lies down the way
-//! its clip falls instead of going limp, and the clip's callbacks (death sounds, `dissolve`) fire as without a
-//! ragdoll. The attack's origin is the attacker's position (the hit messages carry no projectile or radius
-//! point). Crumple takes the root motion, not the limbs' own. The water contact plays no splash.
+//! PORT (a lightweight ragdoll): the bodies move as one: velocity their mass-weighted mean, yaw rate the
+//! vertical angular momentum of their spread over their moment, and the pose stays the clip's (the death
+//! clip, or the get-up clip's first frame while knocked down), so the clip's callbacks fire as without a
+//! ragdoll. The attack's origin is the attacker's position. Crumple takes the root motion, not the limbs'
+//! own. The water contact plays no splash.
 //!
-//! Knockdown (`TakeKnockdownAction::Execute` → `Character::ExecuteKnockdown`): when
-//! the knockdown control starts ([`KnockedDown`], `crate::afflictions`) the skill stops, the body lies down
-//! (`CharState::KnockedDown`: the get-up clip's first frame; the engine stops the animations and the ragdoll
-//! takes the pose) and is thrown with its stored motion (no cap, no frustum test, [`knock_downs`]), out of the
-//! crowd while down (`NavManager::RemoveObject`, back at `ReleaseKnockdown`); once the control ended
-//! and the throw is over it gets up (`ControllerMonsterStateGettingUp::OnUpdate`: `GetUpFaceDown`
-//! when it fell face down, else `GetUpFaceUp`, `CharState::GettingUp`, [`get_up`]). PORT: the engine reads the
-//! face off the root bone when the simulation ends (`Character::PhysicsPost` `SetFellFaceDown`); the
-//! port's body stays upright, so the throw decides it: pushed along its facing it falls on its face, against it
-//! on its back, either way with no push ([`falls_face_down`]).
+//! Knockdown (`TakeKnockdownAction::Execute` → `Character::ExecuteKnockdown`): when the knockdown control
+//! starts ([`KnockedDown`]) the skill stops, the body lies down and is thrown with its stored motion (no cap,
+//! no frustum test, [`knock_downs`]), out of the crowd while down; once the control ended and the throw is
+//! over it gets up (`GetUpFaceDown` / `GetUpFaceUp`, [`get_up`]). PORT: the engine reads the face off the
+//! root bone when the simulation ends; the port's body stays upright, so the throw decides it
+//! ([`falls_face_down`]).
 use crate::collision::WorldCollision;
 use crate::combat::{AttackMade, CounterHit, Overkill};
 use crate::nav::Nav;
@@ -89,7 +69,7 @@ impl Plugin for RagdollPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RagdollView>()
             .add_message::<BodyDecal>()
-            // The hits' motions before the afflictions apply their knockdowns (the knocking hit's own is kept).
+            // Before the afflictions apply their knockdowns (the knocking hit's motion is kept).
             .add_systems(
                 Update,
                 store_motion
@@ -98,7 +78,7 @@ impl Plugin for RagdollPlugin {
                     .after(CombatSet)
                     .before(AfflictionStage::Tick),
             )
-            // The throws start the frame of the death / knockdown and lie the body down before the drive.
+            // The throws lie the body down before the drive.
             .add_systems(
                 Update,
                 (death_ragdolls, late_crumples, knock_downs, fly, get_up)
@@ -113,16 +93,14 @@ impl Plugin for RagdollPlugin {
 
 /// `GameEngine::AllowRagdolls`: a death is thrown only while fewer ragdolls run.
 pub const MAX_ACTIVE: usize = 5;
-/// `Character::PhysicsSetup` arms the 10000 ms countdown (`Character.physicsCountdown`) that ends the simulation at 0
-/// (`Character::PhysicsUpdate`).
+/// `Character::PhysicsSetup`: the 10000 ms countdown that ends the simulation.
 pub const MAX_SECONDS: f32 = 10.0;
 /// PORT: how far (m) out of the camera's frustum a character still counts as in the preload frustum
-/// (`Entity::InRenderPreLoadFrustum`: the engine's preload frustum is wider than the view; its size was not
-/// decompiled).
+/// (`Entity::InRenderPreLoadFrustum`; its size was not decompiled).
 const PRELOAD_MARGIN: f32 = 10.0;
 /// `Character::PhysicsSetup`: a living TakeHit throw's flight length per (amplification × strength)².
 const PREFLIGHT: f32 = 0.040_488_73;
-/// PORT: a body on the ground slower than this (m/s) rests (the gibs' rest).
+/// PORT: a body on the ground slower than this (m/s) rests.
 const REST_SPEED: f32 = 0.3;
 /// PORT: the yaw rate (rad/s) the bodies' spread may give the one body at most, and each body's own moment
 /// (m² per kg) added to the spread's.
@@ -132,22 +110,20 @@ const OWN_MOMENT: f32 = 0.05;
 const BODY_MIDDLE: f32 = 0.5;
 /// PORT: the lever (m) of a sliding body's yaw friction: the spin slows by friction × gravity / it.
 const SPIN_LEVER: f32 = 0.5;
-/// The water's `PhysicsSurface` (`gd_sim::surface`): no fall sound (the engine plays a splash), no decal.
+/// Water: no fall sound (the engine plays a splash), no decal.
 const WATER: u32 = gd_sim::surface::Surface::Water as u32;
 
-/// The ragdoll steps: what reads a hit's stored motion orders after `Motion` (the physics props' toss).
+/// What reads a hit's stored motion orders after `Motion`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RagdollStage {
-    /// The frame's hits store their motion ([`RagdollMotion`]).
     Motion,
-    /// The throws start, fly and end.
     Throw,
 }
 
-/// The ragdoll motion type (`PhysicsUtil::GetEffectEnum`, Engine.dll): how the bodies start.
+/// `PhysicsUtil::GetEffectEnum` (Engine.dll).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RagdollEffect {
-    /// 0: the bodies keep the clip's motion.
+    /// 0: the bodies keep the character's motion.
     Crumple,
     /// 1: thrown along the motion's direction.
     TakeHit,
@@ -156,7 +132,7 @@ pub enum RagdollEffect {
 }
 
 impl RagdollEffect {
-    /// `GetEffectEnum`: "Crumple" 0, "Random" 2, anything else (empty too) 1.
+    /// "Crumple" 0, "Random" 2, anything else (empty too) 1.
     pub fn parse(s: &str) -> Self {
         match s {
             "Crumple" => RagdollEffect::Crumple,
@@ -166,22 +142,21 @@ impl RagdollEffect {
     }
 }
 
-/// The motion of the last hit on a character or prop (module doc, `Character::SetRagdollData`: the
-/// `PhysicsMotion` at `Character.ragdollMotion`).
+/// The motion of the last hit on a character or prop (`Character.ragdollMotion`).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct RagdollMotion {
     pub effect: RagdollEffect,
     /// The unit direction (zero: none).
     pub dir: Vec3,
-    /// `ParametersCombat.physicsStrength`: the physics strength ([`physics_strength`]).
+    /// `ParametersCombat.physicsStrength`.
     pub strength: f32,
-    /// `ParametersCombat.ragDollAmplification`: the skill's `ragDollAmplification`.
+    /// `ParametersCombat.ragDollAmplification`.
     pub amplification: f32,
 }
 
 impl Default for RagdollMotion {
-    /// `ParametersCombat::ParametersCombat`: TakeHit straight up, strength 1, amplification 1 — what
-    /// an attack no skill set up carries (retaliation, reflection).
+    /// `ParametersCombat::ParametersCombat`: TakeHit straight up, strength 1, amplification 1 (retaliation,
+    /// reflection).
     fn default() -> Self {
         Self {
             effect: RagdollEffect::TakeHit,
@@ -208,45 +183,40 @@ impl RagdollMotion {
     }
 }
 
-/// A running ragdoll, physics simulation 3 (module doc): the thrown body, moved by [`fly`] until it ends.
+/// A running ragdoll (physics simulation 3), moved by [`fly`] until it ends.
 #[derive(Component, Clone, Debug)]
 pub struct Ragdoll {
-    /// The body's velocity (m/s).
     pub vel: Vec3,
-    /// Its yaw rate (rad/s).
+    /// Yaw rate (rad/s).
     pub spin: f32,
-    /// Its contacts' friction (the bodies' mass-weighted `friction` × the world's 1, at most 10).
+    /// The bodies' mass-weighted `friction` (at most 10).
     pub friction: f32,
-    /// A body of the mesh plays the fall sound (`playFallSound`), on the first ground contact ([`Self::fell`]).
+    /// `playFallSound`, on the first ground contact ([`Self::fell`]).
     pub fall_sound: bool,
     pub fell: bool,
-    /// A knockdown (`Character::IsAlive`): kept on the path mesh. A death ends it.
+    /// A knockdown: kept on the path mesh. A death ends it.
     pub alive: bool,
-    /// Seconds of simulation left ([`MAX_SECONDS`], `physicsTimeLimit`).
     pub left: f32,
-    /// The record's `ragdollDecal`, and the seconds until a contact may drop it again.
+    /// `ragdollDecal`, and the seconds until a contact may drop it again.
     pub decal: Option<String>,
     pub cooldown: f32,
     clock: Clock,
 }
 
-/// Knocked down (module doc, `Character::ExecuteKnockdown`): on while the knockdown control runs
-/// (`crate::afflictions`), the body lying out of the crowd; `up` once the control ended: it gets up when its
-/// throw is over ([`get_up`]).
+/// Knocked down (`Character::ExecuteKnockdown`): on while the knockdown control runs; `up` once the control
+/// ended: it gets up when its throw is over.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct KnockedDown {
     pub up: bool,
 }
 
-/// The camera's view as the ragdoll gate's preload frustum (`Entity::InRenderPreLoadFrustum`): its planes
-/// (`normal · p + d > 0` inside), written each frame by the presentation (grimdawn `ragdoll.rs`). `None` without a
-/// camera (headless): no death is thrown, none is hidden for being out of view.
+/// The camera's frustum planes (`normal · p + d > 0` inside) as the preload frustum, written each frame by
+/// the presentation. `None` without a camera: no death is thrown, none is hidden.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct RagdollView(pub Option<[Vec4; 6]>);
 
 impl RagdollView {
-    /// Whether a character standing at `at` is in the preload frustum ([`PRELOAD_MARGIN`]); `None` without a
-    /// camera.
+    /// Whether a character at `at` is in the preload frustum; `None` without a camera.
     pub fn sees(&self, at: Vec3) -> Option<bool> {
         let planes = self.0.as_ref()?;
         let c = (at + Vec3::Y).extend(1.0);
@@ -254,9 +224,8 @@ impl RagdollView {
     }
 }
 
-/// A dying body's ground contact drops its `ragdollDecal` (module doc; `Character::CollisionCallback`:
-/// the decal's Y the contact normal, its yaw random, flag 0x40000 so it grows in). The presentation
-/// places it (grimdawn `ragdoll.rs`).
+/// A dying body's ground contact drops its `ragdollDecal` (`Character::CollisionCallback`: Y the contact
+/// normal, yaw random).
 #[derive(Message, Clone, Debug)]
 pub struct BodyDecal {
     pub record: String,
@@ -264,9 +233,8 @@ pub struct BodyDecal {
     pub rotation: Quat,
 }
 
-/// `CombatManager::TakeAttack` (module doc): the motion's strength, `physicsStrengthEquation` of the
-/// attack's absolute `damage` and the defender's `maxLife`, clamped to `physicsStrengthMin` ..
-/// `physicsStrengthMax` (no equation: 0 before the clamp).
+/// `CombatManager::TakeAttack`: `physicsStrengthEquation` of the attack's absolute `damage` and the
+/// defender's `maxLife`, clamped (no equation: 0 before the clamp).
 pub fn physics_strength(f: &CombatFormulas, damage: f32, max_life: f32) -> f32 {
     let v = f.physics_strength.as_ref().map_or(0.0, |e| {
         e.eval(&|n: &str| {
@@ -282,9 +250,9 @@ pub fn physics_strength(f: &CombatFormulas, damage: f32, max_life: f32) -> f32 {
     v.max(f.physics_strength_min).min(f.physics_strength_max)
 }
 
-/// `Skill::InitRagDollData` (module doc): the motion an attack of `skill` (its record and level
-/// index; `None`: the default weapon attack) made from `from` gives a defender at `to`, before its strength.
-/// `clip_effect`: the `RagDollData` `effectType` of the clip the attacker plays.
+/// `Skill::InitRagDollData`: the motion an attack of `skill` (record and level index; `None`: the default
+/// weapon attack) from `from` gives a defender at `to`, before its strength. `clip_effect`: the
+/// `RagDollData` `effectType` of the attacker's clip.
 pub fn attack_motion(
     data: &GameData,
     skill: Option<(&Record, usize)>,
@@ -335,10 +303,9 @@ pub fn attack_motion(
     }
 }
 
-/// The floor a body moving `prev → p` lands on, and its normal: the first physics surface below it (terrain or a
-/// scenery physics mesh, `WorldCollision::floor_below`), as the engine's rigid body meets the Bullet world; from
-/// the higher of the two heights so a fast drop does not pass through a floor. Without one (no collision loaded
-/// there) the nav ground, else nothing within 100 m. The gibs, the thrown props and the ragdolls land on it.
+/// The floor a body moving `prev → p` lands on, and its normal: the first physics surface below it, from the
+/// higher of the two heights so a fast drop does not pass through; else the nav ground, else nothing within
+/// 100 m.
 pub fn floor(coll: &WorldCollision, nav: &Nav, prev: Vec3, p: Vec3) -> (f32, Vec3) {
     let top = Vec3::new(p.x, prev.y.max(p.y) + 0.2, p.z);
     if let Some((hit, n)) = coll.floor_below(top, 100.0) {
@@ -348,10 +315,9 @@ pub fn floor(coll: &WorldCollision, nav: &Nav, prev: Vec3, p: Vec3) -> (f32, Vec
     (y, Vec3::Y)
 }
 
-/// `Character::PhysicsSetup`'s straight-move check of a living TakeHit throw (module doc): the share of the
-/// strength that keeps the predicted flight `offset` from `from` on the path mesh: all of it when the straight
-/// move ([`crate::nav::straight_move_point`], a closed door stops it) ends within 1 m of the flight's end, else
-/// the share of the way it got, none from off the mesh.
+/// `Character::PhysicsSetup`'s check of a living TakeHit throw: the share of the strength that keeps the
+/// flight `offset` from `from` on the path mesh: all of it when the straight move ends within 1 m of the
+/// flight's end, else the share of the way it got, none from off the mesh.
 fn reach(nav: &Nav, from: Vec3, offset: Vec3) -> f32 {
     if nav.0.locate(from.to_array()).is_none() {
         return 0.0;
@@ -366,9 +332,8 @@ fn reach(nav: &Nav, from: Vec3, offset: Vec3) -> f32 {
     if full - got > 1.0 { got / full } else { 1.0 }
 }
 
-/// `Character::PhysicsUpdate`'s straight move of a living body's slide from `pos` to `next` (module doc):
-/// whether [`crate::nav::straight_move_point`] from the path mesh's ground under `pos` gets all the way (off the
-/// mesh, a mesh edge or a dynamic obstacle such as a closed door stops it).
+/// `Character::PhysicsUpdate`'s straight move of a living body's slide: whether it gets all the way from the
+/// path mesh's ground under `pos` to `next`.
 fn slide_stays(nav: &Nav, pos: Vec3, next: Vec3) -> bool {
     let Some(g) = nav.0.ground([pos.x, pos.y + 0.5, pos.z]) else {
         return false;
@@ -378,9 +343,8 @@ fn slide_stays(nav: &Nav, pos: Vec3, next: Vec3) -> bool {
     (end - to).with_y(0.0).length_squared() < 1e-6
 }
 
-/// `Character::PhysicsSetup` (module doc): the bodies' start velocities by the motion's effect, made one
-/// (PORT): their mass-weighted mean, and the yaw rate their spread gives it. `bodies`: each body's world centre
-/// and mass; `drift`: the character's motion (Crumple).
+/// `Character::PhysicsSetup`: the bodies' start velocities by the effect, made one (PORT). `bodies`: each
+/// body's world centre and mass; `drift`: the character's motion (Crumple).
 fn initial_velocity(motion: &RagdollMotion, bodies: &[(Vec3, f32)], drift: Vec3) -> (Vec3, f32) {
     let u = |a: f32| (gd_game_core::rng::f32() * 2.0 - 1.0) * a;
     let crumple = (drift * 0.8).clamp_length_max(4.5);
@@ -413,8 +377,8 @@ fn initial_velocity(motion: &RagdollMotion, bodies: &[(Vec3, f32)], drift: Vec3)
     (vel / mass, (turn / moment).clamp(-MAX_SPIN, MAX_SPIN))
 }
 
-/// PORT (module doc): a knocked-down body falls on its face when the throw pushes it along its facing `facing`,
-/// on its back against it, either way without a push.
+/// PORT: a knocked-down body falls on its face when pushed along its facing, on its back against it,
+/// either way without a push.
 fn falls_face_down(motion: &RagdollMotion, facing: Vec3, drift: Vec3) -> bool {
     let push = match motion.effect {
         RagdollEffect::TakeHit => motion.dir,
@@ -429,7 +393,6 @@ fn falls_face_down(motion: &RagdollMotion, facing: Vec3, drift: Vec3) -> bool {
     }
 }
 
-/// Takes `by` (m/s) off the horizontal speed, down to none.
 fn slow(v: &mut Vec3, by: f32) {
     let s = v.with_y(0.0).length();
     if s <= by {
@@ -443,9 +406,8 @@ fn slow(v: &mut Vec3, by: f32) {
 }
 
 impl Ragdoll {
-    /// The body of `ch` standing at `tf` thrown with `motion` (module doc, `Character::PhysicsSetup`);
-    /// `alive`: a knockdown. `None` when its mesh has no ragdoll bodies
-    /// (`Actor::HasRigidBodyData`). The bodies lie where the pose this frame puts them.
+    /// `Character::PhysicsSetup`; `alive`: a knockdown. `None` when the mesh has no ragdoll bodies. The
+    /// bodies lie where this frame's pose puts them.
     pub fn throw(
         data: &GameData,
         nav: &Nav,
@@ -500,10 +462,9 @@ impl Ragdoll {
         })
     }
 
-    /// One world step of the body standing at `pos` (module doc): gravity; a wall (or, alive, the path mesh's
-    /// edge or a dynamic obstacle, [`slide_stays`]) stops its slide; the floor stops its fall (the world's
-    /// restitution is 0) and its friction takes the slide, at the contact as much as the fall it stopped. Returns
-    /// the floor met (height, normal).
+    /// One world step: gravity; a wall (or, alive, the path mesh's edge) stops the slide; the floor stops the
+    /// fall and its friction takes the slide, at the contact as much as the fall it stopped. Returns the
+    /// floor met (height, normal).
     fn step(&mut self, coll: &WorldCollision, nav: &Nav, pos: &mut Vec3) -> Option<(f32, Vec3)> {
         self.vel.y -= GRAVITY * STEP;
         let mut next = *pos + self.vel * STEP;
@@ -539,8 +500,7 @@ impl Ragdoll {
     }
 }
 
-/// Every hit stores its motion on the defender (module doc, `Character::SetRagdollData`; a
-/// physics prop keeps the direction too, `PhysicsDecoration::TakeAttack`).
+/// `Character::SetRagdollData` (a physics prop keeps the direction too, `PhysicsDecoration::TakeAttack`).
 #[allow(clippy::too_many_arguments)]
 fn store_motion(
     mut commands: Commands,
@@ -558,7 +518,7 @@ fn store_motion(
     )>,
     places: Query<&Transform, With<Combatant>>,
 ) {
-    // The level each skill hit was used at (`SkillHit::level_index`: the hit messages name the skill alone).
+    // The level each skill hit was used at (the hit messages name the skill alone).
     let levels: Vec<(Entity, Entity, String, usize)> = skill_hits
         .read()
         .map(|h| (h.attacker, h.target, h.skill.clone(), h.level_index))
@@ -598,7 +558,6 @@ fn store_motion(
         let Ok((cb, ch, stored, knocked)) = targets.get_mut(target) else {
             continue;
         };
-        // Down already: it keeps the motion that knocked it down.
         if knocked {
             continue;
         }
@@ -616,8 +575,7 @@ fn store_motion(
     }
 }
 
-/// `DefaultDeathHandler::Execute` (module doc): the dying characters thrown, the ones dying out of
-/// view hidden.
+/// `DefaultDeathHandler::Execute`.
 #[allow(clippy::too_many_arguments)]
 fn death_ragdolls(
     mut commands: Commands,
@@ -647,11 +605,10 @@ fn death_ragdolls(
         if sees == Some(false) && !is_player {
             commands.entity(e).try_insert(gd_game_core::visuals::Hidden);
         }
-        // The gib branch (grimdawn `monsters::gib_deaths`).
         if overkill && gore && rec.and_then(|r| r.str("gibEffect")).is_some() {
             continue;
         }
-        // Thrown already (knocked down): it goes on (`SetPhysicsSimulation(3)` again), dead now.
+        // Knocked down: it goes on, dead now.
         if let Some(mut r) = ragdoll {
             r.alive = false;
             continue;
@@ -669,8 +626,7 @@ fn death_ragdolls(
     }
 }
 
-/// `DefaultDeathHandler::AnimationCallback` (module doc): a `doLateCrumple` body is thrown at its
-/// death clip's `ragDoll` callback.
+/// `DefaultDeathHandler::AnimationCallback`.
 fn late_crumples(
     mut commands: Commands,
     data: Res<GameData>,
@@ -689,7 +645,7 @@ fn late_crumples(
         let Some(rec) = data.db.get(&ch.record) else {
             continue;
         };
-        // `Character::ShouldDoRagDoll`: `ragdollPhysics`, in the preload frustum, rigid bodies.
+        // `Character::ShouldDoRagDoll`.
         if running
             || !rec.bool("doLateCrumple")
             || rec.i32("ragdollPhysics") == Some(0)
@@ -710,8 +666,7 @@ fn late_crumples(
     }
 }
 
-/// The knockdown starts (module doc, `Character::ExecuteKnockdown`): the skill stops, the body lies
-/// down the way the throw pushes it, and is thrown.
+/// `Character::ExecuteKnockdown`.
 fn knock_downs(
     mut commands: Commands,
     data: Res<GameData>,
@@ -739,7 +694,6 @@ fn knock_downs(
             ch.root_velocity,
         );
         ch.knock_down(face_down);
-        // `TakeKnockdownAction::Execute`: `SkillManager::StopCurrentSkill`.
         commands
             .entity(e)
             .try_remove::<gd_game_core::casting::Casting>();
@@ -752,7 +706,7 @@ fn knock_downs(
     }
 }
 
-/// The thrown bodies fly, land and slide (module doc); the simulation ends at rest, hidden, or out of time.
+/// The simulation ends at rest, hidden, or out of time.
 #[allow(clippy::too_many_arguments)]
 fn fly(
     mut commands: Commands,
@@ -797,7 +751,7 @@ fn fly(
         let Some((ground, normal)) = touched else {
             continue;
         };
-        // `Character::CollisionCallback` (module doc).
+        // `Character::CollisionCallback`.
         let surface = coll.surface_below(pos);
         if r.fall_sound && !r.fell && surface != WATER {
             let at = ch
@@ -815,7 +769,7 @@ fn fly(
             }
         }
         r.fell = true;
-        // Not on water nor surface 9 (`(surface − 7) & ~2`).
+        // Not on water nor surface 9.
         if !r.alive
             && r.cooldown <= 0.0
             && !matches!(surface, 7 | 9)
@@ -835,9 +789,8 @@ fn fly(
     }
 }
 
-/// The knockdown control ended and the throw is over: the body gets up (module doc,
-/// `ControllerMonsterStateKnockedDown::EndKnockdown` → "GettingUp"); another state that took over
-/// (a stun, a freeze) keeps it.
+/// `ControllerMonsterStateKnockedDown::EndKnockdown` → "GettingUp"; another state that took over (a stun,
+/// a freeze) keeps it.
 fn get_up(
     mut commands: Commands,
     mut down: Query<(Entity, &KnockedDown, &mut Character), (Without<Ragdoll>, Without<Dead>)>,

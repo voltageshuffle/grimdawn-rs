@@ -1,26 +1,21 @@
-//! The player's inventory and equipment for this session (the systems named here are `gd_game::inventory`'s).
+//! The player's inventory and equipment for this session.
 //!
-//! Loaded from the save (or the starting gear), changed by pickups and the character window, written back by
-//! `gd_game::save` (equipment, both weapon sets, the bags, [`Inventory::held`], [`Inventory::unplaced`]). Grid
-//! rules: `gd_formats::inventory` (32-px cells, footprint = bitmap size, column-major auto placement). Two
-//! weapon sets: the active one in `equipped`, the other in `other_weapons` (`gd_game::weapon_sets`). The worn
-//! equipment is the player's `Loadout::items`: `sync_equipment` copies every change there; the game rebuilds
-//! the body on [`EquipmentChanged`].
+//! Loaded from the save (or the starting gear), written back by `gd_game::save`. Grid rules:
+//! `gd_formats::inventory`. The active weapon set is in `equipped`, the other in `other_weapons`. `sync_equipment`
+//! copies the worn equipment to the player's `Loadout::items`; the game rebuilds the body on [`EquipmentChanged`].
 //!
 //! Components, augments and single-piece transmuters (`CreateSecondaryCursorHandler`): a right click
 //! selects one (it stays in its cell), the next click ([`ApplyRequest::Click`]) on a bag, stash or worn item
 //! uses it there ([`Inventory::apply_click`], rules [`Inventory::apply_check`]); dragging one onto an item only
-//! swaps them. PORT: while the transfer stash is blocked (`crate::stash` module doc) a component / augment
-//! from elsewhere is not used on a transfer-stash item (it would be lost with the unsaved store):
-//! `apply_requests` refuses that click like a refused transfer, and the mode stays.
+//! swaps them. PORT: while the transfer stash is blocked, a component / augment from elsewhere is not used on a
+//! transfer-stash item: `apply_requests` refuses the click and the mode stays.
 //!
 //! Detached items (`EquipmentCtrl::AttributesHaveChanged` / `Sift`, every 250 ms): a worn item whose
 //! requirements fail (level and attributes with the gear's reductions, `gd_sim::items::req_reduction`) or an
 //! off-hand one-hander whose dual-wield bit is gone stays in its slot (drawn) but gives no stats, skills, set
 //! count or components (`sift_equipment`; the save's `attached` flag).
 //!
-//! Giving an item ([`Inventory::give`], `ControllerPlayer::GiveItemToPlayer`; nothing takes it:
-//! `gd_game::loot::give_item`):
+//! Giving an item ([`Inventory::give`], `ControllerPlayer::GiveItemToPlayer`):
 //! 1. [`Inventory::auto_insert`]: an EMPTY slot of its class with requirements met, in [`AUTO_INSERT_ORDER`],
 //!    then the ACTIVE set's main hand, else off hand (strict hand rule). Nothing is swapped.
 //! 2. [`Inventory::add_to_bags`]: OneShot use, (ground pickups) an incomplete component joins a partial, the
@@ -41,8 +36,7 @@
 //! [`Inventory::cancel_held`]. Right press on a worn item with a merchant open sells it
 //! (`gd_game::trade::SellEquipped`).
 //!
-//! Item-slot windows give items back through [`InvRequest::Stow`] = `gd_game::loot::give_item`; never lost.
-//! Stacks: `crate::stack`.
+//! Item-slot windows give items back through [`InvRequest::Stow`].
 use crate::stash::Stash;
 use bevy::prelude::*;
 use gd_formats::collections::HashMap;
@@ -54,28 +48,21 @@ use gd_formats::save::item::Item;
 use gd_sim::items::{ItemDb, ResolvedItem, resolve};
 use std::sync::Arc;
 
-/// The inventory's systems: the game's inventory input runs between
-/// `init_inventory` and `sync_equipment` (`trade.rs` runs after the set).
+/// The inventory's systems: the game's inventory input runs between `init_inventory` and `sync_equipment`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InventorySet;
 
-/// The UI's answer in the apply mode (enchant / component use, `Inventory::applying`): the window
-/// sends it, `apply_requests` applies it.
+/// The UI's answer in the apply mode (`Inventory::applying`).
 #[derive(Message, Clone, Copy, Debug)]
 pub enum ApplyRequest {
-    /// Ends the mode (`Inventory::cancel_apply`): Escape without a question
-    /// up, the character or the stash window closing.
+    /// Ends the mode: Escape without a question up, the character or the stash window closing.
     Cancel,
     /// Yes / No to the confirmation (`Inventory::answer_apply`).
     Answer(bool),
-    /// Right click on an item: select it when it is a component / augment
-    /// (`Inventory::start_apply`; the other right-click uses are [`InvRequest::Bag`]).
+    /// Right click on an item: selects it when it is a component / augment.
     Start(ItemLoc),
-    /// Left or right click on `target` (None: an empty equipment slot) in
-    /// the mode (`Inventory::apply_click`; the handlers'
-    /// `Secondary{Inventory,Equip,Stash,Transfer}Activate` only call the
-    /// `Primary…` one, and the bag sack's click handler `BagWidget_HandleMouseEvent` in
-    /// Grim Dawn.exe gives both buttons to an active handler first).
+    /// Left or right click on `target` (None: an empty equipment slot); both buttons go to an active handler
+    /// (`BagWidget_HandleMouseEvent`).
     Click(Option<ItemLoc>),
 }
 
@@ -94,59 +81,44 @@ pub fn sort_key(inv: &Inventory, tags: &gd_formats::text::TagTable, item: &Item)
     })
 }
 
-/// Auto-sort of bag `b` (`PlayerInventoryCtrl::SortPrimarySack` / `SortSecondarySack` → `InventorySack::Sort`,
-/// layouts and retry: `gd_formats::inventory` module doc). Each press starts one layout further than the last
-/// one of its button ([`Inventory::sort_presses`]), so successive presses cycle the four layouts.
+/// Auto-sort of bag `b` (`InventorySack::Sort`). Each press starts one layout further than the last
+/// ([`Inventory::sort_presses`]), cycling the four layouts.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct SortBag(pub usize);
 
-/// A click in the character window, resolved by the UI from its layout to
-/// the bag cell / equipment slot under the cursor; `apply_inv_requests`
-/// applies the rule. The cursor item stays state ([`Inventory::held`]), the
-/// UI only asks for the transitions and reads the state next frame.
+/// A click in the character window, resolved by the UI to a bag cell / equipment slot. The cursor item is
+/// state ([`Inventory::held`]); the UI only asks for the transitions.
 #[derive(Message, Clone, Debug)]
 pub enum InvRequest {
-    /// The window is closed: ends the apply mode and puts the held item back
-    /// in a bag (it stays in hand when they are full).
+    /// The window closed: ends the apply mode and puts the held item back in a bag (stays in hand when full).
     Closed,
     /// The extra-bag tab button.
     BagTab(usize),
-    /// A click on the item (or empty cell) `cell` of bag `bag`; `cursor` is
-    /// the cursor in cells from the grid's top-left (the drop footprint is
-    /// centred on it, `gd_formats::inventory::drop_cell`). Left: pick up / place / swap with the
-    /// held item. Right: select a component, learn a blueprint, use a
-    /// consumable or equip the item.
+    /// `cursor` is in cells from the grid's top-left (the drop footprint is centred on it). Left: pick up /
+    /// place / swap. Right: select a component, learn a blueprint, use a consumable or equip the item.
     Bag {
         bag: usize,
         cell: (u32, u32),
         cursor: Vec2,
         right: bool,
     },
-    /// A click on an equipment slot (not in the apply mode): left swaps with
-    /// the held item; right with an item held as left, else nothing (module doc).
+    /// Not in the apply mode: left swaps with the held item; right acts as left with one held.
     Slot { slot: EquipSlot, right: bool },
     /// A held item clicked on the paper doll.
     Doll,
-    /// An EMPTY item-slot window slot (Inventor, Runekeeper, crafter) takes the bag item at `cell` of `bag`
-    /// (Shift + left click; the UI refuses an occupied slot, `AscensionItemBox_AddItem`).
-    /// Answered with a `crafting::SlotReturn` holding the item.
+    /// An EMPTY item-slot window slot takes the bag item at `cell` of `bag` (Shift + left
+    /// click); answered with a `crafting::SlotReturn`.
     ToWindowSlot { bag: usize, cell: (u32, u32) },
-    /// The window's slot gives `item` back to the player (window closed, tab switched, Shift + left on the
-    /// slot): `ItemBox_ReturnItemToPlayer` = `gd_game::loot::give_item` (module doc).
+    /// The window's slot gives `item` back to the player (`ItemBox_ReturnItemToPlayer`).
     Stow(Item),
-    /// A click on the window's slot: the cursor item is exchanged with
-    /// `give` (the slot's item, None for an empty slot); the old cursor item
-    /// comes back as a `crafting::SlotReturn`.
+    /// The cursor item is exchanged with the slot's item (None: empty); the old cursor item comes back as a
+    /// `crafting::SlotReturn`.
     Exchange(Option<Item>),
 }
 
-/// The slots a held item clicked on the paper doll tries, in order.
-/// GrimDawn.exe `CharacterWindowScene::HandleItemClick` (the character window's scene view, called
-/// from its mouse handler `CharacterWindowScene::HandleMouseEvent`): the held item's equip type picks
-/// one slot of the window (`EquipSlotWidget::HandleClick`) and hands it the click; a ring the
-/// first ring slot when that is empty, else the second; a weapon or off-hand
-/// item the weapon pair (`CharacterWindowScene::ClickWeaponPair`: main hand first, then the off hand;
-/// a `WeaponArmor_Shield` the off hand first); other types (components) nothing.
+/// The slots a held item clicked on the paper doll tries, in order (`CharacterWindowScene::HandleItemClick`,
+/// `ClickWeaponPair`): a ring the first ring slot when empty, else the second; a weapon main hand then off hand
+/// (a shield off hand first); others their class's first slot.
 pub fn doll_slots(inv: &Inventory, item: &Item) -> Vec<EquipSlot> {
     let Some(class) = inv.info(item).map(|i| i.resolved.class.clone()) else {
         return Vec::new();
@@ -167,7 +139,6 @@ pub fn doll_slots(inv: &Inventory, item: &Item) -> Vec<EquipSlot> {
     }
 }
 
-/// What [`Inventory::smart_insert`] did.
 #[derive(Debug)]
 pub enum SmartInsert {
     /// Worn; what it displaced went to the bags or onto the cursor.
@@ -223,18 +194,16 @@ pub fn sack_cell<'a>(
     }
 }
 
-/// Resolved item data the UI and rules need.
 pub struct ItemInfo {
     pub resolved: ResolvedItem,
     pub size: Footprint,
 }
 
-/// Where the held item came from (`CursorHandlerItemMove.source`, [`Inventory::cancel_held`]).
+/// Where the held item came from ([`Inventory::cancel_held`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeldFrom {
-    /// A bag cell, a stash / transfer page cell or an equipment slot.
     At(ItemLoc),
-    /// The caravan's reagent (material) storage.
+    /// The caravan's reagent storage.
     Reagents,
 }
 
@@ -268,70 +237,53 @@ pub struct Applying {
 pub struct Inventory {
     /// Worn items by [`SLOTS`]; the weapons are the active weapon set's.
     pub equipped: [Option<Item>; 14],
-    /// The inactive weapon set's main / off hand (`gd_game::weapon_sets`).
+    /// The inactive weapon set's main / off hand.
     pub other_weapons: [Option<Item>; 2],
-    /// Weapon set II is the active one (`EquipmentCtrl.alternate`, the save's
-    /// `use_alternate`).
+    /// Weapon set II is active (`EquipmentCtrl.alternate`).
     pub alternate: bool,
-    /// The requested set (`ControllerCharacter.requestedAlternate`, block 1
-    /// `alternate_config`); `weapon_sets::apply_swap` makes it current.
+    /// The requested set (`ControllerCharacter.requestedAlternate`); `weapon_sets::apply_swap` makes it current.
     pub requested_alternate: bool,
-    /// Set II was chosen once in the character window (`Player.alternateConfigEnabled`,
-    /// `alternate_config_enabled`): the HUD swap button works.
+    /// Set II was chosen once (`Player.alternateConfigEnabled`): the HUD swap button works.
     pub alternate_enabled: bool,
-    /// The main bag, then the extra bags the character has (one per save
-    /// sack; a new character has only the main bag, the game adds bags by
-    /// quest).
+    /// The main bag, then the extra bags (one per save sack).
     pub bags: Vec<Sack<Item>>,
-    /// The extra bag shown beside the main one (index into `bags`, ≥ 1; with no extra bag there is none and the
-    /// window shows the main bag alone, `CharacterWindow::RenderInventory`).
+    /// The extra bag shown beside the main one (index into `bags`, ≥ 1; unused with no extra bag).
     pub bag_tab: usize,
-    /// Sorts done by the main bag's / the extra bags' auto-sort button this session ([`SortBag`]): the layout
-    /// the next one starts with (`CharacterWindow.sortCountPrimary` / `sortCountSecondary`, zeroed when the
-    /// in-game UI is built, never saved; one count for every extra bag).
+    /// Auto-sort presses of the main / extra bags this session (`CharacterWindow.sortCountPrimary` /
+    /// `sortCountSecondary`, not saved; one count for every extra bag).
     pub sort_presses: [u32; 2],
     pub held: Option<Item>,
-    /// Where the held item was picked up from, with the item itself: used only while that item is still the
-    /// held one ([`Inventory::cancel_held`]).
+    /// Where the held item was picked up, with the item: valid only while that item is still held.
     pub held_from: Option<(HeldFrom, Item)>,
-    /// Bag items of the save that found no cell on load (their cell taken or outside the grid, and no bag has
-    /// room): kept, and written back at their saved sack and cell (`gd_game::save`), so a later load tries again.
+    /// Save bag items that found no cell on load: written back at their saved cell, so a later load tries again.
     pub unplaced: Vec<Unplaced>,
-    /// The held item's destroy question is up (`gd_game::item_drop`: a soulbound or untradeable item clicked on
-    /// the world), its text tag; answered with `item_drop::DestroyAnswer`.
+    /// The held item's destroy question is up (its text tag); answered with `item_drop::DestroyAnswer`.
     pub destroying: Option<&'static str>,
-    /// The tonic / writ / bounty a right click chose (`gd_game::consumables::ask_use`): its yes / no question is up
-    /// once [`crate::consumables::UseAsk::question`] is set.
+    /// The tonic / writ / bounty a right click chose; its question is up once
+    /// [`crate::consumables::UseAsk::question`] is set.
     pub use_ask: Option<crate::consumables::UseAsk>,
-    /// The apply mode: a component / augment chosen by right click, used on
-    /// the next item clicked (module docs).
+    /// The apply mode: a component / augment used on the next item clicked.
     pub applying: Option<Applying>,
-    /// UI sounds of inventory actions, played by `play_sounds`.
+    /// UI sounds of inventory actions.
     pub sounds: Vec<String>,
-    /// Bumped on every change (UI rebuild signature).
+    /// Bumped on every change.
     pub version: u64,
-    /// The worn equipment changed: `gd_game::inventory::sync_equipment` passes it to the
-    /// player's loadout.
+    /// The worn equipment changed; `sync_equipment` passes it to the player's loadout.
     pub equipment_dirty: bool,
-    /// The worn item each slot holds while it is detached (its requirements
-    /// failed at a sift, module docs); another item in the slot is attached.
+    /// The worn item each slot holds while detached; another item in the slot is attached.
     pub detached: [Option<Item>; 14],
-    /// Consumables used this frame (right click; `consumables.rs` applies them, one of the stack each): the item
-    /// and the bag cell it was taken from (None: a hotbar / hook / food use, no cell — [`Self::return_used`]).
+    /// Consumables used this frame, one each: the item and its bag cell (None: hotbar / hook / food use,
+    /// [`Self::return_used`]).
     pub used: Vec<(Item, Option<(usize, u32, u32)>)>,
-    /// Items picked up from the ground that the bag window has not shown yet, by (record, seed): they glow in
-    /// the bag grid until the cursor passes over them (`Item::OnPickup` sets the flag the grid's
-    /// rebuild reads; the `newItemHighlight` option, `ui/newitems.rs`).
+    /// Ground pickups not yet shown, by (record, seed): they glow in the bag grid until hovered.
     pub fresh: Vec<(String, u32)>,
     db: ItemDb,
-    /// Derived-item cache, interior-mutable so the UI reads it through `&self`
-    /// ([`Self::info`]) without ticking the resource's change detection.
+    /// Interior-mutable so [`Self::info`] reads through `&self` without ticking change detection.
     info: parking_lot::Mutex<HashMap<Item, Option<Arc<ItemInfo>>>>,
     vfs: Arc<gd_formats::vfs::Vfs>,
 }
 
-/// A saved item that fits nowhere in its grids ([`Inventory::unplaced`], `Stash::unplaced`): its sack index
-/// and saved cell.
+/// A saved item that fits nowhere in its grids ([`Inventory::unplaced`], `Stash::unplaced`).
 #[derive(Clone, Debug)]
 pub struct Unplaced {
     pub sack: usize,
@@ -340,10 +292,9 @@ pub struct Unplaced {
     pub item: Item,
 }
 
-/// Puts a save's items into `sacks` (`saved`: sack index, cell, item): every item at its saved cell first,
-/// then each one whose cell is taken or outside the grid at the first free cell of its own sack, else of the
-/// others in order; the ones no sack holds are returned. PORT: the engine's load of a colliding item is not
-/// traced; nothing is dropped here.
+/// Puts a save's items into `sacks`: each at its saved cell first, then the colliding ones at the first free
+/// cell of their own sack, else of the others; returns those no sack holds. PORT: the engine's load of a
+/// colliding item is not traced.
 pub fn place_saved(
     inv: &mut Inventory,
     what: &str,
@@ -399,13 +350,12 @@ pub const MAX_SACKS: usize = 6;
 /// Entries [`Inventory::info`] keeps before it starts over.
 const INFO_CACHE_MAX: usize = 4096;
 
-/// The cursor passed over a glowing new item (`ui/newitems.rs`): its glow ends.
+/// The cursor passed over a glowing new item: its glow ends.
 #[derive(Message, Clone, Debug)]
 pub struct NewItemSeen(pub (String, u32));
 
 impl Inventory {
-    /// A new character's inventory: the main bag (12×8), no equipment, the session's `version`
-    /// (`gd_game::inventory::init_inventory` fills the save's items).
+    /// A new character's inventory: the main bag, no equipment.
     pub fn new(db: ItemDb, vfs: Arc<gd_formats::vfs::Vfs>, version: u64) -> Self {
         Self {
             equipped: Default::default(),
@@ -435,7 +385,7 @@ impl Inventory {
         }
     }
 
-    /// Marks an item picked up from the ground (its bag glow, [`Inventory::fresh`]).
+    /// Marks a ground pickup ([`Inventory::fresh`]).
     pub fn mark_fresh(&mut self, item: &Item) {
         let key = (item.base_name.clone(), item.seed);
         if !self.fresh.contains(&key) {
@@ -443,12 +393,8 @@ impl Inventory {
         }
     }
 
-    /// The item's resolved data and footprint, cached (a cache miss resolves and
-    /// stores it). `&self`: the cache is interior-mutable, so a UI read never marks
-    /// the inventory changed. Cleared at [`INFO_CACHE_MAX`] entries, so stack sizes
-    /// and passing ground drops cannot grow it without bound. The lock is held only
-    /// for the lookup and the insert: systems resolving different items in parallel
-    /// (a drop being named and filtered) never wait on each other's resolve.
+    /// The item's resolved data and footprint, cached; cleared at [`INFO_CACHE_MAX`] entries. The lock is held
+    /// only for the lookup and the insert, so parallel resolves never wait on each other.
     pub fn info(&self, item: &Item) -> Option<Arc<ItemInfo>> {
         if let Some(i) = self.info.lock().get(item) {
             return i.clone();
@@ -465,8 +411,7 @@ impl Inventory {
         cache.entry(item.clone()).or_insert(r).clone()
     }
 
-    /// The item's footprint (1×1 for an unknown record), cached like [`Self::info`] so the
-    /// save / Lua paths do not re-resolve an item on every call.
+    /// The item's footprint (1×1 for an unknown record), cached like [`Self::info`].
     pub fn size_of(&self, item: &Item) -> Footprint {
         self.info(item).map_or(Footprint { w: 1, h: 1 }, |i| i.size)
     }
@@ -484,17 +429,11 @@ impl Inventory {
         self.version += 1;
     }
 
-    /// `CursorHandlerItemMove::Cancel`: the held
-    /// item goes back where it came from ([`Inventory::held_from`]): a bag cell, or a stash / transfer page cell,
-    /// when that cell has no conflict (`InventorySack::GetConflicts`, then `PlayerInventoryCtrl::AddItem` /
-    /// `Player::AddItemToPrivateStash` / `GameEngine::AddItemToTransfer` at its old position; PORT: the stash
-    /// sack is the one it came from, the engine's the selected one, which is that page while it is shown); an
-    /// item not `CanBePlacedInTransferStash` from the transfer stash goes to the bags (`AddItem`), staying on the
-    /// cursor when they are full; a material taken from the reagent storage goes back into it
-    /// (`AddItemToReagents`). Otherwise (an equipment slot, a window, a refused add) it is returned as `Err` for
-    /// `ControllerPlayer::GiveItemToPlayer(id, false)` (`gd_game::loot::give_item`: equip-empty, bags, else
-    /// thrown down). `stash`: None before the stash is loaded.
-    // `Err` hands the item back to the caller (as `Inventory::give`).
+    /// `CursorHandlerItemMove::Cancel`: the held item goes back to its bag or stash cell ([`Inventory::held_from`])
+    /// when that cell has no conflict (`InventorySack::GetConflicts`); an item not `CanBePlacedInTransferStash`
+    /// from the transfer stash goes to the bags (else stays held); a reagent goes back to the reagent storage.
+    /// Otherwise `Err` for `ControllerPlayer::GiveItemToPlayer(id, false)`. `stash`: None before it is loaded.
+    /// PORT: the stash sack is the one it came from; the engine's is the selected one.
     #[allow(clippy::result_large_err)]
     pub fn cancel_held(&mut self, stash: Option<&mut crate::stash::Stash>) -> Result<(), Item> {
         let Some(item) = self.held.take() else {
@@ -556,15 +495,10 @@ impl Inventory {
         Err(item)
     }
 
-    /// `PlayerInventoryCtrl::AddItem` without the shard join (module doc, step 2); false when all bags are full.
+    /// `PlayerInventoryCtrl::AddItem` without the shard join; false when all bags are full.
     pub fn add_to_bags(&mut self, item: Item) -> bool {
-        // A sack never stays an item: `PlayerInventoryCtrl::AddItem`
-        // runs `OneShotFilter` on a `OneShot_*`
-        // item first; for `OneShot_Sack` it calls `AddSack`
-        // (refused with 6 sacks, the main one included) and then uses the
-        // item (`ControllerPlayer::UseItem`) or, refused, removes it
-        // (`SendRemoveItemFromInventory`): handled either way.
-        // `OneShot_Food` is used at once the same way (`consumables.rs`).
+        // `AddItem` runs `OneShotFilter` first: `OneShot_Sack` → `AddSack` (max 6), then the item is used or
+        // removed; `OneShot_Food` is used at once.
         let (food, sack) = self.db.get(&item.base_name).map_or((false, false), |r| {
             (r.class == "OneShot_Food", r.class == "OneShot_Sack")
         });
@@ -585,8 +519,7 @@ impl Inventory {
         let Some(size) = self.info(&item).map(|i| i.size) else {
             return false;
         };
-        // Onto the stacks of its record with room first (`crate::stack::merge_into`); the bags change only when
-        // all of it finds a place (a refused item stays whole with the caller): a dry run first, no bag copies.
+        // Onto the stacks of its record first; the bags change only when all of it fits (a dry run first).
         let engine = crate::stack::engine_max_in(self.db.get(crate::stack::GAME_ITEM_INFO));
         let max = crate::stack::max_of(self, &item, engine);
         let room: u64 = if max > 1 {
@@ -599,7 +532,6 @@ impl Inventory {
         } else {
             0
         };
-        // New cell for what the stacks leave: the main bag, the selected one, then the rest (module doc).
         let cell = if room >= crate::stack::count(&item) as u64 {
             None
         } else {
@@ -624,11 +556,8 @@ impl Inventory {
         true
     }
 
-    /// Puts a refused consumable back where it was taken from ([`Self::used`]): onto the remaining stack of its
-    /// record at that cell, else into the empty cell; no source or the cell taken meanwhile: first fit
-    /// ([`Self::add_to_bags`]), else onto an empty cursor. `Err`: nowhere to go (the caller throws it down,
-    /// `gd_game::loot::give_item`); a held item is never overwritten.
-    // `Err` hands the item back to the caller.
+    /// Puts a refused consumable back at its cell (onto its stack, else the empty cell), else first fit
+    /// ([`Self::add_to_bags`]), else an empty cursor. `Err`: nowhere to go; a held item is never overwritten.
     #[allow(clippy::result_large_err)]
     pub fn return_used(&mut self, item: Item, from: Option<(usize, u32, u32)>) -> Result<(), Item> {
         if let Some((bag, x, y)) = from {
@@ -664,11 +593,9 @@ impl Inventory {
         Ok(())
     }
 
-    /// `ControllerPlayer::GiveItemToPlayer` (module doc): [`Self::auto_insert`], else the bags
-    /// (`PlayerInventoryCtrl::AddItem`; `combine` = an incomplete component first joins a partial,
-    /// [`shard_target`], which only `CharPickUpConfigCmd` asks for, `PlayerInventoryCtrl::AddItem` callers).
-    /// `Err` hands the item back (nothing took it: `gd_game::loot::give_item`).
-    // `Err` hands the item back to the caller.
+    /// `ControllerPlayer::GiveItemToPlayer`: [`Self::auto_insert`], else the bags (`combine`: an incomplete
+    /// component first joins a partial, [`shard_target`]; only `CharPickUpConfigCmd` asks for it). `Err` hands
+    /// the item back.
     #[allow(clippy::result_large_err)]
     pub fn give(&mut self, item: Item, combine: bool, req: &Requirements) -> Result<(), Item> {
         let item = match self.auto_insert(item, req) {
@@ -685,9 +612,8 @@ impl Inventory {
         }
     }
 
-    /// `CharPickUpConfigCmd::Execute` / `PickUpAction::Execute`: a Broken
-    /// item (base `itemClassification`, `GetItemClassification(1)` == 5) and a `cannotPickUpMultiple`
-    /// record the player already has ([`Self::has_record`]) are not picked up (nothing happens).
+    /// `CharPickUpConfigCmd::Execute` / `PickUpAction::Execute`: a Broken item and a `cannotPickUpMultiple`
+    /// record the player already has ([`Self::has_record`]) are not picked up.
     pub fn refuses_pickup(&self, item: &Item) -> bool {
         let Some(rec) = self.db.get(&item.base_name) else {
             return false;
@@ -697,10 +623,8 @@ impl Inventory {
             || rec.bool("cannotPickUpMultiple") && self.has_record(&item.base_name)
     }
 
-    /// `PlayerInventoryCtrl::AddItem`: an `ItemRelic` (components, charms) that is not complete
-    /// found a partial to join ([`shard_target`]) -> `ControllerPlayer::UseItemOn(item, target)` =
-    /// `ItemRelic::UseRelicOn`: the target gets the shards (`relicCompleteSound` when that completes it,
-    /// else `relicToRelicSound`) and the item is gone. (Stock components all complete at 1 shard.)
+    /// `PlayerInventoryCtrl::AddItem` / `ItemRelic::UseRelicOn`: an incomplete `ItemRelic` / `ItemCharm` joins
+    /// a partial ([`shard_target`]) and is gone.
     fn join_shards(&mut self, item: &Item) -> bool {
         let Some(rec) = self.db.get(&item.base_name) else {
             return false;
@@ -736,9 +660,8 @@ impl Inventory {
             .sum()
     }
 
-    /// `Character::HasItem(name)`: `Inventory::IsItemInInventory` or
-    /// `EquipManager::HasItem`, an item whose object name (its base record) equals `record` ignoring case and
-    /// the slash direction. PORT: the bags and both weapon sets' slots (not the held item).
+    /// `Character::HasItem(name)`: an item whose base record equals `record` ignoring case and slash direction.
+    /// PORT: the bags and both weapon sets' slots (not the held item).
     pub fn has_record(&self, record: &str) -> bool {
         let norm = |s: &str| s.replace('\\', "/").to_ascii_lowercase();
         let want = norm(record);
@@ -769,8 +692,7 @@ impl Inventory {
         count - left
     }
 
-    /// Equipped items as worn (armour slots, then the weapons): the attached
-    /// ones (module docs).
+    /// The attached worn items (armour slots, then the weapons).
     pub fn worn(&self) -> Vec<Item> {
         (0..self.equipped.len())
             .filter(|&i| self.is_attached(i))
@@ -778,14 +700,12 @@ impl Inventory {
             .collect()
     }
 
-    /// Whether equipment slot `i` holds an attached item.
     pub fn is_attached(&self, i: usize) -> bool {
         self.equipped[i].is_some() && self.detached[i] != self.equipped[i]
     }
 
-    /// The worn gear for `compare_dps` with `candidate` in the main hand
-    /// (`None`: as worn): a two-hander clears the off hand
-    /// (`Player::CompareItems` equips it into slot 0).
+    /// The worn gear for `compare_dps` with `candidate` in the main hand (`None`: as worn); a two-hander clears
+    /// the off hand (`Player::CompareItems`).
     pub fn weapon_gear(&self, candidate: Option<&Item>) -> crate::sheet_dps::Gear {
         let (main, off) = (
             slot_index(EquipSlot::MainHand),
@@ -813,9 +733,8 @@ impl Inventory {
         crate::sheet_dps::Gear { items, hands }
     }
 
-    /// The worn gear with `candidate` in the off hand, when it may go there and the worn off hand holds a one-handed
-    /// weapon (`Player::CompareItems`: the off-hand compare runs only against a worn off-hand WEAPON, not a shield or
-    /// focus; a two-handed candidate never prints the line). `None` otherwise.
+    /// The worn gear with `candidate` in the off hand, when it may go there and the worn off hand is a one-handed
+    /// weapon (`Player::CompareItems`).
     pub fn weapon_gear_offhand(&self, candidate: &Item) -> Option<crate::sheet_dps::Gear> {
         let (main, off) = (
             slot_index(EquipSlot::MainHand),
@@ -856,12 +775,8 @@ impl Inventory {
         is_two_handed_type(self.hand_type(item, EquipSlot::MainHand))
     }
 
-    /// Right click on bag item (`bag`, cell `x`, `y`): a component, augment
-    /// or single-piece transmuter (`crate::illusion` docs) enters the apply
-    /// mode (module docs) with the activation sound
-    /// (`relicCursorActivationSound` of `records/ingameui/gameengine.dbr`,
-    /// `CursorHandlerRelicCombine` / `CursorHandlerEnchant` /
-    /// `CursorHandlerTransmute` constructors); false for other items.
+    /// Right click on a bag / stash item: a component, augment or single-piece transmuter enters the apply mode
+    /// with `relicCursorActivationSound`; false for other items.
     pub fn start_apply(&mut self, src: ItemLoc, stash: Option<&Stash>) -> bool {
         if matches!(src, ItemLoc::Equip(_)) {
             return false;
@@ -916,26 +831,17 @@ impl Inventory {
         self.item_in(loc, None)
     }
 
-    /// Ends the apply mode. Callers of the handlers' `Cancel`
-    /// (`CursorHandler::Cancel`): `CursorHandlerEnchant::Escape` (Esc, refused while the
-    /// confirmation is up), `Update` (the confirmation answered) and, after a
-    /// use, `Primary…Activate`; in Grim Dawn.exe the inventory windows' close
-    /// (`InventoryWindow::OnHide`, the character window's `CharacterWindow::OnHide`) and the caravan
-    /// (stash) window's hide (`CaravanWindow::SetVisible`), each when the handler's `CursorHandler.cancelOnClose`
-    /// (true for both handlers) allows it. A press outside every window
-    /// (the handler manager's `CursorHandlerMgr::HandleMouseEvent`, either button) calls
-    /// `ActivateWorld`, which ends the mode the same way and takes the press
-    /// (`grimdawn` `ui/apply.rs` `world_click` sends [`ApplyRequest::Cancel`]).
+    /// Ends the apply mode (`CursorHandler::Cancel`): Esc, an answered confirmation, a use, the inventory or
+    /// caravan window closing (`cancelOnClose`), or a press outside every window (`CursorHandlerMgr::HandleMouseEvent`
+    /// → `ActivateWorld`).
     pub fn cancel_apply(&mut self) {
         if self.applying.take().is_some() {
             self.changed();
         }
     }
 
-    /// Every item the apply mode's component can be used on (bags, stash and
-    /// transfer pages, equipped slots), by the same rule as the click
-    /// ([`Self::apply_check`], [`Self::apply_blocked`]). `transfer_open`:
-    /// `stash::SharedFiles::accepts` of the transfer stash.
+    /// Every item the apply mode's component can be used on, by the click's rule ([`Self::apply_check`],
+    /// [`Self::apply_blocked`]). `transfer_open`: `stash::SharedFiles::accepts` of the transfer stash.
     pub fn apply_targets(
         &self,
         stash: Option<&Stash>,
@@ -996,37 +902,20 @@ impl Inventory {
             .collect()
     }
 
-    /// A component from outside a blocked transfer stash (`transfer_open` false) onto an item in it: refused,
-    /// the store takes no deposits that session (module doc). A component already in it may still be used there.
+    /// A component from outside a blocked transfer stash onto an item in it: refused. One already in it may still
+    /// be used there.
     pub fn apply_blocked(&self, target: Option<ItemLoc>, transfer_open: bool) -> bool {
         let in_transfer =
             |l: Option<ItemLoc>| matches!(l, Some(ItemLoc::Stash { transfer: true, .. }));
         !transfer_open && in_transfer(target) && !in_transfer(self.applying.as_ref().map(|a| a.src))
     }
 
-    /// Whether `comp` (a component or augment) can be used on `target`; `Some`
-    /// holds the confirmation text tag the game asks first, if any.
-    /// `ItemRelic::CanRelicBeUsedOn`: a partial
-    /// component onto another partial of the same record (`TestCompatibility`:
-    /// same record, target incomplete) without confirmation;
-    /// onto equipment only when the component's requirements are met (the
-    /// cursor handler's flag, `AreRequirementsMet` at its creation): an item
-    /// that already has a component accepts only a partial of the same record
-    /// (`TestCompatibility` with the socketed one), so a socketed component is
-    /// never replaced; else `ItemUseFilter` with `tagComponentConfirmation`
-    /// (`CursorHandlerRelicCombine::PrimaryInventoryActivate` /
-    /// `PrimaryEquipActivate`). Augments:
-    /// `ItemEnchantment::CanBeUsedOn` = equipment +
-    /// `ItemUseFilter`, no requirement test, always confirmed; the text
-    /// (`CursorHandlerEnchant::PrimaryInventoryActivate`):
-    /// `tagEnchantmentConfirmation`, a soulbound augment on an unbound item
-    /// `…SoulboundConfirmation`; onto an augmented item `tagEnchantmentOverwrite`,
-    /// `…SoulboundOverwrite` (soulbound augment, unbound item) or
-    /// `…SoulboundRemoval` (a plain augment replacing a soulbound one).
-    /// PORT: an item's soulbound state (`Item.soulbound`) is read as its base
-    /// record's or its augment's `soulbound`; the component's attribute
-    /// requirements (no stock component has any) are not tested.
-    /// Transmuters: [`crate::illusion::transmute_check`].
+    /// Whether `comp` can be used on `target`; `Some` holds the confirmation text tag, if any.
+    /// `ItemRelic::CanRelicBeUsedOn`: a partial onto a partial of the same record, unconfirmed; onto equipment
+    /// only with the level requirement met and no component socketed, `tagComponentConfirmation`.
+    /// `ItemEnchantment::CanBeUsedOn`: equipment + `ItemUseFilter`, always confirmed (`tagEnchantment*` by the
+    /// soulbound states). PORT: soulbound is the base record's or augment's `soulbound`; the component's attribute
+    /// requirements are not tested. Transmuters: [`crate::illusion::transmute_check`].
     pub fn apply_check(
         &self,
         comp: &Item,
@@ -1085,15 +974,8 @@ impl Inventory {
             .then_some(Some("tagComponentConfirmation"))
     }
 
-    /// A soulbound augment is never used on a transfer-stash item
-    /// (`CursorHandlerEnchant::PrimaryTransferActivate`: returns
-    /// before the item under the cursor when the augment's `Item.soulbound` is
-    /// set, and `GetTransferHighlights` marks it red; PORT: that
-    /// flag read as the record's `soulbound`, as in [`Self::apply_check`]);
-    /// `CursorHandlerRelicCombine::PrimaryTransferActivate` has no such test.
-    /// A transmuter only when it `CanBePlacedInTransferStash` (not
-    /// soulbound, no `craftingMaterial`; `CursorHandlerTransmute::
-    /// PrimaryTransferActivate`), so never a stock one.
+    /// Refused on a transfer-stash item: a soulbound augment (`CursorHandlerEnchant::PrimaryTransferActivate`) and a
+    /// transmuter not `CanBePlacedInTransferStash` (`CursorHandlerTransmute::PrimaryTransferActivate`).
     fn refused_at(&self, comp: &Item, at: ItemLoc) -> bool {
         matches!(at, ItemLoc::Stash { transfer: true, .. })
             && self
@@ -1108,17 +990,10 @@ impl Inventory {
                 })
     }
 
-    /// A click on `target` (`None`: an empty cell) in the apply mode.
-    /// `CursorHandlerRelicCombine::PrimaryInventoryActivate` /
-    /// `CursorHandlerEnchant::PrimaryInventoryActivate`, the same in
-    /// `PrimaryStashActivate` (the item under the
-    /// cursor in the shown stash tab, `Player.shownStashTab`) and
-    /// `PrimaryTransferActivate` (the shown transfer tab, `GameEngine.shownTransferTab`;
-    /// [`Self::refused_at`]): no target, the
-    /// component itself or a gone component ends the mode; a target it cannot
-    /// be used on does nothing; else the confirmation is asked
-    /// ([`Applying::confirm`], answered by [`Self::answer_apply`]) or the use
-    /// happens at once.
+    /// A click on `target` (`None`: an empty cell) in the apply mode (`CursorHandlerRelicCombine` /
+    /// `CursorHandlerEnchant::Primary{Inventory,Stash,Transfer}Activate`): no target, the component itself or a
+    /// gone component ends the mode; an unusable target does nothing; else the confirmation is asked
+    /// ([`Self::answer_apply`]) or the use happens at once.
     pub fn apply_click(
         &mut self,
         target: Option<ItemLoc>,
@@ -1199,17 +1074,10 @@ impl Inventory {
         }
     }
 
-    /// Uses the apply mode's component / augment on the item at `t` and ends
-    /// the mode, queueing its sound ([`Inventory::sounds`]).
-    /// `ItemRelic::UseRelicOn`: onto a partial,
-    /// `AddToRelicLevel` adds its shards (`relicCompleteSound`
-    /// when that completes it, else `relicToRelicSound`), the component keeps
-    /// the overflow or is destroyed; onto equipment `AddRelic` and
-    /// `relicToItemSound`; of a stack one is used, the rest stays in its cell.
-    /// `ItemEnchantment::UseOn`: an augment already there is
-    /// destroyed, one of a stack is used, `useSound`. The completion bonus of
-    /// an `ItemRelic` component is empty (`components::roll_bonus`).
-    /// `ItemTransmuter::UseOn`: [`crate::illusion::transmute_result`], no sound.
+    /// Uses the apply mode's item on `t` and ends the mode, queueing its sound. `ItemRelic::UseRelicOn`: onto a
+    /// partial adds its shards (the component keeps the overflow), onto equipment `AddRelic`;
+    /// `ItemEnchantment::UseOn` replaces an augment; one of a stack is used. `ItemTransmuter::UseOn`:
+    /// [`crate::illusion::transmute_result`], no sound.
     fn apply_to(&mut self, t: ItemLoc, mut stash: Option<&mut Stash>, req: &Requirements) {
         use gd_sim::items::components;
         let Some(a) = self.applying.take() else {
@@ -1243,7 +1111,6 @@ impl Inventory {
         } else if target.base_name.eq_ignore_ascii_case(&comp.base_name) {
             let need = components::shards_needed(crec);
             let total = target.var1.max(1) + comp.var1.max(1);
-            // (No stock component has more than one shard: `completedRelicLevel` 1.)
             target.var1 = total.min(need);
             left = (total > need).then_some(total - need);
             snd = sound(
@@ -1261,7 +1128,6 @@ impl Inventory {
             snd = sound(crec, "relicToItemSound");
         }
         debug!("applied {} to {}", comp.base_name, target.base_name);
-        // Write the target back, then the component's cell.
         if let ItemLoc::Equip(i) = t {
             // A detached item stays detached until the next sift re-checks it.
             if self.equipped[i].is_some() && self.detached[i] == self.equipped[i] {
@@ -1330,9 +1196,7 @@ impl Inventory {
         None
     }
 
-    /// Slots `item` may go into: its class's slots, with one-handed weapons
-    /// in the off hand only when a skill grants dual wielding of that kind
-    /// (the hand rule against empty hands, module docs).
+    /// Slots `item` may go into: its class's, the off hand only when the hand rule allows it against empty hands.
     pub fn allowed_slots(&self, item: &Item, req: &Requirements) -> Vec<EquipSlot> {
         let Some(info) = self.info(item) else {
             return Vec::new();
@@ -1349,7 +1213,7 @@ impl Inventory {
             .collect()
     }
 
-    /// `item`'s hand type for `slot` (main = right, off = left, else 0; `gd_formats::inventory::hand_types`).
+    /// `item`'s hand type for `slot` (main = right, off = left, else 0).
     fn hand_type(&self, item: &Item, slot: EquipSlot) -> u32 {
         let Some(info) = self.info(item) else {
             return 0;
@@ -1362,8 +1226,7 @@ impl Inventory {
         }
     }
 
-    /// The hand type hand `slot` of the active set holds (0: empty); a main-hand two-hander holds both (the
-    /// engine stores it in both hands).
+    /// The hand type hand `slot` of the active set holds (0: empty); a main-hand two-hander holds both.
     fn held_hand_type(&self, slot: EquipSlot) -> u32 {
         if let Some(m) = &self.equipped[slot_index(EquipSlot::MainHand)] {
             let t = self.hand_type(m, EquipSlot::MainHand);
@@ -1377,8 +1240,7 @@ impl Inventory {
         }
     }
 
-    /// The hand rule (module docs, `gd_formats::inventory::hand_fits`) for `item` in hand `slot` of the
-    /// active set: `strict` for auto insert, else manual equip.
+    /// The hand rule for `item` in hand `slot` of the active set: `strict` for auto insert, else manual equip.
     pub fn hand_fits(
         &self,
         item: &Item,
@@ -1397,8 +1259,8 @@ impl Inventory {
         gd_formats::inventory::hand_fits(t, here, o, req.dual, strict)
     }
 
-    /// `EquipmentCtrl::SmartAutoInsert` (module doc): the slot a right click equips
-    /// `item` into; None when its requirements are unmet, it is not equipment or neither hand takes it.
+    /// `EquipmentCtrl::SmartAutoInsert`: the slot a right click equips `item` into; None when its requirements
+    /// are unmet, it is not equipment or neither hand takes it.
     /// A single slot always (occupied or not); rings: ring 1 only when both are empty, else ring 2; weapons
     /// (active set, non-strict hand rule): the main hand, unless the off hand may take it, is empty and the
     /// main hand is full (a held two-hander fills both).
@@ -1441,8 +1303,7 @@ impl Inventory {
         }
     }
 
-    /// `EquipmentCtrl::SmartAutoInsert` and its caller `BagWidget_HandleMouseEvent`
-    /// (module doc): equips `item` (already out of the bags, nothing held) into
+    /// `EquipmentCtrl::SmartAutoInsert`: equips `item` (already out of the bags, nothing held) into
     /// [`Self::smart_slot`]. One displaced item: the bags (`AddItem`), else the cursor. A two-hander displacing
     /// a main + off pair: both to the bags (`IsSpaceAvailable`), else main to the bags and off onto the cursor,
     /// else off to the bags and main onto the cursor, else [`SmartInsert::NoRoom`].
@@ -1467,8 +1328,7 @@ impl Inventory {
         if displaced.len() == 2 {
             let l = displaced.pop().unwrap();
             let r = displaced.pop().unwrap();
-            // Worn items never stack, so an add only pushes a new entry: undo by truncating each bag
-            // back to its length (no bag copies).
+            // Worn items never stack, so an add only pushes a new entry: undo by truncating each bag.
             let lens: Vec<usize> = self.bags.iter().map(|b| b.items.len()).collect();
             let undo = |inv: &mut Self| {
                 for (b, n) in inv.bags.iter_mut().zip(&lens) {
@@ -1505,7 +1365,6 @@ impl Inventory {
 
     /// Equips `item` into `slot`; returns what was there (or the item itself
     /// when it cannot go there).
-    // `Err` hands the item back to the caller.
     #[allow(clippy::result_large_err)]
     pub fn equip(
         &mut self,
@@ -1556,9 +1415,8 @@ impl Inventory {
         Ok(old)
     }
 
-    /// `EquipmentCtrl::AutoInsertItem` (module doc): equips `item` into the first
-    /// empty slot of [`AUTO_INSERT_ORDER`] it may go into, never swapping; `Err` hands it back.
-    // `Err` hands the item back to the caller.
+    /// `EquipmentCtrl::AutoInsertItem`: equips `item` into the first empty slot of [`AUTO_INSERT_ORDER`] it may
+    /// go into, never swapping; `Err` hands it back.
     #[allow(clippy::result_large_err)]
     pub fn auto_insert(&mut self, item: Item, req: &Requirements) -> Result<EquipSlot, Item> {
         let slots = self.allowed_slots(&item, req);
@@ -1585,7 +1443,7 @@ impl Inventory {
     }
 }
 
-/// `EquipmentCtrl::AutoInsertItem`'s slot order (module doc; the engine's Clothing location is not tried).
+/// `EquipmentCtrl::AutoInsertItem`'s slot order (the engine's Clothing location is not tried).
 pub const AUTO_INSERT_ORDER: [EquipSlot; 14] = [
     EquipSlot::Head,
     EquipSlot::Amulet,
@@ -1603,10 +1461,8 @@ pub const AUTO_INSERT_ORDER: [EquipSlot; 14] = [
     EquipSlot::OffHand,
 ];
 
-/// Whether the item worn in equipment slot `i` is detached (`sift_equipment`,
-/// and `weapon_sets::apply_swap` for the swapped-in weapons): an off-hand
-/// weapon the skills don't allow to dual wield, or requirements not met. Also
-/// whether it was the dual-wield rule.
+/// Whether the item worn in slot `i` is detached (an off-hand weapon the skills don't allow to dual wield, or
+/// requirements unmet), and whether it was the dual-wield rule.
 pub fn detach_rule(inv: &Inventory, i: usize, item: &Item, req: &Requirements) -> (bool, bool) {
     let left = if i == slot_index(EquipSlot::OffHand) {
         inv.hand_type(item, EquipSlot::OffHand)
@@ -1617,10 +1473,7 @@ pub fn detach_rule(inv: &Inventory, i: usize, item: &Item, req: &Requirements) -
     (undual || !inv.usable(item, req), undual)
 }
 
-/// What the player's equip checks read: level, physique / cunning / spirit,
-/// the worn gear's requirement reductions (`Profile::req_reduction`) and the
-/// skills' dual-wield mask (`Loadout::dual_mask`). Derived each frame by
-/// `sync_requirements` (required by `Player`; it runs before any reader).
+/// What the player's equip checks read; derived each frame by `sync_requirements`, before any reader.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Requirements {
     pub level: i32,
@@ -1629,7 +1482,7 @@ pub struct Requirements {
     pub dual: u32,
 }
 
-/// The inventory's per-frame steps inside [`InventorySet`]: `Init`, `Requirements`, `Equipment`.
+/// Steps inside [`InventorySet`].
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InventoryStage {
     Init,

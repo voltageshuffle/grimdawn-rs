@@ -1,54 +1,29 @@
-//! Loot chests: opening one (in reach, unlocked) drops its loot at the
-//! container level once a session; story locks; culling with the level.
-//! The game shows them (model, idle / open animation); a click is the player's interact order
-//! (`player_orders::InteractTarget`), which [`open_chests`] takes once in reach (`player_orders::usable_range`:
-//! player radius + chest radius (`Actor::GetRadius`, `combat::get_radius`, kept in [`Chest::radius`]: the hover
-//! pick reads the same) + `usableRange` (`combat::fixed_usable_range`: 1 m for the many chests without one),
-//! +1 m at the walk's end, 3D).
+//! Loot chests: opening one (in reach, unlocked) drops its loot at the container level once a
+//! session; story locks; culling with the level. A click is the player's interact order, which
+//! [`open_chests`] takes once in reach (player radius + [`Chest::radius`] + `usableRange`, 1 m
+//! without one; +1 m at the walk's end, 3D).
 //!
-//! `FixedItemContainer::Open` (fields from
-//! `FixedItemContainer::Load`): opening plays the record's
-//! `openSound` pak at the chest's coords, starts `openAnimation`, and, when
-//! `openFxPakName` is set, creates that object (cached at load) and adds it
-//! to the world at the chest's coords (`World::AddEntity`, not attached);
-//! then the loot is generated. Here: [`PlaySound`] and
-//! [`gd_game_core::visuals::spawn_fx`] at the chest's transform. The loot is thrown
-//! one item at a time from `FixedItem::GetLootDropCoords` with the record's
-//! `actorRadius` (`crate::loot::fixed_drop_point`, `Dropper::one_by_one`).
+//! `FixedItemContainer::Open`: plays the record's `openSound` at the chest, starts
+//! `openAnimation`, adds `openFxPakName` to the world at the chest (not attached), then the
+//! loot is thrown one item at a time from `FixedItem::GetLootDropCoords` with `actorRadius`.
 //!
-//! The radius lock (`FixedItemContainer::UpdateSelf`, `CheckRadiusClear`,
-//! fields from `Load`): a container with `LockedRadius` (> 0.0001) that was not opened yet sets its `locked`
-//! flag every 500 ms: locked while a live `Monster` (`World::GetEntitiesInSphere` of that radius around it)
-//! has a classification (`ResolveMonsterClassificationEnum`) at or above its `LockedClassification`, a whole
-//! string: `Common` 0, `Champion` 1, `Hero` 2, `Boss` 3, `Quest` 4, anything else 999 (never locks). The boss
-//! chests (`locked` 1, radius 100, `Quest`, `tagChestLockedBoss`) unlock so once their boss is dead
-//! ([`radius_locks`]; PORT: the monsters' centres, one timer for every chest). The same update shows the
-//! record's `IdleEffect` until the chest opens and its `LockedEffect` while locked (grimdawn `chests.rs`).
+//! The radius lock (`FixedItemContainer::CheckRadiusClear`): an unopened container with
+//! `LockedRadius` (> 0.0001) sets its `locked` flag every 500 ms: locked while a live `Monster`
+//! within that radius has a classification at or above its `LockedClassification` (`Common` 0,
+//! `Champion` 1, `Hero` 2, `Boss` 3, `Quest` 4, anything else 999: never locks). Boss chests
+//! unlock so once their boss is dead. PORT: the monsters' centres, one timer for every chest.
 //!
-//! Food crates (`FixedItemShrine`: `interactive/constitution_foodcrate{a,b}01`, 19 placed in levels and 29 from
-//! the `pool_constitution_foodcratea01` accessory pool) are used like chests ([`Chest::shrine`]).
-//! Game.dll:
-//! - `FixedItemShrineController::LoadFromDatabase`: `oneTimeUse`, `shrineActiveTime` /
-//!   `shrineDormantTime` / `shrineSampleTime` (s → ms), `shrineRadius`. `TouchedByActor` (idle
-//!   only): the crate goes idle → active (state 5) with the sample timer at 0 and the active timer at
-//!   `shrineActiveTime`; `Update` samples while active: `GetTargetsInRadius` of `shrineRadius`
-//!   around the crate for the user's side (its flags not decoded) → `FixedItemTargetConfigCmd` → `FixedItem::UseOnTarget`
-//!   → `GiveBonusToTargets`: `Character::TakeBonus` with the record's bonus block
-//!   (constitution: `crate::constitution`). The sample timer restarts at `shrineSampleTime` and both timers
-//!   count down together, so with the stock 1 s / 1 s the active timer runs out first: one bonus per use.
-//!   Then dormant for `shrineDormantTime`, back to idle only without `oneTimeUse` (1 in both records).
-//! - `SetFixedItemState`: idle → `idleAnimation`, `StartIdleEffect` (`IdleLoopingEffect`
-//!   attached at `IdleLoopingAttachment`); use → `GoIdleToActive` (`idleToActiveAnimation`,
-//!   `idleToActiveSound` at the crate, `idleToActiveFxPakName`) and `StartActiveEffect`: the idle
-//!   effects stop emitting and stay in the world (`PlaceEffectsInWorld`), `ActiveOneShotEffect` starts, with
-//!   `ActiveMeshFX`. The stock crates have no active / dormant animations, so the crate rests opened.
+//! Food crates (`FixedItemShrine`) are used like chests ([`Chest::shrine`]):
+//! - `FixedItemShrineController`: `TouchedByActor` (idle only) goes active for
+//!   `shrineActiveTime`, sampling every `shrineSampleTime` the targets within `shrineRadius`
+//!   (`FixedItem::GiveBonusToTargets` → `Character::TakeBonus`); both timers count down
+//!   together, so the stock 1 s / 1 s gives one bonus per use. Then dormant for
+//!   `shrineDormantTime`, back to idle only without `oneTimeUse`.
+//! - Use: `idleToActiveSound` at the crate and `ActiveOneShotEffect`; the idle effects stop
+//!   emitting and stay in the world. The stock crates have no active / dormant animations.
 //!
-//! Here: the use sound and `ActiveOneShotEffect` at the crate, and the player's constitution bonus when the
-//! player stands within `shrineRadius` (grimdawn `chests.rs` shows the animations and the idle effect).
-//! PORT: the sample is taken at once (the engine's first controller update after the touch); only the
-//! player is a target (pets have no constitution here, and the stock crates' other bonuses are 0); a crate
-//! used is spent for the session like an opened chest (`oneTimeUse` in every stock record); no loot
-//! (`TouchedByActor` → `LoadDropLoot`: the stock crates have no loot table).
+//! PORT: the sample is taken at once; only the player is a target; a used crate is spent for
+//! the session like an opened chest; no loot (the stock crates have no loot table).
 use crate::movement::MovePath;
 use crate::nav::Nav;
 use bevy::prelude::*;
@@ -64,20 +39,19 @@ pub struct Chest {
     pub opened: bool,
     /// Level of the proxy that placed it (0: none).
     pub proxy_level: i32,
-    /// `Actor::GetRadius` (`combat::get_radius`): the use range's and the hover pick's.
+    /// `Actor::GetRadius`: the use range's and the hover pick's.
     pub radius: f32,
-    /// The record's `locked` (see `doors::LockedUse`); story `SetLocked` changes it.
+    /// The record's `locked`; story `SetLocked` changes it.
     pub locked: bool,
-    /// `LockedRadius` and the `LockedClassification` level (module doc, the radius lock).
+    /// `LockedRadius` and the `LockedClassification` level.
     pub lock_radius: Option<(f32, u32)>,
-    /// A `FixedItemShrine` (a food crate, module doc): its use gives a bonus, not loot.
+    /// A `FixedItemShrine` (a food crate): its use gives a bonus, not loot.
     pub shrine: bool,
 }
 
 impl Chest {
-    /// `FixedItemContainer::IsOfInterest`: its state
-    /// is 1 (closed; `SetFixedItemState` → 3 opens it). A locked chest is
-    /// still of interest (a click tells it is locked).
+    /// `FixedItemContainer::IsOfInterest`: closed. A locked chest is still of interest (a click
+    /// tells it is locked).
     pub fn is_of_interest(&self) -> bool {
         !self.opened
     }
@@ -87,9 +61,8 @@ impl Chest {
 #[derive(Message, Clone, Debug)]
 pub struct ChestOpened(pub u32);
 
-/// A path to beside a chest: chests usually stand on cells the nav data
-/// blocks, so the goal is the chest, else the first reachable point on a
-/// ring around it.
+/// A path to beside a chest: chests usually stand on cells the nav data blocks, so the goal is
+/// the chest, else the first reachable point on a ring around it.
 pub fn path_near(
     nav: &gd_sim::nav::NavWorld,
     scratch: &mut gd_sim::nav::PathScratch,
@@ -156,7 +129,7 @@ pub fn open_chests(
         return;
     };
     let at = gt.translation();
-    // Use range (`player_orders::usable_range`): +1 m only once the walk has ended.
+    // +1 m only once the walk has ended.
     let range = gd_game_core::player_orders::usable_range(
         pcb.map_or(0.5, |c| c.radius),
         chest.radius,
@@ -173,7 +146,7 @@ pub fn open_chests(
             record: chest.record.clone(),
             at,
         });
-        // The player's locked-chest voice (`char_sounds::locked_vox`, `Player::PlayLockedChestVox`).
+        // `Player::PlayLockedChestVox`.
         if let Some(pak) =
             crate::char_sounds::locked_vox(&data, ch, crate::char_sounds::LockedKind::Chest)
         {
@@ -193,7 +166,6 @@ pub fn open_chests(
         chest.record.clone(),
     ));
     if chest.shrine {
-        // A food crate: its sound and effect, the bonus (module doc, "Food crates").
         if let Some(pak) = rec.str("idleToActiveSound") {
             sound.write(PlaySound {
                 pak: pak.to_owned(),
@@ -227,7 +199,6 @@ pub fn open_chests(
         }
         return;
     }
-    // Open sound and FX (module doc).
     if let Some(pak) = rec.str("openSound").filter(|s| !s.is_empty()) {
         sound.write(PlaySound {
             pak: pak.to_owned(),
@@ -243,7 +214,6 @@ pub fn open_chests(
             Transform::from_translation(pos).with_rotation(rot),
         );
     }
-    // Loot at the container level (see `container_level`).
     let player_level = progress.as_ref().map_or(1, |p| p.progress.level);
     let difficulty = loot.session.mode().difficulty;
     let limits = world.level_limits(
@@ -288,7 +258,7 @@ pub fn open_chests(
         chest.record.rsplit('/').next().unwrap_or(""),
         drops.len()
     );
-    // The chest's lore note (PORT, `lore` module doc); one already read is seeded but not dropped (hidden).
+    // The chest's lore note; one already read is seeded but not dropped.
     let note = rec
         .str("perPartyMemberDropItemName")
         .filter(|n| !n.is_empty())
@@ -299,7 +269,6 @@ pub fn open_chests(
             ..Default::default()
         })
         .filter(|it| !codex.knows(&it.base_name));
-    // `FixedItem::GetLootDropCoords` / `GetLootDropRadius` (`crate::loot` doc).
     let body = rec.str("mesh").and_then(|m| bodies.get(&data, m));
     let drop = crate::loot::fixed_drop_point(&nav, at, gt.rotation(), body.as_deref());
     crate::loot::drop_loot_by(
@@ -318,7 +287,6 @@ pub fn open_chests(
     }
 }
 
-/// `GD_OPEN_CHESTS` (hooks.rs).
 #[cfg(feature = "dev")]
 pub fn test_open(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -392,7 +360,6 @@ pub fn story_locks(
     }
 }
 
-/// The radius lock (module doc).
 pub fn radius_locks(
     time: Res<Time>,
     mut timer: Local<f32>,
@@ -426,11 +393,8 @@ pub fn radius_locks(
     }
 }
 
-/// Something locked was used (`FixedItem` / `FixedDoor` `locked`,
-/// loaded from the record and honoured for every door: `FixedDoor::RequestToUse`
-/// checks the flag, which only the record, `SetLocked` (scripts),
-/// `QuestCommandLockDoor` and a restored state change): its `lockedSound`
-/// plays and its `lockedTag` (else `lockedTextTag`) is shown.
+/// Something locked was used (`FixedItem` / `FixedDoor` `locked`): its `lockedSound` plays and
+/// its `lockedTag` (else `lockedTextTag`) is shown.
 #[derive(Message, Clone)]
 pub struct LockedUse {
     pub record: String,
@@ -460,8 +424,7 @@ impl Plugin for ChestsPlugin {
     }
 }
 
-/// A chest of `record` (its `mesh` is needed) at `tf`; `opened`: opened
-/// earlier this session.
+/// A chest of `record` (its `mesh` is needed) at `tf`; `opened`: opened earlier this session.
 pub fn spawn_chest(
     commands: &mut Commands,
     db: &gd_formats::vfs::Database,
@@ -502,8 +465,7 @@ pub fn spawn_chest(
         interact,
         Name::new(format!("chest {}", record.rsplit('/').next().unwrap_or(""))),
     ));
-    // Level and accessory chests go with their level (`usize::MAX`: a story proxy's stay; story chests are the
-    // story's).
+    // Level and accessory chests go with their level (`usize::MAX`: a story proxy's stay).
     if let ChestKey::Level(l, _) | ChestKey::Accessory(l, _, _) = key
         && l != usize::MAX
     {

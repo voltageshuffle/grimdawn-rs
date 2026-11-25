@@ -1,131 +1,75 @@
-//! Hovering a usable object (chest, door, devotion shrine, riftgate) or a
-//! character (monster, NPC, pet): the hover target gets an outline and the
-//! `UIActorDescription` widget at the top centre of the screen describes it.
+//! Hovering a usable object (chest, door, devotion shrine, riftgate) or a character (monster, NPC, pet): the hover
+//! target gets an outline and the `UIActorDescription` widget at the top centre of the screen describes it.
 //!
-//! Target (Grim Dawn.exe frame update `InGameUI::Update` → `InGameUI::SetHoverTarget`
-//! → `InGameUI::OutlineHoverTarget`), in this order:
-//! 1. an unopened container under the cursor (`FixedItemContainer`,
-//!    `IsOfInterest`: state 1, closed: `Chest::is_of_interest`);
-//! 2. an enemy under the cursor: of the enemies the cursor touches, the one
-//!    nearest to the player (`InGameUI::PickNearestEnemy`); it also becomes the combat
-//!    enemy. The list (`InGameUI::CollectEnemyCandidates`) takes `Destructible`s that are
-//!    `IsTargetable` (record `targetable`, not broken) too, so a targetable
-//!    breakable is hovered (and clicked) like an enemy. One pick feeds the hover and the attack
-//!    (`combat::pick_enemy`: the posed body box under the ray, else near it, the touched enemy nearest to the
-//!    player; the candidate margin widens while a held click is pathing / repeated, `InGameUI::HandleMouseEvent`);
-//! 3. a non-enemy character under the cursor: an `Npc` (record `Class`
-//!    `Npc*`) only while it is available for conversations
-//!    (`Npc::IsAvailableForConversations`: the story object's flag; level
-//!    NPCs without story hooks count as available, PORT) and visible;
-//!    friendly monsters always; the player's own pets only while the Target
-//!    Pet key is held; with them a described decoration (a direction sign:
-//!    `gd_game_core::world::Described`, its parts' mesh boxes under the ray), named
-//!    by its `description` and outlined in the object colour;
-//! 4. another fixed item of interest: doors (`gd_game::doors` module docs),
-//!    devotion shrines / totems (`Shrine::is_of_interest`: not during their
-//!    fight, a totem not once cleared), riftgates (`Waypoint::is_of_interest`:
-//!    not locked), personal portals and the Shattered Realm's exit gates (both named
+//! Target (`InGameUI::Update` → `InGameUI::SetHoverTarget` → `InGameUI::OutlineHoverTarget`), in this order:
+//! 1. an unopened container under the cursor (`FixedItemContainer`, `IsOfInterest`: state 1, closed);
+//! 2. an enemy under the cursor: of the enemies the cursor touches, the one nearest to the player
+//!    (`InGameUI::PickNearestEnemy`); it also becomes the combat enemy. The list
+//!    (`InGameUI::CollectEnemyCandidates`) takes `IsTargetable` `Destructible`s (record `targetable`, not broken)
+//!    too. One pick feeds the hover and the attack; the candidate margin widens while a held click is pathing /
+//!    repeated (`InGameUI::HandleMouseEvent`);
+//! 3. a non-enemy character under the cursor: an `Npc` (record `Class` `Npc*`) only while it is available for
+//!    conversations (`Npc::IsAvailableForConversations`; PORT: level NPCs without story hooks count as available)
+//!    and visible; friendly monsters always; the player's own pets only while the Target Pet key is held; with
+//!    them a described decoration, named by its `description` and outlined in the object colour;
+//! 4. another fixed item of interest: doors, devotion shrines / totems (not during their fight, a totem not once
+//!    cleared), riftgates (not locked), personal portals and the Shattered Realm's exit gates (both named
 //!    `tagRiftgatePersonal`), its unused buff shrines.
 //!
 //! The list above is the gamepad / WASD path; in Keyboard Only (`movementType` 2) the only thing it touches is the
-//! controller targeting's pick (`crate::controller_target`: not a ground item, whose label is selected instead).
-//! PORT: the mouse path (`InGameUI::HandleMouseEvent`) keeps its filters but is not ported
-//! as such: it collects what is near the cursor (`InGameUIActorCapture::CollectCandidates`) and takes the
-//! mesh under the ray, else the one nearest to it (`InGameUIActorCapture::PickObjectUnderCursor`), with no
-//! fixed order of kinds.
-//! What it drops, `InGameUIActorCapture::CollectCandidates`: the main player (never outlined:
-//! `InGameUI::ClearHoverTarget` only clears the outline), characters failing its virtual
-//! `Character::IsCursorPickable` / `IsCursorTargetable` / `IsCursorVisible` checks, and a `Pet` that is no foe of
-//! the player unless its argument is 0, which is the input object's `InGameUI.targetPetHeld`,
-//! set while key action 38 Target Pet is held (`InGameUI::HandleKeyEvent`;
-//! `tagKeybind35`, "Target Pet (Hold Key and Click)"). So a summon is neither
-//! named nor outlined until that key is down, and then it is `friendOutline`.
-//! All of this needs a main player, so nothing is hovered on the main menu,
-//! whose character is a paper doll (`doll::DollBody`).
+//! controller targeting's pick (not a ground item, whose label is selected instead).
+//! PORT: the mouse path (`InGameUI::HandleMouseEvent`) keeps its filters but is not ported as such: it collects
+//! what is near the cursor (`InGameUIActorCapture::CollectCandidates`) and takes the mesh under the ray, else the
+//! one nearest to it (`InGameUIActorCapture::PickObjectUnderCursor`), with no fixed order of kinds.
+//! `InGameUIActorCapture::CollectCandidates` drops the main player (never outlined), characters failing
+//! `Character::IsCursorPickable` / `IsCursorTargetable` / `IsCursorVisible`, and a `Pet` that is no foe of the
+//! player unless `InGameUI.targetPetHeld` (key action 38 Target Pet held, `InGameUI::HandleKeyEvent`): a summon is
+//! neither named nor outlined until that key is down, and then it is `friendOutline`.
+//! Nothing is hovered without a main player (the main menu).
 //!
-//! Outline (`InGameUI::OutlineHoverTarget`, with the `targetOutline` option, on by
-//! default in `Options::Options`): fixed items get `objectOutlineColor`;
-//! characters `friendOutlineColor` when `FactionManager::IsFriend(player
-//! pack, GetOriginalFaction, pack)`, else `mindControlledOutlineColor` when
-//! their current faction is a friend, else `enemyOutlineColor`; pets are
-//! friends of their owner. Here foes (`gd_game::combat::Side::Player`'s foes: a `Monster` without `Allied`
-//! (the friendly packs, `gd_game::monsters`, and faction changes, `gd_game::factions`), a pet a monster's
-//! convert joined to its pack) are enemies and every other character (pets, NPCs,
-//! `Allied` monsters such as guards) a friend (no mind control). An NPC is outlined only while it is "of interest"
-//! (`Npc::IsOfInterest`: it has a conversation and is available, or it is a
-//! boat master; every `Npc` subclass — merchant, crafter, … — overrides it to
-//! true); a `Destructible` only while `IsTargetable`, in the object
-//! colour with the mouse (the enemy colour with a gamepad, input mode ≠ 0). Colours: `records/game/gameengine.dbr`
-//! (`GameEngine::LoadFromDatabase`): object (0.5, 0.5, 1), friend (0, 1, 0),
-//! enemy (1, 0, 0).
+//! Outline (`InGameUI::OutlineHoverTarget`, with the `targetOutline` option, on by default): fixed items get
+//! `objectOutlineColor`; characters `friendOutlineColor` when `FactionManager::IsFriend(player pack,
+//! GetOriginalFaction, pack)`, else `mindControlledOutlineColor` when their current faction is a friend, else
+//! `enemyOutlineColor`; pets are friends of their owner. Here [`gd_game::combat::Side::Player`]'s foes are enemies
+//! and every other character a friend (no mind control). An NPC is outlined only while it is of interest
+//! (`Npc::IsOfInterest`: it has a conversation and is available, or it is a boat master; every `Npc` subclass
+//! overrides it to true); a `Destructible` only while `IsTargetable`, in the object colour with the mouse (the
+//! enemy colour with a gamepad). Colours (`GameEngine::LoadFromDatabase`, `records/game/gameengine.dbr`): object
+//! (0.5, 0.5, 1), friend (0, 1, 0), enemy (1, 0, 0).
 //!
-//! The outline itself (Engine.dll `GraphicsDeferredRenderer::
-//! RenderFinalScene`; details in `render/post.rs`): the
-//! outlined meshes are drawn flat in `outlineColor` into a separate target,
-//! blurred by `ApplyGlow(target, 1.25, 1.0)` and added over the scene except
-//! on the object's own visible pixels: a soft halo of about 4 px around it.
-//! The halo is added to whatever lies beside those pixels, so it falls on the
-//! edge of something in front of the object too: the engine does that
-//! (stencil 255 is the only exclusion; `shots/real/trainingdummy.png`).
-//! Here each outlined part gets a copy in the glow view only ([`OutlineMask`],
-//! `GdMaterial::outline_mask`: its palette class where it passes the depth
-//! test) and [`OutlineGlow`] carries the classes' colours to the composite;
-//! with nothing outlined no copy exists. Besides the hover target the label
-//! manager outlines the ground items whose label is listed and, brighter,
-//! the selected one ([`ITEM_OUTLINE`], [`SELECTED_ITEM_OUTLINE`]): an
-//! actor has one outline colour, so each class is one palette entry.
+//! The outline itself (`GraphicsDeferredRenderer::RenderFinalScene`): the outlined meshes are drawn flat in
+//! `outlineColor` into a separate target, blurred by `ApplyGlow(target, 1.25, 1.0)` and added over the scene
+//! except on the object's own visible pixels (stencil 255 is the only exclusion): a soft halo of about 4 px.
+//! Here each outlined part gets a copy in the glow view only ([`OutlineMask`]) and [`OutlineGlow`] carries the
+//! classes' colours to the composite. Besides the hover target the label manager outlines the ground items whose
+//! label is listed and, brighter, the selected one ([`ITEM_OUTLINE`], [`SELECTED_ITEM_OUTLINE`]); each class is
+//! one palette entry.
 //!
-//! The widget (`records/ui/inworld/actordescription.dbr`, loader
-//! `UIActorDescription::Load`, update `UIActorDescription::Update`, draw `UIActorDescription::Draw` from the game
-//! window's draw `InGameUI::Render`). The anchor is the top centre of the
-//! viewport: x = viewport x + width / 2, y = 1 px (not UI-scaled); each part
-//! is centred on the anchor x (texts by their text width, bitmaps by theirs)
-//! plus its own record offset (scaled). Drawn in order:
-//! - name (`actor_name.dbr`, y 0, `style_special_enemyname`): a fixed
-//!   item's `description` (a personal portal: `tagRiftgatePersonal`,
-//!   `FixedItemTeleport::GetGameDescription`: the tag localized
-//!   with the owner's name as its parameter, which stock text does not use); an NPC's `Npc::GetRolloverDescription`
-//!   (`description` + " - " + `professionTag` when set); other characters'
-//!   `Monster::GetGameDescription`: the classification's colour code
-//!   (`GameEngine::GetMonsterColorText`, gameengine.dbr: Common `{^w}`,
-//!   Champion `{^y}`, Hero `{^o}`, Boss / SuperBoss `{^r}`, Quest `{^p}`)
-//!   before the `description`;
-//! - for objects and NPCs (`UIActorDescription.isObjectOrNpc` set: `Npc` or `Decoration`) nothing else,
-//!   except a `Destructible` (its `GetGameDescription`: the `description`):
-//!   `healthBar` at `GetLife` / `GetMaxLife` and the tier-1 border (no race,
-//!   no level; PORT: the fill clamp is the characters' 0.02…1);
-//! - for other characters: race (`actor_race.dbr`, y 75,
-//!   `style_special_enemyrace`; `Monster::GetRaceText`: the
-//!   `characterRacialProfile` entries' `tag<Race>` joined by " - ",
-//!   `noTagUnknownRace` for an unknown one), drawn when not empty;
-//! - for a `Monster` (pets too) or a player: the health bar, filled to
-//!   clamp(life / max, 0.02, 1) of the display range: `healthBarBoss` when
-//!   the classification is Boss or above (≥ 3) and the canvas is at least
-//!   1920 px wide, else `healthBar` (animated, 30 fps, y 58); then the tier
-//!   border by classification: Common tier 1, Champion 2, Hero 3, Quest 4,
-//!   Boss / SuperBoss 5 (Quest and Boss fall back to tier 3 below 1920 px;
-//!   y 31; a player gets tier 1); status icons only with
-//!   `monsterBarsDebuffs` (off: the strip, `debuff_strip`);
-//! - the level (`actor_level.dbr`, y 27, `style_special_enemylvl`): the
-//!   character level as a bare number, coloured by its difference to the
-//!   player's level d: d < −2 `levelDiffTier6`, −2…−1 tier 5, 0…1 tier 4,
-//!   2…3 tier 3, 4…5 tier 2, ≥ 6 tier 1; drawn for players always and for
-//!   other characters with `showMonsterLevelOnRollover` (on by
-//!   default: `Options::Options` leaves the bit at the array's `true`).
+//! The widget (`records/ui/inworld/actordescription.dbr`, `UIActorDescription::Load` / `Update` / `Draw`). The
+//! anchor is the top centre of the viewport: x = viewport x + width / 2, y = 1 px (not UI-scaled); each part is
+//! centred on the anchor x plus its own record offset (scaled). Drawn in order:
+//! - name (`actor_name.dbr`, y 0, `style_special_enemyname`): a fixed item's `description` (a personal portal:
+//!   `FixedItemTeleport::GetGameDescription`, `tagRiftgatePersonal` with the owner's name as its parameter); an
+//!   NPC's `Npc::GetRolloverDescription` (`description` + " - " + `professionTag` when set); other characters'
+//!   `Monster::GetGameDescription`: the classification's colour code (`GameEngine::GetMonsterColorText`: Common
+//!   `{^w}`, Champion `{^y}`, Hero `{^o}`, Boss / SuperBoss `{^r}`, Quest `{^p}`) before the `description`;
+//! - for objects and NPCs (`UIActorDescription.isObjectOrNpc`: `Npc` or `Decoration`) nothing else, except a
+//!   `Destructible`: `healthBar` at `GetLife` / `GetMaxLife` and the tier-1 border (PORT: the fill clamp is the
+//!   characters' 0.02…1);
+//! - for other characters: race (`actor_race.dbr`, y 75, `style_special_enemyrace`; `Monster::GetRaceText`: the
+//!   `characterRacialProfile` entries' `tag<Race>` joined by " - ", `noTagUnknownRace` for an unknown one), drawn
+//!   when not empty;
+//! - for a `Monster` (pets too) or a player: the health bar, filled to clamp(life / max, 0.02, 1):
+//!   `healthBarBoss` when the classification is Boss or above (≥ 3) and the canvas is at least 1920 px wide, else
+//!   `healthBar` (animated, 30 fps, y 58); then the tier border by classification: Common tier 1, Champion 2,
+//!   Hero 3, Quest 4, Boss / SuperBoss 5 (Quest and Boss fall back to tier 3 below 1920 px; y 31; a player gets
+//!   tier 1); status icons only with `monsterBarsDebuffs`;
+//! - the level (`actor_level.dbr`, y 27, `style_special_enemylvl`): the character level as a bare number,
+//!   coloured by its difference to the player's level d: d < −2 `levelDiffTier6`, −2…−1 tier 5, 0…1 tier 4,
+//!   2…3 tier 3, 4…5 tier 2, ≥ 6 tier 1; drawn for players always and for other characters with
+//!   `showMonsterLevelOnRollover` (on by default).
 //!
-//! The widget's fade (`UIActorDescription.fadeState`: alpha 0.3 → 1 over 250 ms) never runs:
-//! only its constructor (`UIActorDescription::UIActorDescription`) writes the fade flags (to 0), so the
-//! widget always draws at full alpha (the writes to its fade flags
-//! in Grim Dawn.exe).
-//!
-//! PORT (a performance choice): the widget is built when what it shows changes (target, level, strip, window), not
-//! for the target's life: the bar's fill follows it in place (`HoverFill`, `animate_fill`).
-//!
-//! Test hook: `GD_HOVER=x,y` (logical px; `@dx,dy` from the window centre)
-//! stands in for the mouse, as for item tooltips; `GD_HOVER=monster` /
-//! `GD_HOVER=npc` / `GD_HOVER=breakable` / `GD_HOVER=decoration` points it at
-//! the nearest foe / NPC / targetable breakable (1 m up) / described
-//! decoration (2 m up).
+//! The widget's fade (`UIActorDescription.fadeState`) never runs: it always draws at full alpha.
 use crate::record_facts::{RecordFacts, icon_override};
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
@@ -177,10 +121,8 @@ impl Plugin for HoverPlugin {
 }
 
 /// What the world mouse handler remembers between events (`InGameUI::HandleMouseEvent`): the object of the last
-/// event (`InGameUI.lockedObject`: set to the picked object, cleared when none), whether the last left press issued
-/// a primary command (`InGameUI.primaryCommandIssued`: `HandleActionFromMouse` with the left button, not through
-/// the Move key; cleared once no button is held)
-/// and the combat enemy of the last event (restored with a locked object).
+/// event (`InGameUI.lockedObject`), whether the last left press issued a primary command
+/// (`InGameUI.primaryCommandIssued`; cleared once no button is held) and the combat enemy of the last event.
 #[derive(Default)]
 struct HeldLock {
     remembered: Option<Entity>,
@@ -188,11 +130,10 @@ struct HeldLock {
     enemy: bool,
 }
 
-/// The inputs of [`held_pick`].
 struct HeldInput {
     /// Option `targetLock` ("Classic Targeting").
     target_lock: bool,
-    /// `SkillManager::IsRunningSkill`. PORT: a channel (`gd_game_core::casting::Channel`) is the running skill.
+    /// `SkillManager::IsRunningSkill`. PORT: a channel is the running skill.
     running: bool,
     /// `IsCommandRepeated`: a world button held after its press, or the Move key held.
     repeated: bool,
@@ -202,11 +143,10 @@ struct HeldInput {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum HeldPick {
-    /// The usual pick under the cursor.
     Fresh,
     /// The remembered object stays the target, the combat enemy too (when it is still there).
     Locked(Entity),
-    /// No object at all (no hover target, no mark).
+    /// No hover target, no mark.
     Nothing,
 }
 
@@ -225,9 +165,8 @@ fn held_pick(i: &HeldInput) -> HeldPick {
     }
 }
 
-/// Test hook `GD_DEBUFF_TARGET=<skill>`: the skill's debuff (as `casting::fire` lands a curse: the wrapper's
-/// buff record, level 1, its `skillActiveDuration`) lands once on each character the pointer hovers, cast by
-/// the player.
+/// `GD_DEBUFF_TARGET=<skill>`: the skill's debuff (the wrapper's buff record, level 1, its `skillActiveDuration`)
+/// lands once on each character the pointer hovers, cast by the player.
 #[cfg(feature = "dev")]
 fn hook_debuff(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -274,11 +213,8 @@ fn hook_debuff(
     });
 }
 
-/// The hover target's [`Interact`]: its own mark (`base`), `Attack` added
-/// when a combat enemy is under the cursor (`enemy`, whatever won the
-/// hover), then the record's override ("Dialog" clears every flag, the
-/// attack one too; "Attack" only adds the attack mark). Dialog / merchant
-/// outrank attack in `ui::cursor::select`, so one value carries the flags.
+/// The hover target's [`Interact`]: its own mark (`base`), `Attack` added when a combat enemy is under the cursor,
+/// then the record's override ("Dialog" clears every flag; "Attack" only adds the attack mark).
 fn marks(base: Interact, enemy: bool, icon: Option<Interact>) -> Interact {
     let base = if enemy && base == Interact::None {
         Interact::Attack
@@ -295,8 +231,7 @@ fn marks(base: Interact, enemy: bool, icon: Option<Interact>) -> Interact {
 #[derive(Component)]
 struct NameRoot;
 
-/// Distance along the ray to where it enters a box placed by `gt` (`b` in that frame: a mesh's box, a ground item's
-/// model box): [`bounds::Aabb::ray_entry`] of the ray taken into the frame.
+/// Distance along the ray to where it enters a box `b` placed by `gt`.
 pub(crate) fn ray_box(ray: Ray3d, gt: &GlobalTransform, b: &bounds::Aabb) -> Option<f32> {
     let inv = gt.affine().inverse();
     // Not normalised: t stays the world distance along the ray.
@@ -307,8 +242,7 @@ pub(crate) fn ray_box(ray: Ray3d, gt: &GlobalTransform, b: &bounds::Aabb) -> Opt
     (t < f32::INFINITY).then_some(t)
 }
 
-/// What decides the hover target: the cursor ray, or in Keyboard Only the controller targeting's pick
-/// (`crate::controller_target`), the only thing it touches.
+/// What decides the hover target: the cursor ray, or in Keyboard Only the controller targeting's pick.
 #[derive(Clone, Copy)]
 enum Probe {
     Ray(Ray3d),
@@ -346,8 +280,7 @@ fn nearest<'a>(
     best.map(|b| (b.1, b.2))
 }
 
-/// Characters the player's side may attack are those [`gd_game::combat::Side::Player`] calls foes
-/// (`FactionManager::IsFoe`): monsters without `Allied`, a pet a monster's convert joined to its pack.
+/// Characters [`gd_game::combat::Side::Player`] calls foes (`FactionManager::IsFoe`).
 type Foes<'w, 's> = Query<
     'w,
     's,
@@ -382,14 +315,12 @@ type Friends<'w, 's> = Query<
     ),
 >;
 
-/// Whether the player's side calls this character a foe (`Side::foe`, the one rule).
 fn player_foe(sd: &gd_game::combat::SideDataItem) -> bool {
     gd_game::combat::Side::Player.foe(sd.side_ref())
 }
 
 /// A described decoration's parts as one world sphere: the ray is tested against its parts only when it passes
-/// within it. PORT (a performance choice): the parts are spawned with the decoration (`gd_world`), so the sphere is
-/// taken once they have their boxes; 1 m of margin covers a floating part's bob.
+/// within it; 1 m of margin covers a floating part's bob.
 #[derive(Component)]
 struct DecoSphere {
     centre: Vec3,
@@ -512,7 +443,6 @@ fn pick(
         (described, children, boxes),
     ) = objects;
     if fresh.begun() {
-        // The remembered object was the ended session's.
         *lock = HeldLock::default();
     }
     // A described decoration's hit: the nearest of its parts' mesh boxes along the ray.
@@ -552,7 +482,6 @@ fn pick(
         let available = o.in_world && o.available_for_conversation;
         (available, available && o.conversation.is_some())
     };
-    // `GD_HOVER`: the pointer on the nearest object of a kind, or at a fixed point.
     #[cfg(feature = "dev")]
     let hooked = hooks.ui.hover.as_deref().and_then(|v| {
         let cam = cams.single().ok()?;
@@ -589,7 +518,6 @@ fn pick(
             )
             .and_then(project),
             _ => {
-                // `@dx,dy`: from the window centre (the player), whatever the window size.
                 let (rel, v) = v.strip_prefix('@').map_or((false, v), |r| (true, r));
                 let (x, y) = v.split_once(',')?;
                 let p = Vec2::new(x.parse().ok()?, y.parse().ok()?);
@@ -601,8 +529,7 @@ fn pick(
     let hooked = None;
     let cursor = hooked.or(win.cursor_position());
     point.set_if_neq(HoverPoint(cursor));
-    // No main player (the main menu): nothing is hovered, but the pointer
-    // stays known (the game cursor sprite follows it there).
+    // No main player (the main menu): nothing is hovered, but the pointer stays known.
     let Ok((me, _, ppath, pcb)) = player.single() else {
         hovered.set_if_neq(Hovered::default());
         return;
@@ -615,13 +542,12 @@ fn pick(
         }
     } else {
         cursor
-            // The game menu / its confirm / Options take the pointer: nothing behind them is hovered.
             .filter(|_| !capture.0 && !pause.menu)
             .zip(cams.single().ok())
             .and_then(|(c, (cam, tf))| cam.viewport_to_world(tf, c).ok())
             .map(Probe::Ray)
     };
-    // The held button (option `targetLock`, `InGameUI::HandleMouseEvent`, [`held_pick`]).
+    // The held button (option `targetLock`, `InGameUI::HandleMouseEvent`).
     let (mouse, move_held, channel) = held;
     let running = channel.single().ok();
     let pressed = mouse.any_just_pressed([MouseButton::Left, MouseButton::Right]);
@@ -644,15 +570,14 @@ fn pick(
     }
     let last_enemy = lock.enemy;
     // The held-click pick frustum widens while pathing to an enemy or repeated (`InGameUI::HandleMouseEvent`
-    // `IsPathing || IsCommandRepeated`): the stickiness of a held attack.
+    // `IsPathing || IsCommandRepeated`).
     let wide =
         (any_held && !pressed) || move_held.0 || (pcb.target.is_some() && !ppath.points.is_empty());
     let resolve = |facts: &mut RecordFacts,
                    probe: Option<Probe>,
                    enemy_override: Option<bool>|
      -> (Option<Hovered>, bool) {
-        // 2. (before the rest: the combat enemy marks whatever wins) Enemies
-        // (targetable breakables among them): the one nearest to the player.
+        // 2. Enemies (targetable breakables among them), before the rest: the combat enemy marks whatever wins.
         let foe = probe
             .and_then(|probe| match probe {
                 Probe::Ray(ray) => gd_game::combat::pick_enemy(
@@ -726,13 +651,13 @@ fn pick(
                         kind: Kind::Character,
                         interact,
                         // `InGameUI::OutlineHoverTarget` asks `IsFriend` of the original faction: a converted
-                        // pet's is the player's, so it keeps the friend colour while it fights him.
+                        // pet keeps the friend colour.
                         outline: Some(if converted { friend_c } else { enemy_c }),
                         race: f.race.clone(),
                         classification: f.classification,
                     });
                 }
-                // A breakable: the object colour with the mouse (`InGameUI::OutlineHoverTarget`).
+                // A breakable: the object colour with the mouse.
                 Some((e, _, Err(b))) => {
                     let o = object(e, &b.record);
                     let interact = if o.interact == Interact::None {
@@ -770,7 +695,7 @@ fn pick(
                     if !available || vis == Some(&Visibility::Hidden) {
                         continue;
                     }
-                    // `IsOfInterest`: a subclass's always (module docs).
+                    // `IsOfInterest`: a subclass's always.
                     let interest = conversation || f.npc_subclass;
                     let mark = match (interest, f.merchant) {
                         (false, _) => Interact::None,
@@ -798,9 +723,8 @@ fn pick(
                 };
                 best = Some((t, h));
             }
-            // Described decorations (`gd_game_core::world::Described`) are with the characters
-            // (`InGameUIActorCapture::CollectCandidates` lists them with them; `InGameUI::Update` takes a `Decoration`
-            // from that pick): the nearest along the ray. Name only, object outline.
+            // Described decorations are picked with the characters (`InGameUIActorCapture::CollectCandidates`): the
+            // nearest along the ray. Name only, object outline.
             for (e, _, d, sphere) in &described {
                 let Some(t) = deco_hit(probe, e, sphere) else {
                     continue;
@@ -824,7 +748,6 @@ fn pick(
                 return Some(h);
             }
             // 4. Other fixed items.
-            // Doors only while of interest (`gd_game::doors::Door::is_of_interest`).
             let doors = doors
                 .iter()
                 .filter(|(_, _, d)| data.db.get(&d.record).is_some_and(|r| d.is_of_interest(r)))
@@ -860,8 +783,7 @@ fn pick(
                         w.record.as_str(),
                     )
                 });
-            // A personal portal (PORT: hit within 1 m of a point 1 m up, as its clicks do): its
-            // name is `tagRiftgatePersonal`, not the record's `description`.
+            // A personal portal (PORT: hit within 1 m of a point 1 m up): its name is `tagRiftgatePersonal`.
             let portals =
                 portals
                     .iter()
@@ -874,7 +796,7 @@ fn pick(
                             gd_game::riftgates::PORTAL_RECORD,
                         )
                     });
-            // The ascendant altar (a fixed actor, always of interest).
+            // The ascendant altar (always of interest).
             let altars = altars.iter().map(|(e, gt, a)| {
                 (
                     e,
@@ -883,9 +805,8 @@ fn pick(
                     a.record.as_str(),
                 )
             });
-            // The Shattered Realm's exit gates (`FixedItemDungeonTeleport`: a `FixedItemTeleport`, always of
-            // interest; PORT: hit within its mesh's 1.45 m orb, centred 1.8 m up) and its unused buff shrines
-            // (`EndlessShrine::is_of_interest`).
+            // The Shattered Realm's exit gates (`FixedItemDungeonTeleport`, always of interest; PORT: hit within
+            // its mesh's 1.45 m orb, centred 1.8 m up) and its unused buff shrines.
             let exits = exit_gates.iter().map(|(e, gt)| {
                 (
                     e,
@@ -918,8 +839,7 @@ fn pick(
             )
             .map(|(e, rec)| {
                 let mut h = object(e, rec);
-                // `FixedItemTeleport::GetGameDescription` (the exit gate's class inherits
-                // it): `tagRiftgatePersonal`, not the record's description.
+                // `FixedItemTeleport::GetGameDescription` (inherited by the exit gate): `tagRiftgatePersonal`.
                 if rec == gd_game::riftgates::PORTAL_RECORD
                     || rec == gd_game::endless::EXIT_GATE_RECORD
                 {
@@ -975,7 +895,6 @@ fn pick(
             }
         }
     };
-    // `InGameUI.lockedObject`: the object of this event (none: cleared), and the combat enemy for the next one.
     lock.remembered = next.as_ref().and_then(|h| h.entity);
     lock.enemy = enemy;
     let next = next.unwrap_or_default();
@@ -986,10 +905,9 @@ fn pick(
         );
         *hovered = next;
     }
-    // The light rig's hover highlight (`gd_render::hover`): the marker follows the hover target that took the outline
-    // path (`InGameUI::HandleMouseEvent`: an `Npc` goes through `InGameUI::SetHoverTarget`, whose
-    // `InGameUI::OutlineHoverTarget` outlines and ends in `SetHighlight(true)`, only when `IsOfInterest`; else it
-    // is only named), whether or not `targetOutline` draws it.
+    // The light rig's hover highlight follows a hover target that took the outline path (`InGameUI::SetHoverTarget`
+    // → `InGameUI::OutlineHoverTarget` → `SetHighlight(true)`, only when `IsOfInterest`), whether or not
+    // `targetOutline` draws it.
     let want = hovered.entity.filter(|_| hovered.outline.is_some());
     let cur = glow.iter().next();
     if cur != want {
@@ -1002,16 +920,12 @@ fn pick(
     }
 }
 
-/// An outlined part's copy in the outline pass (module docs).
 #[derive(Component)]
 pub struct OutlineMask;
 
-/// The ground item outline colours of the label manager (`Grim Dawn.exe` `UIWorldDescManager.itemOutlineColor` /
-/// `UIWorldDescManager.selectedOutlineColor`, ctor `UIWorldDescManager::UIWorldDescManager`): every item whose label
-/// is listed (`UIWorldDescManager::ListLabel`, from the frustum scan `UIWorldDescManager::ScanFrustum`:
-/// `EnableOutline(true)`, `SetOutlineColor(itemOutlineColor)`) and the selected label's item (update
-/// `UIWorldDescManager::Update`, when the command is not repeated: `SetOutlineColor(selectedOutlineColor)`). Not gated
-/// by `targetOutline`.
+/// The ground item outline colours of the label manager (`UIWorldDescManager.itemOutlineColor` /
+/// `selectedOutlineColor`): every item whose label is listed (`UIWorldDescManager::ScanFrustum`) and the selected
+/// label's item (`UIWorldDescManager::Update`, when the command is not repeated). Not gated by `targetOutline`.
 const ITEM_OUTLINE: Vec3 = Vec3::new(0.5, 0.4, 0.25);
 const SELECTED_ITEM_OUTLINE: Vec3 = Vec3::new(1.0, 0.8, 0.5);
 
@@ -1023,8 +937,8 @@ struct Outlined(
     HashMap<Entity, (Entity, AssetId<Mesh>, AssetId<GdMaterial>, Entity)>,
 );
 
-/// The outline pass's objects (module docs): the hover target in its colour (palette class 1, with `targetOutline`)
-/// and the ground items with a listed label ([`ITEM_OUTLINE`] / [`SELECTED_ITEM_OUTLINE`], classes 2 / 3).
+/// The outline pass's objects: the hover target (palette class 1, with `targetOutline`) and the ground items with a
+/// listed label (classes 2 / 3).
 #[allow(clippy::too_many_arguments)]
 fn outline(
     mut commands: Commands,
@@ -1041,7 +955,6 @@ fn outline(
     mut glow: ResMut<OutlineGlow>,
 ) {
     if fresh.begun() {
-        // The masks went with the ended session's entities.
         *state = Outlined::default();
     }
     let hover = hovered
@@ -1055,7 +968,6 @@ fn outline(
         }
     }
     if state.0 != want {
-        // Masks of roots no longer outlined, or outlined in another class.
         let keep = |root: Entity| state.0.iter().find(|w| w.0 == root).map(|w| w.1);
         let gone: Vec<Entity> = state
             .1
@@ -1081,8 +993,7 @@ fn outline(
         }
     }
     glow.set_if_neq(OutlineGlow(palette));
-    // Every frame: parts that appeared since (bodies and attachments load
-    // over several frames) or changed mesh or material.
+    // Every frame: parts that appeared since (bodies load over several frames) or changed mesh or material.
     for &(root, class) in &want {
         for e in children.iter_descendants(root) {
             let Ok((mesh, material, skin)) = parts.get(e) else {
@@ -1120,8 +1031,8 @@ fn outline(
     }
 }
 
-/// The health bar's fill, animated every frame ([`animate_fill`]): its bar, the full bitmap's size, the widget's
-/// rect (screen px), the window's inverse scale factor and the fill ratio ([`describe`] sets it in place).
+/// The health bar's fill: its bar, the full bitmap's size, the widget's rect (screen px), the window's inverse scale
+/// factor and the fill ratio.
 #[derive(Component)]
 struct HoverFill {
     bar: BarGraph,
@@ -1132,8 +1043,7 @@ struct HoverFill {
 }
 
 /// What the widget was built for: the target, whether it has a bar, its level and the player's level, the window
-/// size, the debuff strip, the UI scale (window size and UI-scale option). The bar's fill is not here: it changes
-/// in place.
+/// size, the debuff strip, the UI scale. Not the bar's fill.
 type Shown = (
     Hovered,
     bool,
@@ -1173,7 +1083,6 @@ fn describe(
         .entity
         .filter(|_| matches!(hovered.kind, Kind::Character | Kind::Breakable))
         .and_then(|e| lives.get(e).ok());
-    // A `Monster` (pets too) or a `Destructible` has the health bar.
     let ratio = live
         .filter(|l| l.1 || l.2 || hovered.kind == Kind::Breakable)
         .map(|l| (l.0.life / l.0.profile.sheet.life.max(1.0)).clamp(0.02, 1.0));
@@ -1205,7 +1114,6 @@ fn describe(
         clear,
     );
     if same {
-        // The life changes the fill only (`animate_fill` draws it).
         if let Some(ratio) = ratio {
             for mut f in &mut fills {
                 if f.ratio != ratio {
@@ -1241,7 +1149,6 @@ fn describe(
     );
     // Anchor: the viewport's top centre, 1 px down (`InGameUI::Render`).
     let anchor = Vec2::new((ui.screen.x * 0.5).trunc(), 1.0);
-    // A text box as wide as its text, centred on the anchor (`UIActorDescription::Draw`).
     let text = |ui: &mut Ui, tb: &TextBox, s: &str, tint: Color| {
         let Some(style) = tb.style.as_deref() else {
             return;
@@ -1260,8 +1167,7 @@ fn describe(
         Color::WHITE,
     );
     let sub = |k: &str| desc.str(k).map(str::to_owned).unwrap_or_default();
-    // A `Destructible` (`UIActorDescription::Draw`'s `UIActorDescription.isObjectOrNpc` branch): `healthBar` at
-    // life / max life and the tier-1 border, nothing else.
+    // A `Destructible`: `healthBar` at life / max life and the tier-1 border, nothing else.
     if hovered.kind == Kind::Breakable {
         if let Some(ratio) = ratio
             && let Some(Widget::BarGraph(bar)) = ui.widget(&sub("healthBar"))
@@ -1329,13 +1235,12 @@ fn describe(
     }
 }
 
-/// The debuff icon strip under the bar (`monsterBarsDebuffs`; `UIActorDescription::Draw`,
-/// `PlayerStatusIcons::DrawArea`): the widget
-/// `actor_statusicons.dbr` is centred on the anchor by its width, its debuff area
-/// (area 2: `activeHudArea2X/Y` = (0, 120), width 226) starts there and the icons run left to right at their
-/// texture's own size (32 px) plus `iconHorizSpace` / `iconVertSpace` (6); a row ends once the running sum
-/// reaches the area width (6 icons), the next goes down. Countdown text (red) at the cooldown text location
-/// (16, 18) of the icon. PORT: the widget width centred on is taken as the area's width (not decompiled).
+/// The debuff icon strip under the bar (`UIActorDescription::Draw`, `PlayerStatusIcons::DrawArea`): the widget
+/// `actor_statusicons.dbr` is centred on the anchor by its width, its debuff area (area 2: `activeHudArea2X/Y` =
+/// (0, 120), width 226) starts there and the icons run left to right at their texture's own size (32 px) plus
+/// `iconHorizSpace` / `iconVertSpace` (6); a row ends once the running sum reaches the area width (6 icons).
+/// Countdown text (red) at (16, 18) of the icon. PORT: the widget width centred on is taken as the area's width
+/// (not decompiled).
 fn debuff_strip(
     ui: &mut Ui,
     data: &GameData,
@@ -1388,7 +1293,6 @@ fn debuff_strip(
     }
 }
 
-/// A tier border bitmap centred on the anchor at its record offset.
 fn tier_border(ui: &mut Ui, widget: &str, anchor: Vec2) {
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(widget)
         && let Some((h, s)) = ui.image(&bitmap)
@@ -1408,8 +1312,8 @@ fn tier_border(ui: &mut Ui, widget: &str, anchor: Vec2) {
     }
 }
 
-/// The bar centred on the anchor at its record offset; the empty bitmap
-/// under the fill when `renderBackground` is set (animated bars).
+/// The bar centred on the anchor at its record offset; the empty bitmap under the fill when `renderBackground` is
+/// set.
 fn health_bar(ui: &mut Ui, bar: BarGraph, anchor: Vec2, ratio: f32) {
     let empty = bar.empty.as_deref().and_then(|p| ui.image(p));
     let Some((full, fs)) = bar.full.as_deref().and_then(|p| ui.image(p)) else {
@@ -1443,8 +1347,7 @@ fn health_bar(ui: &mut Ui, bar: BarGraph, anchor: Vec2, ratio: f32) {
     });
 }
 
-/// The fill at its ratio; `UIBarGraphAnimated`: the fill cycles its frames at `framesPerSecond`. Writes only what
-/// changed.
+/// The fill at its ratio; `UIBarGraphAnimated`: the fill cycles its frames at `framesPerSecond`.
 fn animate_fill(time: Res<Time>, mut fills: Query<(&HoverFill, &mut Node, &mut ImageNode)>) {
     for (f, mut node, mut img) in &mut fills {
         let frame = f

@@ -1,33 +1,22 @@
-//! Spending attribute and skill points. The UI sends [`SpendAttribute`] /
-//! [`RaiseSkill`]; the rules (enough points, `SkillBook::try_raise`) and
-//! their effects (the loadout, unspent points, the profile) live here.
+//! Spending attribute and skill points ([`SpendAttribute`] / [`RaiseSkill`]): the rules and their effects
+//! on the loadout, unspent points and the profile.
 //!
-//! Skills window undo (`UISkillPane` in GrimDawn.exe: click callback
-//! `UISkillPane::OnButtonClick`, undo = `UISkillPane::Undo`, `UISkillPane::OnHide`,
-//! enable flag in `UISkillPane::Update`): every point spent in the window is recorded per pane, i.e. per
-//! mastery (class tree), and per skill ([`SkillUndo`], the entry's `SkillUndoEntry.delta`; the pane's
-//! `UISkillPane.undoPending` "something to undo" flag = a non-empty record). A pane's button is enabled
-//! only while its flag is set; its undo ([`UndoSkillPoints`] naming the tree) takes every level recorded in
-//! that pane back, returns those points and empties that record alone (all-or-nothing, not a stack): the
-//! other pane keeps its spending. `UISkillPane::Undo` only walks its own skill list and re-checks no
-//! requirement: each skill gets its own delta back. Nothing can be left orphaned, because a skill only
-//! requires its own tree's mastery bar and every level that bar gained in this pane is reverted with it.
-//! Hiding the window ([`CommitSkillUndo`]) clears every record, making the spending permanent.
-//! Only skill points: attributes and devotion have their own buttons.
-//! In reclamation mode (`crate::reclamation`) a click refunds a point instead;
-//! the record keeps it as a negative entry and counts the refunds (the window's
-//! `UISkillPane.refundCount`): undo levels those skills back up, takes the points again and pays
-//! the price back (`UseReclamationPoints(-refunds)`,
-//! `gd_sim::reclamation::payback`). The `StopSkill` call when a level falls
-//! to 0 (a no-op on the base `Skill`) is not mirrored beyond the level.
+//! Skills window undo (`UISkillPane::OnButtonClick` / `Undo` / `OnHide`): every point spent in the window is
+//! recorded per pane (mastery tree) and per skill ([`SkillUndo`], `SkillUndoEntry.delta`). A pane's button
+//! is enabled while its record is non-empty (`UISkillPane.undoPending`); its undo ([`UndoSkillPoints`])
+//! reverts every level recorded in that pane, returns those points and empties that record alone
+//! (all-or-nothing, not a stack). It re-checks no requirement; nothing can be orphaned because a skill only
+//! requires its own tree's mastery bar. Hiding the window ([`CommitSkillUndo`]) clears every record. Skill
+//! points only.
+//! In reclamation mode a click refunds a point instead: the record keeps it as a negative entry and counts
+//! the refunds (`UISkillPane.refundCount`); undo levels those skills back up, takes the points again and
+//! pays the price back (`UseReclamationPoints(-refunds)`). The `StopSkill` call when a level falls to 0 (a
+//! no-op on the base `Skill`) is not mirrored.
 //!
-//! Attribute reset (Tonic of Reshaping, [`ResetAttributes`] from `consumables`):
-//! `ItemAttributeReset::Use` → `ControllerCharacter::ResetAttributePoints` → the
-//! `ResetAttributePointsConfigCmd::Execute` → `CharacterBio::ResetAttributePoints`: each
-//! attribute's base goes back to its initial value, the points spent ((current − initial) / increment, summed)
-//! are added to the unspent attribute points. Refused unless some point is spent (`HasModifierPointsInUse`).
-//! The points spent are [`Loadout::allocated`], the save's included: the load splits them off the saved bio
-//! (`gd_game_core::player::split_bio`), so earlier sessions' points are refunded too.
+//! Attribute reset ([`ResetAttributes`], Tonic of Reshaping; `CharacterBio::ResetAttributePoints`): each
+//! attribute's base goes back to its initial value and the points spent return to unspent. Refused unless
+//! some point is spent (`HasModifierPointsInUse`). The points spent are [`Loadout::allocated`], the save's
+//! included, so earlier sessions' points are refunded too.
 use crate::inventory::{init_inventory, sync_equipment};
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
@@ -67,12 +56,10 @@ impl Plugin for PointsPlugin {
     }
 }
 
-/// Where the player's requests (point spending) are applied; the game's
-/// input systems that send them run before it.
+/// Where the player's point-spending requests are applied; their senders run before it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerRequests;
 
-/// Physique, Cunning or Spirit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attribute {
     Physique,
@@ -80,39 +67,35 @@ pub enum Attribute {
     Spirit,
 }
 
-/// Spend one attribute point.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpendAttribute(pub Attribute);
 
-/// Refund every spent attribute point (a Tonic of Reshaping used, module doc).
+/// Refund every spent attribute point.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetAttributes;
 
-/// `CharacterBio::HasModifierPointsInUse`: some physique, cunning or spirit above its
-/// initial value.
+/// `CharacterBio::HasModifierPointsInUse`.
 pub fn attributes_spent(loadout: &Loadout) -> bool {
     loadout.allocated != Default::default()
 }
 
-/// Spend one skill point on `skill` of class tree `tree`.
 #[derive(Message, Debug, Clone)]
 pub struct RaiseSkill {
     pub tree: String,
     pub skill: String,
 }
 
-/// Undo the skill points spent in the skills window's pane of class tree `tree` since the window opened.
+/// Undo the skill points spent in the pane of `tree` since the window opened.
 #[derive(Message, Debug, Clone)]
 pub struct UndoSkillPoints {
     pub tree: String,
 }
 
-/// The skills window was hidden: the spent points stay.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CommitSkillUndo;
 
-/// One pane's changes in the open skills window: (skill, levels: spent > 0, refunded < 0) in order of first
-/// change, and the refunds made (`UISkillPane.refundCount`).
+/// One pane's changes: (skill, levels: spent > 0, refunded < 0) in order of first change, and the refunds
+/// made (`UISkillPane.refundCount`).
 #[derive(Default, Debug, Clone)]
 pub struct PaneUndo {
     pub tree: String,
@@ -120,7 +103,6 @@ pub struct PaneUndo {
     pub refunds: u32,
 }
 
-/// The open skills window's changes, per pane (module doc).
 #[derive(Resource, Default, Debug, Clone)]
 pub struct SkillUndo {
     pub panes: Vec<PaneUndo>,
@@ -154,7 +136,6 @@ impl SkillUndo {
             .collect()
     }
 
-    /// Records `delta` levels of `skill` in the pane of `tree`.
     pub fn record(&mut self, tree: &str, skill: &str, delta: i32) {
         let levels = &mut self.pane(tree).levels;
         match levels
@@ -166,7 +147,6 @@ impl SkillUndo {
         }
     }
 
-    /// Counts one refund made in the pane of `tree`.
     pub fn refund(&mut self, tree: &str) {
         self.pane(tree).refunds += 1;
     }
@@ -200,7 +180,7 @@ fn spend_attributes(
     }
 }
 
-/// `CharacterBio::ResetAttributePoints` (module doc): the allocated points back to unspent.
+/// `CharacterBio::ResetAttributePoints`.
 fn reset_attributes(
     mut commands: Commands,
     mut msgs: MessageReader<ResetAttributes>,
@@ -254,9 +234,8 @@ fn raise_skills(
             info!("cannot raise {skill}: {why}");
             continue;
         }
-        // A newly learned toggle starts switched off
-        // (`Skill_BuffSelfToggled` constructor clears its active flag;
-        // only `AutoActivateNow` sets it).
+        // A newly learned toggle starts switched off (`Skill_BuffSelfToggled` constructor; only
+        // `AutoActivateNow` sets it).
         if new
             && data
                 .db
@@ -284,7 +263,7 @@ fn undo_skill_points(
     mut commits: MessageReader<CommitSkillUndo>,
     mut undo: ResMut<SkillUndo>,
     mut progress: ResMut<PlayerProgress>,
-    // Option: created with the player (`reclamation::init_reclamation`); no refunds before it exists.
+    // Option: created with the player; no refunds before it exists.
     mut reclaim: Option<ResMut<crate::reclamation::SkillReclamation>>,
     mut players: Query<(Entity, &mut Loadout), With<Player>>,
 ) {

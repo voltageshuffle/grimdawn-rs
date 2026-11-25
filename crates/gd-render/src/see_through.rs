@@ -19,15 +19,9 @@
 //! boxes named "Visibility" skipped; a mesh without hit boxes never fades)
 //! against that frustum; if one intersects, every mesh section except one
 //! named "NoTransparency" is marked for this frame. Characters, the cursor and
-//! other actors are not involved: only the scenery's own records opt in.
-//! There is no other way in: the mode (`Actor.transparencyMode`) is written only by the
-//! `Actor` constructor (0) and `Actor::Load`; a level instance carries only
-//! its scale (`Actor::Read`); `GameCamera::UpdateTransparencyFrustum` adds
-//! `GridRegion::UpdateTransparency` only for underground grid levels (no
-//! stock level has a grid). So the Devil's Crossing prison front
-//! (`prisonmodular/*`, `woodbeam*`, the gate `door_devilscrossinggate`: all
-//! `allowTransparency` 0; `prison_2ndfloor_corner_large01.msh` has no hit
-//! boxes either) never fades over the player at the gate, in the game too.
+//! other actors are not involved: only the scenery's own records opt in
+//! (`Actor.transparencyMode` is written only by the `Actor` constructor and
+//! `Actor::Load`; the grid-level path `GridRegion::UpdateTransparency` has no stock level).
 //!
 //! (`GraphicsMeshInstance::UpdateSectionOpacities`,
 //! called from `Actor::UpdateSelf` / `FastUpdate` with `1 − maxTransparency`):
@@ -36,9 +30,7 @@
 //! dt_ms·0.004`, snapping to 1 once ≥ 0.75. Opacities exist per entry of the
 //! mesh's section-name chunk (a mesh without one never fades); sections named
 //! "FadeIn" draw `1 − opacity` (no stock mesh has one, not ported). The
-//! shader gets `transparencyValue = (o⁸, o⁸, o, o⁸)` (per
-//! `SetShaderParameters`: the stores are `pow(o, 7.994)` ×2, o,
-//! `pow` again).
+//! shader gets `transparencyValue = (o⁸, o⁸, o, o⁸)` (`SetShaderParameters`).
 //!
 //! (`GraphicsMeshInstance::GetShader2`, `RenderPass`):
 //! a section at opacity < 1 draws with its material's "…T.ssh"
@@ -46,38 +38,17 @@
 //! `pLightShadowStyle` / `depthStyle` / `transparencyMaskStyle` /
 //! `reflectionStyle` passes; at 0 only in the shadow ones.
 //!
-//! Where those draw: `GraphicsDeferredRenderer::ExecutePrepareScene`
-//! takes `deferred` passes of priority 0..5999 only
-//! (`ConstructRenderPass` drops the rest), and every T shader's
-//! `deferred` technique is 10000, so a faded section never enters the
-//! G-buffer. It is drawn by the transparency list: `RenderScene` →
-//! `ExecutePrepareTransparency` collects `depthStyle` and the
-//! light styles of priority 10000..11000 (`CollectPassesForAllLights`:
-//! the first light's `dLightDiffuseAmbientStyle`, then each
-//! other light's style), sorts them far to near by the object's position
-//! (`GraphicsMTRenderer::SortTransparencyPasses`) and draws them after the deferred lighting
-//! (`RenderScenePasses`). The DirectX11 programs (every "…t.ssh" alike,
-//! per standardstatict.ssh): `depthStyle` (depthPS, value 35) writes
-//! depth only, dropping texels with base alpha < 0.5;
-//! `dLightDiffuseAmbientStyle` (lightDiffuseAmbientPS, value 17) lights
-//! (hemisphere ambient + sun with its shadow) with alpha = `v` and no discard,
-//! blending SrcAlpha / OneMinusSrcAlpha with DepthFunc EQUAL and no depth
-//! write; each point light's `pLightDiffuseStyle` (value 14) adds at full
-//! strength (One / BLEND_FACTOR) and discards `v < 0.5`. `v =
-//! alphaMaskFactor·(transparencyValue.w − mask − .z) + .z` = o: the factor
-//! (`GraphicsMTRenderer.alphaMaskFactor`, read only by `SetShaderParamsForScene`)
-//! is set to 0 by the constructor and never written again, and
-//! no pass collects `transparencyMaskStyle`, so the screen mask is dead. Per
-//! pixel of the section's front-most surface with base alpha ≥ 0.5:
-//! `o·(ambient + sun) + (1 − o)·behind`, plus the point lights while o ≥ 0.5.
-//! So a marked part drops to 75 % and fades evenly to `1 − maxTransparency`
-//! and stays there (0.5 → 50 %, 0.6 → 40 %, 0.75 → 25 %); only records with
-//! `maxTransparency` 1 (roofs, many trees) end at 0 and disappear. The shadow
-//! stays, whole: the T shaders' `lightShadowPS` (standardstatict.ssh
-//! value 38) cuts `base.a · vcol.a < 0.5` only, without the opacity, so a
-//! part at opacity 0 still casts its full shadow. A material without a T variant
-//! (`*_nofade.ssh`; `model::transparent_variant_exists`) is always drawn: the
-//! round pillars' base and broken stump stay, only the shaft goes.
+//! Faded sections never enter the G-buffer (every T shader's `deferred` technique is 10000;
+//! `GraphicsDeferredRenderer::ExecutePrepareScene` takes 0..5999). The transparency list
+//! (`ExecutePrepareTransparency`, sorted far to near by `GraphicsMTRenderer::SortTransparencyPasses`, drawn after the
+//! deferred lighting) draws them (standardstatict.ssh): `depthStyle` writes depth only, dropping texels with base
+//! alpha < 0.5; `dLightDiffuseAmbientStyle` lights (hemisphere ambient + sun with its shadow) with alpha = o,
+//! SrcAlpha / OneMinusSrcAlpha, DepthFunc EQUAL, no depth write; each point light's `pLightDiffuseStyle` adds at full
+//! strength and discards o < 0.5 (`GraphicsMTRenderer.alphaMaskFactor` is always 0, so the screen mask is dead). Per
+//! pixel of the section's front-most surface with base alpha ≥ 0.5: `o·(ambient + sun) + (1 − o)·behind`, plus the
+//! point lights while o ≥ 0.5. So only records with `maxTransparency` 1 (roofs, many trees) disappear. The shadow
+//! stays whole: `lightShadowPS` cuts `base.a · vcol.a < 0.5` only, without the opacity. A material without a T
+//! variant (`*_nofade.ssh`; `model::transparent_variant_exists`) is always drawn.
 //!
 //! PORT: hit boxes ignore bones. The box–frustum test is the engine's two
 //! stages (separating-plane reject `Frustum::RejectBox` + per-face clip `Frustum::ClipBoxFaces`,
@@ -90,12 +61,9 @@
 //! The colour pass lights with the port's deferred formulas and tests the
 //! depth pass's texels instead of EQUAL depth.
 //!
-//! PORT: the two fade pipeline variants are pre-warmed behind the loading cover ([`warm_fade_pipelines`]):
-//! the engine's T shader variants exist up front (`GetShader2`), but a Bevy pipeline
-//! compiles on first use, so the first fade of a material key would pop while it compiles. During `Loading`
-//! one invisible dummy draw per (fade states, wind) key of the dressed scenery queues the pipelines; the
-//! dummies go when play starts. A streamed area's scenery spawns far outside the transparency frustum, so
-//! its variants compile long before the player reaches them.
+//! PORT: the two fade pipeline variants are pre-warmed behind the loading cover ([`warm_fade_pipelines`]): a Bevy
+//! pipeline compiles on first use, so the first fade of a material key would pop. During `Loading` one invisible
+//! dummy draw per (fade states, wind) key of the dressed scenery queues the pipelines; the dummies go when play starts.
 use crate::camera::GameCamera;
 use crate::render::material::{FadePass, GdMaterial, GdParams, PassStates};
 use bevy::camera::visibility::DynamicSkinnedMeshBounds;
@@ -132,7 +100,7 @@ pub struct SeeThroughPlugin;
 
 impl Plugin for SeeThroughPlugin {
     fn build(&self, app: &mut App) {
-        // Test hook: `GD_NO_SEE_THROUGH` keeps all scenery opaque (before / after shots).
+        // `GD_NO_SEE_THROUGH` keeps all scenery opaque.
         #[cfg(feature = "dev")]
         if app
             .world()
@@ -161,14 +129,12 @@ impl Plugin for SeeThroughPlugin {
 #[derive(Resource, Default)]
 struct FadeWarm {
     dummies: Vec<Entity>,
-    /// (the fade pass's states, wind) — the material's bind-group key; the dummy carries the part's own
-    /// mesh, so the vertex-layout half of the pipeline key matches too.
+    /// (the fade pass's states, wind): the material's bind-group key; the dummy carries the part's own mesh.
     keys: HashSet<(PassStates, bool)>,
 }
 
-/// Behind the loading cover: queue every dressed scenery part's two fade pipeline variants once, as invisible
-/// dummy draws (the colour clone at opacity 0, the depth clone writes no colour; both sit beyond the far plane).
-/// The first real fade then finds its pipelines compiled — no pop (module doc).
+/// Queues every dressed scenery part's two fade pipeline variants once, as invisible dummy draws (the colour clone at
+/// opacity 0, the depth clone writes no colour; both beyond the far plane).
 fn warm_fade_pipelines(
     mut commands: Commands,
     mut warm: ResMut<FadeWarm>,
@@ -193,7 +159,7 @@ fn warm_fade_pipelines(
                 continue;
             };
             let wind = m.params.wind.y != 0.0;
-            // The variants not queued yet; the material is cloned only for those.
+            // The variants not queued yet.
             let new = [FadePass::Depth, FadePass::Colour].map(|pass| {
                 let states = fade_states(m.states, pass);
                 warm.keys.insert((states, wind)).then_some(states)
@@ -242,13 +208,9 @@ struct Obb {
 }
 
 impl Obb {
-    /// The engine's box–frustum test (`GraphicsMeshInstance::SetTransparency`):
-    /// a separating-plane reject (`Frustum::RejectBox`) AND an exact
-    /// confirm (`Frustum::ClipBoxFaces` → `Frustum::ClipPolygon`) that clips each box face against
-    /// every frustum plane. The plane test alone also accepts a box that sits
-    /// beside the frustum but inside the infinite slab of one of its planes;
-    /// the face clip keeps only boxes that really reach into the frustum, so a
-    /// house's far walls are not faded just because the player stands near it.
+    /// The engine's box–frustum test (`GraphicsMeshInstance::SetTransparency`): a separating-plane reject
+    /// (`Frustum::RejectBox`) AND an exact confirm (`Frustum::ClipBoxFaces` → `Frustum::ClipPolygon`) that clips each
+    /// box face against every frustum plane (the plane test alone accepts boxes beside the frustum).
     fn touches(&self, planes: &[Vec4]) -> bool {
         let sep = planes.iter().all(|p| {
             let n = p.truncate();
@@ -352,8 +314,8 @@ pub fn max_transparency(rec: &gd_formats::arz::Record) -> Option<f32> {
 }
 
 impl SeeThrough {
-    /// The mesh's hit boxes placed by `tf`, its sections, and the spawned part
-    /// entities (`model::spawn_model*`) with their sections (`part_sections`).
+    /// The mesh's hit boxes placed by `tf`, its sections, and the spawned part entities with their sections
+    /// (`part_sections`).
     pub fn new(
         max_transparency: f32,
         msh: &Msh,

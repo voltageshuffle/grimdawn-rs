@@ -1,9 +1,7 @@
-//! `GD_MOUSE` (hooks.rs): the real mouse without one. Each event, at its time after the player spawned (real time,
-//! so it also fires while the game menu holds the game), moves the
-//! window's cursor (`Window::set_physical_cursor_position`) or writes a `MouseButtonInput` before the input systems
-//! (`First`), so every system sees it as the OS pointer: the UI windows, the world click, the hover. At most one event
-//! fires a frame, so a press, the moves and the release land in separate frames (as a real mouse's) even when
-//! frames are slow. Each event logs the player's position (`GD_MOUSE: <event> ...`), which is what a check reads.
+//! `GD_MOUSE`: the real mouse without one. Each event, at its time after the player spawned (real time),
+//! moves the window's cursor or writes a `MouseButtonInput` before the input systems (`First`), so every system
+//! sees it as the OS pointer. At most one event fires a frame, so a press, the moves and the release land in
+//! separate frames even when frames are slow. Each event logs the player's position (`GD_MOUSE: <event> ...`).
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;

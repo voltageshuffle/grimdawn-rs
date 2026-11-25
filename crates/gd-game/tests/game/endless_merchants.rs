@@ -6,8 +6,8 @@ use gd_game_core::session::{GameMode, LoadedCharacter};
 
 const ED: &str = "records/endlessdungeon/";
 
-/// The expected stock of a market record: each category's table (a `LevelTable` of one `LootItemTable_DynWeight`
-/// with one item), once per category (`marketNum<X>Min..Max` 1..1), as `MarketMiniMart::Refresh` rolls it.
+/// The expected stock of a market record: each category's single item, once per category, as
+/// `MarketMiniMart::Refresh` rolls it.
 fn expected_stock(db: &gd_formats::vfs::Database, market: &str) -> Vec<String> {
     let m = db.get(market).expect("market record");
     let mut want = Vec::new();
@@ -34,15 +34,13 @@ fn expected_stock(db: &gd_formats::vfs::Database, market: &str) -> Vec<String> {
     want
 }
 
-/// Each Splendor merchant sells its Ultimate table (`merchanttbl_reward_0Nu`, the session difficulty's entry of
-/// `marketFileName`): one Shattered set piece per category, every one stocked (the port knows each item); on
-/// Normal / Elite the shared `_01` / `_01e` tables sell nothing.
+/// Each Splendor merchant sells its Ultimate table: one Shattered set piece per category, every one
+/// stocked; on Normal / Elite the shared `_01` / `_01e` tables sell nothing.
 #[test]
 fn the_splendor_merchants_sell_their_ultimate_tables() {
     use gd_game::trade::{MarketTimers, Markets, stock_market};
     use gd_game_core::inventory::Inventory;
     use gd_sim::items::market::market_file;
-    // An Ultimate session (the menu's Ultimate choice) of a character the port saved.
     let Some(mut new) = TestGame::new_character("Tester", false, false) else {
         return;
     };
@@ -113,7 +111,6 @@ fn the_splendor_merchants_sell_their_ultimate_tables() {
             got
         });
         assert_eq!(got, want, "merchant {n}");
-        // Normal and Elite: the shared tables have no categories.
         for d in 0..2 {
             let low = market_file(npc, d).unwrap();
             assert!(expected_stock(&data.db, low).is_empty(), "{low}");

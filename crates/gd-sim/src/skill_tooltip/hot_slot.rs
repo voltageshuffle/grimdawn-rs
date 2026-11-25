@@ -11,15 +11,12 @@ pub enum HotState {
     Configuration,
 }
 
-/// The state `Skill::SetAvailability` stores in `Skill.availability` (`Skill::Update` calls it
-/// every frame with its `Skill.ignoreMana` byte and `false`): not enough energy ([`energy_cost`] above the
-/// current energy, `Skill::IsManaAvailable`) → 2 `LowMana`, unless `Skill.ignoreMana` skips the check; else
-/// the cooldown running (`Skill.cooldownRemaining` > 0) or no charge left (`GetCooldownCharges` < 1) → 1
-/// `Cooldown`; else the worn weapons not suiting it (`QualifyingWeapon` / `QualifyingHandState`) → 4
-/// `Configuration`; else 0
-/// ready, 5 for level 0 and 7 outside the skill's shapeshift form (both read as ready by
-/// `GenerateUISkillInfo`, whose not-learned line comes first). `energy_ok` is the caller's: `Skill.ignoreMana`
-/// ([`ignores_energy`]) or the energy check.
+/// The state `Skill::SetAvailability` stores in `Skill.availability` (every frame from `Skill::Update`):
+/// not enough energy ([`energy_cost`] above the current energy, `Skill::IsManaAvailable`) → 2 `LowMana`;
+/// else the cooldown running or no charge left (`GetCooldownCharges` < 1) → 1 `Cooldown`; else the worn
+/// weapons not suiting it (`QualifyingWeapon` / `QualifyingHandState`) → 4 `Configuration`; else 0 ready
+/// (5 for level 0 and 7 outside the skill's shapeshift form also read as ready). `energy_ok`:
+/// `Skill.ignoreMana` ([`ignores_energy`]) or the energy check.
 pub fn hot_state(energy_ok: bool, cooling: bool, weapons_ok: bool) -> HotState {
     if !energy_ok {
         HotState::LowMana
@@ -32,13 +29,9 @@ pub fn hot_state(energy_ok: bool, cooling: bool, weapons_ok: bool) -> HotState {
     }
 }
 
-/// The `Skill.ignoreMana` byte (`Skill::SetIgnoreMana`, nothing calls it): the energy check of [`hot_state`] is
-/// skipped. The writes of it in Game.dll: set by the `Skill_Passive` constructor (so its kin
-/// `Skill_PassiveDualWieldWeapon`, `Skill_PassiveShield`, `Skill_Mastery`), by `Skill_PlayAttackAnimation`'s
-/// and `SkillBuff`'s; the toggles `Skill_BuffSelfToggled`, `Skill_BuffAttackRadiusToggled`,
-/// `Skill_OnHitAttackRadius`, `Skill_OnHitBuffSelf` copy their on byte into it in `ActivateNow` (so it is set
-/// while one is on; `Skill_Shapeshift` calls the `Skill_BuffSelfToggled` one; their `…Duration` / `BuffSelfShield`
-/// kin have their own `ActivateNow` and keep it clear). `active` = the skill is on.
+/// The `Skill.ignoreMana` byte: the energy check of [`hot_state`] is skipped. Set for passives
+/// (`Skill_Passive` and kin), `Skill_PlayAttackAnimation` and `SkillBuff*`; the toggles copy their on
+/// byte into it in `ActivateNow`. `active` = the skill is on.
 pub fn ignores_energy(class: &str, active: bool) -> bool {
     match class {
         "Skill_Passive"
@@ -60,12 +53,8 @@ pub fn ignores_energy(class: &str, active: bool) -> bool {
 /// `GetTotalSkillAttribute(2)` %, `skillManaCostReduction`: the skill's own record and modifiers, value plus
 /// |value| × `…Modifier` %, plus the player's), floored at 0; an item skill (`Skill.isItemSkill`, here
 /// `item_skill`) or a potion (`Skill.isPotion`, `Skill_ChargePotion`) takes the cost unreduced. A reduction with a
-/// `skillManaCostReductionChance` inside (0, 100) never counts: `GetTotalSkillAttribute` rolls it
-/// (`SkillAttribute::GetTotalValue`, a Park–Miller draw × 100 ≤ the chance) into the
-/// accumulator's chance part, and `IsManaAvailable` asks without it (its third argument 0 in the
-/// disassembly; a chance of 0 or 100 and above is a plain value). No stock record has such a chance. PORT:
-/// the player's part is the profile total, which has no chance part of its own.
-/// [`crate::actor::skill_energy_cost`] computes it with a roll that always fails (the plain value).
+/// `skillManaCostReductionChance` inside (0, 100) never counts (`IsManaAvailable` asks without the
+/// rolled chance part).
 pub fn energy_cost(ctx: &SkillTipCtx, skill: &str, item_skill: bool) -> f32 {
     let (Some(rec), Some(prof)) = (ctx.db.get(skill), profile_record(ctx.db, skill)) else {
         return 0.0;
@@ -100,11 +89,9 @@ pub fn plain_value(chance: f32) -> bool {
 
 /// The rollover of the evade and potion hot slots: [`hot_slot_lines`] of their default skill at level 1.
 /// `PlayerHotSlotCtrl::CreateHotSlotOption`: slot types 2 / 3 are
-/// `HotSlotOptionPotionSkill`, 5 `HotSlotOptionEvade`, and both keep `HotSlotOptionSkill::GetRolloverText`
-/// (the one-line `HotSlotOptionPotion::GetRolloverText` belongs to a class nothing creates);
+/// `HotSlotOptionPotionSkill`, 5 `HotSlotOptionEvade`, and both keep `HotSlotOptionSkill::GetRolloverText`;
 /// `SkillManager::LoadDefaultPlayerSkills` loads `defaulthealthpotion` / `defaultmanapotion` /
-/// `defaultevade` and sets them to level 1. The potion's own parameter text is
-/// `charge_potion_restores`' rule; neither prints a level header ([`current_block`]).
+/// `defaultevade` at level 1. Neither prints a level header ([`current_block`]).
 pub fn default_hot_slot_lines(ctx: &SkillTipCtx, skill: &str, state: HotState) -> Vec<TextLine> {
     let mut book = ctx.book.clone();
     if book.level(skill) == 0 {

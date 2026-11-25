@@ -1,6 +1,6 @@
-//! Giving the player an item (`Inventory::give`, `gd_game::loot::give_item`): an empty slot it fits takes it
-//! first (never a swap; weapons into the active set with the hand rules), else the main bag, the selected bag,
-//! the others; a full inventory throws it back down (soulbound: destroyed); Broken items are not picked up.
+//! Giving the player an item (`Inventory::give`): an empty slot it fits takes it first (never a swap; weapons into
+//! the active set with the hand rules), else the main bag, the selected bag, the others; a full inventory throws it
+//! back down (soulbound: destroyed); Broken items are not picked up.
 use bevy::prelude::*;
 use gd_formats::inventory::EquipSlot;
 use gd_formats::save::item::Item;

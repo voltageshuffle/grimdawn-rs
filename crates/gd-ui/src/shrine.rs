@@ -21,10 +21,8 @@
 //!   every offering slot is filled; on the proxy window it reads
 //!   `tagShrineButton02` ("Start"); cancel and close hide the window.
 //!
-//! The shrine button has no rollover: the window reads no
-//! `shrineButtonRollover` (the record's field; the name is not even
-//! a string in `Grim Dawn.exe`, the loaders `ShrineWindow::Load` / `ShrineProxyWindow::Load` read
-//! only the fields above and `shrineSound`).
+//! The shrine button has no rollover: `ShrineWindow::Load` / `ShrineProxyWindow::Load` read
+//! only the fields above and `shrineSound`, not the record's `shrineButtonRollover`.
 //!
 //! Offering boxes: each is an `enchanteritembox.tpl` item box (class ctor
 //! `EnchanterItemBox::EnchanterItemBox` on the base `UIItemBox::UIItemBox`, loader `UIItemBox::Load`, draw
@@ -94,7 +92,6 @@ impl Plugin for ShrineUiPlugin {
     }
 }
 
-/// A clickable part of the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Accept,
@@ -102,22 +99,19 @@ pub enum Part {
     Close,
 }
 
-/// The built window (physical px). Empty while no shrine window is open.
+/// The built window (physical px); empty while no shrine window is open.
 #[derive(Resource, Default)]
 pub struct ShrineLayout {
     pub window: Option<URect>,
-    /// Buttons (enabled ones only).
     pub buttons: Vec<(URect, Part)>,
-    /// The offering boxes and their items.
     pub boxes: Vec<(URect, String)>,
-    /// The offering under the cursor (its tooltip, `tooltip.rs`).
     pub hover_item: Option<Item>,
 }
 
 #[derive(Component)]
 struct ShrineRoot;
 
-/// A button quad: its part and whether it is enabled (hover look swapped in place by [`live`]).
+/// A button quad: its part and whether it is enabled.
 #[derive(Component)]
 struct ShrineButton(Part, bool);
 
@@ -129,7 +123,7 @@ fn build(
     open: Res<ShrineWindow>,
     shrines: Query<&Shrine>,
     inv: Res<Inventory>,
-    // Option: created with the player (`gd_game::stash::init_stash`).
+    // Option: created with the player.
     stash: Option<Res<gd_game_core::stash::Stash>>,
     roots: Query<Entity, With<ShrineRoot>>,
     mut layout: ResMut<ShrineLayout>,
@@ -157,7 +151,6 @@ fn build(
     let slots = &slots_at.1;
     let sig = (
         open.version,
-        // The UI scale too (an applied UI Scale rebuilds).
         size.extend(assets.scale(size).to_bits()),
         slots.each_ref().map(|s| s.as_ref().map(|s| s.1)),
     );
@@ -182,10 +175,9 @@ fn build(
     let field = |k: &str| rec.str(k).unwrap_or("").to_string();
     let r = WindowDef::from_record(rec).screen_rect(ui.screen.x, ui.screen.y, s);
     let o = Vec2::new(r.x, r.y);
-    // The window takes its clicks, so no HUD button under it plays a sound (as the altar does).
+    // The window takes its clicks, so no HUD button under it plays a sound.
     ui.sound_blocker(r);
     let proxy = open.proxy;
-    // Background.
     if let Some(bg) = ui.record(&field(if proxy {
         "shrineCorruptedBitmap"
     } else {
@@ -196,7 +188,6 @@ fn build(
             ui.bitmap(path, f("bitmapPositionX"), f("bitmapPositionY"), o);
         }
     }
-    // Title.
     if let Some(t) = ui.record(&field(if proxy {
         "shrineCorruptedTitle"
     } else {
@@ -237,7 +228,6 @@ fn build(
             }
         }
     }
-    // Offering boxes, then covers over the empty slots.
     if !proxy {
         for (i, slot) in slots.iter().enumerate() {
             let n = i + 1;
@@ -260,7 +250,7 @@ fn build(
                 ui.sc(f("itemXSize")),
                 ui.sc(f("itemYSize")),
             );
-            // The box's background: `highlightTexture` tinted by the missing look (module doc).
+            // The box's background: `highlightTexture` tinted by the missing look.
             if !have {
                 let tex = b
                     .str("highlightTexture")
@@ -293,7 +283,6 @@ fn build(
             layout.boxes.push((br, item.clone()));
         }
     }
-    // Buttons.
     let ready = proxy || slots.iter().flatten().all(|(_, have)| *have);
     if let Some(b) = ui.record(&field("shrineButton")) {
         let text = if proxy {
@@ -333,7 +322,7 @@ fn build(
     layout.window = Some(r);
 }
 
-/// A button drawn for [`live`] hover; its rect when enabled.
+/// Its rect when enabled.
 fn live_button(
     ui: &mut super::Ui,
     b: &gd_formats::arz::Record,
@@ -347,7 +336,7 @@ fn live_button(
     enabled.then_some(br)
 }
 
-/// Hover in place (no rebuild): the button bitmaps and the hovered offering's item.
+/// Hover in place: the button bitmaps and the hovered offering's item.
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
     mut layout: ResMut<ShrineLayout>,
@@ -382,8 +371,6 @@ fn live(
     }
 }
 
-/// `GD_SHRINE_ACCEPT` (hooks.rs): presses the shrine button (when enabled) once per window, after it has been open
-/// that long.
 #[cfg(feature = "dev")]
 fn accept_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -419,8 +406,7 @@ fn accept_hook(
     }
 }
 
-/// Clicks on the window: the shrine button accepts, cancel / close cancel (Esc through the shared
-/// dispatcher, `ui::esc_dispatcher`); the window takes the click (no walking).
+/// Clicks on the window: the shrine button accepts, cancel / close cancel; the window takes the click.
 #[allow(clippy::too_many_arguments)]
 fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -435,7 +421,6 @@ fn clicks(
     let Some(wr) = layout.window else {
         return;
     };
-    // Esc closes the window through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
     let Some(p) = super::cursor_px(win) else {
         return;
@@ -474,8 +459,7 @@ fn clicks(
     }
 }
 
-/// The item's rarity plate (`gameiteminfo.dbr` `<class>ItemBackground` tinted `<class>ItemColor`) over the
-/// rect `character::item_icon` draws the icon in (module doc).
+/// The item's rarity plate (`gameiteminfo.dbr` `<class>ItemBackground` tinted `<class>ItemColor`).
 pub(crate) fn rarity_plate(ui: &mut super::Ui, inv: &Inventory, item: &Item, r: URect) {
     if let Some(info) = inv.info(item)
         && let Some(key) = super::character::rarity_key(info.resolved.display_color_index())
@@ -503,8 +487,7 @@ pub(crate) fn rarity_plate(ui: &mut super::Ui, inv: &Inventory, item: &Item, r: 
     }
 }
 
-/// The sounds of a left press on `part` (module doc): the button record's `soundNameDown` (looked up by `down`),
-/// then, for Offer on the offering window, `shrineSound`.
+/// The sounds of a left press on `part`: the button's `soundNameDown`, then, for Offer, `shrineSound`.
 fn press_sounds(
     rec: &gd_formats::arz::Record,
     part: Part,

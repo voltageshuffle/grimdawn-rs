@@ -1,5 +1,4 @@
-//! Advances the [`DayClock`] while the `dayNightCycle` option is on (the
-//! clock data is [`gd_game_core::day_clock`]).
+//! Advances the [`DayClock`] while the `dayNightCycle` option is on.
 use bevy::prelude::*;
 use gd_game_core::day_clock::DayClock;
 
@@ -16,7 +15,7 @@ impl Plugin for DayClockPlugin {
     }
 }
 
-/// The clock runs while the option is on (the game's pause stops it: virtual time).
+/// Virtual time: the game's pause stops the clock.
 fn advance_day_clock(
     mut clock: ResMut<DayClock>,
     options: Res<gd_game_core::options::GameOptions>,

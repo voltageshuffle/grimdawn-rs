@@ -1,11 +1,8 @@
 //! The potions window ("Cauldron", `records/ui/cauldron/potions_table.dbr`,
 //! the HUD master table's `hudPotionsWindow`): per potion (tabs), its three
 //! containers, its two modifier slots and the potion's description; a click
-//! on a slot opens the list of the potion's unlocked modifiers. It shows
-//! [`PotionWindow`] and the player's skill book (`HudValues::skills`) and
-//! sends [`PotionRequest`]s; the rules are in `gd_game::cauldron` and
-//! `gd_sim::potions`. Clicking a cauldron (`NpcCauldron`) is the shared interact order
-//! (`gd_game::player_orders`, the hover pick): gd-game walks beside it, and in reach the window opens.
+//! on a slot opens the list of the potion's unlocked modifiers. Clicking a
+//! cauldron (`NpcCauldron`) walks beside it and opens the window in reach.
 //!
 //! Layout, `Grim Dawn.exe` (loader `PotionsWindow::Load`, open
 //! `PotionsWindow::Open`, click `PotionsWindow::OnButtonPress`, update `PotionsWindow::Update`, HUD
@@ -26,8 +23,7 @@
 //!   `skillUpAlternateBitmapName`, else `skillUpBitmapName`, of that level;
 //! - the modifier list (`skillSelect`, a `SlotSelectWindow`) opens at the
 //!   clicked slot's bottom-left corner, listing the potion's unlocked
-//!   modifiers (no `selectedBorder`: the window loads it into `PotionsWindow.selectedBorder`
-//!   (loader `PotionsWindow::Load`, ctor `PotionsWindow::PotionsWindow`) and no method of its vtable reads it).
+//!   modifiers (`PotionsWindow.selectedBorder` is loaded but never read).
 //!
 //! - the tab buttons: the record's `potionBitmapName` until the window
 //!   opens; on open (`PotionsWindow::Open`) both potions run their `Update`
@@ -39,22 +35,17 @@
 //! - the modifier list: a `SlotSelectWindow` (`slot_select`); a click
 //!   plays `skillSelectSound` and closes the list;
 //! - the description scrolls in `potionsModifiersScrollWindow` (the
-//!   journal's scroll window class, so the shared `window::scrollbar_live` / `Bar`): the
-//!   wheel over the scroll window scrolls int(120 × 0.2 × s) px a notch
-//!   (`UIScrollWindow::HandleScrollInput`); arrows 20 × s px, repeating after 300 ms. Scrolling and hovering move the
-//!   pane, the bar thumb and the button frames in place ([`live`]); the skill rollovers go through
-//!   `tip::TipCanvas` with the style's delay ([`tooltip`]), not into the window build.
+//!   journal's scroll window class): the wheel scrolls int(120 × 0.2 × s) px
+//!   a notch (`UIScrollWindow::HandleScrollInput`); arrows 20 × s px,
+//!   repeating after 300 ms.
 //!
 //! PORT: a potion whose choice matches no combo shows its skill icon (the
 //! engine keeps the last matched bitmap); a locked container's icon is grey;
 //! the picks' selected (0.4, 0.6, 1, 0.15) / disabled looks were not traced; the
 //! description is the potion's, container's and slotted modifiers' tooltip
 //! lines (its text source not decompiled) and returns to the top on a page
-//! switch; a click on the scroll track pages (`window::Bar::press`); a secondary-skill modifier (Stoneskin, ...) takes its icon
-//! from its buff record (`display_record`). Sounds: [`press_sound`].
-//! Hooks (hooks.rs): `GD_UI_OPEN=potions` (`GD_UI_TAB=2`: the energy page); `GD_POTION_SLOT` opens a slot's list,
-//! `GD_POTION_HOVER` shows a skill's tooltip, `GD_POTION_SCROLL` scrolls the description, `GD_POTION_CONTAINER`
-//! chooses a container of the page, `GD_USE_CAULDRON` walks to the nearest cauldron and opens it (each as a click would).
+//! switch; a click on the scroll track pages; a secondary-skill modifier
+//! (Stoneskin, ...) takes its icon from its buff record (`display_record`).
 use super::Ui;
 use super::contains;
 use super::window::Rebuild;
@@ -89,7 +80,6 @@ impl Plugin for PotionsUiPlugin {
                     .before(click_cauldron),
             ),
         );
-        // Live: open, or still built (the closing frame despawns the root).
         super::window::add_window(
             app,
             build,
@@ -105,45 +95,37 @@ impl Plugin for PotionsUiPlugin {
     }
 }
 
-/// A clickable part of the window.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Close,
     Tab(usize),
     Container(String),
     Slot(usize),
-    /// A modifier of the open list.
     Pick(String),
 }
 
-/// UI-only state: the slot whose modifier list is open, the description's
-/// scroll (px).
+/// UI-only state: the open modifier list's slot, the description's scroll (px).
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct PotionsView {
     pub list: Option<usize>,
     pub scroll: f32,
 }
 
-/// The built window (physical px). Empty while it is closed.
+/// Physical px. Empty while closed.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct PotionsLayout {
     pub window: Option<URect>,
     pub list: Option<URect>,
     pub parts: Vec<(URect, Part)>,
-    /// The description's scroll window (`potionsModifiersScrollWindow`) and
-    /// how far it can scroll.
     pub desc: Option<(URect, f32)>,
-    /// Its scroll bar.
     pub(super) bar: Option<super::window::Bar>,
-    /// The modifier buttons are enabled (a container of the page is chosen).
     pub slots_enabled: bool,
 }
 
 #[derive(Component)]
 struct PotionsRoot;
 
-/// A button frame's up / over bitmaps ([`live`] swaps them by the hover; the down frame is static per
-/// build, `enabled` gates the over look).
+/// A button frame's up / over bitmaps; `enabled` gates the over look.
 #[derive(Component)]
 struct FrameLook {
     part: Part,
@@ -153,14 +135,13 @@ struct FrameLook {
     enabled: bool,
 }
 
-/// The description pane's inner node ([`live`] scrolls it by `PotionsView::scroll`).
 #[derive(Component)]
 struct DescScrolled {
     clip_y: f32,
     inv: f32,
 }
 
-/// The topmost part under the cursor (borrowed from the layout: no copy per frame).
+/// The topmost part under the cursor.
 fn hovered<'a>(win: &Window, layout: &'a PotionsLayout) -> Option<Cow<'a, Part>> {
     super::cursor_px(win).and_then(|p| {
         layout
@@ -172,7 +153,6 @@ fn hovered<'a>(win: &Window, layout: &'a PotionsLayout) -> Option<Cow<'a, Part>>
     })
 }
 
-/// The `GD_POTION_HOVER` hook's part, which wins over [`hovered`].
 #[cfg(feature = "dev")]
 fn forced(hooks: &gd_game_core::hooks::Hooks) -> Option<Cow<'static, Part>> {
     hooks
@@ -182,7 +162,6 @@ fn forced(hooks: &gd_game_core::hooks::Hooks) -> Option<Cow<'static, Part>> {
         .map(|s| Cow::Owned(Part::Pick(s)))
 }
 
-/// The potions window's rect (see the module docs).
 pub fn window_rect(data: &GameData, screen: Vec2, s: f32) -> Option<URect> {
     let rec = data.db.get(RECORD)?;
     let mut r = WindowDef::from_record(rec).screen_rect(screen.x, screen.y, s);
@@ -195,7 +174,7 @@ pub fn window_rect(data: &GameData, screen: Vec2, s: f32) -> Option<URect> {
     Some(r)
 }
 
-/// A skill's button icon at `level` (1-based; `SkillButton::GetIcon`).
+/// `SkillButton::GetIcon`; `level` is 1-based.
 pub(super) fn skill_icon(data: &GameData, skill: &str, level: u32) -> Option<String> {
     let rec = gd_sim::skills::display_record(&data.db, skill)?;
     let i = level.max(1) as usize - 1;
@@ -213,8 +192,7 @@ fn field_pos(r: &gd_formats::arz::Record, k: &str) -> f32 {
     r.f32(k).unwrap_or(0.0)
 }
 
-/// A `potionbutton.tpl` button: its frame (`frame` bitmap field), then
-/// `icon` at `skillOffset`; the rect of the frame (or of the icon).
+/// A `potionbutton.tpl` button: its frame, then `icon` at `skillOffset`.
 fn potion_button(
     ui: &mut Ui,
     b: &gd_formats::arz::Record,
@@ -228,7 +206,6 @@ fn potion_button(
         o.x + ui.sc(field_pos(b, "bitmapPositionX")),
         o.y + ui.sc(field_pos(b, "bitmapPositionY")),
     );
-    // The frame size defines the button (InFocus exists on every one).
     let size_of = |ui: &mut Ui, k: &str| {
         b.str(k)
             .map(str::to_owned)
@@ -292,7 +269,6 @@ fn potion_button(
     r
 }
 
-/// The module doc's hooks.
 #[cfg(feature = "dev")]
 fn test_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -343,14 +319,12 @@ fn build(
     mut trees: Local<Option<Vec<PotionTree>>>,
     mut fresh: gd_game_core::session::NewSession,
     mut built: Local<Rebuild<(u64, u64, UVec2, Option<usize>, gd_sim::skills::SkillBook)>>,
-    // The tab icons set when the window opened (module doc).
     mut tab_icons: Local<Option<Vec<Option<String>>>>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
     if fresh.begun() {
         built.reset();
         *tab_icons = None;
-        // The ended session's data (a session may mount another mod).
         *trees = None;
     }
     let Ok(win) = window.single() else { return };
@@ -360,8 +334,7 @@ fn build(
         view.scroll = 0.0;
         *tab_icons = None;
     }
-    // Hover and scroll are not in the signature: `live` moves the frames, the pane and the thumb,
-    // `tooltip` shows the hovered skill's rollover. The font generation is: a language swap redraws the texts.
+    // Hover and scroll are not in the signature: `live` and `tooltip` apply them.
     let list = view.list;
     let generation = assets.fonts.generation;
     if size.x == 0
@@ -400,7 +373,6 @@ fn build(
             .collect()
     });
     let s = assets.scale(size);
-    // Description and tooltip lines (before `Ui` borrows the assets.fonts).
     let ctx = gd_sim::skill_tooltip::SkillTipCtx {
         db: &data.db,
         trees: &data.skill_trees(),
@@ -438,7 +410,6 @@ fn build(
         return;
     };
     let o = Vec2::new(r.x, r.y);
-    // Background, title.
     if let Some(bg) = ui.record(&field("potionsBaseBitmap"))
         && let Some(path) = bg.str("bitmapName")
     {
@@ -458,7 +429,6 @@ fn build(
             .unwrap_or_default();
         ui.text(&tb, o, &text);
     }
-    // Tabs.
     for (i, key) in ["potions1Button", "potions2Button"].into_iter().enumerate() {
         let Some(b) = ui.record(&field(key)) else {
             continue;
@@ -484,7 +454,6 @@ fn build(
         );
         layout.parts.push((br, Part::Tab(i)));
     }
-    // Containers.
     for (i, c) in tree.containers.iter().enumerate().take(3) {
         let Some(b) = ui.record(&field(&format!("potionsContainer{}", i + 1))) else {
             continue;
@@ -513,7 +482,6 @@ fn build(
         );
         layout.parts.push((br, Part::Container(c.clone())));
     }
-    // Modifier slots.
     let enabled = gd_sim::potions::slots_enabled(book, tree);
     layout.slots_enabled = enabled;
     let mut slot_rects = [None; 2];
@@ -541,11 +509,8 @@ fn build(
             layout.parts.push((br, Part::Slot(i)));
         }
     }
-    // Description: the potions' text box in its scroll window
-    // (loader `PotionsWindow::Load`: the box is the window's only child,
-    // `UIScrollWindow::SetChild`), the same `UIScrollWindow` as the journal's panes
-    // (`UIScrollWindow::Load`, `UIScrollWindow::HandleArrowInput`), so the same
-    // scroll bar (`verticalScrollbar`, always shown here) and arrows.
+    // Description: the window's only child, in a `UIScrollWindow` like the
+    // journal's (`PotionsWindow::Load`), scroll bar always shown.
     if let (Some(sw), Some(bx)) = (
         ui.record(&field("potionsModifiersScrollWindow")),
         ui.record(&field("potionsModifiersBox")),
@@ -586,7 +551,6 @@ fn build(
                 .unwrap_or_else(|| default_style.clone());
             let lh = ui.line_height(&style);
             for part in ui.wrap_lines(&style, w, &l.text) {
-                // The pane clips the rows that cannot show; `live` scrolls it.
                 ui.text_line(&style, Vec2::new(x, y), &part, 1.0);
                 y += lh;
             }
@@ -613,7 +577,6 @@ fn build(
             );
         }
     }
-    // Close button.
     if let Some(b) = ui.record(&field("potionsCloseButton"))
         && let Some((img, sz)) = b
             .str("bitmapNameUp")
@@ -647,13 +610,11 @@ fn build(
         layout.parts.push((br, Part::Close));
     }
     layout.window = Some(r);
-    // The open slot's modifier list.
     if let Some(slot) = view.list.filter(|_| enabled)
         && let Some(anchor) = slot_rects[slot]
         && let Some(sel) = ui.record(&field("skillSelect"))
     {
-        // The list (`slot_select`): the potion's unlocked modifiers (the window's
-        // `selectedBorder` is never drawn, module docs).
+        // `selectedBorder` is never drawn.
         let list = gd_sim::potions::unlocked_modifiers(book, tree);
         let picks: Vec<super::slot_select::Pick> = list
             .iter()
@@ -681,8 +642,7 @@ fn build(
     }
 }
 
-/// The window's hover looks in place (no rebuild): the button frames' up / over bitmaps, the open
-/// list's hovered row tint, the description pane and its scroll bar thumb.
+/// The window's hover looks in place: button frames, list row tint, pane and thumb.
 #[allow(clippy::too_many_arguments)]
 fn live(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -701,7 +661,6 @@ fn live(
         return;
     }
     let Ok(win) = window.single() else { return };
-    // The game menu / Options holds the mouse: no hover looks under it.
     let hover = hovered(win, &layout);
     #[cfg(feature = "dev")]
     let hover = forced(&hooks).or(hover);
@@ -728,7 +687,6 @@ fn live(
         _ => None,
     };
     for (h, parent, mut vis) in &mut hovers {
-        // The hot slot list's rows are `hotbar_pick::draw`'s.
         if picks.contains(parent.parent()) {
             continue;
         }
@@ -756,8 +714,7 @@ fn live(
     }
 }
 
-/// The hovered skill's rollover, right of the window (or of the open list), through the shared
-/// `TipCanvas` with the style's delay — not drawn into the window build.
+/// The hovered skill's rollover, right of the window (or of the open list).
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -772,7 +729,6 @@ fn tooltip(
 ) {
     if fresh.begun() {
         *shown = None;
-        // The ended session's data (a session may mount another mod).
         *trees = None;
     }
     let Ok(win) = window.single() else { return };
@@ -843,9 +799,7 @@ fn tooltip(
     );
 }
 
-/// Clicks on the window (it takes them: no walking): tabs, containers,
-/// slots (open / close their list), list picks, the close button. Esc closes the list, else the
-/// window, through the shared dispatcher (`ui::esc_dispatcher`).
+/// Clicks on the window (it takes them: no walking). Esc closes the list, else the window.
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -869,19 +823,16 @@ pub fn clicks(
         *held = None;
         return;
     };
-    // The game menu / Options holds the mouse: no wheel, no press, no held bar.
     if pause.menu {
         wheel.clear();
         *held = None;
         return;
     }
-    // Esc closes the list, else the window, through the shared dispatcher (`ui::esc_dispatcher`).
     let Ok(win) = window.single() else { return };
     let Some(p) = super::cursor_px(win) else {
         return;
     };
     let max = layout.desc.map_or(0.0, |(_, m)| m);
-    // A held scroll bar arrow repeats, a held thumb drags (`window::bar_held`).
     if !buttons.pressed(MouseButton::Left) {
         *held = None;
     }
@@ -915,10 +866,8 @@ pub fn clicks(
         return;
     }
     capture.0 = true;
-    // The wheel over the scroll window scrolls the description: int(delta ×
-    // 0.2 × s) px with Windows' 120 per notch (scroll bar mouse
-    // handler `UIScrollWindow::HandleScrollInput`, events 17 / 18, passed on by the scroll window's
-    // `UIScrollWindow::HandleMouseEvent` while the cursor is inside it).
+    // The wheel over the scroll window: int(delta × 0.2 × s) px with 120 per
+    // notch (`UIScrollWindow::HandleScrollInput`).
     let s = scale.factor(win.physical_width(), win.physical_height());
     for w in wheel.read() {
         if !layout.desc.is_some_and(|(r, _)| contains(&r, p))
@@ -945,14 +894,12 @@ pub fn clicks(
         *held = Some(hold);
         return;
     }
-    // A press plays the button's `soundNameDown` when it goes down ([`press_sound`]).
     let button = press_sound(
         hit.as_ref(),
         open.page,
         |c| values.skills.level(c) > 0,
         layout.slots_enabled,
     );
-    // A pick plays the list's `skillSelectSound` (`SlotSelectWindow::HandleMouseEvent`).
     let (button, key) = match (&hit, button) {
         (Some(Part::Pick(_)), _) => (Some("skillSelect".to_owned()), "skillSelectSound"),
         (_, b) => (b, "soundNameDown"),
@@ -994,14 +941,9 @@ pub fn clicks(
     }
 }
 
-/// The button record whose `soundNameDown` a left press on `hit` plays. `Grim Dawn.exe`: the tabs
-/// (`PotionsWindow.tabGroup`) and each page's containers are radio groups (`UIRadioButtonGroup::HandleMouseEvent`): a
-/// press on an enabled button that is up sets it down with its `soundNameDown` (the group's down one goes up with its
-/// `soundNameUp`: no stock potion button has one); a press on the down one does nothing. The close button
-/// (`PotionsWindow.closeButton`) and the modifier buttons are push groups (`UIPushButtonGroup::HandleMouseEvent`): a
-/// press on an enabled button sets it down with the sound (the release over it plays `soundNameUp`, none in stock). The
-/// window acts on the press (listener `PotionsWindow::OnButtonPress`, event 0). The update `PotionsWindow::Update`
-/// disables the modifier buttons while no container of the page is down; containers are never disabled.
+/// The button record whose `soundNameDown` a left press on `hit` plays. Tabs and containers are
+/// radio groups (`UIRadioButtonGroup::HandleMouseEvent`): a press on the down one is silent. The
+/// window acts on the press (`PotionsWindow::OnButtonPress`).
 fn press_sound(
     hit: Option<&Part>,
     page: usize,
@@ -1011,17 +953,14 @@ fn press_sound(
     match hit? {
         Part::Close => Some("potionsCloseButton".to_owned()),
         Part::Tab(i) if *i != page => Some(format!("potions{}Button", i + 1)),
-        // Every container has the same sound.
         Part::Container(c) if !chosen(c) => Some("potionsContainer1".to_owned()),
         Part::Slot(i) if slots_enabled => Some(format!("potionsModifier{}", i + 1)),
         _ => None,
     }
 }
 
-/// Clicking a cauldron is the shared interact order ([`gd_game::player_orders::PlayerOrder::Interact`],
-/// from the hover pick [`crate::state::hover::Hovered`]): gd-game walks beside it and opens the window in
-/// use range (`gd_game::cauldron::reach_cauldron`, `NpcCauldron::OnPlayerInteract`). The Interact key's
-/// `UseObject` routes through the same order (`apply_orders`), so it opens the window too.
+/// Clicking a cauldron is the shared interact order; gd-game opens the window in use range
+/// (`NpcCauldron::OnPlayerInteract`).
 #[allow(clippy::too_many_arguments)]
 fn click_cauldron(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1042,7 +981,6 @@ fn click_cauldron(
     {
         return;
     }
-    // The hover pick (one pick feeds the hover and the world clicks): a cauldron under the cursor.
     let Some(e) = hovered.entity else { return };
     if npcs.get(e).is_ok_and(|c| is_cauldron(&data, c)) {
         orders.write(gd_game::player_orders::PlayerOrder::Interact(e));
@@ -1055,7 +993,6 @@ fn is_cauldron(data: &GameData, c: &gd_render::character::Character) -> bool {
         .is_some_and(gd_game::cauldron::is_cauldron)
 }
 
-/// `GD_USE_CAULDRON` (hooks.rs): once, walks to the nearest cauldron within 40 m as if it were clicked.
 #[cfg(feature = "dev")]
 fn use_cauldron(
     hooks: Res<gd_game_core::hooks::Hooks>,

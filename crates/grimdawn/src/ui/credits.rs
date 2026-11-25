@@ -9,8 +9,7 @@
 //! 0.4 and out over 0.7 to 0.9; it starts again when the last line has left the top (never ends by itself). The 3D menu
 //! scene stays behind. The menu music fades out over 2.5 s while `Sound/Music/Music_Credits.ogg` loops; leaving (the
 //! Back button, `tagMenuButton04`, or Esc) fades it back in. A mouse click elsewhere does nothing. Back activates on
-//! the left press (the shared rule, `widgets::button_pressed`), read from the raw mouse messages: the menu's
-//! `swallow_input` has already reset this frame's `ButtonInput` when the roll runs.
+//! the left press, read from the raw mouse messages (the menu's `swallow_input` has already reset `ButtonInput`).
 //! PORT: the clip band (80 px from the top, 100 from the bottom) skips whole lines; the Back button is a text button in
 //! the h2 style at the bottom left; a closed roll keeps nothing (the offset restarts at the screen height).
 use super::UiAssets;
@@ -50,8 +49,7 @@ pub struct Credits {
     was_open: bool,
 }
 
-/// The menu music starts at full gain: after Exit to Main Menu (`ui::reset_session` inserts the default) it plays
-/// at once instead of fading in from silence.
+/// The menu music starts at full gain, so after Exit to Main Menu it does not fade in from silence.
 impl Default for Credits {
     fn default() -> Self {
         Self {
@@ -100,7 +98,6 @@ fn parse(text: &str) -> Vec<(Option<usize>, String)> {
         .collect()
 }
 
-/// A line's advance in px at UI scale `s`.
 fn advance(style: Option<usize>, s: f32) -> f32 {
     ((style.map_or(BLANK, |i| SIZES[i] * 1.1)) * s).floor()
 }
@@ -137,7 +134,6 @@ fn roll(
         Query<&mut Node, With<gd_ui::fade::FadeGroup>>,
     ),
 ) {
-    // `GD_MENU_CREDITS` (hooks.rs): opens the roll once.
     #[cfg(feature = "dev")]
     if hooks.ui.menu_credits && !*hooked {
         *hooked = true;
@@ -147,7 +143,7 @@ fn roll(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let (w, h) = (size.x as f32, size.y as f32);
-    // The press from the raw messages (module doc); every message is read, so none carries over a frame.
+    // Every message is read, so none carries over a frame.
     let pressed = clicks
         .read()
         .filter(|e| e.button == MouseButton::Left && e.state == bevy::input::ButtonState::Pressed)
@@ -172,7 +168,6 @@ fn roll(
             v.0 = base * credits.menu_gain;
         }
     }
-    // Opening: the text, the offset and the music.
     if credits.open && !credits.was_open {
         credits.lines = data
             .vfs
@@ -196,7 +191,7 @@ fn roll(
             ));
         }
     }
-    // Closing: the roll's music goes (a fade of 2.5 s in the engine; here it ends at once).
+    // PORT: the roll's music ends at once (the engine fades it over 2.5 s).
     if !credits.open && credits.was_open {
         if let Some(e) = credits.music.take() {
             commands.entity(e).try_despawn();
@@ -231,7 +226,6 @@ fn roll(
     if !credits.open {
         return;
     }
-    // The roll rises; after the last line it starts again at the bottom.
     let s = assets.scale(size);
     let inv = 1.0 / win.scale_factor();
     let speed = if credits.fast { FAST } else { SPEED };
@@ -248,7 +242,6 @@ fn roll(
         let root = gd_ui_kit::spawn_root(&mut commands, CreditsRoot, 121);
         commands.entity(root).insert(gd_ui::hud::KeepsShown);
         let mut ui = assets.ui(&mut commands, &data, root, s, inv, Vec2::new(w, h));
-        // The Back button (drawn whether or not the text loaded: it is the way out besides Esc).
         let back = ui.fonts.tag("tagMenuButton04").to_owned();
         let (bw, bh) = (ui.text_width(STYLES[1], &back), ui.line_height(STYLES[1]));
         let r = URect::new(10.0 * s, h - 30.0 * s - bh, bw, bh);
@@ -277,8 +270,7 @@ fn roll(
     let Some(lines) = credits.lines.as_deref() else {
         return;
     };
-    // Each line in the band is its own fade group, spawned when it enters and despawned when it leaves; the
-    // group's `top` and alpha move in place.
+    // Each line in the band is its own fade group, spawned when it enters and despawned when it leaves.
     let off = credits.offset.floor();
     let mut want: Vec<(usize, f32, f32)> = Vec::new();
     for (i, ((style, text), top)) in lines.iter().zip(&b.tops).enumerate() {
@@ -339,7 +331,6 @@ fn roll(
     }
 }
 
-/// The built roll: its root, each line's top at offset 0 (physical px) and the lines in the band.
 struct Built {
     key: (UVec2, u32),
     root: Entity,

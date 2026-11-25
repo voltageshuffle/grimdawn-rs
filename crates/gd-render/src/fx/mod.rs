@@ -20,26 +20,24 @@
 //!
 //! Draw entities are frustum-culled by an origin-centred `Aabb` refitted each frame from the particles
 //! ([`render::half_extents`]); an emitter culled in every view last frame keeps simulating (its lights,
-//! decals and completion depend on it) but skips the buffer fill and upload.
+//! decals and completion depend on it) but skips the buffer fill.
 //!
 //! PORT: the effects simulate in parallel across the task pool ([`update_effects`]; each emitter draws from its
 //! own `rand()` stream, [`sim`]); what touches the world (decals, meshes, buffers, lights, despawns) follows in
 //! one serial pass in query order.
 //!
-//! PORT: a finished emitter's material + storage buffer return to a pool ([`FxAssets`]) and the next
-//! emitter reuses them (the fields rewritten, the grown buffer kept) — no fresh GPU allocation per cast;
-//! and during the loading cover [`preload_effects`] parses the player's skill effect pfx and every placed
-//! effect's pfx + flipbook textures into the caches, so the first cast / first near effect does no file IO
-//! on the render thread (the engine pre-loads through its resource manager).
+//! PORT: a finished emitter's material + storage buffer return to a pool ([`FxAssets`]) for the next emitter; and
+//! during the loading cover [`preload_effects`] parses the player's skill effect pfx and every placed effect's pfx +
+//! flipbook textures into the caches (the engine pre-loads through its resource manager).
 //!
 //! PORT: an effect whose files are still loading holds its pfx and the flipbooks already in, and a finished
-//! background read is held for [`gd_game_core::weak_cache::FRESH_FRAMES`] (`FxAssets::fresh_*`), so a fight with more
-//! than [`gd_game_core::weak_cache::RECENT`] flipbooks in play cannot evict an effect's early files before its last one
-//! arrives (the engine's resource manager keeps a released resource 5 s instead).
+//! background read is held for [`gd_game_core::weak_cache::FRESH_FRAMES`] (`FxAssets::fresh_*`), so the caches
+//! cannot evict an effect's early files before its last one arrives (the engine's resource manager keeps a released
+//! resource 5 s instead).
 //!
 //! PORT: the additive and alpha-blended particles draw at half resolution and are composited onto the frame
-//! before the fog ([`half_res`]): a fill-rate saving for effect-heavy fights; they draw after the other
-//! transparent items (and the weather quads) instead of interleaved with them by the sort.
+//! before the fog ([`half_res`]); they draw after the other transparent items (and the weather quads) instead of
+//! interleaved with them by the sort.
 pub mod enchant;
 pub mod half_res;
 pub mod items;
@@ -91,9 +89,9 @@ pub struct FxPlugin;
 impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "particle.wesl");
-        // Gameplay spawns bare effect requests (`gd_game::visuals`).
+        // Gameplay spawns bare effect requests.
         app.register_required_components::<EffectSpec, Visibility>();
-        // `GD_NO_FX`: leave effects out (A/B frame-time checks).
+        // `GD_NO_FX`: leave effects out.
         #[cfg(feature = "dev")]
         if app
             .world()
@@ -132,7 +130,7 @@ impl Plugin for FxPlugin {
 
 pub use gd_game_core::visuals::{EffectSource, EffectSpec, Restart, StopEmitting};
 
-/// CPU time of the last [`update_effects`] (simulation + mesh building), for `GD_FPS` (`dev::fx`).
+/// CPU time of the last [`update_effects`] (simulation + mesh building), for `GD_FPS`.
 #[cfg(feature = "dev")]
 #[derive(Resource, Default)]
 pub struct FxStats {
@@ -182,7 +180,6 @@ pub fn spawn_placed(commands: &mut Commands, p: &PlacedEffect) -> Entity {
     spawn_effect_record(commands, &p.record, p.transform)
 }
 
-/// Running effect.
 #[derive(Component)]
 pub struct Effect {
     pub pfx: Arc<Pfx>,
@@ -197,8 +194,7 @@ pub struct EmitterRuntime {
     /// Mesh entity (None for emitters that are not drawn: no texture).
     pub draw: Option<Draw>,
     pub light: Option<Entity>,
-    /// The emitter's `dropDecal` record path, normalized once (constant per
-    /// emitter): a dying particle's [`DropDecal`] clones the Arc, no String.
+    /// The emitter's `dropDecal` record path, normalized.
     pub drop_decal: Option<Arc<str>>,
 }
 
@@ -210,7 +206,7 @@ pub struct Draw {
     pub buffer: Handle<ShaderBuffer>,
     pub cap: usize,
     /// The buffer's size in bytes: at least [`render::buffer_bytes`]`(cap)`, more for a pooled buffer that grew for
-    /// an earlier emitter (uploads keep the size, so they rewrite the GPU buffer in place instead of reallocating).
+    /// an earlier emitter (uploads keep the size).
     buffer_size: u64,
     /// This frame's simulation output, from [`update_effects`]' parallel pass to its serial one.
     drawn: Option<Drawn>,
@@ -226,22 +222,20 @@ struct Drawn {
     fill: Option<Vec<[f32; 4]>>,
 }
 
-/// How many finished emitters' material + buffer pairs the pool keeps (a busy fight draws tens at once;
-/// beyond this the pairs drop and their assets free with the despawned draw entities).
+/// How many finished emitters' material + buffer pairs the pool keeps; beyond this the pairs drop and their assets
+/// free with the despawned draw entities.
 const PARTICLE_POOL_CAP: usize = 128;
 #[derive(Resource, Default)]
 pub struct FxAssets {
     /// Parsed effect files and flipbook textures (with their frame count), held weakly: a running effect holds
-    /// its `.pfx` and its emitters' materials the textures (`gd_game_core::weak_cache`, `textures::WeakHandles`); the
-    /// last effect files used stay parsed (the cache's recent set), so a monster's now-and-then cast is not parsed
-    /// again each time.
+    /// its `.pfx` and its emitters' materials the textures; the last effect files used stay parsed (the cache's
+    /// recent set).
     pfx: gd_game_core::weak_cache::WeakCache<Pfx>,
     textures: crate::textures::WeakHandles<Image, u32>,
     /// Effect files and flipbook textures read and decoded in the background on their first use during play
-    /// ([`FxAssets::pfx_ready`], [`collect_fx_loads`]): an effect waits for them instead of stalling the frame.
-    /// While it waits it holds those already in ([`init_effects`]' `FxWaiting`), and a just-finished read is held
-    /// by `fresh_pfx` / `fresh_textures` for [`gd_game_core::weak_cache::FRESH_FRAMES`] until its waiter takes it: the
-    /// recent sets alone let a busy fight evict an effect's early files before its last one arrives.
+    /// ([`FxAssets::pfx_ready`], [`collect_fx_loads`]). While an effect waits it holds those already in
+    /// ([`init_effects`]' `FxWaiting`), and a just-finished read is held by `fresh_pfx` / `fresh_textures` for
+    /// [`gd_game_core::weak_cache::FRESH_FRAMES`] until its waiter takes it.
     loading: Vec<bevy::tasks::Task<(String, FxLoad)>>,
     /// The just-finished background reads, held for their waiters (see `loading`).
     fresh_pfx: gd_game_core::weak_cache::Fresh<Arc<Pfx>>,
@@ -268,13 +262,13 @@ enum Ready<T> {
 }
 
 impl FxAssets {
-    /// Cached effect files and textures still in use (the memory audit).
+    /// Cached effect files and textures still in use.
     pub fn count(&self, images: &Assets<Image>) -> (usize, usize) {
         (self.pfx.live(), self.textures.live(images))
     }
 
-    /// Drops the loaded effects and their textures (the mounted mod changed:
-    /// `model::drop_on_mod_change`); the quad meshes don't depend on the data.
+    /// Drops the loaded effects and their textures (the mounted mod changed); the quad meshes don't depend on the
+    /// data.
     pub fn clear(&mut self) {
         self.pfx.clear();
         self.textures.clear();
@@ -445,12 +439,10 @@ fn warm_record(
     }
 }
 
-/// During the loading cover: the skill effect records of the player's loadout (the same resolvers the cast
-/// reads, `gd_game::skill_fx`) and every placed effect spec warm the pfx / texture caches once per session.
-/// `init_effects` still defers a far placed effect's emitter builds; this only does the file IO early. The caches
-/// hold weakly, so what is warmed is held ([`WarmFx`]): by the placed entity, and the skills' by `skills` for the
-/// session.
-// One system: the loadout's skill records and the placed specs share the caches.
+/// During the loading cover: the skill effect records of the player's loadout and every placed effect spec warm the
+/// pfx / texture caches once per session (file IO only; `init_effects` still defers a far placed effect's emitter
+/// builds). The caches hold weakly, so what is warmed is held ([`WarmFx`]): by the placed entity, and the skills' by
+/// `skills` for the session.
 #[allow(clippy::too_many_arguments)]
 fn preload_effects(
     mut commands: Commands,
@@ -530,8 +522,7 @@ fn preload_effects(
 /// emitter takes the entity's `WorldCoords` matrix as it is, so a frame that
 /// mirrors (a weapon on the body's "R Hand" point, whose basis has det −1)
 /// mirrors the particles' spawn points and velocities, and local particles are
-/// drawn through it. Dropping the mirror swapped the dagger's red (+x) and
-/// green (−x) flames.
+/// drawn through it.
 fn coords_of(g: &GlobalTransform) -> Coords {
     let a = g.affine();
     let m = Mat3::from(a.matrix3);
@@ -590,8 +581,8 @@ fn collect_fx_loads(mut assets: ResMut<FxAssets>, mut images: ResMut<Assets<Imag
 }
 
 /// What [`init_effects`] holds for an effect still waiting on its flipbooks: its pfx and the flipbooks already in,
-/// so a busy fight's other effects don't evict them from the caches' recent sets before the last one arrives
-/// (like `character::dress_bodies`' `Waiting`). Dropped when the effect starts or its entity goes.
+/// so the caches' recent sets cannot evict them before the last one arrives. Dropped when the effect starts or its
+/// entity goes.
 #[derive(Default)]
 struct FxWaiting {
     pfx: Option<Arc<Pfx>>,
@@ -653,8 +644,8 @@ fn init_effects(
         };
         let pfx = match pfx {
             Ready::Done(pfx) => pfx,
-            // Read in the background: the effect starts once its file and flipbooks are in (a few frames late;
-            // PORT: the engine's `ResourceLoader` loads in the background too).
+            // Read in the background: the effect starts once its file and flipbooks are in (the engine's
+            // `ResourceLoader` loads in the background too).
             Ready::Loading => continue,
             Ready::Failed => {
                 held.remove(&e);
@@ -689,8 +680,7 @@ fn init_effects(
             tf.translation,
             gt.rotation()
         );
-        // The record's ground decal ([`WithDecal`]).
-        // Its frame is the effect's world coords (`decal.rs`).
+        // The record's ground decal ([`WithDecal`]), framed by the effect's world coords.
         if let (EffectSource::Record(r), true) = (&spec.source, with_decal)
             && data.db.get(r).is_some_and(|rec| rec.str("decal").is_some())
         {
@@ -708,7 +698,7 @@ fn init_effects(
         let mut emitters = Vec::with_capacity(pfx.emitters.len());
         for (order, d) in pfx.emitters.iter().enumerate() {
             let mut frames = 1;
-            // `GD_FX_SKIP=<emitter name>` (debug): don't draw that emitter.
+            // `GD_FX_SKIP=<emitter name>`: don't draw that emitter.
             #[cfg(feature = "dev")]
             let skip = hooks
                 .render
@@ -721,9 +711,8 @@ fn init_effects(
                 None
             } else if let Some((img, n)) = assets.texture(&data, &d.texture, &mut images) {
                 frames = n;
-                // One material (and buffer) per emitter: the particles live in the material's buffer.
-                // A pooled pair (a finished emitter's) is rewritten in place; its buffer keeps its grown
-                // size and its stale contents are never drawn (the entity hides until the first update).
+                // One material (and buffer) per emitter: the particles live in the material's buffer. A pooled
+                // pair's stale contents are never drawn (the entity hides until the first update).
                 let cap = render::MIN_CAPACITY;
                 let params = Vec4::new(
                     d.orient_vertically() as u32 as f32,
@@ -922,8 +911,7 @@ fn update_effects(
     let t0 = std::time::Instant::now();
     let dt = time.delta_secs();
     let focus = cams.iter().next().map(|c| c.target);
-    // At least 8 effects per task (a quiet scene's few run as one task, its overhead a fraction of their work),
-    // up to 4 tasks per thread so idle threads take over from busy ones (particle counts differ a hundredfold).
+    // At least 8 effects per task, up to 4 tasks per thread (particle counts differ a hundredfold).
     let batching = BatchingStrategy::new()
         .min_batch_size(8)
         .batches_per_thread(4);
@@ -977,9 +965,8 @@ fn update_effects(
                     .compute_affine()
                     .inverse()
                     .transform_point3(coords.pos);
-                // Off-screen last frame (frustum-culled in every view): keep simulating but
-                // skip the fill + upload. Always fill when just shown (a pooled or stale
-                // buffer) or about to grow; the padded bounds make it visible slightly early.
+                // Off-screen last frame (frustum-culled in every view): keep simulating but skip the fill. Always
+                // fill when just shown (a pooled or stale buffer) or about to grow.
                 let fill = (particles.len() > dr.cap || *vis != Visibility::Visible || seen.get())
                     .then(|| {
                         let mut out = Vec::new();
@@ -1002,8 +989,7 @@ fn update_effects(
                 commands.entity(e).try_despawn();
                 continue;
             }
-            // Write only on change: a `Mut` deref marks the draw / light changed, and every placed effect of a
-            // loaded level passes here each frame.
+            // Write only on change: a `Mut` deref marks the draw / light changed.
             for em in &effect.emitters {
                 if let Some(dr) = &em.draw
                     && let Ok((_, _, mut vis, _, _)) = draws.get_mut(dr.entity)
@@ -1061,15 +1047,13 @@ fn update_effects(
                         if let Some(fill) = fill
                             && let Some(mut b) = buffers.get_mut(&dr.buffer)
                         {
-                            // The filled vec becomes the upload as it is (no copy).
                             b.data = ShaderBufferData::Initialized {
                                 data: AlignedVec::from(fill),
                                 buffer_size: dr.buffer_size,
                             };
                         }
-                        // The draw entity sits at the effect origin (the sort centre of the
-                        // static mesh); the particles are relative to it. Write only on change:
-                        // a stationary placed effect flags nothing changed each frame.
+                        // The draw entity sits at the effect origin (the sort centre of the static mesh); the
+                        // particles are relative to it.
                         let new = Transform {
                             translation: coords.pos,
                             rotation: frame.rotation,
@@ -1089,10 +1073,10 @@ fn update_effects(
             {
                 pl.color = Color::linear_rgb(ls.color.x, ls.color.y, ls.color.z);
                 pl.range = ls.radius.max(0.1);
-                // Same scale as the level FireLights (gd_world); the deferred
-                // light buffer reads intensity / (40 000 × range) as brightness.
+                // Same scale as the level FireLights; the deferred light buffer reads intensity / (40 000 × range)
+                // as brightness.
                 pl.intensity = 40_000.0 * ls.radius * ls.intensity;
-                // `GD_NO_FX_LIGHTS=1` (debug): effect lights off.
+                // `GD_NO_FX_LIGHTS=1`: effect lights off.
                 #[cfg(feature = "dev")]
                 if hooks.render.no_fx_lights {
                     pl.intensity = 0.0;
@@ -1114,7 +1098,7 @@ fn update_effects(
     }
 }
 
-/// `EffectEntity` placements of a level (record class check, cached per record).
+/// `EffectEntity` placements of a level.
 pub fn collect_placed(
     level: &gd_formats::map::Level,
     data: &GameData,
@@ -1147,36 +1131,20 @@ pub fn collect_placed(
     out
 }
 
-/// The objects a mesh creates at its attach points (MIF
-/// `CreateEntity { attach, entity }`, e.g. the flame and the light of a torch
-/// prop), as (record, record class, attach frame in mesh space). Built once
-/// per render model from its parsed mesh and kept on it
+/// The objects a mesh creates at its attach points (MIF `CreateEntity { attach, entity }`, e.g. the flame and the
+/// light of a torch prop), as (record, record class, attach frame in mesh space), kept on the render model
 /// ([`crate::model::ModelAsset::creations`]).
 ///
-/// Engine.dll `Actor::CreateAttachmentsFromMesh`
-/// (called once from `Actor::UpdateSelf` / `FastUpdate` when the actor's
-/// mesh has loaded): every actor, whatever its class (decorations, doors,
-/// chests, set-piece objects, breakables …), creates each
-/// `GraphicsMesh::GetCreationData` entry's object and attaches it at the
-/// named attach point (`Actor::Attach`). Static level scenery goes through
-/// [`mesh_attached`] (effects) and [`mesh_lights`] (`FireLight` /
-/// `DayNightLight`: the light of every candle, fire barrel and lantern),
-/// placed once in the world: it never moves and its skeleton stays at the
-/// bind pose, so the attached frames never change. Scenery that moves (an
-/// animated `Decoration`: swinging lanterns, the arcane crystals; a bobbing
-/// `Floater`), record models (`CharAssets::spawn_record_model`, set pieces)
-/// go through [`spawn_mesh_attachments`] (both, children of the object),
-/// equipment worn by characters (weapons, armour) through [`items`]. PORT:
-/// only effects and lights are created.
+/// Engine.dll `Actor::CreateAttachmentsFromMesh` (called once from `Actor::UpdateSelf` / `FastUpdate` when the
+/// actor's mesh has loaded): every actor, whatever its class, creates each `GraphicsMesh::GetCreationData` entry's
+/// object and attaches it at the named attach point (`Actor::Attach`). Static level scenery goes through
+/// [`mesh_attached`] (effects) and [`mesh_lights`], placed once in the world at the bind pose; scenery that moves and
+/// record models go through [`spawn_mesh_attachments`], equipment worn by characters through [`items`]. PORT: only
+/// effects and lights are created.
 ///
-/// The bind-pose mesh-space frame (`MeshCreation::bind`) composes a
-/// bone-parented point with its bone's bind frame (`GraphicsMesh::
-/// GetAttachedCoords`: bone abs × attach coords); [`spawn_mesh_attachments`]
-/// makes such effects and lights follow the posed bone
-/// ([`crate::model::BoneFx`], `Actor::GetAttachedCoordsInRegion`): the
-/// Korvan rifts' vortex (`DoorFX` on `BN_Root`, which their open animation
-/// raises 6.35 m to the ground), the flame of a swinging lantern post
-/// (`Fire` on `BN_Lantern02`), the arcane crystal's glow and night light.
+/// The bind-pose mesh-space frame (`MeshCreation::bind`) composes a bone-parented point with its bone's bind frame
+/// (`GraphicsMesh::GetAttachedCoords`: bone abs × attach coords); [`spawn_mesh_attachments`] makes such effects and
+/// lights follow the posed bone ([`crate::model::BoneFx`], `Actor::GetAttachedCoordsInRegion`).
 pub(crate) fn mesh_creations(data: &GameData, m: &gd_formats::msh::Mesh) -> Arc<[MeshCreation]> {
     let mut out = Vec::new();
     for (attach, entity) in m.create_entities() {

@@ -1,5 +1,4 @@
-//! The click-modifier keyboard ([`ClickKeys`]) and the world-click input stages ([`CastInputStage`]):
-//! the binary's casting input orders against them, the UI windows order before them.
+//! The click-modifier keyboard ([`ClickKeys`]) and the world-click input stages ([`CastInputStage`]).
 use bevy::prelude::*;
 
 /// The keyboard with the held click modifiers: Stationary Attack (action 39, default Shift) and Force Move (action
@@ -24,13 +23,11 @@ pub enum CastInputStage {
 }
 
 impl ClickKeys<'_> {
-    /// Stationary Attack held.
     pub fn stationary(&self) -> bool {
         self.bindings
             .pressed(gd_ui_kit::keys::STATIONARY_ATTACK, &self.keys)
     }
 
-    /// Force Move held.
     pub fn force_move(&self) -> bool {
         self.bindings
             .pressed(gd_ui_kit::keys::FORCE_MOVE, &self.keys)

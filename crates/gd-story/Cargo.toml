@@ -11,11 +11,9 @@ license = "MIT"
 anyhow = "1.0.104"
 gd-formats = { path = "../gd-formats" }
 gd-rules = { path = "../gd-rules" }
-log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+log = { version = "*", features = ["max_level_debug", "release_max_level_off"] }
 mlua = { version = "0.12", features = ["lua51", "vendored"] }
 
 [dev-dependencies]
-# The story data test plays the install's main quest through a test env that
-# resolves item footprints with gd-sim's item rules (the runtime env lives in
-# gd-game, above this crate).
+# The story data test resolves item footprints with gd-sim's item rules.
 gd-sim = { path = "../gd-sim", features = ["testdata"] }

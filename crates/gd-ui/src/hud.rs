@@ -134,11 +134,10 @@ const FACADE_AREA: &str = "hudFacadeArea";
 const REGION_AREA: &str = "hudRegionArea";
 
 /// The screen rects (physical px) of the HUD's static hit areas, by HUD table field: buttons
-/// ([`button_rect_at`]; the orb HUD's folder buttons at the folder origin, `menufolder.rs`, with the folder's
+/// ([`button_rect_at`]; the orb HUD's folder buttons at the folder origin, with the folder's
 /// background), hot slots ([`slot_rect`]), the orbs and the experience bar ([`bar_rect`]), the level-up indicator
-/// ([`level_up_button_rect`]) and the orb HUD's level-up buttons ([`LEVEL_UP_BUTTONS`]). PORT (a performance
-/// choice): [`build`] writes it, so the per-frame hit tests read a rect instead of re-deriving it from the database;
-/// it changes with the HUD (window size, classic / orb table), and a field the table lacks has no rect.
+/// ([`level_up_button_rect`]) and the orb HUD's level-up buttons ([`LEVEL_UP_BUTTONS`]). [`build`] writes it; it
+/// changes with the HUD (window size, classic / orb table), and a field the table lacks has no rect.
 #[derive(Resource, Default)]
 pub struct HudLayout(bevy::platform::collections::HashMap<&'static str, URect>);
 
@@ -147,7 +146,6 @@ impl HudLayout {
         self.0.get(field).copied()
     }
 
-    /// Whether physical-px point `p` is over any of the HUD's hit areas.
     pub fn covers(&self, p: Vec2) -> bool {
         self.0.values().any(|r| super::contains(r, p))
     }
@@ -201,9 +199,7 @@ impl HudLayout {
                 }
             }
         }
-        // The HUD's background hit areas (`UIPlayerHud::HandleMouseEvent`): the toolbar window rect and
-        // the status / facade / region strips at the portrait origin (`UIPlayerHud::Load`), so a click
-        // on the toolbar art, the gaps between slots or the status strip does not reach the world.
+        // Background hit areas (`UIPlayerHud::HandleMouseEvent`): the toolbar window and the portrait-origin strips.
         if let Some(m) = ui.record(ui.hud_master())
             && let Some(t) = m.str("hudToolbar").and_then(|p| ui.record(p))
         {
@@ -261,7 +257,7 @@ fn area_rect(ui: &Ui, origin: Vec2, x: &str, y: &str, w: &str, h: &str) -> Optio
     ))
 }
 
-/// `loot_button`: the loot filter button's state (`lootfilter.rs`); `menu_down`: the factions and achievements
+/// `loot_button`: the loot filter button's state; `menu_down`: the factions and achievements
 /// windows are open (their classic HUD buttons show the down bitmap).
 pub fn build(
     ui: &mut Ui,
@@ -376,10 +372,10 @@ pub fn build(
     hot_slot(ui, &pri, to, label("hudPriPotionButton"), hp.as_deref());
     hot_slot(ui, &sec, to, label("hudSecPotionButton"), ep.as_deref());
     hot_slot(ui, &ev, to, label("hudEvadeButton"), evade.as_deref());
-    // The orb HUD's menu folder button and, while open, its background (`menufolder.rs`).
+    // The orb HUD's menu folder button and, while open, its background.
     if !ui.classic_hud {
         super::menufolder::draw_folder(ui, values.menu_folder, to);
-        // The folder button's sounds + modal blocking (its bitmap is `menufolder.rs`'s).
+        // The folder button's sounds + modal blocking.
         if let Some(r) = button_rect_at(ui, super::menufolder::BUTTON, to)
             && let Some(brec) = ui.record(&field(super::menufolder::BUTTON))
         {
@@ -466,7 +462,7 @@ pub fn build(
         }
         ui.text(&tb, to, &num);
     }
-    // The teleport button (`gd_game::riftgates` module doc): plain without a
+    // The teleport button: plain without a
     // personal portal, orange with one, the disabled bitmap while it waits.
     if let Some(t) = values.teleport {
         state_button(
@@ -495,7 +491,7 @@ pub fn build(
         true,
         false,
     );
-    // The loot filter toggle (`lootfilter.rs`): down while the window is
+    // The loot filter toggle: down while the window is
     // open, disabled while all items are hidden.
     use super::lootfilter::HudButton;
     state_button(
@@ -508,7 +504,7 @@ pub fn build(
     );
     // The menu buttons: the classic HUD's always on the toolbar, `UIPlayerHud::Render` draws them at the origin they
     // were loaded at (the toolbar's, `UIPlayerHud::Load`); the orb HUD's inside its opened folder, at the folder's
-    // origin (`menufolder.rs`). Both draw the options button first, only while the options window is not up, then the
+    // origin. Both draw the options button first, only while the options window is not up, then the
     // others only while the game menu is not up either ([`OptionsButton`]).
     if values.options_button.shown {
         state_button(
@@ -733,9 +729,7 @@ fn pulse_glow(ui: &mut Ui, bitmap: &str, x: f32, y: f32, origin: Vec2, glow: Glo
 
 /// The HUD's pulse state (`UIPlayerHud.levelUpPulse`, the window-button pulses `UIPlayerHud.journalPulse`,
 /// `UIPlayerHud.groupPulse`, `UIPlayerHud.characterPulse`, `UIPlayerHud.skillsPulse` with their `HudButtonPulse.on`
-/// flags; the indicator flag
-///
-/// `UIPlayerHud.levelUpIndicatorOn`).
+/// flags; the indicator flag `UIPlayerHud.levelUpIndicatorOn`).
 #[derive(Default)]
 pub struct HudPulses {
     level_up: Option<ColorPulse>,
@@ -1063,7 +1057,7 @@ pub fn clock(
     real: Res<Time<Real>>,
     // (size, the shown second or None when off, labelled, classic HUD).
     mut built: Local<Rebuild<(UVec2, Option<i64>, bool, bool)>>,
-    // (the last second read, its text): libc is read only when the second could have changed.
+    // (the last second read, its text).
     mut tick: Local<(i64, Option<String>)>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -1074,7 +1068,6 @@ pub fn clock(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let shown = options.flag("showTime");
-    // PORT: read the clock once a second (the real clock's whole second advances), not every frame.
     let sec = real.elapsed_secs() as i64;
     if shown && sec != tick.0 {
         tick.0 = sec;
@@ -1130,8 +1123,7 @@ pub struct FpsText;
 
 /// PORT: "Show FPS" (`showFPS`, a port-only option): a live FPS counter in the top-left corner, in the
 /// clock's mono style. The rate is an exponential moving average of `Time<Real>` deltas (0.5 s time
-/// constant); the text redraws in place at most 4 times a second, and the root rebuilds only when the
-/// window size, the option or the font generation changes.
+/// constant); the text redraws at most 4 times a second.
 #[allow(clippy::too_many_arguments)]
 pub fn fps_overlay(
     mut fresh: gd_game_core::session::NewSession,
@@ -1255,8 +1247,7 @@ pub fn teleport_rect(ui: &mut Ui, t: gd_game::riftgates::PortalButton) -> Option
 
 /// The HUD takes the cursor over any of its hit areas (`UIPlayerHud::HandleMouseEvent`: the toolbar window,
 /// the status / facade / region strips, the orbs and the experience bar, the buttons and slots), so a
-/// click on the HUD background does not fall through to a world move / attack. Runs before the HUD
-/// button systems ([`buttons`]); [`HudLayout::covers`] is the one hit test.
+/// click on the HUD background does not fall through to a world move / attack. Runs before [`buttons`].
 pub fn capture(
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<HudLayout>,
@@ -1272,10 +1263,8 @@ pub fn capture(
 
 /// The HUD's buttons, one system mapping a [`HudLayout`] field to its action (the engine's HUD button
 /// listener, `UIPlayerHud::OnToolbarButton`). The press sounds and modal blocking are the registered
-/// [`super::widgets::ButtonSound`] nodes' (`widgets.rs`, [`super::widgets::frontmost`]): the frontmost
-/// registered rect under the cursor takes the press, so a modal window's blocker blocks the buttons
-/// behind it. The weapon-swap / quickbar keys and the `GD_WEAPON_SWAP` / `GD_HUD_CLICK` hooks act here
-/// too. PORT: on press (the level-up indicator on release, event 1), like the engine's toolbar buttons.
+/// [`super::widgets::ButtonSound`] nodes': the frontmost registered rect under the cursor takes the press.
+/// PORT: on press (the level-up indicator on release, event 1), like the engine's toolbar buttons.
 #[allow(clippy::too_many_arguments)]
 pub fn buttons(
     layout: Res<HudLayout>,
@@ -1312,7 +1301,6 @@ pub fn buttons(
     use gd_game::hotbar::ShowSkillSet;
     use gd_game::weapon_sets::SwapWeapons;
     let keys_free = dialog.view.is_none() && !rift_map.open;
-    // `GD_WEAPON_SWAP` (hooks.rs): the character window's swap button pressed at those times.
     #[cfg(feature = "dev")]
     {
         let swap_hook = swap_hook.get_or_insert_with(|| hooks.ui.weapon_swap.clone());
@@ -1396,7 +1384,6 @@ pub fn buttons(
         }
         _ => {}
     };
-    // `GD_HUD_CLICK` (hooks.rs): those clicks, in order.
     #[cfg(feature = "dev")]
     while let Some((at, field)) = hooks.ui.hud_click.get(*fired)
         && time.elapsed_secs() >= *at
@@ -1422,7 +1409,6 @@ pub fn buttons(
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
-    // The frontmost registered rect takes the press (a modal's blocker blocks the buttons behind it).
     let Some(front) = super::widgets::frontmost(p, &button_sounds, &gz) else {
         return;
     };
@@ -1458,7 +1444,7 @@ pub fn buttons(
 pub struct HotbarRow(pub usize);
 
 /// A root node that Toggle UI leaves shown ([`toggle_ui`]): the game menu, the options window, the cursor, the
-/// cinematic text, the credits and the dialog manager's prompt boxes (`confirm.rs`, each in a root of its own).
+/// cinematic text, the credits and the dialog manager's prompt boxes (each in a root of its own).
 #[derive(Component)]
 pub struct KeepsShown;
 
@@ -1473,8 +1459,8 @@ pub struct ToggledOff(Display);
 /// menu (`UIPlayerHud.gameMenuWindow`, `hudExitWindow`), the options window (`UIPlayerHud.optionsWindow`) and the
 /// dialog manager's prompt boxes (`UIPlayerHud.dialogManager`).
 /// Input is not gated: the hidden windows still take their keys and clicks. PORT: a hidden root gets
-/// `Display::None`; the roots flagged [`KeepsShown`] stay; a prompt box (`confirm.rs`) is drawn in
-/// a [`KeepsShown`] root of its own, so it stays while the window that asked hides. The flag lives for the session (the HUD's lifetime).
+/// `Display::None`; the roots flagged [`KeepsShown`] stay; a prompt box is drawn in a [`KeepsShown`] root of its
+/// own, so it stays while the window that asked hides. The flag lives for the session.
 #[allow(clippy::type_complexity)]
 pub fn toggle_ui(
     mut commands: Commands,
@@ -1522,7 +1508,6 @@ pub fn toggle_ui(
     }
 }
 
-/// The classic HUD's level-up indicator button field.
 pub const LEVEL_UP_BUTTON: &str = "playerPortraitLevelUpIndicatorButton";
 
 /// The screen rect of the classic HUD's hidden level-up indicator button (a 60 x 60 button at the portrait
@@ -1612,7 +1597,7 @@ pub fn portrait_origin(ui: &Ui) -> Option<Vec2> {
 /// A HUD button's state bitmaps ([`state_button`]); [`button_states`] shows one per cursor + press.
 #[derive(Component)]
 pub struct HudButton {
-    /// The HUD master field ([`super::gamemenu::GameMenu::blocks_hud`]).
+    /// The HUD master field.
     field: &'static str,
     pub rect: URect,
     up: Handle<Image>,
@@ -1629,8 +1614,7 @@ pub struct HudButton {
 /// blocking ([`super::widgets::ButtonSound`]). `ButtonStatic::Render`: the down
 /// bitmap while the down flag is set, the disabled bitmap while disabled, `bitmapNameInFocus` while
 /// hovered, else up. `enabled`: the button works; `toggled`: a toggle down while its window is open.
-/// PORT: the loot filter button registers no sound here — `lootfilter.rs` plays its own (the up
-/// sound on close too).
+/// PORT: the loot filter button registers no sound here; the loot filter plays its own (the up sound on close too).
 fn state_button(
     ui: &mut Ui,
     field: &'static str,
@@ -1692,9 +1676,8 @@ fn state_button(
 
 /// Shows each HUD button's state bitmap in place (`ButtonStatic::Render`): the
 /// down bitmap while held over it (or toggled down), the disabled bitmap while unusable,
-/// `bitmapNameInFocus` while hovered, else up. Per cursor + `ButtonInput`, no rebuild and no second
-/// overlay (the character-window buttons' hover is `rollover.rs`'s `FocusRoot`). Under the game menu
-/// / options window no button hovers but the options button ([`super::gamemenu::GameMenu::blocks_hud`]).
+/// `bitmapNameInFocus` while hovered, else up. Under the game menu / options window no button hovers but the
+/// options button ([`super::gamemenu::GameMenu::blocks_hud`]).
 pub fn button_states(
     window: Query<&Window, With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1762,8 +1745,7 @@ pub fn slot_labels(
 
 /// A hot slot's persistent state highlight (`HotSlotButton::Update` / `HotSlotOptionSkill::GetStatus`:
 /// low energy → `highlightBlue`, wrong weapons → `highlightRed`, outside its form /
-/// not learned → the dark rect). PORT: an active toggle / aura shows the blue highlight too — the
-/// engine's `GetStatus` reads only the availability, the port makes the "on" state visible.
+/// not learned → the dark rect). PORT: an active toggle / aura shows the blue highlight too.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SlotLook {
     /// Ready: no highlight.
@@ -1818,7 +1800,7 @@ pub struct SlotCharge {
 /// The hot slots' state overlays (`HotSlotButton::Render` / `HotSlotButton::Update`): over the icon and the
 /// cooldown wipe, one of the hover rect (green usable / red not), `highlightBlue`, `highlightRed` or
 /// the dark rect, plus the charge count. Built per layout, animated in place from
-/// [`super::HudVitals::hot_slots`] (like the cooldown wipe). The hover rect takes priority over the
+/// [`super::HudVitals::hot_slots`]. The hover rect takes priority over the
 /// persistent highlight (the draw's order). Under the game menu / options window no slot hovers
 /// ([`super::gamemenu::GameMenu::blocks_hud`]).
 #[allow(clippy::too_many_arguments)]
@@ -1853,7 +1835,6 @@ pub fn hot_slot_states(
         return;
     }
     let classic = assets.classic_hud();
-    // The UI scale too: closing Options after a scale change rebuilds the HUD (`HudLayout`), so the rects follow.
     let scale = assets.scale(size).to_bits();
     let same = *last == Some((size, classic, scale));
     let kept = super::retire_roots(
@@ -2098,8 +2079,7 @@ pub fn bar_field(ui: &mut Ui, rec: &str, origin: Vec2, stat: Stat) {
         Some(URect::new(0.0, 0.0, 1.0, 1.0)),
         Color::WHITE,
     );
-    // The cap is masked by the empty bitmap (none without one,
-    // `StatusBar::Render`); see `masked.rs`.
+    // The cap is masked by the empty bitmap (none without one, `StatusBar::Render`).
     let cap = match (bar.cap.as_deref().and_then(|p| ui.image(p)), &empty) {
         (Some((h, size)), Some((mask, _))) => {
             Some((super::masked::quad(ui, h, mask.clone(), rect, rect), size))
@@ -2204,8 +2184,7 @@ fn minimap(ui: &mut Ui, area_tag: &str, name_y: f32) {
     );
 }
 
-/// The bars' fills and caps from the current values: only what changed is written (an unchanged node keeps
-/// the UI layout and image extraction from redoing it).
+/// The bars' fills and caps from the current values; only what changed is written.
 pub fn animate_bars(
     time: Res<Time>,
     (values, vitals): (Res<HudValues>, Res<super::HudVitals>),
@@ -2229,8 +2208,7 @@ pub fn animate_bars(
         super::set_image_src(&mut img, src);
         // Cap (`StatusBar::Render`): the cap bitmap's height (vertical;
         // its width horizontal) centred on the fill edge, across the whole
-        // widget, masked by the empty bitmap over the widget rect
-        // (`masked.rs`), so it stays inside the orb at any level.
+        // widget, masked by the empty bitmap over the widget rect, so it stays inside the orb at any level.
         if let Some((ce, csize)) = b.cap
             && let Ok((mut cn, mut cv)) = caps.get_mut(ce)
         {

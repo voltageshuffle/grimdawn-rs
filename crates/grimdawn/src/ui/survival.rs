@@ -16,18 +16,14 @@
 //! title, a bullet and the localised wrapped tag per objective) is drawn whenever visible, also empty.
 //!
 //! The timer warning sound re-triggers whenever the clip ends while the timer is under 10 s and stops when
-//! the window leaves (the Crucible poll `UISurvivalHud::Update`; the Shattered Realm's event 66 plays once per
-//! entry — the clip (14.6 s) outlasts the window, so both sound the same, [`timer_warning`]); the five rollovers (`survivalpane_*rollover`) show through [`PaneRollovers`] (`rollover.rs`; the `^n^n` paragraph break of the timer text shows as one); the pane's update gate
-//! (`IsGameWaiting`, `GameEngine.gameWaiting`) is unknown; the timer text's red is a tint on the style colour (the
-//! engine overrides the colour).
+//! the window leaves ([`timer_warning`]); the five rollovers (`survivalpane_*rollover`) show through
+//! [`PaneRollovers`] (the `^n^n` paragraph break of the timer text shows as one); the pane's update gate
+//! (`IsGameWaiting`) is unknown; the timer text's red is a tint on the style colour (the engine overrides the colour).
 //!
-//! The HUD shift (HUD render `UIPlayerHud::Render`, minimap mode switch `UIPlayerHud::ToggleCompass`): the Crucible
-//! pane, the Shattered Realm pane, `hudInfoIconWindow` (the mutator icons) and `hudChallengeAreaWindow`
-//! (`ui/challenge.rs`) are drawn at their window origin + `UIPlayerHud.paneShift` (x, y); their hover tests reuse the
-//! drawn origin (`UISurvivalHud::HitTestRollover` stores it at `UISurvivalHud.drawnOrigin`), the objective window is
-//! not shifted. Mode 2 (no minimap) sets (0, 0), mode 3 (the floating minimap) (−(160·s + 20), 0)
-//! = the minimap's width and margin, mode 4 (−15 − `UIPlayerHud.minimapWidth`, 0). See [`hud_shift`]; the mode is
-//! `gd_game::compass::CompassMode` ([`compass_mode`]).
+//! The HUD shift (`UIPlayerHud::Render`, `UIPlayerHud::ToggleCompass`): the Crucible pane, the Shattered Realm
+//! pane, `hudInfoIconWindow` and `hudChallengeAreaWindow` are drawn at their window origin + `UIPlayerHud.paneShift`;
+//! their hover tests reuse the drawn origin; the objective window is not shifted. Mode 2 (no minimap) sets (0, 0),
+//! mode 3 (the floating minimap) (−(160·s + 20), 0), mode 4 (−15 − `UIPlayerHud.minimapWidth`, 0). See [`hud_shift`].
 use super::{URect, Widget};
 use super::{UiAssets, additive};
 use bevy::prelude::*;
@@ -36,8 +32,7 @@ use gd_formats::ui::{TextBox, WindowDef};
 use gd_game_core::data::GameData;
 use gd_ui::state::survival::{PaneRollovers, SurvivalView, Zone, compass_mode, hud_shift};
 
-/// Copies the story's survival state into [`SurvivalView`] (compared in place; it changes about once a second,
-/// and the objective texts are copied only when they differ).
+/// Copies the story's survival state into [`SurvivalView`].
 pub fn collect(
     mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
@@ -53,7 +48,6 @@ pub fn collect(
         .region
         .is_some_and(|r| story.endless.in_dungeon(r, false));
     let survival = &story.game.survival;
-    // The view without its objective texts, and whether it shows them.
     let (mut next, listed) = if story.game.survival_mode {
         let s = survival;
         (
@@ -77,7 +71,7 @@ pub fn collect(
             true,
         )
     } else if in_dungeon {
-        // The Shattered Realm: the objective window only (the endless pane is `EndlessView`).
+        // The Shattered Realm: the objective window only.
         (
             SurvivalView {
                 objective_window: true,
@@ -96,7 +90,6 @@ pub fn collect(
             .filter(|_| listed)
     };
     let same_texts = view.objectives.iter().eq(texts());
-    // The rest compared with the texts set aside (no copy, no change mark).
     let cur = view.bypass_change_detection();
     let held = std::mem::take(&mut cur.objectives);
     let same_rest = *cur == next;
@@ -141,7 +134,7 @@ struct Glow {
 }
 
 /// When each glow's pulse started (seconds of the app clock), the counters last seen, and each pane's
-/// warning-sound voice ([`timer_warning`]).
+/// warning-sound voice.
 #[derive(Resource, Default)]
 pub struct GlowState {
     started: [Option<f32>; 4],
@@ -162,7 +155,6 @@ fn pulse_alpha(ms: f32) -> f32 {
     }
 }
 
-/// The timer warning's alpha (see the module doc).
 fn warning_alpha(ms: u128) -> f32 {
     let mut x = (ms % 1750) as f32 / 1750.0 * 0.85 + 0.35;
     if x > 0.775 {
@@ -182,11 +174,9 @@ fn warning_alpha_endless(ms: u128) -> f32 {
 
 const MASTER: &str = gd_ui_kit::MASTER;
 
-/// The timer warning sound (the Crucible `UISurvivalHud` update `UISurvivalHud::Update`: while 0 < bonus < 10 s, `if
-/// (pak && !SoundPak::IsPlaying(pak)) Play2D` — re-triggered whenever the clip ends; leaving the window stops it, as
-/// the Shattered Realm's event-65 handler does with `SoundPak::Stop`, `UIEndlessHud::OnBonusTimerChanged`). PORT: the
-/// pak's last voice entity being alive stands for `IsPlaying` (`gd_game_core::world::PeriodicSound`); the stop is the
-/// voice's despawn (the engine's Crucible pane fades 500 ms instead).
+/// The timer warning sound (`UISurvivalHud::Update`): while 0 < bonus < 10 s, re-triggered whenever the clip ends;
+/// leaving the window stops it. PORT: the pak's last voice entity being alive stands for `IsPlaying`; the stop is
+/// the voice's despawn (the engine's Crucible pane fades 500 ms instead).
 fn timer_warning(
     commands: &mut Commands,
     data: &GameData,
@@ -208,7 +198,6 @@ fn timer_warning(
     }
 }
 
-/// Starts glows and sounds when an event counter rose, and the timer warning's sound.
 #[allow(clippy::too_many_arguments)]
 fn detect_events(
     view: Res<SurvivalView>,
@@ -230,7 +219,6 @@ fn detect_events(
         }
         return;
     }
-    // Looked up when a sound plays, not per frame.
     let table = std::cell::LazyCell::new(|| {
         data.db
             .get(MASTER)
@@ -269,7 +257,7 @@ fn detect_events(
     );
 }
 
-/// Sets each glow's alpha from its pulse (additive material, rebuilt only for a changed 8-bit colour).
+/// Sets each glow's alpha from its pulse.
 fn animate_glows(
     mut commands: Commands,
     time: Res<Time>,
@@ -291,7 +279,6 @@ fn animate_glows(
     }
 }
 
-/// The timer text pulses red below 10 s (tint on the style colour).
 fn animate_warning(
     view: Res<SurvivalView>,
     endless: Res<EndlessView>,
@@ -320,7 +307,7 @@ fn animate_warning(
     }
 }
 
-/// Builds the pane (rebuilt when what it shows changes; the glows and the warning animate in place).
+/// Builds the pane.
 #[allow(clippy::too_many_arguments)]
 fn build_pane(
     mut fresh: gd_game_core::session::NewSession,
@@ -332,7 +319,7 @@ fn build_pane(
     mut built: Local<Option<(UVec4, SurvivalView)>>,
     mut assets: UiAssets,
     mut zones: ResMut<PaneRollovers>,
-    // Option: created once the player is in ([`compass_mode`]).
+    // Option: created once the player is in.
     compass: Option<Res<gd_game::compass::CompassMode>>,
 ) {
     if fresh.begun() {
@@ -341,16 +328,13 @@ fn build_pane(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let mode = compass_mode(compass.as_deref());
-    // The UI scale is a layout input too (an applied UI Scale option rebuilds).
     let sk = size
         .extend(mode as u32)
         .extend(assets.scale(size).to_bits());
-    // Nothing changed: skip the key's clone of the view.
     if !view.is_changed() && built.as_ref().is_some_and(|(s, _)| *s == sk) {
         return;
     }
     let mut key = view.clone();
-    // Not layout inputs: the counters and the objectives (another root) only animate / rebuild elsewhere.
     key.counters = [0; 4];
     key.objectives.clear();
     if size.x == 0 || built.as_ref().is_some_and(|(s, v)| *s == sk && *v == key) {
@@ -434,7 +418,6 @@ fn build_pane(
             });
         }
     }
-    // The glows: always built, shown by `animate_glows`.
     for (kind, (name, at)) in GLOWS.iter().enumerate() {
         let Some(Widget::Bitmap { bitmap, .. }) = ui.widget(&field(name)) else {
             continue;
@@ -473,7 +456,6 @@ fn build_pane(
     }
 }
 
-/// Builds the objective window (rebuilt when the list or the screen changes).
 #[allow(clippy::too_many_arguments)]
 fn build_objectives(
     mut fresh: gd_game_core::session::NewSession,
@@ -571,18 +553,15 @@ fn build_objectives(
     }
 }
 
-/// What the Shattered Realm's pane shows (`UIEndlessHud`, exe load `UIEndlessHud::Load`, update `UIEndlessHud::Update`,
-/// render `UIEndlessHud::Render`). Loaded from `hudEndlessDungeonWindow` (`endlesshud_table.dbr`, 384x190 at x 10 / y
-/// 3, right / top), visible while the player's region belongs to a floor of the dungeon. Drawn in order: the progress
-/// bar (the floor's progress / total, right-anchored animated sheet with its empty bitmap and cap,
-/// `hud::Stat::EndlessProgress`) and the always-full orb (`Stat::Full`), the background, the timer glow (a 350 ms pulse
-/// on every timer add), the texts: "Shard" and the dungeons generated, "Chunk" and the floor number + 1 (0-based index,
-/// the boss floor included), the bonus timer "mm:ss" (the Crucible's timer; below 10 s it pulses red: alpha = triangle
-/// of `(t % 1750) / 1750 * 1.25 + 0.35` folded at 0.975). The objective window shows the floor's tag
-/// (`endless::sync_objectives`). Hover `UIEndlessHud::HitTestRollover`: the rollovers test each text's own box (the bar
-/// first, its result dropped), the Shard name / number -> `endlessDungeonNameRollover`, the Chunk name / number ->
-/// `endlessFloorNameRollover`, the timer -> `endlessTimerRollover` (`RolloverLine2`, through [`PaneRollovers`]; PORT:
-/// the timer text's `^n^n` paragraph breaks show as one, as in the Crucible's). The events: `detect_endless_events`.
+/// What the Shattered Realm's pane shows (`UIEndlessHud::Load` / `Update` / `Render`). Loaded from
+/// `hudEndlessDungeonWindow` (`endlesshud_table.dbr`, 384x190 at x 10 / y 3, right / top), visible while the
+/// player's region belongs to a floor of the dungeon. Drawn in order: the progress bar (floor progress / total,
+/// `hud::Stat::EndlessProgress`) and the always-full orb, the background, the timer glow (a 350 ms pulse on every
+/// timer add), the texts: "Shard" and the dungeons generated, "Chunk" and the floor number + 1 (boss floor
+/// included), the bonus timer "mm:ss" (below 10 s it pulses red: alpha = triangle of
+/// `(t % 1750) / 1750 * 1.25 + 0.35` folded at 0.975). Hover `UIEndlessHud::HitTestRollover`: each text's own box
+/// (the bar first, its result dropped), Shard -> `endlessDungeonNameRollover`, Chunk -> `endlessFloorNameRollover`,
+/// timer -> `endlessTimerRollover` (PORT: `^n^n` paragraph breaks show as one).
 /// PORT: the timer's style record (`style_survivalpane_s`) exists only in the Crucible's mod, so
 /// `style_endlessdungeon_s` stands in outside it.
 #[derive(Resource, Default, Clone, PartialEq, Debug)]
@@ -605,7 +584,6 @@ pub struct EndlessView {
 #[derive(Component)]
 struct EndlessRoot;
 
-/// The endless pane's state from the story.
 pub fn collect_endless(
     mut fresh: gd_game_core::session::NewSession,
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
@@ -637,15 +615,12 @@ pub fn collect_endless(
     }
 }
 
-/// The endless HUD's events (`UIEndlessHud`; all only while the pane shows): every timer change by
-/// `IncrementBonusTimer` (event 65, handler exe `UIEndlessHud::OnBonusTimerChanged`) pulses the timer glow, a positive
-/// one also plays `bonusTimeSound` (a death's penalty only pulses); the glow also pulses once when the bonus first
-/// drops to 60 s or less (the latch clears above it); the timer under 10 s plays `timerTenSecondsSound`
-/// ([`timer_warning`]: re-triggered while it ends, as the Crucible pane — the engine's event 66 plays once per entry,
-/// the clip outlasts the window); event 64 with its byte false (handler `UIEndlessHud::OnTimerFailed`; the timer ran
-/// out, or the boss's timer reset found it out) plays `timerFailedSound`; a floor completing (event 67,
-/// `UIEndlessHud::OnSoundEvent`) plays `floorCompleteSound`, the boss's death `bossCompleteSound` (its tutorial
-/// page: `gd_game::endless`).
+/// The endless HUD's events (only while the pane shows): every timer change (event 65,
+/// `UIEndlessHud::OnBonusTimerChanged`) pulses the timer glow, a positive one also plays `bonusTimeSound`; the
+/// glow also pulses once when the bonus first drops to 60 s or less (the latch clears above it); the timer under
+/// 10 s plays `timerTenSecondsSound` ([`timer_warning`]); event 64 with its byte false (`UIEndlessHud::OnTimerFailed`)
+/// plays `timerFailedSound`; a floor completing (event 67, `UIEndlessHud::OnSoundEvent`) plays
+/// `floorCompleteSound`, the boss's death `bossCompleteSound`.
 #[allow(clippy::too_many_arguments)]
 fn detect_endless_events(
     view: Res<EndlessView>,
@@ -677,7 +652,6 @@ fn detect_endless_events(
         }
         return;
     }
-    // Looked up when a sound plays, not per frame.
     let table = std::cell::LazyCell::new(|| {
         data.db
             .get(MASTER)
@@ -736,7 +710,7 @@ fn detect_endless_events(
     *last = Some((view.active_floor, view.boss_dead));
 }
 
-/// Builds the endless pane (rebuilt when what it shows changes).
+/// Builds the endless pane.
 #[allow(clippy::too_many_arguments)]
 fn build_endless_pane(
     mut fresh: gd_game_core::session::NewSession,
@@ -748,7 +722,7 @@ fn build_endless_pane(
     mut built: Local<Option<(UVec4, EndlessView, u64)>>,
     mut assets: UiAssets,
     mut zones: ResMut<PaneRollovers>,
-    // Option: created once the player is in ([`compass_mode`]).
+    // Option: created once the player is in.
     compass: Option<Res<gd_game::compass::CompassMode>>,
 ) {
     if fresh.begun() {
@@ -810,7 +784,6 @@ fn build_endless_pane(
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&field("endlessBackground")) {
         ui.bitmap(&bitmap, x, y, origin);
     }
-    // The timer glow (shown by `animate_glows`, kind 3).
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&field("endlessLowTimeGlow"))
         && let Some((image, px)) = ui.image(&bitmap)
     {
@@ -824,7 +797,6 @@ fn build_endless_pane(
         ui.commands.entity(e).insert(Glow { kind: 3, image });
         ui.commands.entity(ui.root).add_child(e);
     }
-    // The rollover areas: the shard texts, the chunk texts, the timer (the bar and orb have none).
     for (names, rollover) in [
         (
             ["endlessDungeonName", "endlessDungeonCounter"],
@@ -888,7 +860,6 @@ fn build_endless_pane(
     }
 }
 
-/// One mutator icon shown (`Game.AddMutator` list).
 #[derive(Clone, PartialEq)]
 struct MutatorIcon {
     bitmap: String,
@@ -898,7 +869,6 @@ struct MutatorIcon {
     attributes: Vec<String>,
 }
 
-/// The mutator icons shown.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct MutatorView {
     icons: Vec<MutatorIcon>,
@@ -907,12 +877,10 @@ pub struct MutatorView {
 #[derive(Component)]
 struct MutatorRoot;
 
-/// The mutators the info icon window lists (`UIInfoIconWindow::Update`):
-/// always in the Crucible, in the Shattered Realm while the player is in the dungeon (the session's list), else
-/// in a challenge area that shows the HUD (the area's, `challenge.rs`; type 2 with its id). An icon's attribute lines
-/// (rollover entry `UIInfoIconWindow::GetRolloverText`): the mutator's pak of the game difficulty (`normalMutator` /
-/// `eliteMutator` / `ultimateMutator`) at level 1 when it `affectsPlayers`, else at the main player's character
-/// level, printed as an `AttributePak`'s text (class 19, `items::tooltip::attribute_line_rich` in store order).
+/// The mutators the info icon window lists (`UIInfoIconWindow::Update`): always in the Crucible, in the Shattered
+/// Realm while the player is in the dungeon, else in a challenge area that shows the HUD. An icon's attribute lines
+/// (`UIInfoIconWindow::GetRolloverText`): the mutator's pak of the game difficulty at level 1 when it
+/// `affectsPlayers`, else at the main player's character level, printed as an `AttributePak`'s text (class 19).
 #[allow(clippy::too_many_arguments)]
 fn collect_mutators(
     mut fresh: gd_game_core::session::NewSession,
@@ -922,8 +890,7 @@ fn collect_mutators(
     mode: Res<gd_game_core::session::GameMode>,
     mut view: ResMut<MutatorView>,
     fonts: Res<super::text::FontCache>,
-    // The inputs the view was last computed from (mutator list, difficulty, character level, tags
-    // generation): the db lookups and attribute resolution run only when one changes.
+    // The inputs the view was last computed from (mutator list, difficulty, character level, tags generation).
     mut last: Local<Option<(Vec<String>, usize, u32, u64)>>,
 ) {
     if fresh.begun() {
@@ -1001,11 +968,9 @@ fn collect_mutators(
     }
 }
 
-/// Builds the mutator icons (render `UIInfoIconWindow::Render`: the window `hudInfoIconWindow`, right / top; icons laid
-/// right to left from its right edge, window x + width (`UIWindow.extentX`, the extent `UIWindow::LoadBase` sets), with
-/// `iconSpacing`, no background or text). Rollover (`UIInfoIconWindow::GetRolloverText`): the name in text class 7, the
-/// description (when set) in class 17, the attribute lines in class 19 (`GameEngine::GetGameTextStyleName`: the
-/// `gameengine.dbr` keys of `gd_sim::items::tooltip::CLASS_KEYS`).
+/// Builds the mutator icons (`UIInfoIconWindow::Render`: icons laid right to left from the window's right edge
+/// with `iconSpacing`, no background or text). Rollover: the name in text class 7, the description (when set) in
+/// class 17, the attribute lines in class 19.
 #[allow(clippy::too_many_arguments)]
 fn build_mutators(
     mut fresh: gd_game_core::session::NewSession,
@@ -1017,7 +982,7 @@ fn build_mutators(
     mut built: Local<Option<(UVec4, MutatorView, u64)>>,
     mut assets: UiAssets,
     mut zones: ResMut<PaneRollovers>,
-    // Option: created once the player is in ([`compass_mode`]).
+    // Option: created once the player is in.
     compass: Option<Res<gd_game::compass::CompassMode>>,
 ) {
     if fresh.begun() {
@@ -1096,9 +1061,7 @@ fn build_mutators(
     }
 }
 
-/// `Game.PlayFullscreenGlow` (`GameEngine::ShowGlowEffect` -> `InGameUI` glow): a trigger sets
-/// the target to 1 when it is 0; the level follows it at 1 per second and the
-/// target falls back to 0 on reaching 1, so the glow is 0 -> 1 -> 0 over about 2 s.
+/// `Game.PlayFullscreenGlow` (`GameEngine::ShowGlowEffect`): a trigger sets the target to 1 when it is 0.
 #[derive(Resource, Default)]
 pub struct GlowOverlay {
     level: f32,
@@ -1124,10 +1087,9 @@ struct GlowOverlayRoot;
 #[derive(Component)]
 struct GlowOverlayNode;
 
-/// The fullscreen glow: the texture `ui/hud/wavecompleted_glowoverlay01.tex` (hardcoded in the engine) over the
-/// whole screen in white with alpha `clamp(level + 0.1 sin(t * 0.003141593 per ms), 0, 1)` (a shimmer of period
-/// 2 s), only with the `screenEffects` option. PORT: plain alpha blending (the canvas default state's
-/// blend is not read).
+/// The fullscreen glow: `ui/hud/wavecompleted_glowoverlay01.tex` (hardcoded in the engine) over the whole screen
+/// in white with alpha `clamp(level + 0.1 sin(t * 0.003141593 per ms), 0, 1)`, only with the `screenEffects`
+/// option. PORT: plain alpha blending (the canvas default state's blend is not read).
 #[allow(clippy::too_many_arguments)]
 fn fullscreen_glow(
     mut fresh: gd_game_core::session::NewSession,
@@ -1155,7 +1117,6 @@ fn fullscreen_glow(
     }
     let glow = &mut *glow;
     ramp(&mut glow.level, &mut glow.target, clock.delta_secs());
-    // Drawn only with the `screenEffects` option (`Options::GetBool`, `InGameUI` render).
     if (glow.level <= 0.0 && glow.target == 0.0) || !options.flag("screenEffects") {
         for (_, mut v) in &mut nodes {
             v.set_if_neq(Visibility::Hidden);
@@ -1210,14 +1171,12 @@ struct SunderedRoot;
 #[derive(Component)]
 struct SunderedNode;
 
-/// The "sundered" overlay (`InGameUI` frame `InGameUI::Update` / render `InGameUI::Render`): while the player's
-/// damage multiplier accumulator
-/// (`Character::GetDamageMultiplier` = `DurationDamageManager::GetFixedDamage(61)`: the player's type-61 duration entry,
-/// applied by enemy skills' `offensiveSlowDamageMult*`) is nonzero and the target is 0 the target becomes 1: the level then repeats the 2 s
-/// triangle ([`ramp`]) while the condition holds. `ui/hud/hud_statusoverlay_sundered01.tex` over the whole
-/// screen above the HUD with alpha `clamp(sin(t * 0.003141593 per ms) * 0.3 + level, 0, 1)`, only with the
-/// `screenEffects` option. PORT: plain alpha blending. `negativeDamageMult` (the Amplification potions) does not feed it; enemy skills'
-/// `offensiveSlowDamageMult*` give the player the entry (`gd_game::afflictions`).
+/// The "sundered" overlay (`InGameUI::Update` / `InGameUI::Render`): while the player's damage multiplier
+/// accumulator (`Character::GetDamageMultiplier` = `DurationDamageManager::GetFixedDamage(61)`, from enemy skills'
+/// `offensiveSlowDamageMult*`) is nonzero and the target is 0 the target becomes 1: the level repeats the 2 s
+/// triangle ([`ramp`]) while the condition holds. `ui/hud/hud_statusoverlay_sundered01.tex` over the whole screen
+/// above the HUD with alpha `clamp(sin(t * 0.003141593 per ms) * 0.3 + level, 0, 1)`, only with the
+/// `screenEffects` option. PORT: plain alpha blending. `negativeDamageMult` does not feed it.
 #[allow(clippy::too_many_arguments)]
 fn sundered_overlay(
     mut fresh: gd_game_core::session::NewSession,
@@ -1288,12 +1247,11 @@ struct LowHealthRoot;
 #[derive(Component)]
 struct LowHealthNode;
 
-/// The low-health screen overlay (`InGameUI` frame `InGameUI::Update` / render `InGameUI::Render`):
-/// `system/textures/lowhealth.tex` over the whole screen under the HUD, its level a pure
-/// function of the life fraction `p`: 0 above `lowHealthEffectPercentage` (0.3) + 0.0125, `minOpacity` (0.7)
-/// at the threshold - 0.0125 (linear between), up to 1 as life drops to 0; alpha is
-/// `clamp(sin(t * 0.003141593 per ms) * 0.1 + level)`; only with the `screenEffects` option. PORT: the one-hit
-/// flash drawn over the HUD (gated by an unresolved devotion-window query) is not drawn.
+/// The low-health screen overlay (`InGameUI::Update` / `InGameUI::Render`): `system/textures/lowhealth.tex` over
+/// the whole screen under the HUD, its level a pure function of the life fraction `p`: 0 above
+/// `lowHealthEffectPercentage` (0.3) + 0.0125, `minOpacity` (0.7) at the threshold - 0.0125 (linear between), up to
+/// 1 as life drops to 0; alpha is `clamp(sin(t * 0.003141593 per ms) * 0.1 + level)`; only with the
+/// `screenEffects` option. PORT: the one-hit flash drawn over the HUD is not drawn.
 #[allow(clippy::too_many_arguments)]
 fn low_health_overlay(
     mut fresh: gd_game_core::session::NewSession,
@@ -1343,7 +1301,6 @@ fn low_health_overlay(
         for e in &roots {
             commands.entity(e).try_despawn();
         }
-        // Under the HUD (its roots are at the default layer).
         let root = gd_ui_kit::spawn_root(&mut commands, LowHealthRoot, -1);
         let mut ui = assets.ui(
             &mut commands,

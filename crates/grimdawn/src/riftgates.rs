@@ -1,44 +1,23 @@
-//! Riftgates and respawn points: the presentation side of
-//! `gd_game::riftgates` (rules and engine facts in its module doc). Here:
-//! a click is the player's interact order (`gd_game::player_orders`, used in reach by
-//! `gd_game::riftgates::use_gate`, which opens the riftgate map
-//! `ui::riftmap`), gate effects and looping sounds (locked, else active once
-//! discovered, else dormant), the
-//! map-wide [`WaypointIndex`] (the riftgates, respawn points and devotion shrines among the map's
-//! instance-group members, with their region's map records; built when the session begins, see
-//! `gd_game::riftgates`) and granted travels ([`GateTravel`] → `doors::PendingTravel`).
-//! Personal portals ([`Portal`]): their model and the area name where one opened ([`name_portal`]); a click
-//! interacts with them like a gate.
-//! The Shattered Realm's exit gates (`gd_game::endless::EndlessGate`): [`dress_exit_gates`].
-//! Chthonic rifts ([`DynamicRift`], rules in `gd_game::riftgates`, their groups in `gd_game::unique`):
-//! their look ([`rift_effects`]); a click interacts with an active one.
+//! Riftgates and respawn points: the presentation side of `gd_game::riftgates`. A click is the player's interact
+//! order; gate effects and looping sounds (locked, else active once discovered, else dormant); the map-wide
+//! [`WaypointIndex`] (riftgates, respawn points and devotion shrines among the map's instance-group members, with
+//! their region's map records) and granted travels ([`GateTravel`] → `doors::PendingTravel`).
+//! Personal portals ([`Portal`]): their model and the area name where one opened; a click interacts with them like
+//! a gate. The Shattered Realm's exit gates: [`dress_exit_gates`]. Chthonic rifts ([`DynamicRift`]): their look
+//! ([`rift_effects`]); a click interacts with an active one.
 //!
-//! Portal looks, Game.dll `FixedItemTeleport::SetOperation` / `Load`: a new
-//! portal plays `openAnimation`
-//! once (not looped) with `openSound`, a closing one `closedAnimation` with
-//! `closedSound` (`openFxPakName` / `closedFxPakName` would be spawned too;
-//! empty for this record). The mesh `personalriftgate01.msh` is a reused
-//! zombie skeleton that the record's `baseTexture`
-//! (`system/textures/invisible.tex`, fully transparent) hides, with
-//! `castsShadows` 0 (`Actor::Load`, `CharAssets::spawn_record_model`); what
-//! the player sees is `anm_personalrift_active.anm`'s `CreateEntity` at
-//! frame 10: `records/fx/ui/riftgatepersonal_active_fx01.dbr` at the
-//! `FXCentered` attach point (2.27 m up; `model::anim_entities`), whose
-//! looping emitters run until the portal goes: then
-//! `FixedItemTeleport::UpdateSelf` detaches the effect,
-//! `StopEmitting`, and it fades out ([`gd_render::model::DetachEffects`]).
+//! Portal looks, `FixedItemTeleport::SetOperation` / `Load`: a new portal plays `openAnimation` once with
+//! `openSound`, a closing one `closedAnimation` with `closedSound` (`openFxPakName` / `closedFxPakName` are empty
+//! for this record). The mesh `personalriftgate01.msh` is hidden by `invisible.tex` with `castsShadows` 0; what the
+//! player sees is `anm_personalrift_active.anm`'s `CreateEntity` at frame 10:
+//! `records/fx/ui/riftgatepersonal_active_fx01.dbr` at `FXCentered`, whose looping emitters run until the portal
+//! goes; then `FixedItemTeleport::UpdateSelf` detaches the effect and it fades out.
 //!
-//! Gate state sounds, `StaticTeleporter::SetActive` /
-//! `Load`: each state change stops the old effect and sound and
-//! spawns a `SoundEntity` with the state's pak (`lockedSound` while locked,
-//! else `activeSound` once discovered, else `dormatSound`, spelled so in the
-//! loader: stock gate records name it `dormantSound`, so gates are silent while
-//! dormant) at the gate, looping like a placed `SoundObject`
-//! (`gd_audio::spawn_loop`: distance gain, silent beyond 8 × `fallOff`).
+//! Gate state sounds, `StaticTeleporter::SetActive` / `Load`: each state change stops the old effect and sound and
+//! loops the state's pak at the gate (`lockedSound`, else `activeSound` once discovered, else `dormatSound`, spelled
+//! so in the loader: stock records name it `dormantSound`, so gates are silent while dormant).
 //!
-//! The arrival: the engine's teleport activity (`InstallTeleportActivity`)
-//! puts the player on the floor at the destination (`gd_game::doors::run_teleport`,
-//! `gd_game::nav::teleport_landing`).
+//! The arrival: `InstallTeleportActivity` puts the player on the floor at the destination.
 #[cfg(feature = "dev")]
 use crate::player::MovePath;
 use bevy::prelude::*;
@@ -85,13 +64,12 @@ impl Plugin for RiftgatesPlugin {
     }
 }
 
-/// The gate's locked / active / dormant effect and looping sound entities
-/// (if the record has them) and which of the three.
+/// The gate's locked / active / dormant effect and looping sound entities and which of the three.
 #[derive(Component)]
 struct GateFx(Option<Entity>, Option<Entity>, &'static str);
 
-/// The map-wide [`WaypointIndex`] (module doc), once the session's map is open: a Crucible or custom game
-/// opens its own map before `SessionReady`, and the campaign world behind the menu needs no index.
+/// Built once the session's map is open: a Crucible or custom game opens its own map before `SessionReady`, and
+/// the campaign world behind the menu needs no index.
 fn build_index(
     mut commands: Commands,
     ready: Option<Res<gd_game_core::session::SessionReady>>,
@@ -159,8 +137,6 @@ fn build_index(
     ));
 }
 
-/// Riftgates show their locked effect while locked, else the active one
-/// once discovered, else the dormant one (`gd_game::riftgates` module doc).
 fn gate_effects(
     mut commands: Commands,
     state: Option<Res<TravelState>>,
@@ -205,7 +181,6 @@ fn gate_effects(
     }
 }
 
-/// A granted travel waits for its destination's nav data (`gd_game::doors::run_teleport`).
 fn travel(
     mut granted: MessageReader<GateTravel>,
     mut pending: ResMut<crate::doors::PendingTravel>,
@@ -215,8 +190,7 @@ fn travel(
     }
 }
 
-/// A new personal portal gets the area name tag where it opened
-/// (`Engine::GetAreaNameTag`: the name sector there).
+/// `Engine::GetAreaNameTag`: the name sector where the portal opened.
 fn name_portal(
     mut portal: ResMut<PersonalPortal>,
     world: Option<Res<gd_world::StreamedMap>>,
@@ -239,8 +213,7 @@ fn name_portal(
     }
 }
 
-/// Portal looks (module doc): the model with its open animation and sound
-/// when it appears; the closed animation and sound once it closes.
+/// The model with its open animation and sound when it appears; the closed animation and sound once it closes.
 fn dress_portals(
     mut commands: Commands,
     q: Query<
@@ -293,16 +266,11 @@ fn dress_portals(
     }
 }
 
-/// The portal's closed animation has been started.
 #[derive(Component)]
 struct PortalClosed;
 
-/// A Shattered Realm exit gate as it appears: its record model (`CharAssets::spawn_record_model`): the mesh
-/// `ugdoorobj_endlessdungeonentrance_01.msh` under `invisible.tex`, whose MIF `CreateEntity` puts
-/// `records/fx/ui/riftgate_endless_fx01.dbr` (the small Shattered Realm rift, `pfx_endlessrift.pfx`, with its
-/// decal) at its `DoorFX` point; and the `openSound` loop. `FixedItemTeleport::InitialUpdate` → `SetOperation(0)`
-/// (not locked): `openAnimation` (none in this record),
-/// `openSound` at the gate, `openFxPakName` (none).
+/// A Shattered Realm exit gate's record model (its MIF `CreateEntity` puts `riftgate_endless_fx01.dbr` at
+/// `DoorFX`) and the `openSound` loop (`FixedItemTeleport::InitialUpdate` → `SetOperation(0)`).
 fn dress_exit_gates(
     mut commands: Commands,
     new: Query<Entity, Added<gd_game::endless::EndlessGate>>,
@@ -327,10 +295,6 @@ fn dress_exit_gates(
     }
 }
 
-/// `GD_PORTAL` (hooks.rs): after `secs`, presses the HUD teleport
-/// button once, then uses the portal (opening the map with it in use).
-/// With `:open` it only opens it; a list of times presses it at each time
-/// (each new portal replaces the last one).
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_portal(
@@ -398,8 +362,6 @@ fn test_portal(
     }
 }
 
-/// `GD_USE_RIFTGATE` (hooks.rs): the nearest riftgate or active Chthonic rift within 25 m, once (the interact
-/// order walks to it and opens the map; `use_gate` keeps the target while the hook holds).
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn test_riftgate(
@@ -452,9 +414,8 @@ fn test_riftgate(
     }
 }
 
-/// A Chthonic rift's look (`DynamicTeleporter::SetActive`): active, its `activeEffect` and a
-/// looping `activeSound`; dormant, `dormantEffect` and the `dormatSound` the loader asks for (stock records
-/// have `dormantSound`: silent); unselected (state 1), nothing (`gd_game::riftgates::DynamicRift`).
+/// A Chthonic rift's look (`DynamicTeleporter::SetActive`): active, `activeEffect` and a looping `activeSound`;
+/// dormant, `dormantEffect` and `dormatSound` (silent on stock records); unselected (state 1), nothing.
 fn rift_effects(
     mut commands: Commands,
     data: Res<gd_game_core::data::GameData>,

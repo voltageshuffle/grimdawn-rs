@@ -9,7 +9,7 @@
 //! stack (`UIPlayerHud::OpenStackWindow`: the item, then the window at the item's right edge
 //! and top); every bag / stash click hides it first. Nothing else opens it: a
 //! merchant buys and sells whole items (right click sells the stack) and a
-//! dropped stack drops whole. [`StackWindow::open`].
+//! dropped stack drops whole.
 //!
 //! The window: shown with the text "1" selected (`StackWindow::Show`:
 //! amount 1, the edit box focused); its draw (`StackWindow::Draw`) puts
@@ -26,13 +26,8 @@
 //! clipboard, `trade::Clipboard`) taking digits only; Enter is OK, Esc
 //! hides the window (`StackWindow::OnEscape`). OK (`StackWindow::OnOk`) sends the split and
 //! hides the window; Cancel hides it (`StackWindow::OnCancel`). PORT: the 4-character
-//! limit cuts the text's end (`gd_sim::edit`'s width cut) instead of
-//! refusing the key; the buttons have no down bitmap. The edit box ticks on
+//! limit cuts the text's end instead of refusing the key; the buttons have no down bitmap. The edit box ticks on
 //! real time (the caret and key repeat keep going while the game is paused).
-//!
-//! `GD_STACK` (hooks.rs): after `secs` the window opens on the first stack of more than one of the
-//! main bag (with the inventory open; with the stash open, of the shown
-//! stash page) and `amount` is typed; `:ok` presses OK a second later.
 use super::contains;
 use super::widgets::{Label, static_button};
 use super::window::Rebuild;
@@ -119,7 +114,7 @@ pub struct StackWindow {
 }
 
 impl StackWindow {
-    /// Opens on the stack at `from` of `stack` items (module doc); `at` is its top-right corner.
+    /// Opens on the stack at `from` of `stack` items; `at` is its top-right corner.
     pub fn open(&mut self, from: ItemLoc, at: Vec2, stack: u32, data: &GameData) {
         let max = gd_game_core::stack::split_max(stack, gd_game_core::stack::engine_max(&data.db));
         // "1" selected, the caret after it (`StackWindow::Show`).
@@ -453,10 +448,9 @@ fn clicks(
     }
 }
 
-/// The focused edit box takes the keyboard (module doc); the game's keys see nothing while the window is up
-/// (Escape stays for the shared dispatcher, `ui::esc_dispatcher`, which hides the window). The game menu or
-/// Options (`GamePause::menu`, opened by the HUD button with the window up) hides it: its Enter / digits
-/// are the menu's. PORT: the engine's modal menu leaves the window up, untouched.
+/// The focused edit box takes the keyboard; the game's keys see nothing while the window is up (Escape stays
+/// for `ui::esc_dispatcher`). The game menu or Options hides it.
+/// PORT: the engine's modal menu leaves the window up, untouched.
 #[allow(clippy::too_many_arguments)]
 fn keys(
     mut stack: ResMut<StackWindow>,
@@ -479,7 +473,7 @@ fn keys(
     let mut ok = false;
     if let Some(open) = stack.open.as_mut() {
         let before = open.text.clone();
-        // `NumericOnly`, 4 characters (module doc).
+        // `NumericOnly`, 4 characters.
         let fits = |t: &str| t.chars().count() <= 4;
         let digits = |t: &str| t.chars().all(|c| c.is_ascii_digit());
         open.edit
@@ -542,7 +536,6 @@ fn keys(
     super::keys::reset_but_escape(&mut keys);
 }
 
-/// `GD_STACK` (module doc).
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn hook(

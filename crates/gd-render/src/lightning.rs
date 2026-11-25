@@ -14,8 +14,7 @@
 //!   length, the noise being a 1D lattice noise of game time × 0.02 plus a
 //!   small random offset (see [`subdivide`] and [`noise1`]);
 //! - the path is generated once, when the bolt is made (`SetTarget` →
-//!   `Generate`), not per frame (`UpdateSelf` only calls `Generate` for new
-//!   tendril bolts).
+//!   `Generate`), not per frame;
 //! - the ribbon faces the camera (the scene's camera axes);
 //! - over its life (`timeMin..timeMax`) the drawn part grows from the start
 //!   during the first quarter and is eaten from the start during the last,
@@ -27,14 +26,12 @@
 //! (default `FX/Textures/lightningbolt128_02.tex`), `shader` (`TrailAdditive.ssh`), `lineWidth`,
 //! `textureLength`, `strikeEffect` (default `records/fx/ambient/fx_lightningblast.dbr`), `strikeDecal`
 //! (default `records/fx/decals/decal_blackchar.dbr`); the record's `life` is not read: every bolt lives
-//! `lightningLife` = 200 ms. `SetEnd` with `fromSky` starts it 20 m above the end (Game.dll
-//! `Skill_AttackRadiusLightning2::CreateVisualEffect` calls `SetEnd` then `SetFromSky(true)`,
-//! so it is the record's flag that counts; every stock record has it). The path is regenerated every
+//! `lightningLife` = 200 ms. `SetEnd` with `fromSky` starts it 20 m above the end. The path is regenerated every
 //! 50–100 ms ([`update_bolts2`]) as a main tendril and sub-tendrils ([`generate`], [`generate_tendril`],
 //! [`generate_sub_tendril`]) and drawn as camera-facing ribbons ([`bolt2_mesh`]). The strike decal is dynamic
 //! (`Decal.dynamic`) and its `Decal.faceAngle` (π/2 − `maxAngle`) is set to −π/2, so it keeps every mesh face
-//! whatever its slope (`Lightning2::Generate`; grimdawn `casting.rs` `fx_decals`). PORT: the `rand()`
-//! calls use the port's stream; the scene's camera axis is the camera's forward.
+//! whatever its slope (`Lightning2::Generate`). PORT: the `rand()` calls use the port's stream; the scene's camera
+//! axis is the camera's forward.
 use bevy::prelude::*;
 
 pub struct LightningPlugin;
@@ -93,15 +90,13 @@ fn subdivide(from: Vec3, to: Vec3, depth: u32, game_ms: i32, out: &mut Vec<Vec3>
     subdivide(mid, to, depth - 1, game_ms, out);
 }
 
-/// The CRT `rand()` (0..=32767) the game draws from. PORT: the game's is the
-/// process-wide CRT stream shared with everything else, so its values cannot
-/// be reproduced; the port's shared RNG stands in, with the same range.
+/// The CRT `rand()` (0..=32767) the game draws from. PORT: the game's process-wide CRT stream cannot be reproduced;
+/// the port's shared RNG stands in, with the same range.
 fn rand() -> i32 {
     gd_game_core::rng::i32(0..=32767)
 }
 
-/// MSVC CRT `rand()` from its per-thread start state 1 (used to rebuild the
-/// noise table exactly).
+/// MSVC CRT `rand()` from its per-thread start state 1.
 struct MsvcRand(u32);
 
 impl MsvcRand {
@@ -111,19 +106,12 @@ impl MsvcRand {
     }
 }
 
-/// Game.dll's 1D gradient noise table (`Game::Noise1Table`: 514 permutation entries,
-/// then 514 gradients).
+/// Game.dll's 1D gradient noise table (`Game::Noise1Table`: 514 permutation entries, then 514 gradients).
 ///
-/// `Game::InitNoise1`, run by the static initialiser `Game::StaticInitNoise1` with
-/// the CRT `rand`: for i in 0..256, perm[i] = i and grad[i] = (rand % 512 −
-/// 256) / 256, normalised to ±1 when its square exceeds 1e-4; then for i =
-/// 255 down to 1 perm[i] swaps with perm[rand as u8]; then entries 256..514
-/// repeat 0..258. That initialiser and the 2D one after it are the only
-/// static initialisers of Game.dll (or Engine.dll, which loads first) that
-/// reach `rand`, and GrimDawn.exe imports Game.dll statically, so they run on
-/// the main thread during process start before any `srand`: the 1D table is
-/// built from the CRT's initial state (1). ASSUMED: no other module loaded
-/// before it (CrashReport, StatReport, lua51) calls `rand` on that thread.
+/// `Game::InitNoise1` (static initialiser `Game::StaticInitNoise1`, CRT `rand` from its initial state 1): for i in
+/// 0..256, perm[i] = i and grad[i] = (rand % 512 − 256) / 256, normalised to ±1 when its square exceeds 1e-4; then for
+/// i = 255 down to 1 perm[i] swaps with perm[rand as u8]; then entries 256..514 repeat 0..258. ASSUMED: no module
+/// loaded before Game.dll (CrashReport, StatReport, lua51) calls `rand` on the main thread.
 struct Noise1 {
     perm: [usize; 514],
     grad: [f32; 514],
@@ -305,7 +293,7 @@ fn fade_bolts(
         };
         let bottom = if rest < 0.25 { 1.0 - rest * 4.0 } else { 0.0 };
         let k = top - bottom;
-        // Write only on change: `get_mut` marks the material changed, and the middle half of the life holds k = 1.
+        // Write only on change: `get_mut` marks the material changed.
         let color = Color::linear_rgb(b.color.x * k, b.color.y * k, b.color.z * k);
         if materials
             .get(&m.0)
@@ -326,7 +314,7 @@ fn fade_bolts(
         if let Some(mut mesh) = meshes.get_mut(&b.mesh)
             && let Some(bevy::mesh::Indices::U32(idx)) = mesh.indices_mut()
         {
-            // The full-size index buffer from the spawn, rewritten in place: the drawn quads, the rest degenerate.
+            // The drawn quads; the rest degenerate.
             idx.fill(0);
             if hi >= lo + 2 {
                 for (q, i) in idx.as_chunks_mut::<6>().0.iter_mut().zip(lo..hi) {
@@ -387,8 +375,7 @@ fn spawn_bolt2(
     } else {
         b.from
     };
-    // The mesh is made on the first update, once the bolt is generated (no empty mesh asset).
-    // `trailadditive.ssh`: texture × vertex colour, added (as `trails.rs`).
+    // `trailadditive.ssh`: texture × vertex colour, added.
     let mat = assets.materials.add(StandardMaterial {
         base_color_texture: img,
         unlit: true,
@@ -584,9 +571,7 @@ fn bolt2_mesh(b: &Bolt2, view: Vec3) -> Mesh {
 /// `Lightning2::UpdateSelf` every update of `dt` ms: the life counts down (gone at 0); the
 /// regeneration timer too, and at 0 the texture offset moves on by 0.25 + u / 4 (wrapping past 1), the
 /// timer restarts at 50 + 50u ms and the bolt is generated again (so the first update generates it),
-/// each time with its strike effect and decal at the strike point (`strikeEffect`, default
-/// `fx_lightningblast`, an `EffectEntity` added at the point; `strikeDecal`, default `decal_blackchar`,
-/// put on the floor there).
+/// each time with its `strikeEffect` and `strikeDecal` at the strike point.
 fn update_bolts2(
     mut commands: Commands,
     time: Res<Time>,

@@ -6,25 +6,19 @@ use gd_formats::collections::HashMap;
 use gd_game_core::monsters::{FactionPack, Monster};
 use gd_rules::Rng;
 
-/// Items a monster wears (`Character::LoadLoot`, rolled when it is created):
-/// they count in its combat profile and drop on death unless Broken.
+/// Items a monster wears (`Character::LoadLoot`): they count in its combat profile and drop on
+/// death unless Broken.
 #[derive(Component)]
 pub struct Worn {
     pub items: Vec<gd_formats::save::item::Item>,
     pub resolved: Vec<gd_sim::items::ResolvedItem>,
 }
 
-/// The `charLevel` of a character placed straight in a level file (a `Turret`, a town guard),
-/// `Character::Load`: its experience level control (`Character.levelControl`) loads the record's `charLevel`
-/// equation, `minLevel` (default 1) and `maxLevel` (default 1) (`ExperienceLevelControl::Load`), then
-/// `ExperienceLevelControl::ApplyLevel` sets the level (`Character.level`, the constructor leaves 0) to
-/// `min(max(trunc(charLevel), minLevel), maxLevel)`, or `minLevel` without an equation. The equation's `charLevel`
-/// variable (`ExperienceLevelControl::GetCharLevelVariable`) is the players' average level
-/// (`PlayerManagerClient::GetPlayerInfo`: the rounded mean of the players' `Character.level`; one player: his level).
-/// The level
-/// entity factory sets no level after it, and `Monster::RestoreState` keeps it when
-/// the region reloads (here: [`ProxyStates`]). A proxy's monsters get the proxy's level instead.
-/// PORT: the equation's `playerLevel` variable (`ExperienceLevelControl.playerLevel`) resolves to 0.
+/// The `charLevel` of a character placed straight in a level file (a `Turret`, a town guard):
+/// `ExperienceLevelControl::ApplyLevel` gives `min(max(trunc(charLevel), minLevel), maxLevel)`
+/// (both default 1), or `minLevel` without an equation; the equation's `charLevel` is the players'
+/// average level. `Monster::RestoreState` keeps it when the region reloads ([`ProxyStates`]).
+/// PORT: the equation's `playerLevel` variable resolves to 0.
 pub fn placed_char_level(db: &gd_formats::vfs::Database, record: &str, player_level: i32) -> i32 {
     let Some(r) = db.get(record) else {
         return 1;
@@ -59,14 +53,12 @@ pub struct MonsterState {
     pub alive: bool,
     /// Held back by an ambush proxy until it releases it.
     pub pending: bool,
-    /// A level placement's scale (`creature` module doc); None: the record's.
+    /// A level placement's scale; None: the record's.
     pub scale: Option<f32>,
 }
 
-/// The pool each "Unified Entities" group chose this session (group name -> index into its members'
-/// candidate pools; `GameEngine.unifiedEntityChoices`, cleared in `ExitPlayingMode`): its proxies and set pieces
-/// share
-/// the choice.
+/// The pool each "Unified Entities" group chose this session (`GameEngine.unifiedEntityChoices`):
+/// its proxies and set pieces share the choice.
 #[derive(Resource, Default)]
 pub struct UnifiedPools(pub HashMap<String, usize>);
 
@@ -74,16 +66,13 @@ pub struct UnifiedPools(pub HashMap<String, usize>);
 #[derive(Resource, Default)]
 pub struct ProxyStates(pub HashMap<(usize, u32), Vec<MonsterState>>);
 
-/// The session's hero-boss registry (`GameEngine::RegisterProxyHeroBoss` / `GameEngine::IsProxyHeroBossInGame`,
-/// Game.dll): the lowercased record paths of the Hero / Boss / SuperBoss
-/// monsters the proxies spawned. A pool entry whose record is in it never spawns again this session
-/// (`gd_sim::proxy::run_pool`); a proxy that ignores the restriction (`Proxy.Create`'s bool,
-/// `ProxyEndless`) spawns its bosses without registering them. Nothing unregisters
-/// (`UnregisterProxyHeroBoss` has no callers): the registry lasts the session (reset at its end).
+/// The session's hero-boss registry (`GameEngine::RegisterProxyHeroBoss`): the lowercased records
+/// of the Hero / Boss / SuperBoss monsters the proxies spawned; a pool entry in it never spawns
+/// again this session. A proxy that ignores the restriction (`ProxyEndless`) does not register.
+/// Nothing unregisters.
 #[derive(Resource, Default)]
 pub struct HeroBosses(pub gd_formats::collections::HashSet<String>);
 
-/// Monster profiles by (record, level).
 #[derive(Resource, Default)]
 pub struct ProfileCache(
     pub HashMap<(String, i32), Option<(std::sync::Arc<gd_sim::actor::Profile>, f32)>>,
@@ -91,14 +80,9 @@ pub struct ProfileCache(
 
 pub const PLAYER_PACK: &str = "records/controllers/factions/faction_player.dbr";
 
-/// Whether the player treats `record` as a foe (`FactionManager::
-/// IsFoe` (both overloads) with the player's pack): the
-/// creature's faction is its `factions` pack's `myFaction` (none, e.g. no
-/// pack: never a foe); the player's own value for that faction decides when
-/// it is non-zero (foe below 0), else the creature pack's value for the
-/// player's faction (`factionPlayer`) does. `defaultTeamMajor` is not read by
-/// the game. The player's values are the session's (`factions`), before
-/// loading the player record's pack (`faction_player.dbr`).
+/// Whether the player treats `record` as a foe (`FactionManager::IsFoe`): the creature's faction
+/// is its `factions` pack's `myFaction` (no pack: never a foe); the player's own value for that
+/// faction decides when non-zero (foe below 0), else the creature pack's `factionPlayer` does.
 pub fn is_foe(
     db: &gd_formats::vfs::Database,
     factions: Option<&crate::factions::PlayerFactions>,
@@ -124,7 +108,7 @@ pub fn is_foe(
     pack.f32("factionPlayer").unwrap_or(0.0) < 0.0
 }
 
-/// The player's value for faction `t` ([`is_foe`]): the session's, else the player record's pack.
+/// The player's value for faction `t`: the session's, else the player record's pack.
 pub fn player_value(
     db: &gd_formats::vfs::Database,
     factions: Option<&crate::factions::PlayerFactions>,
@@ -137,10 +121,8 @@ pub fn player_value(
     })
 }
 
-/// The player's faction pack as `Monster::JoinMe` copies it onto a monster joining him (the
-/// joiner's pack `Character.factionPack` becomes the leader's): the player record pack's `myFaction`
-/// (`faction_player.dbr`, the
-/// player faction 0) and the player's values ([`player_value`]).
+/// The player's faction pack as `Monster::JoinMe` copies it onto a monster joining him: the
+/// player record pack's `myFaction` and the player's values.
 pub fn player_pack(
     db: &gd_formats::vfs::Database,
     factions: Option<&crate::factions::PlayerFactions>,
@@ -159,8 +141,8 @@ pub fn player_pack(
     }
 }
 
-/// Creatures that are not the player's foes ([`is_foe`]): they stand as
-/// plain NPCs and cannot be attacked, unless they fight ([`is_fighter`]).
+/// Creatures that are not the player's foes: plain NPCs that cannot be attacked, unless they
+/// fight ([`is_fighter`]).
 pub fn is_friendly(
     db: &gd_formats::vfs::Database,
     factions: Option<&crate::factions::PlayerFactions>,
@@ -169,32 +151,23 @@ pub fn is_friendly(
     !is_foe(db, factions, record)
 }
 
-/// Whether a creature record is a fighting monster: class `Monster` with a `controller`. A friendly one is
-/// `combat::Allied` and fights its faction foes, however it got into the world: a Crucible defense or
-/// Devil's Crossing guard spawned by the story, a town guard placed straight in a level
-/// ([`LevelProxies::npcs`]), a friendly creature a proxy rolled. The
-/// engine has no ally flag nor team table: every `Monster` runs its `ControllerMonster`, whose
-/// `AngerUpdate` takes as targets the characters in its view sphere that `FactionManager::IsFoe`
-/// calls foes, so a placed guard (`factions` Survivors, a `ControllerMonster` /
-/// `ControllerStationaryMonster`) engages the monsters its faction pack is hostile to, like any monster engages
-/// the player. Other friendly records (`Npc*` classes, or no controller) are plain NPCs.
+/// Whether a creature record is a fighting monster: class `Monster` with a `controller`. A
+/// friendly one is `combat::Allied` and fights its faction foes (`ControllerMonster::AngerUpdate`
+/// targets whatever `FactionManager::IsFoe` calls foes; the engine has no ally flag).
 pub fn is_fighter(db: &gd_formats::vfs::Database, record: &str) -> bool {
     db.get(record)
         .is_some_and(|r| r.class == "Monster" && r.str("controller").is_some_and(|c| !c.is_empty()))
 }
 
-/// Whether a creature record is of the engine's `Npc` class family (`Npc`, `NpcMerchant`, `NpcCrafter`, ...:
-/// every `Npc*` creature class, by their RTTI parents in Game.dll). Such a character never fights nor
-/// takes a skill hit, whatever its faction: `Npc::Load` gives it a `ControllerNpc2` (default
-/// `ai_npcdefault02`: wander / idle / chat / quest states, no anger nor attack state) and
-/// `GameEngine::FilterInvalidTargets` drops every `Npc`. So a Kurn or Bysmiel NPC stays a plain NPC
-/// when the player's standing with its faction is hostile, and a reputation change never turns it.
+/// Whether a creature record is of the engine's `Npc*` class family. Such a character never
+/// fights nor takes a skill hit, whatever its faction (`ControllerNpc2` has no anger state;
+/// `GameEngine::FilterInvalidTargets` drops every `Npc`).
 pub fn is_npc(db: &gd_formats::vfs::Database, record: &str) -> bool {
     db.get(record).is_some_and(|r| r.class.starts_with("Npc"))
 }
 
-/// Whether a spawned creature stands as a plain NPC (no `Monster`, no AI): an [`is_npc`] record, or a friendly
-/// ([`is_friendly`]) one that does not fight ([`is_fighter`]).
+/// Whether a spawned creature stands as a plain NPC (no `Monster`, no AI): an [`is_npc`] record,
+/// or a friendly one that does not fight.
 pub fn stands_as_npc(
     db: &gd_formats::vfs::Database,
     factions: Option<&crate::factions::PlayerFactions>,
@@ -203,9 +176,8 @@ pub fn stands_as_npc(
     is_npc(db, record) || (is_friendly(db, factions, record) && !is_fighter(db, record))
 }
 
-/// Spawns one proxy monster with its combat profile and AI (friendly
-/// creatures, [`is_friendly`] by the player's `factions`, are `combat::Allied` when they fight
-/// ([`is_fighter`]), else plain NPCs).
+/// Spawns one proxy monster with its combat profile and AI (friendly fighters are
+/// `combat::Allied`, other friendlies plain NPCs).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_state(
     commands: &mut Commands,
@@ -261,7 +233,6 @@ pub fn spawn_state(
 /// A `Proxy` entity of a level (collected by the world streamer).
 #[derive(Clone, Debug)]
 pub struct ProxyCpu {
-    /// Entity index in the level.
     pub entity: u32,
     pub record: String,
     pub position: Vec3,
@@ -269,13 +240,12 @@ pub struct ProxyCpu {
     pub uid: Option<[u32; 4]>,
 }
 
-/// On a level root: its proxies, not yet run/restored.
 #[derive(Component)]
 pub struct LevelProxies {
     pub level: usize,
     pub proxies: Vec<ProxyCpu>,
-    /// NPCs and `Monster`s (town guards) without story hooks: (entity index, record, transform); the transform's
-    /// scale is the placement's (`creature` module doc).
+    /// NPCs and `Monster`s (town guards) without story hooks: (entity index, record, transform
+    /// with the placement's scale).
     pub npcs: Vec<(u32, String, Transform)>,
     /// Loot containers without story hooks: (entity index, record, transform).
     pub chests: Vec<(u32, String, Transform)>,
@@ -293,25 +263,21 @@ pub struct LevelProxies {
     pub sounds: Vec<(String, Vec3)>,
     /// `PatrolPoint` objects: (record, position, uid).
     pub patrol_points: Vec<(String, Vec3, [u32; 4])>,
-    /// Gameplay objects placed straight in the level, by record class
-    /// ([`placed_class`]): (entity index, record, transform).
+    /// Gameplay objects placed straight in the level ([`placed_class`]): (entity index, record,
+    /// transform).
     pub placed: Vec<(u32, String, Transform)>,
 }
 
-/// Whether a level entity of record class `class` is one of the
-/// [`LevelProxies::placed`] objects: `CharonGeyserMarker` (`crate::geysers`)
-/// and `Turret` monsters (`crate::turrets`).
+/// Whether a level entity of record class `class` is one of the [`LevelProxies::placed`] objects.
 pub fn placed_class(class: &str) -> bool {
     matches!(class, "CharonGeyserMarker" | "Turret")
 }
 
-/// An entity of a level outside its root, despawned with the level ([`cull_monsters`]): a static object a set piece
-/// placed, and the loose world entities that take the level they appear in (`crate::levels::place_loose`; ground
-/// items are saved first, `crate::loot::LevelItems`).
+/// An entity of a level outside its root, despawned with the level ([`cull_monsters`]): a set
+/// piece's static object, or a loose world entity.
 #[derive(Component)]
 pub struct LevelProp(pub usize);
 
-/// An object a set piece placed this session.
 #[derive(Clone, Debug)]
 pub struct SetObject {
     pub record: String,
@@ -325,14 +291,12 @@ pub struct SetObject {
     pub block: bool,
 }
 
-/// What each set piece (level, entity index) placed this session.
 #[derive(Resource, Default)]
 pub struct SetPieceStates(pub HashMap<(usize, u32), Vec<SetObject>>);
 
 /// The engine's "request and block" points while one set piece is placed
-/// (Engine `NavManager::RequestBlockedPoint` & co: each accepted point is kept with its
-/// clearance; a point is blocked when its xz distance to a kept one is at most
-/// the two clearances; `SetPiece::Place` clears them afterwards).
+/// (`NavManager::RequestBlockedPoint`): a point is blocked when its xz distance to a kept one is
+/// at most the two clearances.
 struct Blocks<'a> {
     nav: &'a gd_sim::nav::NavWorld,
     y: f32,
@@ -346,8 +310,7 @@ impl Blocks<'_> {
             .any(|(q, qr)| (p - *q).with_y(0.0).length() <= r + qr)
     }
 
-    /// The navmesh point under (x, z) (Detour's nearest point must be the
-    /// candidate itself).
+    /// The navmesh point under (x, z) (Detour's nearest point must be the candidate itself).
     fn on_mesh(&self, x: f32, z: f32) -> Option<Vec3> {
         self.nav
             .ground([x, self.y + 2.0, z])
@@ -362,8 +325,7 @@ impl Blocks<'_> {
         Some(p)
     }
 
-    /// `RequestAndBlockRandomPointInRadius`: 100 tries at a random angle and
-    /// a random distance up to `radius`.
+    /// `RequestAndBlockRandomPointInRadius`: 100 tries at a random angle and distance.
     fn in_radius(&mut self, c: Vec3, radius: f32, r: f32) -> Option<Vec3> {
         for _ in 0..100 {
             let (a, d) = (
@@ -394,8 +356,8 @@ impl Blocks<'_> {
         None
     }
 
-    /// `RequestAndBlockNearPoint`: rings 2r + 0.1 apart out to `max`, as many
-    /// samples per ring as fit, from a random start angle that keeps turning.
+    /// `RequestAndBlockNearPoint`: rings 2r + 0.1 apart out to `max`, as many samples per ring as
+    /// fit, from a random start angle that keeps turning.
     fn near(&mut self, c: Vec3, max: f32, r: f32) -> Option<Vec3> {
         if max <= 0.0 {
             return None;
@@ -423,13 +385,11 @@ impl Blocks<'_> {
     }
 }
 
-/// An ambush proxy holding back monsters (`ProxyAmbush::UpdateSelf`):
-/// once the player is inside `alertArea`, after
-/// `rand[minDelayTime, maxDelayTime]` it places `rand[minGroupSize,
-/// maxGroupSize]` of them every `rand[minSpawnTime, maxSpawnTime]` (ms),
-/// waiting `minSpawnTime` while more than `spawnThreshold` of its monsters
-/// are alive. Times are the record's seconds × 1000 (`Load`). Each placed
-/// monster gets its Spawn animation (`PlaceNextObject`, [`crate::combat::SpawnStartup`]).
+/// An ambush proxy holding back monsters (`ProxyAmbush::UpdateSelf`): once the player is inside
+/// `alertArea`, after `rand[minDelayTime, maxDelayTime]` it places `rand[minGroupSize,
+/// maxGroupSize]` of them every `rand[minSpawnTime, maxSpawnTime]`, waiting `minSpawnTime` while
+/// more than `spawnThreshold` of its monsters are alive. Each placed monster plays its Spawn
+/// animation.
 #[derive(Component)]
 pub struct Ambush {
     key: (usize, u32),
@@ -443,41 +403,33 @@ pub struct Ambush {
     timer: i32,
 }
 
-/// A Shattered Realm proxy (`ProxyEndless`): its monsters are held (`pending`) in [`ProxyStates`] until the
-/// generator activates the proxy ([`crate::endless`], `ProxyEndless::UpdateSelf`: state
-/// 1 = dormant never spawns, the generator flips it to 0 when the floor is active). `LevelProp` of its level.
+/// A Shattered Realm proxy (`ProxyEndless`): its monsters are held (`pending`) in [`ProxyStates`]
+/// until the generator activates the proxy. `LevelProp` of its level.
 #[derive(Component)]
 pub struct EndlessProxy {
     pub key: (usize, u32),
-    /// The proxy record (a shrine proxy's accessory pools: `crate::endless::spawn_activated_shrines`).
+    /// The proxy record (a shrine proxy's accessory pools).
     pub record: String,
     pub uid: Option<[u32; 4]>,
     /// The patrol points the monsters take on activation.
     pub patrol: Vec<[u32; 4]>,
 }
 
-/// Key of the n-th object of a level's set piece `ei` (proxy/chest keys of
-/// its objects; level entity indices stay below 2^24).
+/// Key of the n-th object of a level's set piece `ei` (level entity indices stay below 2^24).
 pub fn set_key(ei: u32, n: usize) -> u32 {
     0x8000_0000 | (ei << 6) | n as u32 & 63
 }
 
-/// Positions for a set piece's objects (`SetPiece::Place`
-/// and its `Apply*Positioning`): parts stand at their offset
-/// from the set piece (world axes, put on the floor when the offset has no
-/// height) and block their spot; Random puts each object at a free point
-/// within `placementRadius` (`GetFreeLocation`), Ring on the circle
-/// (`GetOutlyingLocation`); both first roll the scale (own stream). Camp
-/// places the parts, then one random main/center object near the centre
-/// (`GetNearbyLocation`) and the other main ones and all secondary /
-/// perimeter ones on the circle, then the rest: the first object of each
-/// entry at a free point, the later ones near the last placed one of their
-/// entry (which moves on while inside the radius). Grid puts each object on
-/// a random free cell (2 × the mean radius, at least 2 m) of the disc,
-/// nudged along x by up to half a cell. Clearance is the object's radius
-/// (`actorRadius` × the scale vector's length) + its `buffer`; a forced
-/// object that finds no room takes the set piece's position, any other is
-/// dropped. Then `ApplyRotation` (own stream).
+/// Positions for a set piece's objects (`SetPiece::Place`): parts stand at their offset (world
+/// axes, floored when the offset has no height) and block their spot; Random puts each object
+/// at a free point within `placementRadius`, Ring on the circle; both first roll the scale (own
+/// stream). Camp places the parts, then one random main object near the centre, the other main
+/// and secondary ones on the circle, then the rest: each entry's first object at a free point,
+/// the later ones near the entry's last placed one (which moves on while inside the radius).
+/// Grid puts each object on a random free cell (2 × the mean radius, at least 2 m), nudged along
+/// x by up to half a cell. Clearance is `actorRadius` × the scale vector's length + `buffer`; a
+/// forced object that finds no room takes the set piece's position, any other is dropped. Then
+/// `ApplyRotation` (own stream).
 pub fn place_set_piece(
     nav: &gd_sim::nav::NavWorld,
     centre: Vec3,
@@ -493,7 +445,6 @@ pub fn place_set_piece(
     };
     let radius = run.radius;
     let n = run.objects.len();
-    // (position, scale) per object; None = not placed.
     let mut placed: Vec<Option<(Vec3, f32)>> = vec![None; n];
     let floor = |p: Vec3| {
         nav.ground([p.x, p.y + 2.0, p.z])
@@ -632,7 +583,7 @@ pub fn place_set_piece(
     let mut out = Vec::new();
     for (o, at) in run.objects.iter().zip(placed) {
         let Some((p, s)) = at else { continue };
-        // `ApplyRotation` (parts keep the set piece's frame).
+        // Parts keep the set piece's frame.
         let rot = if o.offset.is_some() {
             Quat::from_rotation_y(yaw)
         } else {
@@ -652,11 +603,9 @@ pub fn place_set_piece(
     out
 }
 
-/// `SetPiece::ApplyRotation` (forward = the model's +Z): None
-/// keeps the set piece's facing; Y a random heading; XYZ a random up vector
-/// (three rolls in -1..1); Aligned along the line from the centre, turned a
-/// quarter at random (odd roll); FaceOut / FaceIn away from / towards the
-/// centre; a point within 0.1 m of the centre gets a random heading.
+/// `SetPiece::ApplyRotation` (forward = +Z): None keeps the set piece's facing; Y a random
+/// heading; XYZ a random up vector; Aligned along the line from the centre, turned a quarter on an
+/// odd roll; FaceOut / FaceIn away from / towards the centre; within 0.1 m of the centre, random.
 pub fn set_rotation(
     own: &mut Rng,
     r: gd_sim::setpiece::Rotation,
@@ -724,9 +673,9 @@ pub fn ambushes(
     mut profiles: ResMut<ProfileCache>,
     rules: Res<gd_game_core::rules::CombatRules>,
     mut assets: crate::creature::Spawner,
-    // Option: factions are optional input to the spawn (`as_deref`).
+    // Option: factions are optional input to the spawn.
     factions: Option<Res<crate::factions::PlayerFactions>>,
-    // The fraction of a millisecond the whole-millisecond timers have not consumed yet.
+    // The ms fraction the whole-millisecond timers have not consumed yet.
     mut carry: Local<f32>,
     (mut anims, mut clips, mut new): (
         ResMut<gd_game_core::character::AnimCache>,
@@ -750,8 +699,7 @@ pub fn ambushes(
             a.alerted = true;
             a.timer = irand(a.delay_ms.0, a.delay_ms.1);
             info!("ambush {:?} alerted at {:?}", a.key, a.position);
-            // PORT: its group's meshes and clips start loading now, hidden by the spawn delay
-            // ([`crate::creature::ready_to_spawn`]).
+            // The group's meshes and clips start loading now, hidden by the spawn delay.
             if let Some(list) = states.0.get(&a.key) {
                 for m in list.iter().filter(|m| m.pending) {
                     crate::creature::ready_to_spawn(
@@ -782,7 +730,7 @@ pub fn ambushes(
         let Some(list) = states.0.get_mut(&key) else {
             continue;
         };
-        // PORT: a group whose meshes or clips are still loading waits (its timer run out) for a later frame.
+        // A group whose meshes or clips are still loading waits for a later frame.
         let mut ready = true;
         for m in list.iter().filter(|m| m.pending) {
             ready &= crate::creature::ready_to_spawn(
@@ -815,8 +763,8 @@ pub fn ambushes(
                     (key.0, key.1, i),
                     &[],
                 );
-                // `PlaceNextObject`: `EnableSpawnAnimation` on a monster before it is
-                // spawned (`combat::SpawnStartup`; a hidden monster's Startup is its Hidden state instead).
+                // `PlaceNextObject`: `EnableSpawnAnimation` (a hidden monster's Startup is its
+                // Hidden state instead).
                 if let Some(e) = placed {
                     commands.entity(e).queue_silenced(|mut w: EntityWorldMut| {
                         if let Some(mut ai) = w.get_mut::<crate::combat::MonsterAi>() {
@@ -831,21 +779,20 @@ pub fn ambushes(
     }
 }
 
-/// A level monster [`run_proxies`] queued: its [`ProxyStates`] entry (key, index in the list) and its patrol points.
+/// A level monster [`run_proxies`] queued: its [`ProxyStates`] (key, index) and patrol points.
 struct PendingSpawn {
     key: (usize, u32),
     index: usize,
     patrol: std::sync::Arc<[[u32; 4]]>,
 }
 
-/// On a populated level root: its monsters still to spawn ([`spawn_level_monsters`]).
+/// On a populated level root: its monsters still to spawn.
 #[derive(Component)]
 pub struct PendingMonsters(Vec<PendingSpawn>);
 
-/// Spawns the monsters [`run_proxies`] queued on the level roots ([`PendingMonsters`]), each once its mesh and clips
-/// are parsed ([`crate::creature::ready_to_spawn`]), at most [`crate::creature::SPAWNS_PER_FRAME`] a frame. PORT: the
-/// engine spawns a level's monsters with the level; here they come over the next frames, so walking into a level
-/// does not stall a frame on dozens of spawns. A monster whose state died or turned pending meanwhile is dropped.
+/// Spawns the monsters [`run_proxies`] queued ([`PendingMonsters`]), each once its mesh and clips
+/// are parsed, at most [`crate::creature::SPAWNS_PER_FRAME`] a frame. PORT: the engine spawns a
+/// level's monsters with the level. A monster whose state died or turned pending is dropped.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_level_monsters(
     mut commands: Commands,
@@ -900,8 +847,8 @@ pub fn spawn_level_monsters(
     }
 }
 
-/// Scatters `n` points on the nav mesh around `center`, at least 1.2 m apart
-/// (stand-in for `NavManager::FillPointSet`, which packs 0.25-radius circles).
+/// Scatters `n` points on the nav mesh around `center`, at least 1.2 m apart (stand-in for
+/// `NavManager::FillPointSet`).
 pub fn place(nav: &gd_sim::nav::NavWorld, center: Vec3, extents: f32, n: usize) -> Vec<Vec3> {
     let mut out: Vec<Vec3> = Vec::new();
     let base = nav
@@ -932,29 +879,25 @@ pub fn place(nav: &gd_sim::nav::NavWorld, center: Vec3, extents: f32, n: usize) 
     out
 }
 
-/// Monsters are not parented to their level (streaming may despawn a level in
-/// the frame they are added); they go when their level is unloaded: marked
-/// [`gd_game_core::levels::Unload`], despawned in `Last` (other systems of this frame
-/// may still command them). Only a change of the loaded levels, or an entity
-/// added since the last run (spawned for a level already gone), can need it.
+/// Monsters are not parented to their level (streaming may despawn a level in the frame they are
+/// added); they go when their level is unloaded: marked [`gd_game_core::levels::Unload`],
+/// despawned in `Last`.
 pub fn cull_monsters(
     mut commands: Commands,
     world: Res<gd_game_core::levels::Levels>,
     q: Query<(Entity, Ref<Monster>)>,
     npcs: Query<(Entity, Ref<LevelNpc>)>,
-    // Ground items leave with their level through `crate::loot::stash_ground_items` (kept for its next load).
     props: Query<(Entity, Ref<LevelProp>), Without<crate::loot::GroundItem>>,
 ) {
     let all = world.is_changed();
     let gone = |level: usize| !world.loaded.contains_key(&level);
     for (e, m) in &q {
-        // Story monsters (slot level usize::MAX) are managed by the story.
         if (all || m.is_added()) && m.slot.0 != usize::MAX && gone(m.slot.0) {
             commands.entity(e).try_insert(gd_game_core::levels::Unload);
         }
     }
     for (e, n) in &npcs {
-        // A story monster's dropped NPC keeps its slot level usize::MAX: the story's too.
+        // A story monster's dropped NPC keeps slot level usize::MAX: the story's too.
         if (all || n.is_added()) && n.0 != usize::MAX && gone(n.0) {
             commands.entity(e).try_insert(gd_game_core::levels::Unload);
         }
@@ -966,9 +909,8 @@ pub fn cull_monsters(
     }
 }
 
-/// The player's level now, for what spawns: [`gd_game_core::progress::PlayerProgress`] (the one source of the level
-/// in a session). Before `init_progress` created it (the menu backdrop, the frames a session's first levels
-/// stream in ahead of the player) it is the level that resource starts from (`PlayerProgress::from_save`).
+/// The player's level now, for what spawns: [`gd_game_core::progress::PlayerProgress`]; before
+/// it exists, the level that resource starts from (`PlayerProgress::from_save`).
 pub fn current_player_level(
     progress: Option<&gd_game_core::progress::PlayerProgress>,
     loaded: Option<&gd_game_core::session::LoadedCharacter>,
@@ -985,15 +927,13 @@ pub fn current_player_level(
         .max(1)
 }
 
-/// New monsters roll and equip their gear, then rebuild their profile.
 #[allow(clippy::too_many_arguments)]
 pub fn equip_monsters(
     mut commands: Commands,
     mut q: Query<(Entity, &Monster, &mut gd_game_core::combat::Combatant), Added<Monster>>,
     data: Res<gd_game_core::data::GameData>,
     rules: Res<gd_game_core::rules::CombatRules>,
-    // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
-    // a new character.
+    // Option: `progress` is absent before the player exists; `loaded` for a new character.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     session: crate::session::Session,
@@ -1036,26 +976,20 @@ pub fn equip_monsters(
     }
 }
 
-/// On a level root whose gameplay content [`run_proxies`] spawned (the game
-/// then spawns its props and removes [`LevelProxies`]).
+/// On a level root whose gameplay content [`run_proxies`] spawned.
 #[derive(Component)]
 pub struct LevelPopulated;
 
-/// Populates newly loaded levels (the streamer adds [`LevelProxies`]): set
-/// pieces roll their objects once a session ([`SetPieceStates`]; their
-/// creatures and proxies join the level's proxies), proxies roll their
-/// monsters and accessory chests once a session ([`ProxyStates`],
-/// `ChestStates::accessories`), ambushes wait for the player, the living
-/// monsters queue on the root ([`PendingMonsters`], spawned by
-/// [`spawn_level_monsters`]); patrol points, nav blockers and plain NPCs
-/// spawn. The game spawns the level's props (chests, doors, breakables,
-/// shrines, ...) after.
+/// Populates newly loaded levels ([`LevelProxies`]): set pieces roll their objects once a session
+/// ([`SetPieceStates`]; their creatures and proxies join the level's proxies), proxies roll their
+/// monsters and accessory chests once a session ([`ProxyStates`]), ambushes wait for the player,
+/// the living monsters queue on the root ([`PendingMonsters`]); patrol points, nav blockers and
+/// plain NPCs spawn.
 #[allow(clippy::too_many_arguments)]
 pub fn run_proxies(
     mut commands: Commands,
     levels: Query<(Entity, &LevelProxies), Without<LevelPopulated>>,
-    // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
-    // a new character.
+    // Option: `progress` is absent before the player exists; `loaded` for a new character.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<crate::nav::Nav>,
@@ -1077,24 +1011,19 @@ pub fn run_proxies(
     let difficulty = mode.difficulty;
     for (root, lp) in &levels {
         commands.entity(root).insert(LevelPopulated);
-        // The level's living monsters, spawned by [`spawn_level_monsters`].
         let mut pending: Vec<PendingSpawn> = Vec::new();
         let no_patrol: std::sync::Arc<[[u32; 4]]> = std::sync::Arc::new([]);
-        // Set pieces: their proxies join the level's, creatures become
-        // single-monster entries.
+        // Set pieces: their proxies join the level's, creatures become single-monster entries.
         let mut extra = Vec::new();
         for (ei, rec, pos, yaw, uid) in &lp.set_pieces {
             let objs = set_states.0.entry((lp.level, *ei)).or_insert_with(|| {
-                // A set piece its unique-entity group leaves out is spent (`crate::unique`).
                 if !unique.loads(*uid, crate::unique::Loader::SetPiece) {
                     debug!("set piece {rec} {uid:?}: not chosen in its unique group");
                     return Vec::new();
                 }
                 let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
-                // Set pieces of one "Unified Entities" group share the pool
-                // choice (`SetPiece::Generate`, one store with the proxies,
-                // [`UnifiedPools`]); the engine stores the chosen index after
-                // every choice, overwriting (`SetEntityUnificationIndex`).
+                // One "Unified Entities" group shares the pool choice with its proxies
+                // ([`UnifiedPools`]); the engine stores the index after every choice, overwriting.
                 let group = uid
                     .and_then(|u| groups.groups.unified_group(u))
                     .map(str::to_owned);
@@ -1159,7 +1088,6 @@ pub fn run_proxies(
                             uid: None,
                         });
                     }
-                    // A mesh-less nav blocker (the game places the meshes).
                     "NavBlocker"
                         if assets
                             .data
@@ -1187,8 +1115,7 @@ pub fn run_proxies(
         for p in lp.proxies.iter().chain(&extra) {
             let key = (lp.level, p.entity);
             let list = states.0.entry(key).or_insert_with(|| {
-                // A proxy its unique-entity group leaves out builds no pools: nothing spawns
-                // (`crate::unique`).
+                // A proxy its unique-entity group leaves out builds no pools: nothing spawns.
                 if !unique.loads(p.uid, crate::unique::Loader::Proxy) {
                     debug!(
                         "proxy {} {:?}: not chosen in its unique group",
@@ -1205,8 +1132,8 @@ pub fn run_proxies(
                     .db
                     .get(&p.record)
                     .is_some_and(|r| r.class == "ProxyEndless");
-                // Proxies of one "Unified Entities" group share the pool choice (`Proxy::InitializePools` /
-                // `ProxyEndless::InitializePools`, one store for both, [`UnifiedPools`]).
+                // Proxies of one "Unified Entities" group share the pool choice
+                // (`Proxy::InitializePools`, [`UnifiedPools`]).
                 let group = p
                     .uid
                     .and_then(|u| groups.groups.unified_group(u))
@@ -1256,7 +1183,6 @@ pub fn run_proxies(
                 let extents = gd_sim::proxy::proxy_info(&assets.data.db, &p.record)
                     .map(|i| i.placement_extents)
                     .unwrap_or(5.0);
-                // Accessories (chests) are placed with the monsters.
                 let points = place(
                     &nav.0,
                     p.position,
@@ -1299,7 +1225,7 @@ pub fn run_proxies(
                 .get(&p.record)
                 .is_some_and(|r| r.class == "ProxyEndless");
             if is_endless {
-                // Held until the generator activates it (`crate::endless`).
+                // Held until the generator activates it.
                 commands.spawn((
                     EndlessProxy {
                         key,
@@ -1340,8 +1266,8 @@ pub fn run_proxies(
                     LevelProp(lp.level),
                 ));
             }
-            // `ControllerMonster::PostParentAttached`: the patrol points of the
-            // groups holding the proxy.
+            // `ControllerMonster::PostParentAttached`: the patrol points of the groups holding
+            // the proxy.
             let patrol: std::sync::Arc<[[u32; 4]]> = p
                 .uid
                 .map(|u| groups.groups.for_proxy(u))
@@ -1366,8 +1292,7 @@ pub fn run_proxies(
                 "CharonGeyserMarker" => {
                     commands.spawn((*tf, crate::geysers::GeyserMarker, LevelProp(lp.level)));
                 }
-                // A monster placed in the level: its record's level at the players' level
-                // ([`placed_char_level`]), for its stats, skills and rewards.
+                // A monster placed in the level: [`placed_char_level`].
                 "Turret" => {
                     let key = (lp.level, *ei);
                     let list = states.0.entry(key).or_insert_with(|| {
@@ -1419,7 +1344,6 @@ pub fn run_proxies(
         }
         for (ei, rec, tf) in &lp.npcs {
             let mut tf = *tf;
-            // The placement's scale (`LevelProxies::npcs`).
             let placed = Some(tf.scale.y);
             if let Some(cell) = nav
                 .0
@@ -1427,9 +1351,8 @@ pub fn run_proxies(
             {
                 tf.translation.y = nav.0.pos(cell)[1];
             }
-            // A placed `Monster` (a town guard; a faction champion) is a monster like a placed Turret: it fights by
-            // faction (an ally when friendly, [`is_fighter`]) at its record's level ([`placed_char_level`]), and stays
-            // dead for the session once killed.
+            // A placed `Monster` (a town guard) fights by faction at [`placed_char_level`] and
+            // stays dead for the session once killed.
             if is_fighter(&assets.data.db, rec) {
                 let key = (lp.level, *ei);
                 let list = states.0.entry(key).or_insert_with(|| {
@@ -1474,16 +1397,9 @@ pub fn run_proxies(
     }
 }
 
-/// Things a dying monster leaves (`spawnObjects` of its on-death skills):
-/// a chest, a breakable or a creature.
-///
-/// `Skill_OnDeathSpawnActor::ActivateOnDeathNow`: its
-/// `spawnObjects` actor appears where the monster died, on the floor (`WorldVec3::TranslateToFloor`; a
-/// nemesis's loot chest, a hero's loot orb). `SpawnActor`
-/// creates whatever the record is and adds it to the world at the owner's
-/// level: containers, destructibles, monsters (Gilisten's
-/// rebirth) and NPCs (Direni, Edmund Doyle) all appear. The game dresses
-/// them like any chest, breakable or creature; the drops are keyed by [`DropSeq`].
+/// Things a dying monster leaves (`Skill_OnDeathSpawnActor::ActivateOnDeathNow`): its
+/// `spawnObjects` actor appears where the monster died, on the floor, at the owner's level —
+/// containers, destructibles, monsters and NPCs alike. The drops are keyed by [`DropSeq`].
 #[allow(clippy::too_many_arguments)]
 pub fn death_actors(
     mut commands: Commands,
@@ -1614,10 +1530,8 @@ pub fn death_actors(
     }
 }
 
-/// Keys for on-death drops: a session counter, not the dead monster's entity
-/// index. Bevy recycles indices, and `Broken` / the chest states last the
-/// session: a later monster reusing a dead one's index must not inherit its
-/// broken or opened drop.
+/// Keys for on-death drops: a session counter, not the dead monster's entity index (Bevy recycles
+/// indices, and a later monster must not inherit a broken or opened drop).
 #[derive(Default)]
 pub struct DropSeq(u32);
 
@@ -1649,14 +1563,13 @@ impl Plugin for MonstersPlugin {
                     spawn_level_objects
                         .in_set(MonsterStage::LevelObjects)
                         .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
-                        // A loaded character's read notes are not placed (`crate::lore` module doc).
+                        // A loaded character's read notes are not placed.
                         .run_if(resource_exists::<crate::lore::LoreCodex>)
                         .after(run_proxies),
                     ambushes.run_if(resource_exists::<gd_game_core::rules::CombatRules>),
                     cull_monsters,
-                    // Its fresh profile (no buffs) must land before the auras and the
-                    // monster profile rebuild, or it wipes the buffs they added in
-                    // the monster's first frame (the rebuild consumed the dirty flag).
+                    // Its fresh profile must land before the auras and the monster profile
+                    // rebuild of its first frame, or it wipes the buffs they added.
                     equip_monsters
                         .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                         .before(crate::auras::AurasSet)
@@ -1670,13 +1583,11 @@ impl Plugin for MonstersPlugin {
     }
 }
 
-/// Runs a script-placed proxy (`LuaProxy::Create` + `SetCoords` from Lua or a
-/// quest) at `position` and spawns its monsters; `id` is the story object, so
-/// they are story monsters (slot level `usize::MAX`) left to the story to
-/// despawn. Same rules as level proxies, without the per-session memory.
-/// `limits_at` is `Proxy.Create`'s vec (`LuaProxy::CreateAt` → `Proxy::SetLimitsLocation`): the area limits
-/// are read there, the monsters still place at `position`; `ignore_boss` its bool
-/// (`CreateAtIgnoreBoss`, byte +1612): the bosses spawn without registering in [`HeroBosses`].
+/// Runs a script-placed proxy (`LuaProxy::Create` + `SetCoords`) at `position` and spawns its
+/// monsters as story monsters of `id` (slot level `usize::MAX`), without per-session memory.
+/// `limits_at` is `Proxy.Create`'s vec (`Proxy::SetLimitsLocation`): the area limits are read
+/// there, the monsters still place at `position`; `ignore_boss`: the bosses spawn without
+/// registering in [`HeroBosses`].
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_story_proxy(
     commands: &mut Commands,
@@ -1698,8 +1609,7 @@ pub fn spawn_story_proxy(
 ) -> Vec<Entity> {
     let mut rng = Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF));
     let mode = session.mode();
-    // PORT: a script-placed proxy has no region here (engine source not traced): position lookup
-    // (`SetLimitsLocation`'s vec when the script gave one).
+    // PORT: a script-placed proxy's region (not traced): by position (`limits_at` when given).
     let limits =
         world.and_then(|w| w.level_limits(None, limits_at.unwrap_or(position), mode.difficulty));
     let area = gd_sim::proxy::area_level(player_level, limits);
@@ -1727,7 +1637,7 @@ pub fn spawn_story_proxy(
         extents,
         spawns.len() + run.accessories.len(),
     );
-    // Its accessory pool's chests (as for level proxies), keyed by the story id.
+    // Its accessory pool's chests, keyed by the story id.
     let extra = points.split_off(spawns.len().min(points.len()));
     for (n, (rec, p)) in run.accessories.iter().zip(extra).enumerate() {
         let tf = Transform::from_translation(p).with_rotation(Quat::from_rotation_y(
@@ -1796,29 +1706,22 @@ pub fn spawn_story_proxy(
     out
 }
 
-/// The level's gameplay objects are spawned ([`spawn_level_objects`]).
 #[derive(Component)]
 pub struct LevelObjectsSpawned;
 
-/// A newly populated level's gameplay objects, after [`run_proxies`]:
-/// set-piece breakables and chests, the nav obstacles of the other set-piece
-/// objects (a blocking one's mesh hit boxes, like `FixedItem::CreatePathObstacle`;
-/// a `NavBlocker` whose mesh fails to load its cylinder), proxy
-/// accessory chests, riftgates and respawn points, devotion shrines and the
-/// ascendant altar, breakables, doors and level chests. The game adds what it
-/// only shows (set-piece meshes, sound emitters), then drops the [`LevelProxies`].
+/// A newly populated level's gameplay objects, after [`run_proxies`]: set-piece breakables and
+/// chests, the nav obstacles of the other set-piece objects (like
+/// `FixedItem::CreatePathObstacle`), proxy accessory chests, riftgates and respawn points,
+/// devotion shrines and the ascendant altar, breakables, doors and level chests.
 ///
-/// PORT: a level's objects spawn once every mesh and door animation they read is parsed in the background
-/// ([`level_objects_ready`]), not in the frame the level is populated, so walking into a level does not parse them on
-/// the game thread. While it waits the level holds the meshes already parsed (`waiting`): `BodyCache` only keeps its
-/// last `gd_game_core::weak_cache::RECENT` meshes warm, so a level with many set pieces beside a crowd would otherwise lose
-/// its early meshes before the last one arrives.
+/// Spawns once every mesh and door animation they read is parsed ([`level_objects_ready`]); while
+/// it waits the level holds the meshes already parsed, since `BodyCache` only keeps its last
+/// `RECENT` meshes warm.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_level_objects(
     mut commands: Commands,
     levels: Query<(Entity, &LevelProxies), (With<LevelPopulated>, Without<LevelObjectsSpawned>)>,
-    // Option: `progress` is absent before the player exists ([`current_player_level`]); `loaded` is absent for
-    // a new character.
+    // Option: `progress` is absent before the player exists; `loaded` for a new character.
     progress: Option<Res<gd_game_core::progress::PlayerProgress>>,
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     nav: Res<crate::nav::Nav>,
@@ -1844,7 +1747,6 @@ pub fn spawn_level_objects(
             waiting.insert(root, held);
             continue;
         }
-        // The spawned objects hold their meshes now.
         waiting.remove(&root);
         commands.entity(root).insert(LevelObjectsSpawned);
         for (ei, ..) in &lp.set_pieces {
@@ -1882,7 +1784,7 @@ pub fn spawn_level_objects(
                             chests.opened.contains(&ck),
                         );
                     }
-                    // A set-piece proxy's accessory chests, rolled by [`run_proxies`] under its set key.
+                    // A set-piece proxy's accessory chests, under its set key.
                     "Proxy" | "ProxyAmbush" => spawn_accessories(
                         &mut commands,
                         &data.db,
@@ -1931,7 +1833,6 @@ pub fn spawn_level_objects(
         }
         for (rec, pos, uid) in &lp.waypoints {
             let Some(r) = data.db.get(rec) else { continue };
-            // The Chthonic rifts (`crate::riftgates::DynamicRift`).
             if r.class == "DynamicTeleporter" {
                 let e = crate::riftgates::spawn_dynamic_rift(&mut commands, r, rec, *pos, *uid);
                 commands.entity(e).insert(LevelProp(lp.level));
@@ -2057,8 +1958,7 @@ fn spawn_accessories(
         .flatten()
         .enumerate()
     {
-        // A buff shrine is not a chest: `crate::endless::spawn_activated_shrines` places the ones of the
-        // proxies the generator activated.
+        // A buff shrine is not a chest (`crate::endless::spawn_activated_shrines`).
         if db.get(rec).is_some_and(|r| r.class == "EndlessBuffShrine") {
             continue;
         }
@@ -2076,9 +1976,8 @@ fn spawn_accessories(
     }
 }
 
-/// Whether every mesh and door animation [`spawn_level_objects`] reads for the level is parsed (one not yet parsed
-/// starts its background load: [`gd_game_core::creature::BodyCache::ready`], [`gd_game_core::character::AnimCache::ready`]): the
-/// set-piece objects', the breakables' and the doors'. The object meshes already parsed go into `held`.
+/// Whether every mesh and door animation [`spawn_level_objects`] reads for the level is parsed
+/// (starting background loads for the rest). The object meshes already parsed go into `held`.
 fn level_objects_ready(
     data: &gd_game_core::data::GameData,
     bodies: &mut gd_game_core::creature::BodyCache,

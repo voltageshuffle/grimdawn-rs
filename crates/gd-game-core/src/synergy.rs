@@ -1,6 +1,5 @@
-//! Synergy controller data: the mode/team enum ([`Mode`]) and the
-//! per-monster [`Synergy`] state. The team-forming and super-attack systems
-//! are gd-game's `synergy` (its module docs carry the full engine trace).
+//! Synergy controller data. The team-forming and super-attack systems are
+//! gd-game's `synergy`.
 use bevy::prelude::*;
 
 use crate::monster_skills::Special;
@@ -14,29 +13,28 @@ pub enum Mode {
     Slave(u32),
 }
 
-/// A synergy monster's controller state (module docs).
 #[derive(Component, Debug)]
 pub struct Synergy {
     pub mode: Mode,
     pub radius: f32,
     pub team_size: usize,
-    /// `synergyChargeTime`, the charge time left (s).
+    /// `synergyChargeTime` (s).
     pub charge_time: f32,
     pub charge_left: f32,
     /// `synergySearchInterval*` (ms) and the search timer (s).
     pub interval: (i32, i32),
     pub search: f32,
-    /// Slot 0, the super skill.
+    /// Slot 0.
     pub super_skill: Option<Special>,
-    /// The super attack was ordered (`ControllerMonsterSynergy.superAttackOrdered`) / seen running.
+    /// `ControllerMonsterSynergy.superAttackOrdered` / seen running.
     pub fired: bool,
     pub started: bool,
-    /// The members (the leader's `AddComrade` list).
+    /// The leader's `AddComrade` list.
     pub comrades: Vec<Entity>,
 }
 
 impl Synergy {
-    /// The charge, 0..1 (the leader's beams' fill).
+    /// 0..1.
     pub fn charge(&self) -> f32 {
         if self.charge_time <= 0.0 {
             1.0

@@ -1,7 +1,7 @@
 //! The ten arenas (`gd_game_core::session::ARENAS`): their script objects.
 use super::*;
 
-/// A map's story objects (records with a script hook): `(id, record, coords)`, as the host streams them.
+/// A map's script-hooked objects: `(id, record, coords)`.
 pub fn arena_objects(g: &TestGame, map: &str) -> Vec<(u32, String, Coords)> {
     let data = g.data();
     let m = gd_formats::map::MapFile::open_resource(&data.vfs, map).expect("the arena map");
@@ -27,10 +27,9 @@ pub fn arena_objects(g: &TestGame, map: &str) -> Vec<(u32, String, Coords)> {
     out
 }
 
-/// Every arena loads: its script objects' hooks all exist in the Crucible's scripts, it has the event's script
-/// objects (the event NPC, the player spawn point, the merchant, the five spawn beacons, the six wave spawn points
-/// of every tier) and a player spawn point; and an event starts there (the first tier's first wave: a proxy at
-/// spawn points 1 and 2, `tier01waves.lua`; point 6 is the bonus spawn, off until `checkBonusStatus`).
+/// Every arena loads: its object hooks exist in the Crucible's scripts, it has the event's objects
+/// (event NPC, player spawn, merchant, five beacons, six wave spawn points per tier), and the first
+/// wave starts (a proxy at spawn points 1 and 2; point 6 is the bonus spawn, off until `checkBonusStatus`).
 #[test]
 fn every_arena_loads_and_starts_an_event() {
     for (_, letter) in gd_game_core::session::ARENAS {

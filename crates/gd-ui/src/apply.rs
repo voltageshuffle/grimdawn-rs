@@ -1,56 +1,25 @@
-//! The component / augment / transmuter apply mode's look (rules: `gd_game::inventory`
-//! `start_apply` / `apply_click` / `answer_apply`; transmuters `gd_game_core::illusion::transmute_check`:
-//! `CursorHandlerTransmute` is the same mode, its highlights `CursorHandlerTransmute::GetInventoryHighlights` as below,
-//! its questions the `tagTransmute…` ones in the same box).
+//! The component / augment / transmuter apply mode's look (rules: `gd_game::inventory`;
+//! transmuters `gd_game_core::illusion::transmute_check`, `CursorHandlerTransmute`).
 //!
 //! Highlights (`CursorHandlerRelicCombine::GetInventoryHighlights`,
-//! `CursorHandlerEnchant::GetInventoryHighlights`): the
-//! selected component's cell goes in the second list, the item under the
-//! cursor in the first when it can take it (`CanRelicBeUsedOn` /
-//! `CanBeUsedOn`), else the third; the grid draws those lists blue, green
-//! and red at 0.5 alpha as for the item-move preview (`inventory.rs`
-//! `held_overlay`). PORT: every valid target (bags, the shown stash /
-//! transfer page and equipped slots, from `Inventory::apply_targets`, the
-//! click's own rule) is drawn green with a bright 2 px border (so it shows on
-//! rarity backgrounds), not only the hovered one (the decompiled handler
-//! lists only the hovered item); an invalid hovered item is red.
+//! `CursorHandlerEnchant::GetInventoryHighlights`): the selected component's cell blue, the hovered
+//! item green when it can take it (`CanRelicBeUsedOn` / `CanBeUsedOn`), else red, at 0.5 alpha.
+//! PORT: every valid target (`Inventory::apply_targets`) is drawn green with a bright 2 px border,
+//! not only the hovered one.
 //!
-//! Cancel (callers, `gd_game_core::inventory::Inventory::cancel_apply`):
-//! Esc while no confirmation is up (the shared `ui::esc_dispatcher`;
-//! `CursorHandlerEnchant::Escape`, which returns "consumed"), closing the character window (`inventory.rs`) and
-//! hiding the stash window ([`stash_closed`], whatever the component's
-//! place). A right click is no cancel: on a bag, slot or stash cell it is the
-//! mode's click (`ApplyRequest::Click`). A click on the world, either button,
-//! ends the mode and does nothing else ([`world_click`]).
+//! Cancel (`Inventory::cancel_apply`): Esc while no confirmation is up (`CursorHandlerEnchant::Escape`),
+//! closing the character window and hiding the stash window ([`stash_closed`]). A right click is the
+//! mode's click, not a cancel. A world click, either button, ends the mode ([`world_click`]).
 //!
-//! `GD_APPLY_YES` (hooks.rs): Yes once the confirmation has been up that long
-//! (with `GD_INV_CLICKS`, which also clicks the stash window).
+//! The confirmation (`DialogManager::AddDialog`) is the generic Yes / No box; it takes every click
+//! while up; Esc and the close button answer No (PORT).
 //!
-//! The confirmation (`DialogManager::AddDialog` with the tag from
-//! `apply_check`) is the generic Yes / No box (`gd_ui_kit::confirm::confirm_box`), built in its base look
-//! with its hover / press look moved in place ([`box_live`]); it takes every click while up; Esc and the
-//! close button answer No (PORT).
+//! The drop key (action 32) does what a world click does, with no mouse-over-world test and whatever
+//! window is open ([`drop_key`]).
 //!
-//! The drop key (action 32: D, B with keyboard movement) does what a world click does, with no
-//! mouse-over-world test and whatever window is open ([`drop_key`]; rules `gd_game::item_drop`).
-//!
-//! The same box asks the tonics' and faction writs' questions (`tagDevotionResetConfirmation`,
-//! `tagAttributeResetConfirmation`, `tagFactionWarrantConfirmation`, `tagFactionMandateConfirmation`)
-//! (`gd_game::consumables::use_question`; Yes, No, Esc and the close button send
-//! `consumables::UseAnswer`).
-//!
-//! A world click with an item on the cursor drops it ([`world_click`],
-//! `gd_game::item_drop`); for a soulbound / untradeable item the same box
-//! asks `tagDestroySoulbound` / `tagDestroyUntradeable` (`Inventory::destroying`;
-//! Yes, No, Esc and the close button send `item_drop::DestroyAnswer`).
-//!
-//! The same box asks the move-reagents button's `tagMoveReagentsConfirm`
-//! ([`InvConfirm`], `inventory.rs`); Yes sends `gd_game_core::stash::DepositReagents`.
-//! And the auto-sort buttons' `tagCaravanSort` (the window
-//! listener `CharacterWindow::OnButtonEvent`: without the option "sortConfirmBypass" a
-//! press opens `DialogManager::AddDialog` type 31 with it, remembering the
-//! sack (`CaravanWindow.pendingSortSack`); with it the sack is sorted at once); Yes sorts that bag
-//! ([`gd_game_core::inventory::SortBag`]).
+//! The same box asks the tonics' and faction writs' questions (`consumables::UseAnswer`), the
+//! soulbound / untradeable destroy questions (`item_drop::DestroyAnswer`), `tagMoveReagentsConfirm`
+//! and `tagCaravanSort` (`CharacterWindow::OnButtonEvent`: skipped with option "sortConfirmBypass").
 use super::contains;
 use super::window::Rebuild;
 use crate::state::inventory::{InvLayout, UiCapture};
@@ -92,7 +61,6 @@ impl Plugin for ApplyUiPlugin {
                         .run_if(resource_exists::<Inventory>),
                 ),
             );
-        // Live: an item is being applied, or a confirmation is up / still built.
         super::window::add_window(
             app,
             build,
@@ -106,7 +74,6 @@ impl Plugin for ApplyUiPlugin {
                     || view.yes_no.is_some()
             },
         );
-        // The box's hover / press look moves in place (no rebuild on a hover).
         app.add_systems(
             Update,
             box_live
@@ -123,7 +90,6 @@ pub struct ApplyView {
     yes_no: Option<super::confirm::ConfirmRects>,
 }
 
-/// The character window's question up (module doc).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum InvConfirm {
     #[default]
@@ -150,8 +116,7 @@ struct ApplyRoot;
 #[derive(Component)]
 struct ApplyHighlight;
 
-/// What a highlight marks (module doc): the component's own cell (blue), a valid target (green, bright
-/// border), the invalid item under the cursor (red).
+/// The component's own cell (blue), a valid target (green, bright border), the invalid hovered item (red).
 #[derive(Clone, Copy, PartialEq)]
 enum Mark {
     Source,
@@ -159,8 +124,7 @@ enum Mark {
     Invalid,
 }
 
-/// The box's answer this frame, the same for every question: a left press on Yes / No or the close
-/// button (its sound). Esc answers No through the shared dispatcher (`ui::esc_dispatcher`).
+/// The box's answer this frame: a left press on Yes / No or the close button.
 fn answer(
     buttons: &ButtonInput<MouseButton>,
     cursor: Option<Vec2>,
@@ -188,7 +152,7 @@ fn pending(inv: &Inventory) -> Option<&'static str> {
     inv.applying.as_ref()?.confirm.map(|c| c.1)
 }
 
-/// Builds the box in its base look when the question or the layout changes; [`box_live`] shows the hover.
+/// Builds the box in its base look when the question or the layout changes.
 #[allow(clippy::too_many_arguments)]
 fn build(
     mut commands: Commands,
@@ -212,7 +176,6 @@ fn build(
             .or(reagents.tag())
             .or(inv.destroying)
             .or(gd_game::consumables::use_question(&inv)),
-        // The UI scale too (an applied UI Scale rebuilds).
         size.extend(assets.scale(size).to_bits()),
     );
     if size.x == 0 || !built.changed(sig) {
@@ -238,7 +201,6 @@ fn build(
     view.yes_no = super::confirm::confirm_box(&mut ui, tag, (None, false));
 }
 
-/// The box's hover / press look in place ([`super::confirm::apply_look`]).
 fn box_live(
     window: Query<&Window, With<PrimaryWindow>>,
     view: Res<ApplyView>,
@@ -253,9 +215,7 @@ fn box_live(
     super::confirm::apply_look(root, look, &mut looks);
 }
 
-/// The stash window hiding ends the mode (the caravan window's
-/// show / hide `CaravanWindow::SetVisible` in Grim Dawn.exe: on hide it calls the cursor
-/// handler's `Cancel` when its `CursorHandler.cancelOnWindowClose` allows, true for both apply handlers).
+/// Hiding the stash window ends the mode (`CaravanWindow::SetVisible` calls the handler's `Cancel`).
 fn stash_closed(
     trade: Res<crate::state::trade::Trade>,
     inv: Res<Inventory>,
@@ -274,8 +234,7 @@ fn stash_closed(
 }
 
 /// Key action 32 `DropItem` down sends [`gd_game::item_drop::DropKey`]
-/// (`CursorHandlerMgr_OnKeyAction`: key down only, no world-hover test, any window
-/// open; the cursor handler's `ActivateWorld` is gd-game's).
+/// (`CursorHandlerMgr_OnKeyAction`: key down only, no world-hover test, any window open).
 fn drop_key(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
@@ -286,22 +245,10 @@ fn drop_key(
     }
 }
 
-/// A press no window took ends the mode (Grim Dawn.exe: the cursor
-/// handler manager's mouse handler `CursorHandlerMgr::HandleMouseEvent` gives a left or right press
-/// with a handler up to its `ActivateWorld` and reports it consumed;
-/// `CursorHandlerRelicCombine::ActivateWorld`, shared by
-/// `CursorHandlerEnchant`, clears the item id and the highlight, so
-/// `IsComplete` ends the handler). Runs after every window's input
-/// (`UiCapture`) and before the world's (pet orders aside): the press is
-/// taken, and so is holding that button (PORT: the port walks while the
-/// button is held, the engine starts a walk from the press only).
-/// With an item on the cursor the same press goes to
-/// `CursorHandlerItemMove::ActivateWorld`: it drops the item
-/// ([`gd_game::item_drop::DropHeld`]; rules and the destroy question of a
-/// soulbound / untradeable item there, answered in [`clicks`]).
-///
-/// `GD_INV_CLICKS` (hooks.rs): a click outside the inventory and stash
-/// windows is such a press.
+/// A press no window took ends the mode (`CursorHandlerMgr::HandleMouseEvent`,
+/// `CursorHandlerRelicCombine::ActivateWorld`) or drops the held item
+/// (`CursorHandlerItemMove::ActivateWorld`, [`gd_game::item_drop::DropHeld`]); runs after every
+/// window's input. PORT: the port walks while the button is held, the engine from the press only.
 #[allow(clippy::too_many_arguments)]
 fn world_click(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -349,7 +296,6 @@ fn world_click(
         }
         *held = None;
     }
-    // The destroy question takes every click while up (`clicks`).
     let dropping = inv.held.is_some() && inv.destroying.is_none();
     if (capture.0 && scripted.is_none())
         || inv.destroying.is_some()
@@ -400,7 +346,6 @@ fn clicks(
     ),
 ) {
     let cursor = window.single().ok().and_then(super::cursor_px);
-    // The move-reagents / auto-sort question (module doc).
     if *reagents != InvConfirm::None {
         capture.0 = true;
         let answer = answer(&buttons, cursor, view.yes_no, &data, &mut sound);
@@ -418,8 +363,6 @@ fn clicks(
         }
         return;
     }
-    // The held item's destroy question (`gd_game::item_drop`) or an item use's (tonic / writ): Yes / No, Esc and
-    // the close button No.
     let asking = gd_game::consumables::use_question(&inv).is_some();
     if inv.destroying.is_some() || asking {
         capture.0 = true;
@@ -433,9 +376,7 @@ fn clicks(
         }
         return;
     }
-    // Escape ends the mode through the shared dispatcher (`ui::esc_dispatcher`;
-    // `CursorHandlerEnchant::Escape`: refused while the confirmation is up, else it calls the
-    // handler's `CursorHandler::Finish` virtual (taken as its end) and consumes the key).
+    // `CursorHandlerEnchant::Escape`: refused while the confirmation is up.
     if pending(&inv).is_none() {
         #[cfg(feature = "dev")]
         {
@@ -444,7 +385,6 @@ fn clicks(
         return;
     }
     capture.0 = true;
-    // `GD_APPLY_YES` (hooks.rs).
     #[cfg(feature = "dev")]
     {
         let since = *asked.get_or_insert(time.elapsed_secs());
@@ -469,8 +409,6 @@ fn clicks(
     }
 }
 
-/// The mode's highlights (module doc): what to mark is worked out each frame, the nodes are respawned only
-/// when that changes (the hovered item, the targets, the windows' layout).
 #[allow(clippy::too_many_arguments)]
 fn highlights(
     mut commands: Commands,
@@ -507,15 +445,14 @@ fn highlights(
         &panels,
         (&*trade, &*trade_layout, stash.as_deref()),
     );
-    // The nodes on screen are these marks' (a new session despawned them: drawn again).
+    // A new session despawned the nodes: draw again.
     if shown.0 == marks && shown.1 == k && old.is_empty() == marks.is_empty() {
         return;
     }
     for e in &old {
         commands.entity(e).try_despawn();
     }
-    // PORT: valid targets get the engine's 0.5 green plus a bright border, so
-    // they stay visible on the rarity backgrounds.
+    // PORT: valid targets get a bright border over the engine's 0.5 green.
     let edge = Color::srgba(0.4, 1.0, 0.4, 1.0);
     for (r, m) in &marks {
         let (c, border) = match m {
@@ -544,8 +481,7 @@ fn highlights(
     *shown = (marks, k);
 }
 
-/// Lists the cells and slots to mark (physical px), in draw order; nothing while no item is being applied or
-/// its confirmation is up.
+/// Cells and slots to mark (physical px), in draw order; none while the confirmation is up.
 fn mark(
     marks: &mut Vec<(URect, Mark)>,
     (inv, req, transfer_open): (&Inventory, &gd_game_core::inventory::Requirements, bool),
@@ -562,7 +498,6 @@ fn mark(
         return;
     };
     let valid = inv.apply_targets(stash, req, transfer_open);
-    // The shown grids: the bags (character window) and the stash / transfer page.
     let mut grids: Vec<(
         URect,
         f32,
@@ -645,10 +580,7 @@ fn mark(
     }
 }
 
-/// True while a modal Yes/No (or Ok) question is up over the inventory: the apply confirmation and the
-/// reagent / sort question (`ui/apply.rs`), the destroy-item and tonic/writ questions (`item_drop`,
-/// `gd_game::consumables::use_question`), the trade prompt and the dismantle warning. The windows under it
-/// take no click, wheel, hover or key while it is up.
+/// True while a modal Yes/No (or Ok) question is up over the inventory; the windows under it take no input.
 pub fn question_up(
     inv: &Inventory,
     trade: &crate::state::trade::Trade,

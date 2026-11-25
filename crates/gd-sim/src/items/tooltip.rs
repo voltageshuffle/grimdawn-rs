@@ -1,6 +1,6 @@
 //! Item tooltip text from the game's format tags.
 //!
-//! Each attribute class has a display tag (`display_tags.rs`, from Game.dll);
+//! Each attribute class has a display tag ([`DISPLAY_TAGS`]);
 //! ranges use the tag + `R` with (min, max); requirements use
 //! `MeetsRequirement` / `FailsRequirement[WithReduction]` ([`requirement_lines_reduced`]).
 //! The base classes build their text in code (`DamageBasePhysical[R]` +
@@ -50,9 +50,8 @@ pub struct Line {
     pub kind: LineKind,
     /// `GameTextClass` (index into [`CLASS_KEYS`]): picks the style, indent.
     pub class: u8,
-    /// The `GameTextLine` bitmap drawn before the text: (texture path, scale; `GameTextString::
-    /// GetIconWidth` = texture size x scale x UI scale): the skill modifier blocks' skill name and an
-    /// equipment's name (its symbol, `tooltip_item::symbol_bitmap`).
+    /// The `GameTextLine` bitmap drawn before the text: (texture path, scale; width =
+    /// texture size × scale × UI scale, `GameTextString::GetIconWidth`).
     pub icon: Option<(String, f32)>,
 }
 
@@ -71,21 +70,19 @@ pub fn format(fmt: &str, args: &[Arg]) -> String {
     render(fmt, args, false)
 }
 
-/// [`format`] keeping the `^X` colour codes (the tooltip renderer colours
-/// inline spans; plain callers drop them).
+/// [`format`] keeping the `^X` colour codes.
 pub fn format_rich(fmt: &str, args: &[Arg]) -> String {
     render(fmt, args, true)
 }
 
 /// [`format`] keeping `%.Nf`'s trailing zeros ("x1.50"): the floating combat
-/// texts (`CriticalHitFormatMult`, kept as the port showed them; the trimming
-/// was only checked on item and skill tooltips).
+/// texts (`CriticalHitFormatMult`). PORT: the engine's trimming is known for
+/// item and skill tooltips only.
 pub fn format_exact(fmt: &str, args: &[Arg]) -> String {
     expand(fmt, args, false, false, true)
 }
 
-/// [`format`] keeping the text's own spacing (a tag's double spaces; only the ends are trimmed): the gold
-/// pile's name (`naming::money_label`).
+/// [`format`] keeping the text's own spacing (a tag's double spaces; only the ends are trimmed).
 pub fn format_spaced(fmt: &str, args: &[Arg]) -> String {
     let mut s = expand(fmt, args, true, false, false);
     trim_in_place(&mut s);
@@ -97,8 +94,8 @@ fn render(fmt: &str, args: &[Arg], rich: bool) -> String {
     expand(fmt, args, true, rich, true)
 }
 
-/// Longest `%.p` precision (bad data: an unbounded `%.999999999f` would
-/// allocate a gigabyte; the stock tags use at most two decimals).
+/// Longest `%.p` precision (bad-data guard: an unbounded `%.999999999f` would allocate a
+/// gigabyte).
 const MAX_PRECISION: usize = 20;
 
 /// The text being expanded: with `collapse`, whitespace runs are written as one
@@ -159,7 +156,6 @@ fn expand(fmt: &str, args: &[Arg], trim_zeros: bool, rich: bool, collapse: bool)
             '{' | '}' => {}
             '^' => {
                 let c = b.next();
-                // Rich text keeps the `^X` colour codes for the renderer.
                 if rich && let Some((_, c)) = c {
                     out.push('^');
                     out.push(c);
@@ -210,7 +206,6 @@ fn expand(fmt: &str, args: &[Arg], trim_zeros: bool, rich: bool, collapse: bool)
                     _ => write!(out, "{v:.prec$}"),
                 }
                 .unwrap();
-                // As `skill_tooltip::format`:
                 // `%+.1f` of 3 shows `+3`, of 4.8 `+4.8` (trailing zeros dropped).
                 let n = &out.s[start..];
                 if trim_zeros && !matches!(conv, 'd' | 't' | 'g') && n.contains('.') {
@@ -259,22 +254,13 @@ pub fn attribute_line_rich(tags: &TagTable, a: &Attr) -> Option<String> {
     attr_text(tags, a, None, true)
 }
 
-/// The weapon's base attack speed line (Game.dll
-/// `CharAttributeVal_BaseAttackSpeed::CreateText`): the
-/// attribute's value (the base record's `characterBaseAttackSpeed` plus the
-/// modifier table's affix, [`super::resolve`]) plus 1, times the player's
-/// base attack speed, times the weapon animation's frame rate over its
-/// length; localised with `tagAttackSpeed` ("X.XX Attacks per Second").
-/// Nothing when the result is not positive — without a main player
-/// `GameEngine::GetPlayerBaseAttackSpeed` is 0 and the engine
-/// prints no line.
+/// The weapon's base attack speed line (`CharAttributeVal_BaseAttackSpeed::CreateText`):
+/// (`value` + 1) × `player_speed` × `anim_rate`, localised with `tagAttackSpeed`. Nothing
+/// when not positive (without a main player `GameEngine::GetPlayerBaseAttackSpeed` is 0).
 ///
-/// `player_speed` is that getter: the player's accumulated `AttackSpeed`
-/// value × (1 + its modifier %) × (1 + its multiplier) (the accumulator's
-/// three banks at indices 15 / 73 / 131, the port's
-/// `Profile::speed_caps[1].raw`); `anim_rate` the weapon animation's `GetFrameRate / GetLength` (the
-/// `AnimationSet` subobject `Weapon.animationSet`, its `GetFrameRate` / `GetLength` virtuals; the same ratio as
-/// [`crate::dps::weapon_rate`]'s animation duration), 1 without one.
+/// `player_speed` is that getter: the player's accumulated `AttackSpeed` value × (1 + its
+/// modifier %) × (1 + its multiplier); `anim_rate` the weapon animation's
+/// `GetFrameRate / GetLength`, 1 without one.
 pub fn attack_speed_line(
     tags: &TagTable,
     value: f32,
@@ -336,9 +322,9 @@ fn is_dur_fixed(class: &str) -> bool {
 
 fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -> Option<String> {
     let t = |k: &str| tags.get(k);
-    // `ConversionAttribute` text (`ConversionAttribute::GetText`): `tagDamageConversion`
-    // (percent, `tagConversion<in>`, `tagConversion<out>`), or `tagDamageRemoval`
-    // (percent, in) when the out type has no name; nothing at 0 %.
+    // `ConversionAttribute::GetText`: `tagDamageConversion` (percent, `tagConversion<in>`,
+    // `tagConversion<out>`), or `tagDamageRemoval` (percent, in) when the out type has no
+    // name; nothing at 0 %.
     if a.class == "ConversionAttribute" {
         let pct = a
             .values
@@ -409,10 +395,8 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             let f = t("DefenseAbsorptionProtection")?;
             return Some(render(f, &[Arg::Num(p)], rich));
         }
-        // The weapon's base attack speed: the attacks-per-second line
-        // ([`attack_speed_line`]) with the player's speed and the weapon
-        // animation's rate; no player context, no line (the engine's
-        // `GetPlayerBaseAttackSpeed` is 0 without a main player).
+        // No player context, no line (the engine's `GetPlayerBaseAttackSpeed` is 0
+        // without a main player).
         "CharAttributeVal_BaseAttackSpeed" => {
             return speed.and_then(|(p, r)| attack_speed_line(tags, first, p, r, rich));
         }
@@ -427,8 +411,7 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             if (min == 0.0 && max == 0.0) || (dmin == 0.0 && dmax == 0.0) {
                 return None;
             }
-            // `DamageAttributeDurFixed::GetText` (slows, reductions, OA / DA, fumble...): the
-            // value itself (`DamageSingleFormat` / `DamageRangeFormat`), the type tag right
+            // `DamageAttributeDurFixed::GetText`: the value itself, the type tag right
             // after it ("30" + "% Slow target"), then `DamageFixedSingleFormatSecond` (1 s) /
             // `DamageFixedSingleFormatTime` / `DamageFixedRangeFormatTime`.
             let fixed = is_dur_fixed(def.class) || is_dur_fixed(a.class);
@@ -478,9 +461,8 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             trim_in_place(&mut s);
             s
         }
-        // `DamageAttributeDurMod::GetText`: no value but
-        // a duration modifier, on a class with a `GetDamageTypeTag` virtual
-        // (only `DamageAttributeDurMod_Poison`, "DamageDurationPoison"):
+        // `DamageAttributeDurMod::GetText`: no value but a duration modifier, on a class
+        // with a `GetDamageTypeTag` virtual (only `DamageAttributeDurMod_Poison`):
         // `IncreasedDuration` (modifier, type text) instead of the value tag.
         AttrFamily::OffenseDurationModifier | AttrFamily::RetaliationDurationModifier
             if a.class == "DamageAttributeDurMod_Poison"
@@ -510,13 +492,10 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             if min == 0.0 && max == 0.0 {
                 return None;
             }
-            // A reflex or influence (`DamageAttributeReflex` / `DamageAttributeInfluence`
-            // and their `RetaliationAttribute*` copies: knockdown, stun, freeze, confusion,
-            // fear, mind control, disruption...) passes its duration as `%t0` text
+            // A reflex or influence passes its duration as `%t0` text
             // (`DamageAttributeAbs::GetText`): the constructors' `DamageFixed*` /
             // `RetaliationFixed*` tags, `...SingleFormatSecond` when min == max == 1,
-            // `...SingleFormatTime` when min == max, else `...RangeFormatTime`; the
-            // chance prefix below applies as to any damage.
+            // `...SingleFormatTime` when min == max, else `...RangeFormatTime`.
             if let Some(stem) = fixed_time_stem(def.class).or_else(|| fixed_time_stem(a.class)) {
                 let max = max.max(min);
                 let key = if max != min {
@@ -550,13 +529,8 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
             }
         }
     };
-    // `DamageAttributeDurMod::GetText`: after the value text, a
-    // positive duration modifier appends `ImprovedTimeFormat`
-    // (" with +30% Increased Duration"); the duration-only variant is the
-    // `IncreasedDuration` arm above. The Ctrl view does not use the range
-    // variant (the `GetRangeText` virtual, `ImprovedTimeFormatR`:
-    // no item caller; `Create*RangeText` calls the `CreateRangeNumbers` virtual, see
-    // [`range_numbers`]).
+    // `DamageAttributeDurMod::GetText`: after the value text, a positive duration
+    // modifier appends `ImprovedTimeFormat` (" with +30% Increased Duration").
     if matches!(
         def.family,
         AttrFamily::OffenseDurationModifier | AttrFamily::RetaliationDurationModifier
@@ -585,15 +559,11 @@ fn attr_text(tags: &TagTable, a: &Attr, speed: Option<(f32, f32)>, rich: bool) -
     Some(s)
 }
 
-/// The details (Ctrl) view's range numbers of one attribute: the text the
-/// engine appends to the attribute's own line (`ItemEquipment::Create*RangeText`
-/// family from `ItemEquipment::CreateDamageRangeText` on, called by `Armor` / `Weapon` /
-/// `WeaponArmor::CreateUIAttributeText` with the details flag: per slot of the
-/// store's non-global list the rolled attribute's `CreateText`, then the
-/// `_Min` attribute's `CreateRangeNumbers(_Max attribute)`, which appends
-/// `DamageRangeFormatAppend` (" [min-max]") to the last line of the list).
-/// `min` / `max` are the slot's attributes of [`super::resolve::AttrBounds`].
-/// per class (`CreateRangeNumbers` / `GetRangeNumbers`):
+/// The details (Ctrl) view's range numbers of one attribute, appended to its own line
+/// (`ItemEquipment::Create*RangeText`: per slot of the store's non-global list, the `_Min`
+/// attribute's `CreateRangeNumbers(_Max attribute)` in `DamageRangeFormatAppend`,
+/// " [min-max]"). `min` / `max` are the slot's attributes of
+/// [`super::resolve::AttrBounds`]. Per class (`CreateRangeNumbers` / `GetRangeNumbers`):
 /// - character (`CharAttribute::CreateRangeNumbers`): the format `CharAttribute.format`
 ///   (`DamageSingleFormat`, `Float1Format` for life / energy regeneration) of
 ///   both values, unless both are 0; skill (`SkillAttribute`),
@@ -1032,14 +1002,10 @@ pub fn stat_lines(tags: &TagTable, item: &ResolvedItem, keep: impl Fn(&Attr) -> 
     stat_lines_ranged_speed(tags, item, keep, true, None, None)
 }
 
-/// [`stat_lines`] with or without the `^X` colour codes (`colors`); with
-/// `bounds` (the details view) each rolled attribute of the item's own stores
-/// gets its [`range_numbers`] appended. A global-chance damage attribute gets
-/// none (the range loop walks the store's non-global list; the global ones
-/// print in `CreateGlobalText`). `speed` is the weapon base attack speed
-/// line's player context: (the player's base attack speed, the weapon
-/// animation's frame rate / length), [`attack_speed_line`]; `None` leaves
-/// the line out (a read-only text without a player).
+/// [`stat_lines`] with or without the `^X` colour codes (`colors`); with `bounds` (the
+/// details view) each non-global attribute of the item's own stores gets its
+/// [`range_numbers`] appended. `speed` is the [`attack_speed_line`] player context (player
+/// base attack speed, weapon animation rate); `None` leaves that line out.
 pub fn stat_lines_ranged_speed(
     tags: &TagTable,
     item: &ResolvedItem,
@@ -1080,8 +1046,7 @@ pub fn stat_lines_ranged_speed(
         let Some(mut text) = attr_text(tags, a, speed, colors) else {
             continue;
         };
-        // The slot's `_Min` / `_Max` attributes: the bound sets have the
-        // rolled set's creators and order, so entry `i` is the same slot.
+        // The bound sets have the rolled set's creators and order: entry `i` is this slot.
         if let Some(b) = bounds
             && a.global.is_none()
             && let (Some(lo), Some(hi)) = (b.min.get(i), b.max.get(i))

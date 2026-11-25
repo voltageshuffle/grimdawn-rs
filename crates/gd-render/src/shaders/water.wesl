@@ -34,8 +34,8 @@ struct WaterParams {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Gamma-space output like every Grim Dawn material (render/mod.rs); the
-    // glow view gets nothing (water has no glow).
+    // Gamma-space output like every Grim Dawn material; the glow view gets
+    // nothing (water has no glow).
     if view.exposure > 0.1 {
         return vec4(0.0, 0.0, 0.0, 0.0);
     }
@@ -64,7 +64,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     alpha = alpha + spec;
     let sky = textureSample(sky_texture, sky_sampler, r).rgb;
     let c_sky = sky * water.water_color.rgb + spec;
-    // reflectPS (waterbasic.ssh): the planar scene reflection (render/reflection.rs)
+    // reflectPS (waterbasic.ssh): the planar scene reflection
     // at the water pixel's screen uv, distorted by the bump, blended over the sky
     // reflection by min(refl.a·1.5, 0.75). The surface.z lerp below gates it to the
     // reflecting water types (AddReflectionPlanes: surfaceParams.z > 0).

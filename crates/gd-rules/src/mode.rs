@@ -34,11 +34,9 @@ impl Mode {
     }
 
     /// Ultimate Veteran: challenge 3 on Ultimate (`GameEngine::IsUltimateVeteran`):
-    /// monsters get the challenge stats of
-    /// `gameascendant.dbr` `ultimateChallangeAdjustment`
-    /// (`actor::Rules::with_veteran`; proxy pools take its spawn offsets on all
-    /// of Ultimate, see `gd_sim::proxy::run_pool`), containers take
-    /// `lootTable[3]` (`LootContainer::LoadLootTable`) and shrines `ascendantLootTable`
+    /// monsters get the challenge stats of `gameascendant.dbr`
+    /// `ultimateChallangeAdjustment`, containers take `lootTable[3]`
+    /// (`LootContainer::LoadLootTable`) and shrines `ascendantLootTable`
     /// (`StaticShrine::Load`).
     pub fn ultimate_veteran(self) -> bool {
         self.difficulty == 2 && self.challenge == 3
@@ -58,7 +56,7 @@ impl Mode {
     /// (the campaign's titles; `GameInfo::GetMode` 1 uses the `tagS…` ones);
     /// plain Normal shows nothing. The Crucible (`GameInfo::GetMode() == 1`, `survival`) titles its
     /// difficulties `tagSDifficultyTitle02` ("Challenger") / `03` ("Gladiator").
-    /// At most two tags; unused slots are `""` (no allocation for the HUD's per-change label).
+    /// At most two tags; unused slots are `""`.
     pub fn label_tags_in(self, hardcore: bool, survival: bool) -> [&'static str; 2] {
         let first = if hardcore { "tagHardcore" } else { "" };
         let second = match (self.challenge, self.difficulty) {

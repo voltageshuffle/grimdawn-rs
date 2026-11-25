@@ -1,46 +1,26 @@
 //! Monsters noticing projectiles: the AI dodge and `ProjectileAnger`.
 //!
 //! Game.dll:
-//! * `ProjectileBase::UpdateSelf`: a flying projectile's notify timer
-//!   (`ProjectileBase.notifyTimer`, 0 at launch) runs down and, once below 0, is set to 200 ms
-//!   (`ProjectileBase.notifyInterval`) and `ProjectileBase::NotifyMonsters` runs: every
-//!   foe of the projectile's owner within the record's `notificationRadius`
-//!   (default 5, `ProjectileBase::Load`) of it gets
-//!   `Character::ProjectileNotification` → its controller's.
-//! * `ControllerMonster::ProjectileNotification`: while the
-//!   monster's dodge timer (`ControllerMonster.dodgeTimer`, counted down by `ControllerMonster::Update`)
-//!   runs, the notification only sets it to `DodgeDelay` again (so a stream of
-//!   projectiles keeps it from dodging). Else the current state's
-//!   `ProjectileNotification` runs, the owner gets `ProjectileAnger`
-//!   (`AngerManager::AddAnger`, × its anger multiplier) and the timer is set
-//!   to `DodgeDelay` (ms, default 5000).
-//! * The state handler of Idle, Patrol, Roam, Wander, FollowLeader,
-//!   DefendLeader, Pursue, WaitToAttack, Attack, RepositionForAttack and Return
-//!   is `DefaultProjectileNotificationResponse`: `rand() % 100 <
-//!   DodgeChance`, the projectile at least the monster's radius +
-//!   `MinDodgeDistance` away (3D), and a dodge point found (`ControllerMonster::FindRandomPoint`,
-//!   `patrol::pick_spot`: five tries at `DodgeDistance` (default 4) from the
-//!   monster at a random angle, on the floor, |Δy| < `MaxYViewDistance`, more
-//!   than `DodgeDistance` − 0.1 away, reachable): "DodgeAttack", at once: a
-//!   swing or cast under way is cut short (`combat::monster_ai`). The other
-//!   states (Startup / Hidden, AlertBeforePursue, Flee, Stunned, QuestMove,
-//!   NavigateObstacle, DodgeAttack itself, Dying) have the empty handler; the
-//!   stationary classes have no DodgeAttack state (`combat::ControllerClass`).
-//! * `ControllerMonsterStateDodgeAttack` (`OnBegin`): runs to the
-//!   point at its run speed (unreachable: "Return"), ignoring every event;
-//!   `EndOfPathReached` / `PathFailed`: "Return".
+//! * `ProjectileBase::UpdateSelf`: the notify timer (0 at launch) runs down and, once below 0, is set
+//!   to 200 ms and `ProjectileBase::NotifyMonsters` runs: every foe of the owner within
+//!   `notificationRadius` (default 5) gets `Character::ProjectileNotification`.
+//! * `ControllerMonster::ProjectileNotification`: while the dodge timer runs, it only resets it to
+//!   `DodgeDelay` (so a stream of projectiles keeps it from dodging). Else the state's handler runs,
+//!   the owner gets `ProjectileAnger` (`AngerManager::AddAnger`, × anger multiplier) and the timer is
+//!   set to `DodgeDelay` (ms, default 5000).
+//! * Idle, Patrol, Roam, Wander, FollowLeader, DefendLeader, Pursue, WaitToAttack, Attack,
+//!   RepositionForAttack and Return use `DefaultProjectileNotificationResponse`: `rand() % 100 <
+//!   DodgeChance`, the projectile at least radius + `MinDodgeDistance` away (3D), and a dodge point
+//!   found (`ControllerMonster::FindRandomPoint`: five tries at `DodgeDistance` (default 4), on the
+//!   floor, |Δy| < `MaxYViewDistance`, more than `DodgeDistance` − 0.1 away, reachable): "DodgeAttack"
+//!   at once, cutting a swing or cast short. Other states have the empty handler.
+//! * `ControllerMonsterStateDodgeAttack`: runs to the point (unreachable: "Return"), ignoring every
+//!   event; `EndOfPathReached` / `PathFailed`: "Return".
+//! * Player controller states have no handler, so of the player's side only pets (a
+//!   `ControllerMonster`) react. The foe test is the skill victim rule (`combat::Side::foe`).
 //!
-//! * The player's controller states have no handler (`ControllerAI::
-//!   ProjectileNotification` forwards to the state's slot, empty
-//!   in every `ControllerPlayerState*`), so of the player's side only pets react
-//!   to a foe's projectile: a pet is a `ControllerMonster` (`pets.rs`), same rules and
-//!   its controller record's `DodgeChance` (`Pet::projectile_notified`). The foe test
-//!   is the skill victim rule (`combat::Side::foe`): an `Allied` guard ignores the
-//!   player's projectiles, monsters of foe factions notice each other's.
-//!
-//! PORT: a pet does not release its attack slot when it dodges and "Return"
-//! is its idle (nor does a pet dodge mid-swing); the sphere test is centre to
-//! centre.
+//! PORT: a pet does not release its attack slot when it dodges and "Return" is its idle (nor does a
+//! pet dodge mid-swing); the sphere test is centre to centre.
 use crate::combat::{MonsterAi, QuestMove, Side, SideRef};
 use crate::nav::Nav;
 use bevy::prelude::*;
@@ -49,24 +29,22 @@ use gd_game_core::character::{CharState, Character};
 use gd_game_core::combat::{Combatant, Dead};
 use gd_game_core::data::GameData;
 
-/// The controller's dodge fields (`ControllerMonster::Load`)
-/// and its dodge timer and state.
+/// The controller's dodge fields (`ControllerMonster::Load`) and its dodge timer and state.
 #[derive(Clone, Debug, Default)]
 pub struct Dodge {
     /// `DodgeChance` (%, int).
     pub chance: i32,
     /// `DodgeDelay` (s).
     pub delay: f32,
-    /// `DodgeDistance`, `MinDodgeDistance`.
+    /// `DodgeDistance`.
     pub distance: f32,
     pub min: f32,
     /// `ProjectileAnger` (default 20).
     pub anger: f32,
-    /// The dodge timer (s).
+    /// `ControllerMonster.dodgeTimer` (s).
     pub timer: f32,
     /// A dodge picked this frame: the path to its point.
     pub start: Option<Vec<Vec3>>,
-    /// In the DodgeAttack state.
     pub running: bool,
 }
 
@@ -84,12 +62,11 @@ impl Dodge {
     }
 }
 
-/// A projectile's notify timer (s; none yet: 0, it notifies at once).
+/// A projectile's notify timer (s; 0 notifies at once).
 #[derive(Component)]
 pub struct NotifyTimer(f32);
 
-/// `ProjectileBase::UpdateSelf`'s notification and
-/// `ControllerMonster::ProjectileNotification` (see the module docs).
+/// `ProjectileBase::UpdateSelf`'s notification and `ControllerMonster::ProjectileNotification`.
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn notify_monsters(
@@ -164,9 +141,8 @@ pub fn notify_monsters(
             .and_then(|r| r.f32("notificationRadius"))
             .unwrap_or(5.0);
         let at = ptf.translation;
-        // `AngerManager::AddAnger` scales by the owner's `angerMultiplier` (0 without `causesAnger`,
-        // `ShouldRemoveEnemy`), for a monster's and a pet's anger alike: a monster's `as_target`, a pet's record,
-        // else (the player) 1.
+        // `AngerManager::AddAnger` scales by the owner's `angerMultiplier` (0 without `causesAnger`);
+        // the player: 1.
         let mult = monsters
             .get(owner)
             .map(|m| {
@@ -187,7 +163,7 @@ pub fn notify_monsters(
                 })
             })
             .unwrap_or(1.0);
-        // The owner's side: a live monster's or pet's, else the one the projectile kept (`Side::lookup_kept`).
+        // A live monster's or pet's side, else the one the projectile kept.
         let side = monsters
             .get(owner)
             .ok()
@@ -205,7 +181,6 @@ pub fn notify_monsters(
             })
             .or_else(|| p.side.clone())
             .unwrap_or_else(|| Side::from_hostile(hostile));
-        // The pets among its foes (the player's controller states have no handler).
         for (e, tf, mut pet, cb, ch, joined) in &mut pets {
             let victim = joined.map_or(SideRef::Player, |j| SideRef::Monster {
                 pack: &j.pack,

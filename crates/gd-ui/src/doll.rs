@@ -1,8 +1,5 @@
-//! The paper doll's UI builders and state: the `UISceneView` camera/light record ([`SceneView`]), the
-//! gamma-space UI material that shows the doll's render target ([`DollMaterial`], `doll.wesl`), the
-//! per-view doll state ([`Dolls`]) and the window builders ([`panel`], [`menu_character`],
-//! [`rotate_button`]). The binary's `doll.rs` runs the systems that build the bodies, turn the views
-//! and ride the cameras (they read the world / menu scene); this module is what the windows draw.
+//! The paper doll's UI builders and state; the binary's `doll.rs` runs the systems that build the
+//! bodies, turn the views and ride the cameras.
 use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, TextureFormat};
@@ -13,7 +10,6 @@ use gd_formats::ui::Rect as URect;
 
 pub use gd_render::character::{DollBody, DollView};
 
-/// Registers the doll's embedded shader and UI material and its state resource.
 pub struct DollUiPlugin;
 
 impl Plugin for DollUiPlugin {
@@ -24,7 +20,7 @@ impl Plugin for DollUiPlugin {
     }
 }
 
-/// A `UISceneView` record's camera and lights (module doc).
+/// A `UISceneView` record's camera and lights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneView {
     pub fov: f32,
@@ -72,9 +68,7 @@ impl SceneView {
         self.target_point + Quat::from_rotation_y(rot) * self.target_offset
     }
 
-    /// The light rig for the doll shader (module doc). The light turns with
-    /// the camera, so its direction goes in view space (constant per record:
-    /// Bevy warns on every change of a `ColorGrading` it does not apply).
+    /// The light turns with the camera, so its direction goes in view space.
     pub fn grading(&self) -> ColorGrading {
         let cam = Transform::from_translation(self.eye(0.0)).looking_at(self.target_point, Vec3::Y);
         let d = cam.rotation.inverse() * self.light_dir;
@@ -97,7 +91,6 @@ impl SceneView {
     }
 }
 
-/// The doll image's UI material: the gamma-space scene colours drawn as they are (`doll.wesl`).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct DollMaterial {
     #[texture(0)]
@@ -113,8 +106,7 @@ impl UiMaterial for DollMaterial {
 
 #[derive(Default)]
 pub struct Doll {
-    /// The render target (its size), drawn by `material`; a new pair per
-    /// size (a resized or replaced target image stayed black).
+    /// The render target (its size), drawn by `material`; a new pair per size.
     pub target: Option<(UVec2, Handle<Image>, Handle<DollMaterial>)>,
     /// The view rect and rotate buttons (left, right) of the last UI build, screen px.
     pub rect: Option<URect>,
@@ -122,7 +114,7 @@ pub struct Doll {
     /// The drawn rotate-button overlay: (button, down?) and its node.
     pub button_look: Option<((usize, bool), Entity)>,
     pub record: String,
-    /// What the window shows (set by the UI build).
+    /// Set by the UI build.
     pub shown: bool,
     pub rotation: f32,
     /// Held rotate button (right?) and ms to the next step.
@@ -141,8 +133,7 @@ pub struct Doll {
 pub struct Dolls(pub HashMap<DollView, Doll>);
 
 impl Dolls {
-    /// Every entity the dolls own (body, camera, rotate-button overlay): `exit.rs` despawns them before
-    /// the resource is reset, since they may predate the session (the main menu's doll).
+    /// Despawned by `exit.rs` before the resource is reset: they may predate the session.
     pub fn entities(&self) -> Vec<Entity> {
         self.0
             .values()
@@ -156,8 +147,7 @@ fn target_image(w: u32, h: u32) -> Image {
     Image::new_target_texture(w.max(1), h.max(1), TextureFormat::Rgba8UnormSrgb, None)
 }
 
-/// Draws `view`'s doll over `rect` (screen px) and records the view's
-/// `UISceneView` record for the doll's camera.
+/// Draws `view`'s doll over `rect` (screen px).
 pub fn panel(ui: &mut gd_ui_kit::Ui, view: DollView, record: &str, rect: URect) {
     let e = ui.commands.spawn(ui.node(rect)).id();
     ui.commands.entity(ui.root).add_child(e);
@@ -194,8 +184,7 @@ pub fn panel(ui: &mut gd_ui_kit::Ui, view: DollView, record: &str, rect: URect) 
         let mut dolls = world.resource_mut::<Dolls>();
         let d = dolls.0.entry(view).or_default();
         if !d.shown {
-            // A newly opened window starts facing the doll (reset on close, `InventoryWindow::OnHide`);
-            // test hook `GD_DOLL_ROT=<radians>`.
+            // `InventoryWindow::OnHide` resets the rotation.
             d.rotation = rotation;
         }
         d.shown = true;
@@ -213,8 +202,7 @@ pub fn panel(ui: &mut gd_ui_kit::Ui, view: DollView, record: &str, rect: URect) 
     });
 }
 
-/// Stands the main menu's selected character (female, item looks) in the
-/// menu scene (`DollView::Menu`).
+/// Stands the main menu's selected character (female, item looks) in the menu scene.
 pub fn menu_character(ui: &mut gd_ui_kit::Ui, preset: (bool, Vec<String>)) {
     ui.commands.queue(move |world: &mut World| {
         let mut dolls = world.resource_mut::<Dolls>();
@@ -224,7 +212,6 @@ pub fn menu_character(ui: &mut gd_ui_kit::Ui, preset: (bool, Vec<String>)) {
     });
 }
 
-/// A rotate button: its rect (screen px) and its down / in-focus bitmaps.
 #[derive(Clone)]
 pub struct RotateButton {
     pub rect: URect,
@@ -232,8 +219,7 @@ pub struct RotateButton {
     pub over: Option<Handle<Image>>,
 }
 
-/// Draws a rotate button's widget (its up bitmap) at window origin `o` and
-/// returns it for [`rotate_buttons`].
+/// Draws a rotate button's up bitmap at window origin `o`.
 pub fn rotate_button(
     ui: &mut gd_ui_kit::Ui,
     button: Option<gd_formats::ui::Widget>,
@@ -256,7 +242,6 @@ pub fn rotate_button(
     Some(RotateButton { rect, down, over })
 }
 
-/// Records `view`'s rotate buttons (left, right) for the input.
 pub fn rotate_buttons(ui: &mut gd_ui_kit::Ui, view: DollView, buttons: [Option<RotateButton>; 2]) {
     ui.commands.queue(move |world: &mut World| {
         if let Some(mut dolls) = world.get_resource_mut::<Dolls>() {

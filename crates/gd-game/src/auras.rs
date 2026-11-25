@@ -1,6 +1,5 @@
-//! Radius buffs reaching allies: the buffs a character's auras
-//! (`Skill_BuffRadiusToggled`) and timed radius buffs (`Skill_BuffRadius`)
-//! put on the characters around it.
+//! Radius buffs: the buffs a character's auras (`Skill_BuffRadiusToggled`) and
+//! timed radius buffs (`Skill_BuffRadius`) put on the characters around it.
 //!
 //! Rules (`Skill_BuffRadius::Update` / `ActivateNow` / `TargetResult`):
 //! - Every 1 s while on (the first pass at activation) the aura takes the targets in
@@ -14,9 +13,8 @@
 //! - A new buff goes to the front of [`ReceivedBuffs::list`](gd_game_core::skill_buffs::ReceivedBuffs). A new
 //!   buff on another character starts the record's `charFxPakOtherNames` there.
 //!
-//! Emitters ([`pulse_auras`]): the player (switched-on toggles with `SkillLinks` modifiers, running
-//! timed buffs), pets (`Pet::emissions`) and monsters (`MonsterSkills::emissions`). Sides come from
-//! [`crate::combat::Side`].
+//! Emitters: the player (switched-on toggles with `SkillLinks` modifiers, running timed buffs), pets
+//! (`Pet::emissions`) and monsters (`MonsterSkills::emissions`).
 //!
 //! PORT: the player is never its own target here; its own auras and timed buffs count through
 //! `SkillBook::stat_sources` / `Loadout::buffs`, and [`Activated`] gives it the bonus alone.
@@ -34,12 +32,11 @@ use gd_game_core::player::{Loadout, Player};
 use gd_game_core::skill_buffs::{ReceivedBuff, ReceivedBuffs};
 use std::sync::Arc;
 
-/// `Skill_BuffRadius.pulseInterval`: ms between passes.
+/// `Skill_BuffRadius.pulseInterval`.
 pub const PULSE_SECS: f32 = 1.0;
-/// `Skill_BuffRadius.buffDuration`: how long one pass's buff lasts on a target.
+/// `Skill_BuffRadius.buffDuration`.
 pub const BUFF_SECS: f32 = 1.5;
 
-/// An aura a character has on: what each pass puts on its targets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Emission {
     pub skill: Arc<str>,
@@ -47,18 +44,15 @@ pub struct Emission {
     pub buff: Arc<str>,
     pub radius: f32,
     pub mods: Arc<[(String, usize)]>,
-    /// The caster is its own target (module docs; not for the player, never
-    /// for a debuff).
+    /// Not for the player, never for a debuff.
     pub on_self: bool,
-    /// A debuff aura (`debufSkill`): foes are its targets.
+    /// `debufSkill`: foes are its targets.
     pub debuf: bool,
-    /// The skill's devotion level, which its buffs carry
-    /// (`ReceivedBuff::devotion`; a celestial power's, else 0).
+    /// Carried by its buffs (`ReceivedBuff::devotion`; a celestial power's, else 0).
     pub devotion: u32,
 }
 
-/// Whether a radius-buff skill is a debuff aura (`debufSkill` of its buff
-/// record, `Skill_BuffRadius.debufSkill`; also read from the skill record).
+/// `debufSkill` of the skill's buff record or the skill record.
 pub fn is_debuf(db: &Database, rec: &Record) -> bool {
     rec.bool("debufSkill")
         || gd_sim::skills::profile_name(rec)
@@ -66,8 +60,7 @@ pub fn is_debuf(db: &Database, rec: &Record) -> bool {
             .is_some_and(|b| b.bool("debufSkill"))
 }
 
-/// The emission of radius-buff skill `skill` at `li`: None without a buff
-/// record or a radius.
+/// None without a buff record or a radius.
 pub fn emission(
     db: &Database,
     skill: &str,
@@ -92,10 +85,8 @@ pub fn emission(
     })
 }
 
-/// The player's auras on (module docs): switched-on radius toggles at their
-/// effective level and running `Skill_BuffRadius` casts (the player's cast
-/// runs under the wrapper's `buffSkillName`, `casting.rs`), each with its
-/// devotion level (celestial powers: `devotion`'s).
+/// Switched-on radius toggles at their effective level and running `Skill_BuffRadius` casts (under the
+/// wrapper's `buffSkillName`), each with its devotion level.
 pub fn player_emissions(
     db: &Database,
     loadout: &Loadout,
@@ -112,7 +103,6 @@ pub fn player_emissions(
             })
         };
     let mut out = Vec::new();
-    // Learned and worn items' radius toggles (`crate::player` docs, item toggles).
     for (s, l) in &loadout.skills_and_item_toggles(db) {
         if *l == 0
             || !db
@@ -153,41 +143,35 @@ pub fn player_emissions(
     out
 }
 
-/// A `Skill_BuffRadius` goes off (`Skill_BuffRadius::ActivateNow`, module docs): its first pass happens now, with
-/// the instant heal, whether or not the skill lasts (an instant one, no `skillActiveDuration`, has only this pass).
-/// Sent for every cast of one ([`crate::monster_skills`]' buff-other cast, `casting`'s self buffs); a lasting one
-/// also runs on its caster as a timed buff, whose later passes are the regular ones.
+/// A `Skill_BuffRadius` goes off (`Skill_BuffRadius::ActivateNow`): its first pass happens now, with the instant
+/// heal; an instant one (no `skillActiveDuration`) has only this pass, a lasting one also runs on its caster as a
+/// timed buff.
 #[derive(Message, Clone, Debug)]
 pub struct Activated {
     pub caster: Entity,
     pub skill: String,
     pub level_index: usize,
-    /// The caster's modifiers of the skill (they travel with its buffs and add to its bonus).
+    /// They travel with its buffs and add to its bonus.
     pub mods: Vec<(String, usize)>,
 }
 
-/// Seconds to the next pass of each aura a character has on.
 #[derive(Component, Default, Debug)]
 pub struct AuraPulse(Vec<(Arc<str>, f32)>);
 
-/// An emitter's auras on, cached ([`pulse_auras`]). The player's: [`player_emissions`] clones
-/// the skill book and scans the worn items, so it runs only when what it reads
-/// changes (the [`Loadout`], the [`Caster`]'s timed buffs, the [`gd_game_core::weapon_pool::SkillLinks`]
-/// modifiers, the devotion levels), not every frame. A pet's / monster's depend only on its
-/// switched-on toggles and timed buffs (skill and level; their timers change every frame, so
-/// change detection would always fire): `from` keeps those, compared each frame.
+/// An emitter's auras on, cached: the player's rebuilt when what [`player_emissions`] reads changes; a pet's /
+/// monster's when `from` (its toggles and timed buffs, skill and level) differs, compared each frame.
 #[derive(Component, Default)]
 pub struct CachedEmissions {
-    /// A pet's / monster's toggles then timed buffs the list was made from (empty: the player).
+    /// Empty for the player.
     from: Vec<(String, usize)>,
     list: Vec<Emission>,
 }
 
-/// The aura pulse ([`pulse_auras`]): what adds buffs to be counted by the profile rebuilds runs `.before`, what reads them `.after`.
+/// What adds buffs to be counted by the profile rebuilds runs `.before`, what reads them `.after`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AurasSet;
 
-/// [`pulse_auras`]'s per-frame scratch: the allocations are reused, the contents rebuilt every frame.
+/// [`pulse_auras`]'s per-frame scratch.
 #[derive(Default)]
 pub struct AuraScratch {
     activated: Vec<Activated>,
@@ -201,11 +185,8 @@ pub struct AuraScratch {
     near: Vec<usize>,
 }
 
-/// The passes (module docs): every [`PULSE_SECS`] each emitter's auras buff
-/// the friendly (debuff auras: hostile) characters in their radius; buffs
-/// not refreshed run out. A player whose received buffs changed is marked
-/// [`ProfileDirty`]; pets and monsters rebuild theirs (`pets.rs`,
-/// `monster_skills.rs`).
+/// Every [`PULSE_SECS`] each emitter's auras buff the friendly (debuff auras: hostile) characters in their
+/// radius; buffs not refreshed run out. A player whose received buffs changed is marked [`ProfileDirty`].
 #[allow(clippy::too_many_arguments)]
 pub fn pulse_auras(
     mut commands: Commands,
@@ -217,7 +198,6 @@ pub fn pulse_auras(
             &Transform,
             Option<Ref<Loadout>>,
             Option<Ref<gd_game_core::weapon_pool::SkillLinks>>,
-            // The player's effective skill levels (absent until derived).
             Option<Ref<gd_game_core::player::EffectiveSkills>>,
             Option<&Pet>,
             Option<&MonsterSkills>,
@@ -241,8 +221,6 @@ pub fn pulse_auras(
         ),
         (Without<Dead>, Without<gd_game_core::world::Breakable>),
     >,
-    // Whether a buff's previous caster is still a live target (`land`'s alive
-    // test), asked per replacement instead of collecting every combatant.
     alive_q: Query<
         Entity,
         (
@@ -251,7 +229,7 @@ pub fn pulse_auras(
             Without<gd_game_core::world::Breakable>,
         ),
     >,
-    // Option: devotion is optional input (no devotion auras without it).
+    // Option: no devotion auras without it.
     devotion: Option<Res<crate::devotion::DevotionState>>,
     mut activated: MessageReader<Activated>,
     players: Query<Entity, (With<Player>, With<ReceivedBuffs>)>,
@@ -261,12 +239,8 @@ pub fn pulse_auras(
     let dt = time.delta_secs();
     sc.activated.clear();
     sc.activated.extend(activated.read().cloned());
-    // Buffs ran out already (`crate::skill_buffs::run_buffs`); a pass this
-    // frame lands on the ones in range.
     sc.passes.clear();
     for (e, tf, loadout, links, effective, pet, ms, sd, pulse, mut cache) in &mut emitters {
-        // The auras on, cached (`CachedEmissions`): the player's rebuilt when what they read
-        // changed, a pet's / monster's when its toggles or timed buffs did.
         let computed: Vec<Emission>;
         let on: &[Emission] = match (loadout.as_deref(), pet, ms) {
             (Some(l), ..) => {
@@ -310,7 +284,6 @@ pub fn pulse_auras(
                 };
                 match cache.as_deref() {
                     Some(c) if c.from.iter().map(|(s, li)| (s, *li)).eq(from()) => &c.list,
-                    // Nothing on and nothing cached: no component for a character without auras.
                     None if toggled.is_empty() && buffs.is_empty() => &[],
                     _ => {
                         computed = match (pet, ms) {
@@ -333,7 +306,6 @@ pub fn pulse_auras(
                 }
             }
         };
-        // Activations now: their pass, and a lasting one's next pass a second later.
         sc.now.clear();
         sc.now.extend(
             sc.activated
@@ -368,7 +340,6 @@ pub fn pulse_auras(
             on.iter().any(|o| &o.skill == s) || sc.now.iter().any(|o| &o.skill == s)
         });
         for em in on {
-            // A new aura passes at once (`ActivateNow`), then every second.
             let t = match pulse.0.iter_mut().find(|(s, _)| *s == em.skill) {
                 Some((_, t)) => {
                     *t -= dt;
@@ -382,8 +353,7 @@ pub fn pulse_auras(
             if *t > 0.0 {
                 continue;
             }
-            // A toggle's first pass is its `ActivateNow` / `AutoActivateNow` one (the bonus flag set,
-            // `Skill_BuffRadiusToggled::ActivateNow`, `AutoActivateNow`); a timed
+            // A toggle's first pass is its `ActivateNow` / `AutoActivateNow` one (the bonus flag set); a timed
             // buff's came with its [`Activated`].
             let first = *t == 0.0
                 && data
@@ -395,11 +365,11 @@ pub fn pulse_auras(
                 .push((e, tf.translation, sd.side(), em.clone(), first));
         }
     }
-    // Characters' first buffs (inserted after the passes).
+    // Characters' first buffs, inserted after the passes.
     let mut fresh: std::collections::BTreeMap<Entity, ReceivedBuffs> =
         std::collections::BTreeMap::new();
-    // The targets' bodies in query order, indexed (`crate::combat::grid`): a pass scans the ones near it, plus
-    // its emitter (whose bonus needs no radius), in that order.
+    // The targets' bodies in query order: a pass scans the ones near it, plus its emitter (whose bonus
+    // needs no radius), in that order.
     let grid = if sc.passes.is_empty() {
         None
     } else {
@@ -414,7 +384,7 @@ pub fn pulse_auras(
         Some(&sc.grid)
     };
     for (from, at, side, em, activation) in sc.passes.drain(..) {
-        // `ActivateNow`'s pass gives each friend the skill's bonus (`Character::TakeBonus`, module docs).
+        // `ActivateNow`'s pass gives each friend the skill's bonus (`Character::TakeBonus`).
         let bonus = data
             .db
             .get(&em.buff)
@@ -435,18 +405,16 @@ pub fn pulse_auras(
             };
             if t == from {
                 if !em.on_self {
-                    // The player: found by the activation's pass too, its buff kept elsewhere (module docs).
+                    // The player: found by the activation's pass too, its buff kept elsewhere.
                     bonus.queue(&mut commands, t);
                     continue;
                 }
             } else {
-                // `IsFoe` for a debuff aura, else `IsFriend` (its complement between characters); no hiding
-                // character (`FilterInvalidTargets`, `combat::VictimSideItem::hiding`: a player's totems).
+                // `IsFoe` for a debuff aura, else `IsFriend`; no hiding character (`FilterInvalidTargets`).
                 if tv.hiding() || side.foe(tv.side.side_ref()) != em.debuf {
                     continue;
                 }
             }
-            // `Combatant::in_radius`, on the box taken this frame.
             if !grid.body(i).meets_sphere(at.to_array(), em.radius) {
                 continue;
             }
@@ -477,8 +445,7 @@ pub fn pulse_auras(
                         .land(b.clone(), |c| alive_q.contains(c))
                 }
             };
-            // A new `SkillBuff` (also one replacing a running buff at another
-            // level) goes active (`crate::skill_buffs::on_created`).
+            // A new `SkillBuff` (also one replacing a running buff at another level) goes active.
             if put.created() {
                 crate::skill_buffs::on_created(&mut commands, &data, &b, t, ttf.translation, put);
             }

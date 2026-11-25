@@ -1,7 +1,6 @@
 use super::*;
 
-/// The root of the minimap's node tree: the map quad, the frame, the [`MiniQuad`] pool and the [`MiniLabel`]
-/// (module doc, PORT: built once per layout, changed in place).
+/// The root of the minimap's node tree: the map quad, the frame, the [`MiniQuad`] pool and the [`MiniLabel`].
 #[derive(Component)]
 pub(super) struct MiniRoot;
 
@@ -51,7 +50,6 @@ impl Quad {
     }
 }
 
-/// The minimap's live nodes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct MiniNodes<'w, 's> {
     roots: Query<'w, 's, Entity, With<MiniRoot>>,
@@ -69,14 +67,12 @@ pub(super) struct MiniNodes<'w, 's> {
 }
 
 /// What the minimap's tree was built for: the window (px), the physical → logical factor's bits, the map image,
-/// the bits of the two alphas ([`map_alphas`]), the compass mode, the HUD style (`compass_window` reads
-/// `hud::master(classic)`) and the UI scale's bits. Layout inputs only: nothing here changes while the player moves.
+/// the bits of the two alphas ([`map_alphas`]), the compass mode, the HUD style and the UI scale's bits.
 pub(super) type MiniLayout = (UVec2, u32, AssetId<Image>, [u32; 2], u8, bool, u32);
 
-/// The minimap in one compass mode ([`gd_game::compass::CompassMode`], [`compass_geometry`]).
+/// The minimap in one compass mode ([`gd_game::compass::CompassMode`]).
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct CompassGeometry {
-    /// The map's screen rect (px).
     rect: URect,
     /// The view's zoom (m × 3 over the map's height).
     zoom: f32,
@@ -87,11 +83,10 @@ pub(super) struct CompassGeometry {
 }
 
 /// The minimap per compass mode on a `w` px wide screen at UI scale `s`; `compass` is the top-left corner of the
-/// HUD table's `hudCompass` window (`hudwindow_compass.dbr`, its loaded screen rect).
-/// `UIPlayerHud::ToggleCompass` (positions right-aligned: x = W − value), the HUD draw `UIPlayerHud::Render`
-/// (frame per mode: 0 `hud_compasssmall`, 1 `hud_compasslarge`, 2 `hud_compassclosed`, 3 `hud_compassfloating`,
-/// 4 `hud_compassfloatinglarge`, drawn at the map's corner; the two floating ones centred on it by
-/// `UIMinimap::SetSize`) and the widget's update `DetailMapWidget::Update` (zoom 30 in mode 4, else 20):
+/// HUD table's `hudCompass` window. `UIPlayerHud::ToggleCompass` (positions right-aligned: x = W − value),
+/// `UIPlayerHud::Render` (frame per mode: 0 `hud_compasssmall`, 1 `hud_compasslarge`, 2 `hud_compassclosed`,
+/// 3 `hud_compassfloating`, 4 `hud_compassfloatinglarge`, drawn at the map's corner; the two floating ones centred
+/// on it by `UIMinimap::SetSize`) and `DetailMapWidget::Update` (zoom 30 in mode 4, else 20):
 /// - mode 3: a 160·s px map at (W − (160·s + 20), 50·s), mode 4: 246·s px at (W − (246·s + 25), 50·s), both in
 ///   the floating alphas;
 /// - with (X, Y) the window's corner, the five values 110, 160, 246, X + 5 and Y + 9 are each scaled by s (the
@@ -152,12 +147,9 @@ pub(super) fn compass_window(
     })
 }
 
-/// The HUD minimap (module doc) in the compass mode's geometry ([`compass_geometry`]).
-///
-/// Every frame, as the widget's update and draw do (module doc): the map image is composited again when its view
-/// or the explored ground changed, the icons are gathered and the tree's quads take their places. The tree itself
-/// ([`MiniRoot`]) is built once per [`MiniLayout`]; nothing is despawned or spawned because something moved (a
-/// pool node is added when a frame has more icons than any before it, the name when the hovered icon changes).
+/// The HUD minimap in the compass mode's geometry ([`compass_geometry`]): the map image is composited again when
+/// its view or the explored ground changed, the icons are gathered and the tree's quads take their places. The
+/// tree ([`MiniRoot`]) is built once per [`MiniLayout`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn minimap(
     mut commands: Commands,
@@ -197,7 +189,7 @@ pub(super) fn minimap(
     let s = assets.scale(size);
     let (w, h) = (size.x as f32, size.y as f32);
     let geometry = compass_geometry(mode, w, s, compass_window(&data, &options, w, h, s));
-    // Hidden under the full-screen devotion window (real reference shot), and closed in compass mode 2.
+    // Hidden under the full-screen devotion window, and closed in compass mode 2.
     let Some(geometry) = geometry.filter(|_| !panels.devotion) else {
         gd_ui::window::despawn_all(&mut commands, &nodes.roots);
         *built = None;
@@ -244,8 +236,7 @@ pub(super) fn minimap(
         *cut = Some((o, target.id()));
         img.data = Some(c.disc(o, px.x));
     }
-    // Icons and their screen points (engine clamping), on the view the image is cut at (whole pixels) so they step
-    // with the map under them.
+    // Icons on the view the image is cut at (whole pixels) so they step with the map under them.
     let shown = cache.as_ref().map_or(view, |c| c.shown(o));
     let pl = player
         .single()
@@ -283,7 +274,7 @@ pub(super) fn minimap(
     }
     // Custom quads go under the other icons (their own pass).
     placed.sort_by_key(|(_, i, _)| i.kind != 14);
-    // The game menu / Options holds the cursor: no icon name under it.
+    // The game menu / Options holds the cursor.
     let cursor = gd_ui_kit::cursor_px(win).filter(|_| !pause.menu);
     let isz = (16.0 * s).round();
     let hover = cursor
@@ -293,7 +284,6 @@ pub(super) fn minimap(
             })
         })
         .map(|(p, i, _)| (*p, i.name.as_str()));
-    // The tree: kept while its layout holds.
     let inv = 1.0 / win.scale_factor();
     let (map_a, marker_a) = if geometry.floating {
         map_alphas(&data, &options)
@@ -366,7 +356,7 @@ pub(super) fn minimap(
         let c = Vec2::new(rect.x + r, rect.y + r) + dir * r;
         quads.push(Quad::centred(img, c, sz, angle_of(dir), marker_a));
     }
-    // The pool takes them in place (a new tree has no pool yet: the nodes still alive are the old tree's).
+    // A new tree has no pool yet: the nodes still alive are the old tree's.
     let mut pool = 0;
     if kept.is_some() {
         for (slot, mut node, mut image, mut turn) in &mut nodes.quads {
@@ -391,8 +381,7 @@ pub(super) fn minimap(
         let e = ui.quad_stretch(q.image.clone(), q.rect, q.color());
         ui.commands.entity(e).insert((MiniQuad(n), q.turn()));
     }
-    // The hovered icon's name, left of it: its holder follows the icon; another name is another holder. The holder
-    // is as large as the screen so that its lines never wrap.
+    // The holder is as large as the screen so that its lines never wrap.
     let label_at = |p: Vec2, width: f32| {
         URect::new(
             (p.x - isz * 0.5 - width - 3.0).round(),

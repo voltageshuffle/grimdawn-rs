@@ -55,7 +55,6 @@ impl Tab {
         Tab::Network,
     ];
 
-    /// `GD_OPTIONS_OPEN`'s tab names.
     #[cfg(feature = "dev")]
     pub fn parse(s: &str) -> Option<Tab> {
         Some(match s {

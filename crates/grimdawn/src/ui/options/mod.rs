@@ -1,89 +1,58 @@
-//! The options window (the game menu's "Options Menu"): tabs Gameplay,
-//! Interface, Health Bars, Key Bindings, Audio, Video (and the inert
-//! Network tab), Default / Apply / Close. It edits a draft of
-//! [`gd_game_core::options::GameOptions`]; Apply replaces the session's options
-//! and writes the port's own `options.txt` (`crate::settings`).
+//! The options window (the game menu's "Options Menu"): tabs Gameplay, Interface, Health Bars, Key Bindings,
+//! Audio, Video (and the inert Network tab), Default / Apply / Close. It edits a draft of
+//! [`gd_game_core::options::GameOptions`]; Apply replaces the session's options and writes the port's own
+//! `options.txt`.
 //!
-//! Records: `records/ui/mainmenu/mainmenu_constants.dbr`
-//! (`optionsWindow` = `optionswindow/options_mastertable.dbr`: window 880 ×
-//! 613 at (−440, −306) from the screen centre, page rect (15, 114) 850 × 420,
-//! background `options_background.dbr`, title `tagMenu04` in
-//! `style_difficultywindowtitle`, the tab buttons at their
-//! `bitmapPosition` from the window's top-left (toggle buttons: the open
-//! tab shows its down bitmap), Default / Apply / Close aligned Center /
-//! Bottom: x = window centre + `bitmapPositionX`, top = window bottom −
-//! `bitmapPositionY`; Apply's up bitmap is `buttonthin01_upfocus`, disabled
-//! while nothing changed); `optionsCheckboxBitmap` (`buttoncheckbox*.tex`:
-//! up / down = off / on), `optionsFontName` (labels,
-//! `style_mainmenu_optionsheader01`), `dropboxBorder` / `dropboxBackColor`
-//! / `dropboxButtonUpBitmap`, `dropboxListFont`, `slideboxBorder`
-//! (`slider{left,center,right}.tex` track),
-//! `optionsKeyBindingHeaderColor` (0.7, 0.55, 0.4, 0.25) and
-//! `optionsKeyBindingHeaderFontName` for the bindings' header.
+//! Records: `records/ui/mainmenu/mainmenu_constants.dbr` (`optionsWindow` =
+//! `optionswindow/options_mastertable.dbr`: window 880 × 613 at (−440, −306) from the screen centre, page rect
+//! (15, 114) 850 × 420, background `options_background.dbr`, title `tagMenu04` in `style_difficultywindowtitle`,
+//! the tab buttons at their `bitmapPosition` from the window's top-left (toggle buttons: the open tab shows its
+//! down bitmap), Default / Apply / Close aligned Center / Bottom: x = window centre + `bitmapPositionX`, top =
+//! window bottom − `bitmapPositionY`; Apply's up bitmap is `buttonthin01_upfocus`, disabled while nothing
+//! changed); `optionsCheckboxBitmap` (`buttoncheckbox*.tex`: up / down = off / on), `optionsFontName` (labels,
+//! `style_mainmenu_optionsheader01`), `dropboxBorder` / `dropboxBackColor` / `dropboxButtonUpBitmap`,
+//! `dropboxListFont`, `slideboxBorder` (`slider{left,center,right}.tex` track), `optionsKeyBindingHeaderColor`
+//! (0.7, 0.55, 0.4, 0.25) and `optionsKeyBindingHeaderFontName` for the bindings' header.
 //!
-//! Key bindings (Grim Dawn.exe): the list (`KeyBindingList::Build`) has the
-//! columns `tagKeybindingTitle02..04` (Function / Primary / Secondary) 370 /
-//! 170 / 170 × UI scale wide, rows in the order of `KeyBindingList::AddRows` (the
-//! move-forward / back / left / right rows only for the WASD movement type),
-//! each action's tag from `KeyBindings::GetActionTag`; the defaults are `KeyMap::SetDefaultBindings`'s
-//! (`keybindings.txt` "action: primary secondary" in the engine's key codes:
-//! DirectInput scan codes, 107 / 118 right Ctrl / Alt, 145+ mouse wheel /
-//! buttons and gamepad, named by `InputDevice::GetDefaultButtonName`,
-//! Engine.dll). PORT: keyboard names are Wine's for the
-//! scan code (the real list asks the OS). Clicking a Primary / Secondary
-//! cell waits for a key (Esc cancels) and binds it; Apply stores the
-//! bindings (`super::keys`, which also says which the port honours). The list's scroll bar (its input
-//! `MenuScrollBar::HandleMouseEvent`): a press on the thumb grabs it, a move places it at the cursor less the grab
-//! offset, the release lets go. PORT: the list scrolls by whole rows (the row nearest the thumb's place); a press on
-//! the track does not page.
+//! Key bindings: the list (`KeyBindingList::Build`) has the columns `tagKeybindingTitle02..04` (Function /
+//! Primary / Secondary) 370 / 170 / 170 × UI scale wide, rows in the order of `KeyBindingList::AddRows` (the
+//! move-forward / back / left / right rows only for the WASD movement type), each action's tag from
+//! `KeyBindings::GetActionTag`; the defaults are `KeyMap::SetDefaultBindings`'s (engine key codes: DirectInput
+//! scan codes, 107 / 118 right Ctrl / Alt, 145+ mouse wheel / buttons and gamepad, named by
+//! `InputDevice::GetDefaultButtonName`). PORT: keyboard names are Wine's for the scan code. Clicking a Primary /
+//! Secondary cell waits for a key (Esc cancels) and binds it; Apply stores the bindings. The list's scroll bar
+//! (`MenuScrollBar::HandleMouseEvent`): a press on the thumb grabs it, a move places it at the cursor less the
+//! grab offset, the release lets go. PORT: the list scrolls by whole rows; a press on the track does not page.
 //!
-//! Sounds (`ui/widgets.rs`): the tabs and Default / Apply / Close are `menubutton`s (their `soundNameOver` /
-//! `soundNameDown`, Apply only while enabled); the check boxes play the constants' `gemButtonRolloverSound` /
-//! `gemButtonClickSound` (`MenuCheckBox::MenuCheckBox`). The sliders and dropdowns are silent: their constructors
-//! (`MenuSlider::MenuSlider` from `OptionsWindow::AddSlider`, `MenuDropBox::MenuDropBox` from the page builders) take
-//! a copy of the options window's `OptionsWindow.sliderSound` / `OptionsWindow.dropBoxSound`, which its constructor
-//! default-builds (`SoundDescriptor::SoundDescriptor`) and nothing loads (no
-//! `SoundManager::Load` or assignment reaches them), and `mainmenu_constants.dbr` has no slider / dropbox sound field.
+//! Sounds: the tabs and Default / Apply / Close are `menubutton`s (their `soundNameOver` / `soundNameDown`, Apply
+//! only while enabled); the check boxes play the constants' `gemButtonRolloverSound` / `gemButtonClickSound`
+//! (`MenuCheckBox::MenuCheckBox`). The sliders and dropdowns are silent (`OptionsWindow.sliderSound` /
+//! `OptionsWindow.dropBoxSound` are default-built and never loaded).
 //!
-//! Page layouts: the engine's page builder (`OptionsWindow::Load`) walks a row cursor from the page origin
-//! (`options_mastertable.dbr` `pageX` / `pageY` 15 / 114, `pageExtentX` / `pageExtentY` 850 × 420). PORT: the
-//! pages use an adaptive flow layout ([`pages::layout`]) instead of the engine's fixed cursor: each tab is a set
-//! of columns, every row a fixed height, labels measured with the font (`ui.text_width`) so a control sits just
-//! past its label and the box plus its dropdown arrow stay inside the page's right edge (the bounds come from the
-//! record, not the textures). Omitted options leave no gap. The drawn widgets' insides (the dropdown box with its
-//! arrow outside, the anti-aliasing check with its label on the left) are the port's own; a
-//! dropdown opens a list of its
-//! values under the box ([`choices`]); a slider is set by dragging its knob ([`knob_bitmap`], `input`); the
-//! controls' rollovers: [`rollover`]; Default
-//! resets the open page's options to the factory defaults plus `Options::SetToDefaults`'s group overrides
-//! (Gameplay corpsePersistence 0.0, Audio musicVolume 0.6). The device / resolution / window-mode lists are the
-//! engine's (`OptionsWindow::Load`, `OptionsWindow::AddResolutionDropBox`, `OptionsWindow::AddWindowModeDropBox`);
-//! the monitor they read is the effective primary ([`crate::settings::primary_monitor`]: Wayland reports none).
-//! Video dropdown lists (`OptionsWindow::AddQualityDropBox`'s jump table, pick
-//! handler `OptionsWindow::HandleVideoPick`, page builder `OptionsWindow::Load`): textureQuality Low..High, fxQuality /
-//! lightingQuality Low..Very High,
-//! detailLevel Low..Ultra, weather Off + Low..Very High (Off = `weatherEnabled` false), shadows Off + Low..Ultra (Off =
-//! `shadows` false); the shown item is the stored quality clamped to the entries (a file's "ultra" texture quality shows
-//! High and stays stored until a pick). The `reflectionQuality` row (tagVideoOption04) is a Low..Very High
-//! dropdown driving the water's planar reflection (gd-render `render/reflection.rs`). PORT: the Video rows of
-//! options the port does not use (`tripleBuffer`, `alphatocoverage`, `deferredrendering`) are simply absent (the
-//! flow closes the gap); the options file keeps their lines (`gd_game_core::options`).
-//! PORT: the port's own FPS controls have literal English labels (no engine tags exist) and are read live each
-//! frame, so Apply only stores them: "Show FPS" (`showFPS`, the HUD counter `gd_ui::hud::fps_overlay`) is a check
-//! box on the Interface tab, and "FPS Limit" (`maxFPS`, the frame limiter `grimdawn::fps_limit`; Off = 0, uncapped)
-//! a dropdown on the Video tab.
+//! PORT: the pages use an adaptive flow layout ([`pages::layout`]) instead of `OptionsWindow::Load`'s fixed row
+//! cursor: each tab is a set of columns, every row a fixed height, a control just past its measured label, inside
+//! the page's right edge. Omitted options leave no gap. The drawn widgets' insides are the port's own; a dropdown
+//! opens a list of its values under the box; a slider is set by dragging its knob. Default resets the open page's
+//! options to the factory defaults plus `Options::SetToDefaults`'s group overrides (Gameplay corpsePersistence
+//! 0.0, Audio musicVolume 0.6). The device / resolution / window-mode lists are the engine's
+//! (`OptionsWindow::AddResolutionDropBox`, `OptionsWindow::AddWindowModeDropBox`); the monitor they read is the
+//! effective primary.
 //!
-//! Performance (PORT, `docs/architecture.md`): the rebuild signature holds only
-//! layout state (size, open, tab, dropdown, rebind, movement type, keys
-//! version); hover, slider drags, list scrolls and the draft's values never
-//! rebuild — [`live`] swaps the state bitmaps ([`Look`]), moves the knobs and
-//! the clipped list panes ([`Scroll`]) and sets the dropdown texts
-//! ([`DropText`]) in place. So the hits of what moves (knobs, the list rows, the key list's thumb) are stored at
-//! value / scroll 0 and [`hit_at`] places them where [`live`] draws them. The controls' rollovers are the menu manager's
-//! shared box (`super::rollover::menu_tip`) with its 500 ms one-shot delay
-//! ([`rollover`]). PORT: the dropdown value and the open list's rows are ellipsised to their box's inner width
-//! (`UITextBox::TruncateLine`; the rows clear the scroll column when it shows); the layout keeps the rows' full
-//! labels (`drop_rows`) and a hovered row shows its label in that box (`super::rollover::menu_tip_text`).
+//! Video dropdown lists (`OptionsWindow::AddQualityDropBox`, `OptionsWindow::HandleVideoPick`): textureQuality
+//! Low..High, fxQuality / lightingQuality Low..Very High, detailLevel Low..Ultra, weather Off + Low..Very High
+//! (Off = `weatherEnabled` false), shadows Off + Low..Ultra (Off = `shadows` false); the shown item is the stored
+//! quality clamped to the entries (the stored value stays until a pick). `reflectionQuality` (tagVideoOption04)
+//! is a Low..Very High dropdown driving the water's planar reflection. PORT: the Video rows the port does not use
+//! (`tripleBuffer`, `alphatocoverage`, `deferredrendering`) are absent; the options file keeps their lines.
+//! PORT: the port's own FPS controls have literal English labels and are read live each frame, so Apply only
+//! stores them: "Show FPS" (`showFPS`) on the Interface tab, "FPS Limit" (`maxFPS`; Off = 0, uncapped) on the
+//! Video tab.
+//!
+//! Hover, slider drags, list scrolls and the draft's values never rebuild: [`live`] updates them in place, so the
+//! hits of what moves (knobs, list rows, the key list's thumb) are stored at value / scroll 0 and [`hit_at`]
+//! places them where [`live`] draws them. The controls' rollovers are the menu manager's shared box with its
+//! 500 ms one-shot delay. PORT: the dropdown value and the open list's rows are ellipsised to their box's inner
+//! width (`UITextBox::TruncateLine`); a hovered row shows its full label in the rollover box.
 mod bindings;
 mod build;
 mod input;
@@ -112,8 +81,7 @@ use pages::*;
 
 pub const RECORD: &str = "records/ui/mainmenu/optionswindow/options_mastertable.dbr";
 const CONSTANTS: &str = "records/ui/mainmenu/mainmenu_constants.dbr";
-/// The slider knob's bitmaps: up, held (dragged), hovered (the slider constructor `MenuSlider::MenuSlider`,
-/// hard-coded).
+/// The slider knob's bitmaps: up, held (dragged), hovered (`MenuSlider::MenuSlider`, hard-coded).
 const KNOB: [&str; 3] = [
     "ui/mainmenu/buttongemup.tex",
     "ui/mainmenu/buttongemdown.tex",
@@ -130,8 +98,7 @@ const TAB_FIELDS: [&str; 7] = [
     "videoButton",
     "networkButton",
 ];
-/// The reference shots' window origin at 1920 × 1080 (layouts below are in
-/// those screen coordinates).
+/// The window origin at 1920 × 1080 (layouts below are in those screen coordinates).
 const ORIGIN: Vec2 = Vec2::new(520.0, 234.0);
 
 pub struct OptionsUiPlugin;
@@ -157,13 +124,12 @@ impl Plugin for OptionsUiPlugin {
     }
 }
 
-/// `GD_OPTIONS_OPEN` (hooks.rs) opens the window at start.
+/// `GD_OPTIONS_OPEN` opens the window at start.
 #[cfg(feature = "dev")]
 fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
     let Some(tab) = hooks.ui.options_open.clone().and_then(|t| Tab::parse(&t)) else {
         return;
     };
-    // `GD_OPTIONS_DROP=<n>` also opens the page's n-th dropdown.
     let dropdown = hooks.ui.options_drop.and_then(|n| {
         ctls(tab)
             .iter()
@@ -172,7 +138,6 @@ fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
             .nth(n)
             .map(|(i, _)| i)
     });
-    // `GD_OPTIONS_REBIND` waits for that binding's key.
     let rebind = hooks.ui.options_rebind;
     commands.insert_resource(OptionsWindow {
         open: true,
@@ -187,38 +152,33 @@ fn open_window(mut commands: Commands, hooks: Res<gd_game_core::hooks::Hooks>) {
 enum Hit {
     Tab(Tab),
     Check(&'static str),
-    /// A slider: option, x range of the knob's centre (physical px). Only the
-    /// knob takes a press.
+    /// A slider: option, x range of the knob's centre (physical px). Only the knob takes a press.
     Slider(&'static str, f32, f32),
-    /// A slider's knob: option, its centre's travel (physical px). Its rect is stored at value 0: the knob moves
-    /// with the value without a rebuild ([`live`]), so [`hit_at`] places it at the value.
+    /// A slider's knob: option, its centre's travel (physical px). Its rect is stored at value 0.
     Knob(&'static str, f32),
     Default,
     Apply,
     Close,
     List,
-    /// A dropdown box (control index in the page).
+    /// Control index in the page.
     Drop(usize),
-    /// A row of the open dropdown's list.
     DropRow(usize),
     /// The open list's scroll column (its right 20 px when it has more than [`DROP_ROWS`] rows): the list's top y and
     /// height (physical px) and its row count.
     DropBar(f32, f32, usize),
-    /// A key binding cell: action, 0 primary / 1 secondary.
+    /// Action, 0 primary / 1 secondary.
     Key(u32, usize),
-    /// The key-binding list's scroll bar thumb: its rect stored at scroll 0 ([`hit_at`] moves it as [`live`] does).
+    /// Its rect stored at scroll 0.
     KeyThumb,
 }
 
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct OptionsLayout {
     hits: Vec<(URect, Hit)>,
-    /// The controls' rollover areas and tags ([`rollover_tag`]).
     tips: Vec<(URect, String)>,
-    /// The key-binding list's last scroll position (rows − visible rows), set when the list is built.
+    /// Rows − visible rows, set when the list is built.
     max_scroll: usize,
-    /// The key-binding list's row height and visible row area (physical px):
-    /// its cell hits are stored at scroll 0 ([`hit_at`] shifts and clips them).
+    /// The key-binding list's row height and visible row area (physical px); cell hits are stored at scroll 0.
     key_row_h: f32,
     key_clip: URect,
     /// The key-binding list's thumb: its top at scroll 0 and its travel (physical px).
@@ -226,8 +186,7 @@ pub struct OptionsLayout {
     /// The open dropdown list's row height and visible box (physical px).
     drop_row_h: f32,
     drop_clip: URect,
-    /// The open dropdown list's full row labels (row index): a hovered row's rollover
-    /// shows its whole label ([`rollover`]; the drawn rows are ellipsised).
+    /// The open dropdown list's full row labels (the drawn rows are ellipsised).
     drop_rows: Vec<String>,
 }
 
@@ -236,17 +195,14 @@ fn scrolled(scroll: usize, lines: f32, max: usize) -> usize {
     ((scroll as f32 - lines.signum() * lines.abs().ceil()).max(0.0) as usize).min(max)
 }
 
-/// The key-binding list thumb's top at `scroll` (as [`live`] places it).
 fn key_thumb_top(layout: &OptionsLayout, scroll: usize) -> f32 {
     let (top, travel) = layout.key_bar;
     let span = layout.max_scroll.max(1) as f32;
     (top + travel * (scroll.min(layout.max_scroll) as f32 / span)).round()
 }
 
-/// The hit under `p` (physical px): the key-list cells and the dropdown rows
-/// are stored at scroll 0, shifted by the list's scroll and clipped to its
-/// visible area (a scrolled-away row takes no mouse); a slider knob is placed at its value in `o`, the key list's
-/// thumb at the list's scroll.
+/// The hit under `p` (physical px): the key-list cells and the dropdown rows are shifted by the list's scroll and
+/// clipped to its visible area; a slider knob is placed at its value in `o`, the key list's thumb at the scroll.
 fn hit_at(
     layout: &OptionsLayout,
     o: &GameOptions,
@@ -256,7 +212,6 @@ fn hit_at(
 ) -> Option<Hit> {
     for (r, h) in &layout.hits {
         let r = match *h {
-            // The list's pane draws a row `scroll` rows up (`super::window::pane`).
             Hit::Key(..) => {
                 if !contains(&layout.key_clip, p) {
                     continue;
@@ -269,7 +224,6 @@ fn hit_at(
                 }
                 URect::new(r.x, r.y - drop_top as f32 * layout.drop_row_h, r.w, r.h)
             }
-            // As [`live`] places the knob.
             Hit::Knob(k, travel) => {
                 URect::new((r.x + travel * slider_get(o, k)).round(), r.y, r.w, r.h)
             }
@@ -283,7 +237,7 @@ fn hit_at(
     None
 }
 
-/// The rows a dropdown list shows at a time (draw `MenuDropBox::Draw` / input `MenuDropBox::HandleMouseEvent`).
+/// The rows a dropdown list shows at a time (`MenuDropBox::Draw` / `MenuDropBox::HandleMouseEvent`).
 const DROP_ROWS: usize = 16;
 
 /// The first row a dropdown list shows when it opens (`MenuDropBox::HandleMouseEvent`): with more than
@@ -302,14 +256,12 @@ fn drop_bar_row(y: f32, top: f32, height: f32, s: f32, rows: usize) -> usize {
     (f * rows.saturating_sub(DROP_ROWS) as f32) as usize
 }
 
-/// A control of a page, in page-local reference coordinates (the page's top-left is (0, 0); [`pages::layout`]
-/// places them, `build` scales them onto the screen).
+/// A control of a page, in page-local reference coordinates (the page's top-left is (0, 0)).
 #[derive(Clone, Copy)]
 enum Ctl {
     /// Checkbox: option, label tag, box top-left (the label sits right of the box).
     Check(&'static str, &'static str, f32, f32),
-    /// Checkbox with its label on the left (the Video anti-aliasing row): option, label tag, label x, centre y,
-    /// box x.
+    /// Checkbox with its label on the left: option, label tag, label x, centre y, box x.
     CheckLeft(&'static str, &'static str, f32, f32, f32),
     /// Slider: option, label tag, label x, centre y, track x0..x1.
     Slider(&'static str, &'static str, f32, f32, f32, f32),
@@ -317,7 +269,6 @@ enum Ctl {
     Drop(Shown, &'static str, f32, f32, f32, f32),
 }
 
-/// A dropdown's value.
 #[derive(Clone, Copy)]
 enum Shown {
     Language,
@@ -337,18 +288,15 @@ enum Shown {
     MaxFps,
 }
 
-/// Whether a checkbox can be changed: "Evade To Cursor" (`tagGameplayOption36`) is greyed out exactly when the
-/// movement type is Keyboard Only (options window `OptionsWindow::Load`: enabled = `movementType != 2`; the
-/// option is then ignored by `HotSlotOptionEvade::Activate`, see `gd_game::evade`).
+/// "Evade To Cursor" (`tagGameplayOption36`) is greyed out when the movement type is Keyboard Only
+/// (`OptionsWindow::Load`: enabled = `movementType != 2`).
 fn check_enabled(key: &str, draft: &GameOptions) -> bool {
     !(key == "evadeFollowCursor" && draft.int("movementType") == 2)
 }
 
-/// A check box's state bitmaps (the `optionsCheckboxBitmap` pattern's `*`),
-/// indexed by [`check_state`].
+/// A check box's state bitmaps (the `optionsCheckboxBitmap` pattern's `*`), indexed by [`check_state`].
 const CHECK_STATES: [&str; 5] = ["up", "over", "down", "downover", "disabled"];
 
-/// A check box's bitmap index into [`CHECK_STATES`], drawn by `build` and `live`.
 fn check_state(on: bool, enabled: bool, hovered: bool) -> usize {
     match (on, hovered) {
         _ if !enabled => 4,

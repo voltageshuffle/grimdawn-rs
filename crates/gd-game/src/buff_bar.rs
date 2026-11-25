@@ -1,68 +1,41 @@
-//! The skills a character's HUD status icons list: the player's buff bar
-//! (grimdawn `ui/status.rs`) and the small icons under a pet portrait
-//! (grimdawn `ui/pets.rs`). Read-only queries of the gameplay state; the UI
-//! keeps the bar's own state (icon order, fade-out, cooldown phase).
+//! The skills a character's HUD status icons list: the player's buff bar and the small icons under a pet portrait.
+//! Read-only queries of the gameplay state; the UI keeps the bar's own state (icon order, fade-out, cooldown phase).
 //!
-//! The player (`hudPlayerStatusIcons` update, Grim Dawn.exe
-//! `PlayerStatusIcons::Update`), in this order:
-//! 1. `SkillManager::GetActiveSkillList` — the character's
-//!    skills (save order), then its item skills, then its sub skills — each
-//!    that `Skill::HasIconDisplay`. That is `IsTrackable`,
-//!    false for the base `Skill`, except `Skill_BuffRadius{,Toggled}`:
-//!    only with `debufSkill` (their buff shows from step 2). `IsTrackable`
-//!    per class (Game.dll): the `Skill_BuffSelfToggled` family
-//!    (`…Toggled`, `…Duration`, `…Shield`, `…Invulnerable`, `…Immobilize`,
-//!    `…Colossus`, `…Sick`, `Skill_Shapeshift`) and
-//!    `Skill_BuffAttackRadius{Toggled,Duration,Lightning}`,
-//!    `Skill_OnHitAttackRadius`: their active flag; `Skill_PassiveOnHitBuffSelf`
-//!    / `…OnCritBuffSelf` / `…OnLifeBuffSelf` / `…OnHitBuffShield`: while
-//!    their buff runs; `Skill_TargetedSpawnPet` with `trackSpawns`: while one
-//!    of its pets lives; `Skill_WeaponPool_Charged*`: with charges;
-//!    `Skill_ChargePotion`: while its absorption lasts.
-//! 2. `Character::GetUITempSkillList`: the `SkillBuff`s on the character
-//!    (an aura's `buffSkillName` record, a buff someone cast on it) whose
-//!    `IsTempTrackable` = not `hideFromUI`; `SkillBuff_Debuf*` go to
-//!    the debuff area.
+//! The player (Grim Dawn.exe `PlayerStatusIcons::Update`), in this order:
+//! 1. `SkillManager::GetActiveSkillList` — the character's skills (save order), then its item skills, then its sub
+//!    skills — each that `Skill::HasIconDisplay`, i.e. `IsTrackable`: false for the base `Skill` and
+//!    `Skill_BuffRadius{,Toggled}` without `debufSkill` (their buff shows from step 2). Per class (Game.dll): the
+//!    `Skill_BuffSelfToggled` family (`…Toggled`, `…Duration`, `…Shield`, `…Invulnerable`, `…Immobilize`,
+//!    `…Colossus`, `…Sick`, `Skill_Shapeshift`), `Skill_BuffAttackRadius{Toggled,Duration,Lightning}` and
+//!    `Skill_OnHitAttackRadius`: their active flag; `Skill_PassiveOnHitBuffSelf` / `…OnCritBuffSelf` /
+//!    `…OnLifeBuffSelf` / `…OnHitBuffShield`: while their buff runs; `Skill_TargetedSpawnPet` with `trackSpawns`:
+//!    while one of its pets lives; `Skill_WeaponPool_Charged*`: with charges; `Skill_ChargePotion`: while its
+//!    absorption lasts.
+//! 2. `Character::GetUITempSkillList`: the `SkillBuff`s on the character that are not `hideFromUI`;
+//!    `SkillBuff_Debuf*` go to the debuff area.
 //!
-//! What an icon shows comes from `GetTrackableType`: 0 duration
-//! (`TrackableRemainingTime` / `TrackableTotalTime` ms; a `SkillBuff`'s
-//! total is 0 when ≤ 1500 ms, so an aura's buff has no timer), 1 charges
-//! (`Skill_TargetedSpawnPet`: living pets of it, `Skill_WeaponPool_Charged…`,
-//! `SkillBuff_PassiveCharged`), 2 Cadence's finale, 3 no timer (the
-//! `…Toggled` skills, `Skill_Shapeshift` with a set flag), 4 potions /
-//! `Skill_PassiveOnHitBuffShield`. Passives (`Skill::IsPassive` true: `Skill_Passive*`,
-//! `Skill_Mastery`, `SkillSecondary_BuffSelfDuration`,
-//! `Skill_PassiveDualWieldWeapon`) are drawn round and keep their icon
-//! through their cooldown after the buff ends.
+//! What an icon shows comes from `GetTrackableType`: 0 duration (a `SkillBuff`'s total is 0 when ≤ 1500 ms, so an
+//! aura's buff has no timer), 1 charges (living pets, `Skill_WeaponPool_Charged…`, `SkillBuff_PassiveCharged`),
+//! 2 Cadence's finale, 3 no timer (the `…Toggled` skills, `Skill_Shapeshift` with a set flag), 4 potions /
+//! `Skill_PassiveOnHitBuffShield`. Passives (`Skill::IsPassive`) are drawn round and keep their icon through their
+//! cooldown after the buff ends.
 //!
-//! A pet portrait (`PlayerPortrait::Update` → `Character::GetActiveStatusSkills`
-//! @Game.dll): the same two lists filtered by `HasIconDisplay` /
-//! `IsTempTrackable`, as skill names; the icon is each skill's up bitmap.
+//! A pet portrait (`Character::GetActiveStatusSkills`): the same two lists, as skill names; the icon is each
+//! skill's up bitmap.
 //!
-//! PORT: the port has no `SkillBuff` objects. Step 2 for the player is its
-//! own switched-on `Skill_BuffRadiusToggled` auras (their `buffSkillName`),
-//! then the buffs other characters keep on it (`skill_buffs::ReceivedBuffs`:
-//! auras' passes, curses; newest first, `SkillBuff_Debuf`s in the debuff area,
-//! a curse with its time left), then the timed buffs it got from a `Skill_BuffRadius` /
-//! `Skill_BuffOther` (theirs too, a pet's buff-other). For a pet: its
-//! switched-on toggles (`Pet::toggled`, trackable ones), damage auras and
-//! timed self buffs, then the buffs on it, newest first. Item / sub skills
-//! are the timed buffs left over after the learned skills (devotion and item
-//! procs).
+//! PORT: the port has no `SkillBuff` objects. Step 2 for the player is its own switched-on
+//! `Skill_BuffRadiusToggled` auras' buffs, then the buffs other characters keep on it (newest first, a curse with
+//! its time left), then the timed buffs it got from a `Skill_BuffRadius` / `Skill_BuffOther`. For a pet: its
+//! switched-on toggles, damage auras and timed self buffs, then the buffs on it, newest first. Item / sub skills
+//! are the timed buffs left over after the learned skills.
 //!
-//! The icon: `GetTrackableIcon` when not empty, else the skill's up
-//! bitmap (`PlayerStatusIcons::AddIcon`); only `Skill_ChargePotion` has one,
-//! [`POTION_ABSORB_ICON`], listed in the potion's place in the
-//! skill list while its absorb lasts ([`gd_game_core::casting::ShieldKind::Potion`]),
-//! type 4: left / total of the absorb pool, no text (`PlayerStatusIcons::RefreshIcon`).
+//! The icon: `GetTrackableIcon` when not empty, else the skill's up bitmap; only `Skill_ChargePotion` has one,
+//! [`POTION_ABSORB_ICON`], type 4: left / total of the absorb pool, no text.
 //!
-//! Combo charges (`PlayerStatusIcons::Update` → `PlayerStatusIcons::UpdateComboCharge`): after the lists
-//! and the DoT icons, with a count (`SkillManager::GetComboCharge`) one
-//! entry of its own kind (2) in area 1, created only while
-//! `GetComboChargeMultiplier(count)` ≥ 1, icon [`COMBO_ICON`]: the count in
-//! `chargeText`, the time left (`GetComboChargeDuration`, ms) swept against
-//! the most seen (≤ 250 ms: no total); its rollover is `tagHUDComboCharge` /
-//! `tagHUDComboChargeMultiplier` (`PlayerStatusIcons::GetRolloverText`), not a skill tooltip.
+//! Combo charges (`PlayerStatusIcons::UpdateComboCharge`): after the lists and the DoT icons, one entry of kind 2
+//! in area 1 while `GetComboChargeMultiplier(count)` ≥ 1, icon [`COMBO_ICON`], the count as text and the time left
+//! swept against the most seen (≤ 250 ms: no total); its rollover is `tagHUDComboCharge` /
+//! `tagHUDComboChargeMultiplier`, not a skill tooltip.
 use crate::combo::Combo;
 use gd_formats::arz::Record;
 use gd_formats::vfs::Database;
@@ -72,7 +45,7 @@ use gd_game_core::skill_buffs::ReceivedBuffs;
 use gd_game_core::weapon_pool::PoolCharges;
 use gd_sim::combo::ComboTable;
 
-/// What an icon shows ([module docs](self): `GetTrackableType`).
+/// `GetTrackableType`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Track {
     /// Seconds left of a timed buff (its total is what the UI first saw).
@@ -93,17 +66,14 @@ pub enum Track {
     },
 }
 
-/// The combo charge icon (`PlayerStatusIcons::UpdateComboCharge`).
 pub const COMBO_ICON: &str = "ui/hud/hud_combochargeicon.tex";
 
-/// The combo entry's key (it has no skill).
 pub const COMBO_KEY: &str = "combo charges";
 
 /// `Skill_ChargePotion::GetTrackableIcon`.
 pub const POTION_ABSORB_ICON: &str =
     "ui/skills/icons/potionbuffs/skillicon_potion_absorbing_up.tex";
 
-/// What the player's status list reads.
 #[derive(Clone, Copy)]
 pub struct PlayerState<'a> {
     pub loadout: &'a Loadout,
@@ -117,13 +87,11 @@ pub struct PlayerState<'a> {
     pub combo: Option<(&'a Combo, &'a ComboTable)>,
 }
 
-/// One entry of the player's status list.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tracked {
     /// Identity in the bar (lower-case record of the tracked skill or buff).
     pub key: String,
-    /// The record whose `skillUpBitmapName` is drawn, or a `.tex` path
-    /// (`GetTrackableIcon`).
+    /// The record whose `skillUpBitmapName` is drawn, or a `.tex` path.
     pub icon: String,
     /// The skill whose tooltip the icon shows.
     pub tip: String,
@@ -132,13 +100,11 @@ pub struct Tracked {
     pub debuff: bool,
     /// Drawn round (`roundBitmap` of it or its parent, or a passive).
     pub round: bool,
-    /// A passive (`Skill::IsPassive`): its icon stays through its cooldown, read from
-    /// `Caster::cooldowns[cooldown]`.
+    /// A passive (`Skill::IsPassive`): its icon stays through its cooldown, `Caster::cooldowns[cooldown]`.
     pub passive: bool,
     pub cooldown: String,
 }
 
-/// Classes whose active flag makes them trackable (module docs).
 fn self_trackable(class: &str) -> bool {
     class.starts_with("Skill_BuffSelf")
         || class == "Skill_Shapeshift"
@@ -146,7 +112,7 @@ fn self_trackable(class: &str) -> bool {
         || class == "Skill_OnHitAttackRadius"
 }
 
-/// `Skill::IsPassive` (module docs).
+/// `Skill::IsPassive`.
 pub fn is_passive(class: &str) -> bool {
     class.starts_with("Skill_Passive")
         || class == "Skill_Mastery"
@@ -161,15 +127,13 @@ fn round(rec: &Record) -> bool {
     rec.bool("roundBitmap")
 }
 
-/// The buff record a `Skill_BuffRadius` / `Skill_BuffOther` / toggled aura
-/// puts on its targets.
+/// The buff record a `Skill_BuffRadius` / `Skill_BuffOther` / toggled aura puts on its targets.
 fn buff_of<'a>(db: &'a Database, rec: &'a Record) -> Option<(&'a str, &'a Record)> {
     let b = gd_sim::skills::profile_name(rec)?;
     db.get(b).map(|r| (b, r))
 }
 
-/// An entry's flags from its record: (debuff, round, passive); round is its own `roundBitmap`, `parent_round` or a
-/// passive.
+/// (debuff, round, passive); round is its own `roundBitmap`, `parent_round` or a passive.
 fn flags(rec: &Record, parent_round: bool) -> (bool, bool, bool) {
     let passive = is_passive(&rec.class);
     (
@@ -179,7 +143,7 @@ fn flags(rec: &Record, parent_round: bool) -> (bool, bool, bool) {
     )
 }
 
-/// How a skill of the active skill list (step 1, module docs) is tracked.
+/// How a skill of the active skill list (step 1) is tracked.
 #[derive(Clone, Debug)]
 enum SkillKind {
     /// A switched-on self / attack-radius buff (`self_trackable`): its running buff's time, or no timer (`plain`).
@@ -200,13 +164,12 @@ enum SkillKind {
 #[derive(Clone, Debug)]
 struct Listed {
     name: String,
-    /// `name` lower-cased (the weapon pool's key).
     lower: String,
     kind: SkillKind,
     flags: (bool, bool, bool),
 }
 
-/// One of the player's own switched-on auras' buff (step 2): the buff record, the aura, the flags.
+/// One of the player's own switched-on auras' buff (step 2).
 #[derive(Clone, Debug)]
 struct OwnAura {
     buff: String,
@@ -214,14 +177,13 @@ struct OwnAura {
     flags: (bool, bool, bool),
 }
 
-/// Writes the list into a kept `Vec` in place: entry `n` reuses the strings of the entry there.
+/// Writes the list into a kept `Vec` in place, reusing the entries' strings.
 struct Writer<'o> {
     out: &'o mut Vec<Tracked>,
     n: usize,
 }
 
 impl Writer<'_> {
-    /// The entry (`key` lower-cased; the cooldown read is the `tip` skill's).
     fn put(&mut self, key: &str, icon: &str, tip: &str, track: Track, flags: (bool, bool, bool)) {
         let (debuff, round, passive) = flags;
         if let Some(t) = self.out.get_mut(self.n) {
@@ -252,20 +214,17 @@ impl Writer<'_> {
     }
 }
 
-/// The player's status list kept across frames (module docs for the order). [`Self::list`] resolves the skill
-/// list's records (the learned skills, the item toggles, their classes and buffs) when the loadout changes; every
-/// other frame it only reads the running state and rewrites the entries in place. PORT (a performance choice).
+/// The player's status list kept across frames: [`Self::list`] resolves the skill list's records when the loadout
+/// changes; every other frame it only reads the running state.
 #[derive(Default)]
 pub struct PlayerIcons {
     built: bool,
     skills: Vec<Listed>,
     auras: Vec<OwnAura>,
-    /// Scratch: the running buffs matched in step 1.
     used: Vec<usize>,
 }
 
 impl PlayerIcons {
-    /// The loadout's part of the list (both passes over `skills_and_item_toggles`).
     fn refresh(
         &mut self,
         db: &Database,
@@ -296,8 +255,7 @@ impl PlayerIcons {
                     buff: buff_of(db, rec).map(|b| b.0.to_owned()),
                 }
             } else if c == "Skill_TargetedSpawnPet" && rec.bool("trackSpawns") {
-                // Skill_TargetedSpawnPet::TrackableTotalTime: GetPetLimit(level),
-                // the modifier-summed limit (the spawn enforces the same).
+                // Skill_TargetedSpawnPet::TrackableTotalTime: GetPetLimit(level), the modifier-summed limit.
                 let mods: Vec<(gd_formats::arz::Record, usize)> = links
                     .map(|l| {
                         l.mods_of(s)
@@ -311,8 +269,8 @@ impl PlayerIcons {
             } else if c == "Skill_ChargePotion" {
                 SkillKind::Potion
             } else if c.starts_with("Skill_WeaponPool_Charged") {
-                // Skill_WeaponPool_ChargedFinale::GetTrackableType (returns 2, not 1) and
-                // `PlayerStatusIcons::RefreshIcon` type 2: Cadence's icon has no count and no sweep.
+                // Skill_WeaponPool_ChargedFinale::GetTrackableType returns 2: Cadence's icon has no count and no
+                // sweep.
                 let finale = c == "Skill_WeaponPool_ChargedFinale";
                 // Skill_WeaponPool_ChargedScaling::TrackableTotalTime: the charge level.
                 let max = gd_sim::stats::level_value(rec, "skillChargeLevel", li)
@@ -354,8 +312,8 @@ impl PlayerIcons {
         }
     }
 
-    /// Writes the player's status list in the engine's order (module docs) into `out`, in place.
-    /// `loadout_changed`: the loadout changed since the last call (the first call reads it anyway).
+    /// Writes the player's status list in the engine's order into `out`. `loadout_changed`: the loadout changed
+    /// since the last call.
     pub fn list(
         &mut self,
         db: &Database,
@@ -385,8 +343,7 @@ impl PlayerIcons {
                 .iter()
                 .position(|b| b.0.eq_ignore_ascii_case(name))
         };
-        // 1. The active skill list: learned skills that are trackable; then the
-        // item list's (worn items' toggles, `crate::player` docs).
+        // 1. The active skill list: learned skills that are trackable, then the worn items' toggles.
         for l in &self.skills {
             let s = l.name.as_str();
             let track = match &l.kind {
@@ -449,8 +406,7 @@ impl PlayerIcons {
             };
             w.put(s, s, s, track, l.flags);
         }
-        // Item and sub skills: the timed buffs not matched above. Step 2's temp skills (the radius / other buffs
-        // and the buffs cast on the player) go after the auras' buffs: the second pass below.
+        // Item and sub skills: the timed buffs not matched above. Step 2's temp skills go after the auras' buffs.
         let temp = |rec: &Record| {
             matches!(
                 rec.class.as_str(),
@@ -472,8 +428,7 @@ impl PlayerIcons {
         for a in &self.auras {
             w.put(&a.buff, &a.buff, &a.skill, Track::Plain, a.flags);
         }
-        // Allies' auras' buffs (`auras.rs`), unless the player's own aura has
-        // the same buff.
+        // Allies' auras' buffs, unless the player's own aura has the same buff.
         for b in received.map(|r| r.list.as_slice()).unwrap_or_default() {
             let Some(brec) = db.get(&b.buff) else {
                 continue;
@@ -486,8 +441,7 @@ impl PlayerIcons {
                 continue;
             }
             let parent = db.get(&b.skill).is_some_and(round);
-            // `SkillBuff::TrackableTotalTime` is 0 for ≤ 1500 ms (an aura pass's
-            // buff): no timer; a curse shows its time left.
+            // `SkillBuff::TrackableTotalTime` is 0 for ≤ 1500 ms (an aura pass's buff): no timer.
             let track = if b.total > crate::auras::BUFF_SECS {
                 Track::Duration(b.left)
             } else {
@@ -535,12 +489,9 @@ impl PlayerIcons {
     }
 }
 
-/// The icons under a pet's portrait (module docs): its trackable skills
-/// (switched-on toggles, `Pet::toggled`, damage auras, `DamageAuras`, timed
-/// self buffs), then the `SkillBuff`s on it newest first: buffs others cast
-/// on it (`Pet::buffs`), then aura buffs (`ReceivedBuffs`, already newest
-/// first); bitmap paths (`skillUpBitmapName`, borrowed from the records). PORT: the two buff lists are
-/// kept apart, so their relative order is by kind, not by age.
+/// The icons under a pet's portrait: its trackable skills (switched-on toggles, damage auras, timed self buffs),
+/// then the `SkillBuff`s on it newest first: buffs others cast on it, then aura buffs; bitmap paths. PORT: the two
+/// buff lists are kept apart, so their relative order is by kind, not by age.
 pub fn pet_icons<'a>(
     db: &'a Database,
     damage: Option<&gd_game_core::casting::DamageAuras>,

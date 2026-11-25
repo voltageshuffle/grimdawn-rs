@@ -30,14 +30,9 @@
 //!
 //! PORT: the wipe is a rasterised bitmap in [`STEPS`] steps (the engine
 //! draws the fan); the seconds only with the `hotbarCooldownCounter`
-//! option (`gd_game_core::options`; off by default); the
-//! potion and evade slots use the skill rule (their own status functions
-//! are not decompiled). They live in their own node tree above the HUD
-//! (`GlobalZIndex(1)`: a rebuilt HUD root is a new stack root and would
-//! otherwise cover them), built when the slots cooling down change and
-//! replaced through [`super::retire_roots`] so no frame goes without them;
-//! the wipe bitmap, the masked fill and the seconds change in place
-//! ([`super::HudVitals::cooldowns`]).
+//! option (off by default); the potion and evade slots use the skill rule
+//! (their own status functions are not decompiled). The overlay is its own
+//! node tree above the HUD (`GlobalZIndex(1)`).
 use super::{FontCache, HudValues};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -48,24 +43,18 @@ use gd_formats::ui::Rect as URect;
 use gd_game_core::casting::Caster;
 use gd_game_core::data::GameData;
 
-/// Wipe steps of the rasterised overlay.
 pub const STEPS: u16 = 512;
 
-/// The wipe colour (RGBA, 0..1).
 const WIPE: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
 
-/// A hot slot whose skill cools down.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SlotCooldown {
     /// The HUD master field (`hudHotSlot3`, `hudEvadeButton`, …).
     pub field: &'static str,
-    /// The key label drawn on the slot.
     pub label: String,
-    /// Seconds left.
     pub left: f32,
     /// Elapsed part, 0..1.
     pub completion: f32,
-    /// The slot's skill record.
     pub skill: String,
 }
 
@@ -82,8 +71,7 @@ const HOT_SLOTS: [&str; 10] = [
     "hudHotSlot10",
 ];
 
-/// Writes the shown slots' running cooldowns into `out` in place (`row` = the hotbar row on the number
-/// slots, `labels` = the bound key labels by field, [`super::hud::slot_labels`]).
+/// Writes the shown slots' running cooldowns into `out` (`row` = the hotbar row on the number slots).
 pub fn slots(
     caster: &Caster,
     row: usize,
@@ -165,11 +153,10 @@ pub fn text(fonts: &FontCache, left: f32) -> Option<String> {
     })
 }
 
-/// The wipe's fan (RenderRadialWipeEffect) in a `w`×`h` rect at the origin: at completion θ the centre `c`,
-/// the point at θ ([`Fan::at`]), then the π/4 points past it.
+/// The wipe's fan (RenderRadialWipeEffect) in a `w`×`h` rect at the origin: the centre, the point at the
+/// completion angle, then the π/4 points past it.
 struct Fan {
     c: Vec2,
-    /// The half diagonal (`isCircular`: the smaller half extent).
     r: f32,
     size: Vec2,
 }
@@ -189,16 +176,13 @@ impl Fan {
         }
     }
 
-    /// The fan point at angle `a` (radians clockwise from 12 o'clock): at `r` from the centre, clamped into the
-    /// rect, so a non-circular slot's point leaves the ray at `a` (it slides along the edge).
+    /// The fan point at angle `a` (radians clockwise from 12 o'clock), clamped into the rect.
     fn at(&self, a: f32) -> Vec2 {
         let a = a - std::f32::consts::FRAC_PI_2;
         (self.c + Vec2::new(a.cos(), a.sin()) * self.r).clamp(Vec2::ZERO, self.size)
     }
 
-    /// The angle (as a fraction of a turn) whose [`Fan::at`] point lies on the ray from the centre through `p`:
-    /// the clamp inverted where the ray leaves the rect (on a side edge only `x` was clamped, so
-    /// `y = c.y − r·cos a`; on the top or bottom edge only `y`, so `x = c.x + r·sin a`).
+    /// The angle (fraction of a turn) whose [`Fan::at`] point lies on the ray from the centre through `p`.
     fn turn(&self, p: Vec2, circular: bool) -> f32 {
         use std::f32::consts::{FRAC_PI_2, PI, TAU};
         let d = p - self.c;
@@ -223,7 +207,6 @@ impl Fan {
     }
 }
 
-/// Whether `p` is inside (or on) the triangle `a b c`.
 fn in_tri(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> bool {
     let cross = |a: Vec2, b: Vec2, p: Vec2| (b - a).perp_dot(p - a);
     let (d1, d2, d3) = (cross(a, b, p), cross(b, c, p), cross(c, a, p));
@@ -231,13 +214,7 @@ fn in_tri(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> bool {
 }
 
 /// A slot size's wipe samples (4×4 a pixel): each sample's span of steps `[first, last]` whose [`Fan`] covers it
-/// (`[1, 0]`: none), so a step's bitmap ([`wipe_image`]) is one compare a sample and draws exactly the fan. A span
-/// ends at the step whose completion point lies on the sample's ray from the centre ([`Fan::turn`]: the clamp
-/// inverted, so a non-circular slot's leading edge bends as the engine's), settled against that step's fan
-/// triangles. It starts at step 0 inside the full fan; past it (the circular slot's arcs beyond the π/4 chords,
-/// a non-square slot's corners) the completion triangle covers a sample only on its way past. Built once a
-/// size: testing every sample against the fan's triangles cost about a million cross products a step, and a
-/// long cooldown takes a new step most frames.
+/// (`[1, 0]`: none).
 pub struct WipeMap(Vec<[u16; 2]>);
 
 impl WipeMap {
@@ -281,8 +258,6 @@ impl WipeMap {
                     };
                     samples.push(match last {
                         Some(last) if full.is_some() => [0, last],
-                        // Outside the full fan only its own octant's completion triangle covers it: uncovered
-                        // before the span, so the start is a binary search.
                         Some(last) => {
                             let (mut first, mut end) = (0, last);
                             while first < end {
@@ -304,7 +279,7 @@ impl WipeMap {
     }
 }
 
-/// The wipe as a bitmap (4×4 samples a pixel): the samples of `map` (this `w`×`h` size's) the step's fan covers.
+/// The wipe bitmap of `step` (4×4 samples a pixel).
 fn wipe_image(map: &WipeMap, w: u32, h: u32, step: u16) -> Image {
     let mut px = vec![0u8; (w * h * 4) as usize];
     for (o, samples) in px
@@ -332,12 +307,10 @@ fn wipe_image(map: &WipeMap, w: u32, h: u32, step: u16) -> Image {
     )
 }
 
-/// A wipe-colour texel of coverage alpha `a`.
 fn wipe_texel(a: f32) -> [u8; 4] {
     [WIPE[0], WIPE[1], WIPE[2], a].map(|c| (c * 255.0).round() as u8)
 }
 
-/// The masked fill's base: one pixel in the wipe colour.
 fn solid_image() -> Image {
     let px = wipe_texel(WIPE[3]);
     Image::new(
@@ -356,7 +329,7 @@ fn solid_image() -> Image {
 #[derive(Component)]
 pub struct CooldownRoot;
 
-/// A drawn slot's wipe or masked fill, animated in place by [`draw`].
+/// A drawn slot's wipe or masked fill.
 #[derive(Component)]
 pub struct SlotShade {
     field: &'static str,
@@ -364,22 +337,20 @@ pub struct SlotShade {
 }
 
 enum Shade {
-    /// The radial wipe: the slot's size in px and shape (the wipe bitmap's key).
+    /// The slot's size in px and shape (the wipe bitmap's key).
     Wipe { w: u32, h: u32, circular: bool },
-    /// The masked fill: the slot rect, the mask's top offset and the height between the offsets (px).
+    /// The slot rect, the mask's top offset and the height between the offsets (px).
     Mask { r: URect, top: f32, region: f32 },
 }
 
-/// A drawn slot's seconds text ([`super::LiveText`]) and the whole seconds it shows.
+/// A drawn slot's seconds text and the whole seconds it shows.
 #[derive(Component)]
 pub struct SlotText {
     field: &'static str,
     secs: i64,
 }
 
-/// What the overlay was built for: the window size, the UI scale (`f32` bits), the font generation (a language
-/// swap redraws the seconds), the counter option, the slots cooling down (field, skill: a potion's skill picks
-/// its mask, and the redrawn key label) and the skill book (the potion's bitmap).
+/// What the overlay was built for.
 pub struct Layout {
     size: UVec2,
     scale: u32,
@@ -389,24 +360,21 @@ pub struct Layout {
     skills: gd_sim::skills::SkillBook,
 }
 
-/// The wipe step of a slot.
 fn step(c: &SlotCooldown) -> u16 {
     (c.completion * STEPS as f32).floor().min(STEPS as f32) as u16
 }
 
-/// The whole seconds the text shows ([`text`]'s rounding).
+/// The whole seconds [`text`] shows.
 fn whole_secs(left: f32) -> i64 {
     ((left * 1000.0).round() as i64 + 999).div_euclid(1000)
 }
 
-/// The masked fill's rect (`ButtonStatic::RenderCooldown` / `ButtonStatic::RenderMaskedCooldown`, see [`draw`]).
+/// `ButtonStatic::RenderMaskedCooldown`'s fill rect.
 fn mask_rect(r: URect, top: f32, region: f32, completion: f32) -> URect {
     URect::new(r.x, r.y + top, r.w, (region * (1.0 - completion)).max(0.0))
 }
 
-/// Builds the overlay when the slots cooling down (or the window, the UI scale, the font generation, the counter
-/// option, the skills) change; every other frame swaps the wipe bitmaps, sizes the masked fills and redraws the
-/// seconds in place.
+/// Builds the overlay when the slots cooling down (or its inputs) change; every other frame updates it in place.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut fresh: gd_game_core::session::NewSession,
@@ -438,13 +406,13 @@ pub fn draw(
         wipes.clear();
         maps.clear();
     }
-    // Bound the wipe cache: a resolution / UI-scale change mints a fresh full set (`AdditiveCache`'s rule).
+    // Bound the wipe cache: a resolution / UI-scale change mints a fresh full set.
     if wipes.len() > 4096 {
         wipes.clear();
         maps.clear();
     }
-    // No layout without a window: the next one rebuilds (the skill book compare below only looks at
-    // `values` when it changed since this system's last run, which a return here would skip).
+    // No layout without a window: the next one rebuilds (the skill book compare below then sees
+    // only `values` changes since this system's last run, which this return skips).
     let Some((win, size)) = window
         .single()
         .ok()
@@ -454,7 +422,6 @@ pub fn draw(
         *last = None;
         return;
     };
-    // `standardHUD` moves the slots: redraw.
     if std::mem::replace(&mut *classic, assets.classic_hud()) != *classic {
         *last = None;
     }
@@ -515,7 +482,7 @@ pub fn draw(
                 Visibility::Hidden
             });
         }
-        // Only the kept root's texts: a retired root's despawn is queued (`retire_roots`).
+        // Only the kept root's texts: a retired root's despawn is queued.
         for (e, mut t, mut live) in &mut texts {
             let Some(c) = cooldown(t.field) else { continue };
             if kept != Some(parents.root_ancestor(e)) {
@@ -570,10 +537,7 @@ pub fn draw(
             Some(gd_formats::ui::Widget::HotSlot { circular: true, .. })
         );
         let (w, h) = (r.w.max(1.0) as u32, r.h.max(1.0) as u32);
-        // `ButtonStatic::RenderCooldown` / `ButtonStatic::RenderMaskedCooldown`: a button with `disableCooldownRadial`
-        // and a loaded mask (the potion's combo mask) draws the cooldown as (0, 0, 0, 0.6) through the mask
-        // instead of the radial wipe: from the mask's top offset down, (1 - completion) of the
-        // height between the offsets (fractions of the mask bitmap's height); nothing at 0.
+        // `ButtonStatic::RenderMaskedCooldown`: a `disableCooldownRadial` button with a mask draws the masked fill.
         let mask = matches!(
             ui.widget(&rec),
             Some(gd_formats::ui::Widget::HotSlot {

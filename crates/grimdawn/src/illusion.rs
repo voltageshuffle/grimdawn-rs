@@ -1,8 +1,7 @@
 //! The Illusionist's window, input side (drawn by `ui/trade.rs`
 //! `illusionist_window`; rules in `gd_game::illusion`).
 //!
-//! GrimDawn.exe transmuter window (`TransmuteWindow::Load` loader,
-//! `TransmuteWindow::BuildPage` page builder, `TransmuteWindow::Apply` apply): clicking one of the
+//! `TransmuteWindow::Load` / `BuildPage` / `Apply`: clicking one of the
 //! nine equipment boxes (`equipHead` … `equipHandLeft`) selects that worn
 //! item and lists the unlocked looks for it, 18 to a page
 //! (`displayBoxCount`), opening on the page of its current look; clicking a
@@ -10,22 +9,18 @@
 //! slots are browsed); the cost is one `transmuteCost` per pick that is not
 //! the item's own look; Apply Illusion sends every pick
 //! ([`gd_game::illusion::ApplyIllusions`]) and clears them. PORT: the slot
-//! selected on opening (the first worn item that takes an illusion, head
-//! first).
+//! selected on opening is the first worn item that takes an illusion, head
+//! first.
 //!
-//! Weapon swap (`TransmuteWindow::OnButtonEvent` / `UIIllusionist::UpdatePreview` /
-//! `TransmuteWindow::SwapWeapons`): the
-//! window's `equipSwap1LeftButton` is down while set II is worn (set on
-//! opening and whenever `Player::GetAlternateConfig` changes); a click swaps
-//! the player's weapon sets like the character window's button
-//! (`SetAlternateConfig` + `ClearComboCharges`, set II marks the set chosen:
-//! [`gd_game::weapon_sets::SwapWeapons`] `from_window`), so the doll and the
-//! hand slots show the other set. When the active set changes the window
-//! drops the pending picks of weapons and the doll's weapon appearances.
+//! Weapon swap (`TransmuteWindow::OnButtonEvent` / `TransmuteWindow::SwapWeapons`):
+//! `equipSwap1LeftButton` is down while set II is worn; a click swaps the
+//! weapon sets like the character window's button
+//! ([`gd_game::weapon_sets::SwapWeapons`] `from_window`). When the active set
+//! changes the window drops the pending weapon picks.
 //! PORT: the engine drops picks whose item is a `GAME::Weapon`; the port
 //! drops both hand slots' picks.
 //! The character view is the paper doll (`crate::doll`), wearing the pending
-//! picks (`Paperdoll::SetItemAppearance`), turned by the rotate buttons.
+//! picks (`Paperdoll::SetItemAppearance`).
 use crate::trade::TradeOpen;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -68,7 +63,6 @@ pub fn illusion_clicks(
         trade.version += 1;
     }
     *alternate = Some(inv.alternate);
-    // The selected slot: the first worn item that takes an illusion.
     if trade.illusion.slot.is_none() {
         let first = EQUIP_BOXES.iter().map(|(_, s)| *s).find(|s| {
             inv.equipped[*s].as_ref().is_some_and(|it| {
@@ -84,7 +78,6 @@ pub fn illusion_clicks(
             trade.version += 1;
         }
     }
-    // The list for the selected item.
     let unlocked: usize = ill.file.entries.iter().map(|e| e.records.len()).sum();
     let current = trade.illusion.slot.and_then(|s| inv.equipped[s].as_ref());
     if current.map(|it| (it, unlocked)) != trade.illusion.built.as_ref().map(|(it, n)| (it, *n)) {
@@ -121,8 +114,6 @@ pub fn illusion_clicks(
             .map_or(0, |i| i / PAGE);
         trade.version += 1;
     }
-    // `GD_ILLUSION` (hooks.rs): once, pick the n-th look for the selected slot (`GD_ILLUSION_APPLY` also
-    // applies it and closes the window).
     #[cfg(feature = "dev")]
     if let Some(n) = hooks.items.illusion
         && let Some(s) = trade.illusion.slot

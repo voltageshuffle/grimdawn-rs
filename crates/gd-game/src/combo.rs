@@ -1,21 +1,15 @@
 //! The player's combo charges (rules and engine addresses: `gd_sim::combo`).
 //!
-//! [`Combo`] holds the charges (a component on the player, read-only for
-//! the UI); [`ComboUse`] the skill use that may spend them, set when a cast
-//! starts (`casting::try_cast`, the engine's reset on every skill request).
-//! `combat::apply_hits` scales a use's hits by the multiplier taken on its
-//! first hit, spends after that hit and gains charges from every skill hit
-//! ([`on_hit`]). Charges expire here ([`tick`]) and clear on a weapon change,
-//! the swap buttons and riftgate / portal travel ([`clear`]).
+//! [`ComboUse`] is the skill use that may spend them, reset when a cast starts.
+//! `combat::apply_hits` scales a use's hits by the multiplier taken on its first hit, spends after
+//! that hit and gains charges from every skill hit. Charges expire ([`tick`]) and clear on a weapon
+//! change, the swap buttons and riftgate / portal travel ([`clear`]).
 //!
-//! PORT: the gain runs per hit message, not once per skill target result
-//! (the lockout makes the two the same for a multi-target hit); a use spends
-//! on its first hit only; the melee / ranged choice of the lockout is the
-//! port's melee test (weapon skill without a ranged weapon) for the engine's
-//! `AttackInfo.isMelee` flag; "player teleport" (`TeleportLocalClientActivity::PlacePlayer`) is riftgate /
-//! portal travel. The look: the count's aura (`skillComboChargeAura`) as a
-//! buff effect on the player; the "remain" effect / sound of a kept spend
-//! is not played.
+//! PORT: the gain runs per hit message, not once per skill target result (the lockout makes them
+//! equal); a use spends on its first hit only; the lockout's melee test is "weapon skill without a
+//! ranged weapon" for `AttackInfo.isMelee`; "player teleport" is riftgate / portal travel. The
+//! count's aura (`skillComboChargeAura`) is a buff effect on the player; the "remain" effect /
+//! sound of a kept spend is not played.
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_game_core::data::GameData;
@@ -43,27 +37,24 @@ impl Plugin for ComboPlugin {
     }
 }
 
-/// The combo charges of the player.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Combo(pub ComboCharges);
 
-/// `gameengine.dbr`'s combo fields.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ComboRules(pub ComboTable);
 
-/// The current skill use's claim on the charges (`Skill.comboClaim` / `Skill.comboClaimCount`).
+/// `Skill.comboClaim` / `Skill.comboClaimCount`.
 #[derive(Component, Debug, Clone, Default)]
 pub struct ComboUse {
-    /// The used skill's data record (what its hits name).
+    /// The data record its hits name.
     pub skill: String,
-    /// The skill has a cooldown and is not channelled.
+    /// Has a cooldown and is not channelled.
     pub eligible: bool,
-    /// The multiplier taken by the use's first hit.
     pub multiplier: Option<f32>,
 }
 
 impl ComboUse {
-    /// A use of `rec` (the cast's data record) with cooldown `cooldown` s.
+    /// `rec`: the cast's data record; `cooldown` in s.
     pub fn new(skill: &str, rec: &Record, cooldown: f32) -> Self {
         Self {
             skill: skill.to_owned(),
@@ -109,11 +100,10 @@ fn tick(time: Res<Time>, mut q: Query<&mut Combo>, mut carry: Local<f32>) {
     }
 }
 
-/// `ClearComboCharges`: a weapon attached (the worn weapons changed), the
-/// swap buttons, travel.
+/// `ClearComboCharges`: a weapon change, the swap buttons, travel.
 fn clear(
     mut fresh: gd_game_core::session::NewSession,
-    // Option: the travel messages clear the combo without an inventory (no inventory takes no swap).
+    // Option: travel clears the combo without an inventory.
     inv: Option<Res<Inventory>>,
     mut swaps: MessageReader<crate::weapon_sets::SwapWeapons>,
     mut travel: MessageReader<crate::riftgates::GateTravel>,
@@ -152,11 +142,10 @@ fn clear(
 
 const FX_KEY: &str = "combo charge";
 
-/// The combo aura currently shown on the player.
 #[derive(Component, Debug, Clone, Default)]
 pub struct ComboAura(pub Option<String>);
 
-/// `SetComboChargeEffect`: the count's aura on the player.
+/// `SetComboChargeEffect`.
 fn look(
     mut commands: Commands,
     data: Res<GameData>,
@@ -187,16 +176,14 @@ fn look(
     }
 }
 
-/// What one hit needs from [`before_hit`] to [`on_hit`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HitCombo {
-    /// (100 + multiplier) % for the hit's damage, 0 = none.
+    /// (100 + multiplier) %, 0 = none.
     pub scale: f32,
-    /// The hit took the multiplier: it spends.
     pub spends: bool,
 }
 
-/// `CollectComboMultiplier` for a hit of `skill` (its data record name).
+/// `CollectComboMultiplier`.
 pub fn before_hit(
     table: &ComboTable,
     combo: &Combo,
@@ -222,10 +209,8 @@ pub fn before_hit(
     }
 }
 
-/// After a hit: `SpendComboCharges` (`reduction`: the attacker's
-/// `skillComboChargeSpendReduction`), then `IncrementComboCharge` from the
-/// gaining skill's records (`gain`: the skill and its modifiers at their
-/// levels, see [`gains_by_parent`]).
+/// After a hit: `SpendComboCharges` (`reduction`: `skillComboChargeSpendReduction`), then
+/// `IncrementComboCharge` from the gaining skill and its modifiers at their levels (`gain`).
 #[allow(clippy::too_many_arguments)]
 pub fn on_hit(
     table: &ComboTable,

@@ -11,11 +11,9 @@
 //! `gd_game_core::casting::SpellBeams`'; each ray is its own `LineEffect2` with its own end (`endEffect`, while the ray is
 //! at its end) and ground (`groundEffect`, while it meets a surface) effects at its far end, the start effect
 //! (`startEffect`, one per node) at `emit + heading * retract` until the stop; each is removed when stopped
-//! (`ActivateNow`, `Update`, `PlaceEffects`, `StartEndEffects`,
-//! `DestroyBeams`). The beam, start and end names are the node's (`BeamNode::effects`: a modifier's
-//! `fxChanges` replaces them, `gd_game_core::skill_fx::beam_effects`). PORT: the sounds are `gd_game::combat_sounds`'.
-//! Each node's drawing and each link ribbon is an entity [`VisualOf`] its caster; the record's ribbon parameters are
-//! read once when it is made.
+//! (`ActivateNow`, `Update`, `PlaceEffects`, `StartEndEffects`, `DestroyBeams`). The beam, start and end names are the
+//! node's (`BeamNode::effects`: a modifier's `fxChanges` replaces them). Each node's drawing and each link ribbon is an
+//! entity [`VisualOf`] its caster.
 use bevy::prelude::*;
 use gd_game_core::casting::{BeamNode, SpellBeams};
 use gd_game_core::visuals::EffectSpec;
@@ -136,8 +134,7 @@ fn place(
 ) {
     if let Some((mut tf, mut gt)) = e.and_then(|e| fx.get_mut(e).ok()) {
         tf.translation = at;
-        // After Propagate: write the global frame too so the effect follows
-        // this frame's pose, not the next.
+        // After Propagate: write the global frame too so the effect follows this frame's pose.
         *gt = GlobalTransform::from_translation(at);
     }
 }
@@ -150,7 +147,6 @@ type FxOnly = (
 /// The ribbon's 18 indices (4 points, 3 quads), fixed for every beam.
 const RIBBON_IDX: [u32; 18] = [0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6, 5, 7, 6];
 
-/// A ribbon entity spawned with the record's material.
 fn spawn_ribbon(
     commands: &mut Commands,
     mat: Handle<StandardMaterial>,
@@ -385,8 +381,7 @@ fn ribbon_texture(beam: &gd_formats::arz::Record) -> &str {
         .unwrap_or("FX/Textures/beam.tex")
 }
 
-/// Whether the beam's ribbon texture is decoded: else it decodes in the background and the beam is drawn on a later
-/// frame ([`crate::textures::Textures::ready`]), instead of stalling this one.
+/// Whether the beam's ribbon texture is decoded; else its decode starts in the background.
 fn ribbon_ready(beam: &gd_formats::arz::Record, assets: &mut crate::character::CharAssets) -> bool {
     let data = assets.data.clone();
     assets
@@ -470,12 +465,11 @@ struct LinkRibbon {
 }
 
 /// Reflect-link and tether ribbons (`Skill_AttackSpellReflectLink::Update`, `SkillSecondary_Tether::Update`):
-/// a `LineEffect2` (`linkName` / `tetherName`) from the caster's
-/// `emitPointName` (default `FXCentered`) to the same point of the linked character, re-read every frame, so the ribbon
-/// always spans the two. The start effect (`startEffect`) emits at the caster's point from the link's start; the
-/// ribbon shows after the delay (`linkDelay` for the main player, `tetherDelay`: `gd_game_core::reflect_link::Link::shown`,
-/// `gd_game_core::secondary::Tether::delay`) with the end effect (`endEffect`) at the target's point; when the link ends
-/// both effects stop and the ribbon goes. The points are on the posed bodies.
+/// a `LineEffect2` (`linkName` / `tetherName`) from the caster's `emitPointName` (default `FXCentered`) to the same
+/// point of the linked character, re-read every frame on the posed bodies. The start effect (`startEffect`) emits at
+/// the caster's point from the link's start; the ribbon shows after the delay (`linkDelay` for the main player,
+/// `tetherDelay`) with the end effect (`endEffect`) at the target's point; when the link ends both effects stop and
+/// the ribbon goes.
 #[allow(clippy::too_many_arguments)]
 fn draw_links(
     mut commands: Commands,
@@ -653,7 +647,7 @@ fn update_link(
     r.ribbon.scroll(&mut r.scroll, dt);
     let d = b - a;
     let len = d.length();
-    // The ends together: no ribbon (as a beam ray's), rather than last frame's left where it was.
+    // The ends together: no ribbon, rather than last frame's left where it was.
     if len <= 0.1 {
         if r.mesh.take().is_some() {
             commands.entity(e).try_remove::<Mesh3d>();

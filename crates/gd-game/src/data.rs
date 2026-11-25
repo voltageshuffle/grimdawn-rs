@@ -1,12 +1,9 @@
-//! Mounts the install as the [`GameData`] resource at startup (the data
-//! access itself is [`gd_game_core::data`]).
+//! Mounts the install as the [`GameData`] resource at startup.
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 use std::path::PathBuf;
 
-/// Mounts the install at `root` as the [`GameData`] resource. The binary resolves `root` once
-/// (`grimdawn`'s `main`: `--game-dir`, then the executable's and the working folder, see
-/// [`gd_game_core::data::find_install`]); everything after reads it back as [`GameData::root`].
+/// Mounts the install at `root` (resolved once by the binary) as the [`GameData`] resource.
 pub struct DataPlugin {
     pub root: PathBuf,
 }
@@ -16,7 +13,6 @@ impl Plugin for DataPlugin {
         let root = &self.root;
         let t = std::time::Instant::now();
         let data = GameData::open(root).expect("open game data");
-        // `GD_SURVIVAL`: a Crucible process (the dev game inserts its hooks before the plugins).
         #[cfg(feature = "dev")]
         if app
             .world()

@@ -2,12 +2,10 @@ use super::*;
 use gd_ui::state::options::Tab;
 
 /// A page's columns of controls, in flow order (column-major). The coordinates are unset here; [`layout`]
-/// measures the labels and places them. Identity-only callers (input, live, the open hook) use [`ctls`].
+/// measures the labels and places them.
 ///
 /// PORT: the engine's page builder (`OptionsWindow::Load`) walks a fixed row cursor with hard-coded column
-/// offsets and skips rows for options the port does not show; the port lays each tab out as columns of
-/// fixed-height rows instead, so an omitted option leaves no gap and a long label pushes its control right
-/// rather than overflowing.
+/// offsets; the port lays each tab out as columns of fixed-height rows, so an omitted option leaves no gap.
 pub(super) fn page(tab: Tab) -> Vec<Vec<Ctl>> {
     fn check(k: &'static str, t: &'static str) -> Ctl {
         Ctl::Check(k, t, 0.0, 0.0)
@@ -118,7 +116,7 @@ pub(super) fn page(tab: Tab) -> Vec<Vec<Ctl>> {
                 drop(Shown::Quality("textureQuality"), "tagVideoOption02"),
                 drop(Shown::Shadows, "tagVideoOption03"),
                 slider("uiScale", "tagVideoOption23"),
-                // "Fullscreen Gamma" (`gamma`): the exclusive fullscreen gamma ramp (gd-render `post.rs`).
+                // "Fullscreen Gamma" (`gamma`): the exclusive fullscreen gamma ramp.
                 slider("gamma", "tagVideoOption10"),
             ],
             vec![
@@ -151,15 +149,13 @@ pub(super) fn page(tab: Tab) -> Vec<Vec<Ctl>> {
     }
 }
 
-/// The page's controls in flow order (column-major), coordinates unset: for callers that only read a control's
-/// identity (the open dropdown's [`Shown`], the Default reset's option keys).
+/// The page's controls in flow order (column-major), coordinates unset.
 pub(super) fn ctls(tab: Tab) -> Vec<Ctl> {
     page(tab).into_iter().flatten().collect()
 }
 
-/// The layout environment `build` measures with: the page's content size (reference units, from the window
-/// record's `pageExtent*`), the check-box and dropdown-arrow texture widths (reference units), and a closure
-/// returning a label's measured width in reference units (`ui.text_width / ui.s`).
+/// The layout environment `build` measures with, in reference units: the page's content size (`pageExtent*`),
+/// the check-box and dropdown-arrow texture widths, and a label-width measure.
 pub(super) struct Env<'a> {
     pub size: Vec2,
     pub check_w: f32,
@@ -181,7 +177,7 @@ const ARROW_GAP: f32 = 3.0;
 const DROP_MIN: f32 = 60.0;
 
 /// A dropdown's box width (reference units) at shrink factor `f` (1 = natural): the audio device lists stay
-/// wide, the FPS cap and quality lists shrink toward [`DROP_MIN`].
+/// wide, the others shrink toward [`DROP_MIN`].
 fn drop_bw(s: Shown, f: f32) -> f32 {
     let nat = match s {
         Shown::OutputDevice | Shown::InputDevice => return 400.0,
@@ -191,7 +187,6 @@ fn drop_bw(s: Shown, f: f32) -> f32 {
     DROP_MIN + (nat - DROP_MIN) * f
 }
 
-/// The slider track width at shrink factor `f`.
 fn track_w(f: f32) -> f32 {
     TRACK_MIN + (TRACK_W - TRACK_MIN) * f
 }
@@ -209,10 +204,9 @@ fn tab_metrics(tab: Tab) -> (f32, f32, bool) {
     }
 }
 
-/// Place a tab's controls: measure each column's widest left label, size the columns to their content, spread
-/// them across the page (shrinking dropdown boxes when they would not fit), and set every control just past its
-/// label, clamped so the box and its arrow stay inside the page's right edge. Returns the controls in flow order
-/// with page-local reference coordinates.
+/// Places a tab's controls: sizes the columns to their widest left labels, spreads them across the page
+/// (shrinking dropdown boxes when they would not fit), and sets every control just past its label, clamped
+/// inside the page's right edge. Returns the controls in flow order with page-local reference coordinates.
 pub(super) fn layout(tab: Tab, env: &mut Env) -> Vec<Ctl> {
     let mut cols = page(tab);
     let (row_h, top, bottom) = tab_metrics(tab);
@@ -316,11 +310,8 @@ pub(super) fn layout(tab: Tab, env: &mut Env) -> Vec<Ctl> {
 }
 
 /// The environment a dropdown's rows / shown text read besides the draft: the audio device lists, the render
-/// adapter list, the mounted localisations, the effective primary monitor
-/// ([`crate::settings::primary_monitor`], its video modes and physical size), and the localisation tag table
-/// ([`gd_formats::text::TagTable`]) the value labels resolve through. `screen` is the window's physical
-/// size, the resolution fallback when there is no monitor. Built once per calling system; the monitor's modes
-/// are session-stable.
+/// adapter list, the mounted localisations, the effective primary monitor and the localisation tag table.
+/// `screen` is the window's physical size, the resolution fallback when there is no monitor.
 pub(super) struct ChoiceCtx<'a> {
     devices: &'a gd_audio::devices::AudioDevices,
     pub adapters: &'a crate::render_devices::RenderAdapters,
@@ -350,8 +341,7 @@ impl<'a> ChoiceCtx<'a> {
     }
 }
 
-/// A device dropdown's rows (`OptionsWindow::Load` enumerates the host's devices when the window opens): row 0
-/// "Default" sets index 0 (the system default, not a listed entry), row k + 1 sets the list's entry k.
+/// A device dropdown's rows: row 0 "Default" sets index 0 (the system default), row k + 1 sets the list's entry k.
 fn device_rows(
     k: &'static str,
     entries: &[gd_audio::devices::AudioDeviceEntry],
@@ -374,8 +364,8 @@ fn device_shown(index: i32, entries: &[gd_audio::devices::AudioDeviceEntry]) -> 
         .map_or_else(|| "Default".to_string(), |e| e.name.clone())
 }
 
-/// The stored `language` option string (the engine's spelling, e.g. "English"); the factory default when the
-/// value is missing or not a string.
+/// The stored `language` option string (e.g. "English"); the factory default when the value is missing or
+/// not a string.
 pub(super) fn language_option(o: &GameOptions) -> &str {
     match o.get("language") {
         Some(Value::Str(s)) => s,
@@ -407,7 +397,7 @@ fn aspect_suffix(w: u32, h: u32) -> &'static str {
     }
 }
 
-/// A mode's row label: "{w} x {h} @{hz}hz" + the aspect suffix (`OptionsWindow::AddResolutionDropBox`).
+/// A mode's row label: "{w} x {h} @{hz}hz" + the aspect suffix.
 fn mode_label(w: u32, h: u32, millihertz: u32) -> String {
     format!(
         "{} x {} @{}hz{}",
@@ -426,14 +416,11 @@ fn stored_resolution(o: &GameOptions) -> Option<(u32, u32)> {
     }
 }
 
-/// The resolution dropdown's rows (`OptionsWindow::AddResolutionDropBox`, the mode list `OptionsWindow::Load`
-/// fills from the graphics engine's supported modes): the effective primary monitor's modes at least 1024 x 720, labelled
-/// and deduped, ascending by (w, h); when the stored resolution is valid but no mode row carries it, the window's
-/// physical size is appended as the last row.
-/// PORT: a row writes `resolution` only — the engine also writes `refreshRate`, which the port does not apply
-/// (vsync is `syncToRefresh`).
-/// PORT: the list is exactly what the monitor reports, with no synthetic entries — Wayland compositors commonly
-/// expose only the current mode (a platform limitation).
+/// The resolution dropdown's rows (`OptionsWindow::AddResolutionDropBox`): the effective primary monitor's modes
+/// at least 1024 x 720, labelled and deduped, ascending by (w, h); when the stored resolution is valid but no
+/// mode row carries it, the window's physical size is appended as the last row.
+/// PORT: a row writes `resolution` only (the engine also writes `refreshRate`).
+/// PORT: the list is exactly what the monitor reports, with no synthetic entries.
 fn resolution_rows(o: &GameOptions, ctx: &ChoiceCtx) -> Vec<(String, Vec<(&'static str, Value)>)> {
     let mut rows: Vec<(String, Vec<(&'static str, Value)>)> = Vec::new();
     if let Some(m) = ctx.monitor {
@@ -475,9 +462,8 @@ fn resolution_rows(o: &GameOptions, ctx: &ChoiceCtx) -> Vec<(String, Vec<(&'stat
     rows
 }
 
-/// The resolution the dropdown shows: the stored option when valid, else the effective auto size (the effective
-/// primary monitor's physical size, else the window's) — never the live window size alone. Shown as the matching row's
-/// label when a row carries that size, else "{w} x {h}".
+/// The resolution the dropdown shows: the stored option when valid, else the effective auto size (the primary
+/// monitor's physical size, else the window's). Shown as the matching row's label, else "{w} x {h}".
 fn resolution_shown(o: &GameOptions, ctx: &ChoiceCtx) -> String {
     let (w, h) = stored_resolution(o).unwrap_or_else(|| {
         ctx.monitor
@@ -518,20 +504,16 @@ const COLOR_BLIND: [(&str, &str); 4] = [
 ];
 
 /// A dropdown value's localized label: the tag's text (`LocalizationManager::Localize`), the English fallback
-/// when the tag is missing. [`crate::ui::text::FontCache::tag`]'s plain lookup — [`gd_formats::text::TagTable`]
-/// strips the `{}` param braces at load, so a no-param tag needs no further handling.
+/// when the tag is missing.
 fn label(ctx: &ChoiceCtx, key: &str, fallback: &str) -> String {
     ctx.tags.get(key).unwrap_or(fallback).to_string()
 }
 
-/// The value a closed dropdown box shows. The movement / window-mode / color-blind / quality / Off labels
-/// localize through the engine tags (`OptionsWindow::Load`, `LocalizationManager::Localize`) like the open rows
-/// ([`choices`]); the MainMenu product names, the language display names and the host's device / resolution /
-/// render-device labels stay invariant.
+/// The value a closed dropdown box shows, localized like the open rows ([`choices`]); product names, language
+/// display names and the host's device / resolution / render-device labels stay invariant.
 pub(super) fn shown_text(s: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> String {
     match s {
-        // The stored option string's display name (`gd_formats::text::LANGUAGES`); an unknown spelling shows
-        // the factory default.
+        // An unknown spelling shows the factory default.
         Shown::Language => gd_formats::text::LANGUAGES
             .iter()
             .find(|l| l.option == language_option(o))
@@ -560,8 +542,7 @@ pub(super) fn shown_text(s: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> String {
                 adapter_label(i, &entries[i])
             }
         }
-        // `OptionsWindow::AddWindowModeDropBox`: 0 Fullscreen, 1 Windowed, 2 Windowed (Borderless) — the order
-        // [`crate::settings::window_mode`] applies.
+        // `OptionsWindow::AddWindowModeDropBox`: 0 Fullscreen, 1 Windowed, 2 Windowed (Borderless).
         Shown::WindowMode => {
             let (tag, en) = WINDOW_MODE[o.int("screenMode").clamp(0, 2) as usize];
             label(ctx, tag, en)
@@ -573,7 +554,7 @@ pub(super) fn shown_text(s: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> String {
         },
         Shown::Quality(_) | Shown::Weather | Shown::Shadows => {
             let i = selected(s, o);
-            // The list's entry (the engine shows the selected item's text), localized like the rows.
+            // The engine shows the selected item's text.
             let (tag, en) = match s {
                 Shown::Quality(_) => (QUALITY[i].0, quality_english(QUALITY[i].0)),
                 _ if i == 0 => ("tagOptionOff", "Off"),
@@ -601,8 +582,7 @@ pub(super) fn shown_text(s: Shown, o: &GameOptions, ctx: &ChoiceCtx) -> String {
     }
 }
 
-/// Quality display tags (`Options::PrintToConsole`, Engine.dll) and their file spelling; the display localizes
-/// via [`label`] with the [`quality_english`] fallback.
+/// Quality display tags (`Options::PrintToConsole`) and their file spelling.
 pub(super) const QUALITY: [(&str, &str); 5] = [
     ("tagVideoLevel03", "low"),
     ("tagVideoLevel02", "medium"),
@@ -614,8 +594,7 @@ pub(super) const QUALITY: [(&str, &str); 5] = [
 /// PORT: the `maxFPS` dropdown's caps, after the leading Off (0, uncapped).
 const FPS_CAPS: [i32; 5] = [30, 60, 120, 144, 240];
 
-/// The English quality names [`QUALITY`]'s display tags localize (`Options::PrintToConsole`, Engine.dll): the
-/// fallback when a tag is missing (an unknown tag keeps the file default's name, medium).
+/// The English quality names: the fallback when a tag is missing (an unknown tag keeps medium).
 fn quality_english(tag: &str) -> &'static str {
     match tag {
         "tagVideoLevel03" => "Low",
@@ -627,10 +606,9 @@ fn quality_english(tag: &str) -> &'static str {
     }
 }
 
-/// Number of quality entries a dropdown offers (without the leading Off of weather / shadows). Jump table of
-/// `OptionsWindow::AddQualityDropBox`, pick handler `OptionsWindow::HandleVideoPick`, page builder
-/// `OptionsWindow::Load`: textureQuality Low..High (3); fxQuality, lightingQuality and weather Low..Very High (4);
-/// detailLevel (5); shadows Low..Ultra (5) after Off.
+/// Number of quality entries a dropdown offers (without the leading Off of weather / shadows).
+/// `OptionsWindow::AddQualityDropBox`: textureQuality Low..High (3); fxQuality, lightingQuality and weather
+/// Low..Very High (4); detailLevel (5); shadows Low..Ultra (5) after Off.
 pub(super) fn level_count(s: Shown) -> usize {
     match s {
         Shown::Quality("textureQuality") => 3,
@@ -672,14 +650,9 @@ pub(super) fn selected(s: Shown, o: &GameOptions) -> usize {
     }
 }
 
-/// A dropdown's rows: (text, the options a pick sets). The device / resolution / window-mode lists are the
-/// engine's (`OptionsWindow::Load`, `OptionsWindow::AddWindowModeDropBox`, `OptionsWindow::AddResolutionDropBox`);
-/// the render-device list is the host's wgpu adapters (`crate::render_devices`: 0-based `device` index, no
-/// Default row — the engine's device index selects a listed adapter directly) and the language list the mounted
-/// localisations (`GameData::available_languages`); the quality lists are the engine's (see [`level_count`];
-/// the file spells qualities in lower case). The movement / window-mode / color-blind / quality / Off row texts
-/// localize through the engine tags (`OptionsWindow::Load`, `LocalizationManager::Localize`) — the same labels
-/// [`shown_text`] shows, so the selection matching holds; the stored values stay the engine's.
+/// A dropdown's rows: (text, the options a pick sets). The render-device list is the host's wgpu adapters
+/// (0-based `device` index, no Default row) and the language list the mounted localisations; the file spells
+/// qualities in lower case. Row texts localize like [`shown_text`], so the selection matching holds.
 pub(super) fn choices(
     s: Shown,
     o: &GameOptions,
@@ -692,7 +665,7 @@ pub(super) fn choices(
             .map(|(i, n)| (n.to_string(), vec![(k, Value::Int(i as i32))]))
             .collect()
     };
-    // The localized integer rows: (display tag, English fallback) pairs; the pick still sets the row's index.
+    // (display tag, English fallback) pairs; the pick still sets the row's index.
     let tagged_ints = |k: &'static str, rows: &[(&str, &str)]| {
         rows.iter()
             .enumerate()
@@ -770,8 +743,7 @@ pub(super) fn choices(
         }))
         .collect(),
         Shown::OutputDevice => device_rows("soundDevice", &ctx.devices.output),
-        // PORT: `captureDevice` is kept for parity (voice chat is unported); the engine binds this list to
-        // `soundDevice` (an `OptionsWindow::Load` bug) — not replicated.
+        // PORT: the engine binds this list to `soundDevice` (an `OptionsWindow::Load` bug), not replicated.
         Shown::InputDevice => device_rows("captureDevice", &ctx.devices.input),
         Shown::Resolution => resolution_rows(o, ctx),
         Shown::RenderDevice => ctx
@@ -794,8 +766,8 @@ pub(super) fn choices(
     }
 }
 
-/// The knob's bitmap index into [`KNOB`] (the slider's draw `MenuSlider::Draw`): held while dragged, else lit
-/// while the cursor is on the knob, else up.
+/// The knob's bitmap index into [`KNOB`] (`MenuSlider::Draw`): held while dragged, else lit while the cursor is
+/// on the knob, else up.
 pub(super) fn knob_bitmap(dragged: bool, hovered: bool) -> usize {
     match (dragged, hovered) {
         (true, _) => 1,
@@ -804,10 +776,9 @@ pub(super) fn knob_bitmap(dragged: bool, hovered: bool) -> usize {
     }
 }
 
-/// The rollover text tag of the control labelled `label` (the page builders `OptionsWindow::Load`,
-/// `OptionsWindow::AddBloodDropBox`, `OptionsWindow::AddWindowModeDropBox`, `OptionsWindow::AddResolutionDropBox`: each
-/// check box / slider / dropdown gets its label's `tag<Page>Option<NN>` with
-/// `Option` → `Desc`, except the microphone list and the three voice-chat boxes, whose rollover repeats the label).
+/// The rollover text tag of the control labelled `label` (`OptionsWindow::Load`): the label's
+/// `tag<Page>Option<NN>` with `Option` → `Desc`, except the microphone list and the three voice-chat boxes,
+/// whose rollover repeats the label.
 pub(super) fn rollover_tag(label: &str) -> String {
     match label {
         "tagAudioOption09" | "tagAudioOption10" | "tagAudioOption11" | "tagAudioOption13" => {
@@ -817,9 +788,8 @@ pub(super) fn rollover_tag(label: &str) -> String {
     }
 }
 
-/// A slider option's value as 0..1 and back (volumes, UI scale are
-/// 0..1 already; PORT: corpse persistence / background FPS / auto loot
-/// radius are taken as 0..1 too).
+/// A slider option's value as 0..1 and back. PORT: corpse persistence / background FPS / auto loot radius are
+/// taken as 0..1 too.
 pub(super) fn slider_get(o: &GameOptions, k: &str) -> f32 {
     o.float(k).clamp(0.0, 1.0)
 }

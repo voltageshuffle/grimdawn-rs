@@ -1,7 +1,5 @@
-//! The main menu's character creation path: a new character (no save) plays,
-//! saves into the port's save folder and loads back with its name, sex and
-//! hardcore flag. Also what every save writes (one identity per character, the hardcore shared files) and
-//! when (written at creation).
+//! The main menu's character creation path: a new character (no save) plays, saves and loads back with its
+//! name, sex and hardcore flag; what every save writes (one identity per character, the hardcore shared files).
 use gd_formats::save::gdc::{Gdc, HotSlot};
 use gd_formats::save::gst::Transfer;
 use gd_game::testing::TestGame;

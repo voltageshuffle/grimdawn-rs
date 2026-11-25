@@ -1,11 +1,10 @@
 //! Test support: where the data tests find the game, and their rule for missing data.
-//! Runtime code never uses it (the game finds its install itself: `grimdawn`'s `main`).
+//! Runtime code never uses it.
 //!
-//! The install is `GD_ROOT` ([`game_dir`]; there is no default) and is the only input from outside
-//! the repo. Data tests get their inputs through [`require`] (or [`game`]): a missing file, or an
-//! unset `GD_ROOT`, **panics** with what is missing, so a moved or renamed file fails the test
-//! instead of passing it silently; with `GD_SKIP_DATA_TESTS=1` it returns None and the test skips
-//! (a machine without the game). Files a test writes go in a [`TempDir`].
+//! The install is `GD_ROOT` ([`game_dir`]; there is no default). Data tests get their inputs
+//! through [`require`] (or [`game`]): a missing file, or an unset `GD_ROOT`, **panics** with what
+//! is missing; with `GD_SKIP_DATA_TESTS=1` it returns None and the test skips. Files a test writes
+//! go in a [`TempDir`].
 use std::path::{Path, PathBuf};
 
 /// The installed game: `GD_ROOT`, None when unset.

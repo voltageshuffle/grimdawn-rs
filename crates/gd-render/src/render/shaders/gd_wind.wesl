@@ -1,4 +1,4 @@
-// Vertex program of the wind ("wiggle") shaders (render/material.rs `Wind`):
+// Vertex program of the wind ("wiggle") shaders:
 // Bevy's mesh / prepass vertex, skinned or not, with the position moved by
 //   a_i = (p_i + o_i)·rippleScale_i + time·foliageSpeed,  s = sin(a)
 //   d   = (s_y·s_z, s_z·s_x, s_x·s_y), or (s_y·k_z, s_z·k_x, s_x·k_y) with
@@ -9,14 +9,13 @@
 // ("wiggly"). p is the bind-pose position ("wiggly" skinned programs) or the
 // skinned one in object space ("wiggle" skinned programs; the offset is turned
 // into the world by the object's frame). Also the vertex program of the
-// distortion material (render/distort.rs) under GD_WIND_DISTORT.
-// Mode 4 is the terrain grass bend instead (grass.ssh vertex programs,
-// render/grass.rs `grass_wind`): with h = 1 − v (1 at the blade's top) and
+// distortion material under GD_WIND_DISTORT.
+// Mode 4 is the terrain grass bend instead (grass.ssh vertex programs):
+// with h = 1 − v (1 at the blade's top) and
 // a = sin(p.x + time)·h·windStrength, b = sin(p.z + time + 0.5)·h·windStrength,
 //   p.x += 0.075·a + 0.025·b,  p.z += 0.025·a + 0.075·b
-// (windStrength = the mesh tag's f32 bits, per entity outside the material bind
-// group: the weather's strength changes without a material update; p terrain-local).
-// Then the offset field d (binding 14 at the point uv_b.x, render/grass.rs `GrassOffsets`):
+// (windStrength = the mesh tag's f32 bits; p terrain-local).
+// Then the offset field d (binding 14 at the point uv_b.x):
 //   p.xz += h·d,  p.y −= H − √(H² − |h·d|²)   (H = bladeHeight, ripple_scale.x).
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, decompress_vertex};
@@ -69,7 +68,7 @@ struct GdParams {
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> material: GdParams;
 
-// The grass offset fields (render/grass.rs `GrassOffsets`): per point the disturbance offset (xy) and the
+// The grass offset fields: per point the disturbance offset (xy) and the
 // disturbance + wind offset (zw).
 @if(!GD_WIND_DISTORT)
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var<storage, read> grass_offsets: array<vec4<f32>>;
@@ -94,14 +93,14 @@ fn wind_offset(p: vec3<f32>, c: vec4<f32>, origin: vec3<f32>) -> vec3<f32> {
     return d * c.rgb * (c.a * 0.1 * material.wind.y) * material.ripple_amplitude.xyz;
 }
 
-/// grass.ssh: the blade bend by the wind (module doc).
+/// grass.ssh: the blade bend by the wind.
 fn grass_bend(p: vec3<f32>, v: f32, strength: f32) -> vec3<f32> {
     let h = 1.0 - v;
     let ab = sin(vec2<f32>(p.x + globals.time, p.z + globals.time + 0.5)) * (h * strength);
     return vec3<f32>(0.075 * ab.x + 0.025 * ab.y, 0.0, 0.025 * ab.x + 0.075 * ab.y);
 }
 
-/// grass.ssh: the offset field's push (module doc). PORT: the root's argument is kept ≥ 0 (the engine's would be NaN
+/// grass.ssh: the offset field's push. PORT: the root's argument is kept ≥ 0 (the engine's would be NaN
 /// for an offset longer than the blade).
 fn grass_push(v: f32, d: vec2<f32>) -> vec3<f32> {
     let hd = (1.0 - v) * d;
@@ -173,7 +172,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 }
 @if(VERTEX_UVS_A && VERTEX_UVS_B && !SKINNED && !GD_WIND_DISTORT) {
     if (wind_mode() & 4u) != 0u {
-        // uv_b: the blade's point in the offset fields, 1 when its layer takes the wind (render/grass.rs).
+        // uv_b: the blade's point in the offset fields, 1 when its layer takes the wind.
         let q = grass_offsets[u32(vertex.uv_b.x)];
         vertex.position += grass_push(vertex.uv.y, select(q.xy, q.zw, vertex.uv_b.y > 0.5));
     }

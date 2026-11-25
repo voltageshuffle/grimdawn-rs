@@ -22,12 +22,11 @@
 //! Detour searches polygons, a few hundred for a long path; a cell search of a long detour expands over 100k cells,
 //! so the search goes coarse to fine. [`NavWorld::settle`] splits each layer into block nodes (the cells of an
 //! 8 × 8 block joined within it); A* over block nodes gives a corridor (the path's nodes and their neighbours) and
-//! the cell search stays inside it. Measured near Devil's Crossing: paths about 2 % longer than an unrestricted
-//! cell search's (worst 22 %), strict searches half the time, detours past the old budget found. Dynamic obstacles
-//! are seen by the cell search only: a corridor that does not reach the goal falls back to the whole nav, unless
-//! (strict) an obstacle covers the goal cell or the obstacles shut the goal in (a flood from it within a quarter of
-//! the budget, `NavWorld::enclosed`; the static connections are symmetric, every step of the Devil's Crossing nav
-//! has its way back). A strict search toward another component fails at once ([`NavWorld::connected`]).
+//! the cell search stays inside it. The block nodes do not see dynamic obstacles: a corridor that does not
+//! reach the goal falls back to the whole nav, unless (strict) an obstacle covers the goal cell or the obstacles
+//! shut the goal in (a flood from it within a quarter of the budget, `NavWorld::enclosed`; the static connections
+//! are symmetric). A strict search toward another component fails at once ([`NavWorld::connected`]); the
+//! components see the dynamic obstacles, so a goal a closed door shuts off is in another one.
 use gd_formats::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -160,6 +159,8 @@ pub struct NavWorld {
     obstacle_grid: HashMap<(i32, i32), Vec<(u64, usize)>>,
     /// Which components the loaded layers form ([`NavWorld::settle`]).
     conn: Conn,
+    /// Renewed by every change ([`PathScratch`]'s memo).
+    version: Version,
 }
 
 /// A block node's component within its layer ([`BlockNode::comp`]).
@@ -256,8 +257,25 @@ struct Conn {
     pending: std::collections::VecDeque<ConnJob>,
     /// Target tile → the labelled exits stepping into it.
     into: HashMap<(i32, i32), Vec<ExitRef>>,
-    /// (slot, component) → its component's root; `None` until rebuilt after a change.
-    roots: Option<HashMap<(u32, u8), (u32, u8)>>,
+    /// The labelled layers with a cell a dynamic obstacle covers, labelled around the obstacles.
+    obstructed: HashMap<u32, Obstructed>,
+    /// Slots whose [`Conn::obstructed`] entry is out of date.
+    dirty: HashSet<u32>,
+    /// (slot, component) → its component's root (an [`Obstructed`] layer's own components, else
+    /// [`BlockNode::comp`]); `None` until rebuilt after a change.
+    roots: Option<HashMap<(u32, u16), (u32, u16)>>,
+}
+
+/// A cell of an [`Obstructed`] layer in no component: not walkable, or covered by an obstacle.
+const NO_LABEL: u16 = u16::MAX;
+
+/// A layer labelled around the dynamic obstacles covering some of its cells.
+struct Obstructed {
+    /// Per cell: its component, by the moves within the layer between cells no obstacle covers; [`NO_LABEL`].
+    comp: Vec<u16>,
+    /// The moves between this layer and others, out through its exits and in through theirs: (this layer's cell,
+    /// other slot, its generation, its cell).
+    edges: Vec<(u32, u32, u32, u32)>,
 }
 
 /// Obstacle grid cell size.
@@ -375,7 +393,9 @@ impl<K: PartialEq> PartialOrd for Open<K> {
 
 /// The scratch of a path search (the open heaps, the visited block nodes and cells, the corridor), reused between
 /// searches: a caller keeps one in a `Local` and passes it to [`NavWorld::find_path`] /
-/// [`NavWorld::find_path_strict`], so a search allocates nothing once it has grown.
+/// [`NavWorld::find_path_strict`], so a search allocates nothing once it has grown. It also keeps the last
+/// [`MEMO`] searches' results: a search is a function of the world's [`Version`], its end cells, budget and mode,
+/// so the same one again (a held click on the same spot) is answered from there.
 #[derive(Default)]
 pub struct PathScratch {
     open: BinaryHeap<Open<CellKey>>,
@@ -386,6 +406,40 @@ pub struct PathScratch {
     coarse: HashMap<BlockKey, (f32, BlockKey)>,
     /// The block nodes the cell search may enter.
     corridor: HashSet<BlockKey>,
+    /// The last searches: (key, path found, the path).
+    memo: Vec<(SearchKey, bool, Vec<[f32; 3]>)>,
+    /// The [`PathScratch::memo`] entry the next search replaces.
+    memo_next: usize,
+}
+
+/// Searches a [`PathScratch`] remembers.
+const MEMO: usize = 4;
+
+/// What a search's result depends on.
+#[derive(Clone, Copy, PartialEq)]
+struct SearchKey {
+    version: Version,
+    start: CellKey,
+    goal: CellKey,
+    max_nodes: usize,
+    partial: bool,
+}
+
+/// A [`NavWorld`]'s state as a search sees it: unique across worlds, renewed by every change.
+#[derive(Clone, Copy, PartialEq)]
+struct Version(u64);
+
+impl Default for Version {
+    fn default() -> Self {
+        Self::next()
+    }
+}
+
+impl Version {
+    fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
 }
 
 impl NavWorld {
@@ -399,6 +453,7 @@ impl NavWorld {
     }
 
     pub fn add(&mut self, owner: u64, layers: Vec<NavLayer>) {
+        self.version = Version::next();
         for l in layers {
             let slot = match self.free.pop() {
                 Some(s) => {
@@ -425,6 +480,7 @@ impl NavWorld {
 
     /// Unloads `owner`'s layers; their slots are reused by later [`Self::add`]s.
     pub fn remove(&mut self, owner: u64) {
+        self.version = Version::next();
         let mut removed = false;
         for slot in self.owners.remove(&owner).unwrap_or_default() {
             if let Some(l) = self.layers[slot as usize].take() {
@@ -436,6 +492,8 @@ impl NavWorld {
                 let s = &mut self.conn.slots[slot as usize];
                 s.0 = s.0.wrapping_add(1);
                 s.1 = None;
+                self.conn.obstructed.remove(&slot);
+                self.conn.dirty.remove(&slot);
                 self.conn.roots = None;
                 removed = true;
             }
@@ -453,24 +511,37 @@ impl NavWorld {
 
     /// Whether every loaded layer's connectivity is known ([`Self::settle`]).
     pub fn settled(&self) -> bool {
-        self.conn.pending.is_empty() && self.conn.roots.is_some()
+        self.conn.pending.is_empty() && self.conn.dirty.is_empty() && self.conn.roots.is_some()
     }
 
     /// Works out which components the loaded layers form, for at most `budget` (a game system calls it every frame;
-    /// new layers are known a few frames after they load). Each layer's cells are labelled by the moves within the
-    /// layer, each exit (an edge or portal cell) is linked to every walkable cell of another layer it can step onto,
-    /// and the links join the components. A link is made from either side and to every candidate within
+    /// new layers and changed obstacles are known a few frames later). Each layer's cells are labelled by the moves
+    /// within the layer, each exit (an edge or portal cell) is linked to every walkable cell of another layer it can
+    /// step onto, and the links join the components. A link is made from either side and to every candidate within
     /// [`CLIMB`], a superset of the moves a search takes (one cell, the closest in height): two cells in different
-    /// components cannot be joined by any path, whatever the dynamic obstacles. PORT: Detour's polygon search fails
-    /// an unreachable goal after a few hundred polygons; the cell search here would expand its whole budget, so
-    /// [`Self::find_path_strict`] rejects it up front ([`Self::connected`]).
+    /// components cannot be joined by any path. A layer with cells a dynamic obstacle covers is labelled again
+    /// without them ([`Obstructed`]), its moves to other layers listed cell by cell, so a closed door splits the
+    /// components it shuts off. PORT: Detour's polygon search fails an unreachable goal after a few hundred
+    /// polygons; the cell search here would expand its whole budget, so [`Self::find_path_strict`] rejects it up
+    /// front ([`Self::connected`]).
     pub fn settle(&mut self, budget: std::time::Duration) {
+        if self.settled() {
+            return;
+        }
+        self.version = Version::next();
         let start = std::time::Instant::now();
         while let Some(job) = self.conn.pending.pop_front() {
             match job {
                 ConnJob::Label(slot, generation) => self.label(slot, generation),
                 ConnJob::Resolve(slot, generation, exit) => self.resolve(slot, generation, exit),
             }
+            if start.elapsed() >= budget {
+                return;
+            }
+        }
+        while let Some(&slot) = self.conn.dirty.iter().next() {
+            self.conn.dirty.remove(&slot);
+            self.label_obstructed(slot);
             if start.elapsed() >= budget {
                 return;
             }
@@ -632,6 +703,20 @@ impl NavWorld {
             exits,
             links: Vec::new(),
         });
+        // An obstacle may cover this layer, and the obstructed layers it borders have moves to it to list.
+        self.conn.dirty.insert(slot);
+        for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+            for &s in self
+                .by_tile
+                .get(&(tile.0 + dx, tile.1 + dz))
+                .into_iter()
+                .flatten()
+            {
+                if self.conn.obstructed.contains_key(&s) {
+                    self.conn.dirty.insert(s);
+                }
+            }
+        }
         self.conn.roots = None;
     }
 
@@ -675,17 +760,9 @@ impl NavWorld {
             if o == slot && !outside {
                 continue;
             }
-            let ol = self.layer(o);
-            let (ox, oz) = (
-                ((p[0] - ol.bmin[0]) / ol.cs).floor() as i32,
-                ((p[2] - ol.bmin[2]) / ol.cs).floor() as i32,
-            );
-            let Some(oi) = ol.idx(ox, oz).filter(|_| ol.walkable(ox, oz)) else {
+            let Some(oi) = self.landing(o, p) else {
                 continue;
             };
-            if (ol.y(oi) - p[1]).abs() > CLIMB {
-                continue;
-            }
             let (og, Some(oc)) = &self.conn.slots[o as usize] else {
                 // Not labelled yet: its own labelling resolves this exit again.
                 continue;
@@ -705,10 +782,140 @@ impl NavWorld {
         }
     }
 
-    /// Joins the components along every live link.
+    /// The layer `o` cell under `p` that a move from `p` can step onto: walkable, within [`CLIMB`] of `p`.
+    fn landing(&self, o: u32, p: [f32; 3]) -> Option<usize> {
+        let ol = self.layer(o);
+        let (ox, oz) = (
+            ((p[0] - ol.bmin[0]) / ol.cs).floor() as i32,
+            ((p[2] - ol.bmin[2]) / ol.cs).floor() as i32,
+        );
+        ol.idx(ox, oz)
+            .filter(|_| ol.walkable(ox, oz))
+            .filter(|&i| (ol.y(i) - p[1]).abs() <= CLIMB)
+    }
+
+    /// The cells of `l` a dynamic obstacle covers, as [`Self::blocked`] sees them; `None` when there are none.
+    fn covered_cells(&self, l: &NavLayer) -> Option<Vec<bool>> {
+        let g = |v: f32| (v / OBSTACLE_CELL).floor() as i32;
+        let (x1, z1) = (l.bmin[0] + l.w as f32 * l.cs, l.bmin[2] + l.h as f32 * l.cs);
+        let mut found: Vec<(u64, usize)> = (g(l.bmin[0])..=g(x1))
+            .flat_map(|x| (g(l.bmin[2])..=g(z1)).map(move |z| (x, z)))
+            .filter_map(|k| self.obstacle_grid.get(&k))
+            .flatten()
+            .copied()
+            .collect();
+        if found.is_empty() || l.w == 0 || l.h == 0 {
+            return None;
+        }
+        found.sort_unstable();
+        found.dedup();
+        let mut covered = vec![false; (l.w * l.h) as usize];
+        let mut any = false;
+        let cell = |v: f32, min: f32, n: u32| {
+            (((v - min) / l.cs).floor() as i64).clamp(0, i64::from(n) - 1) as i32
+        };
+        for (w, i) in found {
+            let o = &self.obstacles[&w][i];
+            let b = o.bounds();
+            for z in cell(b[1], l.bmin[2], l.h)..=cell(b[3], l.bmin[2], l.h) {
+                for x in cell(b[0], l.bmin[0], l.w)..=cell(b[2], l.bmin[0], l.w) {
+                    if l.walkable(x, z) && o.covers(l.center(x, z)) {
+                        covered[(z as u32 * l.w + x as u32) as usize] = true;
+                        any = true;
+                    }
+                }
+            }
+        }
+        any.then_some(covered)
+    }
+
+    /// Labels layer `slot` around the dynamic obstacles covering its cells ([`Obstructed`]), or drops its entry when
+    /// none does.
+    fn label_obstructed(&mut self, slot: u32) {
+        match self.obstructed(slot) {
+            Some(o) => self.conn.obstructed.insert(slot, o),
+            None => self.conn.obstructed.remove(&slot),
+        };
+    }
+
+    fn obstructed(&self, slot: u32) -> Option<Obstructed> {
+        let lc = self.conn.slots.get(slot as usize)?.1.as_ref()?;
+        let l = self.layers.get(slot as usize)?.as_ref()?;
+        let covered = self.covered_cells(l)?;
+        let open = |i: usize| l.areas[i] != 0 && l.heights[i] != 0xff && !covered[i];
+        // Either cell's connection bit, as `label`.
+        let joined = |i: usize, j: usize, d: usize| {
+            l.cons[i] & (1 << d) != 0 || l.cons[j] & (1 << ((d + 2) % 4)) != 0
+        };
+        let mut comp = vec![NO_LABEL; covered.len()];
+        let mut next = 0u16;
+        let mut stack = Vec::new();
+        for i0 in 0..comp.len() {
+            if comp[i0] != NO_LABEL || !open(i0) {
+                continue;
+            }
+            comp[i0] = next;
+            stack.push(i0);
+            while let Some(i) = stack.pop() {
+                let (x, z) = ((i as u32 % l.w) as i32, (i as u32 / l.w) as i32);
+                for d in 0..4 {
+                    if let Some(j) = l.idx(x + DX[d], z + DZ[d])
+                        && comp[j] == NO_LABEL
+                        && open(j)
+                        && joined(i, j, d)
+                    {
+                        comp[j] = next;
+                        stack.push(j);
+                    }
+                }
+            }
+            next += 1;
+        }
+        let outside = |l: &NavLayer, ex: &Exit| {
+            l.idx(
+                ex.x as i32 + DX[ex.d as usize],
+                ex.z as i32 + DZ[ex.d as usize],
+            )
+            .is_none()
+        };
+        let at = |l: &NavLayer, ex: &Exit| ex.z as u32 * l.w + ex.x as u32;
+        let mut edges = Vec::new();
+        for ex in &lc.exits {
+            if comp[at(l, ex) as usize] == NO_LABEL {
+                continue;
+            }
+            let (p, tile) = Self::exit_point(l, ex);
+            for &o in self.by_tile.get(&tile).into_iter().flatten() {
+                if o == slot && !outside(l, ex) {
+                    continue;
+                }
+                if let Some(oi) = self.landing(o, p) {
+                    let og = self.conn.slots[o as usize].0;
+                    edges.push((at(l, ex), o, og, oi as u32));
+                }
+            }
+        }
+        for &(s, g, e) in self.conn.into.get(&l.tile).into_iter().flatten() {
+            let (sg, Some(sc)) = &self.conn.slots[s as usize] else {
+                continue;
+            };
+            let (sl, ex) = (self.layer(s), &sc.exits[e as usize]);
+            if *sg != g || (s == slot && !outside(sl, ex)) {
+                continue;
+            }
+            if let Some(i) = self.landing(slot, Self::exit_point(sl, ex).0)
+                && comp[i] != NO_LABEL
+            {
+                edges.push((i as u32, s, g, at(sl, ex)));
+            }
+        }
+        Some(Obstructed { comp, edges })
+    }
+
+    /// Joins the components along every live link, and an obstructed layer's components along its moves.
     fn rebuild_roots(&mut self) {
-        let mut parent: HashMap<(u32, u8), (u32, u8)> = HashMap::default();
-        fn find(p: &mut HashMap<(u32, u8), (u32, u8)>, mut k: (u32, u8)) -> (u32, u8) {
+        type Key = (u32, u16);
+        fn find(p: &mut HashMap<Key, Key>, mut k: Key) -> Key {
             while let Some(&up) = p.get(&k) {
                 if up == k {
                     break;
@@ -719,21 +926,49 @@ impl NavWorld {
             }
             k
         }
-        let slots = &self.conn.slots;
-        for (s, (_, lc)) in slots.iter().enumerate() {
+        fn union(p: &mut HashMap<Key, Key>, a: Key, b: Key) {
+            let (a, b) = (find(p, a), find(p, b));
+            if a != b {
+                p.insert(a, b);
+                p.entry(b).or_insert(b);
+            }
+        }
+        let mut parent: HashMap<Key, Key> = HashMap::default();
+        let conn = &self.conn;
+        let live = |o: u32, og: u32| {
+            let s = &conn.slots[o as usize];
+            s.0 == og && s.1.is_some()
+        };
+        for (s, (_, lc)) in conn.slots.iter().enumerate() {
             let Some(lc) = lc else { continue };
+            if conn.obstructed.contains_key(&(s as u32)) {
+                continue;
+            }
             for &(c, o, og, oc) in &lc.links {
-                if slots[o as usize].0 != og || slots[o as usize].1.is_none() {
-                    continue;
-                }
-                let (a, b) = (find(&mut parent, (s as u32, c)), find(&mut parent, (o, oc)));
-                if a != b {
-                    parent.insert(a, b);
-                    parent.entry(b).or_insert(b);
+                if live(o, og) && !conn.obstructed.contains_key(&o) {
+                    union(&mut parent, (s as u32, c.into()), (o, oc.into()));
                 }
             }
         }
-        let keys: Vec<(u32, u8)> = parent.keys().copied().collect();
+        let comp = |o: u32, i: usize| match conn.obstructed.get(&o) {
+            Some(ob) => Some(ob.comp[i]).filter(|&k| k != NO_LABEL),
+            None => conn.slots[o as usize]
+                .1
+                .as_ref()
+                .map(|lc| lc.comp(i))
+                .filter(|&k| k != NO_COMP)
+                .map(u16::from),
+        };
+        for (&s, ob) in &conn.obstructed {
+            for &(i, o, og, oi) in &ob.edges {
+                if live(o, og)
+                    && let (Some(a), Some(b)) = (comp(s, i as usize), comp(o, oi as usize))
+                {
+                    union(&mut parent, (s, a), (o, b));
+                }
+            }
+        }
+        let keys: Vec<Key> = parent.keys().copied().collect();
         let mut roots = HashMap::default();
         for k in keys {
             let r = find(&mut parent, k);
@@ -743,18 +978,23 @@ impl NavWorld {
     }
 
     /// Whether `a` and `b` can be joined by some path: `Some(false)` only when they lie in different components,
-    /// `None` while the connectivity is being worked out ([`Self::settle`]) or for a cell of a layer with more
-    /// components than are counted.
+    /// `None` while the connectivity is being worked out ([`Self::settle`]), for a cell an obstacle covers or for a
+    /// cell of a layer with more components than are counted.
     pub fn connected(&self, a: Cell<'_>, b: Cell<'_>) -> Option<bool> {
-        if !self.conn.pending.is_empty() {
+        if !self.conn.pending.is_empty() || !self.conn.dirty.is_empty() {
             return None;
         }
         let roots = self.conn.roots.as_ref()?;
         let comp = |c: Cell<'_>| {
-            let l = self.layer(c.layer);
-            let lc = self.conn.slots[c.layer as usize].1.as_ref()?;
-            let k = lc.comp((c.z as u32 * l.w + c.x as u32) as usize);
-            (k != NO_COMP && k != MANY_COMPS).then(|| {
+            let i = (c.z as u32 * self.layer(c.layer).w + c.x as u32) as usize;
+            let k = match self.conn.obstructed.get(&c.layer) {
+                Some(ob) => ob.comp[i],
+                None => match self.conn.slots[c.layer as usize].1.as_ref()?.comp(i) {
+                    NO_COMP | MANY_COMPS => return None,
+                    k => k.into(),
+                },
+            };
+            (k != NO_LABEL).then(|| {
                 let key = (c.layer, k);
                 roots.get(&key).copied().unwrap_or(key)
             })
@@ -764,6 +1004,9 @@ impl NavWorld {
 
     /// Replaces the obstacles of `owner` (an empty list removes them).
     pub fn set_obstacles(&mut self, owner: u64, obstacles: Vec<Obstacle>) {
+        self.version = Version::next();
+        // The layers the old and new obstacles overlap are labelled around them again ([`Self::settle`]).
+        let mut touched: Vec<[f32; 4]> = Vec::new();
         if let Some(old) = self.obstacles.remove(&owner) {
             for o in &old {
                 for k in Self::grid_cells(o) {
@@ -774,17 +1017,30 @@ impl NavWorld {
                         }
                     }
                 }
+                touched.push(o.bounds());
             }
-        }
-        if obstacles.is_empty() {
-            return;
         }
         for (i, o) in obstacles.iter().enumerate() {
             for k in Self::grid_cells(o) {
                 self.obstacle_grid.entry(k).or_default().push((owner, i));
             }
+            touched.push(o.bounds());
         }
-        self.obstacles.insert(owner, obstacles);
+        for (s, l) in self.layers.iter().enumerate() {
+            let Some(l) = l else { continue };
+            let (x0, z0) = (l.bmin[0], l.bmin[2]);
+            let (x1, z1) = (x0 + l.w as f32 * l.cs, z0 + l.h as f32 * l.cs);
+            if touched
+                .iter()
+                .any(|b| b[0] <= x1 && b[2] >= x0 && b[1] <= z1 && b[3] >= z0)
+            {
+                self.conn.dirty.insert(s as u32);
+                self.conn.roots = None;
+            }
+        }
+        if !obstacles.is_empty() {
+            self.obstacles.insert(owner, obstacles);
+        }
     }
 
     fn grid_cells(o: &Obstacle) -> impl Iterator<Item = (i32, i32)> {
@@ -879,11 +1135,8 @@ impl NavWorld {
         best.map(|b| b.1)
     }
 
-    /// Nearest walkable cell within `radius` metres (spiral search). The
-    /// spiral's points share a handful of tiles (`radius` ≪ [`TILE`]), so the
-    /// tile → layers lookup is memoized (empty tiles included) instead of
-    /// hashed per point: a failed endpoint (scenery / void) costs a few
-    /// lookups, not one per probe. Probe order and results are unchanged.
+    /// Nearest walkable cell within `radius` metres (spiral search). The spiral's points share a handful of tiles
+    /// (`radius` ≪ [`TILE`]), so the tile → layers lookup is memoized (empty tiles included).
     pub fn nearest(&self, p: [f32; 3], radius: f32) -> Option<Cell<'_>> {
         if let Some(c) = self.locate(p) {
             return Some(c);
@@ -1037,9 +1290,7 @@ impl NavWorld {
         self.search(scratch, from, to, max_nodes, false)
     }
 
-    /// The search: the coarse pass over block nodes, then the cell search kept to its corridor. When the corridor
-    /// does not lead to a goal the blocks reach (an obstacle such as a closed door, which the blocks do not see),
-    /// the cell search runs again over the whole nav.
+    /// The search between the end cells, answered from `scratch`'s memo when it holds the same one.
     fn search(
         &self,
         scratch: &mut PathScratch,
@@ -1050,6 +1301,40 @@ impl NavWorld {
     ) -> Option<Vec<[f32; 3]>> {
         let start = self.nearest(from, 2.0)?;
         let goal = self.nearest(to, 3.0)?;
+        let key = SearchKey {
+            version: self.version,
+            start: start.key(),
+            goal: goal.key(),
+            max_nodes,
+            partial,
+        };
+        if let Some((_, found, path)) = scratch.memo.iter().find(|m| m.0 == key) {
+            return found.then(|| path.clone());
+        }
+        let path = self.search_cells(scratch, start, goal, max_nodes, partial);
+        if scratch.memo.len() < MEMO {
+            scratch.memo.push((key, false, Vec::new()));
+        }
+        let m = &mut scratch.memo[scratch.memo_next];
+        m.0 = key;
+        m.1 = path.is_some();
+        m.2.clear();
+        m.2.extend_from_slice(path.as_deref().unwrap_or_default());
+        scratch.memo_next = (scratch.memo_next + 1) % MEMO;
+        path
+    }
+
+    /// The coarse pass over block nodes, then the cell search kept to its corridor. When the corridor does not lead
+    /// to a goal the blocks reach (an obstacle such as a closed door, which the blocks do not see), the cell search
+    /// runs again over the whole nav.
+    fn search_cells(
+        &self,
+        scratch: &mut PathScratch,
+        start: Cell<'_>,
+        goal: Cell<'_>,
+        max_nodes: usize,
+        partial: bool,
+    ) -> Option<Vec<[f32; 3]>> {
         // A goal no path can reach fails a strict search at once ([`Self::settle`]); the partial search still goes
         // to the explored cell nearest it.
         if !partial && self.connected(start, goal) == Some(false) {

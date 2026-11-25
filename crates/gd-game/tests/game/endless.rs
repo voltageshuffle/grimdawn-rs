@@ -26,7 +26,6 @@ fn floor(region: usize, entrance: Option<[f32; 3]>) -> FloorState {
     }
 }
 
-/// A new character's game.
 fn game() -> Option<TestGame> {
     TestGame::new_character("Tester", false, false)
 }
@@ -212,9 +211,8 @@ fn kills_of_the_active_floor_add_progress_chain_and_bonus_time() {
     );
 }
 
-/// Save, quit and reload in the middle of a run (`gd_game::endless` module doc, "Save / quit / reload"):
-/// the save holds nothing of the dungeon, and the next session starts with no generator, the tier counter at 0,
-/// no bonus timer and fresh proxy / shrine state.
+/// Save, quit and reload in the middle of a run: the save holds nothing of the dungeon, and the next session
+/// starts with no generator, the tier counter at 0, no bonus timer and fresh proxy / shrine state.
 #[test]
 fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
     use gd_game::monsters::ProxyStates;
@@ -239,7 +237,6 @@ fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
     }
     let shrine = use_buff_shrine(&mut g, player, 2);
 
-    // Save (F5) mid-run.
     let written = g.save_now();
     let bytes = std::fs::read(&written).expect("player.gdc written");
     let saved = gd_formats::save::gdc::Gdc::parse(&bytes).unwrap();
@@ -249,7 +246,6 @@ fn a_run_is_not_saved_and_a_reload_starts_without_a_dungeon() {
         (0, 0)
     );
 
-    // Quit (what `grimdawn::exit` does) and load the saved character again.
     let world = g.app.world_mut();
     world.entity_mut(shrine).despawn();
     world.entity_mut(player).despawn();

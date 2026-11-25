@@ -31,9 +31,7 @@ pub(super) fn storms(
             s.cast.point
         };
         for _ in 0..s.per_tick {
-            // `Skill_BuffAttackRadiusDrop::Update`: the
-            // landing radius is `1 + rand·(skillTargetRadius − 1)` (an annulus,
-            // nothing within 1 m of the centre), the angle uniform over 2π.
+            // `Skill_BuffAttackRadiusDrop::Update`: landing radius `1 + rand·(skillTargetRadius − 1)`, angle uniform.
             let a = gd_game_core::rng::f32() * std::f32::consts::TAU;
             let land = centre + storm_landing(s.radius, gd_game_core::rng::f32(), a);
             let ground = nav
@@ -41,11 +39,8 @@ pub(super) fn storms(
                 .ground((land + Vec3::Y).to_array())
                 .unwrap_or(centre.y);
             let p = Vec3::new(land.x, ground, land.z);
-            // `Skill_BuffAttackRadiusDrop::DropLaunchPoint`: the launch point is the landing spot at
-            // `dropHeight ± dropVariation`, shifted sideways by a uniform disc
-            // of `dropRadius` (0 for Devastation); the projectile flies back to
-            // the landing spot at its own `projectileVelocity`
-            // (`ProjectileBase::MoveStraightLine`, gravity off).
+            // `Skill_BuffAttackRadiusDrop::DropLaunchPoint`: the landing spot at `dropHeight ± dropVariation`, shifted
+            // by a uniform disc of `dropRadius`; the projectile flies straight back at its `projectileVelocity`.
             let h = s.height + (gd_game_core::rng::f32() * 2.0 - 1.0) * s.drop_variation;
             let mut start = p + Vec3::Y * h;
             if s.drop_radius > 0.0 {
@@ -77,7 +72,7 @@ pub(super) fn expanding_radii(
     mut commands: Commands,
     time: Res<Time>,
     mut q: Query<(Entity, &mut ExpandingRadius)>,
-    // The bodies where they stand now (`Transform`, as every other target query).
+    // The bodies where they stand now (`Transform`).
     all: Query<(Entity, &Transform, &Combatant, crate::combat::VictimSide), Without<Dead>>,
     sides: Query<crate::combat::SideData>,
     mut hits: MessageWriter<SkillHit>,
@@ -145,16 +140,12 @@ pub(super) fn expanding_radii(
     }
 }
 
-/// A lasting damaging area ([`Kind::Area`]): a `ProjectileAreaEffect` (Game.dll `ProjectileGo`,
-/// `UpdateSelf`, `ProjectileStop`). Its life is the `ProjectileInfo`'s whole
-/// seconds x 1000 ms (an `int`, `ProjectileAreaEffect.lifeMs`: the skill profile's `skillActiveDuration` truncated by
-/// the creator, `Skill_AttackProjectileAreaEffect::CreateProjectile` and a grenade's
-/// `ProjectileGrenade::ProjectileStop`
-/// alike; a 2.5 s Blackwater pool lasts 2 s). The hit timer starts at 0, or at `targetInterval` when the life is longer
-/// than one interval, and `ProjectileGo` runs one `UpdateSelf(0)`: a hit at once only for an area no longer than its
-/// interval, else the first after one interval. Every update takes the elapsed time off both; while the life is
-/// above 0 (or in that first, zero-time update) a hit runs when the hit timer is at or below 0 and re-arms it; else
-/// `ProjectileStop`. That timer is the only end: the area outlives its caster and its skill (nothing else stops it).
+/// A lasting damaging area ([`Kind::Area`]): a `ProjectileAreaEffect` (`ProjectileGo`, `UpdateSelf`, `ProjectileStop`).
+/// Its life is the creator's duration in whole seconds (`lifeMs`; a 2.5 s pool lasts 2 s). The hit timer starts at
+/// 0, or at `targetInterval` when the life is longer than one interval, and `ProjectileGo` runs one `UpdateSelf(0)`:
+/// a hit at once only for an area no longer than its interval. Each update takes the elapsed time off both; while
+/// the life is above 0 (or in that first update) a hit runs when the hit timer is at or below 0 and re-arms it; else
+/// `ProjectileStop`. The area outlives its caster and its skill.
 #[derive(Component)]
 pub struct AreaEffect {
     pub(super) cast: Casting,
@@ -165,14 +156,10 @@ pub struct AreaEffect {
     pub(super) radius: f32,
     pub(super) attacker: Entity,
     pub(super) fx: Option<Entity>,
-    /// Seconds between hits: the projectile's `targetInterval` ms (default
-    /// 1000, at least 400; `ProjectileAreaEffect::Load`,
-    /// the first hit: the type doc).
+    /// Seconds between hits: `targetInterval` ms (default 1000, at least 400; `ProjectileAreaEffect::Load`).
     pub(super) interval: f32,
-    /// Its projectile record (the sounds).
     pub(super) projectile: Option<String>,
-    /// Its caster's side, kept for when the caster is gone
-    /// ([`crate::combat::Side::lookup_kept`]).
+    /// The caster's side, kept for when the caster is gone.
     pub(super) side: Option<crate::combat::Side>,
 }
 
@@ -188,8 +175,7 @@ pub(super) fn areas(
     data: Res<GameData>,
 ) {
     for (e, mut a) in &mut q {
-        // `ProjectileGo`'s first update takes no time; the faction pack is the caster's then (copied into the
-        // `ProjectileInfo` at creation).
+        // The first update takes no time; the faction pack is the caster's at creation.
         let dt = if std::mem::take(&mut a.fresh) {
             let a = &mut *a;
             crate::combat::Side::lookup_kept(&sides, a.attacker, a.cast.hostile, &mut a.side);
@@ -261,9 +247,8 @@ pub(super) fn areas(
     }
 }
 
-/// A lasting area of `rec`'s projectile (`Skill_AttackProjectileAreaEffect`,
-/// a geyser) at `cast.point` for `duration` s, `radius` m (the projectile's
-/// `targetInterval` between hits, its flight effect looping there).
+/// A lasting area of `rec`'s projectile (`Skill_AttackProjectileAreaEffect`) at `cast.point` for `duration` s,
+/// `radius` m.
 pub(crate) fn spawn_area(
     commands: &mut Commands,
     data: &GameData,
@@ -314,7 +299,6 @@ pub(crate) fn spawn_area_of(
             spawn_fx_looping(commands, data, &f, Transform::from_translation(cast.point))
         });
     let at = cast.point;
-    // `ProjectileGo`: whole seconds; the first hit waits an interval when the area outlasts one.
     let left = duration.max(0.0).trunc();
     let area = commands
         .spawn((
@@ -333,8 +317,7 @@ pub(crate) fn spawn_area_of(
             Transform::from_translation(at),
         ))
         .id();
-    // `ProjectileAreaEffect::PlaySwipeSound`: at its own
-    // coordinates, tracked with it.
+    // `ProjectileAreaEffect::PlaySwipeSound`: at its own coordinates, tracked with it.
     if let Some(pak) = record.and_then(|r| crate::combat_sounds::projectile_launch(data, &r)) {
         commands.write_message(gd_game_core::visuals::PlaySoundOn { pak, on: area, at });
     }

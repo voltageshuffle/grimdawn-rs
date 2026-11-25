@@ -3,8 +3,7 @@
 //! The game has no devotion key binding (the input action table, GrimDawn.exe
 //! `KeyBindings::GetActionByName`, lists `SkillWindow` but no devotion window): it opens from
 //! the quest window's `devotionButton` (loader `QuestWindow::Load`, `hudDevotionWindow`) and the
-//! skills window's devotion tab (`ui/skills.rs`). Open it with
-//! `UiPanels { devotion: true, .. }`.
+//! skills window's devotion tab.
 //!
 //! Map (window render `DevotionWindow::Render`, scroll clamp `DevotionWindow::ClampScroll`,
 //! zoom `DevotionWindow::ZoomAt`, tiling `DevotionWindow::LayoutTiles`): every bitmap sits at
@@ -33,29 +32,18 @@
 //! centre line, Active texture when both ends are taken, else Inactive when the constellation is
 //! available, else Locked. The `edgeFade` vignette covers the window under the chrome. Random
 //! star glows: `pulse_stars`.
-//! PORT (performance, not an engine fact): zooming, panning and the sidebar slide do not rebuild the window (a
-//! rebuild costs 5-10 ms). The map layers (tiles, nebulae, art, links, stars, glows, pulse sprites, the `InFocus`
-//! overlay) are children of one [`DevotionMap`] container built at zoom 1 for the screen enlarged by a margin that
-//! covers the whole zoom range, the pan slack and the map bounds; the vignette, sidebar and top bar stay under the
-//! root. [`pan_map`] scales the container by the zoom about the screen centre and pans it by
-//! `built_scroll × zoom - scroll` (a render-time [`UiTransform`], as the engine's zoom); a drag moves only the
-//! container. The hit rectangles of stars and art stay in build coordinates and are tested with [`to_map`]
-//! ([`to_screen`] maps them back to the screen). The window is rebuilt (`version` bump) when the pan passes
-//! [`REBUILD_PAN`] (a new root is not drawn on its first frame, so there is slack to the margin) and on state
-//! changes — not on zoom. The sidebar content sits under one [`SidebarPanel`] container that [`sidebar_live`]
-//! moves with the slide progress. The pulses, the constellation fx and the search caret run on real time (the UI
-//! animates while the world is paused).
-//! The link texture is drawn with normal blend (the engine's "filtered" shader technique is state-for-state the
-//! `normal` one in the D3D11 profile, `basictexture.ssh`). The additive blend adds in gamma space as the engine's
-//! UNORM target does (`shown = shown_dst + tex * alpha`; the UI target holds gamma values, `additive.wesl`): against
-//! the real game at the same view (scroll 108,-187) the blurred map is within 2 % in every
-//! brightness band, the strong nebulae included (the darkest reds about 1.5 levels of 255 brighter). PORT: the
+//! The map layers are children of one [`DevotionMap`] container built at zoom 1 and transformed by [`pan_map`];
+//! star and art hit rectangles stay in build coordinates ([`to_map`] / [`to_screen`]). The window is rebuilt when
+//! the pan passes [`REBUILD_PAN`] and on state changes, not on zoom. The pulses, the constellation fx and the
+//! search caret run on real time (the UI animates while the world is paused).
+//! The link texture is drawn with normal blend (the engine's "filtered" technique is the `normal` one in the
+//! D3D11 profile). The additive blend adds in gamma space as the engine's UNORM target does. PORT: the
 //! tooltip (constellation name and description, plus the star's skill name) is a stand-in, placed centred above the
 //! cursor.
 //!
 //! Celestial powers (`DevotionStar::Render`, `DevotionWindow::OnStarClick`, `DevotionWindow::HandleStarClick`,
 //! `DevotionWindow::ShowPowerSelect`): a left click on a taken power, or taking one, opens the skill-select list
-//! centred on the star (a `SlotSelectWindow`, `ui/slot_select.rs`; what it offers: [`power_options`]; a pick sends
+//! centred on the star (a `SlotSelectWindow`; what it offers: [`power_options`]; a pick sends
 //! `BindPower`), and the star shows the bound skill's icon at 0.75 x its size centred on it. A star acts on the release
 //! (event 9) over it after a press (event 1) on it (`DevotionWindow::OnStarClick`: the press sets
 //! `DevotionStar.pressed`, the release over it with it set takes,
@@ -63,8 +51,7 @@
 //! (the engine's `DevotionStar.pressed` stays set until a release over the star), and an untaken power with no devotion
 //! point left (or a star flagged with `DevotionStar.blocked` / `DevotionStar.unavailable` set) does not open the list
 //! (the engine's falls through to the open). The bound hotbar keys over the
-//! star still bind too. `GD_DEVOTION_PICK` (hooks.rs, `auto` too) opens the list. The power classification is
-//! cached in [`DevotionView::powers`] (session state, reset on session and mod change).
+//! star still bind too.
 //!
 //! Search box (`DevotionWindow::Update` / `DevotionStar::GetSearchText` / `DevotionStar::Render`): the
 //! typed text, trimmed and lowercased, is looked for as one substring in each star's skill text ([`search_lines`]:
@@ -72,7 +59,7 @@
 //! star's Down bitmap again in red (1, 0, 0) with normal blend. Live on every key; nothing else changes (no dimming,
 //! the view does not move). The clear button shows while there is text; opening the window clears the box. Help
 //! (`helpButton`): shows tutorial page 59 (`tutorial_p60_devotion`) in the journal's Help tab; opening the window unlocks
-//! that page (its quick tip shows once). The box is an `editbox.tpl`: caret, selection and keys as the market search box (`gd_sim::edit`).
+//! that page (its quick tip shows once). The box is an `editbox.tpl`: caret, selection and keys as the market search box.
 //!
 //! Stars (click `DevotionWindow::OnStarClick`, only left button down / up reach a star,
 //! `DevotionWindow::HandleStarClick`): a left click
@@ -98,33 +85,29 @@
 //! (222,380); the master table's `infoBox` field is a leftover the binary never reads). It starts
 //! open; clicking the close handle slides it out (only the open handle stays), clicking the open
 //! handle slides it back. The reclaim mode holds it open. [`DevotionView::sidebar`] is the progress
-//! (1 open .. 0 closed); [`sidebar_live`] moves the panel container in place and flips the tab handles (no rebuild).
+//! (1 open .. 0 closed).
 //!
 //! Constellation highlight and completion flash (constellation render `DevotionConstellation::Render`,
 //! update `DevotionConstellation::Update`, window update `DevotionWindow::Update`, star click
 //! `DevotionWindow::HandleStarClick`, complete
 //! `DevotionConstellation::OnCompleted`): a partly-taken constellation's art gets a second additive pass in the shared
-//! `constellationColorPulse` colour (gold, 1500 ms, forever) — [`DevotionFx`] advances it and tints
-//! the [`ConstHighlight`] overlays; a completed one is steady Active, an untouched one steady
+//! `constellationColorPulse` colour (gold, 1500 ms, forever); a completed one is steady Active, an untouched one steady
 //! Unavailable/Available. When a star click makes a constellation newly AVAILABLE (the affinity a
 //! completion grants opens others), its art flashes white once (`constellationFlashPulse`, 350 ms
-//! in + 350 ms out, the [`ConstFlash`] overlays); completing a constellation plays
-//! `constellationCompleteSound`. [`devotion_fx`] detects both transitions against the previous
-//! taken state (only while the window is open; opening initialises the snapshot without flashing).
+//! in + 350 ms out); completing a constellation plays
+//! `constellationCompleteSound`. Only while the window is open; opening flashes nothing.
 //!
 //! First-run star pulse phase (window loader `DevotionWindow::Load`, update `DevotionWindow::Update`,
 //! Engine.dll `ColorPulse::ColorPulse`): the 15 glow slots are built pulsing with no star,
 //! and the update only advances while the window is open, so the first open runs one empty pulse
-//! (~2 × [`PULSE_TIME`]) before any star attaches; [`StarPulses::warmup`] models it.
+//! (~2 × [`PULSE_TIME`]) before any star attaches.
 //!
-//! Sounds: the enabled top-bar buttons (help, close, zoom, clear search, undo) and the mastery tabs register their
-//! `soundNameDown` (`Ui::record_button_sound`, `ui/widgets.rs`).
+//! Sounds: the enabled top-bar buttons (help, close, zoom, clear search, undo) and the mastery tabs play their
+//! `soundNameDown`.
 //!
-//! PORT: the top-bar tab segments size to their (localised) titles (`gd_ui_kit::layout::tab_strip`,
-//! contiguous, right-anchored at the stock strip's right edge so they clear the help / close
-//! buttons), the undo button auto-sizes to its label and follows the strip's left edge, and the
-//! reclaim sidebar labels truncate to their text boxes; stock fixes all three to their textures /
-//! boxes (UX over parity).
+//! PORT: the top-bar tab segments size to their (localised) titles (contiguous, right-anchored at the stock strip's
+//! right edge), the undo button auto-sizes to its label and follows the strip's left edge, and the
+//! reclaim sidebar labels truncate to their text boxes; stock fixes all three to their textures / boxes.
 use super::additive::{self, AdditiveCache, AdditiveMaterial};
 use super::contains;
 use super::hud::ColorPulse;
@@ -146,8 +129,7 @@ const ZOOM_RANGE: (f32, f32) = (0.5, 1.0);
 /// The pan (px, per axis) at which the window is rebuilt around the new scroll.
 const REBUILD_PAN: f32 = 200.0;
 
-/// The container of the map layers: built at zoom 1, scaled and panned at render time by [`pan_map`]
-/// instead of rebuilding the window while zooming or dragging.
+/// The container of the map layers: built at zoom 1, scaled and panned at render time by [`pan_map`].
 #[derive(Component)]
 pub struct DevotionMap {
     /// The scroll the layers were built at.
@@ -161,8 +143,7 @@ fn panned(hit: Option<DevHit>) -> bool {
     matches!(hit, None | Some(DevHit::Star(..)))
 }
 
-/// Scales each map container by the view's zoom about the screen centre and pans it to the scroll
-/// (the layers are built at zoom 1; [`to_map`] / [`to_screen`] convert between screen and build coordinates).
+/// Scales each map container by the view's zoom about the screen centre and pans it to the scroll.
 fn pan_map(view: Res<DevotionView>, mut maps: Query<(&DevotionMap, &mut UiTransform)>) {
     for (m, mut t) in &mut maps {
         let pan = m.built * view.zoom - view.scroll;
@@ -184,9 +165,9 @@ pub enum DevHit {
     ZoomOut,
     /// `undoButton`: revert the changes made since the window opened.
     Undo,
-    /// Sidebar / top bar: blocks panning, nothing else.
+    /// Sidebar / top bar: blocks panning.
     Panel,
-    /// The search box (click activates it) and its clear button.
+    /// The search box (click activates it).
     SearchBox,
     ClearSearch,
     /// `helpButton`: shows the devotion tutorial page.
@@ -194,13 +175,12 @@ pub enum DevHit {
     /// A row of the skill-select list (index into [`PickState::options`]) and the list's panel.
     Pick(usize),
     PickPanel,
-    /// `infoTabOpen` (true) / `infoTabClose` (false): slide the sidebar in or out. Only the visible
-    /// handle counts ([`sidebar_live`] flips them at progress 0).
+    /// `infoTabOpen` (true) / `infoTabClose` (false): slide the sidebar in or out.
     InfoTab(bool),
 }
 
-/// The open skill-select list (`devotion_skillselect`): the star it binds, the star's centre it is centred on
-/// (physical px), what it offers ([`power_options`]) and the hovered row.
+/// The open skill-select list (`devotion_skillselect`): the star it binds, the star's centre (physical px), what it
+/// offers and the hovered row.
 #[derive(Clone, Debug)]
 pub struct PickState {
     pub star: (usize, usize),
@@ -209,7 +189,7 @@ pub struct PickState {
     pub hover: Option<usize>,
 }
 
-/// A skill-select row's skill: its record and, for an item skill, which one (`gd_game::devotion::Binding::item`).
+/// A skill-select row's skill: its record and, for an item skill, which one.
 pub type PickSkill = (String, Option<gd_game_core::player::ItemSkillSource>);
 
 /// One row of the skill-select list: the skill (none: unassigned), its look and the tag after its name.
@@ -224,8 +204,7 @@ pub struct PowerPick {
 pub struct DevotionLayout {
     pub window: Option<URect>,
     pub hits: Vec<(DevHit, URect)>,
-    /// The sliding sidebar panel's width (physical px): its hit rect is stored at the open position,
-    /// [`clicks`] shifts it by the slide progress.
+    /// The sliding sidebar panel's width (physical px): its hit rect is stored at the open position.
     pub sidebar: Option<f32>,
     /// Constellation art rectangles (tooltip hover).
     pub arts: Vec<(usize, URect)>,
@@ -233,33 +212,27 @@ pub struct DevotionLayout {
     /// (image, offset and size in map px, logical px per screen px).
     pub pulse_stars: Vec<(usize, usize)>,
     pub pulse_art: Option<(Handle<Image>, Vec2, Vec2, f32)>,
-    /// Every star's `InFocus` bitmap and rectangle (map build px), and logical px per screen px:
-    /// [`focus`] puts the hovered star's on top without rebuilding the window.
+    /// Every star's `InFocus` bitmap and rectangle (map build px), and logical px per screen px.
     pub focus_art: Vec<((usize, usize), Handle<Image>, URect)>,
     pub focus_inv: f32,
-    /// `DevotionView::version` of the build that made this layout: the pulse sprites of an older build (still shown for a
-    /// frame or two until the new window root replaces the old one) keep their last place instead of being placed by
-    /// this layout.
+    /// `DevotionView::version` of the build that made this layout: an older build's pulse sprites keep their place.
     pub build: u64,
 }
 
-/// A constellation art's partly-taken highlight pass: the shared `constellationColorPulse` colour
-/// ([`devotion_fx`]) over the art's `image` (the overlay pans with the map).
+/// A constellation art's partly-taken highlight pass in the shared `constellationColorPulse` colour.
 #[derive(Component)]
 pub struct ConstHighlight {
     pub image: Handle<Image>,
 }
 
-/// A constellation art's completion-flash pass ([`devotion_fx`] shows it white while the
-/// constellation's `constellationFlashPulse` runs).
+/// A constellation art's completion-flash pass, white while `constellationFlashPulse` runs.
 #[derive(Component)]
 pub struct ConstFlash {
     pub ci: usize,
     pub image: Handle<Image>,
 }
 
-/// Whether a star's skill is a celestial power: the session cache ([`classify_powers`]), computed
-/// on a miss (the build only reads the view).
+/// Whether a star's skill is a celestial power: the session cache, computed on a miss.
 fn is_power(
     db: &gd_formats::vfs::Database,
     powers: &gd_formats::collections::HashMap<String, bool>,
@@ -271,12 +244,10 @@ fn is_power(
     })
 }
 
-/// Fills [`DevotionView::powers`] for every star skill (static game data; the rebuild reads it). The
-/// session's end resets the view (`ui::reset_session`), a mod change clears the map
-/// ([`clear_is_power_on_mod_change`]).
+/// Fills [`DevotionView::powers`] for every star skill.
 fn classify_powers(
     mut view: ResMut<DevotionView>,
-    // Option: created with the player (`gd_game::devotion::init_devotion`).
+    // Option: created with the player.
     state: Option<Res<DevotionState>>,
     data: Res<gd_game_core::data::GameData>,
 ) {
@@ -293,7 +264,7 @@ fn classify_powers(
     }
 }
 
-/// The mounted mod changed: the skill classification is its data (`model::drop_on_mod_change`).
+/// The mounted mod changed: the skill classification is its data.
 fn clear_is_power_on_mod_change(
     mut mod_changed: MessageReader<gd_render::model::ModChanged>,
     mut view: ResMut<DevotionView>,
@@ -303,8 +274,7 @@ fn clear_is_power_on_mod_change(
     }
 }
 
-/// The hovered star's `InFocus` bitmap (`DevotionStar::Render`: on top of the star, additive), moved
-/// with the pointer instead of rebuilding the window.
+/// The hovered star's `InFocus` bitmap (`DevotionStar::Render`: on top of the star, additive).
 fn focus(
     mut commands: Commands,
     view: Res<DevotionView>,
@@ -326,7 +296,6 @@ fn focus(
         .hover
         .and_then(|(c, s, _)| s.map(|s| (c, s)))
         .filter(|_| layout.window.is_some());
-    // The overlay lives under the map container (it moves with the pan): a rebuilt root takes the old one along.
     if shown.map(|(_, r, w)| (r, w)) == root.zip(want) {
         return;
     }
@@ -361,12 +330,10 @@ const PULSE_DELAY: (f32, f32) = (2000.0, 7000.0);
 const PULSE_TIME: f32 = 2000.0;
 const PULSE_A: [f32; 4] = [0.3, 0.3, 0.3, 0.1];
 const PULSE_B: [f32; 4] = [1.0, 1.0, 1.0, 0.8];
-/// The sidebar slide lasts this many ms (sidebar ctor `DevotionSidebar::DevotionSidebar`, `DevotionSidebar.slideTime` =
-/// 200).
+/// The sidebar slide in ms (`DevotionSidebar::DevotionSidebar`, `DevotionSidebar.slideTime`).
 const SIDEBAR_TIME: f32 = 200.0;
 
-/// The sliding sidebar content container: drawn at the open position, [`sidebar_live`] moves it
-/// with [`DevotionView::sidebar`] (the slide animates in place, no rebuild).
+/// The sliding sidebar content container, drawn at the open position.
 #[derive(Component)]
 struct SidebarPanel {
     /// The open position's x (physical px).
@@ -381,7 +348,6 @@ struct SidebarPanel {
 #[derive(Component)]
 struct SidebarHandle(bool);
 
-/// Moves the sidebar container with the slide progress and shows the matching tab handle.
 fn sidebar_live(
     view: Res<DevotionView>,
     mut panels: Query<(&SidebarPanel, &mut Node)>,
@@ -418,9 +384,7 @@ struct PulseSlot {
 pub struct StarPulses {
     slots: [PulseSlot; PULSE_SLOTS],
     rng: u32,
-    /// The first-run empty pulse (module doc): ms left before any star may attach. The engine's
-    /// slots are built pulsing with no star and only advance while the window is open, so the first
-    /// open runs one full pulse (~2 × PULSE_TIME) first; afterwards the slots cycle normally.
+    /// The first-run empty pulse: ms left before any star may attach.
     warmup: f32,
 }
 
@@ -495,41 +459,38 @@ impl Plugin for DevotionUiPlugin {
 
 /// The star map's view: scroll (px), zoom, and the constellation (and star)
 /// under the cursor with the cursor position the tooltip was anchored at.
-/// `version` is bumped on a change that rebuilds the window (not by a small pan, zoom or the sidebar slide).
+/// `version` is bumped on a change that rebuilds the window.
 #[derive(Resource)]
 pub struct DevotionView {
     pub scroll: Vec2,
     pub zoom: f32,
     pub hover: Option<(usize, Option<usize>, Vec2)>,
     pub version: u64,
-    /// The scroll the window was last built at (set by `ui::rebuild`).
+    /// The scroll the window was last built at.
     pub built_scroll: Vec2,
-    /// The search box's text and whether it takes the keyboard (module doc).
+    /// The search box's text and whether it takes the keyboard.
     pub search: String,
     pub typing: bool,
-    /// The search box's caret, selection and key repeat (`gd_sim::edit`).
     pub edit: gd_sim::edit::EditState,
     pub pick: Option<PickState>,
     /// A celestial power just clicked to be taken and its centre: the list opens once it is taken.
     pub pick_after: Option<((usize, usize), Vec2)>,
-    /// The sidebar slide progress: 1 open .. 0 closed (module doc, info tab). Starts open.
+    /// The sidebar slide progress: 1 open .. 0 closed.
     pub sidebar: f32,
     /// Whether the sidebar is sliding open (false: closing); equal progress means idle.
     pub sidebar_open: bool,
-    /// The highlight / flash animation and its transition snapshot (module doc).
+    /// The highlight / flash animation and its transition snapshot.
     pub fx: DevotionFx,
-    /// Whether each star skill is a celestial power ([`classify_powers`]): session state, reset with
-    /// the view and on mod change.
+    /// Whether each star skill is a celestial power: session state, reset on mod change.
     pub powers: gd_formats::collections::HashMap<String, bool>,
 }
 
-/// Screen point → map build coordinates (the container scales by zoom about the screen centre, then pans).
+/// Screen point → map build coordinates.
 fn to_map(view: &DevotionView, screen: Vec2, p: Vec2) -> Vec2 {
     let c = screen * 0.5;
     c + (p - c + view.scroll) / view.zoom - view.built_scroll
 }
 
-/// Map build coordinates → screen point.
 fn to_screen(view: &DevotionView, screen: Vec2, b: Vec2) -> Vec2 {
     let c = screen * 0.5;
     c + (b - c + view.built_scroll) * view.zoom - view.scroll
@@ -556,8 +517,7 @@ impl Default for DevotionView {
     }
 }
 
-/// The constellation highlight and completion-flash state (module doc), kept in [`DevotionView`]
-/// so it resets with the session. The pulses are loaded from the master table on first use.
+/// The constellation highlight and completion-flash state. The pulses are loaded from the master table on first use.
 #[derive(Default)]
 pub struct DevotionFx {
     /// The shared partly-taken highlight pulse (`constellationColorPulse`); None until loaded.
@@ -565,15 +525,14 @@ pub struct DevotionFx {
     /// Per-constellation flash pulse (`constellationFlashPulse`), running while `flash_on`.
     pub flash: Vec<ColorPulse>,
     pub flash_on: Vec<bool>,
-    /// The previous available / complete state, to spot the transitions a star click causes.
+    /// The previous available / complete state.
     prev_avail: Vec<bool>,
     prev_complete: Vec<bool>,
-    /// The snapshot is initialised (the first open frame does it without flashing).
+    /// The snapshot is initialised.
     ready: bool,
 }
 
-/// The constellations that just became available (the flash triggers) and just completed (the
-/// sound triggers), comparing the previous taken state to the current one
+/// The constellations that just became available and just completed
 /// (`DevotionWindow::HandleStarClick` / `DevotionConstellation::OnCompleted`).
 fn transitions(
     prev_avail: &[bool],
@@ -590,7 +549,6 @@ fn transitions(
     (flash, done)
 }
 
-/// `GD_DEVOTION_SCROLL` / `GD_DEVOTION_ZOOM` (hooks.rs): the start view.
 #[cfg(feature = "dev")]
 fn start_view(hooks: Res<gd_game_core::hooks::Hooks>, mut view: ResMut<DevotionView>) {
     if let Some(v) = hooks.ui.devotion_scroll {
@@ -605,8 +563,7 @@ fn start_view(hooks: Res<gd_game_core::hooks::Hooks>, mut view: ResMut<DevotionV
 }
 
 /// What the tooltip shows: (constellation, star, devotion version, points, screen, the reclaim mode's
-/// (aether held, money, refunds made)), and the skill book it was drawn from (compared by value, copied only when
-/// the tooltip is redrawn).
+/// (aether held, money, refunds made)).
 type TipKey = (
     usize,
     Option<usize>,
@@ -617,15 +574,14 @@ type TipKey = (
 );
 
 /// Hover tooltip of the star map: a constellation's name and description, or
-/// a star's skill text (`GameEngine::GenerateUIDevotionText`, see
-/// `gd_sim::skill_tooltip::devotion_lines`), drawn in its own overlay.
+/// a star's skill text (`GameEngine::GenerateUIDevotionText`).
 #[allow(clippy::too_many_arguments)]
 fn tooltip(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     window: Query<&Window, With<PrimaryWindow>>,
     panels: Res<super::UiPanels>,
     values: Res<HudValues>,
-    // Option: created with the player (`gd_game::devotion::init_devotion`).
+    // Option: created with the player.
     state: Option<Res<DevotionState>>,
     view: Res<DevotionView>,
     mut canvas: super::tip::TipCanvas,
@@ -643,7 +599,6 @@ fn tooltip(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let hover = view.hover;
-    // `GD_DEVOTION_HOVER` (hooks.rs) fakes a hover.
     #[cfg(feature = "dev")]
     let hover = hooks
         .ui
@@ -704,7 +659,6 @@ fn tooltip(
     let lines: Vec<TextLine> = match si.and_then(|i| c.stars.get(i)) {
         Some(star) => {
             let taken = |n: &str| values.skills.level(n) > 0;
-            // The player's affinity once for this tip (the status and the reclaim locks both read it).
             let have = state.data.affinity(&taken);
             let status = if taken(&star.skill) {
                 DevStatus::Taken
@@ -812,8 +766,7 @@ fn tooltip(
     if lines.is_empty() {
         return;
     }
-    // PORT: the real window is centred on the cursor with its bottom edge just above it,
-    // clamped to the screen.
+    // PORT: the engine's window is centred on the cursor with its bottom edge just above it.
     let gap = 10.0 * canvas.assets.scale(size);
     canvas.show(
         super::tip::TipOwner::Devotion,
@@ -833,8 +786,7 @@ fn tooltip(
 /// that no other slot holds, with a random 2000-7000 ms delay (`starPulseDelayMin/Max`);
 /// `ColorPulse::Update` blends colour A to B and back over `pulseTime` each way
 /// (`devotion_starcolorpulse.dbr`), nothing is drawn during the delay.
-/// PORT: the very first run of a slot has an extra half-cycle in the engine; every run is
-/// the same here.
+/// PORT: the engine gives a slot's very first run an extra half-cycle.
 fn pulse_stars(
     time: Res<Time<Real>>,
     layout: Res<DevotionLayout>,
@@ -849,9 +801,7 @@ fn pulse_stars(
     };
     let (off, size, inv) = (*off, *size, *inv);
     let dt = time.delta_secs() * 1000.0;
-    // The first-run empty pulse (module doc): the slots run one pulse with no star before any
-    // attaches; the sprites stay hidden meanwhile. Only advances while the window is open (the
-    // layout has no pulse art when it is closed).
+    // The first-run empty pulse: the sprites stay hidden.
     if pulses.warmup > 0.0 {
         pulses.warmup -= dt;
         for (sp, _node, mut vis, _e) in &mut sprites {
@@ -892,8 +842,7 @@ fn pulse_stars(
         pulses.slots[i] = slot;
     }
     for (sp, mut node, mut vis, e) in &mut sprites {
-        // A sprite of an older build keeps its last place and look until its window root is replaced:
-        // the layout is the new build's, and hiding it would flicker the glow for a frame.
+        // A sprite of an older build keeps its last place and look until its window root is replaced.
         if sp.1 != layout.build {
             continue;
         }
@@ -933,19 +882,17 @@ fn pulse_stars(
     }
 }
 
-/// The constellation highlight pulse, the completion flash and sound, and the sidebar slide
-/// (module doc). The pulses only advance while the window is open (the engine update
-/// early-returns while hidden); the first open frame initialises the transition snapshot without
-/// flashing (`DevotionWindow::HandleStarClick` flashes on a star click, not on open).
+/// The constellation highlight pulse, the completion flash and sound, and the sidebar slide. They only advance
+/// while the window is open; the first open frame initialises the transition snapshot without flashing.
 #[allow(clippy::too_many_arguments)]
 fn devotion_fx(
     time: Res<Time<Real>>,
     panels: Res<super::UiPanels>,
     layout: Res<DevotionLayout>,
     mut view: ResMut<DevotionView>,
-    // Option: created with the player (`gd_game::devotion::init_devotion`).
+    // Option: created with the player.
     state: Option<Res<DevotionState>>,
-    // Option: created with the player (`gd_game::reclamation::init_reclamation`).
+    // Option: created with the player.
     reclaim: Option<Res<gd_game::reclamation::SkillReclamation>>,
     loadouts: Query<Ref<gd_game_core::player::Loadout>, With<Player>>,
     data: Res<gd_game_core::data::GameData>,
@@ -959,16 +906,14 @@ fn devotion_fx(
     let dt = time.delta_secs() * 1000.0;
     let open = panels.devotion && layout.window.is_some();
     if !open {
-        // Closed: freeze the flashes and forget the snapshot so the next open never flashes stale.
+        // Closed: forget the snapshot so the next open never flashes stale.
         view.fx.ready = false;
         view.fx.flash_on.fill(false);
         return;
     }
     let reclaiming = reclaim.as_ref().is_some_and(|m| m.devotion_mode());
-    // The sidebar slide (`DevotionSidebar::Update` / `DevotionSidebar::SetOpen`): toward the target over
-    // SIDEBAR_TIME; the reclaim mode holds it open. [`sidebar_live`] moves the panel in place.
+    // `DevotionSidebar::Update` / `DevotionSidebar::SetOpen`: the reclaim mode snaps the sidebar open.
     if reclaiming {
-        // The reclaim mode holds the sidebar open (`DevotionSidebar::SetOpen` snaps it open).
         view.sidebar_open = true;
         view.sidebar = 1.0;
     }
@@ -1008,9 +953,8 @@ fn devotion_fx(
         };
         view.fx.ready = false;
     }
-    // The transitions a star click causes (`DevotionWindow::HandleStarClick` / `DevotionConstellation::OnCompleted`):
-    // newly available -> flash; newly complete -> the completion sound. The taken state is the loadout's skills
-    // over the devotion data: unchanged since the last snapshot, nothing can have moved.
+    // `DevotionWindow::HandleStarClick` / `DevotionConstellation::OnCompleted`: newly available -> flash; newly
+    // complete -> the completion sound.
     if !view.fx.ready || state.is_changed() || loadout.is_changed() {
         let taken = |s: &str| loadout.skills.level(s) > 0;
         let aff = d.affinity(&taken);
@@ -1042,7 +986,7 @@ fn devotion_fx(
         view.fx.prev_complete = complete_now;
         view.fx.ready = true;
     }
-    // The shared highlight pulse tints every partly-taken overlay (`DevotionWindow::Update`).
+    // `DevotionWindow::Update`: the shared highlight pulse tints every partly-taken overlay.
     let hl = view.fx.const_pulse.as_mut().map(|p| {
         let [r, g, b, a] = p.update(dt);
         Color::srgba(r, g, b, a)
@@ -1053,7 +997,6 @@ fn devotion_fx(
             commands.entity(e).try_insert(MaterialNode(mh));
         }
     }
-    // Advance the running flashes once, then show / hide their overlays.
     if view.fx.flash.len() == n {
         for ci in 0..n {
             if view.fx.flash_on[ci] {
@@ -1088,11 +1031,10 @@ fn clamp_scroll(screen: Vec2, zoom: f32, scroll: Vec2) -> Vec2 {
     scroll.clamp(-lim, lim)
 }
 
-/// `DevotionWindow::ZoomAt`: zoom by `delta` keeping the point under `at` fixed (render-time: no rebuild).
+/// `DevotionWindow::ZoomAt`: zoom by `delta` keeping the point under `at` fixed.
 fn zoom_by(view: &mut DevotionView, screen: Vec2, delta: f32, at: Vec2) {
     let old = view.zoom;
     let new = (old + delta).clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
-    // At the limit nothing moves.
     if new == old {
         return;
     }
@@ -1113,7 +1055,7 @@ fn rgba(r: &gd_formats::arz::Record, p: &str) -> Color {
     )
 }
 
-/// Whether the star's skill text (module doc) contains the lowercased `query`.
+/// Whether the star's search text contains the lowercased `query`.
 fn star_matches(
     ui: &Ui,
     values: &HudValues,
@@ -1142,12 +1084,9 @@ fn star_matches(
         .any(|l| l.contains(query))
 }
 
-/// A star's search text (`DevotionStar::GetSearchText`): its skill's heading
-/// (`Skill::CreateUISkillHeading`: the name, a power's with its auto-cast suffix, then the description) and the
-/// stat lines of its current level (`CreateUIParameterText`; level 1 while untaken, `CreateUINextParameterText`),
-/// markup stripped, lowercased. Not the "Bound To", rank, experience, requirement or next-level lines of the
-/// tooltip. PORT: the engine builds the lines once when the window attaches the skills (a power ranked up later
-/// keeps its old lines); here at the current rank.
+/// A star's search text (`DevotionStar::GetSearchText`): its skill's heading (`Skill::CreateUISkillHeading`) and the
+/// stat lines of its current level (`CreateUIParameterText`; level 1 while untaken), markup stripped, lowercased.
+/// PORT: the engine builds the lines once when the window attaches the skills; here at the current rank.
 fn search_lines(ctx: &gd_sim::skill_tooltip::SkillTipCtx, skill: &str, level: u32) -> Vec<String> {
     use gd_sim::skill_tooltip::{autocast_suffix, class, is_power, stat_lines};
     let Some(prof) = gd_sim::skills::profile_record(ctx.db, skill) else {
@@ -1196,16 +1135,12 @@ pub fn build(
     };
     let mf = |k: &str| m.str(k).map(str::to_owned).unwrap_or_default();
     let origin = screen * 0.5 - view.built_scroll;
-    // Zoom is render-time ([`pan_map`]): zooming out shows more build-space map. The margin covers the
-    // whole zoom range plus the pan slack, and the map bounds around the built scroll (a zoom-out after
-    // a long pan can show any of the map until the next rebuild).
+    // The margin covers the whole zoom range plus the pan slack, and the map bounds around the built scroll.
     let margin = ((screen * 0.5 + Vec2::splat(REBUILD_PAN + 100.0)) / ZOOM_RANGE.0 - screen * 0.5)
         .max(map_size(screen.x) * 0.5 - screen * 0.5 + view.built_scroll.abs());
-    // Draws a map bitmap at its record position (zoom 1); skipped off screen.
     let map_bitmap = |ui: &mut Ui, path: &str, x: f32, y: f32, color: Color| -> Option<URect> {
         let (h, size) = ui.image(path)?;
-        // Edges are rounded, not the size: neighbouring tiles share an edge (a rounded size left 1 px seams
-        // between the starfield tiles at fractional zooms).
+        // Edges are rounded, not the size: neighbouring tiles share an edge.
         let (x0, y0) = ((origin.x + x).round(), (origin.y + y).round());
         let (x1, y1) = (
             (origin.x + x + size.x as f32).round(),
@@ -1222,7 +1157,7 @@ pub fn build(
         Some(r)
     };
     ui.solid(full, Color::srgb(0.01, 0.01, 0.03));
-    // The map layers go under one container that [`pan_map`] scales and pans; the chrome below stays under the root.
+    // The map layers go under one container; the chrome below stays under the root.
     let real_root = ui.root;
     let map = ui
         .commands
@@ -1244,7 +1179,6 @@ pub fn build(
         .id();
     ui.commands.entity(real_root).add_child(map);
     ui.root = map;
-    // Starfield tiles.
     let tile = mf("bgTile");
     if let Some((_, ts)) = ui.image(&tile) {
         let ms = map_size(screen.x);
@@ -1258,8 +1192,7 @@ pub fn build(
             y += ts.y as f32;
         }
     }
-    // Additive map bitmap (`DevotionWindow::RenderMap`: nebulae, constellation art, stars and glows
-    // use the "additive" blend style).
+    // `DevotionWindow::RenderMap`: nebulae, constellation art, stars and glows are additive.
     let add_bitmap = |ui: &mut Ui, path: &str, x: f32, y: f32, color: Color| -> Option<URect> {
         let (h, size) = ui.image(path)?;
         let r = URect::new(
@@ -1277,13 +1210,11 @@ pub fn build(
         }
         Some(r)
     };
-    // `nebulaSections` is a list of bitmap records.
     for n in m.strs("nebulaSections") {
         if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(n) {
             add_bitmap(ui, &bitmap, x, y, Color::WHITE);
         }
     }
-    // Constellation art.
     for (ci, c) in d.list.iter().enumerate() {
         let Some(cr) = ui.record(&c.record) else {
             continue;
@@ -1291,10 +1222,7 @@ pub fn build(
         let complete = d.complete(ci, &taken);
         let avail = d.available(ci, &aff);
         let any = c.stars.iter().any(|s| taken(&s.skill));
-        // `DevotionConstellation::Render`: Unavailable colour, Available when the affinities are met,
-        // Active when any star is taken; a partly taken constellation gets a second pass in the
-        // shared `constellationColorPulse` colour ([`devotion_fx`]), a newly available one a white
-        // flash pass (`constellationFlashPulse`).
+        // `DevotionConstellation::Render`.
         let key = if any {
             "constellationActive"
         } else if avail {
@@ -1326,7 +1254,6 @@ pub fn build(
             }
         }
     }
-    // Links, then stars.
     let star_tex = |ui: &Ui, ci: usize, si: usize, which: &str| -> Option<String> {
         let b = ui.data.db.get(&d.list[ci].stars[si].button)?;
         b.str(which).map(str::to_owned)
@@ -1344,9 +1271,7 @@ pub fn build(
         conn("connectionInactiveTexture"),
         conn("connectionLockedTexture"),
     );
-    // `DevotionWindow::RenderMap` (links): a quad from star centre to star centre, `connectionWidth`
-    // × zoom to each side of the line; the Active texture when both ends are taken, else the
-    // Inactive one when the constellation's affinities are met, else the Locked one.
+    // `DevotionWindow::RenderMap` (links).
     let link_half = m.f32("connectionWidth").unwrap_or(7.0);
     for (ci, c) in d.list.iter().enumerate() {
         let avail = d.available(ci, &aff);
@@ -1385,14 +1310,10 @@ pub fn build(
             }
         }
     }
-    // Stars (`DevotionStar::Render`, all additive): taken = Down; else Disabled when locked
-    // (has links and none of them taken, alpha 1, or the constellation's affinities unmet,
-    // alpha 0.5), else Up; the hovered star (pointer inside its Up bitmap) gets InFocus on top.
-    // Celestial powers get the `effectBgBitmap` glow first (alpha 0.8 when the affinities are met,
-    // else 0.5; `DevotionWindow::RenderMap`).
+    // Stars (`DevotionStar::Render`, `DevotionWindow::RenderMap`).
     let glow = mf("effectBgBitmap");
     let bound_off_bmp = mf("disabledBitmap");
-    // The search query as the engine builds it (`DevotionWindow::Update`): trimmed of spaces and braces, lowercased.
+    // `DevotionWindow::Update`: trimmed of spaces and braces, lowercased.
     let query = view
         .search
         .trim_matches(|c: char| c == ' ' || c == '{' || c == '}')
@@ -1442,14 +1363,12 @@ pub fn build(
             ) {
                 layout.hits.push((DevHit::Star(ci, si), r));
             }
-            // The skill a celestial power is bound to.
             let bound = state
                 .bindings
                 .iter()
                 .find(|b| power && b.power.eq_ignore_ascii_case(&s.skill))
                 .map(|b| b.skill.as_str());
-            // A taken celestial power shows the icon of the skill it is bound to, 0.75 x its size, centred on the star
-            // (`DevotionStar::Render`).
+            // `DevotionStar::Render`: a taken power's bound skill icon, 0.75 x its size, centred on the star.
             if is_taken
                 && let Some(skill) = bound
                 && let Some(path) =
@@ -1470,9 +1389,8 @@ pub fn build(
                     Color::WHITE,
                 );
             }
-            // `DevotionWindow::RenderMap` (op 3 stars): when the bound skill exists and its level is 0, the
-            // `disabledBitmap` (32 x 32, default blend) is drawn at the star's top-left + its bitmapPosition x zoom
-            // (not size-scaled).
+            // `DevotionWindow::RenderMap` (op 3 stars): a level-0 bound skill draws `disabledBitmap` (32 x 32, default
+            // blend) at the star's top-left + its bitmapPosition x zoom (not size-scaled).
             if let Some(skill) = bound
                 && values.skills.level(skill) == 0
                 && let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&bound_off_bmp)
@@ -1490,7 +1408,7 @@ pub fn build(
                     Color::WHITE,
                 );
             }
-            // The search match: the Down bitmap again, red (`DevotionStar::Render`).
+            // The search match (`DevotionStar::Render`).
             if !query.is_empty()
                 && star_matches(ui, values, state, &s.skill, &query)
                 && let Some(tex) = star_tex(ui, ci, si, "bitmapNameDown")
@@ -1510,7 +1428,6 @@ pub fn build(
             }
         }
     }
-    // Random star glows (`starColorPulseBitmap`), driven by `pulse_stars`.
     layout.pulse_stars = pulse_stars;
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&mf("starColorPulseBitmap"))
         && let Some((h, size)) = ui.image(&bitmap)
@@ -1533,14 +1450,12 @@ pub fn build(
         }
     }
     ui.root = real_root;
-    // Vignette (`edgeFade`): stretched over the whole window, drawn over the map, under the chrome
-    // (`DevotionWindow::RenderMap`).
+    // Vignette (`edgeFade`, `DevotionWindow::RenderMap`): over the map, under the chrome.
     if let Some((h, _)) = ui.image(&mf("edgeFade")) {
         ui.quad_stretch(h, full, Color::WHITE);
     }
-    // Sidebar: affinities and points, on a panel that slides in/out (the info tab, module doc).
-    // The content is drawn at the open position under one container ([`sidebar_live`] moves it);
-    // the tab handles stay at the fixed left-edge origin.
+    // Sidebar: the content is drawn at the open position under one container; the tab handles stay at the
+    // fixed left-edge origin.
     let sc = |ui: &Ui, v: f32| ui.sc(v);
     if let Some(Widget::Bitmap { bitmap, .. }) = ui.widget(&mf("sideBar")) {
         let (w, h) = ui
@@ -1638,9 +1553,7 @@ pub fn build(
             reclaim_texts(ui, values, state, r, &m, po);
         }
         ui.root = chrome_root;
-        // The tab handles (render `DevotionSidebar::Render`): the close handle while the panel is
-        // out, the open handle while it is away; both at the fixed origin, [`sidebar_live`] flips
-        // their visibility, both slide it.
+        // The tab handles (`DevotionSidebar::Render`).
         for (key, open) in [("infoTabClose", false), ("infoTabOpen", true)] {
             if let Some(Widget::Button { up, x, y, .. }) = ui.widget(&mf(key))
                 && let Some(b) = up
@@ -1660,7 +1573,6 @@ pub fn build(
             }
         }
     }
-    // Top bar.
     let oc = Vec2::new((screen.x * 0.5).round(), 0.0);
     if let Some(Widget::Bitmap { bitmap, x, y }) = ui.widget(&mf("searchBoxBackground")) {
         ui.bitmap(&bitmap, x, y, oc);
@@ -1681,10 +1593,8 @@ pub fn build(
         Some((x, y, r))
     };
     btn(ui, "helpButton", Some(DevHit::Help), &mut layout);
-    // The search box: its typed text (the engine's box has no background of its own) and, while there is text, the
-    // clear button.
+    // The search box has no background of its own.
     if let Some(r) = ui.record(&mf("searchBox")) {
-        // The record is an `editbox.tpl`: `LocationX/Y` from the window's top centre, `Width`, `Height`, `Style`.
         let f = |k: &str| r.f32(k).unwrap_or(0.0);
         let rect = URect::new(
             oc.x + ui.sc(f("LocationX")),
@@ -1703,7 +1613,7 @@ pub fn build(
                 let pre = |ui: &mut Ui, n: usize| {
                     ui.text_width(style, &view.search.chars().take(n).collect::<String>())
                 };
-                // PORT: the selection highlight colour (as the market search box).
+                // PORT: the selection highlight colour.
                 if let Some((a, b)) = view.edit.selection().filter(|(a, b)| a < b) {
                     let (xa, xb) = (rect.x + pre(ui, a), rect.x + pre(ui, b));
                     ui.solid(
@@ -1711,7 +1621,7 @@ pub fn build(
                         Color::srgba(0.4, 0.5, 0.9, 0.5),
                     );
                 }
-                // The caret (`UIEditBox::Draw`: 1 px white, blinking: `trade::animate_search`).
+                // The caret (`UIEditBox::Draw`: 1 px white, blinking).
                 let x = rect.x + pre(ui, view.edit.caret.min(view.search.chars().count()));
                 let e = ui.solid(
                     URect::new(x, rect.y, ui.sc(1.0).max(1.0), rect.h),
@@ -1737,8 +1647,7 @@ pub fn build(
         let t = ui.fonts.tag("tagAerialMapZoomText").to_owned();
         ui.text(&tb, oc, &t);
     }
-    // Tabs: the chosen masteries and this one (`devotionbuttons_tab1/2/3button`), sized to
-    // their titles, contiguous in the records' x order and centred on the stock strip's centre.
+    // Tabs: the chosen masteries and this one (`devotionbuttons_tab1/2/3button`), in the records' x order.
     let trees = ui.data.skill_trees();
     let masteries = trees.masteries(&values.skills);
     let shown = (masteries + (masteries < 2) as usize).min(2);
@@ -1798,8 +1707,7 @@ pub fn build(
         hi = hi.max(ui.sc(x) + tw);
         placed.push((key, tab, img, r, tw, y, title));
     }
-    // Right-anchored at the stock strip's right edge (the help / close buttons sit just right of
-    // it), growing leftward with its titles; the undo button below follows the strip's left edge.
+    // Right-anchored at the stock strip's right edge, growing leftward.
     let ox = oc.x + hi - total;
     for (key, tab, img, mut r, tw, y, title) in placed {
         r.x += ox;
@@ -1815,9 +1723,7 @@ pub fn build(
         }
         super::widgets::label(ui, r, TAB_STYLE, TextAlign::Center, &title);
     }
-    // Undo: the disabled bitmap while nothing changed since the window opened
-    // (`DevotionWindow::Update`, see `gd_game::devotion::DevotionUndo`). Auto-sized to its label
-    // and anchored just left of the tab strip so the two never overlap; the label keeps the tab style.
+    // Undo: the disabled bitmap while nothing changed since the window opened (`DevotionWindow::Update`).
     if let Some(Widget::Button {
         up, disabled, y, ..
     }) = ui.widget(&mf("undoButton"))
@@ -1854,8 +1760,7 @@ pub fn build(
     ui.commands.insert_resource(layout);
 }
 
-/// The reclaim mode's sidebar lines (module doc): each label (`textTag`, its `bitmapName` centred on the text box as
-/// the skills window's, `ui::skills`) and its number.
+/// The reclaim mode's sidebar lines: each label (`textTag`, its `bitmapName` centred on the text box) and its number.
 fn reclaim_texts(
     ui: &mut Ui,
     values: &HudValues,
@@ -1902,7 +1807,7 @@ fn reclaim_texts(
                 .str("textTag")
                 .map(|t| ui.fonts.tag(t).to_string())
                 .unwrap_or_default();
-            // A long localised label is cut to its text box (the box bitmap stays centred).
+            // A long localised label is cut to its text box.
             let t = match tb.style.as_deref() {
                 Some(st) => ui.truncate_line(st, ui.sc(tb.rect.w), &t),
                 None => t,
@@ -1915,7 +1820,6 @@ fn reclaim_texts(
     }
 }
 
-/// The skill-select list for star `star` (module doc).
 fn pick_state(
     star: (usize, usize),
     at: Vec2,
@@ -1930,10 +1834,8 @@ fn pick_state(
         .find(|b| b.power.eq_ignore_ascii_case(power))
         .map(|b| (b.skill.clone(), b.item.clone()));
     use super::slot_select::PickLook;
-    // `DevotionSkillSelectWindow::Fill` / `DevotionSkillSelectWindow::Filter` / `SlotSelectWindow::AddRow`: the bound
-    // skill's row is selected (`SlotSelectRow.selected`) and reads
-    // `tagDevotionSelected`; a skill at level 0 is disabled (`SlotSelectRow.disabled`); one of a level above 0 that is
-    // bound to another power (`Skill::HasAutocastSkill`) reads `tagDevotionInUse` (`SlotSelectRow.inUse`).
+    // `DevotionSkillSelectWindow::Fill` / `SlotSelectWindow::AddRow`: the bound skill's row is selected and reads
+    // `tagDevotionSelected`; a level-0 skill is disabled; one above 0 bound to another power reads `tagDevotionInUse`.
     let options = power_options(db, power, loadout, bound.as_ref(), |n| {
         state.data.locate(n).is_some()
     })
@@ -1969,21 +1871,14 @@ fn pick_state(
     }
 }
 
-/// What a celestial power's skill-select list offers, in order (`Grim Dawn.exe`: the window's list is the
-/// `SlotSelectWindow` subclass vtable `DevotionSkillSelectWindow::vftable`: fill `DevotionSkillSelectWindow::Fill`,
-/// filter `DevotionSkillSelectWindow::Filter`): the empty pick ("unassigned"); the skill the power is bound to, if any;
-/// then the player's skills (`Character::GetSkillList`), then its item skills (`GetItemSkillList`, then
-/// `GetItemSkillCache`), each kept when it is not the bound one, not the mastery skill (`Skill_Mastery`), not one of
-/// the default skills (`SkillManager::IsDefaultSkill`), not a `Skill_Modifier`, has no `autoCastSkill` /
-/// `autoCastController` of its own (`Skill::HasAutocastInDbr`), is no item skill with an item auto-cast controller
-/// (`SkillManager::AddItemSkills` sets `Skill.itemAutoCast` for those), is an ordinary skill (operation 0: not a
-/// devotion star), its class is exactly the class of one of the power's `skillTemplates` records (`Skill::IsSkillA`
-/// against the classes `Skill::LoadResources` made from them) and its record is not in the power's `skillBlackList`; a
-/// player skill must also belong to one of the player's masteries (always so for learned ones). The power's fields come
-/// from its profile record (a wrapper's `buffSkillName`, as `templateAutoCast`). The `bool` is a skill at level 0
-/// (greyed, [`pick_state`]): a skill of the book left at no points, and every skill of the item skill cache
-/// (`gd_game_core::player::Loadout::set_items`: the items taken off this session). PORT: the item skill list's sort is not
-/// ported (item skills in equipment order).
+/// What a celestial power's skill-select list offers, in order (`DevotionSkillSelectWindow::Fill` / `::Filter`): the
+/// empty pick; the bound skill, if any; then the player's skills, then its item skills, each kept when it is not the
+/// bound one, not `Skill_Mastery`, not a default skill, not a `Skill_Modifier`, has no `autoCastSkill` /
+/// `autoCastController` of its own, is no item skill with an item auto-cast controller, is an ordinary skill
+/// (operation 0), its class is exactly one of the power's `skillTemplates` classes and it is not in the power's
+/// `skillBlackList`; a player skill must belong to one of the player's masteries. The `bool` is a skill at level 0
+/// (greyed): a book skill at no points, and every skill of the item skill cache. PORT: the item skill list's sort is
+/// not ported (item skills in equipment order).
 fn power_options(
     db: &gd_formats::vfs::Database,
     power: &str,
@@ -2004,7 +1899,7 @@ fn power_options(
     if let Some(b) = bound {
         out.push((Some(b.clone()), false));
     }
-    // Each item skill object is its own row (the engine lists `Skill` objects): worn ones, then the cache's.
+    // Each item skill object is its own row: worn ones, then the cache's.
     let item_skills = gd_game_core::player::sourced_grants(db, &loadout.items)
         .into_iter()
         .chain(
@@ -2050,8 +1945,8 @@ fn power_options(
     out
 }
 
-/// The skill-select list (`devotion_skillselect`, a `SlotSelectWindow`: [`super::slot_select`], centred on the
-/// star; the empty pick shows the pick template's `displayBitmap` and `tagDevotionUnassigned`).
+/// The skill-select list (`devotion_skillselect`, a `SlotSelectWindow`) centred on the star; the empty pick shows
+/// the pick template's `displayBitmap` and `tagDevotionUnassigned`.
 fn pick_list(ui: &mut Ui, pk: &PickState, values: &HudValues, layout: &mut DevotionLayout) {
     let Some(m) = ui.record(MASTER) else { return };
     let Some(sel) = m.str("skillSelect").and_then(|r| ui.record(r)) else {
@@ -2090,7 +1985,6 @@ fn pick_list(ui: &mut Ui, pk: &PickState, values: &HudValues, layout: &mut Devot
     }
 }
 
-/// Clicks, pan / zoom, hover and binding keys on the devotion window.
 #[allow(clippy::too_many_arguments)]
 pub fn clicks(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -2101,7 +1995,7 @@ pub fn clicks(
     mut panels: ResMut<super::UiPanels>,
     layout: Res<DevotionLayout>,
     mut capture: ResMut<UiCapture>,
-    // Option: created with the player (`gd_game::devotion::init_devotion`).
+    // Option: created with the player.
     state: Option<Res<DevotionState>>,
     mut view: ResMut<DevotionView>,
     (casters, loadouts, data, pause, journal_layout): (
@@ -2147,13 +2041,11 @@ pub fn clicks(
         return;
     };
     let screen = Vec2::new(win.physical_width() as f32, win.physical_height() as f32);
-    // `GD_DEVOTION_PICK` (hooks.rs): opens that star's skill-select list once.
     #[cfg(feature = "dev")]
     if let Some(n) = &hooks.ui.devotion_pick
         && !*hooked
         && let Ok(loadout) = loadouts.single()
         && let Some((ci, si)) = if n == "auto" {
-            // `auto`: the first taken celestial power.
             state.data.list.iter().enumerate().find_map(|(ci, c)| {
                 c.stars
                     .iter()
@@ -2173,8 +2065,7 @@ pub fn clicks(
         view.pick = Some(pick_state((ci, si), at, loadout, &state, &data.db));
         view.version += 1;
     }
-    // A celestial power clicked to be taken: its list opens once it is (`DevotionWindow::OnStarClick` sets the open
-    // flag when it takes an operation-3 skill).
+    // A celestial power clicked to be taken: its list opens once it is (`DevotionWindow::OnStarClick`).
     if let Some((star, at)) = view.pick_after
         && let Ok(loadout) = loadouts.single()
         && loadout
@@ -2186,9 +2077,8 @@ pub fn clicks(
         view.pick = Some(pick_state(star, at, loadout, &state, &data.db));
         view.version += 1;
     }
-    // No cursor, the game menu / Options over the map, or the journal (its Help button opens it on top) under the
-    // cursor: nothing here is hovered, dragged, zoomed, clicked or bound (the wheel is a per-frame accumulator, so
-    // skipping it drops it). The pick list's row hover stays as it was.
+    // No cursor, the game menu / Options over the map, or the journal under the cursor: nothing here is hovered,
+    // dragged, zoomed, clicked or bound. The pick list's row hover stays as it was.
     let p = super::cursor_px(win)
         .filter(|p| !pause.menu && !(requests.journal.open && journal_layout.covers(*p)));
     let Some(p) = p else {
@@ -2200,8 +2090,7 @@ pub fn clicks(
         return;
     };
     capture.0 = true;
-    // The map layers live in build coordinates (the container scales and pans them); the chrome is
-    // in screen px, the sidebar panel's hit rect shifted by its slide.
+    // The map layers live in build coordinates; the sidebar panel's hit rect is shifted by its slide.
     let slide = layout.sidebar.map_or(0.0, |w| (view.sidebar - 1.0) * w);
     let map_p = to_map(&view, screen, p);
     let at = |h: Option<DevHit>| match h {
@@ -2214,12 +2103,11 @@ pub fn clicks(
         .iter()
         .rev()
         .find(|(h, r)| match h {
-            // Only the visible tab handle counts ([`sidebar_live`] hides the other).
             DevHit::InfoTab(open) => *open == (view.sidebar <= 0.0) && contains(r, p),
             _ => contains(r, at(Some(*h))),
         })
         .map(|(h, _)| *h);
-    // The hovered row of the skill-select list (tinted, `slot_select`).
+    // The hovered row of the skill-select list.
     if let Some(pk) = &view.pick {
         // A disabled row is never hovered (`SlotSelectPick::HitTest`).
         let h = match top {
@@ -2243,8 +2131,7 @@ pub fn clicks(
     if buttons.just_pressed(MouseButton::Left) {
         view.pick_after = None;
     }
-    // A click outside the skill-select list closes it (Esc through the shared dispatcher,
-    // `ui::esc_dispatcher`).
+    // A click outside the skill-select list closes it.
     if view.pick.is_some()
         && buttons.just_pressed(MouseButton::Left)
         && !matches!(top, Some(DevHit::Pick(_) | DevHit::PickPanel))
@@ -2252,7 +2139,7 @@ pub fn clicks(
         view.pick = None;
         view.version += 1;
     }
-    // A click outside the search box leaves it (`EditBox` deactivation, `EditBox::Deactivate`).
+    // A click outside the search box leaves it (`EditBox::Deactivate`).
     if view.typing && buttons.just_pressed(MouseButton::Left) && top != Some(DevHit::SearchBox) {
         view.typing = false;
         view.version += 1;
@@ -2269,10 +2156,8 @@ pub fn clicks(
         _ => None,
     };
     if hover != view.hover.map(|(c, s, _)| (c, s)) {
-        // Not a rebuild: [`focus`] draws the hovered star.
         view.hover = hover.map(|(c, s)| (c, s, p));
     }
-    // Pan (left drag on the map) and wheel zoom.
     if buttons.just_pressed(MouseButton::Left) {
         *drag = matches!(top, None | Some(DevHit::Star(..))).then_some(p);
     }
@@ -2284,7 +2169,7 @@ pub fn clicks(
     {
         let zoom = view.zoom;
         view.scroll = clamp_scroll(screen, zoom, view.scroll - (p - last));
-        // A small pan only moves the container ([`pan_map`]); past `REBUILD_PAN` the layers are rebuilt around the scroll.
+        // Past `REBUILD_PAN` the layers are rebuilt around the scroll.
         let pan = view.built_scroll - view.scroll;
         if pan.x.abs().max(pan.y.abs()) > REBUILD_PAN {
             view.version += 1;
@@ -2299,7 +2184,7 @@ pub fn clicks(
         zoom_by(&mut view, screen, (notches * 0.001).clamp(-0.1, 0.1), p);
     }
     let reclaiming = requests.mode.as_ref().is_some_and(|m| m.devotion_mode());
-    // A star acts on the release over it after a press on it (module doc, `DevotionWindow::OnStarClick`).
+    // A star acts on the release over it after a press on it (`DevotionWindow::OnStarClick`).
     let star_press = *pressed;
     if buttons.just_pressed(MouseButton::Left) {
         *pressed = match top {
@@ -2349,8 +2234,7 @@ pub fn clicks(
         }
         DevHit::Panel => return,
         DevHit::InfoTab(_) => {
-            // The reclaim mode holds the sidebar open (`DevotionSidebar::SetOpen`); otherwise the
-            // handle toggles the slide ([`devotion_fx`] animates it).
+            // The reclaim mode holds the sidebar open (`DevotionSidebar::SetOpen`).
             if buttons.just_pressed(MouseButton::Left) && !reclaiming {
                 view.sidebar_open = !view.sidebar_open;
             }
@@ -2412,7 +2296,6 @@ pub fn clicks(
     if released {
         *pressed = None;
     }
-    // Binding: the bound hotbar key over a taken celestial power.
     if let Some(slot) =
         (0..10usize).find(|&i| bindings.just_pressed(super::keys::HOT_SLOT_FIRST + i as u32, &keys))
         && let Ok(caster) = casters.single()
@@ -2425,7 +2308,7 @@ pub fn clicks(
         });
         return;
     }
-    // In the reclaim mode a left click refunds the star (module doc).
+    // In the reclaim mode a left click refunds the star.
     if reclaiming {
         if released {
             requests.remove.write(gd_game::devotion::RemoveStar {
@@ -2435,9 +2318,8 @@ pub fn clicks(
         }
         return;
     }
-    // A left click on a taken celestial power opens the skill-select list, centred on the star
-    // (`DevotionWindow::OnStarClick`,
-    // `DevotionWindow::HandleStarClick`: the list's origin is the star's centre).
+    // A left click on a taken celestial power opens the skill-select list centred on the star
+    // (`DevotionWindow::HandleStarClick`).
     let centre = star_centre(&layout, (c, s), &view, screen).unwrap_or(p);
     if released
         && let Ok(loadout) = loadouts.single()
@@ -2459,7 +2341,7 @@ pub fn clicks(
     }
 }
 
-/// The centre of star `star` on screen (its hit rectangle is the Up bitmap in map build coordinates).
+/// The centre of star `star` on screen.
 fn star_centre(
     layout: &DevotionLayout,
     star: (usize, usize),
@@ -2473,7 +2355,6 @@ fn star_centre(
         .map(|(_, r)| to_screen(view, screen, Vec2::new(r.x + r.w * 0.5, r.y + r.h * 0.5)))
 }
 
-/// The devotion window's requests.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct DevotionRequests<'w> {
     take: MessageWriter<'w, gd_game::devotion::TakeStar>,
@@ -2481,7 +2362,7 @@ pub struct DevotionRequests<'w> {
     bind: MessageWriter<'w, gd_game::devotion::BindPower>,
     /// The mode's tab switch (`gd_game::reclamation`).
     reclaim: MessageWriter<'w, gd_game::reclamation::ReclaimRequest>,
-    /// Option: created with the player (`gd_game::reclamation::init_reclamation`).
+    /// Option: created with the player.
     mode: Option<Res<'w, gd_game::reclamation::SkillReclamation>>,
     undo: MessageWriter<'w, gd_game::devotion::UndoDevotion>,
     commit: MessageWriter<'w, gd_game::devotion::CommitDevotionUndo>,
@@ -2494,13 +2375,10 @@ const HELP_PAGE: &str = "records/ui/tutorial/openwindow_devotion/tutorial_p60_de
 /// Its index: unlocked when the window opens (`DevotionWindow::SetVisible`).
 const HELP_INDEX: u32 = 59;
 
-/// The keyboard goes to the search box while it is active: `gd_sim::edit` (caret, selection, repeat;
-/// `EditBox::HandleKey`, as the market search box in `trade.rs`) edits the text, Enter leaves the box (and only
-/// that: the window stays; Esc leaves it through the shared dispatcher, `ui::esc_dispatcher`); the window
-/// opening clears the text and its closing deactivates the box (`DevotionWindow::SetVisible`; here both on close).
-/// It runs in `PreUpdate` ahead of every hotkey
-/// reader and resets the `ButtonInput` (Escape stays for the dispatcher), so the game's keys see nothing of what
-/// is typed (the leaving Enter included). PORT: the clipboard is the process's own (`trade::Clipboard`).
+/// The keyboard goes to the search box while it is active (`EditBox::HandleKey`): Enter leaves the box; the window
+/// closing clears the text and deactivates the box. Runs in `PreUpdate` ahead of every hotkey reader and resets the
+/// `ButtonInput` (Escape stays for the dispatcher). PORT: the clipboard is the process's own; the engine clears the
+/// text on open (`DevotionWindow::SetVisible`).
 #[allow(clippy::too_many_arguments)]
 fn search_typing(
     mut view: ResMut<DevotionView>,
@@ -2516,8 +2394,7 @@ fn search_typing(
 ) {
     use bevy::input::keyboard::{Key, KeyCode as K, KeyboardInput};
     use gd_sim::edit::EditKey;
-    // The held modifiers follow every key message, read or not by the box (a release while the box is inactive
-    // must not leave Shift / Ctrl stuck).
+    // The held modifiers follow every key message, read or not by the box, so a release never leaves them stuck.
     let track = |mods: &mut (bool, bool), e: &KeyboardInput| match e.key_code {
         K::ShiftLeft | K::ShiftRight => mods.0 = e.state.is_pressed(),
         K::ControlLeft | K::ControlRight => mods.1 = e.state.is_pressed(),
@@ -2580,7 +2457,6 @@ fn search_typing(
                 typing = false;
                 continue;
             }
-            // Esc leaves the box through the shared dispatcher (`ui::esc_dispatcher`).
             _ => match super::widgets::edit_key(&e.logical_key, e.key_code, ctrl) {
                 Some(k) => k,
                 None => continue,
@@ -2602,6 +2478,5 @@ fn search_typing(
     } else {
         view.edit = edit;
     }
-    // The game's keys see nothing while the box has the keyboard (Escape stays for the dispatcher).
     super::keys::reset_but_escape(&mut keys);
 }

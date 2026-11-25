@@ -1,7 +1,5 @@
-//! The story runtime's data: the effect messages gameplay consumes, the
-//! story actor components, the runtime resource (quests, conversations, Lua
-//! scripts) and the pure story reads. `gd-game` adds the systems
-//! (`gd_game::story`).
+//! The story runtime's data: effect messages, story actor components, the
+//! runtime resource and pure story reads. The systems are `gd_game::story`.
 use crate::data::GameData;
 use crate::story_env::DataEnv;
 use bevy::prelude::*;
@@ -10,18 +8,14 @@ use gd_story::story::{Effect, Story};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// A story effect for other plugins (progress: [`crate::progress`]; items:
-/// `gd_game::loot::story_rewards`).
 #[derive(Message, Clone, Debug)]
 pub struct StoryEffect(pub Effect);
 
-/// A notice for the player (a text tag or text): the one way into the HUD's notification queue
-/// (`gd_game::notify::queue_notices` reads it after the frame's writers).
+/// A notice for the player (a text tag or text): the one way into the HUD's notification queue.
 #[derive(Message, Clone, Debug)]
 pub struct Notify(pub String);
 
-/// `Engine::ShowCinematicText(headline, subline, type, colour, pushFront)` (`Engine.dll`): the
-/// announcement the UI shows at the top of the screen (`ui/cinematic.rs`). Types (the callers):
+/// `Engine::ShowCinematicText(headline, subline, type, colour, pushFront)`. Types:
 /// 1 achievement, 2 new mutators / formula learned, 3 reputation, 4 devotion, 5 level up / hero killed / lore bonus,
 /// 6 quest update, 7 difficulty unlocked, 8 transmute, 9 Crucible / Shattered Realm bonus and script texts,
 /// 10 super boss / nemesis spawned (pushed to the front).
@@ -36,7 +30,6 @@ pub struct CinematicText {
 }
 
 impl CinematicText {
-    /// A headline alone (no subline), not pushed to the front.
     pub fn plain(head: String, kind: u32) -> Self {
         Self {
             head,
@@ -48,28 +41,23 @@ impl CinematicText {
     }
 }
 
-/// The main player casts a skill record at once on himself (`ActivateSkillConfigCmd` with the player as caster and
-/// target: the Shattered Realm's buff shrines, `gd_game::endless::use_shrine`), the way `gd_game::story::cast_story_skills`
-/// casts a `CastSkill` from its NPC.
+/// The main player casts a skill record at once on himself (`ActivateSkillConfigCmd`: the Shattered
+/// Realm's buff shrines).
 #[derive(Message, Clone, Debug)]
 pub struct PlayerSkillCast(pub String);
 
-/// A monster spawned by a script-placed proxy (despawned with the proxy). One whose record has hooks is a story
-/// object too ([`StoryActor`], `gd_game::story_world::hooked_characters`), armed by its proxy's spawn.
+/// A monster spawned by a script-placed proxy (despawned with the proxy). One whose record has hooks is a
+/// [`StoryActor`] too, armed by its proxy's spawn.
 #[derive(Component)]
 pub struct StoryProxyChild(pub u32);
 
 /// The creature of a story object (NPC or scripted monster), by its id.
-/// The game spawns it as the object streams in; `gd_game::story::arm_story_characters`
-/// makes hostile ones fight.
 #[derive(Component)]
 pub struct StoryActor(pub u32);
 
-/// The player's story id.
 pub const PLAYER_ID: u32 = 0x3fff_ffff;
 
-/// The story runtime (quests, conversations, Lua scripts); `!Send` (Lua VM),
-/// so a non-send resource. `notices`: the HUD's notification queue ([`crate::notify`]).
+/// `!Send` (Lua VM), so a non-send resource.
 pub struct StoryRuntime {
     pub story: Rc<RefCell<Story>>,
     pub env: Rc<DataEnv>,
@@ -78,9 +66,8 @@ pub struct StoryRuntime {
 }
 
 impl StoryRuntime {
-    /// Queues a HUD notification (`GameEngine::AddUINotification`): a text tag (localised) or plain text. It empties
-    /// the queue first, as every reversed error sender does (`crate::notify` module doc). Systems do not call
-    /// it: they write a [`Notify`], which `gd_game::notify::queue_notices` passes here.
+    /// `GameEngine::AddUINotification`: a text tag (localised) or plain text; empties the queue first.
+    /// Systems write a [`Notify`] instead.
     pub fn notify(&mut self, tag: &str) {
         let text = self.env.localize(tag).unwrap_or_else(|| tag.to_owned());
         self.notices
@@ -88,12 +75,11 @@ impl StoryRuntime {
     }
 }
 
-/// The story was set up (once the session's character is known).
+/// Once the session's character is known.
 #[derive(Resource)]
 pub struct StorySetUp;
 
-/// A story NPC's own `Skill_AttackRadius` cast in progress (`gd_game::story::cast_story_skills`): fired by
-/// `gd_game::story::fire_npc_casts`.
+/// A story NPC's own `Skill_AttackRadius` cast in progress.
 #[derive(Component, Clone, Debug)]
 pub struct NpcCast {
     pub skill: String,
@@ -112,10 +98,9 @@ impl NpcCast {
     }
 }
 
-/// The level of `skill` in a character record's skill list (`SkillManager::LoadSkills`:
-/// `skillName{n}` / `skillLevel{n}`, 17 slots for an `Npc` (`Npc::Load`), 34 for the other classes (`Monster::Load`),
-/// stopping at the first empty name; a slot with no level is not loaded). None: the character lacks the skill
-/// (`FindSkillId` fails). PORT: the level is the slot's number (an equation, which no stock NPC holds, counts as 1).
+/// The level of `skill` in a character record's skill list (`SkillManager::LoadSkills`: 17 slots for an `Npc`,
+/// 34 otherwise, stopping at the first empty name). None: the character lacks the skill. PORT: the level is the
+/// slot's number (an equation, which no stock NPC holds, counts as 1).
 pub fn owner_skill_level(data: &GameData, record: &str, skill: &str) -> Option<u32> {
     let rec = data.db.get(record)?;
     let slots = if rec.class == "Npc" { 17 } else { 34 };
@@ -132,8 +117,8 @@ pub fn owner_skill_level(data: &GameData, record: &str, skill: &str) -> Option<u
         })
 }
 
-/// The story's per-frame stages: `Sync` (the inventory's items into the scripts' state), `Tick` (the scripts run), `Arm` (the story
-/// characters get their fighting state). Other systems order against the stage, not the function.
+/// `Sync` (the inventory's items into the scripts' state), `Tick` (the scripts run), `Arm` (the story
+/// characters get their fighting state).
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StoryStage {
     Sync,
@@ -141,9 +126,8 @@ pub enum StoryStage {
     Arm,
 }
 
-/// An objective's shown text: its plain text (`{^n}` / `^n` become line breaks) with the first condition's
-/// count (`Story::objective_progress`) through that condition's tag (`tagConditionHasKilled` /
-/// `tagConditionHasItem`: "{%t0} ({%d1}/{%d2})"). The quest window's objective lines read the same.
+/// An objective's shown text (`{^n}` / `^n` become line breaks) with the first condition's count through that
+/// condition's tag (`tagConditionHasKilled` / `tagConditionHasItem`: "{%t0} ({%d1}/{%d2})").
 pub fn objective_text(
     tags: Option<&gd_formats::text::TagTable>,
     story: &Story,

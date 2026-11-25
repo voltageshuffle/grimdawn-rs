@@ -7,12 +7,9 @@
 //! glyph quad as the engine's vertex colours do). FNTD fonts carry a TrueType
 //! file which is handed to Bevy as a regular [`Font`].
 //!
-//! PORT: fonts follow the localisation language — `Fonts.arc` ships `fonts/<code>/` with the same
-//! base names as the root (English) files (ru/ a Cyrillic FNTX atlas; ja/ko/zh/vi/ FNTD TrueType,
-//! drawn as Bevy text); [`FontCache::font`] tries the language's file first and falls back to the
-//! root. CJK text (ja/ko/zh) wraps between characters, not only spaces ([`wrap_by`]; the engine's
-//! per-language word mode, `LocalizationManager`); the codepoints decide, so Latin / Cyrillic keep
-//! the space-only wrap.
+//! PORT: fonts follow the localisation language: [`FontCache::font`] tries `fonts/<code>/` first
+//! and falls back to the root (English) files. CJK text (ja/ko/zh) also wraps between characters
+//! ([`wrap_by`]; the engine's per-language word mode, `LocalizationManager`).
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -29,9 +26,8 @@ pub enum LoadedFont {
     Dynamic(Handle<Font>, Option<Arc<owned_ttf_parser::OwnedFace>>),
 }
 
-/// A rasterised text block cached as an uploaded GPU image ([`FontCache::rasterize_cached`]):
-/// the same string reuses its image instead of rasterising and uploading again. `image`
-/// covers `[offset, offset + size)` relative to the layout origin.
+/// A rasterised text block cached as an uploaded GPU image ([`FontCache::rasterize_cached`]).
+/// `image` covers `[offset, offset + size)` relative to the layout origin.
 #[derive(Clone)]
 pub struct CachedText {
     pub image: Handle<Image>,
@@ -40,8 +36,7 @@ pub struct CachedText {
     pub layout: TextLayout,
 }
 
-/// The raster cache key: the font, pixel size, style flags, both glyph colours and the
-/// string (colours by bit pattern so equal colours hash equal).
+/// The raster cache key (colours by bit pattern so equal colours hash equal).
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct RasterKey {
     font: String,
@@ -52,44 +47,37 @@ struct RasterKey {
     text: String,
 }
 
-/// An LRU of rasterised texts. The cap bounds the live textures: an evicted entry drops
-/// its handle and Bevy frees the image once no node references it any more.
+/// An LRU of rasterised texts; an evicted entry drops its handle and Bevy frees the image.
 #[derive(Default)]
 struct RasterCache {
     entries: HashMap<RasterKey, (CachedText, u64)>,
     tick: u64,
 }
 
-/// The raster cache's entry cap. Holds the HUD's repeating numbers and a few item tooltips'
-/// lines (each box rasterises one image per line, `tooltip.rs`) without evicting either.
 const RASTER_CAP: usize = 1024;
 
 /// Text class → (font style record, indent) from `gameengine.dbr` (`GameEngine::GetGameTextStyleName` /
-/// `GetGameTextStyleIndent`: the class's key of `gd_sim::items::tooltip::CLASS_KEYS` and its `{key}Indent`), read on a
-/// class's first use. One cache for the item tooltip (`tooltip.rs`) and the skill-style tooltip (`tip.rs`).
+/// `GetGameTextStyleIndent`: the class's key of `gd_sim::items::tooltip::CLASS_KEYS` and its `{key}Indent`).
 #[derive(Default)]
 struct ClassStyles(HashMap<u8, (Option<Arc<str>>, f32)>);
 
-/// Fonts, font styles, text-class styles and localisation tags, loaded on demand. The fonts and
-/// tags follow the mounted data's mod and language ([`Self::load_tags`]); [`Self::generation`]
-/// counts the reloads so the UI rebuild signatures can follow a language swap.
+/// Fonts, font styles, text-class styles and localisation tags, loaded on demand for the mounted
+/// data's mod and language.
 #[derive(Resource, Default)]
 pub struct FontCache {
     fonts: HashMap<String, Option<Arc<LoadedFont>>>,
     styles: HashMap<String, Option<FontStyle>>,
     classes: ClassStyles,
     pub tags: Arc<TagTable>,
-    /// The language the fonts and tags were loaded for (its archive code; "" before the first load).
+    /// The language's archive code ("" before the first load).
     language: String,
-    /// Bumped on every [`Self::load_tags`] (mod or language change): the UI groups' rebuild
-    /// signatures carry it, so a swap rebuilds every group's tag-resolved labels.
+    /// Bumped on every [`Self::load_tags`]; the UI rebuild signatures carry it.
     pub generation: u64,
     raster: RasterCache,
 }
 
 impl FontCache {
-    /// Takes the mounted data's tags and language and drops the fonts and styles loaded from other
-    /// data (a mod can override font files and style records; a language swaps both tags and fonts).
+    /// Takes the mounted data's tags and language and drops the fonts and styles loaded from other data.
     pub fn load_tags(&mut self, data: &GameData) {
         self.fonts.clear();
         self.styles.clear();
@@ -120,9 +108,7 @@ impl FontCache {
             .clone()
     }
 
-    /// [`rasterize`] through the LRU: the same (font, size, flags, colours, string) reuses
-    /// its uploaded image instead of rasterising and uploading a new one (the orb numbers,
-    /// cooldown seconds and floating numbers change often but repeat their strings).
+    /// [`rasterize`] through the LRU.
     pub fn rasterize_cached(
         &mut self,
         images: &mut Assets<Image>,
@@ -172,8 +158,7 @@ impl FontCache {
     }
 
     pub fn style(&mut self, data: &GameData, path: &str) -> Option<FontStyle> {
-        // Keyed by the lowercased path; an already-lowercase path (the usual record path) looks up without
-        // allocating.
+        // Keyed by the lowercased path.
         let key = if path.bytes().any(|b| b.is_ascii_uppercase()) {
             std::borrow::Cow::Owned(path.to_ascii_lowercase())
         } else {
@@ -187,7 +172,7 @@ impl FontCache {
         s
     }
 
-    /// The width of `text` in the style at UI scale `s` (the bitmap font's layout; a rough estimate while the font is not loaded).
+    /// The width of `text` in the style at UI scale `s` (a rough estimate while the font is not loaded).
     pub fn text_width(
         &mut self,
         data: &GameData,
@@ -229,8 +214,7 @@ impl FontCache {
         if let Some(f) = self.fonts.get(key.as_ref()) {
             return f.clone();
         }
-        // The language's own font file first (`fonts/<code>/<basename>`), the root (English)
-        // file when it has none; English reads the root directly.
+        // The language's own font file first (`fonts/<code>/<basename>`), else the root (English) file.
         let bytes = if let Some(base) = key
             .strip_prefix("fonts/")
             .and_then(|p| p.rsplit('/').next())
@@ -267,10 +251,7 @@ impl FontCache {
     }
 }
 
-/// Width (px) of one line of `text` in a TrueType face at pixel size `size`: the sum of the
-/// glyphs' horizontal advances scaled by `size / units_per_em`, markup stripped. CJK ideographs
-/// are full-width in the font's own metrics, so this measures what Bevy shapes (the old
-/// `chars * size * 0.5` estimate halved them and made CJK labels overlap their controls).
+/// Width (px) of one line of `text` in a TrueType face at pixel size `size`, markup stripped.
 pub(crate) fn dynamic_width(face: &owned_ttf_parser::OwnedFace, size: f32, text: &str) -> f32 {
     let face = face.as_face_ref();
     let upm = face.units_per_em() as f32;
@@ -288,7 +269,7 @@ pub(crate) fn dynamic_width(face: &owned_ttf_parser::OwnedFace, size: f32, text:
     units as f32 * size / upm
 }
 
-/// Line height (px) of a TrueType face at pixel size `size` (ascent + descent scaled to the em).
+/// Line height (px) of a TrueType face at pixel size `size`.
 pub(crate) fn dynamic_line_height(face: &owned_ttf_parser::OwnedFace, size: f32) -> f32 {
     let face = face.as_face_ref();
     let upm = face.units_per_em() as f32;
@@ -298,8 +279,7 @@ pub(crate) fn dynamic_line_height(face: &owned_ttf_parser::OwnedFace, size: f32)
     ((face.ascender() - face.descender()) as f32 * size / upm).round()
 }
 
-/// A rasterised text block: `image` covers `[offset, offset + size)` relative
-/// to the layout origin.
+/// `image` covers `[offset, offset + size)` relative to the layout origin.
 pub struct TextImage {
     pub image: Image,
     pub offset: Vec2,
@@ -401,8 +381,7 @@ pub fn rasterize(
         },
         TextureDimension::D2,
         bytes,
-        // Engine colours are gamma-space values: store them as sRGB so the
-        // UI pass writes them back unchanged.
+        // Engine colours are gamma-space values: stored as sRGB so the UI pass writes them back unchanged.
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
@@ -440,11 +419,9 @@ pub fn bitmap_width(font: &gd_formats::fnt::BitmapFont, size: u32, flags: u32, t
     layout_text(font, size, flags, text, ([1.0; 3], [1.0; 3])).width as f32
 }
 
-/// Greedy word wrap of a markup string to `max` px wide by `measure` (the one wrap routine): words split
-/// on spaces, the active colour code carried to each continuation line. PORT: CJK text also breaks
-/// between CJK characters (ideographs, kana, hangul, CJK punctuation — the engine's per-language
-/// character word mode for ja/ko/zh, `LocalizationManager`); the codepoints decide, so Latin /
-/// Cyrillic text keeps the space-only wrap. Markup escapes (`^X`, `&b`, `^^`, `&&`) never split.
+/// Greedy word wrap of a markup string to `max` px wide by `measure`: words split on spaces, the
+/// active colour code carried to each continuation line; CJK text also breaks between CJK
+/// characters (PORT, see module doc). Markup escapes (`^X`, `&b`, `^^`, `&&`) never split.
 pub fn wrap_by(text: &str, max: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -474,8 +451,7 @@ pub fn wrap_by(text: &str, max: f32, measure: impl Fn(&str) -> f32) -> Vec<Strin
 }
 
 /// The wrap units of `text`: its space-separated words, CJK runs further split at every CJK
-/// character ([`CjkUnits`]); the flag says a space precedes the unit (the join of the original
-/// word wrap). An empty word (a double space) stays one empty unit.
+/// character ([`CjkUnits`]); the flag says a space precedes the unit.
 fn wrap_units(text: &str) -> impl Iterator<Item = (&str, bool)> {
     text.split(' ')
         .flat_map(|word| {
@@ -502,9 +478,8 @@ fn cjk_break(c: char) -> bool {
     )
 }
 
-/// The markup atom at byte `i` of `word`: its end byte and whether it is a single CJK character
-/// (a break opportunity on either side). A `^X` colour code or `&b/&i/&s/&&` style escape is one
-/// non-CJK atom, so a wrap never splits it.
+/// The markup atom at byte `i` of `word`: its end byte and whether it is a single CJK character.
+/// A `^X` colour code or `&b/&i/&s/&&` style escape is one non-CJK atom.
 fn wrap_atom(word: &str, i: usize) -> (usize, bool) {
     let mut it = word[i..].chars();
     let c = it.next().unwrap();
@@ -533,7 +508,6 @@ impl<'a> Iterator for CjkUnits<'a> {
         }
         let start = self.pos;
         if start == self.word.len() {
-            // The empty word of a double space keeps its place (one empty unit).
             self.done = true;
             return Some(&self.word[start..]);
         }

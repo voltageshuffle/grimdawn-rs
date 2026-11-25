@@ -3,18 +3,9 @@
 //! Structure (Game.dll): `Player::WriteNewFormatHeader`,
 //! `Player::ReadNewFormatHeader`, `Player::SaveNewFormatData`,
 //! `Player::LoadNewFormatData` and the per-component
-//! `WriteProperties` functions; offsets/types/order are
-//! from the writer. Field names come from tying each written member to
-//! the game code that names it: block 1 by the `Player`/`Character` accessors
-//! of each member (`IsInMainQuest`, `GetHasBeenInGame`,
-//! `GetGreatestDifficultyCompleted`, `GetCurrentMoney`,
-//! `GetGreatestSurvivalDifficultyCompleted`, `GetCurrentTribute`,
-//! `GetCurrentCompassState`, `GetSkillWindowShowHelp`, `GetAlternateConfig`,
-//! `GetAlternateConfigEnabled`, `GetPlayerTexture`); block 2 by
-//! `CharacterBio::WriteProperties` (attribute ids 1..5); block 16 by the
-//! `PlayStats` accessors (see `PlayStats`); the remaining blocks by the
-//! component writers named on each struct. Members no game code reads back
-//! keep neutral names and say so.
+//! `WriteProperties` functions; offsets/types/order are from the writer. Field names follow
+//! the game code that reads each member (named on each struct); members no game code reads
+//! back keep neutral names and say so.
 //!
 //! Only the current layout (header v2, data v8, block versions as written by the
 //! current game) is decoded; older versions are rejected with an error.
@@ -379,7 +370,7 @@ pub struct PlayStats {
     pub survival_greatest_score: u32,
     pub survival_defenses_built: u32,
     pub survival_powerups_activated: u32,
-    /// `PlayStats::SetSkillStat` map: record → highest value set (seen:
+    /// `PlayStats::SetSkillStat` map: record → highest value set (e.g.
     /// Shattered Realm shrine buff records).
     pub skill_stats: Vec<(String, u32)>,
     pub endless_souls: u32,

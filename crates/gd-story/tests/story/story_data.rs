@@ -19,9 +19,7 @@ const T_CAVE: u32 = 0x92a0_c700;
 const T_REANIMATOR: u32 = 0xa497_f000;
 const T_RETURN: u32 = 0x3f73_dec0;
 
-/// The install's story data as the script host sees it. Mirrors gd-game's
-/// `DataEnv` (which lives above this crate): the loaders are gd-story's, and
-/// the item footprint resolves through gd-sim's item rules (a dev-dependency).
+/// The install's story data as the script host sees it (mirrors gd-game's `DataEnv`).
 struct Env {
     vfs: Arc<Vfs>,
     db: Arc<Database>,
@@ -87,7 +85,7 @@ impl ScriptEnv for Env {
     }
 }
 
-/// The install's story data (archives and database opened once per binary).
+/// The install's story data.
 fn env() -> Option<Env> {
     Some(Env {
         vfs: gd_sim::testdata::vfs()?,

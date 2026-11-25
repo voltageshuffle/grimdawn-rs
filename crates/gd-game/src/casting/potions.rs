@@ -1,9 +1,7 @@
 use super::*;
 
-/// `Character::TakeBonus` of a `OneShot_*` item's bonus fields (same path as
-/// the charge potion's own fields, see the module docs): `life_pts` + `life_pct` % of max
-/// life and `mana_pct` % of max energy at once, `life_slow` % of max life
-/// into the restore pool.
+/// `Character::TakeBonus` of a `OneShot_*` item's bonus fields: `life_pts` + `life_pct` % of max life and
+/// `mana_pct` % of max energy at once, `life_slow` % of max life into the restore pool.
 pub fn take_bonus(
     data: &GameData,
     commands: &mut Commands,
@@ -51,8 +49,6 @@ pub fn potions(
     mut commands: Commands,
     mut activations: MessageWriter<crate::secondary::Activate>,
     #[cfg(feature = "dev")] time: Res<Time>,
-    // The `GD_POTION` schedule left to run and the session's play time it is measured on: session state,
-    // restarted with each session.
     #[cfg(feature = "dev")] mut scripted: Local<Option<(f32, Vec<(f32, bool)>)>>,
     #[cfg(feature = "dev")] mut fresh: gd_game_core::session::NewSession,
 ) {
@@ -102,8 +98,7 @@ pub fn potions(
             "potion cooling down ({:.1} s)",
             caster.cooldowns.get(skill).copied().unwrap_or(0.0)
         );
-        // `HotSlotOptionPotion::Activate`: an undrinkable potion says so while its bar is not full
-        // (energy: max − reserved; `error_vox`).
+        // `HotSlotOptionPotion::Activate`: an undrinkable potion says so while its bar is not full.
         let sheet = &cb.profile.sheet;
         let (id, short) = if skill == HEALTH_POTION {
             ("1", cb.life.max(0.0) < sheet.life)
@@ -122,8 +117,8 @@ pub fn potions(
     let sheet = &cb.profile.sheet;
     let (life_max, energy_max, energy_cap) = (sheet.life, sheet.energy, sheet.usable_energy());
     let h = 1.0 + sheet.heal_increase * 0.01;
-    // The potion's own fields (none with transfusion; infusion moves the
-    // instant parts into the pool), then each modifier's × potency.
+    // The potion's own fields (none with transfusion; infusion moves the instant parts into the pool), then each
+    // modifier's × potency.
     let infusion = total("potionInfusion");
     let own = |k: &str| {
         if total("potionTransfusion") > 0.0 {
@@ -178,8 +173,7 @@ pub fn potions(
     }
     let absorb = total("absorbShieldPercentHealth") * 0.01 * life_max * potency;
     if absorb > 0.0 {
-        // The default potions list no qualifying types: every type
-        // (`Skill_ChargePotion::ModifyDamage`).
+        // No qualifying types: every type (`Skill_ChargePotion::ModifyDamage`).
         let shield = Shield {
             skill: skill.to_owned(),
             absorb: gd_sim::combat::Absorb {
@@ -247,7 +241,6 @@ pub(super) fn potion_over_time(
     }
 }
 
-/// `GD_FX_TEST` (hooks.rs).
 #[cfg(feature = "dev")]
 pub(super) fn fx_test(
     hooks: Res<gd_game_core::hooks::Hooks>,

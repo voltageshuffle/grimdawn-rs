@@ -1,41 +1,31 @@
-//! The Quest Complete / Quest Progress window's content (`hudQuestRewardWindow`, `UIQuestRewardWindow`; the window is
-//! `gd_ui::questpopup`).
+//! The Quest Complete / Quest Progress window's content (`QuestRewardWindow`; drawn by `gd_ui::questpopup`).
 //!
 //! Rules:
-//! - trigger (Game.dll): `Quest2Task::Start` of an available task whose start events have reward actions and
-//!   `Quest2Task::Complete(true)` of a task whose reward events have them queue the task; `Quest2::Update`
-//!   sends GameEvent 43 with the queued tasks, which the window's handler (`Grim Dawn.exe`
-//!   `QuestRewardWindow::HandleGameEvent`) turns into rewards: for a task not complete its incentive events that
-//!   hold, for a complete one its objectives that hold and its reward events that hold; their actions filtered by
-//!   `QuestRewardWindow::IsShownReward` (`ScriptableAction::IsReward`: GiveMoney 4 with an amount above 0,
-//!   GiveFaction 5, GiveItem 6 / GiveRandomItem 20 with a count above 0, GiveLevel 7, GiveExperience 8,
-//!   GiveSkillPoint 15 / GiveAttribPoint 18 with an amount, GiveDevotion 25, GiveTribute 26);
+//! - trigger: `Quest2Task::Start` of an available task whose start events have reward actions and
+//!   `Quest2Task::Complete(true)` of a task whose reward events have them queue the task; `Quest2::Update` sends
+//!   GameEvent 43, which `QuestRewardWindow::HandleGameEvent` turns into rewards: for a task not complete its
+//!   incentive events that hold, for a complete one its objectives and reward events that hold; their actions
+//!   filtered by `QuestRewardWindow::IsShownReward` (`ScriptableAction::IsReward`).
 //! - the rebuild (`QuestRewardWindow::Rebuild`) sums money, levels, skill points, attribute points and devotion into
 //!   one icon each, gathers the faction changes into one, makes an item icon per given item, sums the experience
-//!   into the XP line, and skips the skill / attribute points while the difficulty (Normal or Elite) was skipped
-//!   with an unlock item (`PlayStats::GetDifficultySkip`); tribute has no icon. Icon order: money, faction, level,
-//!   skill points, attribute points, devotion, then the items; at most 6 are shown (`QuestRewardWindow.icons`, the
-//!   rest logged and hidden). Nothing to show (no XP, no icon): no window. The title is `tagQuestRewardWindowTitle`
-//!   when the quest is complete (`Quest2::IsComplete(true)`), else `tagQuestRewardWindowInterim`.
-//! - the items' roll (Game.dll): `Quest2Event::Execute` calls every action's `OnActivate`, then
-//!   `Execute`, then `OnDeactivate`; the window event is queued afterwards and dispatched by the next
-//!   `Quest2::Update`, so the rebuild sees finished rolls. `ScriptableAction_GiveRandomItem::OnActivate`
-//!   (shared with `GiveItem`) seeds the action's own Park–Miller RNG (`ScriptableAction_GiveRandomItem.rng`) with one
-//!   `RandomUniformLocked::GenerateSeed` draw and rolls `count` items (`GenerateItem` uses that RNG),
-//!   storing each item's id and replica info; `Execute` gives exactly those items to the player.
-//!   The rebuild reads them back with `GetNumItems` / `GetInfoItem` (the live item,
-//!   else `Item::CreateItem` from the replica): GiveRandomItem shows one icon per rolled item (its `GetStackSize`
-//!   above 1 drawn at the lower right), GiveItem the first info item with the action's count.
+//!   into the XP line, and skips the skill / attribute points while the difficulty was skipped with an unlock item
+//!   (`PlayStats::GetDifficultySkip`); tribute has no icon. Icon order: money, faction, level, skill points,
+//!   attribute points, devotion, then the items; at most 6 are shown (the rest logged). Nothing to show (no XP, no
+//!   icon): no window. The title is `tagQuestRewardWindowTitle` when the quest is complete
+//!   (`Quest2::IsComplete(true)`), else `tagQuestRewardWindowInterim`.
+//! - the items' roll: `Quest2Event::Execute` runs every action's `OnActivate`, `Execute`, `OnDeactivate`; the
+//!   window event is dispatched by the next `Quest2::Update`, so the rebuild sees finished rolls.
+//!   `ScriptableAction_GiveRandomItem::OnActivate` (shared with `GiveItem`) rolls `count` items with the action's
+//!   own RNG and `Execute` gives exactly those. GiveRandomItem shows one icon per rolled item (a stack size above 1
+//!   drawn at the lower right), GiveItem the first info item with the action's count.
 //!
-//! PORT: the port reads the story's `QuestTaskStarted` / `QuestTaskCompleted` effects of the frame (the engine's
-//! queue empties on the quest's next update); a start counts whenever its incentives hold reward actions (the
-//! engine's "was available" test is not visible in the effect) and so does every completion from in progress
-//! (`Complete(false)`, a whole quest completed by a script, queues nothing in the engine). A GiveRandomItem's
-//! items are rolled by `crate::loot::story_rewards` when its effect runs (the engine rolls before it gives, both
-//! before the window event) and handed over through [`RandomRewardRolls`]: one icon per rolled item, the same
-//! items the player received. Every shipped GiveRandomItem action is a reward event (none in incentives or
-//! objectives), so its roll and its task's completion effect share the frame; a table's batches match its
-//! actions in order. A GiveItem icon is its record with seed 1 (the engine shows its first rolled info item).
+//! PORT: the port reads the frame's `QuestTaskStarted` / `QuestTaskCompleted` story effects; a start counts whenever
+//! its incentives hold reward actions (the engine's "was available" test is not visible in the effect), and so does
+//! every completion, including `Complete(false)` (which queues nothing in the engine). A GiveRandomItem's items are
+//! rolled by `crate::loot::story_rewards` when its effect runs and handed over through [`RandomRewardRolls`]: the
+//! same items the player received. Every shipped GiveRandomItem action is a reward event, so its roll and its
+//! task's completion share the frame; a table's batches match its actions in order. A GiveItem icon is its record
+//! with seed 1.
 use bevy::prelude::*;
 use gd_formats::qst::Action;
 use gd_formats::save::item::Item;
@@ -43,7 +33,7 @@ use gd_game_core::story::{StoryEffect, StoryRuntime};
 use gd_story::story::Effect;
 use gd_story::story::Story;
 
-/// One reward icon (module doc order).
+/// One reward icon.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RewardIcon {
     Money(u32),
@@ -53,8 +43,7 @@ pub enum RewardIcon {
     SkillPoints(u32),
     AttributePoints(u32),
     Devotion(u32),
-    /// A given item: `GiveItem`'s record with the action's count (seed 1 preview), or one `GiveRandomItem`
-    /// roll — the item the player received, its own tooltip.
+    /// `GiveItem`'s record with the action's count (seed 1), or one `GiveRandomItem` roll.
     Item {
         item: Box<Item>,
     },
@@ -63,22 +52,20 @@ pub enum RewardIcon {
 /// The window's content for one quest's tasks of a frame.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct QuestRewardShown {
-    /// The quest's name (its text table's).
+    /// The quest's name.
     pub quest: String,
-    /// `Quest2::IsComplete(true)`: the title.
+    /// `Quest2::IsComplete(true)`: picks the title.
     pub complete: bool,
     pub xp: u32,
     pub icons: Vec<RewardIcon>,
 }
 
-/// The frame's `GiveRandomItem` rolls: `crate::loot::story_rewards` pushes each effect's batch when it runs,
-/// [`show_rewards`] matches them to the reward actions (module doc). The engine keeps the rolls on the action
-/// itself (`GetInfoItem`); the port hands them over within the frame, a table's oldest batch first.
+/// The frame's `GiveRandomItem` rolls: `crate::loot::story_rewards` pushes each effect's batch, [`show_rewards`]
+/// matches them to the reward actions, a table's oldest batch first.
 #[derive(Resource, Default)]
 pub struct RandomRewardRolls(Vec<(String, Vec<Item>)>);
 
 impl RandomRewardRolls {
-    /// Records one effect's rolls.
     pub fn push(&mut self, table: &str, items: Vec<Item>) {
         self.0.push((table.to_owned(), items));
     }
@@ -119,8 +106,7 @@ fn has_rewards(events: &[gd_formats::qst::Event]) -> bool {
     events.iter().flat_map(|e| &e.actions).any(is_shown_reward)
 }
 
-/// `QuestRewardWindow::HandleGameEvent` + `QuestRewardWindow::Rebuild` for the tasks `uids` of quest `qi` (module
-/// doc).
+/// `QuestRewardWindow::HandleGameEvent` + `QuestRewardWindow::Rebuild` for the tasks `uids` of quest `qi`.
 pub fn rewards(
     story: &Story,
     qi: usize,
@@ -234,7 +220,7 @@ pub fn rewards(
     })
 }
 
-/// The frame's started / completed tasks with rewards become [`QuestRewardShown`]s, one per quest (module doc).
+/// The frame's started / completed tasks with rewards become [`QuestRewardShown`]s, one per quest.
 pub fn show_rewards(
     // Option: no story outside a session (the frame's effects and rolls are dropped).
     rt: Option<NonSend<StoryRuntime>>,

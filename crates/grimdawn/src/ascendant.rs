@@ -18,11 +18,6 @@
 //! `GameEngine::OnCreatureDeath`: kills are not counted while the last
 //! spawned Dread is alive; every kill at or past the count rolls (a failed
 //! roll keeps the count); the count restarts only when one spawns.
-//!
-//! Hooks (hooks.rs): `GD_USE_ALTAR` uses the nearest altar within 40 m;
-//! `GD_ALTAR_OFFER` fills the boxes in order and activates (reagents given
-//! if missing, `ui::altar`); `GD_UI_OPEN=altar` opens the window as a view (`ui::altar`); `GD_DREAD_KILLS`
-//! overrides the kill count needed.
 use bevy::prelude::*;
 use gd_game::ascendant::{Altar, AltarOpen, AscendantStage};
 use gd_game_core::player::Player;
@@ -153,15 +148,10 @@ fn close_far(
     }
 }
 
-/// The Altar Window key (action 61, no default key) toggles the offering menu anywhere. `Grim Dawn.exe`
-/// HUD key action `UIPlayerHud::HandleKeyAction` case 61 → `UIPlayerHud::ToggleAltarWindow`: when
-/// `MainPlayerCanUseAscendantAltar` and the third expansion is loaded, the other windows close
-/// (`UIPlayerHud::CloseWindows`) and the altar window (`UIPlayerHud.altarWindow`) flips its visibility; no altar
-/// nearby is needed. The window's show (`AltarWindow::Show`) fills the boxes from
-/// `GameEngine::GetActivatedAltarReagents` ([`gd_game_core::ascendant::AltarState::reagents`]: empty while dormant) and,
-/// with no altar (`AltarWindow.altarId` = 0), disables the activate button (`AltarWindow.activateButton`) and the six
-/// boxes (`AltarWindow.offerBoxes`): the key opens a view of the active offering, never an offering. PORT: the
-/// expansions are always loaded.
+/// The Altar Window key (action 61, no default key) toggles the offering menu anywhere
+/// (`UIPlayerHud::ToggleAltarWindow`: the other windows close; no altar nearby is needed). With no altar
+/// (`AltarWindow.altarId` = 0) `AltarWindow::Show` disables the activate button and the boxes: a view of the
+/// active offering (`GameEngine::GetActivatedAltarReagents`). PORT: the expansions are always loaded.
 fn altar_key(
     (keys, bindings): (Res<ButtonInput<KeyCode>>, Res<gd_ui_kit::keys::KeyBindings>),
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -182,7 +172,6 @@ fn altar_key(
         ResMut<gd_ui::factions::FactionsView>,
     ),
 ) {
-    // The `GD_ALTAR_OFFER` hook allows the altar without the token.
     #[cfg(feature = "dev")]
     let hooked = hooks.items.altar_offer.is_some();
     #[cfg(not(feature = "dev"))]

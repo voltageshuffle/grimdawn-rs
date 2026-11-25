@@ -1,43 +1,20 @@
-//! Fear and confusion: the controller states the duration-damage manager's
-//! involuntary influences enter, below the hard crowd control
-//! (`DurationDamageManager::UpdateFxAndInfluence`:
-//! while none of immobilize / petrify / freeze / trap / sleep / stun /
-//! knockdown runs, confusion (53) before fear (52)).
+//! Fear and confusion: the controller states the duration-damage manager's involuntary influences enter
+//! while no hard crowd control runs (`DurationDamageManager::UpdateFxAndInfluence`; confusion before fear).
 //!
-//! - Confusion: `Monster::CombatExertInfluenceConfusion` →
-//!   `ControllerMonster::Confuse` → `ControllerMonsterStateConfused`
-//!   (`OnBegin`, `OnUpdate`, `WalkRandomly`, `PathFailed` = `EndOfPathReached` → `WalkRandomly`):
-//!   walks to a random point 2 r..7 m from its home (`ControllerMonster::FindRandomPoint`: up to 5
-//!   tries, any direction, on the navmesh, more than 1 m away), and every
-//!   `rand() % 2000 + 1000` ms attacks at random (`UseSkillOnPoint` with the
-//!   best skill at a point 2 r..5 m from home — anyone in reach is hit,
-//!   friend or foe).
-//! - Fear: `Character::CombatExertInfluenceFear` →
-//!   `ControllerMonster::ScareMe` → `ControllerMonsterStateScared`
-//!   (`OnBegin`, `OnUpdate`, `PickRunToPoint`, `PathFailed` = `EndOfPathReached` → re-pick): runs to
-//!   `max(fleeDistance, 5)` m directly away from the last attacker
-//!   (`Character.lastAttacker`, [`Attackers::last`]) with ±1 m of horizontal jitter,
-//!   re-picking every 1–2 s and on the path's end / failure; an invalid
-//!   enemy stops the flee. No roar, no flee count (the Flee state's
-//!   bookkeeping is its own, `crate::flee`).
+//! - Confusion: `ControllerMonster::Confuse` → `ControllerMonsterStateConfused`: walks to a random point
+//!   2 r..7 m from home (`ControllerMonster::FindRandomPoint`), and every `rand() % 2000 + 1000` ms attacks
+//!   at random (`UseSkillOnPoint` with the best skill at a point 2 r..5 m from home, friend or foe).
+//! - Fear: `ControllerMonster::ScareMe` → `ControllerMonsterStateScared`: runs `max(fleeDistance, 5)` m
+//!   directly away from the last attacker ([`Attackers::last`]) with ±1 m jitter, re-picking every 1–2 s and
+//!   on the path's end / failure; an invalid enemy stops the flee. No roar, no flee count.
 //!
-//! Both run only for monsters (`ControllerMonster`); the player's controller
-//! ignores them (its `ScareMe` / `Confuse` vtable slots are no-ops).
+//! Both run only for monsters; the player's controller ignores them.
 //!
-//! PORT: [`crate::afflictions::tick`] marks a feared / confused monster
-//! `Stunned` (the normal AI's exclusion flag) but not `Rooted`, and this
-//! system drives it after `CombatSet` (after the afflictions tick, before
-//! the crowd): the move goes through `MonsterAi::path` + [`advance_steered`] like
-//! `monster_ai`'s own, so the crowd's separation, depenetration and stuck
-//! checks apply; a failed path re-picks the point (both states'
-//! `PathFailed`). A confused monster's random attack is a plain swing at a
-//! random nearby character of any side within its view distance (the engine
-//! uses its best skill at a random point; the skill choice machinery is the
-//! normal AI's, which the takeover suspends), approached on foot — a ranged
-//! monster swings melee too. Pet-class pets (no `MonsterAi`, `pets::ai`
-//! drives them) and the player keep acting: their entries show on the HUD
-//! only. The scripted / patrolling / spirit states `monster_ai` leaves alone
-//! are left alone here too.
+//! PORT: [`crate::afflictions::tick`] marks a feared / confused monster `Stunned` but not `Rooted`, and this
+//! system drives it through `MonsterAi::path` + [`advance_steered`]; a failed path re-picks the point. A
+//! confused monster's random attack is a plain swing at a random nearby character of any side within its
+//! view distance, approached on foot (a ranged monster swings melee too). Pet-class pets and the player keep
+//! acting: their entries show on the HUD only. Scripted / patrolling / spirit states are left alone.
 
 use crate::afflictions::Afflictions;
 use crate::combat::{HiddenFromCombat, MonsterAi, QuestMove, advance_steered, run_speed};
@@ -64,7 +41,6 @@ impl Plugin for CcStatesPlugin {
     }
 }
 
-/// The driven monster's state timers while its fear / confusion runs.
 #[derive(Component, Default)]
 struct CcControl {
     /// Confusion: seconds to the next random attack (`rand() % 2000 + 1000` ms).
@@ -73,10 +49,8 @@ struct CcControl {
     repick: f32,
 }
 
-/// `ControllerMonsterStateConfused::WalkRandomly`'s point (`ControllerMonster::FindRandomPoint`):
-/// up to 5 tries at a random point 2 r..7 m from home, any direction, on the
-/// navmesh and more than 1 m from the monster; the path to it (empty: none
-/// found, the monster stands).
+/// `ControllerMonster::FindRandomPoint`: up to 5 tries at a random point 2 r..7 m from home, on the
+/// navmesh and more than 1 m from the monster; the path to it (empty: none found).
 fn wander_path(
     nav: &Nav,
     scratch: &mut gd_sim::nav::PathScratch,
@@ -107,7 +81,7 @@ fn wander_path(
     Vec::new()
 }
 
-/// A path to `to` (the AI's own: the first point is where the monster stands).
+/// A path to `to` without the monster's own point.
 fn path_to(nav: &Nav, scratch: &mut gd_sim::nav::PathScratch, me: Vec3, to: Vec3) -> Vec<Vec3> {
     nav.0
         .find_path(
@@ -126,16 +100,14 @@ fn cc_states(
     mut scratch: Local<gd_sim::nav::PathScratch>,
     time: Res<Time>,
     nav: Res<Nav>,
-    // The driven monsters mutably, every attackable character read-only: a
-    // snapshot first (the `ParamSet` keeps the two queries apart, as
-    // `monster_ai`'s does).
+    // The driven monsters mutably, every attackable character read-only: a snapshot first.
     mut set: ParamSet<(
         Query<
             (Entity, &Transform, &Combatant),
             (
                 Without<gd_game_core::combat::Dead>,
                 Without<HiddenFromCombat>,
-                // A physics prop has a `Combatant` but is no character to attack.
+                // A physics prop has a `Combatant` but is no character.
                 Without<crate::physics_decoration::PhysicsDecoration>,
             ),
         >,
@@ -167,14 +139,13 @@ fn cc_states(
     mut crowd: Query<&mut CrowdAgent>,
 ) {
     let dt = time.delta_secs();
-    // Nobody feared / confused nor handing back: no snapshot (the common frame).
+    // Nobody feared / confused nor handing back: no snapshot.
     if !set.p1().iter().any(|(.., aff, _, ctl, _)| {
         ctl.is_some() || matches!(aff.cc_state(), Some(T::Fear | T::Confusion))
     }) {
         return;
     }
-    // Every living attackable character: a confused monster's random target
-    // is any of them, friend or foe.
+    // A confused monster's random target is any of them, friend or foe.
     let all: Vec<(Entity, Vec3, f32)> = set
         .p0()
         .iter()
@@ -183,8 +154,7 @@ fn cc_states(
     for (e, mut tf, mut ai, mut cb, mut ch, aff, attackers, ctl, rooted) in &mut set.p1() {
         let cc = aff.cc_state();
         if !matches!(cc, Some(T::Fear | T::Confusion)) {
-            // The effect ended (or a hard crowd control took over): hand the
-            // monster back to its normal AI.
+            // The effect ended (or a hard crowd control took over): back to the normal AI.
             if ctl.is_some() {
                 commands.entity(e).try_remove::<CcControl>();
                 cb.target = None;
@@ -193,13 +163,11 @@ fn cc_states(
             continue;
         }
         cb.cooldown -= dt;
-        // A swing in progress finishes first (the animation's "End" leaves
-        // the state); the confused state's attack timer waits like the
-        // engine's suspended Confused state.
+        // A swing in progress finishes first; the attack timer waits.
         if matches!(ch.state, CharState::Attack | CharState::Cast) {
             continue;
         }
-        // The crowd failed the move: both states' `PathFailed` re-picks.
+        // `PathFailed` re-picks.
         let mut agent = crowd.get_mut(e).ok();
         let failed = agent.as_mut().is_some_and(|a| a.take_path_failed());
         let me = tf.translation;
@@ -212,8 +180,7 @@ fn cc_states(
         let mut swinging = false;
         match cc {
             Some(T::Fear) => {
-                // Scared: away from the last attacker; an invalid enemy
-                // stops the flee ("scared of an invalid enemy" → Hide).
+                // An invalid enemy stops the flee.
                 cb.target = None;
                 repick -= dt;
                 let enemy = attackers
@@ -239,8 +206,6 @@ fn cc_states(
                 }
             }
             Some(T::Confusion) => {
-                // Confused: every 1–3 s a random nearby character of any
-                // side becomes the target; approach it and swing.
                 attack -= dt;
                 if attack <= 0.0 {
                     attack = 1.0 + gd_game_core::rng::f32() * 2.0;
@@ -285,8 +250,7 @@ fn cc_states(
                         cb.target = None;
                     }
                 }
-                // No target: wander (WalkRandomly on the begin and on every
-                // path's end / failure).
+                // No target: wander (`WalkRandomly`).
                 if cb.target.is_none() && can_move {
                     if ai.path.is_empty() || failed {
                         ai.path = wander_path(&nav, &mut scratch, me, ai.home, cb.radius);

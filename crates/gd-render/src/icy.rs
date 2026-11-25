@@ -10,12 +10,10 @@
 //! mesh's own normal and specular maps (no glow) ([`FLAG_ICEY`]). `GMIEffectIcey::SetShaderParameters`
 //! and `Update`: `iceyFactor` fades 0 → 1 over 500 ms from the start
 //! (`t = 1 − max(timer · 0.002, 0)`), then holds 1; `End` puts the base texture back and `BeginFinishing`
-//! fades it 1 → 0 over 500 ms, after which the effect (and the shader) is removed. So the
-//! character turns into the texture at once (base and icy texture are the same) and thaws over half a
-//! second. The stock textures (`damagefreeze_overlay.tex`, `damagepetrify_overlay.tex`) are opaque, so
-//! alpha-tested parts draw solid while it is on. The character's scale is not changed (the character's
-//! effect is made with `expansionTarget` 0). No ice chunk mesh is drawn: the engine never spawns the
-//! handler's `iceCubeName` (afflictions docs).
+//! fades it 1 → 0 over 500 ms, after which the effect (and the shader) is removed. The stock textures
+//! (`damagefreeze_overlay.tex`, `damagepetrify_overlay.tex`) are opaque, so alpha-tested parts draw solid while
+//! it is on. The character's scale is not changed (`expansionTarget` 0). No ice chunk mesh is drawn: the engine
+//! never spawns the handler's `iceCubeName` (afflictions docs).
 //!
 //! PORT: `iceyAlphaMultiplier` is not ported (the deferred program does not read it); parts dressed while
 //! the look is on (a re-dressed body) are not iced, as in the engine (`Start` only covers what is attached
@@ -30,7 +28,7 @@ use bevy::prelude::*;
 use gd_game_core::afflictions::{Icy, icy_texture};
 use gd_game_core::data::GameData;
 
-/// `GMIEffectIcey` ctor / `BeginFinishing`: the 500 ms fades.
+/// `GMIEffectIcey` ctor / `BeginFinishing`.
 const FADE_MS: f32 = 500.0;
 
 pub struct IcyPlugin;
@@ -99,7 +97,7 @@ fn draw_icy(
             commands.entity(e).try_remove::<IcyParts>();
             continue;
         }
-        // Write only on change: `get_mut` marks the material modified (re-prepared), and a held look sits at 1.
+        // Write only on change: `get_mut` marks the material modified.
         let f = icey_factor(ip.timer, ip.thawing);
         for (_, _, copy) in &ip.parts {
             if materials.get(copy).is_some_and(|m| m.params.fade.w != f)
@@ -149,7 +147,6 @@ fn draw_icy(
                 mat.0 = copy;
             }
         }
-        // A body with no lit part (all distortion / hidden): nothing to ice.
         if list.is_empty() {
             continue;
         }

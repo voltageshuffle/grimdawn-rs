@@ -20,8 +20,7 @@
 //!   (`HudExitWindow::Show`, `gd_game::pause` module docs);
 //! - while the window is up the HUD's mouse handler (`UIPlayerHud::HandleMouseEvent`) tests only
 //!   `hudMenuOptionsButton` (its rollover, and a press, which hides the
-//!   window again), then hands the event to the window: nothing else under
-//!   it reacts (`rollover.rs`, `tip.rs`, `tooltip.rs` hide their tooltips);
+//!   window again), then hands the event to the window: nothing else under it reacts;
 //! - the dim (game window update `UIPlayerHud::Update`, draw `UIPlayerHud::Render`): a black
 //!   full-screen rect whose alpha moves to its target (0.6 paused, 0
 //!   running) by 0.001 per ms; the banner flag is set again once the dim is
@@ -37,28 +36,14 @@
 //!   `KeyMap::SetDefaultBindings`).
 //!
 //! The confirmation box is the dialog manager's look
-//! (`records/ui/generic/promptbox/prompt_manager.dbr`: background, Yes / No
-//! buttons; `prompt_text.dbr` for the message). PORT: the box is centred on
-//! the screen and the dialog manager's own layout code is not decompiled.
-//! The box answers on PRESS (Yes / No / close), like `apply.rs`'s box and the
-//! in-game window buttons (`CharacterWindow::OnButtonEvent` event 0); the dialog
-//! manager's own button event is not decompiled. The menu's four buttons act
-//! on press too.
+//! (`records/ui/generic/promptbox/prompt_manager.dbr`, `prompt_text.dbr`). PORT: the box is
+//! centred on the screen (the dialog manager's layout is not decompiled) and answers on press,
+//! like the menu's four buttons.
 //!
-//! PORT: Esc is the shared dispatcher's (`ui::esc_dispatcher`): it closes the frontmost window
-//! (the achievements and loot filter windows included) and opens this menu only when none is open;
-//! while the menu, the options window, a confirmation
-//! or the pause key holds the game, the keyboard and mouse reach nothing
-//! else (the real pause key still lets windows open). Exit to Main Menu
-//! saves, then tears the session down in the running process and shows the main
-//! menu (`exit.rs`).
-//!
-//! The window is built when it opens (`build`, in game only); the buttons' focus
-//! looks and the box's looks are hidden roots of their own that `live` shows
-//! by the cursor, so a hover or a press never rebuilds.
-//!
-//! Hooks (hooks.rs): `GD_GAME_MENU` opens the menu after `secs`, `GD_PAUSE` presses the pause key,
-//! `GD_GAME_MENU_CONFIRM=exit|quit` (with `GD_GAME_MENU`) shows that confirmation, `GD_GAME_MENU_YES` answers Yes.
+//! PORT: Esc closes the frontmost window and opens this menu only when none is open; while the
+//! menu, the options window, a confirmation or the pause key holds the game, the keyboard and
+//! mouse reach nothing else (the real pause key still lets windows open). Exit to Main Menu
+//! saves, then tears the session down in the running process and shows the main menu.
 use super::Ui;
 use super::contains;
 use super::window::Rebuild;
@@ -96,14 +81,12 @@ impl Plugin for GameMenuPlugin {
                 (draw_dim, build, live)
                     .chain()
                     .after(leave)
-                    // The Esc dispatcher opens / closes the menu in `UiInputSet`: build it the same frame.
                     .after(super::UiInputSet)
                     .in_set(super::UiPlaySet),
             );
     }
 }
 
-/// A clickable part of the menu or its confirmation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Resume,
@@ -112,18 +95,16 @@ pub enum Part {
     Quit,
     Yes,
     No,
-    /// The confirmation's close button (answers No, PORT: `confirm.rs`).
+    /// Answers No.
     Close,
 }
 
-/// What a confirmation asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Confirm {
     Exit,
     Quit,
 }
 
-/// The menu's state.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct GameMenu {
     pub open: bool,
@@ -133,31 +114,26 @@ pub struct GameMenu {
 }
 
 impl GameMenu {
-    /// The menu is up with no confirmation over it: of the HUD, only its options button takes the mouse
-    /// (`UIPlayerHud::HandleMouseEvent`, module doc).
+    /// The menu is up with no confirmation over it: of the HUD, only its options button takes the mouse.
     pub fn alone(&self) -> bool {
         self.open && self.confirm.is_none()
     }
 
-    /// Whether the held game (the menu, its confirmation or the options window: [`GamePause::menu`]) keeps
-    /// the mouse from the HUD's `field`: no hover look, press look, rollover or tooltip. Of the HUD only
-    /// `hudMenuOptionsButton` stays live, while the menu is up alone (`UIPlayerHud::HandleMouseEvent`, module doc).
-    /// The press sounds are blocked by the screen-wide blocker `build` and the options window register.
+    /// Whether the held game keeps the mouse from the HUD's `field`; only `hudMenuOptionsButton`
+    /// stays live while the menu is up alone.
     pub fn blocks_hud(&self, pause: &GamePause, field: &str) -> bool {
         pause.menu && (field != "hudMenuOptionsButton" || !self.alone())
     }
 }
 
-/// The built menu (physical px), read by [`input`] the next frame.
+/// Physical px.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct GameMenuLayout {
     pub buttons: Vec<(URect, Part)>,
-    /// The HUD's options button (`hudMenuOptionsButton`).
     pub hud_button: Option<URect>,
 }
 
 impl GameMenuLayout {
-    /// The menu / confirmation part at `p`.
     fn part_at(&self, p: Vec2) -> Option<Part> {
         self.buttons
             .iter()
@@ -166,7 +142,7 @@ impl GameMenuLayout {
     }
 }
 
-/// The screen dim (alpha) and the banner flag (module docs).
+/// The screen dim (alpha) and the banner flag.
 #[derive(Resource)]
 pub(crate) struct Dim {
     alpha: f32,
@@ -182,7 +158,6 @@ impl Default for Dim {
     }
 }
 
-/// Any other window is open (the factions key's UI-mode test, `factions::toggle_key`).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct OpenWindows<'w> {
     panels: Res<'w, super::UiPanels>,
@@ -194,12 +169,11 @@ pub struct OpenWindows<'w> {
     shrine: Res<'w, gd_game::devotion::ShrineWindow>,
     altar: Res<'w, crate::state::ascendant::AltarMenu>,
     pet_menu: Res<'w, super::pets::PetMenu>,
-    /// An NPC window (merchant, stash, Inventor, Illusionist, ...): the Illusionist's stands alone, with no
-    /// inventory beside it, so `panels.character` does not cover it.
+    /// The Illusionist's window stands alone, so `panels.character` does not cover it.
     trade: Res<'w, crate::state::trade::Trade>,
     factions: Res<'w, super::factions::FactionsView>,
     achievements: Res<'w, super::achievements::AchievementsView>,
-    /// Open, or with its Defaults confirmation up (the Esc dispatcher cancels the confirmation first).
+    /// Open, or with its Defaults confirmation up.
     loot_filter: Res<'w, super::lootfilter::LootFilterView>,
 }
 
@@ -224,8 +198,7 @@ impl OpenWindows<'_> {
     }
 }
 
-/// `G` / `P`, menu clicks; swallows the input while the game is held (Esc is the shared
-/// dispatcher's, `ui::esc_dispatcher`, which runs after this in `Update`).
+/// `G` / `P`, menu clicks; swallows the input while the game is held. Runs before the Esc dispatcher.
 #[allow(clippy::too_many_arguments)]
 pub fn input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -249,14 +222,10 @@ pub fn input(
         Local<(bool, bool)>,
     ),
 ) {
-    // The held game resets `ButtonInput` below; drain the raw messages so they do not pile up
-    // (`live` reads its own copy for the pressed look). Buttons act on press, from `ButtonInput`
-    // like the HUD button path.
+    // The held game resets `ButtonInput` below; drain the raw messages so they do not pile up.
     clicks.clear();
-    // This frame's pause-key intent (the request is applied by gd-game after the UI input): the
-    // input reset below reads it, the resource still holds last frame's applied value.
+    // This frame's pause-key intent: the resource still holds last frame's applied value.
     let mut key = pause.key;
-    // `GD_GAME_MENU` / `GD_PAUSE` (hooks.rs).
     #[cfg(feature = "dev")]
     {
         let t = time.elapsed_secs();
@@ -268,7 +237,6 @@ pub fn input(
                 Some("quit") => Some(Confirm::Quit),
                 _ => None,
             };
-            // `GD_GAME_MENU_YES`: answers Yes at once (the save is requested as for a click).
             if hk.ui.game_menu_yes
                 && let Some(c) = menu.confirm.take()
             {
@@ -285,17 +253,14 @@ pub fn input(
     let cursor = window.single().ok().and_then(super::cursor_px);
     let clicked = super::widgets::button_pressed(&mouse);
     let part = cursor.filter(|_| clicked).and_then(|p| layout.part_at(p));
-    // The HUD's options button is still live under the menu and opens / closes it (module doc).
     let hud = cursor
         .filter(|_| mouse.just_pressed(MouseButton::Left))
         .zip(layout.hud_button)
         .is_some_and(|(p, r)| contains(&r, p));
-    // Esc is the shared dispatcher's (`ui::esc_dispatcher`), which runs after this in `Update`.
     let mut took_press = false;
     if options.open {
-        // The options window handles its own keys and clicks (`options.rs`).
     } else if let Some(c) = menu.confirm {
-        // PORT: Y / N (beside Enter / Esc) are the port's keys for the box.
+        // PORT: Y / N (beside Enter / Esc) answer the box.
         if matches!(part, Some(Part::No | Part::Close)) || keys.just_pressed(KeyCode::KeyN) {
             menu.confirm = None;
             if part == Some(Part::Close)
@@ -315,7 +280,6 @@ pub fn input(
         if bindings.just_pressed(super::keys::GAME_MENU, &keys) || part == Some(Part::Resume) || hud
         {
             menu.open = false;
-            // The button took the press: it does not reach the world as the game resumes.
             took_press = hud || part.is_some();
         } else if part == Some(Part::Options) {
             menu.open = false;
@@ -328,7 +292,6 @@ pub fn input(
         }
     } else if bindings.just_pressed(super::keys::GAME_MENU, &keys) || hud {
         menu.open = true;
-        // The menu replaces the pause key's pause (and its banner).
         key = false;
         pause_key.write(PauseKey(Some(false)));
     } else if bindings.just_pressed(super::keys::PAUSE, &keys) {
@@ -345,7 +308,6 @@ pub fn input(
     }
 }
 
-/// A confirmed Exit / Quit, the frame after its save request was handled.
 fn leave(
     mut menu: ResMut<GameMenu>,
     mut exit: MessageWriter<AppExit>,
@@ -376,7 +338,6 @@ struct DimRoot;
 #[derive(Component)]
 struct BannerPart;
 
-/// The dim and the banner, updated every frame from real time.
 #[allow(clippy::too_many_arguments)]
 fn draw_dim(
     mut commands: Commands,
@@ -394,11 +355,9 @@ fn draw_dim(
     if fresh.begun() {
         built.reset();
     }
-    // Only the game window's pause (menu, options, key) moves the dim; the
-    // focus loss pauses game time alone (`gd_game::pause` module docs).
+    // Only the game window's pause (menu, options, key) moves the dim, not focus loss.
     let target = if pause.menu || pause.key { DIM } else { 0.0 };
-    // The key pause shows the banner; the menu's pause hides it; it is
-    // armed again once the dim is gone.
+    // The key pause shows the banner; the menu's pause hides it; it is armed again once the dim is gone.
     if pause.menu {
         dim.banner = false;
     } else if pause.key {
@@ -498,20 +457,16 @@ fn draw_dim(
 #[derive(Component)]
 struct MenuRoot;
 
-/// A root shown only for one state of the mouse: the window is built once with every state and [`live`] shows
-/// the one that holds (no rebuild on a hover or a press).
+/// A root shown only for one state of the mouse; [`live`] shows the one that holds.
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Layer {
-    /// A menu button in its focus look, over its up look.
     Button(Part),
-    /// The confirmation box drawn for this [`super::confirm::Look`].
     Box(super::confirm::Look),
 }
 
-/// The menu's z (the shared band, `window::Z_MENU`), and that of the buttons' focus looks over it.
 const Z: i32 = super::window::Z_MENU;
 
-/// A hidden root for [`Layer`] `l` (a root of its own, so the button sounds registered in it rank by its z).
+/// A hidden root for [`Layer`] `l` (its own root, so the button sounds registered in it rank by its z).
 fn layer(commands: &mut Commands, l: Layer, z: i32) -> Entity {
     gd_ui_kit::spawn_root(
         commands,
@@ -520,7 +475,6 @@ fn layer(commands: &mut Commands, l: Layer, z: i32) -> Entity {
     )
 }
 
-/// The menu window and the confirmation box: rebuilt when the window size or the menu's state changes.
 #[allow(clippy::too_many_arguments)]
 fn build(
     mut commands: Commands,
@@ -538,10 +492,8 @@ fn build(
     }
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
-    // The UI scale too: an applied UI Scale rebuilds the menu at the new size.
     let s = assets.scale(size);
     let sb = s.to_bits();
-    // The HUD style too (`classic_hud`): the menu's look follows it.
     let classic = assets.classic_hud();
     if size.x == 0
         || !built.changed_by(
@@ -566,9 +518,8 @@ fn build(
         hud_button,
         ..default()
     };
-    // While the menu or its confirmation is up it takes the whole screen's mouse (`ui/widgets.rs`): the
-    // HUD under it neither sounds nor presses. The HUD's options button stays live while the menu is up
-    // alone (module doc): its sound is registered again here, in the menu's band, in front of the blocker.
+    // The menu takes the whole screen's mouse; the HUD's options button sound is registered again
+    // in front of the blocker while the menu is up alone.
     if menu.open || menu.confirm.is_some() {
         ui.sound_blocker(URect::new(0.0, 0.0, ui.screen.x, ui.screen.y));
         if menu.alone()
@@ -587,10 +538,8 @@ fn build(
     {
         let mut def = WindowDef::from_record(&rec);
         let field = |k: &str| rec.str(k).unwrap_or("").to_string();
-        // The buttons auto-size to their labels (`widgets::static_button`); measure them first
-        // so the window (and its background) grows by the widest button's growth and every
-        // button keeps its centre in the window. PORT: the stock window is fixed at its record
-        // extent and a long localised label overflows the button (UX over parity).
+        // PORT: the buttons auto-size to their labels and the window grows by the widest growth;
+        // the stock window is fixed and a long label overflows.
         let mut buttons = Vec::new();
         let mut grow = 0.0f32;
         for (k, part) in [
@@ -642,13 +591,11 @@ fn build(
             }
         }
         for (b, part, tex_w, w) in buttons {
-            // Re-centre: the window grew by `grow`, this button by `w - tex_w`.
             let ob = o + Vec2::new((grow - (w - tex_w)) * 0.5, 0.0);
             let label = super::widgets::Label::Record;
             if let Some(br) = super::widgets::static_button(&mut ui, &b, ob, true, false, label) {
                 ui.record_button_sound(br, &b);
                 layout.buttons.push((br, part));
-                // The focus look, shown by `live` while the cursor is on the button.
                 ui.root = layer(ui.commands, Layer::Button(part), Z + 1);
                 super::widgets::static_button(&mut ui, &b, ob, true, true, label);
                 ui.root = root;
@@ -657,8 +604,7 @@ fn build(
     }
 }
 
-/// The Yes / No box of a confirmation (`confirm.rs`), its parts recorded for the input: drawn once per look
-/// of the mouse (nothing hovered, each part hovered, the close button held), each in its [`Layer`].
+/// The Yes / No box of a confirmation, drawn once per look of the mouse, each in its [`Layer`].
 fn confirm_box(ui: &mut Ui, c: Confirm, layout: &mut GameMenuLayout) {
     use super::confirm::Hit;
     let tag = match c {
@@ -689,8 +635,8 @@ fn confirm_box(ui: &mut Ui, c: Confirm, layout: &mut GameMenuLayout) {
     }
 }
 
-/// Per frame, without a rebuild: shows the [`Layer`]s of the part under the cursor. The left button's state is
-/// read from the raw messages ([`input`] resets `ButtonInput` while the menu holds the game).
+/// Shows the [`Layer`]s of the part under the cursor. The left button's state is read from the raw
+/// messages ([`input`] resets `ButtonInput` while the menu holds the game).
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<GameMenuLayout>,
@@ -733,6 +679,5 @@ fn live(
     }
 }
 
-/// The game menu's keyboard / mouse input.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameMenuInputSet;

@@ -1,13 +1,12 @@
 //! What a 3D sound does at the listener's two ears: distance gain and stereo
-//! panning (`gd_audio` applies them to every voice, every frame).
+//! panning.
 //!
 //! The engine only hands positions to the sound system; DirectSound does the
 //! mixing:
 //!
 //! - `WorldCamera::SetListenerPosition` (Engine.dll):
 //!   the listener's front is the camera's z axis (`Math::LookAtMatrix`: target -
-//!   eye) flattened and normalised, its top (0, 1, 0). The ears' position:
-//!   `gd_audio::listener::ears`. The camera's x axis (up x z) is the image's
+//!   eye) flattened and normalised, its top (0, 1, 0). The camera's x axis (up x z) is the image's
 //!   left (`Camera::GetImagePoint`), so screen right = front x up
 //!   in the game's right-handed coordinates.
 //! - DS8Sound.dll negates z in every buffer position (`DS8SoundBuffer::SetPosition`),
@@ -23,13 +22,9 @@
 //!   `DSBCAPS_CTRL3D | DSBCAPS_MUTE3DATMAXDISTANCE` (`DS8SoundSample::LoadWave`, flags
 //!   0x200B2).
 //!
-//! PORT: the distance and pan laws below are not in the game's binaries.
-//! They are `DSOUND_Calc3DBuffer` of Wine's dsound (public source,
-//! `dlls/dsound/sound3d.c`; speakers at -90 / +90 deg, `dlls/dsound/dsound.c`),
-//! which is what the reference game runs on under Proton (its prefix's
-//! dsound.dll is GE-Proton's builtin, with that function's trace strings).
-//! Native Windows mixes with its own closed code, not reversed here. Stereo
-//! output only (Wine pans over more speakers on a surround device).
+//! PORT: the distance and pan laws below are not in the game's binaries: they are
+//! `DSOUND_Calc3DBuffer` of Wine's dsound (`dlls/dsound/sound3d.c`; speakers at -90 / +90 deg),
+//! what the game runs on under Proton. Native Windows mixing is not reversed. Stereo output only.
 
 /// Distance gain of a 3D sound: full inside `fallOff`, then min / d
 /// (`DSOUND_Calc3DBuffer`: rolloff 1, volume in millibels = amplitude

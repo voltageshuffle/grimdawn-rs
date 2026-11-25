@@ -10,17 +10,15 @@
 //! (0.9, 0.9, 1) for types 2, 8, 9), each line over a `skills_leveltextshadow01.tex` strip ((line width + 200) x (line
 //! height + 40), white at 0.7 alpha). The subline (32 px unscaled, 0.75 alpha, same strips) appears under the headline
 //! once the fade-in is over (its `^X` colour codes apply). No sound.
-//! Headline glow (`CinematicText::Render`, Engine.dll `BlurFrameBuffer2` / `GraphicsCanvas_Blur8Tap`): the lines are
-//! drawn white (one colour, not the style's) and centred into a temporary surface cleared to opaque black, (wrap
-//! width + 20) x (lines x line height + 20), line i at y = 10 + i x line height; the surface is blurred (a vertical then a
-//! horizontal pass of eight taps 0.1, 0.11, 0.14, 0.15, 0.15, 0.14, 0.11, 0.1 at -3.5 ... 3.5 texels, into half-size
-//! surfaces) and drawn additive tinted by the event colour at 0.75 alpha, then the sharp surface additive at 0.35, both
-//! stretched over the block size x the grow factor centred at (W/2, 0.15 H). The strips are sized by the grow factor
-//! too, their centres stepped by the unscaled line height from the scaled block's top + 10. Here the surface is built
-//! on the CPU once per headline ([`headline_surface`], [`blur`]) and drawn with `ui/additive.rs`.
-//! Type 0 (the challenge-area name, `gd_game::challenge_areas`, and the area name, [`area_names`]): only the frame's last type-0 text is kept, queued
-//! only into an empty queue (none showing) and dropped while a big window is open (`UIPlayerHud::IsBigWindowOpen` /
-//! `UIPlayerHud::IsBigWindowOpenEx`, [`BigWindows`]).
+//! Headline glow (`CinematicText::Render`, `GraphicsCanvas_Blur8Tap`): the lines are drawn white (one colour, not
+//! the style's) and centred into a temporary surface cleared to opaque black, (wrap width + 20) x (lines x line
+//! height + 20), line i at y = 10 + i x line height; the surface is blurred (a vertical then a horizontal pass of
+//! eight taps 0.1, 0.11, 0.14, 0.15, 0.15, 0.14, 0.11, 0.1 at -3.5 ... 3.5 texels, into half-size surfaces) and
+//! drawn additive tinted by the event colour at 0.75 alpha, then the sharp surface additive at 0.35, both stretched
+//! over the block size x the grow factor centred at (W/2, 0.15 H). The strips are sized by the grow factor too,
+//! their centres stepped by the unscaled line height from the scaled block's top + 10.
+//! Type 0 (the challenge-area name and the area name, [`area_names`]): only the frame's last type-0 text is kept,
+//! queued only into an empty queue and dropped while a big window is open (`UIPlayerHud::IsBigWindowOpen`).
 //! PORT: the 10 / 20 / 200 / 40 px paddings are multiplied by the UI scale like the font size; a TrueType (FNTD) font
 //! is drawn as plain text (no CPU glyphs to blur).
 use super::UiAssets;
@@ -64,14 +62,9 @@ pub struct CinematicQueue {
 #[derive(Component)]
 struct CinematicRoot;
 
-/// The big windows that drop a type-0 text (Grim Dawn.exe `UIPlayerHud::IsBigWindowOpen` /
-/// `UIPlayerHud::IsBigWindowOpenEx`: the
-/// HUD's party,
-/// character, quest, market / faction market / smith, trade, caravan, map, skills, factions, achievements, shrine,
-/// devotion, transmuter, altar, potions, item ascension and loot filter windows, each `IsVisible`). The port's
-/// windows: the character / skills / devotion panels, any NPC trade window (markets, smiths, caravan,
-/// transmuter, illusionist, altar), the journal, the map, the loot filter, the devotion shrine and the potions
-/// window.
+/// The big windows that drop a type-0 text (`UIPlayerHud::IsBigWindowOpen` / `UIPlayerHud::IsBigWindowOpenEx`).
+/// The port's windows: the character / skills / devotion panels, any NPC trade window, the journal, the map, the
+/// loot filter, the devotion shrine and the potions window.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct BigWindows<'w> {
     panels: Res<'w, gd_ui::UiPanels>,
@@ -109,16 +102,12 @@ impl Plugin for CinematicPlugin {
 }
 
 /// The area name's banner: a type-0 cinematic text when the name sector (layer 1) under the ambiance target changes.
-/// Engine.dll `AmbianceManager::Update`: the name sector at the target (`NameSectorData`: tag,
-/// `NameSectorData.show` = the entry's first flag, `NameSectorData.once` = the second, 1 when the level's sector
-/// version has none, `SectorDataManager::ReadNameData`) is compared with the last name seen; when it differs it becomes
-/// the last one, and it counts as new when not yet in the session's list of shown names (added then) or when "once" is
-/// 0. A new name of a sector with "show" set queues `ShowCinematicText(Localize(tag), "", 0, white)` (not in editor
-/// mode); every update also writes the area name (`Engine.areaName`: the sector's tag, empty with no name sector; the
-/// last name seen is kept: `ui/view.rs`). `AmbianceManager::Reset` (world
-/// unload) clears the list and the last name. Type 0 draws per the module doc (dropped while a big window is open or
-/// another text is queued). PORT: the target is the player in its own region (the engine's is the camera's target,
-/// `Grim Dawn.exe` `CameraController::FollowPlayer`, which follows the player).
+/// `AmbianceManager::Update`: the name sector at the target (`NameSectorData`: tag, `show` = the entry's first
+/// flag, `once` = the second, 1 when the level's sector version has none) is compared with the last name seen;
+/// when it differs it becomes the last one, and it counts as new when not yet in the session's list of shown
+/// names (added then) or when "once" is 0. A new name of a sector with "show" set queues
+/// `ShowCinematicText(Localize(tag), "", 0, white)`. `AmbianceManager::Reset` (world unload) clears the list and
+/// the last name. PORT: the target is the player in its own region (the engine's is the camera's target).
 #[allow(clippy::too_many_arguments)]
 fn area_names(
     mut fresh: gd_game_core::session::NewSession,
@@ -173,16 +162,14 @@ fn area_names(
     }
 }
 
-/// A headline node (strip / text) whose rect the grow factor scales about the block centre
-/// ([`show`]); built at grow 1.
+/// A headline node (strip / text) whose rect the grow factor scales about the block centre; built at grow 1.
 #[derive(Component)]
 struct CinematicGrow {
     base: URect,
     centre: Vec2,
 }
 
-/// An additive glow node: its own material (the fade alpha moves its colour in place, the shared
-/// [`super::additive::AdditiveCache`] would mint a material per alpha step) and its grow rect.
+/// An additive glow node: its own material (the fade alpha moves its colour in place) and its grow rect.
 #[derive(Component)]
 struct CinematicGlow {
     mat: Handle<super::additive::AdditiveMaterial>,
@@ -192,12 +179,10 @@ struct CinematicGlow {
     centre: Vec2,
 }
 
-/// A subline node: shown once the fade-in is over ([`show`]).
 #[derive(Component)]
 struct CinematicSub;
 
-/// `base` scaled by `grow` about `centre` (the banner's grow-in; PORT: a scale about the centre, the
-/// engine steps the strips by the unscaled line height).
+/// `base` scaled by `grow` about `centre`. PORT: the engine steps the strips by the unscaled line height.
 fn grow_rect(base: URect, centre: Vec2, grow: f32) -> URect {
     URect::new(
         centre.x + (base.x - centre.x) * grow,
@@ -283,7 +268,6 @@ fn show(
     let size = UVec2::new(win.physical_width(), win.physical_height());
     let clear = |commands: &mut Commands| gd_ui::window::despawn_all(commands, &roots);
     state.age += clock.delta_secs() * 1000.0;
-    // The head ends: the next starts this frame.
     while let Some(head) = state.queue.front() {
         let (_, hold, _) = timing(head.kind);
         if state.age < FADE_IN + hold + FADE_OUT {
@@ -322,9 +306,7 @@ fn show(
     } else {
         ((FADE_IN + hold + FADE_OUT - age) / FADE_OUT, 1.0)
     };
-    // Build once per (screen, scale, kind, headline, subline); the fade alpha and the grow move in place, not by a
-    // rebuild per step: the strips / text in a [`gd_ui::fade::FadeGroup`], the additive glow's own
-    // material alpha, the grow scaling the rects about the block centre.
+    // Build once per (screen, scale, kind, headline, subline); the fade alpha and the grow move in place.
     let phase = if age < FADE_IN {
         0
     } else if age < FADE_IN + hold {
@@ -333,7 +315,7 @@ fn show(
         2
     };
     let base = assets.scale(size);
-    // The subline is in the key: two Level Up banners in a row differ only there. Compared before it is cloned.
+    // The subline is in the key: two Level Up banners in a row differ only there.
     let stale = drawn.as_ref().is_none_or(|(sz, kind, hh, sub, args, b)| {
         (*sz, *kind, *b) != (size, head.kind, base.to_bits())
             || *hh != head.head
@@ -371,7 +353,6 @@ fn show(
         let g = gd_ui::fade::fade_group(&mut ui, root, alpha);
         let top = centre.y - block.y * 0.5;
         let first = (top + pad).floor();
-        // The strips: built at grow 1, faded by the group, grown in place.
         for (i, lw) in widths.iter().enumerate() {
             let cy = first + lh * i as f32 + lh * 0.5;
             if let Some((e, r)) = strip(&mut ui, centre.x, cy, *lw, lh, base, 1.0, 1.0) {
@@ -392,8 +373,7 @@ fn show(
         );
         let rgb = colour(head.kind);
         match glow.as_ref() {
-            // The blurred copy at 0.75 alpha, then the sharp one at 0.35, both additive, each with its
-            // own material so the fade moves its alpha in place.
+            // The blurred copy at 0.75 alpha, then the sharp one at 0.35, both additive.
             Some((_, gg)) => {
                 for (image, base_alpha) in [(gg.blur.clone(), 0.75), (gg.sharp.clone(), 0.35)] {
                     let e = ui.commands.spawn(ui.node(dst)).id();
@@ -418,7 +398,7 @@ fn show(
                     ));
                 }
             }
-            // PORT: a TrueType (FNTD) font is drawn as plain text (faded by the group).
+            // PORT: a TrueType (FNTD) font is drawn as plain text.
             None => {
                 for (i, (l, lw)) in lines.iter().zip(&widths).enumerate() {
                     let y = first + lh * i as f32;
@@ -431,13 +411,11 @@ fn show(
                 }
             }
         }
-        // Subline: under the headline block, shown once the fade-in is over (32 px, unscaled). Built
-        // hidden; `subs` shows it. Per `CinematicText::Render`, its `^X` colour codes apply (over the event
-        // colour at 0.75 alpha).
+        // Subline: under the headline block, shown once the fade-in is over (32 px, unscaled); its `^X` colour
+        // codes apply (over the event colour at 0.75 alpha).
         if !head.sub.is_empty() {
             let sub = gd_ui::floating::format_text(ui.fonts, &head.sub, &head.sub_args);
-            // The subline is unscaled (32 px); the headline nodes are already spawned, so reuse the
-            // same builder at the base scale (a second `Ui` would double-borrow the assets).
+            // Reuse the same builder at the base scale (a second `Ui` would double-borrow the assets).
             ui.s = base;
             let sub_lines = ui.wrap_lines(STYLE, max_w, &sub);
             let slh = ui.line_height(STYLE);
@@ -467,7 +445,6 @@ fn show(
         gd_ui::fade::seal_fade_group(ui.commands, g);
         *group = Some(g);
     }
-    // In place: the fade alpha, the grow, the subline's visibility.
     if let Some(g) = *group {
         fader.set(g, alpha);
     }
@@ -514,7 +491,6 @@ fn strip(
     Some((e, r))
 }
 
-/// The headline's surfaces (`CinematicText::Render`): the text and its blur.
 struct Glow {
     sharp: Handle<Image>,
     blur: Handle<Image>,

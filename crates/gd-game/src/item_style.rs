@@ -6,9 +6,10 @@
 //! character file, so saves stay the real game's. The file is read once at start-up ([`ItemStyles::load`],
 //! called by the loot filter window's plugin); a missing file is no rules (the stock look), a bad line is
 //! skipped with a warning, and a file that cannot be read (permissions, invalid UTF-8) is no rules with a warning
-//! and is never written over. The loot filter window sends [`ItemStyleRequest`]s; [`apply_requests`] changes the
-//! rules, bumps [`ItemStyles::generation`] and writes the file back (keeping the file's comment lines and its
-//! skipped lines as comments, `gd_sim::items::item_style`).
+//! and is never written over. Both problems also go to [`ItemStyles::notice`], which the Item Styles page shows
+//! (a release build has no log); a successful save clears it, a failed one sets it. The loot filter window sends
+//! [`ItemStyleRequest`]s; [`apply_requests`] changes the rules, bumps [`ItemStyles::generation`] and writes the
+//! file back (keeping the file's comment lines and its skipped lines as comments, `gd_sim::items::item_style`).
 //!
 //! Readers resolve a style when they build a label or tooltip (both rebuild on a signature that holds the
 //! generation), never per frame: the ground labels (`grimdawn::loot`), the item tooltip's name line
@@ -29,6 +30,8 @@ pub struct ItemStyles {
     pub generation: u32,
     /// Where edits are written; `None` (tests) writes nothing.
     pub file: Option<PathBuf>,
+    /// The file's load or save problem for the player (module doc); changes only with `generation`.
+    pub notice: Option<String>,
 }
 
 /// The rules' file in the port's settings folder (module doc).
@@ -40,7 +43,7 @@ impl ItemStyles {
     /// Reads `file` (module doc); edits go back to it. A missing file is no rules; a file that cannot be read
     /// (permissions, invalid UTF-8) is no rules too, with a warning, and is never written over.
     pub fn load(file: PathBuf) -> Self {
-        let rules = match std::fs::read_to_string(&file) {
+        let (rules, notice) = match std::fs::read_to_string(&file) {
             Ok(text) => {
                 let (rules, warnings) = StyleRules::parse(&text);
                 for w in &warnings {
@@ -51,21 +54,32 @@ impl ItemStyles {
                     rules.rules.len(),
                     file.display()
                 );
-                rules
+                let notice = match warnings.len() {
+                    0 => None,
+                    1 => Some("1 line in itemstyles.txt skipped".to_owned()),
+                    n => Some(format!("{n} lines in itemstyles.txt skipped")),
+                };
+                (rules, notice)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StyleRules::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (StyleRules::default(), None),
             Err(e) => {
                 warn!(
                     "item styles: cannot read {} ({e}): no rules, and edits are not saved",
                     file.display()
                 );
-                return Self::default();
+                return Self {
+                    notice: Some(
+                        "itemstyles.txt could not be read: edits are not saved".to_owned(),
+                    ),
+                    ..default()
+                };
             }
         };
         Self {
             rules,
             generation: 0,
             file: Some(file),
+            notice,
         }
     }
 
@@ -155,7 +169,10 @@ pub fn apply_requests(
         return;
     }
     styles.generation = styles.generation.wrapping_add(1);
-    if let Some(file) = &styles.file {
-        gd_game_core::session::write_user_file("item styles", file, styles.rules.write());
+    let saved = styles.file.as_ref().map(|file| {
+        gd_game_core::session::try_write_user_file("item styles", file, styles.rules.write())
+    });
+    if let Some(saved) = saved {
+        styles.notice = (!saved).then(|| "itemstyles.txt could not be saved".to_owned());
     }
 }

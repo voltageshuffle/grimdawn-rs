@@ -3,10 +3,8 @@
 //! Each region has one 32-bit TGA, uncompressed or run-length encoded (type 10,
 //! e.g. the Shattered Realm regions) (stock: 256 × 256, 2 px per metre for a
 //! 128 m region), its rows taken in file order (the header's bottom-up origin
-//! bit is not applied, as the engine uploads the rows as stored; PORT: matched
-//! to the real game's local map): the first row is the region's high-z edge.
-//! Drawing them (the fog passes included) is presentation code, kept with the
-//! port's local map UI.
+//! bit is not applied, as the engine uploads the rows as stored): the first
+//! row is the region's high-z edge.
 use super::MapFile;
 use anyhow::{Result, bail};
 
@@ -39,9 +37,7 @@ impl MinimapImage {
         if bpp != 3 && bpp != 4 {
             bail!("minimap TGA {bpp} bytes per pixel");
         }
-        // The rows are used in file order whatever the TGA's origin bit (the
-        // stock files say bottom-up): the texture's first row is the file's
-        // first (checked against the real local map's orientation).
+        // File row order whatever the TGA's origin bit (module docs).
         let n = (w as usize) * (h as usize) * bpp;
         let Some(src) = t.get(18 + idlen..) else {
             bail!("minimap TGA id length {idlen} past end");

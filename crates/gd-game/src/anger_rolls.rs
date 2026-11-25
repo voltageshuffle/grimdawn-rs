@@ -1,51 +1,35 @@
-//! The controller's periodic anger rolls: `RandomAnger*` and `ignorePets*`.
-//!
-//! Game.dll `ControllerMonster::Update` (outside the
-//! Dying / Dead states), timers from the constructor, fields from
-//! `ControllerMonster::Load`:
-//! * ignorePets: a timer (`ControllerMonster.ignorePetsTimer`, 5000 ms at construction) runs down; at or
-//!   below 0 it is set to `ignorePetsInterval` (ms, default 5000) and the flag
-//!   (`ControllerMonster.ignorePets`) re-rolled: `rand() % 101 < ignorePetsChance` (`Game::RandomInt(0,
-//!   100)`, int %, default 0). `ShouldIgnorePets` = the flag
-//!   unless `AngerManager::HasOnlyPetTargets` (no living
-//!   character without a master on the anger list). While it holds:
-//!   `AngerManager::GetNewTarget` skips the pets on the list
-//!   (`FindEnemy`), `AngerUpdate`'s sight sphere and
-//!   `FindEnemyUpdate`'s too-close sphere leave pets out
-//!   (`GetCharactersInSphere`, last argument), and
-//!   `UnderAttack` does not pass a pet's hit on to its master:
-//!   the pet gets both shares. Quest pets (`Skill_SpawnQuestPet`,
-//!   `Character::SetQuestPet`: `Character.questPet`) are never ignored; the port
-//!   has none.
-//! * RandomAnger: until it has once succeeded (`ControllerMonster.randomAngerDone`), a timer
-//!   (`ControllerMonster.randomAngerTimer`,
-//!   3000 ms at construction) runs down; below 0 it is set to
-//!   `RandomAngerEvaluationTime` (ms, default 3000) and, when `rand() % 100 <
-//!   RandomAngerChance` (default 0) and the current state has no target
-//!   (`GetCurrentStateData()` first dword), `PickRandomEnemyInView`
-//!   picks a uniformly random character among the living foes
-//!   within `ViewDistance` (sphere) and `MaxYViewDistance` (when set) of the
-//!   monster, pets left out while ignoring them: it gets 100 anger
-//!   (`AngerManager::AddAnger`, × its anger multiplier) and the rolls stop for good. `FindEnemy` then
-//!   takes it up.
+//! The controller's periodic anger rolls: `RandomAnger*` and `ignorePets*`
+//! (`ControllerMonster::Update`, outside Dying / Dead; fields from `Load`).
+//! * ignorePets: a timer (5000 ms at construction) runs down; at or below 0 it
+//!   is set to `ignorePetsInterval` (ms, default 5000) and the flag re-rolled:
+//!   `rand() % 101 < ignorePetsChance` (default 0). `ShouldIgnorePets` = the
+//!   flag unless `AngerManager::HasOnlyPetTargets`. While it holds,
+//!   `GetNewTarget` skips pets on the list, `AngerUpdate`'s sight sphere and
+//!   `FindEnemyUpdate`'s too-close sphere leave pets out, and `UnderAttack`
+//!   does not pass a pet's hit on to its master. Quest pets are never ignored;
+//!   the port has none.
+//! * RandomAnger: until it once succeeds, a timer (3000 ms at construction)
+//!   runs down; below 0 it is set to `RandomAngerEvaluationTime` (ms, default
+//!   3000) and, when `rand() % 100 < RandomAngerChance` (default 0) and the
+//!   current state has no target, `PickRandomEnemyInView` picks a uniformly
+//!   random living foe within `ViewDistance` and `MaxYViewDistance` (when
+//!   set), pets left out while ignoring them: it gets 100 anger (× its anger
+//!   multiplier) and the rolls stop for good.
 use crate::combat::MonsterAi;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
 use gd_game_core::combat::Dead;
 
-/// The roll fields, timers and flags of a monster's controller.
 #[derive(Clone, Debug)]
 pub struct AngerRolls {
     /// `RandomAngerChance` (%), `RandomAngerEvaluationTime` (s).
     pub random_chance: i32,
     pub random_interval: f32,
-    /// Seconds to the next random-anger roll; set once one succeeded.
     pub random_timer: f32,
     pub random_done: bool,
     /// `ignorePetsChance` (%), `ignorePetsInterval` (s).
     pub ignore_chance: i32,
     pub ignore_interval: f32,
-    /// Seconds to the next re-roll and the rolled flag.
     pub ignore_timer: f32,
     pub ignore_pets: bool,
 }
@@ -66,12 +50,11 @@ impl AngerRolls {
     }
 }
 
-/// The living characters (`Character::IsAlive`): [`ignores_pets`]' test of an anger-list entry.
+/// `Character::IsAlive`.
 pub type Living<'w, 's> = Query<'w, 's, (), (With<gd_game_core::combat::Combatant>, Without<Dead>)>;
 
-/// `ShouldIgnorePets`: the rolled flag, unless `AngerManager::HasOnlyPetTargets` (no entry on the anger list
-/// is a living character without a master: a dead or despawned target left on the list until the next
-/// `AngerUpdate` tick does not count; `is_pet` tells the pets).
+/// `ShouldIgnorePets`: the rolled flag, unless `AngerManager::HasOnlyPetTargets` (a dead or despawned target left
+/// on the list until the next `AngerUpdate` tick does not count).
 pub fn ignores_pets(ai: &MonsterAi, is_pet: impl Fn(Entity) -> bool, living: &Living) -> bool {
     ai.rolls.ignore_pets
         && ai
@@ -80,7 +63,7 @@ pub fn ignores_pets(ai: &MonsterAi, is_pet: impl Fn(Entity) -> bool, living: &Li
             .any(|(e, _)| !is_pet(*e) && living.contains(*e))
 }
 
-/// The `Update` part of both rolls (runs before the monster AI).
+/// Runs before the monster AI.
 pub fn update(
     time: Res<Time>,
     mut monsters: Query<(&Transform, &mut MonsterAi), Without<Dead>>,

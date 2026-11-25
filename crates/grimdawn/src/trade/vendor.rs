@@ -70,8 +70,8 @@ pub(super) fn trade_clicks(
         }
         return;
     };
-    // The dialog box ([`Prompt`]) takes every click while up: Yes on the buy question sends the purchase, Ok /
-    // No / the close button only close it.
+    // The dialog box takes every click while up: Yes on the buy question sends the purchase, Ok / No / close only
+    // close it.
     if let Some(prompt) = trade.prompt {
         use gd_ui_kit::confirm::Hit;
         capture.0 = true;
@@ -114,7 +114,6 @@ pub(super) fn trade_clicks(
         }
         return;
     }
-    // `GD_TRANSFER` (hooks.rs): once, show the transfer stash and move the first personal stash item into it.
     #[cfg(feature = "dev")]
     if hooks.items.transfer
         && matches!(open, TradeOpen::Stash { .. })
@@ -123,15 +122,12 @@ pub(super) fn trade_clicks(
     {
         *tested = true;
         trade.transfer = true;
-        // `GD_REAGENTS`: show the Materials / Components tab.
         trade.reagents = hooks.items.reagents;
 
         stash_req.write(gd_game_core::stash::StashRequest::TestTransfer);
         trade.version += 1;
         return;
     }
-    // `GD_TRADE_BUY` (hooks.rs): once, buy the first item of the open merchant's first tab and sell the
-    // first bag item.
     #[cfg(feature = "dev")]
     if hooks.items.trade_buy
         && let TradeOpen::Vendor { key, market, .. } = &open
@@ -159,7 +155,6 @@ pub(super) fn trade_clicks(
         trade.version += 1;
         return;
     }
-    // `GD_INV_CLICKS` (hooks.rs): a scripted click inside this window clicks it (the stash's apply mode in a run).
     #[cfg(feature = "dev")]
     let scripted = {
         let script = script.get_or_insert_with(|| hooks.items.inv_clicks.clone());
@@ -175,8 +170,8 @@ pub(super) fn trade_clicks(
     let Some(p) = p else {
         return;
     };
-    // The vendor / caravan / crafter / Runekeeper close button (`ui/trade.rs` `close_field`; the Illusionist's
-    // is `illusion_clicks`'): closes the window as Esc does. Not under the stack window or a modal question.
+    // The close button (not the Illusionist's) closes the window as Esc does. Not under the stack window or a modal
+    // question.
     if !matches!(open, TradeOpen::Illusionist { .. })
         && buttons.just_pressed(MouseButton::Left)
         && layout
@@ -201,12 +196,10 @@ pub(super) fn trade_clicks(
     }
     let Some(wr) = layout.window else { return };
     trade.hover = None;
-    // The stack window takes its own clicks (`ui/stack.rs`).
     if stack.covers(p) {
         return;
     }
-    // A modal question (destroy, tonic/writ use, apply / reagent confirmations: `inventory::question_up`)
-    // takes every click: none reaches the window under it.
+    // A modal question takes every click.
     if gd_ui::apply::question_up(&inv, &trade, &confirm) {
         return;
     }
@@ -226,8 +219,8 @@ pub(super) fn trade_clicks(
         }
         None => (left, right),
     };
-    // The search box (module doc): a click on it clears a non-empty text and
-    // focuses it; the clear button empties it; any other click unfocuses it.
+    // The search box: a click on it clears a non-empty text and focuses it; the clear button empties it; any other
+    // click unfocuses it.
     if left && matches!(open, TradeOpen::Vendor { .. } | TradeOpen::Stash { .. }) {
         if layout.search.is_some_and(|r| contains(&r, p)) {
             trade.search.text.clear();
@@ -253,8 +246,8 @@ pub(super) fn trade_clicks(
         return;
     }
     capture.0 = true;
-    // Every left click in the window hides the stack window first (a tab, toggle or sort would leave its
-    // OK splitting a hidden page's item); Ctrl + left on a stash stack opens it again below.
+    // Every left click hides the stack window first (else its OK could split a hidden page's item); Ctrl + left on
+    // a stash stack opens it again below.
     if left {
         stack.hide();
     }
@@ -284,15 +277,14 @@ pub(super) fn trade_clicks(
         if !left {
             return;
         }
-        // Store a held stack of the material or take from the store
-        // (`StashRequest::Material`; Shift takes a stack into the bags).
+        // Store a held stack of the material or take from the store (Shift takes a stack into the bags).
         stash_req.write(gd_game_core::stash::StashRequest::Material {
             record: record.clone(),
             shift: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
         });
         return;
     }
-    // Sort the shown page (`StashRequest::Sort`, the rule is documented there).
+    // Sort the shown page (`StashRequest::Sort`).
     if left
         && let Some(r) = layout.sort
         && contains(&r, p)
@@ -304,8 +296,8 @@ pub(super) fn trade_clicks(
         });
         return;
     }
-    // The buy tab asks first ([`Prompt`], `CaravanWindow::PromptBuy`): short of gold, the Ok box
-    // `tagTransferError01`; else the Yes / No question.
+    // The buy tab asks first (`CaravanWindow::PromptBuy`): short of gold, the Ok box `tagTransferError01`; else the
+    // Yes / No question.
     if left
         && let Some(r) = layout.buy
         && contains(&r, p)
@@ -340,9 +332,8 @@ pub(super) fn trade_clicks(
     }
     if left && let Some((t, _)) = layout.tabs.iter().find(|(_, r)| contains(r, p)) {
         trade.reagents = None;
-        // A faction tier above the player's rank is browsed; its purchases are refused
-        // (`gd_game::trade::BuyRequest`).
-        // An empty vendor tab's button is disabled (`tab_enabled`).
+        // A faction tier above the player's rank is browsed; its purchases are refused.
+        // An empty vendor tab's button is disabled.
         if let TradeOpen::Vendor { key, .. } = &open
             && !markets
                 .0
@@ -372,8 +363,7 @@ pub(super) fn trade_clicks(
         | TradeOpen::Illusionist { .. } => {}
         TradeOpen::Vendor { key, market, .. } => {
             // A held item goes to the merchant: sold whole, a split-off part of a stack too
-            // (`CursorHandlerItemMove::PrimaryMarketActivate`, `gd_game::trade::SellHeld`); nothing is bought
-            // while an item is held (the click is the cursor handler's).
+            // (`CursorHandlerItemMove::PrimaryMarketActivate`); nothing is bought while an item is held.
             if inv.held.is_some() {
                 if left && let Some(shop) = trade.shop(loaded.as_deref()) {
                     sell_held.write(gd_game::trade::SellHeld { shop });
@@ -396,8 +386,7 @@ pub(super) fn trade_clicks(
             if !(left || right) {
                 return;
             }
-            // The purchase (`gd_game::trade::BuyRequest`; refused when the gold
-            // or the bag room is short).
+            // The purchase (refused when the gold or the bag room is short).
             if let Some(shop) = trade.shop(loaded.as_deref()) {
                 buy_req.write(gd_game::trade::BuyRequest {
                     shop,
@@ -411,11 +400,9 @@ pub(super) fn trade_clicks(
             let tab = trade
                 .tab
                 .min(stash.view(trade.transfer).len().saturating_sub(1));
-            // Apply mode (`gd_game::inventory`, look `ui/apply.rs`): right click
-            // selects a component / augment here; in the mode either button uses
-            // it on the item under the cursor (`ApplyRequest::Click`: the
-            // handlers' `SecondaryStashActivate` / `SecondaryTransferActivate`
-            // are the primary ones).
+            // Apply mode: right click selects a component / augment here; in the mode either button uses it on the
+            // item under the cursor (the handlers' `SecondaryStashActivate` / `SecondaryTransferActivate` are the
+            // primary ones).
             let transfer = trade.transfer;
             let loc = move |x, y| gd_game_core::inventory::ItemLoc::Stash {
                 transfer,
@@ -448,7 +435,7 @@ pub(super) fn trade_clicks(
                 return;
             }
             // Ctrl + left click (Shift not held) on a stack of more than one opens the stack window
-            // (`UIPlayerHud::OpenStackWindow`, `ui/stack.rs`; hidden above by every click).
+            // (`UIPlayerHud::OpenStackWindow`).
             let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
             if inv.held.is_none()
                 && !shift
@@ -469,7 +456,6 @@ pub(super) fn trade_clicks(
                 }
                 return;
             }
-            // Pick up / place / swap with the held item (`StashRequest::Click`).
             stash_req.write(gd_game_core::stash::StashRequest::Click {
                 transfer: trade.transfer,
                 page: tab,
@@ -480,8 +466,7 @@ pub(super) fn trade_clicks(
     }
 }
 
-/// The trade answers: a done request rebuilds the window (a bought page shows), a refusal shows its Ok box
-/// ([`Prompt::Message`]) while the window is open.
+/// The trade answers: a done request rebuilds the window, a refusal shows its Ok box while the window is open.
 pub(super) fn trade_done(
     mut done: MessageReader<gd_game::trade::TradeDone>,
     mut refused: MessageReader<gd_game::trade::TradeRefused>,

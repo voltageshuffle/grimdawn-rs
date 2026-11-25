@@ -1,5 +1,5 @@
-//! `FxMesh` effects (Game.dll `GAME::FxMesh`, an FxPak's `meshEffectNames`: 92 stock paks, e.g. the devotion ground
-//! effects, bone spikes, ice spikes): an animated model placed at the pak's coords.
+//! `FxMesh` effects (Game.dll `GAME::FxMesh`, an FxPak's `meshEffectNames`: e.g. the devotion ground effects, bone
+//! spikes, ice spikes): an animated model placed at the pak's coords.
 //!
 //! `FxMesh::Load`, `Start`, `UpdateSelf`: the
 //! record's `meshName`, up to three animations (`animationName`, `animationName2`, `animationName3` with `speed`,
@@ -13,15 +13,11 @@
 //! `fadeOutTime` > 0, `c = sat(left / fadeOutTime)`, after which the colour keeps its last value (0) and the effect
 //! goes once its animation has ended. `GraphicsMeshInstance::SetDiffuseColor` (Engine.dll) writes
 //! `GraphicsMeshInstance.diffuseColor`, which `FxMesh::AddToScene` leaves alone (no `Actor` tint over it) and
-//! `SetShaderParameters` sends as `diffuseColor` = 0.5 x `c` (here: the parts' [`GdMaterial`] copies, as
-//! `Actor::SetTintColor`'s in `enchant.rs`): a darkening, not an alpha fade. Stock: most `FxMesh` records fade, all
-//! briefly (fade-ins 0.01 to 0.25 s, fade-outs at most 0.5 s), often while their animation sinks the mesh into
-//! the ground (`skillclass10/leap_faultlineground_meshfx01`: sustain 1.5 s, fade-out 0.5 s; checked with
-//! `GD_FX_TEST`), so the fade is hard to see on screen. A character pak's mesh rides the record's `attachPoint`
-//! (`PFxManager::AddMeshEffect`: `Attach(effect, identity, attachPoint)`; `gd_game::casting` effects,
-//! moved by `enchant.rs`'s `follow_points`); with `stationaryAttachment` ([`Stationary`]) it does not turn with the
-//! character. A worn item's mesh creates its `FxMesh`es like its effects (`Actor::CreateAttachmentsFromMesh`,
-//! `items.rs`: e.g. the gdx3 shoulder wings), which play the record's weapon-set animations as the player animates
+//! `SetShaderParameters` sends as `diffuseColor` = 0.5 x `c` (here: the parts' [`GdMaterial`] copies): a darkening,
+//! not an alpha fade. A character pak's mesh rides the record's `attachPoint`
+//! (`PFxManager::AddMeshEffect`: `Attach(effect, identity, attachPoint)`); with `stationaryAttachment`
+//! ([`Stationary`]) it does not turn with the character. A worn item's mesh creates its `FxMesh`es like its effects
+//! (`Actor::CreateAttachmentsFromMesh`), which play the record's weapon-set animations as the player animates
 //! ([`sync_meshes`]).
 //! PORT: an effect with no animation lasts the 3 s of the FxPak.
 use crate::character::CharAssets;
@@ -45,8 +41,7 @@ impl Plugin for FxMeshPlugin {
     }
 }
 
-/// `stationaryAttachment`: attached to a character, the mesh follows its position, not its turn
-/// (`enchant.rs` `follow_points`).
+/// `stationaryAttachment`: attached to a character, the mesh follows its position, not its turn.
 #[derive(Component)]
 pub struct Stationary;
 
@@ -180,7 +175,7 @@ fn fade_meshes(
                 m.0 = materials.add(copy);
                 f.owned.push(p);
             }
-            // Write only on change: `get_mut` marks the material modified (re-prepared), and the sustain holds 1.
+            // Write only on change: `get_mut` marks the material modified.
             let diffuse = Vec3::splat(c * 0.5);
             if materials
                 .get(&m.0)

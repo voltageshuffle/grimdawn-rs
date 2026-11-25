@@ -2,7 +2,7 @@
 //! `pets.rs` world input writes them, `gd_ui::pets` draws the portraits.
 use bevy::prelude::*;
 
-/// The selected pets, in selection order (module docs).
+/// The selected pets, in selection order.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct PetSelection(pub Vec<Entity>);
 

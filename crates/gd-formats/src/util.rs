@@ -78,8 +78,7 @@ pub fn latin1(b: &[u8]) -> String {
 
 /// C `atof` (the CRT's `strtod` in the C locale), as the engine reads numbers out of text: leading white space, an
 /// optional sign, digits with at most one `.`, an optional exponent (`e` / `E`, a sign, digits; left out when it
-/// has no digits). The longest such prefix, else 0. Hex floats, `inf` and `nan` are not read (no text the port
-/// parses has them).
+/// has no digits). The longest such prefix, else 0. Hex floats, `inf` and `nan` are not read.
 pub fn atof(s: &str) -> f64 {
     let s = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
     let b = s.as_bytes();
@@ -135,9 +134,24 @@ pub fn safe_join(base: &Path, name: &str) -> Result<PathBuf> {
             Component::RootDir | Component::Prefix(_) | Component::ParentDir
         )
     }) {
-        bail!("unsafe entry name {name:?}");
+        bail!("unsafe entry name \"{name}\"");
     }
     Ok(base.join(p))
+}
+
+/// `[a, b, c]` list of bytes, decimal or two-digit hex, for error text.
+pub fn byte_list(b: &[u8], hex: bool) -> String {
+    let items: Vec<String> = b
+        .iter()
+        .map(|v| {
+            if hex {
+                format!("{v:02x}")
+            } else {
+                v.to_string()
+            }
+        })
+        .collect();
+    format!("[{}]", items.join(", "))
 }
 
 /// MD5 (RFC 1321); the engine's `MD5Digest` (Game.dll `MD5Digest::Update` / `MD5Digest::Transform`).

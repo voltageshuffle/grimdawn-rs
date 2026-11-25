@@ -1,6 +1,6 @@
 //! In-game UI definitions (database records under `records/ui/...`) and the
-//! engine's layout rules. Verified against `Grim Dawn.exe` (the UI widgets live
-//! in the executable, not in Engine/Game.dll) and Engine.dll.
+//! engine's layout rules, from `Grim Dawn.exe` (the UI widgets live in the
+//! executable, not in Engine/Game.dll) and Engine.dll.
 //!
 //! There is no generic widget tree in the data: every window class reads a fixed
 //! set of named fields from its own record (`hudHealthBar`, `equipHead`, ...),
@@ -495,8 +495,6 @@ impl Widget {
         }
     }
 }
-
-// Text layout (GraphicsFont2 / GraphicsCanvas, Engine.dll).
 
 /// One glyph quad in pixels relative to the text origin (top-left of the
 /// first line). `c0` colours the top edge, `c1` the bottom edge.

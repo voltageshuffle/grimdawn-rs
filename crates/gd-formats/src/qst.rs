@@ -35,7 +35,7 @@ fn boolean(r: &mut Reader) -> Result<bool> {
     Ok(r.u8()? != 0)
 }
 
-/// `ScriptableCondition::GetComparisonText` (0x18046f... ): 0 `<`, 1 `<=`,
+/// `ScriptableCondition::GetComparisonText`: 0 `<`, 1 `<=`,
 /// 2 `=`, 3 `>=`, 4 `>`, 5 `<>`. Numeric conditions compare
 /// `actual <op> wanted` (except Difficulty, which compares `wanted <op> actual`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +210,7 @@ pub enum Condition {
     /// `tagConditionHasKilled`). The death handler (`ScriptableCondition_KillClassification::OnCreatureDeath`, event
     /// 11, only with `IsExpansion3Loaded`) counts a `Monster` whose `GetClassification` (`Monster.classification`,
     /// `GameEngine::ResolveMonsterClassificationEnum`: Common 0, Champion 1, Hero 2, Boss 3, Quest 4,
-    /// SuperBoss 5) is either class; the killer and victim rules are `gd_story::story::Kill`'s.
+    /// SuperBoss 5) is either class.
     /// Stock: `bq_av06` (Boss / Quest, 8 kills).
     KillClassification { classes: [u32; 2], count: u32 },
     /// 29 kill counter by faction (`Create` case 29, vtable `ScriptableCondition_KillFaction::vftable`, same

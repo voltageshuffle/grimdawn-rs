@@ -57,7 +57,7 @@
 //!
 //! PORT: the tab segments size to their (localised) titles (`gd_ui_kit::layout::tab_strip`,
 //! contiguous, centred on the stock strip's centre) and the undo button auto-sizes to its
-//! label (kit `static_button`); stock fixes both to their textures (UX over parity).
+//! label (kit `static_button`); stock fixes both to their textures.
 use super::contains;
 use super::{HudValues, Ui};
 use crate::state::inventory::UiCapture;
@@ -72,7 +72,6 @@ const BASE_PANE: &str = "records/ui/skills/classcommon/skills_classpanelconfigur
 #[derive(Clone, Debug, PartialEq)]
 pub enum SkillHit {
     Tab(u8),
-    /// The Devotion tab between the mastery tabs.
     Devotion,
     Raise {
         tree: String,
@@ -100,7 +99,7 @@ pub struct SkillLayout {
     pub masteries: Vec<(u8, URect)>,
 }
 
-/// Registers the button record at `rec`'s press sound (`soundNameDown`, `ui/widgets.rs`) for its rect `r`.
+/// Registers the button record at `rec`'s press sound (`soundNameDown`) for its rect `r`.
 fn button_sound(ui: &mut Ui, r: URect, rec: &str) {
     if let Some(b) = ui.record(rec) {
         ui.record_button_sound(r, &b);
@@ -116,8 +115,8 @@ fn chosen(ui: &Ui, values: &HudValues) -> Vec<(u32, String)> {
         .collect()
 }
 
-/// The (class number, tree) of the pane each slot shows, `None` for its selection pane (module doc): the slot's
-/// pick, else the chosen masteries no slot shows fill the empty slots in order.
+/// The (class number, tree) of the pane each slot shows, `None` for its selection pane: the slot's pick, else the
+/// chosen masteries no slot shows fill the empty slots in order.
 fn slots(ui: &Ui, values: &HudValues, picks: &[Option<String>; 2]) -> [Option<(u32, String)>; 2] {
     let trees = class_trees(&ui.data.db);
     let mut slots = picks
@@ -165,8 +164,6 @@ pub fn build(
         2
     };
     let tab = (tab.max(1) as usize).min(ntabs);
-    // Tabs sized to their titles, contiguous in the records' x order (mastery 1, the devotion
-    // graphic, mastery 2 / select) and centred on the stock strip's centre.
     let tab_style = "records/ui/styles/text/style_special_classtabs.dbr";
     let mut segs = Vec::new();
     for i in 1..=ntabs {
@@ -269,15 +266,8 @@ pub fn build(
             &mut layout,
         ),
     }
-    // Undo button (`undoButton`, `ButtonStaticText`; the disabled bitmap while
-    // nothing was spent in this pane since the window opened, `UISkillPane::Update`:
-    // disabled flag = no pending change; click = the `UISkillPane` virtual
-    // `UISkillPane::Undo`, see `gd_game::points`) and the points line (`pointsRemaining`; localized
-    // `SkillPointsAvailable{,Singular}` / `NoSkillPointsAvailable` in `^r`,
-    // GrimDawn.exe `UISkillPane::Update`). Mastery-pane only: the selection
-    // table has no undo/points fields, so neither is drawn on a free slot.
-    // A pane whose mastery has no point draws `undoMasterySelectionButton` instead, outside reclamation mode (module
-    // doc).
+    // Undo button and points line (`UISkillPane::Update`): mastery pane only. A pane whose mastery has no point
+    // draws `undoMasterySelectionButton` instead, outside reclamation mode.
     if let Some(pane) = &panes[slot] {
         let unchosen = !masteries.contains(pane);
         if unchosen
@@ -473,7 +463,6 @@ fn mastery_pane(
 ) {
     let Some(t) = ui.record(table) else { return };
     let f = |k: &str| t.str(k).map(str::to_string).unwrap_or_default();
-    // The rules' per-tree data, derived once for every button of the pane.
     let data = ui.data;
     let trees = data.skill_trees();
     let class_tree = trees.tree(tree);
@@ -521,9 +510,7 @@ fn mastery_pane(
         }
     }
     // The background is black with the beams in its alpha. Reclamation mode draws `skillPaneBaseReallocationBitmap`
-    // and the base pane's `reallocationBitmap` (no bitmap in stock data) instead of the class image
-    // (`UISkillPane::Draw`: `UISkillPane.baseReallocationBitmap` / `UISkillPane.reallocationBitmap` instead of
-    // `UISkillPane.baseBitmap` / `UISkillPane.classImage`).
+    // and the base pane's `reallocationBitmap` (no bitmap in stock data) instead of the class image.
     let reclaim = values.reclaim.is_some();
     let back = if reclaim {
         "skillPaneBaseReallocationBitmap"
@@ -642,7 +629,7 @@ fn mastery_pane(
                 // The connection lists live on the skill's resource record:
                 // toggles and pets keep them on their buff / pet skill.
                 let has = |r: &gd_formats::arz::Record| !r.strs("skillConnectionOn").is_empty();
-                // Walks `buffSkillName` / `petSkillName` links to the record holding a field (not the profile lookup).
+                // Walks `buffSkillName` / `petSkillName` links to the record holding a field.
                 let res = if has(rec) {
                     Some(rec)
                 } else {
@@ -935,9 +922,7 @@ fn mastery_pane(
             };
         }
     }
-    // No mastery level number: the pane loads `masterySkillLevel`
-    // (GrimDawn.exe `UISkillPane::Load` → `UISkillPane.masterySkillLevel`) but nothing reads it again
-    // (only the constructor and destructor touch the field).
+    // No mastery level number: `UISkillPane::Load` loads `masterySkillLevel` but nothing reads it again.
 }
 
 /// `(slot, other)`: the slot shown and the other slot's mastery (tree); `(level, hover)`: the character level and
@@ -956,7 +941,7 @@ fn select_pane(
     {
         ui.bitmap(&bitmap, x, y, po);
     }
-    // The described mastery's image and text, else the record's image and the default text (module doc).
+    // The described mastery's image and text, else the record's image and the default text.
     let described =
         |k: &str| hover.and_then(|i| t.strs(k).get(usize::from(i)).map(|s| s.to_string()));
     let (image, text) = match (
@@ -1052,7 +1037,6 @@ pub struct Above<'w> {
 }
 
 impl Above<'_> {
-    /// A higher window's rect contains `p` (physical px).
     pub fn covers(&self, p: Vec2) -> bool {
         self.map.covers(&self.rift, p) || (self.journal.open && self.journal_layout.covers(p))
     }
@@ -1095,11 +1079,9 @@ pub fn clicks(
     }
     let Ok(win) = window.single() else { return };
     let cursor = super::cursor_px(win);
-    // `GD_SKILL_HOVER` (hooks.rs) fakes the cursor, as for the tooltip.
     #[cfg(feature = "dev")]
     let cursor = hooks.ui.skill_hover.or(cursor);
     let hit = cursor.map(|c| (c, super::widgets::button_pressed(&buttons)));
-    // `GD_SKILL_CLICKS` (hooks.rs): physical px.
     #[cfg(feature = "dev")]
     let hit = gd_game_core::hooks::take_due(
         script.get_or_insert_with(|| hooks.ui.skill_clicks.clone()),
@@ -1113,7 +1095,6 @@ pub fn clicks(
         return;
     }
     capture.0 = true;
-    // Hovering a mastery button describes it (module doc).
     if let Some(&(i, _)) = layout.masteries.iter().find(|(_, r)| contains(r, p))
         && panels.mastery_hover != Some(i)
     {
@@ -1166,7 +1147,6 @@ pub fn clicks(
 }
 
 /// What the tooltip currently shows: (tree, skill, skills, points, level, screen, reclamation mode and money).
-/// Compared with the live values by reference; copied only when the tooltip is redrawn.
 type TipKey = (
     String,
     String,
@@ -1178,8 +1158,7 @@ type TipKey = (
 );
 
 /// Hover tooltip of a skill button (`GenerateUISkillText`, see `gd_sim::skill_tooltip`), shown through the shared
-/// [`super::tip::TipCanvas`] so hovering does not rebuild the window. `GD_SKILL_HOVER` (hooks.rs, physical px) fakes
-/// the cursor.
+/// [`super::tip::TipCanvas`].
 #[allow(clippy::too_many_arguments)]
 pub fn tooltip(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,

@@ -2,20 +2,18 @@
 //!
 //! * Quests: PORT. [`quest_defs`] loads every `quests/*.qst` of the VFS up
 //!   front; the engine loads the current world's quest-file list
-//!   (`Quest2Repository::LoadQuests` via `World::GetQuestFile`, the `.map`
-//!   header; see [`QuestDefs::repository_order`]).
+//!   (`Quest2Repository::LoadQuests` via `World::GetQuestFile`; see
+//!   [`QuestDefs::repository_order`]).
 //! * Conversations: PORT. [`dialogs`] loads every `conversations/*.cnv` up
 //!   front; the engine loads a character's conversation from its record's
-//!   `conversation` field (Game.dll `Character::Load` reads it).
+//!   `conversation` field (`Character::Load`).
 //! * Resilience: PORT. A file the VFS cannot read or parse is skipped with a
-//!   warning, not propagated: one malformed mod file must not kill the whole
-//!   story (the engine loads only the world's / character's files, so a bad
-//!   mod file elsewhere never reaches it).
+//!   warning, not propagated.
 //! * Text: a non-English session replaces each file's embedded text block with
 //!   the line-ordered `text_<code>/<basename>.txt` override
 //!   ([`gd_formats::text::load_text_override`], `PortableLocalization::Read`).
 //!   PORT: a missing override keeps the embedded English (the engine fails the
-//!   load; the port loads every file up front).
+//!   load).
 use super::dialog::Dialogs;
 use super::quest::{QuestDef, QuestDefs, normalize_path};
 use anyhow::Context;
@@ -26,9 +24,7 @@ use gd_formats::text::load_text_override;
 use gd_formats::vfs::Vfs;
 use std::sync::Arc;
 
-/// Every `quests/*.qst` of the VFS (later layers already override); a
-/// non-English session's text overrides replace the embedded text blocks
-/// (module doc).
+/// Every `quests/*.qst` of the VFS, localized.
 pub fn quest_defs(vfs: &Vfs, language: &str) -> QuestDefs {
     let mut paths: Vec<&str> = vfs
         .paths()
@@ -59,8 +55,7 @@ pub fn quest_defs(vfs: &Vfs, language: &str) -> QuestDefs {
     defs
 }
 
-/// Every `conversations/*.cnv` of the VFS, localized before wrapping in
-/// `Arc` (module doc).
+/// Every `conversations/*.cnv` of the VFS, localized.
 pub fn dialogs(vfs: &Vfs, language: &str) -> Dialogs {
     let mut paths: Vec<&str> = vfs
         .paths()

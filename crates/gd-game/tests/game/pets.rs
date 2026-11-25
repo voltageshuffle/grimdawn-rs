@@ -1,5 +1,4 @@
-//! Pet orders (`gd_game::pets` module docs): the Pet Attack skill sets the
-//! pet's target.
+//! Pet orders: the Pet Attack skill sets the pet's target.
 use bevy::prelude::*;
 use gd_game::combat::Invincible;
 use gd_game::pets::Pet;
@@ -29,8 +28,7 @@ fn game() -> Option<(TestGame, Entity)> {
     Some((g, p))
 }
 
-/// Summons the Hellhound at the player (`selfTarget`, one per cast:
-/// `gd_game::pets::placement`) and returns it.
+/// Summons the Hellhound at the player and returns it.
 fn summon(g: &mut TestGame, owner: Entity) -> Entity {
     g.app.world_mut().write_message(SpawnPet {
         owner,

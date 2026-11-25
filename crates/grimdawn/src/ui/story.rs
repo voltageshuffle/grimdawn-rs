@@ -1,7 +1,6 @@
 //! Presentational story effects the binary draws: the `Character:Say` speech bubble
 //! ([`gd_game::story::SayBubble`]) and the `Game.ScreenShake` camera-shake bridge
-//! ([`gd_game::story::ScreenShake`]). Both are presentation only — the gameplay side (the story host)
-//! inserts the bubble / sets the shake; nothing here mutates gameplay state.
+//! ([`gd_game::story::ScreenShake`]). Presentation only: the story host inserts the bubble / sets the shake.
 //!
 //! ## Speech bubble (`Character:Say`, LUA-14)
 //! Grim Dawn.exe `LuaCharacter::Say`: localises the tag
@@ -23,9 +22,7 @@
 //! `GameCamera::Update` shake as a skill's (`gd_render::camera::apply_shake`, the [`CameraShake`]
 //! message). The story host sets [`ScreenShake`] (amplitude + seconds left); this bridge forwards a
 //! fresh value to the camera as a [`CameraShake`] and decays `secs_left` by the game frame's dt.
-//! PORT: the resource carries no position, so the shake is the player's own (`own`, always applied);
-//! the decay lives here rather than in `gd-render` because a render crate cannot read `gd-game`
-//! (layering). Headless gameplay has no render camera, so nothing reads the shake (a no-op).
+//! PORT: the resource carries no position, so the shake is the player's own (`own`, always applied).
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::collections::{HashMap, HashSet};
@@ -69,8 +66,7 @@ impl Plugin for StoryViewPlugin {
 #[derive(Component)]
 struct SayRoot;
 
-/// A bubble's movable container (its box, border, text and tail are children built once, in local
-/// coordinates; the container is repositioned and faded in place).
+/// A bubble's movable container (box, border, text and tail are children in local coordinates).
 #[derive(Component)]
 struct SayView;
 
@@ -266,7 +262,7 @@ fn say_bubbles(
 }
 
 /// Forwards a fresh [`ScreenShake`] to the render camera and decays its `secs_left` by the game frame's
-/// dt (module doc). The camera's own shake timer ([`gd_render::camera::apply_shake`]) runs the offset.
+/// dt; [`gd_render::camera::apply_shake`] runs the offset.
 fn screen_shake(
     mut shake: ResMut<ScreenShake>,
     time: Res<Time>,

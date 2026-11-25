@@ -60,7 +60,7 @@ impl Pattern {
     }
 }
 
-/// A pattern record's placement fields (module doc).
+/// A pattern record's placement fields.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub pattern: Pattern,
@@ -294,8 +294,7 @@ pub struct NavBlock {
 /// Tries of the random requests (`RequestAndBlockRandomPoint…`).
 const RANDOM_TRIES: usize = 100;
 
-/// Grid candidate ceiling (bad data: a huge `placementRadius`); stock patterns
-/// enumerate a few hundred.
+/// Grid candidate ceiling (bad data: a huge `placementRadius`).
 const MAX_GRID_CANDIDATES: f32 = 1_048_576.0;
 
 impl NavBlock {

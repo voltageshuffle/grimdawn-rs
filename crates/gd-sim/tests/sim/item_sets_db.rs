@@ -1,5 +1,5 @@
-//! Item sets' skill bonuses (`gd_sim::items::sets` docs) against the
-//! installed game database: Mogdrogen's Tranquility (`itemset_c027`).
+//! Item sets' skill bonuses against the installed game database: Mogdrogen's Tranquility
+//! (`itemset_c027`).
 use gd_formats::save::item::Item;
 use gd_sim::items::sets::set_skill_bonuses;
 use gd_sim::testdata::db;

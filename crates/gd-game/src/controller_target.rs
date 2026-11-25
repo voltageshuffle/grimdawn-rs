@@ -1,49 +1,34 @@
-//! Keyboard Only's controller targeting (`movementType` 2; the gamepad's too): with the cursor out of the aim, every
-//! frame the game picks what the player faces and makes it the controller's cursor record and combat enemy / ally.
-//! The game gathers the [`Candidate`]s; [`pick`] is the rule; the result goes to gd-game as [`ControllerTarget`]
-//! (`crate::hotbar::WorldCursor`).
+//! Keyboard Only's controller targeting (`movementType` 2; the gamepad's too): with the cursor out of the aim,
+//! every frame the game picks what the player faces and makes it the controller's cursor record and combat
+//! enemy / ally. The game gathers the [`Candidate`]s; [`pick`] is the rule.
 //!
-//! `Grim Dawn.exe` `InGameUI::Update` (near its end), run each frame
-//! when `InputMode == 0 && movementType == 2` and no window / dialog blocks it (`Ui::IsAnyWindowOpen`; then the
-//! record stays): the record and the combat enemy / ally are cleared, then the scan
-//! `InGameUI::CollectEnemyCandidates` (struct at `InGameUI.targetScan`, aim direction `InGameUI.aimDirection`
-//! = [`gd_game_core::player::ControllerDirection::aim`]) looks at every entity within 20 m of the player
-//! inside the player's camera frustum. `d` is the horizontal distance, the cone test the cosine between the
-//! horizontal direction to it and the aim direction: at least `cos 27°` (0.8910065) from 5 m on, at least 0 (in
-//! front) nearer ([`in_cone`]).
+//! `InGameUI::Update`, each frame when `InputMode == 0 && movementType == 2` and no window blocks it
+//! (`Ui::IsAnyWindowOpen`; then the record stays): the record and the combat enemy / ally are cleared, then
+//! `InGameUI::CollectEnemyCandidates` scans every entity within 20 m inside the camera frustum. `d` is the
+//! horizontal distance; the cone test ([`in_cone`]) needs the cosine to the aim direction at least `cos 27°`
+//! from 5 m on, at least 0 nearer.
 //! - a foe (alive or of interest, targetable, not hiding) within 8 m joins the near list; one in the cone the
 //!   enemy candidates, with targetable unbroken `Destructible`s in the cone;
-//! - the nearest item of interest that passes the label filter within 5 m (`max(radii + 1.5, 5)`: 5 m);
+//! - the nearest item of interest that passes the label filter within 5 m;
 //! - the nearest friendly `Npc` within 5 m and its usable range (`Character::GetUsableRange`: both radii + 3 m);
 //! - the nearest interactable fixed actor in the cone within 10 m and its usable range
-//!   (`FixedActor::GetUsableRange`: both radii + `usableRange`); a fixed actor nearer than the NPC drops the NPC,
-//!   else an NPC drops the fixed actor.
+//!   (`FixedActor::GetUsableRange`); a fixed actor nearer than the NPC drops the NPC, else the NPC drops it.
 //!
-//! A near foe that causes anger (`Character::CausesAnger`, `InGameUI::IsAngryFoe`) holds the combat flag 500 ms
-//! ([`Targeting`]). The enemy is the candidate nearest to the player (`InGameUI::PickNearestEnemy`). In order, the
-//! first that applies is the pick ([`Pick`]): a container out of combat (highlighted only), a breakable enemy out of
-//! combat,
-//! an item out of combat (the ground label selection), an NPC out of combat (the record and the combat ally), a
-//! fixed actor (out of combat, or always when not a shrine / blast container; highlighted only), the enemy (the
-//! record at its coordinates and the combat enemy).
+//! A near foe that causes anger (`InGameUI::IsAngryFoe`) holds the combat flag 500 ms. The enemy is the
+//! candidate nearest to the player (`InGameUI::PickNearestEnemy`). The first that applies is the [`Pick`]:
+//! a container out of combat, a breakable enemy out of combat, an item out of combat, an NPC out of combat, a
+//! fixed actor (out of combat, or always when not a shrine / blast container), the enemy.
 //!
-//! PORT: the game supplies the frustum test (the camera's view), the interactable fixed actors (`IsOfInterest`:
-//! chests, doors and levers, devotion shrines and totems, riftgates, the altar, the player's gravestone, personal
-//! portals, the Shattered Realm's exit gates and buff shrines; the cauldron is an NPC) and the label filter (its
-//! shown labels).
+//! PORT: the game supplies the frustum test, the interactable fixed actors (`IsOfInterest`) and the label
+//! filter.
 //!
-//! The Interact key (key action 54 `tagUse`, default U; [`interact_pick`]), `Grim Dawn.exe` HUD key action
-//! handler `UIPlayerHud::HandleKeyAction` → `UIPlayerHud::InteractNearest`, in every movement mode and apart from the
-//! pick above: of the entities within 10 m of the player (`GetEntitiesInSphere`), in the query's order, an
-//! interactable `FixedActor` (`FixedActor::IsOfInterest`) within its usable range (3D,
-//! `FixedActor::GetUsableRange`) and any `Npc` (no range, no availability test)
-//! become the best when nearer than the best so far (one best distance for both); a fixed actor found wins over
-//! the NPC. The fixed actor goes to `ControllerPlayer::InteractAction`, the NPC to `NpcAction`: the player state's
-//! fixed actor / NPC requests a click makes (`SelectPrimaryAction`), here [`UseObject`]. The Pickup key (55,
-//! unbound) is `crate::loot_filter::PickUpNearest`. PORT: the query's order is the game's candidate order.
+//! The Interact key (`tagUse`, [`interact_pick`]; `UIPlayerHud::InteractNearest`), in every movement mode:
+//! of the entities within 10 m (`GetEntitiesInSphere`), in the query's order, an interactable `FixedActor`
+//! within its usable range (3D) and any `Npc` (no range, no availability test) become the best when nearer
+//! than the best so far (one best distance for both); a fixed actor found wins over the NPC. PORT: the query's
+//! order is the game's candidate order.
 use bevy::prelude::*;
 
-/// What a candidate is (`InGameUI::CollectEnemyCandidates`'s classes).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     /// A foe character: `causes_anger` for the combat flag.
@@ -58,7 +43,6 @@ pub enum Kind {
     Fixed { kind: FixedKind, usable: f32 },
 }
 
-/// The fixed actor classes the pick tells apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FixedKind {
     /// `FixedItemContainer`: a chest.
@@ -75,7 +59,6 @@ pub struct Candidate {
     pub kind: Kind,
 }
 
-/// The pick (module docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Pick {
     #[default]
@@ -99,24 +82,23 @@ impl Pick {
     }
 }
 
-/// The scan's reach (`GetEntitiesInSphere` radius).
+/// `GetEntitiesInSphere` radius.
 pub const SCAN_RADIUS: f32 = 20.0;
 /// How long the combat flag holds after the last frame with a near angry foe (`InGameUI.lastAngryTime`).
 pub const COMBAT_HOLD: f32 = 0.5;
 
-/// The pick's state: the time of the last frame with a near angry foe.
+/// The time of the last frame with a near angry foe.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Targeting {
     pub angry_at: Option<f32>,
 }
 
-/// `InGameUI::CollectEnemyCandidates`'s cone test: `cos` of the angle between the horizontal direction to the
-/// thing and the aim direction.
+/// `InGameUI::CollectEnemyCandidates`'s cone test.
 pub fn in_cone(cos: f32, d: f32) -> bool {
     cos >= if d >= 5.0 { 0.891_006_5 } else { -4.371_139e-8 }
 }
 
-/// The pick of this frame at `now` (s) from the player's position and aim direction (module docs).
+/// The pick of this frame at `now` (s).
 pub fn pick(
     me: Vec3,
     aim: Vec3,
@@ -209,24 +191,23 @@ pub fn pick(
     enemy.map_or(Pick::None, |(_, e, _)| Pick::Enemy(e))
 }
 
-/// Keyboard Only's pick for the controller's cursor record (`SetMouseRepeatData`): the enemy or NPC picked and its
-/// coordinates, else an empty record (no target, no point). Sent by the game every frame the targeting runs.
+/// Keyboard Only's pick for the controller's cursor record (`SetMouseRepeatData`): the enemy or NPC and its
+/// coordinates, else an empty record.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct ControllerTarget {
     pub target: Option<Entity>,
     pub point: Option<Vec3>,
 }
 
-/// The Interact key's request (module docs): use the fixed actor or talk to the NPC as a click on it does. Sent by
-/// the game; the game's object systems (chests, doors, shrines, riftgates, NPCs) take it as a click on theirs.
+/// The Interact key's request: the object systems take it as a click on theirs.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UseObject(pub Entity);
 
-/// The Interact key's reach (`GetEntitiesInSphere` radius, `UIPlayerHud::InteractNearest`).
+/// `GetEntitiesInSphere` radius (`UIPlayerHud::InteractNearest`).
 pub const INTERACT_RADIUS: f32 = 10.0;
 
-/// What the Interact key uses (module docs): of the `Fixed` and `Npc` candidates (others are ignored), in their
-/// order, the fixed actor within its usable range nearer than the best so far, else the NPC nearer than it.
+/// What the Interact key uses: of the `Fixed` and `Npc` candidates, in their order, the fixed actor within its
+/// usable range nearer than the best so far, else the NPC nearer than it.
 pub fn interact_pick(me: Vec3, candidates: &[Candidate]) -> Option<Entity> {
     let mut best = f32::INFINITY;
     let (mut fixed, mut npc) = (None, None);

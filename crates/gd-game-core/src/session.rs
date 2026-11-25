@@ -1,12 +1,7 @@
-//! The play session: which character is loaded ([`LoadedCharacter`], from `GD_SAVE` or the main menu,
-//! `grimdawn::menu`), the player's choices ([`Choice`]: difficulty, mode, custom game) and the resulting
-//! [`GameMode`], read through the `gd_game::session::Session` parameter. `gd_game::session::begin` starts a session
-//! and inserts [`SessionReady`]; `gd_game::session::end_session_state` tears it down (Exit to Main Menu, `grimdawn::exit`, which also moves
-//! [`SessionEpoch`] so [`NewSession`] caches reset). The port never writes to the game's save folder: [`SaveDir`]
-//! is its own.
-//!
-//! Where the player appears ([`PlayerStart`]) is written by whoever knows the place: grimdawn's session
-//! start (the respawn point's level entity in the streamed world) and `riftgates` (a bound respawn point).
+//! The play session: the loaded character ([`LoadedCharacter`]), the player's [`Choice`] and the resulting
+//! [`GameMode`]. `gd_game::session::begin` starts a session and inserts [`SessionReady`];
+//! `gd_game::session::end_session_state` tears it down and moves [`SessionEpoch`]. The port never writes to the
+//! game's save folder: [`SaveDir`] is its own.
 use bevy::prelude::*;
 use gd_formats::save::Shared;
 use gd_formats::save::gdc::Gdc;
@@ -14,8 +9,7 @@ use gd_formats::save::map_dat::MapDat;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// How many sessions the process has torn down. Version counters that systems cache in a `Local`
-/// and compare for equality (`Inventory::version`, `PlayerFactions::version`) start at
+/// How many sessions the process has torn down. Version counters cached in a `Local` start at
 /// [`SessionEpoch::version_base`], so a stale `Local` of a finished session never equals a new one's.
 #[derive(Resource, Default)]
 pub struct SessionEpoch(pub u64);
@@ -26,10 +20,8 @@ impl SessionEpoch {
     }
 }
 
-/// For a system that caches what it built or saw in a `Local` (a signature, entity ids): `begun()`
-/// is true once when a new session started after a teardown (`SessionEpoch` moved), the cue to drop
-/// those caches, since the entities they describe are gone and a stale signature could equal the new
-/// session's and skip a rebuild.
+/// `begun()` is true once when a new session started after a teardown: the cue for a system to drop
+/// `Local` caches (signatures, entity ids) of the old session.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct NewSession<'w, 's> {
     epoch: Res<'w, SessionEpoch>,
@@ -51,26 +43,19 @@ pub fn frame_ms(carry: &mut f32, time: &Time) -> i32 {
     whole as i32
 }
 
-/// The character and difficulty are chosen; the world may start.
 #[derive(Resource)]
 pub struct SessionReady;
 
-/// The entities alive when the session began: `gd_game::session::begin` takes it in the same step that inserts
-/// [`SessionReady`], and the exit to the main menu despawns every entity not in it (`grimdawn::exit`). Not on a later
-/// frame: a session started from the menu can resolve its start point and spawn the player in the frame it begins,
-/// and a player kept by the baseline would outlive the exit.
+/// The entities alive when the session began; the exit to the main menu despawns every other. Taken in the
+/// same step that inserts [`SessionReady`]: the player can spawn in the frame the session begins.
 #[derive(Resource, Default)]
 pub struct SessionBaseline(pub gd_formats::collections::HashSet<Entity>);
 
-/// Run condition of everything that shows or reads the playing session (HUD,
-/// windows, tooltips, hover): the session is chosen ([`SessionReady`]) and its
-/// player is fully loaded, i.e. spawned with its progress and inventory
-/// applied from the save (`init_progress`, `init_inventory`, a frame after the
-/// spawn). PORT: the engine only creates the HUD when entering playing mode
-/// (`GameEngine::EnableGameEngine`); here the widgets exist from startup, so
-/// each system waits for this instead.
+/// Run condition of everything that shows or reads the playing session: [`SessionReady`] and the player
+/// spawned with its progress and inventory applied. PORT: the engine creates the HUD only on entering
+/// playing mode (`GameEngine::EnableGameEngine`); here the widgets exist from startup.
 pub fn in_game(
-    // Option: a run condition's params are validated before any state gate.
+    // Option: run condition params are validated before any state gate.
     ready: Option<Res<SessionReady>>,
     progress: Option<Res<crate::progress::PlayerProgress>>,
     inventory: Option<Res<crate::inventory::Inventory>>,
@@ -79,12 +64,11 @@ pub fn in_game(
     ready.is_some() && progress.is_some() && inventory.is_some() && !players.is_empty()
 }
 
-/// The session's difficulty and challenge (`GameInfo`), set by `gd_game::session::begin`.
+/// The session's difficulty and challenge (`GameInfo`).
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct GameMode(pub gd_rules::mode::Mode);
 
-/// The session's character choice (from the environment or the menu, set by
-/// `gd_game::session::begin`).
+/// The session's character choice.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Choice {
     /// The loaded `player.gdc` (None: a new character).
@@ -92,17 +76,16 @@ pub struct Choice {
     /// A new character's name and sex.
     pub name: String,
     pub female: bool,
-    /// The character is hardcore: the menu's choice for a new one, the header flag of a loaded one (set by
-    /// `gd_game::session::begin`). It picks the shared files' hardcore twins (`gd_formats::save::Shared`).
+    /// The menu's choice for a new character, the header flag of a loaded one. Picks the shared files'
+    /// hardcore twins.
     pub hardcore: bool,
-    /// A Crucible session (`GameInfo::SetMode(1)`): the arena's map resource (`maps/survivalworld_a.map`).
+    /// A Crucible session (`GameInfo::SetMode(1)`): the arena's map resource.
     pub survival: Option<String>,
     /// A custom game (`GameInfo::SetMode(2)`): the user mod and its map.
     pub custom: Option<CustomMap>,
 }
 
-/// A custom game's map (`GameInfo` mode 2, `SetModName` / `SetLevelName`): a user mod
-/// (`mods/<module>/`) and one of its maps.
+/// A custom game's map (`GameInfo` mode 2, `SetModName` / `SetLevelName`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomMap {
     pub module: String,
@@ -111,7 +94,7 @@ pub struct CustomMap {
 }
 
 impl CustomMap {
-    /// The map's file name (the part after the last `/`): the `modText` box (`GameModeWindow::UpdateModText`).
+    /// The map's file name: the `modText` box (`GameModeWindow::UpdateModText`).
     pub fn file_name(&self) -> &str {
         self.level.rsplit('/').next().unwrap_or(&self.level)
     }
@@ -122,10 +105,8 @@ impl CustomMap {
     }
 }
 
-/// The Crucible arenas in the game-mode window's drop-down order (after "Random"): the name tag and the
-/// map letter (`GameModeWindow::Load` / the arena vector of `MainMenu::MainMenu`).
-/// Bog / Woods (g, j) are the Ashes of Malmouth pack's (`survivalmode1`), Stars / Crags (h, i) Forgotten Gods'
-/// (`survivalmode2`): they are listed when the pack is installed.
+/// The Crucible arenas in the game-mode window's drop-down order: the name tag and the map letter
+/// (`GameModeWindow::Load`). g, j need `survivalmode1`; h, i need `survivalmode2`.
 pub const ARENAS: [(&str, &str); 10] = [
     ("tagSurvivalArena_02", "a"),
     ("tagSurvivalArena_01", "b"),
@@ -139,10 +120,8 @@ pub const ARENAS: [(&str, &str); 10] = [
     ("tagSurvivalArena_10", "i"),
 ];
 
-/// The arenas the install offers, as indices into [`ARENAS`]: none without the Crucible
-/// ([`gd_formats::vfs::survival_files_exist`], the port's `Engine::HasSurvivalDLC`); with it the base
-/// arenas, and those of each expansion pack present. Empty means no Crucible: the game-mode window has no
-/// Crucible toggle (`GameModeWindow::Load` creates `survivalButton` only when the DLC is owned).
+/// The arenas the install offers, as indices into [`ARENAS`]; empty without the Crucible
+/// (`Engine::HasSurvivalDLC`), which hides the game-mode window's Crucible toggle.
 pub fn available_arenas(root: &std::path::Path) -> Vec<usize> {
     if !gd_formats::vfs::survival_files_exist(root) {
         return Vec::new();
@@ -156,14 +135,12 @@ pub fn available_arenas(root: &std::path::Path) -> Vec<usize> {
         .collect()
 }
 
-/// The arena map resource of a Crucible arena letter (`a`..`j`).
 pub fn arena_map(letter: &str) -> String {
     format!("maps/survivalworld_{}.map", letter.to_ascii_lowercase())
 }
 
 impl Choice {
-    /// A file of the loaded character's folder (`player.gdc`'s), if a
-    /// character file is loaded.
+    /// A file of the loaded character's folder, if a character is loaded.
     pub fn save_file(&self, rel: impl AsRef<std::path::Path>) -> Option<PathBuf> {
         self.save
             .as_ref()
@@ -181,8 +158,8 @@ impl Choice {
         }
     }
 
-    /// The session's mod (`GameInfo::GetModName`, `map.dat`'s `modName`): `survivalmode` for the
-    /// Crucible (`MainMenu::SetMapData` sets it), the user mod of a custom game, empty for the campaign.
+    /// The session's mod (`GameInfo::GetModName`): `survivalmode` for the Crucible, the user mod of a
+    /// custom game, empty for the campaign.
     pub fn mod_name(&self) -> &str {
         match (&self.survival, &self.custom) {
             (Some(_), _) => gd_formats::vfs::SURVIVAL_MOD,
@@ -191,9 +168,8 @@ impl Choice {
         }
     }
 
-    /// The session's map (`map.dat`'s `mapPath`, `World::Load`): the Crucible arena, the custom
-    /// game's map or the campaign's world.
-    /// PORT: `GD_MAP` (a test hook) is not reflected; its saves name the world map.
+    /// The session's map (`map.dat`'s `mapPath`). PORT: `GD_MAP` is not reflected; its saves name the
+    /// world map.
     pub fn map_path(&self) -> &str {
         match (&self.survival, &self.custom) {
             (Some(m), _) => m,
@@ -203,33 +179,28 @@ impl Choice {
     }
 }
 
-/// The character's `last_difficulty` for a session in `mode` (`Player::SaveNewFormatData`):
-/// `difficulty | ((game mode << 2) | challenge) << 4`; Veteran is challenge 1 on Normal,
-/// Ultimate Veteran challenge 3 on Ultimate. Set on a loaded character when the session begins and written by
-/// every save, a new character's too.
+/// The character's `last_difficulty` (`Player::SaveNewFormatData`):
+/// `difficulty | ((game mode << 2) | challenge) << 4`; Veteran is challenge 1 on Normal, Ultimate Veteran
+/// challenge 3 on Ultimate.
 pub fn last_difficulty(mode: gd_rules::mode::Mode, choice: &Choice) -> u8 {
     (choice.game_mode() << 6) | ((mode.challenge as u8) << 4) | mode.difficulty.min(2) as u8
 }
 
-/// The save's last mode was Veteran (challenge 1).
 pub fn is_veteran(g: &Gdc) -> bool {
     (g.info.last_difficulty >> 4) & 3 == 1
 }
 
-/// The save's last mode was Ultimate Veteran (challenge 3 on Ultimate).
 pub fn is_ultimate_veteran(g: &Gdc) -> bool {
     (g.info.last_difficulty >> 4) & 3 == 3 && g.info.difficulty() == 2
 }
 
-/// The loaded character, if any.
 #[derive(Resource, Clone)]
 pub struct LoadedCharacter(pub Arc<Gdc>);
 
-/// Where the player should appear. Absent until known.
+/// Where the player should appear; absent until known.
 #[derive(Resource, Clone, Copy)]
 pub struct PlayerStart(pub Vec3);
 
-/// The (difficulty, veteran) a session of `gdc` starts on: the save's.
 pub fn mode_for(gdc: &Gdc) -> (usize, bool) {
     (
         gdc.info.difficulty(),
@@ -237,7 +208,6 @@ pub fn mode_for(gdc: &Gdc) -> (usize, bool) {
     )
 }
 
-/// Whether the session's character is hardcore.
 pub fn is_hardcore(loaded: Option<&LoadedCharacter>, choice: &Choice) -> bool {
     match loaded {
         Some(l) => l.0.header.hardcore != 0,
@@ -248,20 +218,30 @@ pub fn is_hardcore(loaded: Option<&LoadedCharacter>, choice: &Choice) -> bool {
 /// The game's own save folder: never written.
 pub const LIVE_SAVES: &str = "My Games/Grim Dawn";
 
-/// Writes a port-owned settings file (`what` names it in the log), creating its folder; refuses a path inside the game's own save
-/// folder ([`LIVE_SAVES`]: the port never writes there). The one writer of the options and key binding files.
+/// Writes a port-owned settings file, creating its folder; refuses a path inside [`LIVE_SAVES`].
 pub fn write_user_file(what: &str, file: &std::path::Path, contents: impl AsRef<[u8]>) {
+    try_write_user_file(what, file, contents);
+}
+
+/// [`write_user_file`], telling whether the file was written.
+pub fn try_write_user_file(what: &str, file: &std::path::Path, contents: impl AsRef<[u8]>) -> bool {
     if file.to_string_lossy().contains(LIVE_SAVES) {
         error!("{what}: refusing to write {}", file.display());
-        return;
+        return false;
     }
     match file
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .and_then(|_| std::fs::write(file, contents))
     {
-        Ok(()) => info!("{what}: saved {}", file.display()),
-        Err(e) => error!("{what}: could not write {}: {e}", file.display()),
+        Ok(()) => {
+            info!("{what}: saved {}", file.display());
+            true
+        }
+        Err(e) => {
+            error!("{what}: could not write {}: {e}", file.display());
+            false
+        }
     }
 }
 
@@ -279,10 +259,7 @@ pub fn data_dir() -> PathBuf {
     base.join("grimdawn-rs")
 }
 
-/// The port's save folder (`main/_<name>/player.gdc`, `transfer.gst`, ...):
-/// a resource, so every save system reads the same value and a test gives
-/// each game its own folder. The default is `<`[`data_dir`]`>/save`; a dev game inserts `GD_SAVE_DIR`'s before
-/// its plugins (grimdawn `main`).
+/// The port's save folder; default `<`[`data_dir`]`>/save`, a test gives each game its own.
 #[derive(Resource, Clone, Debug)]
 pub struct SaveDir(pub PathBuf);
 
@@ -298,12 +275,11 @@ impl SaveDir {
     }
 }
 
-/// The character's highest unlocked difficulty this session (saved as
-/// `greatest_difficulty`).
+/// The character's highest unlocked difficulty this session (`greatest_difficulty`).
 #[derive(Resource)]
 pub struct DifficultyUnlock(pub usize);
 
-/// Highest unlocked difficulty of a character (see the module docs).
+/// Highest unlocked difficulty of a character (`greatest_difficulty` 3 means none).
 pub fn unlocked(g: &Gdc) -> usize {
     match g.info.greatest_difficulty {
         3 => 0,
@@ -311,15 +287,11 @@ pub fn unlocked(g: &Gdc) -> usize {
     }
 }
 
-/// A hardcore character that died. `Grim Dawn.exe` character list
-/// (`CharacterList::Draw`): an entry is drawn as dead when the player is hardcore and
-/// `PlayStats::GetNumberOfDeaths` is non-zero (unless an app flag, cleared
-/// at start-up, is set).
+/// A hardcore character that died (`CharacterList::Draw`).
 pub fn is_dead(g: &Gdc) -> bool {
     g.header.hardcore != 0 && g.stats.deaths > 0
 }
 
-/// The main menu's difficulty options, in the difficulty window's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DifficultyOption {
     Normal,
@@ -339,7 +311,7 @@ impl DifficultyOption {
         Self::UltimateVeteran,
     ];
 
-    /// (difficulty 0..=2, veteran / challenge flag) for `gd_game::session::begin`.
+    /// (difficulty 0..=2, veteran / challenge flag).
     pub fn mode(self) -> (usize, bool) {
         match self {
             Self::Normal => (0, false),
@@ -350,7 +322,6 @@ impl DifficultyOption {
         }
     }
 
-    /// The option a save last played.
     pub fn of_save(g: &Gdc) -> Self {
         match g.info.difficulty() {
             0 if is_veteran(g) => Self::Veteran,
@@ -372,8 +343,7 @@ impl DifficultyOption {
         }
     }
 
-    /// This option, or the highest enabled one below it ([`DifficultyOption::enabled_in`]; in the Crucible a saved
-    /// Veteran has no equivalent and falls to the Normal / Elite / Ultimate it sits on).
+    /// This option, or the highest enabled one below it ([`DifficultyOption::enabled_in`]).
     pub fn clamp(self, g: Option<&Gdc>, crucible: bool) -> Self {
         let i = Self::ALL.iter().position(|d| *d == self).unwrap_or(0);
         Self::ALL[..=i]
@@ -384,11 +354,8 @@ impl DifficultyOption {
             .unwrap_or(Self::Normal)
     }
 
-    /// Whether a character (None: a new one) may pick this option.
-    /// `Grim Dawn.exe` difficulty window enables (`DifficultyWindow::UpdateEnabled`, campaign
-    /// mode): Normal and Veteran always; Elite once Elite is unlocked
-    /// ([`unlocked`] ≥ 1); Ultimate once Ultimate is (≥ 2); Ultimate
-    /// Veteran once Ultimate is unlocked and the character is level 100+.
+    /// Whether a character (None: a new one) may pick this option (`DifficultyWindow::UpdateEnabled`,
+    /// campaign): Elite needs [`unlocked`] ≥ 1, Ultimate ≥ 2, Ultimate Veteran also level 100+.
     pub fn enabled(self, g: Option<&Gdc>) -> bool {
         let u = g.map_or(0, unlocked);
         match self {
@@ -399,10 +366,8 @@ impl DifficultyOption {
         }
     }
 
-    /// [`DifficultyOption::enabled`] in a game mode: the Crucible's three difficulties
-    /// (`DifficultyWindow::UpdateEnabled`): Normal always, Elite once the character's greatest survival
-    /// difficulty completed is 1 or more, Ultimate once it is 2 (`info.greatest_survival_difficulty`);
-    /// the Veteran challenges do not exist there.
+    /// [`DifficultyOption::enabled`] in a game mode: in the Crucible, Elite / Ultimate need
+    /// `greatest_survival_difficulty` ≥ 1 / 2, and there are no Veteran challenges.
     pub fn enabled_in(self, g: Option<&Gdc>, crucible: bool) -> bool {
         if !crucible {
             return self.enabled(g);
@@ -429,20 +394,15 @@ impl DifficultyOption {
 }
 
 impl Choice {
-    /// The per-map save folder name under `_<Name>/` (`GameEngine::GetDifficultyFolder`:
-    /// the map path with `/` and `\` turned into `_`): the campaign's world map
-    /// (`levels_world001.map`), the Crucible arena (`maps_survivalworld_a.map`) or a custom game's map. It holds
-    /// `<Normal|Elite|Ultimate>/{quests.gdd, conversations.gdd, map.fow}`. The Crucible's tokens are not in it:
-    /// they are the survival vectors of `player.gdc` (`gd_game::survival::load_tokens`).
-    /// The folder also holds `map.dat` (`gd_game::save::write_map_dat`).
+    /// The per-map save folder name under `_<Name>/` (`GameEngine::GetDifficultyFolder`): the map path with
+    /// `/` and `\` turned into `_`. Holds `map.dat` and `<Normal|Elite|Ultimate>/{quests.gdd,
+    /// conversations.gdd, map.fow}`.
     pub fn map_folder(&self) -> String {
         self.map_path().replace(['/', '\\'], "_")
     }
 
-    /// The folder the character `name` is saved in (`GameEngine::GetPlayerFolder`):
-    /// `main/_<name>/` for a character in the main quest (`Player::IsInMainQuest`, the save's
-    /// `is_in_main_quest`) or in a Crucible session (mode 1), else `user/_<name>/` (a character created
-    /// in a custom game).
+    /// The folder the character `name` is saved in (`GameEngine::GetPlayerFolder`): `main/_<name>/` in the
+    /// main quest or the Crucible, else `user/_<name>/`.
     pub fn player_folder(
         &self,
         save_dir: &SaveDir,
@@ -457,11 +417,8 @@ impl Choice {
         save_dir.join(kind).join(format!("_{name}"))
     }
 
-    /// The folder of the account-wide files (`transfer.gst`, `formulas.gst`, `transmutes.gst`,
-    /// `reagents.gst`, the potion unlocks; `GameEngine::GetSharedSavePath`): the
-    /// save folder for the campaign and the Crucible (mode 1 uses an empty mod name), `<save>/<mod>/` for
-    /// a custom game, so a user mod has its own transfer stash. Every read and write of those files goes
-    /// through here.
+    /// The folder of the account-wide files (`GameEngine::GetSharedSavePath`): the save folder for the
+    /// campaign and the Crucible, `<save>/<mod>/` for a custom game.
     pub fn shared_save_dir(&self, save_dir: &SaveDir) -> std::path::PathBuf {
         match self.mod_name() {
             m if m.is_empty() || self.game_mode() == 1 => save_dir.0.clone(),
@@ -469,8 +426,7 @@ impl Choice {
         }
     }
 
-    /// Where the account-wide `file` is written ([`Self::shared_save_dir`] and its name, the hardcore twin for a
-    /// hardcore character: `gd_formats::save::Shared::file_name`).
+    /// Where the account-wide `file` is written (the hardcore twin for a hardcore character).
     pub fn shared_file(&self, save_dir: &SaveDir, file: Shared) -> std::path::PathBuf {
         self.shared_save_dir(save_dir)
             .join(file.file_name(self.hardcore))
@@ -489,10 +445,8 @@ impl Choice {
             .ok()
     }
 
-    /// Why this pick must not start an existing save: its `map.dat` names a different mod, and the
-    /// per-map folder is the map path alone, so starting would read and overwrite another mod's (or
-    /// the campaign's) quest/fog state. The Crucible (mode 1) is exempt: its arena folders are its own.
-    /// `None` when the save is fresh or agrees with the pick.
+    /// Why this pick must not start an existing save: its `map.dat` names a different mod, whose quest/fog
+    /// state it would overwrite (the per-map folder is the map path alone). The Crucible is exempt.
     pub fn mod_mismatch(&self, difficulty: usize) -> Option<String> {
         if self.game_mode() == 1 {
             return None;
@@ -509,7 +463,7 @@ impl Choice {
     }
 }
 
-/// A mod name in a refusal message: the campaign when empty (`map.dat`'s `modName`).
+/// A mod name in a refusal message: the campaign when empty.
 fn mod_label(m: &str) -> &str {
     if m.is_empty() { "the campaign" } else { m }
 }

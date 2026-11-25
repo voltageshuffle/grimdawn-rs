@@ -1,6 +1,6 @@
-# Builds the game for x86-64 Linux and Windows and publishes a GitHub release when a `v*` tag is pushed (the tag is
-# `v<workspace version>`, docs/running.md). The release is titled and described by scripts/release-notes: the Grim
-# Dawn version it is for, then the commits since the previous `v*` tag.
+# Builds x86-64 Linux and Windows and publishes a GitHub release when a `v*` tag is pushed; titled and described
+# by scripts/release-notes.
+
 name: Release
 
 on:
@@ -20,9 +20,15 @@ jobs:
         include:
           - os: ubuntu-latest
             archive: grimdawn-rs-linux-x86_64.tar.gz
+            rustflags: >-
+              -Zthreads=8 -Zlocation-detail=none -Zfmt-debug=shallow
+              -Clink-arg=-fuse-ld=mold -Clink-arg=-Wl,-z,pack-relative-relocs
           - os: windows-latest
             archive: grimdawn-rs-windows-x86_64.zip
+            rustflags: -Zthreads=8 -Zlocation-detail=none -Zfmt-debug=shallow
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
       - uses: actions/checkout@v7
 
@@ -31,26 +37,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-
-      # Defender scans every object and rlib the build writes; the hosted runner is throwaway.
-      - name: Windows Defender off
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Set-MpPreference -DisableRealtimeMonitoring $true
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mold
 
       - name: Toolchain
-        run: rustup update stable --no-self-update
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+          rustup default nightly
 
-      # A tag's cache is only seen by a re-run of that tag (GitHub scopes caches to the ref): failed runs save it
-      # too, so a re-run after a flaky step does not start cold.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      # Default features only: `dev` must never ship.
       - name: Build
-        run: cargo build -p grimdawn --release --locked
+        run: cargo build -p grimdawn --release --locked -Zembed-metadata=no
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -81,7 +76,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      # Full history and tags: the notes list the commits since the previous tag.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

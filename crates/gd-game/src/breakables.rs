@@ -1,31 +1,15 @@
-//! Breakable objects (`Destructible`: crates, barrels, bone piles, urns,
-//! breakable doors and walls, the story's levers). They are combat targets with the record's
-//! `maxLifeEquation` (`charLevel` = player level) or `maxLife`, and block
-//! pathing while intact unless `passableWhen` is "Intact" or "Always"
-//! (`Destructible::InitialUpdate` → `SetBlocked(true)` unless
-//! `PassabilityFromString` gives Intact/Always; "Never" is unrecognised there, so
-//! it blocks like ""): `SetBlocked` → `Entity::SetDynamicObstacle(true)`
-//! (Engine.dll) takes, with `useBoundingBoxesForDynamicObstacles`,
-//! the mesh hit boxes (`Destructible::CreatePathObstacles`), else
-//! `NavManager::AddDynamicObstacle(Entity, 0)`: for an `Actor`, a
-//! cylinder of radius max(`GetExtents` = `actorRadius`, 0.5) × |scale vector|
-//! (sqrt(3) × scale for a uniform scale) and height `GetHeight` = `actorHeight`
-//! × scale y, which the tile cache (`NavMesh::AddObstacleCylinder`) makes h = max(height, 3)
-//! from 0.5 h below the origin, 1.5 h tall. So a wooden door (`actorRadius`
-//! 0.8) blocks 1.39 m around its centre, its whole doorway. Broken, they vanish at once: the
-//! `brokenMesh` pieces (one root bone each) fly apart, lie for `rubbleLife`
-//! seconds and fade over `rubbleFade`; `breakEffects` play; with
-//! `lootChance` % they drop their `lootTable` and gold like a container
-//! (`gd_sim::items::loot`). Broken objects stay broken for the session. A
-//! story object's breakable (`crate::story_world`) runs its `onBroken` hook and
-//! goes with its story object; a level's goes with its level (`gd_game_core::levels::LevelMember`).
+//! Breakable objects (`Destructible`: crates, barrels, urns, breakable doors and walls, the story's levers).
+//! They are combat targets with the record's `maxLifeEquation` (`charLevel` = player level) or `maxLife`.
 //!
-//! `Destructible::TakeAttack`: no defensive ability, dodge or
-//! armour; the hit's damage values are summed raw off the life.
-//! Loot at the container level (`Destructible::InitialUpdate`
-//! runs the same loot generator `LootContainer::GetItemLevel` as chests). The broken
-//! pieces' launch, physics and fade are the dressing's ([`Broke`]; grimdawn
-//! `breakables.rs`).
+//! - While intact they block pathing unless `passableWhen` is "Intact" or "Always" (`Destructible::InitialUpdate`;
+//!   "Never" is unrecognised and blocks like ""). With `useBoundingBoxesForDynamicObstacles` the mesh hit boxes
+//!   block (`Destructible::CreatePathObstacles`), else `NavManager::AddDynamicObstacle`'s cylinder: radius
+//!   max(`actorRadius`, 0.5) × |scale vector|, height h = max(`actorHeight` × scale y, 3)
+//!   (`NavMesh::AddObstacleCylinder`), from 0.5 h below the origin, 1.5 h tall.
+//! - `Destructible::TakeAttack`: no defensive ability, dodge or armour; the damage values are summed raw off the life.
+//! - Broken, they vanish at once and stay broken for the session; `breakEffects` play; with `lootChance` % they
+//!   drop their `lootTable` and gold at the container level (`LootContainer::GetItemLevel`). The broken pieces
+//!   are the dressing's ([`Broke`]). A story object's breakable runs its `onBroken` hook.
 use crate::nav::Nav;
 use bevy::prelude::*;
 use gd_game_core::combat::{Combatant, Dead};
@@ -53,12 +37,9 @@ impl Plugin for BreakablesPlugin {
     }
 }
 
-/// A breakable broke (the game throws its broken pieces and plays its
-/// break effects): its record and transform, `Destructible::BreakApart`'s direction and force, and the
-/// story object it is (`crate::story_world`: its `onBroken` hook). A killing blow's break
-/// (`Destructible::TakeAttack`) passes the direction from its attacker (any caster; the player when it is
-/// gone) to the object, 0.5 m up its centre, straight up without one, and force 1; a script's
-/// `Destructible:Destroy(dir, force, bool)` passes its own.
+/// A breakable broke: `Destructible::BreakApart`'s direction and force. A killing blow passes the direction
+/// from its attacker (else the player) to 0.5 m up the object's centre, straight up without one, and force 1;
+/// a script's `Destructible:Destroy(dir, force, bool)` passes its own.
 #[derive(Message, Clone, Debug)]
 pub struct Broke {
     pub record: String,
@@ -96,7 +77,6 @@ pub fn spawn_breakable(
             )),
         ))
         .id();
-    // (`usize::MAX`: an on-death drop or script object stays; a story object's leaves `crate::story_world`'s way.)
     if key.0 != usize::MAX {
         commands
             .entity(e)
@@ -115,7 +95,6 @@ pub fn spawn_breakable(
         .or(rec.f32("life"))
         .unwrap_or(1.0)
         .max(1.0);
-    // Only an intact blocking one is an obstacle (module doc).
     let passable = rec
         .str("passableWhen")
         .is_some_and(|p| p.eq_ignore_ascii_case("Intact") || p.eq_ignore_ascii_case("Always"));
@@ -124,7 +103,7 @@ pub fn spawn_breakable(
     } else if rec.bool("useBoundingBoxesForDynamicObstacles") {
         crate::obstacles::hit_box_obstacles(&msh, &tf)
     } else {
-        // `NavManager::AddDynamicObstacle(Entity)` / `NavMesh::AddObstacleCylinder` (module doc).
+        // `NavManager::AddDynamicObstacle(Entity)` / `NavMesh::AddObstacleCylinder`.
         let radius = rec
             .f32("actorRadius")
             .unwrap_or(gd_game_core::combat::ACTOR_RADIUS)
@@ -193,8 +172,7 @@ pub fn break_objects(
 ) {
     let player = players.single().ok().map(|p| p.translation);
     for (e, tf, b, by, story) in &q {
-        // The killing blow's attacker (any caster: `combat::Side::hits`),
-        // else the player.
+        // The killing blow's attacker, else the player.
         let dir = by
             .and_then(|k| places.get(k.0).ok())
             .map(|t| t.translation)
@@ -205,8 +183,7 @@ pub fn break_objects(
         let Some(rec) = data.db.get(&b.record) else {
             continue;
         };
-        // Swap to the broken mesh: a fresh entity, so the combat systems
-        // forget the old one.
+        // A fresh entity for the broken mesh, so the combat systems forget the old one.
         commands.entity(e).try_despawn();
         broke.write(Broke {
             record: b.record.clone(),
@@ -251,7 +228,7 @@ pub fn break_objects(
             b.record.rsplit('/').next().unwrap_or(""),
             drops.len()
         );
-        // `Destructible::GetLootDropCoords` / `GetLootDropRadius` (`crate::loot` doc).
+        // `Destructible::GetLootDropCoords` / `GetLootDropRadius`.
         let body = rec.str("mesh").and_then(|m| bodies.get(&data, m));
         let drop = crate::loot::fixed_drop_point(&nav, at, tf.rotation, body.as_deref());
         crate::loot::drop_loot_by(
@@ -268,7 +245,6 @@ pub fn break_objects(
     }
 }
 
-/// `GD_BREAK` (hooks.rs).
 #[cfg(feature = "dev")]
 pub fn test_break(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -306,13 +282,11 @@ pub fn test_break(
             crate::combat::kill_me(&mut commands, e);
         }
     } else if cb.target.is_none() {
-        // Attacked as with the button held (`player_orders::PrimaryUse`).
         cb.target = nearest;
         primary.0 = nearest.is_some();
     }
 }
 
-/// Breakables breaking: what reacts to a break orders after `Break`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BreakableStage {
     Break,

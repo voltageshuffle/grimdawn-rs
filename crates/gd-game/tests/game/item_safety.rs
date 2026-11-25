@@ -1,6 +1,6 @@
-//! No path loses an item: a save writes the cursor item, the window boxes' items and an empty extra bag
-//! (`save.rs`), a load keeps an item whose saved cell is taken or outside the grid (`inventory::place_saved`),
-//! and an unreadable shared file is set aside instead of written over (`stash::read_shared`).
+//! No path loses an item: a save writes the cursor item, the window boxes' items and an empty extra bag, a load
+//! keeps an item whose saved cell is taken or outside the grid, and an unreadable shared file is set aside instead
+//! of written over.
 use bevy::prelude::*;
 use gd_formats::inventory::{Footprint, Sack};
 use gd_formats::save::gdc::{Gdc, SackItem};
@@ -22,7 +22,6 @@ fn item(seed: u32) -> Item {
     }
 }
 
-/// A new character in play.
 fn game(name: &str) -> Option<TestGame> {
     let mut g = TestGame::new_character(name, false, false)?;
     g.spawn_player();

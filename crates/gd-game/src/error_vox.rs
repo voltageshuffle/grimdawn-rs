@@ -1,37 +1,27 @@
-//! The player's spoken error lines ("I need more energy", "Not yet", "My bags are full"), the one thing the
-//! `errorSpeech` option gates.
+//! The player's spoken error lines ("I need more energy", "Not yet", "My bags are full"), the one
+//! thing the `errorSpeech` option gates.
 //!
-//! Game.dll `Player::PlayNotEnoughManaVox`, `PlaySkillCooldownVox`,
-//! `PlayItemCooldownVox`, `PlayInventoryFullSound` (the only `errorSpeech` reads
-//! in Game.dll and Grim Dawn.exe): each plays its `CharacterSounds` entry (`notEnoughManaSound`,
-//! `skillCooldownSound`, `itemCooldownSound`, `inventoryFullSound`: the form's override entry first, else the
-//! character's own, [`crate::char_sounds::sound`]) with `SoundPak::Play2D` (unpositioned). The first three also need the
-//! controlling (local) player and share two timers: nothing plays while the "any line" timer (`Player.anyVoxTimer`)
-//! runs, and the same kind with the same id (skill or potion) is skipped while the "repeat" timer
-//! (`Player.repeatVoxTimer`) runs; a played line sets them to 9000 / 15000 ms (`Player::Player`) and remembers its id
-//! per kind. `Player::UpdateSelf`
-//! counts both down by the frame's ms. The inventory-full line has no timer.
+//! `Player::PlayNotEnoughManaVox`, `PlaySkillCooldownVox`, `PlayItemCooldownVox`,
+//! `PlayInventoryFullSound`: each plays its `CharacterSounds` entry with `SoundPak::Play2D`. The
+//! first three need the local player and share two timers: nothing plays while
+//! `Player.anyVoxTimer` runs, and the same kind with the same id is skipped while
+//! `Player.repeatVoxTimer` runs; a played line sets them to 9000 / 15000 ms. The inventory-full
+//! line has no timer.
 //!
-//! Callers ([`ErrorVox`] writers): `ControllerPlayerState::DefaultRequestSkillAction` (a requested skill short of
-//! energy, skill status 2: `casting::requests`), `HotSlotOptionSkill::PlayCooldownVox` (a pressed skill cooling down),
-//! `HotSlotOptionPotion::Activate` (a potion that cannot be drunk while that bar is not full: id 1
-//! health, 2 energy; `casting::potions`), `Player::GiveItemToCharacter` and the other `Give*ToCharacter` (an item
-//! that does not fit is dropped by the player: `loot::story_items`) and the merchants' buy (`MarketMiniMart::Purchase`,
-//! `MarketFaction::Purchase`; no room: `trade`). Picking up a ground item with full bags says nothing (no other
-//! caller).
-//! PORT: `Skill::UseDefaultWhenUnavailable` (a skill that falls back to the default attack stays silent when short of
-//! energy) is not checked.
+//! Callers ([`ErrorVox`] writers): a requested skill short of energy, a pressed skill cooling
+//! down, a potion that cannot be drunk (id 1 health, 2 energy), a given item that does not fit,
+//! a merchant buy without room. Picking up a ground item with full bags says nothing.
+//! PORT: `Skill::UseDefaultWhenUnavailable` (silent when short of energy) is not checked.
 use bevy::prelude::*;
 use gd_game_core::data::GameData;
 use gd_game_core::options::GameOptions;
 use gd_game_core::player::Player;
 
-/// "Repeat" timer set by a played line (ms, `Player.repeatVoxTimer`).
+/// `Player.repeatVoxTimer` set by a played line (ms).
 pub const REPEAT_MS: i32 = 15_000;
-/// "Any line" timer set by a played line (ms, `Player.anyVoxTimer`).
+/// `Player.anyVoxTimer` set by a played line (ms).
 pub const ANY_MS: i32 = 9_000;
 
-/// Which line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoxKind {
     NotEnoughEnergy,
@@ -52,8 +42,8 @@ impl VoxKind {
     }
 }
 
-/// A request for the player's error line `kind`; `id` tells repeats apart (the skill record, `"1"` / `"2"` for the
-/// health / energy potion; unused for [`VoxKind::InventoryFull`]).
+/// A request for the player's error line `kind`; `id` tells repeats apart (the skill record,
+/// `"1"` / `"2"` for the health / energy potion).
 #[derive(Message, Clone, Debug)]
 pub struct ErrorVox {
     pub kind: VoxKind,
@@ -69,9 +59,8 @@ impl ErrorVox {
     }
 }
 
-/// The player's two timers and the last id of each throttled kind (`Player.repeatVoxTimer` / `Player.anyVoxTimer`,
-/// `Player.lastManaVoxId` / `Player.lastSkillCooldownVoxId` / `Player.lastItemCooldownVoxId`). A component of the
-/// player, so a new session starts clear.
+/// The player's two timers and the last id of each throttled kind. A component of the player, so
+/// a new session starts clear.
 #[derive(Component, Clone, Debug, Default)]
 pub struct VoxTimers {
     pub repeat: i32,
@@ -80,7 +69,7 @@ pub struct VoxTimers {
 }
 
 impl VoxTimers {
-    /// Counts both timers down by `ms` (`Player::UpdateSelf`: only a running timer moves).
+    /// Counts both timers down by `ms` (only a running timer moves).
     pub fn tick(&mut self, ms: i32) {
         for t in [&mut self.repeat, &mut self.any] {
             if *t != 0 {

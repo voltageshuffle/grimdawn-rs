@@ -1,60 +1,33 @@
-//! Doors (`FixedDoor`, `FixedItemDoor`), story levers (`FixedLever`) and
-//! dungeon entrances (`DungeonEntrance`) as gameplay: open state, the
-//! obstacles they put on the nav (following their open / close animation,
-//! which runs on its own clock here), story locks and `SetDoor`, and the use
-//! of the door the player walks to (the interact order, `player_orders::InteractTarget`; [`use_door`]: range,
-//! story `onInteract` hooks, locked feedback, open / close, dungeon-entrance
-//! travel, the teleport activity: [`run_teleport`]). The game dresses them (model, the same animation),
-//! draws the loading screen and streams the destination (`grimdawn::doors`).
+//! Doors (`FixedDoor`, `FixedItemDoor`), story levers (`FixedLever`) and dungeon entrances
+//! (`DungeonEntrance`) as gameplay: open state, the nav obstacles they put (following their open / close
+//! animation), story locks and `SetDoor`, and the use of the interacted door ([`use_door`]) including
+//! travel ([`run_teleport`]).
 //!
-//! Use range: `ControllerPlayerState::DefaultRequestInteractableAction`:
-//! used once the 3D distance between the player's and the
-//! object's origins is at most player radius + object radius + `usableRange`
-//! (`FixedActor::GetUsableRange`; both radii are `Actor::GetRadius`,
-//! the same vtable slot on the player and the object: `combat::get_radius`, kept
-//! in [`Door::radius`]; a missing `usableRange` is 1 m, `combat::fixed_usable_range`),
-//! 1 m more once the walk to it has ended
+//! Use range (`ControllerPlayerState::DefaultRequestInteractableAction`): 3D origin distance at most player
+//! radius + object radius + `usableRange`, 1 m more once the walk to it has ended
 //! (`ControllerPlayerStateMoveToFixedItem::EndOfPathReached`).
 //!
-//! Travel (`FixedDoor` use, `DungeonEntrance::RequestToUse`, [`destination`]): the groups searched are the map's
-//! instance
-//! groups holding the door, or, when the first "Dungeon Entrances" group holding it has child groups (random
-//! cave set pieces), those children. Every other member of a searched "Dungeon Entrances" group whose region
-//! exists is a candidate; the engine draws one with `rand()`, the port with `gd_game_core::rng` (the gameplay dice).
-//! An entry is (uid, region id, region-local position). The pair is remembered in both directions
-//! ([`DungeonExits`], `Player::AddDungeonEntranceUID`): a door with a remembered other end goes
-//! there only (`GetDungeonExitForEntranceUID`), and a door without one never draws a member
-//! another door already took (`HasDungeonEntranceUID`). The memory is the `Player` object's
-//! map (`Player.dungeonExits`): nothing saves or loads it, only the constructor / destructor touch it, so it lasts the
-//! session (`grimdawn/src/exit/mod.rs` resets it). The use sets [`crate::teleport::PendingTravel`];
-//! [`run_teleport`] runs the teleport activity of every pending travel and
-//! puts the player there once the destination has streamed in (the game's
-//! streaming reports it with [`DestinationReady`]).
+//! Travel (`DungeonEntrance::RequestToUse`, [`destination`]): the groups searched are the map's instance
+//! groups holding the door, or, when the first "Dungeon Entrances" group holding it has child groups, those
+//! children. Every other member of a searched "Dungeon Entrances" group whose region exists is a candidate,
+//! drawn with `rand()` (here `gd_game_core::rng`). The pair is remembered both ways ([`DungeonExits`],
+//! `Player::AddDungeonEntranceUID`): a door with a remembered other end goes there only, and a door without
+//! one never draws a member another door already took (`HasDungeonEntranceUID`). `Player.dungeonExits` is
+//! never saved, so it lasts the session. The use sets [`crate::teleport::PendingTravel`].
 //!
-//! Interest ([`Door::is_of_interest`]): the mouse pick (Grim Dawn.exe
-//! `InGameUIActorCapture::CollectCandidates`) keeps a fixed actor only when its `IsOfInterest`
-//! holds, so a door that fails it is neither outlined, named nor
-//! clicked. `FixedDoor::IsOfInterest` (also `DungeonEntrance`, a
-//! `FixedDoor` subclass) / `FixedLever::IsOfInterest`: (not `locked`, or
-//! `lockedTag` set) and `FixedDoor::CanInteract` by `interaction` ("Open":
-//! only fully closed, state 0; "Close": only fully open, state 3; else
-//! always); a `FixedDoor` must also be visible.
-//! `FixedItemDoorBase::IsOfInterest`: (not `openOnly`, or closed, state 10)
-//! and (not `locked`, or `lockedTextTag` set). `locked` is the live flag
-//! (record, then `SetLocked`). So a locked door without a locked text, like
-//! the Devil's Crossing prison gate a script opens, is never hovered.
+//! Interest ([`Door::is_of_interest`]): the mouse pick keeps a fixed actor only when `IsOfInterest` holds.
+//! `FixedDoor` / `FixedLever::IsOfInterest`: (not `locked`, or `lockedTag` set) and `FixedDoor::CanInteract`
+//! by `interaction` ("Open": only fully closed; "Close": only fully open; else always); a `FixedDoor` must
+//! also be visible. `FixedItemDoorBase::IsOfInterest`: (not `openOnly`, or closed) and (not `locked`, or
+//! `lockedTextTag` set). So a locked door without a locked text is never hovered.
 //!
-//! Story doors take their story object's open / locked state when they
-//! spawn ([`story_doors`]). A dungeon entrance opens on its first use and
-//! travels on the next ([`Door::use_action`]).
+//! Story doors take their story object's open / locked state when they spawn ([`story_doors`]). A dungeon
+//! entrance opens on its first use and travels on the next ([`Door::use_action`]).
 //!
-//! Level doors keep their state across streaming ([`DoorStates`]): `Region::Unload` saves its levels' entities
-//! (`Level::SaveState`) and `Region::Load` restores them (`Level::RestoreState`). `FixedDoor::SaveState` writes
-//! open for a door opening or open (states 2 / 3), closed for an `autoClose` one, and `FixedDoor::RestoreState`
-//! sets it fully open (state 3) or fully closed (state 0) at once; an item door's state is its `FixedItem` state
-//! (`FixedItem::SaveState` / `RestoreState`). Here: [`remember_doors`] keeps (level, uid) → open as the level
-//! unloads, [`restore_doors`] puts a door spawned again in that state at its animation's end. The lock is
-//! saved too, but a level door's only changes for story doors, which follow their story object.
+//! Level doors keep their state across streaming ([`DoorStates`], `Level::SaveState` / `RestoreState`):
+//! `FixedDoor::SaveState` writes open for an opening or open door, closed for an `autoClose` one;
+//! `RestoreState` sets it fully open or closed at once. The lock is saved too, but only story doors change
+//! it, and they follow their story object.
 use crate::chests::LockedUse;
 use crate::movement::MovePath;
 use crate::nav::NavObstacle;
@@ -100,11 +73,11 @@ impl Plugin for DoorsPlugin {
     }
 }
 
-/// The open state of the level doors whose level streamed out this session, by (level, uid) (module doc).
+/// The open state of the level doors whose level streamed out this session, by (level, uid).
 #[derive(Resource, Default)]
 pub struct DoorStates(pub HashMap<(usize, [u32; 4]), bool>);
 
-/// `FixedDoor::SaveState` as a door's level unloads (module doc): an `autoClose` door is saved closed.
+/// `FixedDoor::SaveState` as a door's level unloads: an `autoClose` door is saved closed.
 pub fn remember_doors(
     mut states: ResMut<DoorStates>,
     doors: Query<(&Door, &gd_game_core::levels::LevelMember), With<gd_game_core::levels::Unload>>,
@@ -118,7 +91,7 @@ pub fn remember_doors(
     }
 }
 
-/// `FixedDoor::RestoreState`: a level door spawned again takes its remembered state at once (module doc).
+/// `FixedDoor::RestoreState`: a level door spawned again takes its remembered state at once.
 pub fn restore_doors(
     mut commands: Commands,
     states: Res<DoorStates>,
@@ -148,17 +121,13 @@ pub fn restore_doors(
     }
 }
 
-/// The pending travel's destination has streamed in (sent by the game's level streaming every frame it holds; the
-/// teleport activity reads it while loading, [`TeleportActivity::step`]).
+/// The pending travel's destination has streamed in (sent every frame it holds).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct DestinationReady;
 
-/// Runs the teleport activity of a pending travel ([`TeleportActivity`], every travel: doors,
-/// riftgates, portals): the player stays frozen where it is (`Character.walkPath`: the walk is cleared every frame)
-/// while the screen fades out and the destination loads ([`DestinationReady`]), then it is put on the floor there
-/// ([`crate::nav::teleport_landing`]; where the loaded destination has no floor, the point itself, as
-/// `TranslateToFloor` leaves it) and the screen fades in; the travel ends with the activity. The loading screen
-/// and the destination's streaming follow the activity (grimdawn `doors.rs`).
+/// Runs the teleport activity of a pending travel ([`TeleportActivity`]): the player stays frozen (its walk
+/// cleared every frame) while the screen fades out and the destination loads, then it is put on the floor
+/// there ([`crate::nav::teleport_landing`]; no floor: the point itself, as `TranslateToFloor` leaves it).
 pub fn run_teleport(
     time: Res<Time>,
     mut pending: ResMut<PendingTravel>,
@@ -195,33 +164,30 @@ pub struct Door {
     pub record: String,
     pub uid: Option<[u32; 4]>,
     pub open: bool,
-    /// `Actor::GetRadius` (`combat::get_radius`): the use range's and the hover pick's.
+    /// `Actor::GetRadius`.
     pub radius: f32,
     pub story: Option<u32>,
-    /// What it blocks while closed.
     pub obstacles: Vec<Obstacle>,
-    /// Locked by a script (`SetLocked`): the player cannot open or close it.
+    /// `SetLocked`: the player cannot open or close it.
     pub locked: bool,
-    /// A `FixedItemDoor` (module docs); else a `FixedDoor` / `DungeonEntrance`.
+    /// A `FixedItemDoor`; else a `FixedDoor` / `DungeonEntrance`.
     pub item_door: bool,
     /// `RemoveObstaclesWhileOpen`.
     pub remove_while_open: bool,
     /// The last open animation has an "Obstacle" callback point.
     pub obstacle_cb: bool,
     pub msh: Arc<Msh>,
-    /// The open / close animation and its clock (the game shows the same).
+    /// The open / close animation and its clock.
     pub anim: Option<DoorAnim>,
-    /// `FixedItemDoor` callbacks still due: "Obstacle" points after frame
-    /// `done` of an opening (`true`) or closing animation, then "End".
+    /// `FixedItemDoor` callbacks still due: "Obstacle" points after frame `done` of an opening (`true`) or
+    /// closing animation, then "End".
     pub watch: Option<(bool, f32)>,
-    /// `autoClose` with its `autoClosePeriod` (ms) of a `FixedDoor` /
-    /// `DungeonEntrance` ([`auto_close`]).
+    /// `autoClose` with its `autoClosePeriod` (ms) of a `FixedDoor` / `DungeonEntrance`.
     pub auto_close: Option<i32>,
-    /// Milliseconds before an auto-closing door closes (`FixedDoor.autoCloseDelay`).
+    /// `FixedDoor.autoCloseDelay` (ms).
     pub close_in_ms: i32,
 }
 
-/// A door's playing animation.
 #[derive(Clone)]
 pub struct DoorAnim {
     pub anim: Arc<Animation>,
@@ -255,7 +221,7 @@ fn put_obstacles(commands: &mut Commands, e: Entity, obstacles: Vec<Obstacle>) {
     }
 }
 
-/// Starts the door's open or close animation (at its end: already there).
+/// Starts the door's open or close animation.
 fn set_anim(
     door: &mut Door,
     anims: &mut AnimCache,
@@ -285,8 +251,8 @@ fn set_anim(
     }
 }
 
-/// Whether everything [`spawn_door`] reads for `record` is parsed: its mesh and its open / close animations (one not
-/// yet parsed starts its background load, [`BodyCache::ready`], [`AnimCache::ready`]).
+/// Whether [`spawn_door`]'s mesh and animations for `record` are parsed; otherwise their background load
+/// starts.
 pub fn door_ready(
     data: &GameData,
     bodies: &mut BodyCache,
@@ -305,9 +271,7 @@ pub fn door_ready(
     ready
 }
 
-/// Spawns a door of `record` (its `mesh` is needed); open doors rest at the
-/// end of their open animation, closed ones at the end of their close
-/// animation (item doors with the obstacles of that pose).
+/// Spawns a door of `record` (its `mesh` is needed), resting at the end of its open or close animation.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_door(
     commands: &mut Commands,
@@ -323,11 +287,10 @@ pub fn spawn_door(
     let rec = data.db.get(record)?;
     let msh = bodies.get(data, rec.str("mesh")?)?;
     let item_door = rec.str("Class") == Some("FixedItemDoor");
-    // `FixedItemDoorBase::Load` reads no `open` (module docs).
+    // `FixedItemDoorBase::Load` reads no `open`.
     let open = !item_door && rec.bool("open");
-    // Only the mesh hit boxes block; a mesh without any doesn't (`FixedDoor::CreatePathObstacles`,
-    // `FixedItem::CreatePathObstacle`).
-    // A closed `FixedItemDoor` is posed at its close animation's end.
+    // Only the mesh hit boxes block (`FixedDoor::CreatePathObstacles`). A closed `FixedItemDoor` is posed
+    // at its close animation's end.
     let close_anim = if item_door {
         rec.str("closeAnimation").and_then(|p| anims.anim(data, p))
     } else {
@@ -356,14 +319,9 @@ pub fn spawn_door(
         close_in_ms: 0,
     };
     door.close_in_ms = door.auto_close.unwrap_or(0);
-    // A closed `FixedDoor` / `DungeonEntrance` rests at its close
-    // animation's end too (`FixedDoor::Load` flags a
-    // closed door, `FixedDoor::InitialUpdate` then calls
-    // `InstantaneousClose`, which poses the close animation at
-    // its last frame (`AnimEntry::PoseLastFrame`) unless a `closedLoopAnimation` is set,
-    // which it plays instead: PORT, not played, 2 stock records). The
-    // Shattered Realm portal's disc is shrunk to nothing there, so a dormant
-    // portal draws nothing. Its obstacles stay the hit boxes.
+    // A closed `FixedDoor` rests at its close animation's end too (`FixedDoor::InitialUpdate` →
+    // `InstantaneousClose`: `AnimEntry::PoseLastFrame`), unless a `closedLoopAnimation` is set, which it
+    // plays instead (PORT: not played). The Shattered Realm portal's disc is shrunk to nothing there.
     let closed_loop = rec
         .str("closedLoopAnimation")
         .is_some_and(|s| !s.is_empty());
@@ -382,7 +340,7 @@ pub fn spawn_door(
             Name::new(format!("door {}", record.rsplit('/').next().unwrap_or(""))),
         ))
         .id();
-    // A level's door goes with its level (None: a story object's).
+    // None: a story object's door.
     if let Some(l) = level {
         commands
             .entity(e)
@@ -394,23 +352,15 @@ pub fn spawn_door(
     Some(e)
 }
 
-/// What using a door does ([`Door::use_action`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoorUse {
-    /// The door's own use: `onInteract`, locked feedback, open / close.
     Toggle,
-    /// A dungeon entrance's travel to its other end.
     Travel,
 }
 
 impl Door {
-    /// `DungeonEntrance::RequestToUse` (the class
-    /// overrides `FixedDoor`'s): after the range, faction and lock checks
-    /// (locked: the locked feedback), a fully closed entrance (`IsClosed`,
-    /// state 0) takes the plain door use (`FixedDoor::RequestToUse`: it
-    /// opens); otherwise (opening or open) the player travels. So a trap
-    /// door opens on the first use and goes down on the second. Other doors
-    /// always take their own use.
+    /// `DungeonEntrance::RequestToUse`: after the range, faction and lock checks, a fully closed entrance
+    /// takes the plain door use (it opens); otherwise the player travels. Other doors always toggle.
     pub fn use_action(&self, rec: &gd_formats::arz::Record) -> DoorUse {
         if rec.str("Class") != Some("DungeonEntrance")
             || self.locked
@@ -429,7 +379,6 @@ impl Door {
             .is_none_or(|a| a.time * a.anim.frame_rate.max(1) as f32 >= a.anim.num_frames as f32)
     }
 
-    /// Hoverable and clickable (module docs, "Interest").
     pub fn is_of_interest(&self, rec: &gd_formats::arz::Record) -> bool {
         let nonempty = |k: &str| rec.str(k).is_some_and(|t| !t.is_empty());
         if self.item_door {
@@ -447,8 +396,8 @@ impl Door {
     }
 }
 
-/// Opens or closes a door (module docs: item doors' obstacles follow the
-/// animation's callbacks; plain doors block only while closed).
+/// Opens or closes a door: item doors' obstacles follow the animation's callbacks; plain doors block only
+/// while closed.
 pub fn set_open(
     commands: &mut Commands,
     anims: &mut AnimCache,
@@ -487,11 +436,9 @@ pub fn set_open(
     }
 }
 
-/// `FixedDoor::Open` / `Close`: a `FixedDoor` (and so a `DungeonEntrance`, the
-/// Shattered Realm's portal) plays its `openSound` / `closeSound` at its coords when it starts opening / closing
-/// (`Load`; its loop sounds are `openedLoopSound` / `closedLoopSound`, so the portal's
-/// `openLoopSound` is never read). A door that spawns in its state plays nothing. PORT: `FixedItemDoor`s
-/// (their own `FixedItemDoorBase` rules, not traced) stay silent.
+/// `FixedDoor::Open` / `Close`: a `FixedDoor` (and a `DungeonEntrance`) plays its `openSound` /
+/// `closeSound` when it starts opening / closing; the portal's `openLoopSound` is never read. A door that
+/// spawns in its state plays nothing. PORT: `FixedItemDoor`s (not traced) stay silent.
 fn door_sound(
     door: &Door,
     rec: &gd_formats::arz::Record,
@@ -510,8 +457,7 @@ fn door_sound(
     })
 }
 
-/// Runs the doors' animation clocks and an item door's callbacks: its
-/// "Obstacle" points and its "End" (module docs).
+/// Runs the doors' animation clocks and an item door's "Obstacle" and "End" callbacks.
 pub fn advance_doors(
     mut commands: Commands,
     time: Res<Time>,
@@ -519,7 +465,7 @@ pub fn advance_doors(
 ) {
     let dt = time.delta_secs();
     for (e, tf, mut door) in &mut doors {
-        // At rest with no callback due: left untouched, so the dressing's `Changed<Door>` skips it.
+        // At rest with no callback due: left untouched, so `Changed<Door>` skips it.
         if door.watch.is_none()
             && door.anim.as_ref().is_none_or(|a| {
                 a.time >= a.anim.num_frames as f32 / a.anim.frame_rate.max(1) as f32
@@ -574,11 +520,8 @@ pub fn advance_doors(
     }
 }
 
-/// `FixedDoor::UpdateSelf`: an `autoClose` door that
-/// is fully open (state 3) counts its timer down (set to `autoClosePeriod` ×
-/// 1000 ms by `FixedDoor::Open` / `Load`) and closes when it runs out
-/// (`Close`); a 0 period never closes. `FixedItemDoor`s'
-/// `autoClose` is another rule (`FixedItemDoorBase`), not this one.
+/// `FixedDoor::UpdateSelf`: a fully open `autoClose` door counts down `autoClosePeriod` × 1000 ms and
+/// closes; a 0 period never closes. `FixedItemDoor`s' `autoClose` is another rule.
 pub fn auto_close(
     mut commands: Commands,
     time: Res<Time>,
@@ -607,12 +550,8 @@ pub fn auto_close(
     }
 }
 
-/// Script doors: spawned by the story (`story_world::sync_actors`); `SetDoor` /
-/// `SetLocked`. The story object's state is the source (`WorldObject::open`
-/// / `locked`, from the record and the scripts' `Open` / `Close` /
-/// `SetLocked`): a door spawned after a script already opened or locked it
-/// (the Devil's Crossing prison gate's trigger fires as its level streams
-/// in, before the door's model is up) takes that state when it appears.
+/// Script doors: `SetDoor` / `SetLocked`. The story object's state (`WorldObject::open` / `locked`) is the
+/// source: a door spawned after a script already opened or locked it takes that state when it appears.
 pub fn story_doors(
     mut commands: Commands,
     mut events: MessageReader<gd_game_core::story::StoryEffect>,
@@ -667,10 +606,8 @@ pub fn story_doors(
                     }
                 }
             }
-            // `Door:SetAutoClose(bool)` (`FixedDoor::SetAutoClose`, Game.dll): the flag
-            // with the record's `autoClosePeriod`; an open door arms its countdown at once (the
-            // [`auto_close`] tick closes it). PORT: the port's item doors share the flag (the engine's
-            // `FixedItemDoorBase` auto-close is another rule, not traced).
+            // `FixedDoor::SetAutoClose`: the flag with the record's `autoClosePeriod`; an open door arms its
+            // countdown at once. PORT: item doors share the flag (`FixedItemDoorBase`'s rule not traced).
             gd_story::story::Effect::SetAutoClose { id, on } => {
                 for (_, _, mut d) in &mut doors {
                     if d.story == Some(id) {
@@ -693,16 +630,14 @@ pub fn story_doors(
     }
 }
 
-/// The dungeon entrances whose other end the player took this session, both ways: entrance uid → exit uid and
-/// exit uid → entrance uid (module docs, "Travel"; the `Player`'s map `Player.dungeonExits`, filled by
-/// `Player::AddDungeonEntranceUID`). The engine's map orders and matches uids by the wrapping sum
-/// of their four words; no two stock dungeon-entrance uids share a sum (`world001.map`), so whole uids key it here.
+/// The dungeon entrances whose other end the player took this session, both ways (`Player.dungeonExits`).
+/// The engine keys uids by the wrapping sum of their four words; no two stock entrance uids share a sum,
+/// so whole uids key it here.
 #[derive(Resource, Default)]
 pub struct DungeonExits(pub HashMap<[u32; 4], [u32; 4]>);
 
-/// Uses the player's interact target (`player_orders::InteractTarget`) once in range (module docs): the Shattered Realm's portals,
-/// dungeon-entrance travel, `onInteract`, `openOnly`, the locked feedback ([`LockedUse`]), else open /
-/// close (a story door's object follows).
+/// Uses the player's interact target once in range: the Shattered Realm's portals, dungeon-entrance
+/// travel, `onInteract`, `openOnly`, the locked feedback ([`LockedUse`]), else open / close.
 #[allow(clippy::too_many_arguments)]
 pub fn use_door(
     mut commands: Commands,
@@ -725,7 +660,7 @@ pub fn use_door(
     mut anims: ResMut<AnimCache>,
     mut locked_out: MessageWriter<LockedUse>,
     mut sound: MessageWriter<gd_game_core::visuals::PlaySound>,
-    // Option: without a story (no session yet) doors still open and close.
+    // Option: without a story doors still open and close.
     rt: Option<NonSend<StoryRuntime>>,
     activity: Res<crate::teleport::TeleportActivity>,
 ) {
@@ -733,8 +668,8 @@ pub fn use_door(
         debug!("doors: no player");
         return;
     };
-    // The player is frozen through a teleport's activity (`run_teleport`): the door is used once it ends,
-    // not acted on now (a travel granted while another is pending would be lost).
+    // Frozen through a teleport: use the door once it ends (a travel granted while another is pending
+    // would be lost).
     if activity.active() {
         return;
     }
@@ -747,8 +682,6 @@ pub fn use_door(
         debug!("doors: no record {}", door.record);
         return;
     };
-    // Use range (module docs, `player_orders::usable_range`): player radius + object radius + `usableRange`,
-    // measured between the origins in 3D, 1 m more at the end of the walk there.
     let range = gd_game_core::player_orders::usable_range(
         pcb.radius,
         door.radius,
@@ -762,9 +695,9 @@ pub fn use_door(
     }
     interact.0 = None;
     path.points.clear();
-    // The Shattered Realm's doors (`EndlessDungeonEntrance::RequestToUse`): a closed one
-    // opens like any door; an open one teleports to the active floor's entrance and dispels the soul buffs, when
-    // it is the hub door the script gave the generator or an `EndlessDungeonExit`.
+    // `EndlessDungeonEntrance::RequestToUse`: a closed one opens like any door; an open one (the hub door
+    // given to the generator, or an `EndlessDungeonExit`) teleports to the active floor's entrance and
+    // dispels the soul buffs.
     if door.open
         && matches!(
             rec.class.as_str(),
@@ -791,8 +724,7 @@ pub fn use_door(
             return;
         }
     }
-    // An open dungeon entrance travels to its other end (none found: the use ends there, as the engine's
-    // `RequestToUse` installs no teleport); a closed one opens (`Door::use_action`).
+    // None found: the use ends there (`RequestToUse` installs no teleport).
     if door.use_action(rec) == DoorUse::Travel
         && let (Some(uid), Some(layout)) = (door.uid, &layout)
     {
@@ -813,9 +745,7 @@ pub fn use_door(
         }
         return;
     }
-    // `onInteract` runs first on every use; a `true` result ends the use
-    // (`FixedDoor::RequestToUse` / `FixedLever::RequestToUse`, see
-    // `ScriptHost::interact_hook`).
+    // `onInteract` runs first on every use; `true` ends the use (`FixedDoor::RequestToUse`).
     if let Some(id) = door.story
         && let Some(rt) = rt.as_ref()
         && rec.str("onInteract").is_some_and(|h| !h.is_empty())
@@ -836,7 +766,7 @@ pub fn use_door(
             record: door.record.clone(),
             at: gt.translation(),
         });
-        // The player's locked-door voice (`char_sounds::locked_vox`, `Player::PlayLockedDoorVox`).
+        // `Player::PlayLockedDoorVox`.
         if let Some(pak) =
             crate::char_sounds::locked_vox(&data, ch, crate::char_sounds::LockedKind::Door)
         {
@@ -855,8 +785,7 @@ pub fn use_door(
     );
     set_open(&mut commands, &mut anims, &data, e, &mut door, rec, open);
     sound.write_batch(door_sound(&door, rec, open, gt.translation()));
-    // A story door's object follows (scripts' `IsOpen`; the state a respawned
-    // door takes, [`story_doors`]).
+    // A story door's object follows (scripts' `IsOpen`; a respawned door takes it).
     if let (Some(id), Some(rt)) = (door.story, rt.as_ref())
         && let Some(o) = rt.story.borrow_mut().entities.get_mut(id)
     {
@@ -864,9 +793,8 @@ pub fn use_door(
     }
 }
 
-/// The other end of the entrance with entity uid `uid` (module docs, "Travel"; `DungeonEntrance::RequestToUse`),
-/// remembered in `exits` both ways. The draw is gameplay randomness (`gd_game_core::rng`, the
-/// engine's `rand()`), so a seeded run lands at the same exit.
+/// The other end of the entrance with entity uid `uid` (`DungeonEntrance::RequestToUse`), remembered in
+/// `exits` both ways.
 pub fn destination(
     groups: &gd_formats::map::sector::InstanceGroups,
     regions: &[gd_formats::map::RegionInfo],
@@ -874,7 +802,6 @@ pub fn destination(
     uid: [u32; 4],
 ) -> Option<Vec3> {
     const ENTRANCES: &str = "Dungeon Entrances";
-    // The groups holding the door, or the children of the first entrance group holding it that has some.
     let searched: Vec<&gd_formats::map::sector::InstanceGroup> = match groups
         .containing(&uid)
         .find(|g| g.kind == ENTRANCES && !g.links.is_empty())
@@ -909,7 +836,7 @@ pub fn destination(
     if candidates.is_empty() {
         return None;
     }
-    // One candidate is taken without a draw (the engine calls `rand()` only for more than one).
+    // The engine calls `rand()` only for more than one candidate.
     let e = match candidates.len() {
         1 => candidates[0],
         n => candidates[gd_game_core::rng::usize(..n)],
@@ -919,8 +846,7 @@ pub fn destination(
     Some(gd_game_core::levels::region_origin(region(e)?) + Vec3::from(e.floats))
 }
 
-/// Door stages: what shows doors orders after `Advance`; the game's door pick runs before `Use`, the
-/// teleport activity after it.
+/// The game's door pick runs before `Use`, the teleport activity after it.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoorStage {
     Advance,

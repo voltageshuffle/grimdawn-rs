@@ -1,5 +1,5 @@
 //! Screen distortion: the `distort*.ssh` mesh shaders and `particledistort*`
-//! emitters (fx/render.rs) refract a copy of the finished frame.
+//! emitters refract a copy of the finished frame.
 //!
 //! When: `GraphicsDeferredRenderer::RenderFinalScene` (Engine.dll): after
 //! every scene pass (sort orders up to 11000: opaque,
@@ -24,16 +24,14 @@
 //!   both × `blendedGlobalFadeFactor`; colour from uv and alpha from the scrolled
 //!   uv, swapped by the `*colorscroll*` shaders.
 //! Pass states (all of them): blend One / InvSrcAlpha, depth test LessEqual,
-//! cull back, alpha write off (read from the technique, material.rs). A mesh
-//! without a `bumpTexture` gets the shader's default `/system/textures/flatbmp.tex`
-//! (flat normal, alpha 1). The `*wiggle*` programs move the vertices by the
-//! foliage wind first (render/material.rs `Wind`: the object's world position
-//! as offset, no ripple amplitude; gd_wind.wesl). Only `distortadditivestatic`
+//! cull back, alpha write off. A mesh without a `bumpTexture` gets the shader's
+//! default `/system/textures/flatbmp.tex` (flat normal, alpha 1). The `*wiggle*`
+//! programs move the vertices by the foliage wind first (the object's world
+//! position as offset, no ripple amplitude). Only `distortadditivestatic`
 //! and `distortadditiveunusedcolorstatic` are `postObjectRenderStyle`; every
 //! other distort mesh shader and both `particledistort*` are `postRenderStyle`,
 //! so they refract the first group. `distortstandard*` has only a forward
-//! `dLightDiffuseAmbientStyle`, which the deferred renderer never draws
-//! (render/material.rs `Special::Hidden`).
+//! `dLightDiffuseAmbientStyle`, which the deferred renderer never draws.
 //!
 //! Here: the materials ([`DistortMaterial`], the particle material with a
 //! distort shader) read Bevy's view transmission texture and are queued in
@@ -113,7 +111,7 @@ pub struct DistortParams {
     /// x 1 = additive family, y 1 = colour scroll (`*colorscroll*`), z 1 = the
     /// mesh has tangents.
     pub flags: UVec4,
-    /// The `*wiggle*` vertex wobble (render/material.rs `WindParams`).
+    /// The `*wiggle*` vertex wobble.
     pub wind: Vec4,
     pub ripple_scale: Vec4,
     pub ripple_amplitude: Vec4,
@@ -131,16 +129,15 @@ pub struct DistortMaterial {
     #[sampler(4)]
     pub bump: Handle<Image>,
     pub states: PassStates,
-    /// Drawn by `postObjectRenderStyle` (the part gets [`PostObjectStyle`]).
+    /// Drawn by `postObjectRenderStyle`.
     pub post_object: bool,
 }
 
 /// A distortion part drawn by `postObjectRenderStyle`, before the
-/// `postRenderStyle` ones and their frame copy (module doc).
+/// `postRenderStyle` ones and their frame copy.
 #[derive(Component)]
 pub struct PostObjectStyle;
 
-/// The main-world entities with [`PostObjectStyle`], rebuilt only when the marked set changed.
 #[derive(Resource, Default)]
 struct PostObjectEntities(EntityHashSet);
 
@@ -159,7 +156,7 @@ fn extract_post_object(
 #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub struct DistortKey {
     states: PassStates,
-    /// Draws with the wind vertex program (gd_wind.wesl, `GD_WIND_DISTORT`).
+    /// Draws with the wind vertex program (`GD_WIND_DISTORT`).
     wind: bool,
 }
 

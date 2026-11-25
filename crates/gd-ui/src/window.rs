@@ -1,24 +1,18 @@
-//! Shared wiring of the pop-up windows (shrine, apply, ...): each window is a `build` system (rebuilds its
-//! widget tree when its signature changes) chained before a `clicks` system (in [`super::UiInputSet`] and
-//! [`WindowClicks`]), both in [`UiPlaySet`] and gated by the window's own `live` condition.
+//! Shared wiring of the pop-up windows: each window is a `build` system (rebuilds its widget tree when
+//! its signature changes) chained before a `clicks` system, gated by the window's own `live` condition.
+//! `live` is "open, or still built": the frame a window closes still runs `build` to despawn its root.
 //!
-//! PORT (performance): `live` is "open, or still built", so a closed, unbuilt window costs no system run; the
-//! frame it closes still runs `build` once so it despawns its root.
+//! The shared scroll bar: the journal's `UIScrollWindow` bar, reused by every scrollable window.
 //!
-//! The shared scroll bar ([`scrollbar_live`] / [`Bar`] / [`bar_held`]): the journal's `UIScrollWindow` bar,
-//! reused by every scrollable window; [`ScrollThumb`] pieces and the [`pane`] container move in place.
-//!
-//! The window manager's one open/close policy ([`WindowPolicy`], [`Windows`]): which windows opening one
-//! closes (`InGameUI::HandleKeyAction` / `UIPlayerHud::CloseWindows`). Esc and focus are the one dispatcher's
-//! (`super::esc_dispatcher`). PORT: windows sit in fixed z bands ([`Z_WINDOW`] … [`Z_OPTIONS`]) instead of
-//! the engine's focus order.
+//! The one open/close policy ([`WindowPolicy`]): which windows opening one closes
+//! (`InGameUI::HandleKeyAction` / `UIPlayerHud::CloseWindows`). PORT: windows sit in fixed z bands
+//! ([`Z_WINDOW`] … [`Z_OPTIONS`]) instead of the engine's focus order.
 use super::{UiInputSet, UiPlaySet};
 use bevy::ecs::schedule::IntoScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 
-/// The "built signature" of a window builder (a `Local<Rebuild<Sig>>`): the builder computes its signature each
-/// frame, rebuilds only when [`Rebuild::changed`] says so, and `NewSession` calls [`Rebuild::reset`].
+/// The "built signature" of a window builder (a `Local<Rebuild<Sig>>`); `NewSession` calls [`Rebuild::reset`].
 pub struct Rebuild<S>(Option<S>);
 
 impl<S> Default for Rebuild<S> {
@@ -28,7 +22,7 @@ impl<S> Default for Rebuild<S> {
 }
 
 impl<S: PartialEq> Rebuild<S> {
-    /// Whether `sig` differs from the last built one; if so, remembers it (the caller rebuilds now).
+    /// Whether `sig` differs from the last built one; if so, remembers it.
     pub fn changed(&mut self, sig: S) -> bool {
         if self.0.as_ref() == Some(&sig) {
             return false;
@@ -37,8 +31,7 @@ impl<S: PartialEq> Rebuild<S> {
         true
     }
 
-    /// As [`Self::changed`], but builds the signature only when `same` says the built one differs: no
-    /// per-frame clone of the inputs.
+    /// As [`Self::changed`], but builds the signature only when `same` says the built one differs.
     pub fn changed_by(&mut self, same: impl FnOnce(&S) -> bool, make: impl FnOnce() -> S) -> bool {
         if self.0.as_ref().is_some_and(same) {
             return false;
@@ -47,13 +40,12 @@ impl<S: PartialEq> Rebuild<S> {
         true
     }
 
-    /// Forgets the built signature: the next `changed` is true.
     pub fn reset(&mut self) {
         self.0 = None;
     }
 }
 
-/// Despawns the old roots of a window that is about to be rebuilt (a second despawn in one frame is not an error).
+/// Despawns the old roots of a window about to be rebuilt (a second despawn in one frame is not an error).
 pub fn despawn_all(
     commands: &mut Commands,
     roots: &Query<Entity, impl bevy::ecs::query::QueryFilter>,
@@ -63,8 +55,8 @@ pub fn despawn_all(
     }
 }
 
-/// The `clicks` systems of [`add_window`] windows: they see Escape before the shared dispatcher
-/// (`super::esc_dispatcher`), so a modal box (the Game Over box) answers it instead of the game menu opening.
+/// The `clicks` systems of [`add_window`] windows: they see Escape before the shared dispatcher, so a
+/// modal box answers it instead of the game menu opening.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowClicks;
 
@@ -86,25 +78,18 @@ pub fn add_window<B, C, L>(
     );
 }
 
-/// The shared window chrome's z bands (`super::spawn_root`): the play windows (altar, shrine, potions,
-/// the NPC windows, the map, the riftgate map, the conversation) at [`Z_WINDOW`], the journal one below
-/// (`Z_WINDOW - 1`), their confirmations / pick / stack boxes and the loot filter window at [`Z_MODAL`]
-/// (a second modal layer `Z_MODAL + 1`), the factions / achievements band at [`Z_PANEL`] (their scroll
-/// bars `Z_PANEL + 1`), the game menu at [`Z_MENU`] (its dim `Z_MENU - 10`) and the options window over it at [`Z_OPTIONS`].
+/// The play windows' z band; the journal at `Z_WINDOW - 1`.
 pub const Z_WINDOW: i32 = 5;
-/// The play windows' confirmations, pick / stack boxes and the loot filter window (see [`Z_WINDOW`]).
+/// The play windows' confirmations, pick / stack boxes and the loot filter window (a second layer `Z_MODAL + 1`).
 pub const Z_MODAL: i32 = 6;
-/// The factions / achievements band (see [`Z_WINDOW`]).
+/// The factions / achievements band (scroll bars `Z_PANEL + 1`).
 pub const Z_PANEL: i32 = 30;
-/// The game menu (see [`Z_WINDOW`]).
+/// The game menu (its dim `Z_MENU - 10`).
 pub const Z_MENU: i32 = 160;
-/// The options window, over the game menu (see [`Z_WINDOW`]).
 pub const Z_OPTIONS: i32 = 165;
 
-/// A window's close button (the shared chrome): the record's `Widget::Button` up bitmap at its
-/// `bitmapPosition` from the window origin `o`, its press sound registered
-/// (`Ui::record_path_button_sound`); returns its rect for the window's click layout. The close itself
-/// is the window's (a click on the rect) or the shared Esc dispatcher's (`super::esc_dispatcher`).
+/// A window's close button: the record's `Widget::Button` up bitmap at its `bitmapPosition` from the
+/// window origin `o`, its press sound registered; returns its rect.
 pub fn close_button(ui: &mut super::Ui, path: &str, o: Vec2) -> Option<gd_formats::ui::Rect> {
     let Some(gd_formats::ui::Widget::Button {
         up: Some(up), x, y, ..
@@ -117,9 +102,8 @@ pub fn close_button(ui: &mut super::Ui, path: &str, o: Vec2) -> Option<gd_format
     Some(r)
 }
 
-/// A clipped pane: a node over `r` whose child spans the screen shifted up
-/// by `scroll`, so children keep screen coordinates; returns the child (the owner's live system
-/// moves it by the scroll, [`ScrollThumb`] moves the bar's thumb).
+/// A clipped pane: a node over `r` whose child spans the screen shifted up by `scroll`, so children keep
+/// screen coordinates; returns the child.
 pub fn pane(ui: &mut super::Ui, r: gd_formats::ui::Rect, scroll: f32) -> Entity {
     let clip = ui
         .commands
@@ -142,8 +126,7 @@ pub fn pane(ui: &mut super::Ui, r: gd_formats::ui::Rect, scroll: f32) -> Entity 
     inner
 }
 
-/// A drawn scroll bar: its buttons, track span and thumb. The layout keeps the bar as built while the thumb moves
-/// with the scroll in place ([`ScrollThumb`]), so a press places the thumb from the scroll ([`Bar::press`]).
+/// A drawn scroll bar: its buttons, track span and thumb, kept as built while the thumb moves in place.
 #[derive(Clone, Copy, Default, PartialEq)]
 pub struct Bar {
     pub up: gd_formats::ui::Rect,
@@ -153,10 +136,9 @@ pub struct Bar {
     thumb: gd_formats::ui::Rect,
 }
 
-/// A held scroll bar part (`UIScrollWindow::HandleArrowInput` arrows, `UIScrollWindow::HandleScrollInput`
-/// track and thumb, `UIScrollWindow::RepeatScroll` repeat): an arrow's step or a track
-/// page's step and pages left (content px), or the thumb's grab offset; the
-/// repeat delay and interval left (ms).
+/// A held scroll bar part (`UIScrollWindow::HandleArrowInput`, `UIScrollWindow::HandleScrollInput`,
+/// `UIScrollWindow::RepeatScroll`): an arrow's or page's step and pages left (content px), or the
+/// thumb's grab offset; the repeat delay and interval left (ms).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BarHold {
     what: Held,
@@ -182,8 +164,7 @@ impl BarHold {
 }
 
 impl Bar {
-    /// The thumb's unrounded top at `scroll` of `max` (where [`draw_scrollbar`] draws it and the owner's live
-    /// system moves it).
+    /// The thumb's unrounded top at `scroll` of `max`.
     fn thumb_top(&self, scroll: f32, max: f32) -> f32 {
         let f = if max > 0.0 {
             (scroll / max).clamp(0.0, 1.0)
@@ -193,11 +174,9 @@ impl Bar {
         self.thumb.y + (self.track.1 - self.track.0 - self.thumb.h) * f
     }
 
-    /// A left press at `p`: the new scroll and the hold, if on the bar.
-    /// An arrow scrolls 20 × s px at once; the track above / below the thumb
-    /// pages by a fifth of the track (in thumb px, so `track / 5 × max /
-    /// (track − thumb)` content px) at once, and while held as many more
-    /// times as whole pages lie between the thumb and the press; the thumb grabs.
+    /// A left press at `p`: the new scroll and the hold, if on the bar. An arrow scrolls 20 × s px; the
+    /// track above / below the thumb pages by a fifth of the track (in thumb px), and while held as many
+    /// more times as whole pages lie between the thumb and the press; the thumb grabs.
     pub fn press(&self, p: Vec2, s: f32, scroll: f32, max: f32) -> Option<(f32, BarHold)> {
         use gd_formats::ui::Rect as URect;
         let inside = |r: &URect| super::contains(r, p);
@@ -212,7 +191,7 @@ impl Bar {
         if let Some(d) = arrow {
             return Some(((scroll + d).clamp(0.0, max), BarHold::new(Held::Arrow(d))));
         }
-        // The thumb where it is drawn now (rounded as the draw rounds its ends).
+        // Rounded as the draw rounds its ends.
         let top = self.thumb_top(scroll, max);
         let (y0, y1) = (top.round(), (top + self.thumb.h).round());
         let thumb = URect::new(self.thumb.x, y0, self.thumb.w, y1 - y0);
@@ -239,11 +218,9 @@ impl Bar {
     }
 }
 
-/// A held bar part after `dt_ms` with the cursor at `y`: a held arrow or
-/// track page repeats once the 300 ms delay is over, every 5 ms — whole
-/// steps accumulated, the remainder kept (fps-independent, as `doll.rs`'s
-/// hold-repeat; a page only its count of times); a held thumb follows the
-/// mouse; returns the new scroll.
+/// A held bar part after `dt_ms` with the cursor at `y`: a held arrow or track page repeats once the
+/// 300 ms delay is over, every 5 ms (whole steps accumulated, a page only its count of times); a held
+/// thumb follows the mouse; returns the new scroll.
 pub fn bar_held(
     bar: Option<Bar>,
     hold: &mut BarHold,
@@ -287,9 +264,7 @@ pub fn bar_held(
     (scroll + d * steps as f32).clamp(0.0, max)
 }
 
-/// Which window's scroll state drives a [`ScrollThumb`]: each window's live system moves its own
-/// (the journal's panes, the character sheet's lists, the potions description, the factions and
-/// achievements lists, the crafting recipe list).
+/// Which window's scroll state drives a [`ScrollThumb`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ScrollOwner {
     Journal,
@@ -300,7 +275,7 @@ pub enum ScrollOwner {
     Craft,
 }
 
-/// A scroll bar thumb piece ([`scrollbar_live`]): the owner's live system moves it along the track.
+/// A scroll bar thumb piece: the owner's live system moves it along the track.
 #[derive(Component)]
 pub struct ScrollThumb {
     pub owner: ScrollOwner,
@@ -312,12 +287,9 @@ pub struct ScrollThumb {
     pub inv: f32,
 }
 
-/// A vertical scroll bar (`scrollbar.tpl`: `upButton`, `downButton`, `scrollTrack`, `scrollBar` with first /
-/// middle / last textures) along the pane's right edge `right` (the pane loses its width;
-/// `UIScrollWindow::Load`), spanning `y .. y + len`, for `visible` px of `content` scrolled by `scroll`. The thumb
-/// pieces carry [`ScrollThumb`], so the owner's live system moves them in place instead of a rebuild per
-/// scroll step. PORT: thumb geometry (proportional, at least its two ends) and the buttons' looks are not
-/// decompiled.
+/// A vertical scroll bar (`scrollbar.tpl`) along the pane's right edge `right` (the pane loses its width;
+/// `UIScrollWindow::Load`), spanning `y .. y + len`, for `visible` px of `content` scrolled by `scroll`.
+/// PORT: thumb geometry and the buttons' looks are not decompiled.
 #[allow(clippy::too_many_arguments)]
 pub fn scrollbar_live(
     ui: &mut super::Ui,
@@ -346,7 +318,6 @@ pub fn scrollbar_live(
     let uh = up.as_ref().map_or(0.0, |(_, s)| ui.sc(s.y as f32));
     let dh = down.as_ref().map_or(0.0, |(_, s)| ui.sc(s.y as f32));
     let (t0, t1) = (y + uh, y + len - dh);
-    // A three-piece strip from `from` to `to`: its entities and its end pieces' heights.
     let piece = |ui: &mut super::Ui, rec: &str, from: f32, to: f32| {
         let (Some(first), Some(mid), Some(last)) = (
             img(ui, rec, "firstEndTexture"),
@@ -380,8 +351,7 @@ pub fn scrollbar_live(
     if let Some(([first, mid, last], fh, lh)) =
         piece(ui, &field("scrollBar"), top.round(), (top + thumb).round())
     {
-        // Each piece's top at scroll 0 (`base_y`) plus the rounding the draw applies: the first and
-        // middle round the thumb's top, the last rounds its bottom.
+        // The first and middle pieces round the thumb's top, the last rounds its bottom.
         let travel = track - thumb;
         for (e, base_y, round_add) in [(first, t0, 0.0), (mid, t0, fh), (last, t0 + thumb, -lh)] {
             ui.commands.entity(e).insert(ScrollThumb {
@@ -414,9 +384,8 @@ pub fn scrollbar_live(
     })
 }
 
-/// The windows the one open/close policy ([`WindowPolicy`]) manages. The first nine and the game menu are
-/// the UI's own (their open flags live in the UI resources); the rest are gameplay windows the policy only reads
-/// (their openers are gd-game's; closing them goes through their requests).
+/// The windows the policy manages. The first nine and the game menu are the UI's own; the rest are
+/// gameplay windows the policy only reads (closing them goes through their requests).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Window {
     Character,
@@ -454,15 +423,12 @@ impl Window {
         Window::GameMenu,
     ];
     pub fn index(self) -> usize {
-        // `ALL` lists the variants in declaration order.
         self as usize
     }
 }
 
-/// The window manager's single open/close policy (the engine's focus model: the factions key
-/// `InGameUI::HandleKeyAction` case 52 and the openers' `UIPlayerHud::CloseWindows` / `UIPlayerHud::ClosePanels`):
-/// opening a window closes the windows its row names. One table for every opener and watcher (the per-window copies
-/// disagreed). Initialized by the factions plugin (the first user).
+/// The window manager's single open/close policy (`InGameUI::HandleKeyAction` case 52,
+/// `UIPlayerHud::CloseWindows` / `UIPlayerHud::ClosePanels`): opening a window closes the windows its row names.
 #[derive(Resource)]
 pub struct WindowPolicy {
     closes: [u16; Window::COUNT],
@@ -473,9 +439,8 @@ impl Default for WindowPolicy {
         use self::Window::*;
         let mask = |ws: &[Window]| ws.iter().fold(0u16, |m, w| m | (1 << w.index()));
         let mut closes = [0u16; Window::COUNT];
-        // Character / Skills and the full-screen Devotion map replace each other (the HUD level-up
-        // button already closes Devotion before opening Skills): a window opened under the map would
-        // stay hidden yet take clicks.
+        // Character / Skills and the full-screen Devotion map replace each other: a window opened under
+        // the map would stay hidden yet take clicks.
         closes[Character.index()] = mask(&[Skills, Devotion, Factions, Achievements, LootFilter]);
         closes[Skills.index()] = mask(&[Character, Devotion, Factions, Achievements, LootFilter]);
         closes[Devotion.index()] = mask(&[Character, Skills, Factions, Achievements]);
@@ -493,7 +458,7 @@ impl Default for WindowPolicy {
         closes[Achievements.index()] = mask(&[
             Character, Skills, Devotion, Journal, Map, Factions, LootFilter,
         ]);
-        // `UIPlayerHud::ClosePanels` (lootfilter.rs doc): the filter press closes factions / achievements too.
+        // `UIPlayerHud::ClosePanels`: the filter press closes factions / achievements too.
         closes[LootFilter.index()] = mask(&[
             Character,
             Skills,
@@ -506,7 +471,6 @@ impl Default for WindowPolicy {
             Factions,
             Achievements,
         ]);
-        // The gameplay windows close the factions / achievements windows.
         closes[Potions.index()] = mask(&[Factions, Achievements]);
         closes[Trade.index()] = mask(&[Factions, Achievements]);
         closes[Conversation.index()] = mask(&[Factions, Achievements]);
@@ -516,7 +480,7 @@ impl Default for WindowPolicy {
 }
 
 impl WindowPolicy {
-    /// The windows opening `w` closes (an owned iterator: the mask is copied, no borrow of the policy).
+    /// The windows opening `w` closes.
     pub fn closes(&self, w: Window) -> impl Iterator<Item = Window> + use<> {
         let m = self.closes[w.index()];
         Window::ALL
@@ -524,7 +488,6 @@ impl WindowPolicy {
             .filter(move |o| m & (1 << o.index()) != 0)
     }
 
-    /// Whether a window that closes `w` opened between `was` and `now` (the watchers' reverse rule).
     pub fn opened_closer(
         &self,
         w: Window,
@@ -537,10 +500,8 @@ impl WindowPolicy {
     }
 }
 
-/// Every managed window's open state, writable for the UI's own: the openers' and watchers' one access
-/// to the policy ([`WindowPolicy`]), and the Esc dispatcher's one close path ([`Self::close`]). Closing a
-/// gameplay window goes through its request (the shrine's / potions' / conversation's cancel, the NPC
-/// windows' `ServiceRequest::Close`, the riftgate map's `RiftgateRequest::Close`).
+/// Every managed window's open state, writable for the UI's own. Closing a gameplay window goes through
+/// its request.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Windows<'w> {
     pub panels: ResMut<'w, super::UiPanels>,
@@ -573,8 +534,7 @@ impl Windows<'_> {
             Window::Skills => self.panels.skills,
             Window::Devotion => self.panels.devotion,
             Window::Journal => self.journal.open,
-            // The riftgate map is the map window's world page: it is on the focus stack too, so Esc
-            // closes it through `set_open(Map, false)`.
+            // The riftgate map is on the focus stack too: Esc closes it through `set_open(Map, false)`.
             Window::Map => self.map.open || self.rift.open,
             Window::Factions => self.factions.open,
             Window::Achievements => self.achievements.open,
@@ -588,7 +548,7 @@ impl Windows<'_> {
         }
     }
 
-    /// Every window's open state, in [`Window::ALL`] order (the watchers' snapshot).
+    /// Every window's open state, in [`Window::ALL`] order.
     pub fn snapshot(&self) -> [bool; Window::COUNT] {
         std::array::from_fn(|i| self.is_open(Window::ALL[i]))
     }
@@ -601,7 +561,6 @@ impl Windows<'_> {
             Window::Journal => self.journal.open = open,
             Window::Map => {
                 self.map.open = open;
-                // The riftgate map is the map window's world page: closing the map closes it too.
                 if !open && self.rift.open {
                     self.out.4.write(gd_game::riftgates::RiftgateRequest::Close);
                 }
@@ -611,7 +570,6 @@ impl Windows<'_> {
             Window::LootFilter => self.loot.open = open,
             Window::Altar => self.altar.open = open,
             Window::GameMenu => self.menu.open = open,
-            // The gameplay windows only close (their openers are gd-game's).
             Window::Shrine if !open && self.shrine.shrine.is_some() => {
                 self.out.0.write(gd_game::devotion::ShrineRequest::Cancel);
             }
@@ -631,7 +589,7 @@ impl Windows<'_> {
         }
     }
 
-    /// Opens `w`, closing what the policy excludes (the one open/close rule).
+    /// Opens `w`, closing what the policy excludes.
     pub fn open(&mut self, w: Window) {
         for o in self.policy.closes(w) {
             self.set_open(o, false);
@@ -639,7 +597,6 @@ impl Windows<'_> {
         self.set_open(w, true);
     }
 
-    /// The window's key / HUD button: open with the policy, or close.
     pub fn toggle(&mut self, w: Window) {
         if self.is_open(w) {
             self.set_open(w, false);
@@ -648,14 +605,12 @@ impl Windows<'_> {
         }
     }
 
-    /// Closes `w` (the Esc dispatcher's one close path).
     pub fn close(&mut self, w: Window) {
         self.set_open(w, false);
     }
 }
 
-/// A `ButtonStaticText`'s state bitmaps on its quad ([`static_button_live`]): [`set_button_look`] swaps
-/// them in place, so a hover never rebuilds the window.
+/// A `ButtonStaticText`'s state bitmaps on its quad: [`set_button_look`] swaps them in place.
 #[derive(Component)]
 pub struct ButtonLook {
     pub up: Handle<Image>,
@@ -664,8 +619,7 @@ pub struct ButtonLook {
 }
 
 /// [`super::widgets::static_button`] drawn in its up (or disabled) state with [`ButtonLook`] on the
-/// quad: returns the rect and the quad entity. (The shared helper returns only the rect; a live hover
-/// needs the entity to swap its bitmap.) The label and its disabled dim are as `static_button`'s.
+/// quad: returns the rect and the quad entity.
 pub fn static_button_live(
     ui: &mut super::Ui,
     rec: &gd_formats::arz::Record,
@@ -721,7 +675,6 @@ pub fn static_button_live(
     Some((r, e))
 }
 
-/// A [`ButtonLook`] quad's bitmap for the mouse state (writes only when it changed).
 pub fn set_button_look(l: &ButtonLook, img: &mut ImageNode, enabled: bool, hovered: bool) {
     let want = match (enabled, hovered) {
         (false, _) if l.disabled.is_some() => l.disabled.as_ref(),

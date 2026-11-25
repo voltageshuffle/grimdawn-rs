@@ -1,58 +1,36 @@
-//! What a hit's convert and disruption do (`gd_sim::combat::Influence`; taunt is anger: `HitLanded::taunt`).
+//! What a hit's convert and disruption do (taunt is anger: `HitLanded::taunt`).
 //!
-//! Convert, `CombatAttributeInfluenceDamage_Convert::Execute` → `Monster::JoinMe(attacker,
-//! value × 1000 ms, banner 1, 0)` when the attacker's level (`Character::GetCharLevel`) + 5 is at least the
-//! defender's. `JoinMe` is a `Monster` method (`Pet` shares it; the player's slot is an empty function, so a player
-//! is never converted). It refuses a monster whose join time (`Monster.joinTime`) is above 0: one joined for a
-//! while stays
-//! until that runs out (a minion that joined its summoner for good has -1 there and can be converted). Else it
-//! saves its leader (`Monster.previousLeader`) and the new leader's level, sets the time, copies the attacker's
-//! faction pack onto
-//! its own (`Character.factionPack`), `SetLeader(attacker)`, clears its controller's anger list and target, and
-//! puts up a convert
-//! banner (`playerPetBannerName` when the copied faction is the player's, else `monsterPetBannerName`, read from
-//! `GameEngine::GetDatabase` = `records/game/gameengine.dbr`; stock: that record has neither field, so the
-//! name is empty and `SetConvertBanner` shows nothing; the port shows none).
-//! `Monster::UpdateSelf` then, every update while it has a leader: a leader it now calls a foe (`FactionManager::
-//! IsFoe`) ends the join at once; else the time counts down by the frame's milliseconds and at 0 ends it.
-//! The end, `Monster::UnJoinLeader(true)`: the banner goes, the time is -1 again, the faction pack
-//! is the one it was loaded with (`GetOriginalFactionPack`, `Load` / `InitialUpdate`), the saved leader is its
-//! leader again, and its controller's anger list and target are cleared.
-//! A player's pet is a `Monster` here too (`Pet` keeps `JoinMe` / `UnJoinLeader`, `Pet::UpdateSelf`
-//! runs `Monster::UpdateSelf` first): joined to its owner for good (-1), a monster's convert takes it over the
-//! same way, and the end puts back its record's pack (`faction_player.dbr` on every stock pet) and its owner.
-//! Port ([`join_converted`], [`unjoin_converted`], [`Converted`]): the monster's `MonsterAi::faction` takes the
-//! attacker's pack (the player's or a pet's: [`crate::monsters::player_pack`]) and its `Allied` mark the
-//! attacker's side, so it fights the attacker's foes and they fight it ([`FoeLists`], `Side`); it follows the
-//! attacker (`PatrolState::join`) and its anger, enemy and target are cleared; the end puts back the record's pack,
-//! the mark as at spawn (`monsters::is_friendly`), the saved leader, and clears them again. A converted pet gets
-//! [`JoinedPack`] (its [`Side`] and a rival of the pack's foes) and [`Converted`] with its owner; the end removes
-//! both. PORT: the leader-turned-foe check runs for a monster leader only (a player leader's pack is the one the
-//! monster copied).
-//! While joined (the engine asks `GetLeader` and the faction, which the join changed): the owner's pet
-//! orders do not reach it (`Skill_PetAttack::GetValidTarget` and `ControllerPlayer::HandlePetAction`
-//! take only the pets the player leads, `DefaultRequestAttackResponse` / `DefaultRequestMoveResponse`
-//! refuse any other sender; a stance change, `Monster::UseController`, still applies; `pets::pet_commands`); its
-//! buff-other goes to its joined pack's leaderless friends (`ChooseBestAllyToBuff`, `pets` module docs); and the
-//! controller targeting reads it as any monster (`Monster::IsTargetable`, `Character::IsHiding` /
-//! `CausesAnger` are its vtable slots too: its record's `targetable`, `hiddenFromCombat` and `causesAnger`;
-//! grimdawn `controller_target.rs`).
+//! Convert, `CombatAttributeInfluenceDamage_Convert::Execute` → `Monster::JoinMe(attacker, value × 1000 ms)` when
+//! the attacker's level + 5 is at least the defender's. The player's `JoinMe` is empty: a player is never
+//! converted. It refuses a monster whose join time is above 0 (a minion joined to its summoner for good has -1 and
+//! can be converted). Else it saves its leader, sets the time, copies the attacker's faction pack,
+//! `SetLeader(attacker)`, clears its anger list and target, and puts up a convert banner (stock
+//! `gameengine.dbr` names none, so nothing shows).
+//! `Monster::UpdateSelf`, every update while it has a leader: a leader it now calls a foe ends the join at once;
+//! else the time counts down and at 0 ends it.
+//! `Monster::UnJoinLeader(true)`: the banner goes, the time is -1 again, the faction pack is the loaded one, the
+//! saved leader is its leader again, and the anger list and target are cleared.
+//! A player's pet is a `Monster` here too: joined to its owner for good (-1), a monster's convert takes it over the
+//! same way, and the end puts back its record's pack and its owner.
+//! Port ([`join_converted`], [`unjoin_converted`]): the monster's `MonsterAi::faction` takes the attacker's pack
+//! and its `Allied` mark the attacker's side ([`FoeLists`], `Side`); it follows the attacker and its anger, enemy
+//! and target are cleared; the end puts back the record's pack, the spawn mark and the saved leader. A converted
+//! pet gets [`JoinedPack`] and [`Converted`]; the end removes both. PORT: the leader-turned-foe check runs for a
+//! monster leader only.
+//! While joined: the owner's pet orders do not reach it (a stance change still applies); its buff-other goes to
+//! its joined pack's leaderless friends (`ChooseBestAllyToBuff`); controller targeting reads it as any monster
+//! (its record's `targetable`, `hiddenFromCombat` and `causesAnger`).
 //!
-//! Disruption, `CombatAttributeAbsDamage_Disruption::Execute` → `Character::
-//! CombatAddCooldownDamage` → `SkillManager::ApplyCooldownDamage`: every skill in the
-//! manager's four skill lists (not the default attacks, `LoadDefaultSkills` keeps them apart) gets
-//! `Skill::ApplyDisruptionCooldownTime`, which for a skill disruption reaches
-//! (`gd_sim::skills::disruptable`) is `Skill::ReplaceCooldownTime(ms, 0)`: a cooldown of that time
-//! unless the running one has more left ([`gd_game_core::casting::Cooldowns::replace`]). Port ([`disrupt_skills`]): the
-//! player's learned, gear-granted and form-granted skills (`Caster::cooldowns`) and procs (`Autocasts`), a
-//! monster's skills (`MonsterSkills`) and a pet's (`Pet`), each where its readiness is checked.
-//! A monster's `attackSkillName` is a manager skill (`Monster::InitSkillsInController`: `FindSkillId`), so it is
-//! disrupted too, and there is no fallback to the default attack: `ControllerMonster::ChooseBestSkill`
-//! picks it whenever it is set, valid and in range (`CloseEnoughToUseSkill`), with no readiness check, so the
-//! monster waits out the cooldown instead of swinging.
+//! Disruption, `CombatAttributeAbsDamage_Disruption::Execute` → `SkillManager::ApplyCooldownDamage`: every skill in
+//! the manager's four skill lists (not the default attacks) that disruption reaches (`gd_sim::skills::disruptable`)
+//! gets `Skill::ReplaceCooldownTime(ms, 0)`: a cooldown of that time unless the running one has more left. Port
+//! ([`disrupt_skills`]): the player's learned, gear- and form-granted skills and procs, a monster's and a pet's
+//! skills. A monster's `attackSkillName` is a manager skill, so it is disrupted too, and
+//! `ControllerMonster::ChooseBestSkill` picks it with no readiness check: the monster waits out the cooldown
+//! instead of swinging.
 use super::*;
 
-/// A hit's convert or disruption for its target (`gd_sim::combat::Influence`), from `apply_hits`.
+/// From `apply_hits`.
 #[derive(Message, Clone, Debug)]
 pub struct Influenced {
     pub attacker: Entity,
@@ -60,16 +38,16 @@ pub struct Influenced {
     pub influence: gd_sim::combat::Influence,
 }
 
-/// A monster that joined another character's side for a while (`Monster::JoinMe` with a time, module docs).
+/// A monster that joined another character's side for a while.
 #[derive(Component, Debug, Clone)]
 pub struct Converted {
-    /// Seconds left (`Monster.joinTime`, milliseconds there).
+    /// Seconds left (`Monster.joinTime`).
     pub left: f32,
-    /// The leader it had before (`Monster.previousLeader`), its leader again at the end.
+    /// `Monster.previousLeader`, its leader again at the end.
     pub leader: Option<Entity>,
 }
 
-/// `Monster::JoinMe` for a hit's convert (module docs).
+/// `Monster::JoinMe` for a hit's convert.
 pub(super) fn join_converted(
     mut commands: Commands,
     mut events: MessageReader<Influenced>,
@@ -88,8 +66,7 @@ pub(super) fn join_converted(
         Without<Dead>,
     >,
 ) {
-    // The characters joined this frame: `Converted` is inserted deferred, so a second convert of one would not see
-    // it and would save the first converter as the leader to go back to.
+    // `Converted` is inserted deferred: a second convert this frame must not save the first converter as leader.
     let mut joined = gd_formats::collections::HashSet::default();
     for ev in events.read() {
         let secs = ev.influence.convert;
@@ -100,8 +77,7 @@ pub(super) fn join_converted(
             continue;
         };
         let level = acb.profile.level;
-        // The attacker's faction pack: a monster's own (or a converted pet's joined one), else the player's (the
-        // player, or his pet, which carries the player's copy).
+        // The attacker's faction pack: a monster's own (or a converted pet's joined one), else the player's.
         let (pack, allied) = match (aai, ajoined) {
             (Some(ai), _) => (ai.faction.clone(), a_allied),
             (None, Some(j)) => (j.pack.clone(), j.allied),
@@ -146,8 +122,7 @@ pub(super) fn join_converted(
                 e.try_insert(Converted { left: secs, leader });
                 joined.insert(ev.target);
             }
-            // A player's pet (`Pet` shares `Monster::JoinMe`): a monster's convert joins it to that monster's
-            // pack and makes the monster its leader (the player's side never hits its own pets).
+            // A player's pet: a monster's convert joins it to that monster's pack and makes the monster its leader.
             (None, Some(p)) if !allied => {
                 debug!(
                     "convert pet {} joins {} for {secs:.1} s",
@@ -172,7 +147,7 @@ pub(super) fn join_converted(
     }
 }
 
-/// `Monster::UpdateSelf`'s join countdown and `UnJoinLeader(true)` (module docs).
+/// `Monster::UpdateSelf`'s join countdown and `UnJoinLeader(true)`.
 pub(super) fn unjoin_converted(
     mut commands: Commands,
     time: Res<Time>,
@@ -220,8 +195,7 @@ pub(super) fn unjoin_converted(
         }
         ec.try_remove::<Converted>();
     }
-    // A converted pet: the same countdown and leader check; `UnJoinLeader(true)` puts back its record's pack (every
-    // stock pet record's `factions` is `faction_player.dbr`: the player's side again) and its owner as leader.
+    // A converted pet: the same countdown and leader check; the end puts back its record's pack and its owner.
     for (e, mut conv, joined, mut cb) in &mut pets {
         let foe = leaders
             .get(joined.leader)
@@ -236,7 +210,7 @@ pub(super) fn unjoin_converted(
     }
 }
 
-/// `SkillManager::ApplyCooldownDamage` for a hit's disruption (module docs).
+/// `SkillManager::ApplyCooldownDamage` for a hit's disruption.
 pub(super) fn disrupt_skills(
     mut events: MessageReader<Influenced>,
     data: Res<GameData>,

@@ -1,36 +1,20 @@
-//! Attackable physics props (`PhysicsDecoration`): the reactive metal barrel
-//! (`level art/setdress/barrel_metal01_reactive.dbr`) and the four wood pieces
-//! (`level art/woodpiece1..4.dbr`) — the only 5 stock records of the class.
+//! Attackable physics props (`PhysicsDecoration`): the reactive metal barrel and the four wood pieces — the only 5
+//! stock records of the class.
 //!
-//! Game.dll: `TakeAttack` accepts an attack from any
-//! `Entity`, switches the prop to physics simulation (`SetPhysicsSimulation`, arg 2) and
-//! stores the direction of the attack's `PhysicsMotion` (`ParametersCombat.physicsMotion`,
-//! what `Skill::InitRagDollData` set: `crate::ragdoll`) — no life is
-//! subtracted, the prop is not killed. `PhysicsSetup` builds its
-//! rigid body in `PhysicsSystem2` at the entity's coords (+ the region offset):
-//! its collision box, the record's `physicsMass` (default 1),
-//! `physicsFriction`, `physicsRestitution`. `PhysicsSync` applies
-//! the stored direction × rand(0.4..0.6) as an impulse plus a random angular
-//! impulse (rand(−1..1) × rand(0.4..0.6) × 0.025 on each axis), then zeroes it.
-//! `UpdateSelf`: once hit, a 5000 ms countdown (`PhysicsDecoration.fadeCountdown`, set by the ctor)
-//! runs, then `GraphicsMeshInstance::BeginFade(255, 255, 255, 3 s)`; when the
-//! fade completes the entity is removed and destroyed. The ctor calls
-//! `SetCastsShadows(false)` (the record's `castsShadows` is overridden).
+//! Game.dll: `TakeAttack` accepts an attack from any `Entity`, switches the prop to physics simulation and stores
+//! the direction of the attack's `PhysicsMotion` — no life is subtracted, the prop is not killed. `PhysicsSetup`
+//! builds its rigid body: its collision box, the record's `physicsMass` (default 1), `physicsFriction`,
+//! `physicsRestitution`. `PhysicsSync` applies the stored direction × rand(0.4..0.6) as an impulse plus a random
+//! angular impulse (rand(−1..1) × rand(0.4..0.6) × 0.025 on each axis), then zeroes it. `UpdateSelf`: once hit, a
+//! 5000 ms countdown runs, then a 3 s fade; when the fade completes the entity is destroyed. The ctor overrides
+//! the record's `castsShadows` with false.
 //!
-//! The props come with their level ([`LevelPhysicsProps`], bucketed by
-//! `gd_world`) and go with it (`gd_game_core::levels::LevelMember`; no saved state; the engine recreates
-//! them when the level reloads).
+//! The props come and go with their level ([`LevelPhysicsProps`]; no saved state).
 //!
-//! PORT: the prop is a life-1 [`Combatant`] — the first hit "kills" it, which
-//! tosses the whole mesh ([`PropTossed`]) with that hit's impulse (its stored
-//! [`RagdollMotion`] direction, the velocity impulse / mass, the spin the
-//! angular impulse over the inertia of the collision box); the class has no
-//! `brokenMesh`, so unlike a `Destructible` it does not break into pieces, and
-//! later hits find nothing. It blocks no pathing (the engine's prop is a
-//! pushable crowd agent, not a static obstacle; the port does not simulate
-//! crowd pushing — the prop stands until hit). The dressing
-//! (`grimdawn::physics_decoration`) draws the prop and tumbles the tossed
-//! mesh on the ragdolls' floor ([`crate::ragdoll::floor`]), then fades it.
+//! PORT: the prop is a life-1 [`Combatant`] — the first hit "kills" it, which tosses the whole mesh
+//! ([`PropTossed`]) with that hit's impulse; the class has no `brokenMesh`, so it does not break into pieces, and
+//! later hits find nothing. It blocks no pathing (the engine's prop is a pushable crowd agent; the port does not
+//! simulate crowd pushing — the prop stands until hit).
 use crate::ragdoll::RagdollMotion;
 use bevy::prelude::*;
 use gd_game_core::combat::{Combatant, Dead};
@@ -56,25 +40,24 @@ impl Plugin for PhysicsDecorationPlugin {
     }
 }
 
-/// A stock physics prop, intact (a combat target; the first hit tosses it).
+/// A stock physics prop, intact (the first hit tosses it).
 #[derive(Component)]
 pub struct PhysicsDecoration {
     pub record: String,
-    /// Its collision box's half extents (`Actor::GetCollisionBox`: the mesh
-    /// box × the scale, at least 0.1 m; `gd_sim::drop_body::half_extents`).
+    /// Its collision box's half extents (`Actor::GetCollisionBox`: the mesh box × the scale, at least 0.1 m).
     pub half: Vec3,
 }
 
-/// A loaded level's `PhysicsDecoration` objects (record, transform), on its
-/// root until [`spawn_level_props`] spawns them.
+/// A loaded level's `PhysicsDecoration` objects (record, transform), on its root until [`spawn_level_props`] spawns
+/// them.
 #[derive(Component)]
 pub struct LevelPhysicsProps {
     pub level: usize,
     pub props: Vec<(String, Transform)>,
 }
 
-/// A prop was hit: the dressing tosses its mesh from `transform` at `vel`
-/// (m/s), spinning at `spin` (rad/s per world axis): `PhysicsSync` (module doc).
+/// A prop was hit: the dressing tosses its mesh from `transform` at `vel` (m/s), spinning at `spin` (rad/s per world
+/// axis).
 #[derive(Message, Clone, Debug)]
 pub struct PropTossed {
     pub record: String,
@@ -83,8 +66,7 @@ pub struct PropTossed {
     pub spin: Vec3,
 }
 
-/// Spawns a prop (the `spawn_breakable` shape, without the pathing obstacle
-/// and the breakable marker: module doc).
+/// Spawns a prop (the `spawn_breakable` shape, without the pathing obstacle and the breakable marker).
 pub fn spawn_physics_decoration(
     commands: &mut Commands,
     data: &GameData,
@@ -136,7 +118,6 @@ pub fn spawn_physics_decoration(
     )
 }
 
-/// A level's props (module doc), once the combat rules exist.
 fn spawn_level_props(
     mut commands: Commands,
     data: Res<GameData>,
@@ -160,7 +141,7 @@ fn spawn_level_props(
     }
 }
 
-/// The first hit tosses the prop with its impulse (module doc, `PhysicsSync`); the combat systems forget it.
+/// The first hit tosses the prop with its impulse (`PhysicsSync`); the combat systems forget it.
 fn toss_objects(
     mut commands: Commands,
     data: Res<GameData>,
@@ -200,7 +181,7 @@ fn toss_objects(
     }
 }
 
-/// Props tossing: what reacts to a toss orders after `Toss`.
+/// What reacts to a toss orders after `Toss`.
 #[derive(bevy::prelude::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicsDecorationStage {
     Toss,

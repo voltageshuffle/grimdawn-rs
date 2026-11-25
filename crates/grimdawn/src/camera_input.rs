@@ -1,5 +1,4 @@
-//! Game camera input: zoom, rotation and the followed target of the world camera (`camera`: the camera
-//! itself, its defaults, pitch curve, projection and shake). Game.dll `GameCamera`:
+//! Game camera input: zoom, rotation and the followed target of the world camera. Game.dll `GameCamera`:
 //! - Zoom (`GameCamera::Zoom` / `UpdateFromInputImpl`): a wheel step moves the wanted
 //!   zoom by 0.1 of the min..max range; each frame the distance moves `clamp(0.004 dt_ms, 0, 1) * 0.5` of the way
 //!   there (never past it) and snaps once within 0.001 of the range ([`zoom_step`]).
@@ -7,26 +6,22 @@
 //!   frame (never past it, still within 0.0001); a held rotate key turns the wanted yaw at 1 rad/s
 //!   (`YawLeft` / `YawRight(true)`, `StopRotation` on release), a wheel-bound one steps it by 0.1 rad
 //!   (`YawLeft` / `YawRight(false)`); `SetCameraYaw` sets both ([`yaw_step`]).
-//! - Keys (`Grim Dawn.exe` `InGameUI::HandleKeyEvent`), key actions: 21 zoom in
+//! - Keys (`InGameUI::HandleKeyEvent`), key actions: 21 zoom in
 //!   (`Zoom(-1)`, wheel up by default), 22 zoom out (`Zoom(+1)`, wheel down), 23 / 24 all the way in / out
 //!   (`Zoom(-/+10000)`, numpad 1 / 3), 25 back to the defaults (`LerpToDefaults`: the default
 //!   distance, yaw 50°; numpad 2), 26 rotate with the mouse while held (middle mouse: `AdjustYaw((last x - x) x
 //!   0.0025)` per cursor pixel, `InGameUI::RotateCameraFromMouse`), 27 / 28 rotate left / right (',' / '.');
-//!   bound to the wheel, 26-28
-//!   step instead. The wheel is key codes 145 (up, DirectInput `DIMOFS_Z` > 0) / 146 (down) (DirectInput.dll
-//!   `DirectInputDevice::Update`), so it does what the actions bound to them do.
-//!   PORT: the zoom keys are not refused while the window the engine checks (`GameEngine.zoomBlockingWindow`,
-//!   unidentified) is open, nor the
+//!   bound to the wheel, 26-28 step instead. The wheel is key codes 145 (up) / 146 (down)
+//!   (`DirectInputDevice::Update`), so it does what the actions bound to them do.
+//!   PORT: the zoom keys are not refused while `GameEngine.zoomBlockingWindow` (unidentified) is open, nor the
 //!   keys while a text field takes them.
 //!
-//! The followed target is read from its `Transform` (the player is a root entity): the same frame's
-//! position the gameplay just wrote, not the pre-propagation `GlobalTransform` of the frame before
-//! (`GameCamera::GetTarget` reads the attach point in the same tick after movement).
+//! The followed target is read from its `Transform` (the player is a root entity), not the pre-propagation
+//! `GlobalTransform` of the frame before (`GameCamera::GetTarget` reads the same tick after movement).
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use gd_render::camera::{CameraFocus, CameraSet, GameCamera};
 
-/// Registers the camera input; the camera itself is `camera::CameraPlugin`.
 pub struct CameraInputPlugin;
 
 impl Plugin for CameraInputPlugin {
@@ -68,21 +63,18 @@ pub fn yaw_step(yaw: f32, wanted: f32, dt: f32) -> f32 {
     }
 }
 
-/// The wheel zooms only over the plain world: a window under the cursor
-/// (`UiCapture`, the same flag that keeps clicks off the world) or the modal
-/// options window consumes it (PORT: the engine routes input to the UI first).
+/// The wheel zooms only over the plain world: a window under the cursor (`UiCapture`) or the modal options window
+/// consumes it. PORT: the engine routes input to the UI first.
 fn wheel_zooms(dy: f32, ui_captured: bool, modal_open: bool) -> bool {
     dy != 0.0 && !ui_captured && !modal_open
 }
 
-/// Key codes of the wheel the camera actions may be bound to (module docs); the other mouse codes (middle, Mouse 4
-/// to 8) come through the bindings (`ui::keys::mouse_codes`).
+/// Key codes of the wheel the camera actions may be bound to; the other mouse codes come through the bindings.
 const WHEEL_UP: u32 = 145;
 const WHEEL_DOWN: u32 = 146;
 
 /// One key action's press on the camera (`InGameUI::HandleKeyEvent`); `wheel`: the press is a wheel notch,
-/// up or down (a bound
-/// rotation then steps 0.1 rad: 26 left on wheel up and right on wheel down, 27 left, 28 right).
+/// up or down (a bound rotation then steps 0.1 rad: 26 left on wheel up and right on wheel down, 27 left, 28 right).
 fn press(cam: &mut GameCamera, action: u32, wheel: Option<bool>) {
     let range = cam.distance_max - cam.distance_min;
     let zoom = |cam: &mut GameCamera, steps: f32| {
@@ -117,9 +109,7 @@ fn camera_input(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<gd_ui_kit::keys::KeyBindings>,
     time: Res<Time>,
-    // The focus (the player) is a root entity: its `Transform` is this frame's
-    // position — `GlobalTransform` would still hold last frame's (propagation runs
-    // after this), and the camera would trail the player by a frame.
+    // The focus is a root entity: its `Transform` is this frame's position (`GlobalTransform` would lag a frame).
     focus: Query<&Transform, With<CameraFocus>>,
     mut last_x: Local<Option<f32>>,
 ) {
@@ -131,7 +121,6 @@ fn camera_input(
     let dt = time.delta_secs();
     for mut cam in &mut cams {
         let range = cam.distance_max - cam.distance_min;
-        // The wheel: what its codes are bound to.
         // The game menu, its confirm and Options (`GamePause::menu`) and the main menu take the wheel.
         if wheel_zooms(
             scroll.delta.y,

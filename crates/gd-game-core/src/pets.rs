@@ -1,2 +1,2 @@
-//! Pet placement geometry (the pet systems are gd-game's `pets`).
+//! Pet placement geometry.
 pub mod placement;

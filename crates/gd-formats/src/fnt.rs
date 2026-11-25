@@ -5,7 +5,7 @@
 //!   file (stock: DXT5, glyph coverage in alpha).
 //! - `FNTD` v1: 28-byte header followed by an embedded TrueType/OpenType file
 //!   that the engine rasterises at runtime into a dynamic texture.
-use crate::util::Reader;
+use crate::util::{Reader, byte_list};
 use anyhow::{Result, bail, ensure};
 
 /// FNTX atlas pixel format code → device call.
@@ -198,7 +198,7 @@ impl Font {
                     font_file: b[28..].to_vec(),
                 }))
             }
-            m => bail!("bad font magic {m:?}"),
+            m => bail!("bad font magic {}", byte_list(m, false)),
         }
     }
 

@@ -1,11 +1,9 @@
 //! Attribute class → tooltip format tag. Game.dll: the string each
-//! `<Class>::GetDisplayTag` returns (176 overrides, e.g.
-//! `DamageAttributeReflex_Stun` → "DamageStun", `RetaliationAttributeReflex_Stun`
-//! → "RetaliationStun") or, for the classes without one, the tag its
-//! constructor stores (`CharAttributeMod_AttackSpeed::CharAttributeMod_AttackSpeed`
-//! → "tagCharAttackSpeedModifier"). Generated; sorted by class name (byte
-//! order, `tooltip::class_tag` binary-searches it); the tag texts themselves
-//! come from the game's text files.
+//! `<Class>::GetDisplayTag` returns (e.g. `DamageAttributeReflex_Stun` →
+//! "DamageStun") or, for the classes without one, the tag its constructor
+//! stores (`CharAttributeMod_AttackSpeed` → "tagCharAttackSpeedModifier").
+//! Generated; sorted by class name in byte order (`tooltip::class_tag`
+//! binary-searches it).
 pub const DISPLAY_TAGS: &[(&str, &str)] = &[
     ("CharAttributeMod_AttackSpeed", "tagCharAttackSpeedModifier"),
     (

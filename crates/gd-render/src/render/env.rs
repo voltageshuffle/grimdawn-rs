@@ -8,16 +8,15 @@
 //!
 //! PORT: the point lights are Bevy `PointLight`s spawned hidden (`Visibility`), so Bevy never clusters or
 //! extracts them; the materials read only this buffer. It holds the [`MAX_LIGHTS`] nearest the camera
-//! target among those whose sphere meets the game camera's frustum (`Light::AddToScene`'s test,
-//! `point_shadow::in_view`); the engine has no cap.
+//! target among those whose sphere meets the game camera's frustum (`Light::AddToScene`'s test); the engine has
+//! no cap.
 use super::GdDefaults;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 use gd_game_core::save::MapLayout;
 use std::f32::consts::PI;
 
-/// The system that writes the environment buffer and turns the sun
-/// (render/shadow.rs builds the sun's shadow map after it).
+/// The system that writes the environment buffer and turns the sun (the sun's shadow map is built after it).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnvSystems;
 
@@ -29,7 +28,7 @@ pub struct EnvPlugin;
 impl Plugin for EnvPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TimeOfDay>();
-        // `GD_TIME`: a fixed hour from the first frame on (`advance_time_of_day` keeps it, across session resets too).
+        // `GD_TIME`: a fixed hour from the first frame on.
         #[cfg(feature = "dev")]
         if let Some(t) = app
             .world()
@@ -48,10 +47,8 @@ impl Plugin for EnvPlugin {
             )
                 .chain(),
         )
-        // Before Bevy builds the sun's shadow cascades: `update_env` switches the
-        // sun's shadows on, and a sun switched on after them reaches the renderer
-        // with no cascade for a view (a panic in `prepare_lights` when an area
-        // with a sun loads after one without).
+        // Before Bevy builds the sun's shadow cascades: a sun whose shadows `update_env` switches on
+        // after them has no cascade for a view (`prepare_lights` panics).
         .add_systems(
             PostUpdate,
             update_env
@@ -88,21 +85,16 @@ pub fn night_light_scale(light: Vec3, sky: Vec3) -> f32 {
 /// a DayNightLight of day colour 0.18, night 0.75 / 0.7, radius 12, carried
 /// by the player), attached to the player mesh's "Light" attach
 /// point (`Player::InitialUpdate`, Game.dll; the point is 3.5 m up,
-/// unparented, in `hero_00.msh` and `heroine_00_head.msh`). Its position goes
-/// into the light buffer continuously (the buffer is rewritten in place at a
-/// fixed size, so a per-frame move costs no bind-group re-prepare).
+/// unparented, in `hero_00.msh` and `heroine_00_head.msh`).
 ///
 /// Its radius follows the character's `characterLightRadius` total every
-/// update (`Player::UpdateSelf`, formula in
-/// `gd_sim::stats::light_radius`; the total is the profile's
-/// `light_radius`, computed with the other stats in gd-game). The same
+/// update (`Player::UpdateSelf`, formula in `gd_sim::stats::light_radius`). The same
 /// update sets its shadow priority to 4 when `Options::GetQuality(6)`
-/// (`lightingQuality`, video_options notes) is 3 ("very high"), else 0
-/// (`Light::SetShadowPriority`, `Light.shadowPriority`): [`player_light_shadow`]; the light then
-/// competes for the point maps like any other (render/point_shadow.rs).
+/// (`lightingQuality`) is 3 ("very high"), else 0
+/// (`Light::SetShadowPriority`): [`player_light_shadow`].
 ///
 /// The character `lightRig` (playerlightrig.dbr) is not this light: it lights
-/// only its own character (render/light_rig.rs).
+/// only its own character.
 #[derive(Component)]
 struct PlayerLight {
     /// The record's `radius` (`Light::GetRadius`, kept by `Player::Load`).
@@ -150,7 +142,7 @@ fn player_light(
                     ..default()
                 },
                 Transform::from_xyz(0.0, 3.5, 0.0),
-                // Read from this module's buffer, not Bevy's clusters (render/lights.rs `spawn_light`).
+                // Read from this module's buffer, not Bevy's clusters.
                 Visibility::Hidden,
                 DayNightColors { day, night },
                 PlayerLight { base: radius },
@@ -229,11 +221,11 @@ fn advance_time_of_day(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
 ) {
     let cycle = options.flag("dayNightCycle");
-    // Screenshot runs keep the noon of the reference shots (`GD_TIME` picks another hour).
+    // Screenshot runs keep noon (`GD_TIME` picks another hour).
     #[cfg(feature = "dev")]
     let cycle = cycle && hooks.shot.path.is_none();
     let hour = if cycle { clock.0 } else { 12.0 };
-    // `GD_TIME` wins every frame: the exit reset puts the resource back to its default.
+    // `GD_TIME` wins every frame.
     #[cfg(feature = "dev")]
     let hour = hooks.render.time.unwrap_or(hour);
     if (hour - tod.0).abs() > f32::EPSILON {
@@ -424,12 +416,8 @@ impl DayNightCycle {
         gd_sim::jukebox::is_day(time, self.day_time, self.night_time)
     }
 
-    /// `AmbianceManager` shadow intensity (`AmbianceManager::ComputeShadowIntensity`): 0 → 1 over 0.1 h
-    /// after sunrise, back before sunset. It reaches no renderer:
-    /// `AmbianceManager.shadowIntensity` is read only by its "Shadow Intensity" statistics
-    /// line (`AmbianceManager::Update`) and the unused export
-    /// `GetShadowIntensity` (imported by neither Game.dll nor the exe); the
-    /// deferred sun pass has no intensity (render/shadow.rs).
+    /// `AmbianceManager::ComputeShadowIntensity`: 0 → 1 over 0.1 h after sunrise, back before sunset. It reaches
+    /// no renderer: only the "Shadow Intensity" statistics line reads `AmbianceManager.shadowIntensity`.
     pub fn shadow_intensity(&self, time: f32) -> f32 {
         let (v6, v8) = (self.sunset, self.sunrise);
         let (v9, v10) = (v6 + 0.1, v8 - 0.1);
@@ -464,7 +452,7 @@ pub struct EnvGpu {
     pub hdr: bool,
     /// The point lights' specular term unless `lightingQuality` is low: `Light::AddToScene`
     /// sets the scene light's `GraphicsLight.specular` (`RenderDeferredPointLight`: `pointSpecular`, else
-    /// `point`) to !`GraphicsEngine::UseLowQualityLighting` (`lightingQuality` low, render/light_rig.rs), and
+    /// `point`) to !`GraphicsEngine::UseLowQualityLighting` (`lightingQuality` low), and
     /// only for a light not in simple mode ([`SimpleLight`]); [`GpuLight::specular`] is the result per light.
     /// The term itself (`pointSpecularPS`) is the sun's: `sat(V·R)^power · specular`, power =
     /// 2^(10.5 · material.y), specular = the specular target's rgb, same G-buffer, same falloff and shadow.
@@ -477,7 +465,7 @@ pub struct GpuLight {
     pub position: Vec3,
     pub radius: f32,
     pub color: Vec3,
-    /// The point shadow's `shadowBluriness`, 0 = no map (render/point_shadow.rs).
+    /// The point shadow's `shadowBluriness`, 0 = no map.
     pub blur: f32,
     /// `pointSpecular` rather than `point` (the scene light's `GraphicsLight.specular`, [`EnvGpu::point_specular`]).
     pub specular: bool,
@@ -487,10 +475,8 @@ pub struct GpuLight {
 /// scene light's specular flag (`GraphicsLight.specular`) and sets it, and the shadow priority, only when
 /// `simpleMode` is 0, so such a light is drawn with `point` (no specular) and never shadowed. Only effect lights set
 /// it: `Emitter::UpdateLight` copies the emitter's bools[11] (EmitterData +115,
-/// `gd_formats::pfx::Emitter::light_simple`) every
-/// update: 35 of the 1137 stock light emitters (devotion shield loops and the like); `Light::SetSimpleMode` has no
-/// other caller. Effect lights never get a point shadow in the port (render/point_shadow.rs), so only the
-/// specular is withheld here.
+/// `gd_formats::pfx::Emitter::light_simple`) every update; `Light::SetSimpleMode` has no
+/// other caller. Effect lights never get a point shadow in the port, so only the specular is withheld here.
 #[derive(Component)]
 pub struct SimpleLight;
 
@@ -514,7 +500,7 @@ impl EnvGpu {
         v
     }
 
-    /// [`Self::to_vec4s`] into a reused scratch buffer (no per-frame allocation).
+    /// [`Self::to_vec4s`] into `v`.
     fn write_vec4s(&self, v: &mut Vec<[f32; 4]>) {
         v.clear();
         v.extend([
@@ -654,8 +640,7 @@ impl Tables {
 /// easing: `AmbianceManager::UpdateOutdoorFactor` (from `AmbianceManager::Update`) only eases the
 /// outdoor / underground factor `AmbianceManager.outdoorFactor` (target 1 outdoors, 0.1 × dt per
 /// step), which stays 1 on stock levels (none is underground).
-/// Also the resource of the current frame's values (read by the
-/// conversation portrait's background, `ui::dialog`).
+/// Also the resource of the current frame's values.
 #[derive(Clone, Debug, PartialEq, Resource)]
 pub struct Ambiance {
     pub light: Vec3,
@@ -675,8 +660,7 @@ pub struct Ambiance {
     /// Height fog (`heightFog`): start, end (world height, m), density.
     pub height_fog: Vec3,
     /// `AmbianceManager::GetIsDay` (`AmbianceManager.isDay`): `DayNightCycle::GetIsDay(t)` of the area's cycle,
-    /// read by the weather's
-    /// Day / Night climate filter and the ambient sound's day / night set (`audio.rs`).
+    /// read by the weather's Day / Night climate filter and the ambient sound's day / night set.
     /// `AmbianceManager::Update`: the area's cycle is the layer-4 entry of the cell under the target in
     /// the manager's region (the same id array that picks the ambient layer-2 session), else the default cycle
     /// (`AmbianceManager.defaultCycle`); `GetIsDay` tests the day window [`DayNightCycle::day_time`] ..
@@ -839,11 +823,9 @@ struct Cache {
     fog_clamp_k: f32,
     /// The last logged day/night entry and its bloom / adjust / tint at 2 decimals.
     current: Option<(String, [i32; 9])>,
-    /// The frame's point lights with their squared distance to the target (reused).
+    /// The frame's point lights with their squared distance to the target.
     lights: Vec<(f32, GpuLight)>,
-    /// The packed point lights (reused; moved into [`EnvGpu::lights`] each frame).
     gpu_lights: Vec<GpuLight>,
-    /// The environment buffer's vec4s (reused; [`EnvGpu::write_vec4s`]).
     vec4s: Vec<[f32; 4]>,
 }
 
@@ -886,13 +868,13 @@ fn update_env(
     let cam = cams.iter().next();
     let target = cam.map_or(Vec3::ZERO, |c| c.0.target);
     let frustum = cam.and_then(|c| c.1);
-    // The main menu's scene lights itself from its own map (render/menu.rs).
+    // The main menu's scene lights itself from its own map.
     let sector_data = match &menu {
         Some(m) => m.map.as_ref().map(|m| &m.sector_data),
         None => world.as_ref().map(|w| &w.0.sector_data),
     };
     // The tables are the map's: rebuilt when the menu comes or goes, or the world's map is replaced (a Crucible
-    // or custom map installed over the campaign world, `gd_world::open_session_map`).
+    // or custom map installed over the campaign world).
     if cache.menu != menu.is_some()
         || (menu.is_none() && world.as_ref().is_some_and(|w| w.is_changed()))
     {
@@ -919,7 +901,7 @@ fn update_env(
             .unwrap_or(0.0);
     }
     let t = menu.as_ref().map_or(time.0, |m| m.time);
-    // The menu: `SetDepthFogClamp(0)` (render/menu.rs).
+    // The menu: `SetDepthFogClamp(0)`.
     let fog_clamp = match (&menu, cam) {
         (None, Some((c, _))) => depth_fog_clamp(
             c.distance,
@@ -934,7 +916,7 @@ fn update_env(
         None => Some(&*levels),
     };
     // The day / night cell (`Ambiance::is_day`): in the game from the player's region's level (the manager's
-    // region; the Shattered Realm's regions overlap main-world ground, as for the ambient sector in `audio.rs`).
+    // region; the Shattered Realm's regions overlap main-world ground).
     let cell = match (
         &menu,
         gd_game_core::riftgates::player_region(story.as_deref()),
@@ -1028,15 +1010,10 @@ fn update_env(
             .is_none_or(|o| super::light_rig::lighting_quality(o) != 0),
     };
     env.lights.clear();
-    // FireLights step their colour and radius every frame (world::Flicker),
-    // effect lights fade: the buffer is rewritten in place at a fixed size
-    // ([`EnvGpu::to_vec4s`]; a size change makes a new GPU buffer and
-    // re-prepares every material bind group). Kept in a stable (position) order.
-    // The shaders' falloff max(1 - (d / radius)², 0) · sat(N·L) ·
+    // Kept in a stable (position) order. The shaders' falloff max(1 - (d / radius)², 0) · sat(N·L) ·
     // colour · albedo is deferred.ssh `pointPS` (radius = `lightMaxDistance`,
-    // `RenderDeferredPointLight`); every light in the scene is
-    // drawn (`SetupLights` has no cap). `pointPS` also
-    // multiplies the light's point shadow (render/point_shadow.rs).
+    // `RenderDeferredPointLight`), times the light's point shadow; every light in the scene is
+    // drawn (`SetupLights` has no cap).
     // `lightColor` is the scene light's `GraphicsLight.color`, the record colour × intensity
     // (× the HDR factor), not the pow(2.2) copy `GraphicsLight.linearColor`
     // (`Light::AddToScene`, `RenderDeferredPointLight`).
@@ -1089,8 +1066,6 @@ fn update_env(
         a.x.total_cmp(&b.x).then(a.z.total_cmp(&b.z))
     });
     env.lights.extend(ls.drain(..).map(|(_, l)| l));
-    // Rewrite only on change: a modified buffer asset re-prepares every
-    // material bind group that references it.
     env.write_vec4s(&mut cache.vec4s);
     let same = buffers
         .get(&defaults.env)

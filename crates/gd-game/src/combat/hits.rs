@@ -5,9 +5,7 @@ pub(super) fn apply_hits(
     mut commands: Commands,
     mut events: MessageReader<AnimCallback>,
     rules: Res<CombatRules>,
-    // The main combatant query and the cone fallback's victim view conflict on
-    // `Combatant` (exclusive vs shared over the same `Without<Dead>` entities):
-    // the ParamSet keeps their accesses sequential.
+    // The main query and the cone fallback's victim view conflict on `Combatant`: the ParamSet keeps them sequential.
     mut qs: ParamSet<(
         Query<
             (
@@ -72,9 +70,8 @@ pub(super) fn apply_hits(
         *rng = None;
     }
     let rng = rng.get_or_insert_with(|| Rng(gd_game_core::rng::u32(1..0x7FFF_FFFF)));
-    // Melee swings (attack animations), then skill hits (casting.rs):
-    // (attacker, target, skill, its weapon-pool parent, off-hand swing,
-    // damage scale, projectile, a debuff's attack: its holder and modifiers).
+    // Melee swings, then skill hits: (attacker, target, skill, its weapon-pool parent, off-hand swing, damage scale,
+    // projectile, a debuff's attack: its holder and modifiers).
     type Todo = (
         Entity,
         Entity,
@@ -87,10 +84,7 @@ pub(super) fn apply_hits(
     );
     let mut todo: Vec<Todo> = Vec::new();
     let mtd = data.engine().melee_target_distance;
-    // The melee callbacks, snapshotted owned: the ParamSet's two queries cannot be
-    // borrowed at once, so the attacker / primary data is copied out first, the cone
-    // fallback resolves against the victim view, and the damage pass re-borrows the
-    // main query by entity.
+    // Copied out: the ParamSet's two queries cannot be borrowed at once.
     struct Swing {
         attacker: Entity,
         at: Vec3,
@@ -105,7 +99,7 @@ pub(super) fn apply_hits(
         let q = qs.p0();
         let mut out = Vec::new();
         for ev in events.read() {
-            // Ranged weapons shoot instead (`casting::ranged_swings`).
+            // Ranged weapons shoot instead.
             if !matches!(ev.name.as_str(), "RightHandHit" | "LeftHandHit")
                 || marks.get(ev.entity).is_ok_and(|m| m.0 || m.1)
             {
@@ -114,9 +108,8 @@ pub(super) fn apply_hits(
             let Ok((atf, acb, _, amon, _, _, _, aside)) = q.get(ev.entity) else {
                 continue;
             };
-            // A skill cast's hit point belongs to the skill (`fire_casts`): the
-            // callback's own identity, not the live state — the "End" of the same
-            // step may already have left `Cast` (`Casting` gone too).
+            // A skill cast's hit point is the callback's own identity, not the live state: the same step's "End" may
+            // already have left `Cast`.
             if ev.cast {
                 continue;
             }
@@ -137,9 +130,7 @@ pub(super) fn apply_hits(
         }
         out
     };
-    // The hit-frame re-check: 3-D distance minus both radii within
-    // `meleeTargetDistance` (`Skill::IsTargetInRange`).
-    // Out of reach: the plain attack's 10° cone at that distance may catch a foe
+    // The hit-frame re-check (`Skill::IsTargetInRange`); out of reach, the plain attack's 10° cone may catch a foe
     // who stepped in (`ExecuteMeleeAttack` → `GetTargetsInCone`).
     let mut resolved: Vec<(Entity, Entity, Vec3, bool, bool)> = Vec::new();
     {
@@ -174,12 +165,8 @@ pub(super) fn apply_hits(
         }
     }
     for (attacker, target, hit_at, is_monster, left) in resolved {
-        // A plain swing is a weapon-pool attack: the pool skill picked as
-        // it started (`weapon_pool::start_swing`) replaces it. The hit point
-        // is the playing clip's — the picked skill's special animation when
-        // it has one (`weapon_pool::pool_swing_specials`), else the plain
-        // swing's (`SkillActivatedWeaponPool::StartAction`
-        // runs the picked skill's own action).
+        // A plain swing is a weapon-pool attack: the pool skill picked at swing start replaces it; the hit point is
+        // the playing clip's (`SkillActivatedWeaponPool::StartAction`).
         if let Ok(p) = picks.get(attacker)
             && p.is_for(gd_game_core::casting::DEFAULT_ATTACK)
             && let Some(pick) = p.pick.clone()
@@ -208,7 +195,7 @@ pub(super) fn apply_hits(
             None,
         ));
     }
-    // Debuffs' attacks on their holders (`crate::skill_buffs`).
+    // Debuffs' attacks on their holders.
     for t in ticks.read() {
         todo.push((
             t.caster,
@@ -221,15 +208,11 @@ pub(super) fn apply_hits(
             Some((t.holder, t.mods.clone())),
         ));
     }
-    // The damage pass re-borrows the main query (the victim view is released).
     let mut q = qs.p0();
     let mut records: HashMap<Arc<str>, Option<&gd_formats::arz::Record>> = HashMap::default();
     for (attacker, target, skill, parent, left, damage_scale, projectile, debuff) in todo {
-        // A dead caster's debuffs still attack while its body is there
-        // (`crate::skill_buffs`), and so do its skills: a dying skill is cast
-        // by the dead character (`StartDyingSkill`, `monster_skills`), and
-        // `Character::AttackTarget` has no life check. Plain swings need a
-        // live attacker.
+        // A dead caster's debuffs and skills still attack (`StartDyingSkill`; `Character::AttackTarget` has no life
+        // check); plain swings need a live attacker.
         let Some((acb, aaff)) = q.get(attacker).ok().map(|a| (a.1, a.5)).or_else(|| {
             corpses
                 .get(attacker)
@@ -238,8 +221,7 @@ pub(super) fn apply_hits(
         }) else {
             continue;
         };
-        // `PetPlayerScaling` pets attack as their player owner (`pets.rs` docs,
-        // `Skill::CollectCombatParameters`).
+        // `PetPlayerScaling` pets attack as their player owner (`Skill::CollectCombatParameters`).
         let owner_cb = casters
             .get(attacker)
             .ok()
@@ -247,14 +229,11 @@ pub(super) fn apply_hits(
             .filter(|p| p.player_scaling)
             .and_then(|p| q.get(p.owner).ok().filter(|o| o.4).map(|o| o.1));
         let pcb = owner_cb.unwrap_or(acb);
-        // What the attacker itself takes back (reflection, retaliation) is
-        // defended by its own profile: the owner swap is only the attack's
-        // collection (`CollectCombatParameters`).
+        // What the attacker takes back is defended by its own profile: the owner swap is only the attack's collection.
         let own_prof = acb.profile.clone();
         let aprof = pcb.profile.clone();
-        // A dual wielder's left-hand swing uses the off-hand weapon, and a charged
-        // `Skill_WeaponPool_ChargedScaling`'s own attack leaves its passive offensive modifiers
-        // out: both read the profile in place (`gd_sim::actor::Attacker`).
+        // A left-hand swing uses the off-hand weapon, and a charged `Skill_WeaponPool_ChargedScaling` attack leaves
+        // its passive offensive modifiers out (`gd_sim::actor::Attacker`).
         let hand = left
             .then(|| aprof.off_hand())
             .flatten()
@@ -264,8 +243,7 @@ pub(super) fn apply_hits(
             .and_then(|(s, _)| hand.without_skill(s))
             .unwrap_or(hand);
         let adeb = aaff.map(|a| a.debuffs()).unwrap_or_default();
-        // A debuff's attack rolls its multiplier against its holder's
-        // defensive ability (`crate::skill_buffs`).
+        // A debuff's attack rolls against its holder's defensive ability.
         let holder_da = debuff.as_ref().and_then(|(h, _)| q.get(*h).ok()).map(
             |(_, hcb, _, _, _, haff, _, _)| {
                 gd_sim::actor::debuffed_defensive_ability(
@@ -290,8 +268,7 @@ pub(super) fn apply_hits(
         let rec = skill
             .as_ref()
             .and_then(|(s, _)| *records.entry(s.clone()).or_insert_with(|| data.db.get(s)));
-        // The skill's learned modifiers and its weapon-pool parent (with
-        // the parent's modifiers) add to it.
+        // The skill's learned modifiers and its weapon-pool parent (with its modifiers) add to it.
         let (alinks, charges) = links
             .get(attacker)
             .ok()
@@ -306,7 +283,7 @@ pub(super) fn apply_hits(
                 })
                 .unwrap_or_default()
         };
-        // A debuff's are the buff's own (`crate::skill_buffs`).
+        // A debuff's are the buff's own.
         let own_mods = match &debuff {
             Some((_, mods)) => mods
                 .iter()
@@ -354,12 +331,10 @@ pub(super) fn apply_hits(
                     }),
                 scale: scale(r, s),
                 damage_scale,
-                // Weapon attacks melee, projectiles ranged, other skills style 0
-                // (`gd_sim::actor::SkillUse::style`).
+                // Weapon attacks melee, projectiles ranged, other skills style 0.
                 style: if let Some(holder_da) = holder_da {
-                    // `SkillBuff_Debuf::Update`: style 4 with a multiplier of at
-                    // least 1 rolled from the attack's OA and the holder's DA
-                    // (`crate::skill_buffs`).
+                    // `SkillBuff_Debuf::Update`: style 4 with a multiplier of at least 1 rolled from the attack's
+                    // OA and the holder's DA.
                     let pth = gd_sim::combat::probability_to_hit(
                         &rules.0.formulas,
                         gd_sim::actor::debuffed_offensive_ability(&aprof, &adeb),
@@ -383,8 +358,7 @@ pub(super) fn apply_hits(
                     .get(attacker)
                     .is_ok_and(|l| l.is_item_skill(&data.db, s)),
             });
-        // The target's damage-absorbing filters run on each damage type in turn
-        // ([`gd_game_core::casting::Shields`]), and so do its reflect links (`reflect_link.rs`).
+        // The target's absorb filters and reflect links run on each damage type in turn.
         let mut sh = shields.get_mut(target).ok();
         let tlinks = reflect_links.get(target).ok();
         let own_filters = sh.as_ref().map_or(0, |s| s.0.len());
@@ -401,9 +375,7 @@ pub(super) fn apply_hits(
                     ..Default::default()
                 }),
         );
-        // Mana burn takes from the target's current energy (the player's
-        // `Caster`, a pet's `Pet::energy`; monsters' energy is not tracked:
-        // full).
+        // Mana burn takes from the target's current energy (monsters' energy is not tracked: full).
         let energy = casters
             .get(target)
             .ok()
@@ -430,12 +402,11 @@ pub(super) fn apply_hits(
         // `Character::SubtractLife` takes nothing from an invincible character.
         if marks.get(target).is_ok_and(|m| m.2) {
             tcb.life = life_before;
-            // No life removed: the leech percent heals nothing either
-            // (`TakeAttack`'s leech is % of the life actually lost).
+            // No life removed: leech is % of the life actually lost.
             hit.leeched = 0.0;
             hit.applied.clear();
         }
-        // A training dummy never dies (`gd_game_core::world::Dummy`).
+        // A training dummy never dies.
         if marks.get(target).is_ok_and(|m| m.3) {
             tcb.life = tcb.life.max(1.0);
         }
@@ -464,8 +435,7 @@ pub(super) fn apply_hits(
             }
             s.drop_spent();
         }
-        // Spend, then gain (`SkillTargetResult`: the attacks, then
-        // `IncrementComboCharge`).
+        // Spend, then gain (`SkillTargetResult`, then `IncrementComboCharge`).
         if let (Some(t), Ok((mut c, _))) = (combo_rules.as_deref(), combos.get_mut(attacker))
             && let (Some(r), Some((_, li))) = (rec, skill.as_ref())
         {
@@ -517,7 +487,7 @@ pub(super) fn apply_hits(
             let melee = rec.as_ref().is_none_or(|r| {
                 gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
             }) && !marks.get(attacker).is_ok_and(|m| m.1);
-            // Gear, passive and skill taunt alike (`gd_sim::combat::Influence`).
+            // Gear, passive and skill taunt alike.
             let taunt = hit.influence.taunt;
             landed.write(HitLanded {
                 attacker,
@@ -559,9 +529,7 @@ pub(super) fn apply_hits(
                 p.energy = (p.energy - hit.energy_burned).max(0.0);
             }
         }
-        // Energy absorption: the defender gains that much energy
-        // (`TakeAttack` tail → `CharacterBio::AddManaSlow`);
-        // monsters track none.
+        // Energy absorption: the defender gains that much energy (`CharacterBio::AddManaSlow`); monsters track none.
         if hit.energy_absorbed > 0.0
             && let Ok((c, p)) = casters.get_mut(target)
         {
@@ -602,10 +570,8 @@ pub(super) fn apply_hits(
                 Some((attacker, skill.as_ref().map(|s| s.0.to_string()))),
             );
         }
-        // Life leech: `TakeAttack`'s tail sends the leech percent of the life
-        // removed back to the attacker as a flat life bonus
-        // (`Character::TakeBonus`): heal increase applies, capped
-        // at the attacker's own maximum.
+        // Life leech: the leech percent of the life removed heals the attacker (`Character::TakeBonus`: heal
+        // increase applies, capped at its maximum).
         if hit.leeched > 0.0
             && let Ok((_, mut acb, _, _, _, _, _, _)) = q.get_mut(attacker)
             && acb.life > 0.0
@@ -616,8 +582,7 @@ pub(super) fn apply_hits(
             }
             .apply(&own_prof.sheet, &mut acb.life, None);
         }
-        // The target's reflect links pass their share on to each link's
-        // target (`reflect_link.rs`).
+        // The target's reflect links pass their share on to each link's target.
         if !hit.link_copy.is_empty()
             && let Some(l) = tlinks
         {
@@ -634,10 +599,8 @@ pub(super) fn apply_hits(
                 let lprof = lcb.profile.clone();
                 let damage =
                     gd_sim::actor::link_reflection(&rules.0, &tprof, &hit.link_copy, link.reflect);
-                // `ReflectLinkDamage` sends it with `Character::AttackTarget`
-                // (), which tells the caster's attack
-                // triggers; the copy keeps the original attack's skill,
-                // weapon ids and crit.
+                // `ReflectLinkDamage` → `Character::AttackTarget`: the caster's attack triggers run; the copy keeps
+                // the original attack's skill, weapon ids and crit.
                 if link.reflect > 0.0 {
                     linked_attacks.write(LinkedAttack {
                         attacker: target,
@@ -702,8 +665,7 @@ pub(super) fn apply_hits(
                         Some((target, Some(link.skill.clone()))),
                     );
                 }
-                // The link attack's leech heals its attacker (this target);
-                // a fresh borrow, the link target's is done.
+                // The link attack's leech heals its attacker (this target).
                 if link_leech > 0.0
                     && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
                     && tcb.life > 0.0
@@ -776,8 +738,7 @@ pub(super) fn apply_hits(
                     Some((target, None)),
                 );
             }
-            // The reflection's leech heals the reflector (the attacker's
-            // borrow is done; a dead attacker's reflection still leeches).
+            // The reflection's leech heals the reflector (even a dead attacker's).
             if reflect_leech > 0.0
                 && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
                 && tcb.life > 0.0
@@ -792,8 +753,7 @@ pub(super) fn apply_hits(
                 continue;
             }
         }
-        // Retaliation on landed melee hits: plain swings and weapon-type
-        // skills (`TakeAttack` style 1; spells and projectiles are not melee).
+        // Retaliation on landed melee hits (`TakeAttack` style 1: plain swings and weapon skills).
         let melee = rec.as_ref().is_none_or(|r| {
             gd_game_core::casting::kind_of(r) == gd_game_core::casting::Kind::Weapon
         }) && !marks.get(attacker).is_ok_and(|m| m.1);
@@ -866,8 +826,7 @@ pub(super) fn apply_hits(
                 Some((target, None)),
             );
         }
-        // The retaliation's leech heals its holder (the target); a fresh
-        // borrow, the attacker's is done.
+        // The retaliation's leech heals its holder (the target).
         if ret_leech > 0.0
             && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
             && tcb.life > 0.0
@@ -891,11 +850,8 @@ pub(super) fn block_recovery(time: Res<Time>, mut q: Query<&mut Combatant>, mut 
     }
 }
 
-/// The attacked monster's aggro (`Character::UnderAttack`): every
-/// attack made — hit or miss — aggroes its target. Split out of [`apply_hits`]
-/// so that system's `SideData` / victim queries (shared `MonsterAi`) do not
-/// double-fetch it beside an exclusive one; runs right after it, before the
-/// conversion pass clears aggro again.
+/// The attacked monster's aggro (`Character::UnderAttack`): every attack, hit or miss. Split from [`apply_hits`]
+/// to avoid its conflicting `MonsterAi` access; runs right after it, before the conversion pass clears aggro.
 pub(super) fn hit_aggro(
     mut made: MessageReader<AttackMade>,
     mut monsters: Query<(&mut MonsterAi, Has<Dead>)>,

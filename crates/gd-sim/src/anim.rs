@@ -28,8 +28,7 @@
 //!   entity orientation (`Actor::UpdateSelf`).
 //!
 //! PORT: the pose is one key per skeleton bone (the engine's `SkeletalPose` is a bone-name
-//! map): a clip's tracks are mapped to bones once per (clip, skeleton), and a track for a
-//! bone the skeleton lacks poses nothing.
+//! map); a track for a bone the skeleton lacks poses nothing.
 use crate::equip::HandState;
 use gd_formats::anm::{self, Animation, IDENTITY_KEY, Key};
 use gd_formats::arz::Record;
@@ -153,10 +152,8 @@ pub enum AnimType {
 }
 
 impl AnimType {
-    /// The number of types: the last variant's discriminant + 1. A variant
-    /// removed or inserted before `MenuFidget` changes it, so [`Self::ALL`] and
-    /// [`ANIM_TYPE_NAMES`] fail to compile until they follow; one appended
-    /// after it must also become the anchor here.
+    /// A variant inserted or removed before `MenuFidget` breaks [`Self::ALL`] and [`ANIM_TYPE_NAMES`]
+    /// at compile time; one appended after it must become the anchor here.
     pub const COUNT: usize = AnimType::MenuFidget as usize + 1;
 
     /// Every type in engine order: `ALL[i] as usize == i` (checked at compile
@@ -252,7 +249,7 @@ pub struct KeySpec {
 /// The 241 key specs of one animation set, exactly as the engine loaders
 /// list them (including their spelling quirks: `IdleTranAnimSpeed`,
 /// `BuffSelfSpeed1`, `SpellAttackAnimWeight` without "1", and the
-/// `TrabsformAnimSpeed` typo in the sHanded loaders). Built once per hand state.
+/// `TrabsformAnimSpeed` typo in the sHanded loaders).
 pub fn set_keys(hand: HandState) -> &'static [KeySpec] {
     static KEYS: [OnceLock<Vec<KeySpec>>; HandState::COUNT] =
         [const { OnceLock::new() }; HandState::COUNT];
@@ -540,7 +537,7 @@ impl AnimSlot {
 
     /// `AnimationBase::GetAnimSpeed`: mean of `numFrames/fps / recordSpeed` over the
     /// variants, i.e. the effective duration in seconds at caller speed 1
-    /// (1.0 when empty). Needs the frame counts, so the caller supplies them.
+    /// (1.0 when empty).
     pub fn mean_duration(&self, frames_fps: impl Fn(&str) -> Option<(u32, u32)>) -> f32 {
         if self.entries.is_empty() {
             return 1.0;
@@ -699,19 +696,15 @@ pub fn blend_ms(prev: AnimType, next: AnimType, slot_ms: f32, is_player: bool) -
     ms
 }
 
-/// A key pose (`GAME::SkeletalPose`) reused across frames: one key per bone of the skeleton it
-/// was built for, so sampling, blending and posing index bones instead of hashing their names.
-/// [`AnimChannel::update`] refills the values in place and rebuilds the buffer only when the
-/// skeleton changes (a shapeshift); a buffer belongs to one channel.
+/// A key pose (`GAME::SkeletalPose`): one key per bone of the skeleton it was built for, rebuilt
+/// when the skeleton changes (a shapeshift). A pose belongs to one channel.
 #[derive(Default)]
 pub struct Pose {
     /// One key per bone of [`Self::mesh`] (the identity key where unposed).
     keys: Vec<Key>,
     /// The skeleton `keys` indexes.
     mesh: Option<Arc<Mesh>>,
-    /// Other skeletons posed with these keys (armour on its wearer): their bone → key maps,
-    /// built once per skeleton. A mutex so the reader systems sharing a pose cache them in
-    /// place (the `Inventory::info` interior-cache pattern).
+    /// Other skeletons posed with these keys (armour on its wearer): their bone → key maps.
     maps: Mutex<Vec<ForeignMap>>,
 }
 
@@ -754,7 +747,7 @@ impl Pose {
 }
 
 /// The entry of `mesh` in `maps`, built if absent: its bones matched to the pose's skeleton
-/// by name once (case-insensitive, as the engine's pose lookup). Entries of gone skeletons
+/// by name (case-insensitive, as the engine's pose lookup). Entries of gone skeletons
 /// are dropped.
 fn foreign_map<'a>(
     maps: &'a mut Vec<ForeignMap>,
@@ -762,8 +755,7 @@ fn foreign_map<'a>(
     home: Option<&Mesh>,
 ) -> &'a mut ForeignMap {
     maps.retain(|m| m.mesh.strong_count() > 0);
-    // By address, no `upgrade` (two atomic ops per entry, per armour piece, per frame): a live `Weak`
-    // keeps its allocation, so an equal address is `mesh` itself.
+    // By address: a live `Weak` keeps its allocation, so an equal address is `mesh` itself.
     if let Some(i) = maps
         .iter()
         .position(|m| std::ptr::eq(m.mesh.as_ptr(), Arc::as_ptr(mesh)))
@@ -854,8 +846,7 @@ pub struct ChannelAnim {
     fresh: bool,
     /// The skeleton [`Self::track_bones`] was built for.
     map_mesh: Option<Arc<Mesh>>,
-    /// Each track's bone index in that skeleton (`u16::MAX`: a bone the skeleton lacks),
-    /// built once per (clip, skeleton) ([`Self::ensure_map`]).
+    /// Each track's bone index in that skeleton (`u16::MAX`: a bone the skeleton lacks).
     track_bones: Vec<u16>,
 }
 
@@ -879,12 +870,11 @@ struct Fading {
     a: ChannelAnim,
     elapsed_ms: f32,
     dur_ms: f32,
-    /// Reused sample buffer for this fade's fixed animation.
     pose: Pose,
 }
 
-/// A `CreateEntity` / `RemoveEntity` trailer event an advance crossed
-/// (module doc): the record to create / remove at the attach point.
+/// A `CreateEntity` / `RemoveEntity` trailer event an advance crossed: the record to create /
+/// remove at the attach point.
 #[derive(Debug, Clone)]
 pub struct AnimEntityEvent {
     /// `CreateEntity` (false: `RemoveEntity`).
@@ -919,13 +909,10 @@ pub struct AnimChannel {
 impl AnimChannel {
     /// `AnimChannel::PlayAnimation(anim, loop, speed, blendMs)`: the current
     /// animation moves to the fade list; blend 0 also drops all fades.
-    /// A finished one-shot's overshoot (the time played past its final frame)
-    /// carries into the new clip's start: the engine chains the next action in
-    /// the same handler pass (`CharacterActionHandler::Execute`),
-    /// so the cadence is the clip's own length, not whole frames. The carry is
-    /// at most the new clip's length, and its first advance reports what it
-    /// crosses from frame 0 (the callbacks in the carried time, its "End" when
-    /// that reaches the end).
+    /// A finished one-shot's overshoot (the time played past its final frame, at most the new
+    /// clip's length) carries into the new clip's start, as the engine chains the next action in
+    /// the same handler pass (`CharacterActionHandler::Execute`); its first advance reports what
+    /// it crosses from frame 0.
     pub fn play(&mut self, anim: Arc<Animation>, looped: bool, speed: f32, blend_ms: f32) {
         let len_ms = |a: &Animation| {
             let fps = a.frame_rate as f32;
@@ -985,8 +972,7 @@ impl AnimChannel {
 
     /// Advances by `dt_ms`, refilling `pose` with the blended pose (root-motion
     /// bone translation removed) and returning the crossed callbacks, entity
-    /// events and root motion. `pose` is reused across frames (it belongs to
-    /// this channel); it is rebuilt only when `mesh` changes.
+    /// events and root motion. `pose` belongs to this channel.
     pub fn update(&mut self, dt_ms: f32, mesh: &Arc<Mesh>, pose: &mut Pose) -> ChannelEvents {
         pose.prepare(mesh);
         let root = mesh.root_bone;
@@ -1033,7 +1019,7 @@ impl AnimChannel {
 /// `[prevFrame, newFrame)` (with loop wrap) and "End". `root` is the skeleton's
 /// root-motion bone index.
 /// PORT: a non-looped clip without a duration (one frame, or frame rate 0) reports "End" on its first
-/// advancing tick, so a state waiting for it is left (the engine's handling of such a clip was not checked).
+/// advancing tick, so a state waiting for it is left (the engine's handling of such a clip is unknown).
 fn advance(
     c: &mut ChannelAnim,
     dt_ms: f32,
@@ -1124,8 +1110,7 @@ fn report_advance(c: &mut ChannelAnim, t_new: f32, ev: &mut ChannelEvents) {
 
 /// The trailer's `CallbackPoint` / `CreateEntity` / `RemoveEntity` blocks
 /// crossed in `[lo, hi)` (frames), in trailer order — the one interval both
-/// the callbacks and the entity events fire from (`AnimChannel::Advance`; read in
-/// place, `Animation::callback_points` / `create_entities` decode copies).
+/// the callbacks and the entity events fire from (`AnimChannel::Advance`).
 fn report_span(ev: &mut ChannelEvents, anim: &Animation, lo: f32, hi: f32) {
     for b in &anim.trailer {
         match b.kind.as_str() {
@@ -1160,9 +1145,8 @@ pub fn pose_abs(mesh: &Arc<Mesh>, pose: &Pose) -> Vec<Coords> {
     abs
 }
 
-/// [`pose_abs`] written into `abs` (its allocation reused; a character's pose every frame).
-/// `mesh` is the pose's own skeleton, or another posed with its keys (an armour piece): the
-/// latter's bone → key map is cached on the pose, built once per skeleton.
+/// [`pose_abs`] written into `abs`. `mesh` is the pose's own skeleton, or another posed with its
+/// keys (an armour piece).
 pub fn pose_abs_into(mesh: &Arc<Mesh>, pose: &Pose, abs: &mut Vec<Coords>) {
     if pose.mesh.as_ref().is_some_and(|m| Arc::ptr_eq(m, mesh)) || pose.keys.is_empty() {
         pose_abs_from(mesh, &pose.keys, None, |_| None, abs);
@@ -1184,8 +1168,7 @@ pub fn pose_abs_into(mesh: &Arc<Mesh>, pose: &Pose, abs: &mut Vec<Coords>) {
 /// the bones below go on with their own bind and the pose's key, the identity
 /// key without one. So a mesh on a foreign skeleton (a paper doll's armour on
 /// a form) follows only the bones the two share by name and
-/// stays in its bind pose elsewhere. The name matches (bone → key and root →
-/// parent bone) are cached on the pose, once per skeleton pair.
+/// stays in its bind pose elsewhere.
 pub fn pose_abs_attached_into(
     mesh: &Arc<Mesh>,
     pose: &Pose,

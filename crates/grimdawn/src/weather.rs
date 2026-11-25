@@ -1,49 +1,37 @@
-//! Weather rendering: Engine.dll's `WeatherManager`, drawn from the rules in `gd_sim::weather` (record facts, the climate
-//! pick and the spawn rules are documented there).
+//! Weather rendering: Engine.dll's `WeatherManager`, drawn from the rules in `gd_sim::weather`.
 //!
 //! Each frame ([`simulate_weather`]): the sector type 6 ("climate") cell under the camera focus names a climate set
-//! record (`WeatherManager::Update` / `ChangeClimate`; the table is read once from
-//! the map's sector data); `gd_sim::weather::Weather` picks / re-rolls / moves the particle systems. [`draw_weather`]
-//! draws them, [`weather_flash`] makes the lightning flash a point light of the lighting environment (`render::env`
-//! gathers it like any level light), [`weather_sounds`] loops the template `sound` and the manager's `windSound` as 2D
+//! record (`WeatherManager::Update` / `ChangeClimate`); `gd_sim::weather::Weather` picks / re-rolls / moves the
+//! particle systems. [`draw_weather`] draws them, [`weather_flash`] makes the lightning flash a point light of the
+//! lighting environment, [`weather_sounds`] loops the template `sound` and the manager's `windSound` as 2D
 //! ambient sounds. The climate's ambience adjustments go into `render::env`'s ambiance
-//! (`AmbianceManager::SetWeatherAdjustments`: the darkness comes off the sky and ground ambient
-//! only; the sun colour and the shadows are untouched, so a storm (darkness 0.3 x intensity) keeps its sunlight; fog
-//! density / colour added, the distance moves the depth fog start).
+//! (`AmbianceManager::SetWeatherAdjustments`: the darkness comes off the sky and ground ambient only, the sun colour
+//! and the shadows are untouched; fog density / colour added, the distance moves the depth fog start).
 //!
-//! Drawing (render functions `WeatherSystem::Render`, Rain `RainSystem::Render`, and the `weatherparticle*.ssh`
-//! DirectX11
-//! programs, `shaders/weather.wesl`): one quad per particle of side = the particle size (template `particleSize` x the
-//! spawn phase: rain 0.25..0.75 m), white vertex colour with the alpha of [`alpha`], the texture as is. Rain and Snow
+//! Drawing (`WeatherSystem::Render`, `RainSystem::Render`, the `weatherparticle*.ssh` programs,
+//! `shaders/weather.wesl`): one quad per particle of side = the particle size (template `particleSize` x the
+//! spawn phase), white vertex colour with the alpha of [`alpha`], the texture as is. Rain and Snow
 //! use the directional program (a square along the velocity, sideways = velocity x camera direction: no stretch by
 //! speed); the others a vertical billboard facing the camera horizontally, turned by the spin. Mist, Fog and GroundFog
-//! use the soft variants when `softParticles` is on (`GetShader`): the scene depth (copied after
-//! the opaque passes, [`WeatherDepth`]) discards hidden fragments and fades the alpha over the last metre. Texture
-//! flipbook frame 0 only (nothing in the weather code reads the frame count / rate; the engine shows frame 0
-//! too). The programs carry their own pass states (`weatherparticle*.ssh`, also the soft ones): Combine
-//! SrcAlpha / InvSrcAlpha, Additive SrcAlpha / One, no depth or alpha write, and sort 6200, after the effect particles
-//! (combine 6000, additive 6100).
+//! use the soft variants when `softParticles` is on (`GetShader`): the scene depth ([`WeatherDepth`]) discards
+//! hidden fragments and fades the alpha over the last metre. Texture flipbook frame 0 only. Pass states: Combine
+//! SrcAlpha / InvSrcAlpha, Additive SrcAlpha / One, no depth or alpha write, sort 6200.
 //!
 //! Options (`WeatherManager::SetEnabled`): `weatherEnabled` off removes every system and the update returns at
-//! once; `weatherQuality` (low / medium / high / very high = 0..3) sets the spawn delay factor 3 / 2 / 1 / 1
-//! (`gd_sim::weather::quality_factor`), re-applied when it changes. `GD_WEATHER=<climate_weather record>` forces a
-//! climate everywhere (test hook).
+//! once; `weatherQuality` (0..3) sets the spawn delay factor 3 / 2 / 1 / 1
+//! (`gd_sim::weather::quality_factor`), re-applied when it changes.
 //!
-//! The day / night filter reads `Ambiance::is_day` (`AmbianceManager::GetIsDay`, the area's own cycle). The main menu
-//! scene weathers from its own map's climate sector layer and clock; the FoA menu map's only climate entry has an empty
-//! record path, so it has no weather there. Quality 3 rain ends at the terrain (`RainSystem::SpawnParticle`: no splash
-//! effect exists, the life is cut to the ground ray's hit against the physics world, [`Floor`]). Above quality 1 a drop
+//! The day / night filter reads `Ambiance::is_day` (`AmbianceManager::GetIsDay`). The main menu
+//! scene weathers from its own map's climate sector layer and clock. Quality 3 rain ends at the terrain
+//! (`RainSystem::SpawnParticle`: the life is cut to the ground ray's hit, [`Floor`]). Above quality 1 a drop
 //! that dies asks for a water ripple where it ends (`RainSystem::OnParticleDeath`,
-//! `Water::CreateRipple(pos, 0.5, 5.0)`;
-//! `water.rs` places and draws them). At quality 2 and 3 (`advancedWind`) strong wind blows gusts
+//! `Water::CreateRipple(pos, 0.5, 5.0)`). At quality 2 and 3 (`advancedWind`) strong wind blows gusts
 //! (`gd_sim::weather::Weather::winds`): each push may ripple the water there (`World::CreateDirectionalWind`, only at
-//! strength >= 1) and bends the grass (`Terrain::CreateGrassWind`, render/grass.rs). The `windSound` loop plays while
+//! strength >= 1) and bends the grass (`Terrain::CreateGrassWind`). The `windSound` loop plays while
 //! the wind factor is above 1.25 at `min(gusts, 3) * 0.1 + (factor - 1) * 0.35` (`Update`).
 //!
-//! Looping sounds are 2D at the pak's volume times the system's particle share: the template loops
-//! (`WeatherSystem::Update`) and `windSound` start with `SoundPak::Play2D` and nothing in the weather code
-//! places them; a
-//! destroyed system's sound fades out over 3 s.
+//! Looping sounds are 2D at the pak's volume times the system's particle share (`WeatherSystem::Update`,
+//! `SoundPak::Play2D`); a destroyed system's sound fades out over 3 s.
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d};
@@ -73,7 +61,6 @@ use gd_render::render::weather::WeatherState;
 use gd_sim::weather::{ClimateSet, Kind, Particle, Weather};
 use gd_ui::state::session::AppState;
 
-/// The fade-out of a destroyed system's sound (ms).
 const FADE_MS: f32 = 3000.0;
 
 const SHADER: &str = "embedded://grimdawn/shaders/weather.wesl";
@@ -120,7 +107,6 @@ impl Plugin for WeatherPlugin {
     }
 }
 
-/// The weather particles' material: the `weatherparticle*` programs (`shaders/weather.wesl`).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 #[bind_group_data(WeatherKey)]
 pub struct WeatherMaterial {
@@ -133,7 +119,6 @@ pub struct WeatherMaterial {
     /// Header vec4 (count), then [centre, size], [velocity, spin], [colour] per particle.
     #[storage(3, read_only)]
     particles: Handle<ShaderBuffer>,
-    /// The scene depth after the opaque passes ([`WeatherDepth`]).
     #[texture(4, sample_type = "depth")]
     depth: Handle<Image>,
     additive: bool,
@@ -164,7 +149,7 @@ impl Material for WeatherMaterial {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
-    /// The effect particles' ordering (fx/render.rs: 10 m per sort step above 5900) at the programs' sort 6200.
+    /// The effect particles' ordering (10 m per sort step above 5900) at the programs' sort 6200.
     fn depth_bias(&self) -> f32 {
         (6200 - 5900) as f32 * 10.0 + self.order as f32 * 0.01
     }
@@ -189,7 +174,6 @@ impl Material for WeatherMaterial {
         if let Some(ds) = descriptor.depth_stencil.as_mut() {
             ds.depth_write_enabled = Some(false);
         }
-        // The pass states: Combine SrcAlpha / InvSrcAlpha, Additive SrcAlpha / One, alpha not written.
         let c = BlendComponent {
             src_factor: BlendFactor::SrcAlpha,
             dst_factor: if key.bind_group_data.additive {
@@ -214,8 +198,8 @@ impl Material for WeatherMaterial {
 #[extract_app(RenderApp)]
 pub struct WeatherDepth(Handle<Image>, bool);
 
-/// Copy the scene depth only while a soft system (Mist / Fog / GroundFog with `softParticles`) is live:
-/// [`WeatherDepth`]'s flag, set after [`draw_weather`] so the frame a soft system appears has its depth.
+/// Copy the scene depth only while a soft system is live; runs after [`draw_weather`] so the frame a soft
+/// system appears has its depth.
 fn soft_live(
     state: Res<WeatherState>,
     rt: Res<WeatherRuntime>,
@@ -233,7 +217,6 @@ fn soft_live(
     }
 }
 
-/// Keeps a depth image of the game camera's target size and asks for a copyable depth buffer.
 fn scene_depth(
     mut rt: ResMut<WeatherRuntime>,
     mut cams: Query<
@@ -278,8 +261,7 @@ fn scene_depth(
     }
 }
 
-/// After the opaque passes: the game camera's depth buffer into its [`WeatherDepth`] image (the soft
-/// programs' `depthTexture`).
+/// After the opaque passes: the game camera's depth buffer into its [`WeatherDepth`] image.
 fn copy_scene_depth(
     view: ViewQuery<(&ViewDepthStencilTexture, &WeatherDepth)>,
     images: Res<RenderAssets<GpuImage>>,
@@ -310,7 +292,6 @@ fn in_game_or_menu_scene(
     *state.get() == AppState::InGame || menu.is_some()
 }
 
-/// One system's drawing, on its drawn entity: the system's id, its storage buffer, quad mesh and material.
 #[derive(Component)]
 struct WeatherDraw {
     system: u32,
@@ -320,18 +301,13 @@ struct WeatherDraw {
     cap: usize,
 }
 
-/// A weather loop's sound entity: the template `sound` or the manager's `windSound` pak it plays.
 #[derive(Component)]
 struct WeatherLoop(String);
 
-/// The weather options, read when the options change ([`simulate_weather`]).
 #[derive(Clone, Copy, PartialEq)]
 struct WeatherOptions {
-    /// `weatherEnabled`.
     enabled: bool,
-    /// `weatherQuality` as an index 0..3.
     quality: u8,
-    /// `softParticles`.
     soft: bool,
 }
 
@@ -348,30 +324,25 @@ impl WeatherOptions {
     }
 }
 
-/// The weather of the running session (reset by `exit.rs`).
+/// The weather of the running session.
 #[derive(Resource, Default)]
 pub struct WeatherRuntime {
-    /// The map's climate sector entries (GUID, set record), read once per map ([`WeatherRuntime::map`]).
+    /// The map's climate sector entries (GUID, set record).
     table: Option<Vec<([i32; 4], String)>>,
-    /// The map the table and the state belong to (identity only; the menu scene's map can change under it).
+    /// The map the table and the state belong to (identity only).
     map: std::sync::Weak<gd_formats::map::MapFile>,
     flash: Option<Entity>,
-    /// The options as last read; `None` until the first frame.
+    /// `None` until the first frame.
     options: Option<WeatherOptions>,
-    /// The quality the systems were last refreshed for.
     quality: Option<u8>,
-    /// The scene the state belongs to: the main menu's (true) or the world's.
+    /// The main menu's scene (true) or the world's.
     menu: bool,
     picks: u32,
     scratch: Vec<[f32; 4]>,
-    /// The scene depth image of the game camera and its size ([`scene_depth`]).
     depth: Option<(Handle<Image>, UVec2)>,
 }
 
-/// The program of a system type: (directional, soft-capable). The constructors (`GetShader` index 0 simple,
-/// 1 directional, +2 additive, +4 soft): Rain `RainSystem::RainSystem` and Snow `SnowSystem::SnowSystem` directional,
-/// never soft; Mist `MistSystem::MistSystem`, Fog / GroundFog `FogSystem::FogSystem` simple with the soft request;
-/// Leaves / WindParticle `LeavesSystem::LeavesSystem` simple.
+/// The program of a system type: (directional, soft-capable), as the constructors' `GetShader` requests.
 fn program(kind: Kind) -> (bool, bool) {
     match kind {
         Kind::Rain | Kind::Snow => (true, false),
@@ -380,13 +351,11 @@ fn program(kind: Kind) -> (bool, bool) {
     }
 }
 
-/// A particle's vertex alpha (the colour is always white). Rain / Snow / Mist spawn (1, 1, 1, 1) and keep
-/// it; Fog (`FogSystem::SpawnParticle`, move `FogSystem::MoveParticle`) spawns at the system alpha
-/// (`WeatherSystem.systemAlpha`: 1.0 on soft-particle-capable hardware, else 0.5; here 1.0) and fades out over its
-/// last 500 ms; GroundFog (move `GroundFogSystem::MoveParticle`) fades in over the
-/// first and out over the last 1000 ms, times the system alpha; Leaves / WindParticle (`LeavesSystem::SpawnParticle`)
-/// spawn at 0 and
-/// fade in / out over 500 ms.
+/// A particle's vertex alpha (the colour is always white). Rain / Snow / Mist keep 1; Fog
+/// (`FogSystem::MoveParticle`) fades out over its last 500 ms; GroundFog (`GroundFogSystem::MoveParticle`) fades
+/// in over the first and out over the last 1000 ms; Leaves / WindParticle (`LeavesSystem::SpawnParticle`) spawn
+/// at 0 and fade in / out over 500 ms. PORT: `WeatherSystem.systemAlpha` is always 1.0 (the engine uses 0.5
+/// without soft-particle hardware).
 fn alpha(kind: Kind, p: &Particle) -> f32 {
     let age = p.total_ms - p.life_ms;
     let ramp = |ms: f32| ((age / ms).min(p.life_ms / ms)).clamp(0.0, 1.0);
@@ -398,15 +367,14 @@ fn alpha(kind: Kind, p: &Particle) -> f32 {
     }
 }
 
-/// vec4s per particle in a weather buffer.
 const VEC4S: usize = 3;
 
 fn buffer_bytes(cap: usize) -> u64 {
     ((1 + cap * VEC4S) * 16) as u64
 }
 
-/// The weather simulation: the options, the climate under the focus, the systems' update, and the rain's ripples
-/// and the gusts' pushes for the water and the grass.
+/// The weather simulation: the options, the climate under the focus, the systems' update, the rain's ripples
+/// and the gusts' pushes.
 #[allow(clippy::too_many_arguments)]
 fn simulate_weather(
     (mut rt, mut state): (ResMut<WeatherRuntime>, ResMut<WeatherState>),
@@ -439,7 +407,7 @@ fn simulate_weather(
     let Some(cam) = cams.iter().next() else {
         return;
     };
-    // The main menu scene takes its climate from its own map (mainmenu.map); the world and the scene never mix.
+    // The world and the menu scene never mix.
     if rt.menu != menu.is_some() {
         clear_all(rt, state, &owned, &mut commands);
         state.weather = None;
@@ -453,7 +421,6 @@ fn simulate_weather(
     let Some(map) = map else {
         return;
     };
-    // Another map (a menu scene's change, or the world's): its own climate table, the weather afresh.
     if !std::ptr::eq(rt.map.as_ptr(), std::sync::Arc::as_ptr(map)) {
         clear_all(rt, state, &owned, &mut commands);
         state.weather = None;
@@ -462,7 +429,6 @@ fn simulate_weather(
     }
     let sector_data = &map.sector_data;
     let levels = backdrop.as_ref().map_or(&*levels, |b| &b.levels);
-    // `SetEnabled(false)`: everything stops and the update returns at once.
     if !opts.enabled {
         if state.weather.is_some() {
             clear_all(rt, state, &owned, &mut commands);
@@ -491,7 +457,7 @@ fn simulate_weather(
             .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
         Weather::new(seed, gd_sim::weather::Templates::load(&data.db))
     });
-    // `AmbianceManager::GetIsDay`; before the first ambiance the default cycle at the clock.
+    // `AmbianceManager::GetIsDay`; before the first ambiance, the default cycle at the clock.
     let day = ambiance.map_or_else(
         || {
             let c = gd_render::render::env::DayNightCycle::default();
@@ -508,16 +474,14 @@ fn simulate_weather(
         rt.quality = Some(quality);
     }
 
-    // The climate set of the sector under the camera focus (`GetTargetId` type 6 + `GetSectorData`). A set is
-    // loaded only when the name changes (`ChangeClimate` is a no-op for the same name).
+    // `GetTargetId` type 6 + `GetSectorData`; `ChangeClimate` is a no-op for the same name.
     let table = rt.table.as_ref();
     let sector_climate = || {
         let focus = backdrop
             .as_ref()
             .map_or(cam.target, |b| b.view.player.translation);
         // In the game the sector of the player's own region (`Player::UpdateSelf`; the Shattered Realm's
-        // regions overlap main-world ground). PORT: the engine's climate sector source is not traced; the
-        // menu scene has one map, so the position alone.
+        // regions overlap main-world ground). PORT: the engine's climate sector source is not traced.
         let region =
             gd_game_core::riftgates::player_region(story.as_deref()).filter(|_| menu.is_none());
         let guid = match region {
@@ -536,7 +500,6 @@ fn simulate_weather(
     };
     #[cfg(feature = "dev")]
     let forced: std::borrow::Cow<str>;
-    // `GD_WEATHER` (hooks.rs): a forced climate set.
     #[cfg(feature = "dev")]
     let (name, set) = match hooks.render.weather.as_deref() {
         Some(f) => {
@@ -556,7 +519,7 @@ fn simulate_weather(
     let (name, set) = sector_climate();
     weather.change_climate(name, set, day, quality);
     let dt_ms = time.delta_secs() * 1000.0;
-    // The floor for quality 3 rain and the gusts (the world only; the menu scene has no collision world).
+    // The menu scene has no collision world.
     let floor = coll.as_deref().map(|c| Floor(c, cam.target.y));
     let ground: Option<&dyn gd_sim::weather::Ground> = match (&floor, &menu) {
         (Some(f), None) => Some(f),
@@ -573,9 +536,7 @@ fn simulate_weather(
         ground,
     );
 
-    // The rain's death hook `RainSystem::OnParticleDeath`: above `weatherQuality` 1 every drop asks for a ripple
-    // where it
-    // ends, `Water::CreateRipple(pos, 0.5, 5.0, 0)` on the camera region's water.
+    // `RainSystem::OnParticleDeath`: above `weatherQuality` 1, `Water::CreateRipple(pos, 0.5, 5.0, 0)`.
     if quality > 1 {
         for s in weather
             .systems
@@ -588,8 +549,7 @@ fn simulate_weather(
                 .extend(s.died.iter().map(|p| (Vec3::from_array(*p), 0.5, 5.0)));
         }
     }
-    // The gusts' `World::CreateDirectionalWind`: the grass offset field (`Terrain::CreateGrassWind` with falloff) and
-    // a ripple where the push is strong enough (strength >= 1).
+    // `World::CreateDirectionalWind` / `Terrain::CreateGrassWind`.
     state.ripples.requests.extend(
         weather
             .winds
@@ -615,7 +575,6 @@ fn simulate_weather(
     }
 }
 
-/// One entity per particle system ([`WeatherDraw`]): its quads, material and particle buffer, refreshed each frame.
 fn draw_weather(
     mut rt: ResMut<WeatherRuntime>,
     state: Res<WeatherState>,
@@ -656,7 +615,6 @@ fn draw_weather(
             0.0,
             0.0,
         );
-        // A new system's drawing is spawned here and filled in this frame.
         let mut created = None;
         let (entity, d): (Entity, &mut WeatherDraw) =
             match draws.iter_mut().find(|(_, d)| d.system == s.id) {
@@ -703,7 +661,6 @@ fn draw_weather(
                     (*e, d)
                 }
             };
-        // A new depth image (window resized, session start) or a toggled `softParticles`.
         if let Some(m) = mats.get(&d.mat)
             && (m.depth != *depth || m.params != params)
             && let Some(mut m) = mats.get_mut(&d.mat)
@@ -717,9 +674,8 @@ fn draw_weather(
             d.mesh = assets.quads(d.cap, meshes);
             commands.entity(entity).insert(Mesh3d(d.mesh.clone()));
         }
-        // The vertex data of the render functions (`WeatherSystem::Render`, Rain `RainSystem::Render`): the centre,
-        // the colour,
-        // (u, v, size, spin) and the velocity (Rain) / the base wind tilt (the others; unused by the simple program).
+        // `WeatherSystem::Render` / `RainSystem::Render` vertex data: the centre, the colour, (u, v, size, spin)
+        // and the velocity (Rain) / the base wind tilt (the others).
         scratch.clear();
         scratch.push([f32::from_bits(n as u32), 0.0, 0.0, 0.0]);
         for p in &s.particles {
@@ -804,9 +760,8 @@ fn wanted(weather: &Weather, wind: Option<f32>, pak: &str) -> Option<f32> {
         .reduce(f32::max)
 }
 
-/// The looping sounds: the template `sound` of each system, and the manager's `windSound` (on while the wind factor is
-/// above 1.25, stopped at once below). `WeatherManager`: a destroyed system's sound
-/// fades out over 3000 ms (`SoundManager::FadeSound`, linear, stopped at the end: [`Fade`]).
+/// The looping sounds: each system's template `sound` and the manager's `windSound` (stopped at once below
+/// 1.25). A destroyed system's sound fades out over 3000 ms (`SoundManager::FadeSound`, linear: [`Fade`]).
 fn weather_sounds(
     state: Res<WeatherState>,
     data: Res<gd_game_core::data::GameData>,
@@ -836,7 +791,6 @@ fn weather_sounds(
             }
         }
     }
-    // Each wanted pak once: the systems' sounds, then the wind's unless a system loops the same pak.
     let systems = &weather.systems;
     let paks = systems
         .iter()
@@ -858,7 +812,7 @@ fn weather_sounds(
         let Some(info) = sounds.pak(&data, pak) else {
             continue;
         };
-        // Read in the background the first time: the loop starts on a later frame (it is not in `loops` until then).
+        // Fetched in the background: the loop starts on a later frame.
         let Some(file) = info
             .names
             .first()
@@ -881,8 +835,6 @@ fn weather_sounds(
     }
 }
 
-/// The world floor for weather: the rain ray against every physics surface, the gusts on the terrain height (from the
-/// camera focus height).
 struct Floor<'a>(&'a crate::collision::WorldCollision, f32);
 
 impl gd_sim::weather::Ground for Floor<'_> {
@@ -897,13 +849,11 @@ impl gd_sim::weather::Ground for Floor<'_> {
     }
 }
 
-/// The weather's own entities, despawned by [`clear_all`].
 type Owned<'w, 's> = (
     Query<'w, 's, Entity, With<WeatherDraw>>,
     Query<'w, 's, Entity, With<WeatherLoop>>,
 );
 
-/// Despawns every weather entity (the scene switched, the options switched off).
 fn clear_all(
     rt: &mut WeatherRuntime,
     state: &mut WeatherState,

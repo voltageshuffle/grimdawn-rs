@@ -1,6 +1,5 @@
 //! The character animation systems: the single-tick action pipeline
-//! (advance → finish → drive), the idle controllers and the background clip
-//! loads (the character data is [`gd_game_core::character`]).
+//! (advance → finish → drive), the idle controllers and the background clip loads.
 use crate::constitution::Constitution;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -19,9 +18,8 @@ impl Plugin for CharacterPlugin {
         app.add_message::<AnimCallback>()
             .init_resource::<AnimCache>()
             .add_systems(First, collect_anim_loads)
-            // The single-tick action pipeline (module doc): the animations advance and
-            // dispatch their callbacks before the frame's gameplay readers, so a hit point
-            // crossed this frame lands its damage this frame (the engine's inline dispatch).
+            // Callbacks dispatch before the gameplay readers: a hit point crossed this frame lands its damage
+            // this frame (the engine's inline dispatch).
             .add_systems(
                 Update,
                 (advance_animations, finish_actions)
@@ -50,10 +48,7 @@ impl Plugin for CharacterPlugin {
                 PostUpdate,
                 crate::turning::turn_characters.before(TransformSystems::Propagate),
             )
-            // `Animate` dispatches in Update; its PostUpdate readers (audio's
-            // `character_callbacks`) order after the set, which crosses schedules and
-            // would otherwise drop them before propagation: keep the set after it, so
-            // they read propagated transforms.
+            // `Animate`'s PostUpdate readers (audio's `character_callbacks`) must read propagated transforms.
             .configure_sets(
                 PostUpdate,
                 CharacterStage::Animate.after(TransformSystems::Propagate),
@@ -72,7 +67,7 @@ impl Plugin for CharacterPlugin {
     }
 }
 
-/// Files the clips [`AnimCache::ready`] parsed in the background, kept warm until their creatures hold them.
+/// Files the clips parsed in the background, kept warm until their creatures hold them.
 fn collect_anim_loads(mut cache: ResMut<AnimCache>) {
     use bevy::tasks::{block_on, futures_lite::future};
     if cache.loading.is_empty() {
@@ -94,10 +89,8 @@ fn collect_anim_loads(mut cache: ResMut<AnimCache>) {
     }
 }
 
-/// Parses a new character's whole clip set in the background and hands it the clips ([`HeldAnims`]), so its
-/// attack / hit / death clips are parsed before it first plays them instead of on the game thread mid-fight (PORT:
-/// the port's analogue of the engine's background `ResourceLoader`, as `SoundPak::PreLoad` is for sounds). A clip
-/// played before its set lands is parsed on the spot.
+/// Parses a new character's whole clip set in the background and hands it the clips ([`HeldAnims`]) (PORT: the
+/// analogue of the engine's background `ResourceLoader`). A clip played before its set lands is parsed on the spot.
 fn preload_anims(
     mut commands: Commands,
     data: Res<GameData>,
@@ -170,8 +163,7 @@ fn preload_anims(
     }
 }
 
-/// The start state of a new character ([`RenderHooks::char_state`]) and its attack hold (`GD_CHAR_HOLD`):
-/// applied to every character the frame it appears, before it is driven.
+/// The `GD_CHAR_STATE` / `GD_CHAR_HOLD` start state, applied the frame a character appears, before it is driven.
 #[cfg(feature = "dev")]
 fn start_hooks(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -188,20 +180,12 @@ fn start_hooks(
     }
 }
 
-/// Advances every character's animation by the frame time (scaled by
-/// slows, held by `GD_CHAR_HOLD`): stores the pose and its bone frames
-/// ([`Character::posed`]), the world-space root-motion velocity, and sends the
-/// callback points crossed — in `Update`, before the gameplay readers, so a hit
-/// point crossed this frame lands its damage this frame (the engine emits and
-/// dispatches callbacks inside the advance, `AnimChannel::Update` →
-/// `SkillManager::HandleSkillAnimationCallback`). Also arms
-/// [`Character::allow_interrupt`] at the clip's `AllowInterrupt` point, ends an
-/// evade's dash at `StopJump`, counts the attack-delay down, and stores the
-/// crossed entity events ([`Character::entity_events`]) for gd-render.
-/// A clip that has played out (`AnimChannel::settled`: corpses, finished
-/// one-shots) keeps its pose and is not sampled again.
-/// Characters advance in parallel (each touches only its own state and RNG); the
-/// callbacks then go out in query order, as one loop over the characters sends them.
+/// Advances every character's animation by the frame time (scaled by slows): stores the pose, the world-space
+/// root-motion velocity, and sends the callback points crossed before the gameplay readers (the engine
+/// dispatches inside the advance, `AnimChannel::Update` → `SkillManager::HandleSkillAnimationCallback`). Also
+/// arms [`Character::allow_interrupt`] at `AllowInterrupt`, ends an evade's dash at `StopJump`, counts the
+/// attack-delay down, and stores the crossed entity events. A settled clip keeps its pose and is not sampled.
+/// Characters advance in parallel; the callbacks then go out in query order.
 pub fn advance_animations(
     time: Res<Time>,
     mut chars: Query<(Entity, &Transform, &mut Character)>,
@@ -209,7 +193,7 @@ pub fn advance_animations(
 ) {
     let dt_ms = time.delta_secs() * 1000.0;
     chars.par_iter_mut().for_each(|(_, root_tf, mut c)| {
-        // `ControllerPlayer::Update` counts the attack-delay down with the frame's ms.
+        // `ControllerPlayer::Update`.
         c.attack_delay = (c.attack_delay - dt_ms).max(0.0);
         if c.channel.settled() {
             if c.root_velocity != Vec3::ZERO {
@@ -229,8 +213,7 @@ pub fn advance_animations(
         let k = c.time_scale();
         let ev = c.channel.update(dt * k, &c.body, &mut c.pose);
         c.repose();
-        // Characters are root entities: the local transform is the current one
-        // (propagation runs after the gameplay).
+        // Characters are root entities: the local transform is the current one.
         let root = root_tf.compute_affine();
         let v = anim::root_velocity_object(&c.body, ev.root_velocity, 1.0);
         c.root_velocity = root.transform_vector3(Vec3::from(v)) * k;
@@ -239,11 +222,10 @@ pub fn advance_animations(
                 "RightHandHit" | "LeftHandHit" => {
                     debug!("{}: {name} at frame {:.1}", c.record, c.channel.frame());
                 }
-                // `AttackAction::AnimationCallback` sets the flag the
-                // action matrix's permission query reads.
+                // `AttackAction::AnimationCallback`.
                 "AllowInterrupt" => c.allow_interrupt = true,
-                // The evade's dash over: the recovery is cancelable
-                // (`ControllerPlayerStateJumpToUseSkill::RequestSkillAction` refuses only the warm-up).
+                // The recovery is cancelable (`ControllerPlayerStateJumpToUseSkill::RequestSkillAction` refuses
+                // only the warm-up).
                 "StopJump" if c.playing == AnimType::Evade => {
                     c.evade_warmup = false;
                     c.allow_interrupt = true;
@@ -273,8 +255,8 @@ pub fn advance_animations(
     }
 }
 
-/// `ControllerPlayerStateIdle::OnUpdate` / `ControllerPlayerStateLongIdle::Attacked` (module doc): the player turns
-/// to the long idle after [`LONG_IDLE_AFTER_MS`] idling out of combat, and back to the combat idle when it fights.
+/// `ControllerPlayerStateIdle::OnUpdate` / `ControllerPlayerStateLongIdle::Attacked`: the long idle after
+/// [`LONG_IDLE_AFTER_MS`] idling out of combat, back to the combat idle when it fights.
 pub fn player_long_idle(
     time: Res<Time>,
     mut players: Query<(&mut Character, Option<&Constitution>), With<gd_game_core::player::Player>>,
@@ -296,9 +278,8 @@ pub fn player_long_idle(
     }
 }
 
-/// The NPC whose conversation is open plays the chat idle (module doc); at its start it turns to the player
-/// (`ChatAction::FaceTarget`: yaw only, when they are at least 1 m apart and the record's
-/// `rotateWhenChatting`, default on, allows it).
+/// The NPC whose conversation is open plays the chat idle; at its start it turns to the player
+/// (`ChatAction::FaceTarget`: yaw only, at least 1 m apart, `rotateWhenChatting` default on).
 pub fn npc_chat(
     conv: Res<crate::conversation::Conversation>,
     data: Res<GameData>,
@@ -336,10 +317,8 @@ pub fn npc_chat(
     }
 }
 
-/// Dispatches the animations' "End" callbacks: finishes the ended actions before
-/// the frame's requesters run — the engine's `CharacterHandlerUpdate`
-/// shape (finish ended actions → run pending → animate), so a swing that ends this
-/// frame chains into the next in the same pass, with no rendered idle frame between.
+/// Finishes the actions whose "End" callback came, before the frame's requesters run (the engine's
+/// `CharacterHandlerUpdate` order), so a swing that ends this frame chains into the next with no idle frame.
 pub fn finish_actions(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
     time: Res<Time>,
@@ -351,7 +330,6 @@ pub fn finish_actions(
     for (mut c, tf) in &mut chars {
         let c = &mut *c;
         c.derive_motion(&data, &mut cache, tf.map_or(1.0, |t| t.scale.x));
-        // The movers pass this frame's move clip speed again with their move state.
         c.move_rate = None;
         if c.state != CharState::Idle {
             c.idle = IdleMode::Combat;
@@ -388,20 +366,17 @@ pub fn finish_actions(
                 ) => {
                     c.state = CharState::Idle;
                     c.cast_anim = None;
-                    // The ended clip must not satisfy `drive_characters`' wanted check:
-                    // a requester may re-set the same state this frame (the swing chain),
-                    // and the settled clip would never advance again.
+                    // The settled clip must not satisfy `drive_characters`' wanted check: a requester may
+                    // re-set the same state this frame (the swing chain).
                     c.playing = AnimType::None;
                 }
-                // The proc's special ended: the swing is over (its hit point
-                // already fired from this clip, `combat::apply_hits`).
+                // The proc's special ended: the swing is over.
                 (CharState::Attack, AnimType::Special) => {
                     c.state = CharState::Idle;
                     c.playing = AnimType::None;
                     c.swing_special = None;
                 }
-                // The channel / whirlwind start clip ended: its loop plays
-                // until the requester releases (the loop's own "End" only
+                // The start clip ended: its loop plays until the requester releases (the loop's "End" only
                 // wraps). No loop clip: the action is over.
                 (CharState::Channel, AnimType::ChannelStart) => {
                     if !c.play(
@@ -452,12 +427,9 @@ pub fn finish_actions(
                     c.state = CharState::Idle;
                     c.playing = AnimType::None;
                 }
-                // The scripted clip keeps playing: a looped one (the doll's and the player's long idle) wraps with
-                // an "End" every cycle, and clearing `playing` here would make Idle restart the combat idle and the
-                // scripted clip every wrap (the doll's twitch).
+                // A looped scripted clip wraps with an "End" every cycle: clearing `playing` would restart it.
                 (CharState::Scripted, t) if t == c.scripted => c.state = CharState::Idle,
                 (CharState::Attack, t) if anim::is_attack(t) => {
-                    // `GD_CHAR_STATE=attack` (hooks.rs): swing again.
                     #[cfg(feature = "dev")]
                     if hooks.render.char_state.as_deref() == Some("attack") {
                         c.swing_special = None;
@@ -480,14 +452,12 @@ pub fn finish_actions(
     }
 }
 
-/// Starts animations for state changes. Runs after the frame's requesters
-/// (`CharacterStage::Drive` orders it after `CombatSet`): a state set this frame
-/// animates this frame, and the ended actions were already finished by
-/// [`finish_actions`] before the requesters ran.
-/// - A channel / whirlwind state whose skill stopped (its `gd_game_core::casting::Channel` gone: released, out of
-///   energy, a new action, a stun, an evade) is over ([`Character::end_channel`]): one place for every stop.
-/// - A move clip already playing whose mover now passes another caller speed ([`Character::move_rate`]) takes
-///   it in place. PORT: `Character::MoveTo` re-plays the clip (a new cycle, blended); the port keeps the cycle.
+/// Starts animations for state changes, after the frame's requesters (a state set this frame animates this
+/// frame).
+/// - A channel / whirlwind state whose `gd_game_core::casting::Channel` is gone is over
+///   ([`Character::end_channel`]): one place for every stop.
+/// - A playing move clip whose mover passes another caller speed takes it in place. PORT: `Character::MoveTo`
+///   re-plays the clip (a new cycle, blended); the port keeps the cycle.
 pub fn drive_characters(
     data: Res<GameData>,
     mut cache: ResMut<AnimCache>,
@@ -498,8 +468,7 @@ pub fn drive_characters(
         if !channel {
             c.end_channel();
         }
-        // The proc's special belongs to its swing: another state drops it
-        // (a plain swing's pool roll sets it again before this runs).
+        // The proc's special belongs to its swing (a plain swing's pool roll sets it again before this runs).
         if c.state != CharState::Attack {
             c.swing_special = None;
         }
@@ -511,11 +480,10 @@ pub fn drive_characters(
             && matches!(c.playing, AnimType::GetUpFaceDown | AnimType::GetUpFaceUp)
             && c.channel.current.as_ref().is_some_and(|a| a.speed == 0.0)
         {
-            // A corpse that died lying keeps its held frame (the engine's ragdoll just goes on).
+            // A corpse that died lying keeps its held frame.
             true
         } else if c.state == CharState::Attack && c.playing == AnimType::Special {
-            // Only the proc's own special is the swing: a cast's Special left
-            // over from an interrupted cast must not count.
+            // A cast's Special left over from an interrupted cast is not the swing.
             c.swing_special.is_some()
         } else {
             c.plays_own_clip()

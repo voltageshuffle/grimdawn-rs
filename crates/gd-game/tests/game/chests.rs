@@ -1,6 +1,5 @@
-//! Headless check of loot chests: opening one in reach drops loot once,
-//! plays its open sound and FX and is remembered for the session; locked
-//! ones do not open.
+//! Loot chests: opening one in reach drops loot once, plays its open sound and FX and is remembered for the
+//! session; locked ones do not open.
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use gd_game::chests::{Chest, spawn_chest};

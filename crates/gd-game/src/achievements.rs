@@ -1,6 +1,5 @@
-//! Achievements: the list (`gameengine.dbr`'s `achievementRecord`, its `achievementGroups` each with a `button`
-//! record and an `achievements` list) and which are unlocked ([`Achievements`]). Game.dll
-//! `AchievementManager` / `Achievement`:
+//! Achievements: the list (`gameengine.dbr`'s `achievementRecord` groups) and which are unlocked
+//! ([`Achievements`]). Game.dll `AchievementManager` / `Achievement`:
 //! - The unlock state is Steam's only: nothing is saved locally and the manager lives for the process (no session
 //!   reset); without Steam every achievement starts locked.
 //! - An unlock (of a locked, listed id) shows `tagAchievementUnlocked` over the `title` (type 1) and sends
@@ -15,13 +14,12 @@
 //!   [`faction_unlocks`]).
 //!
 //! PORT: tokens are seen as new entries in the story player's set. The engine's periodic checks wait for a Steam
-//! sync; here they always run, and the loaded save stands in for that sync: tokens held at story start and what
-//! the session's first periodic check finds unlock silently ([`SyncAchievement`]). `Stat` counters are the loaded
-//! save's plus this session's [`crate::play_stats::PlayCounts`]. The dungeon test is the monster's proxy being one
-//! the running dungeon activated. `NUM_PETS_ACTIVE` counts the player's live pets.
+//! sync; here the loaded save stands in for it: tokens held at story start and what the session's first periodic
+//! check finds unlock silently ([`SyncAchievement`]). `Stat` counters are the loaded save's plus this session's
+//! [`crate::play_stats::PlayCounts`]. The dungeon test is the monster's proxy being one the running dungeon
+//! activated. `NUM_PETS_ACTIVE` counts the player's live pets.
 use bevy::prelude::*;
 
-/// The game engine record (its `achievementRecord`).
 pub const ENGINE: &str = "records/game/gameengine.dbr";
 
 /// One achievement record (`achievement.tpl`).
@@ -31,28 +29,24 @@ pub struct Achievement {
     /// Text tags.
     pub title: String,
     pub description: String,
-    /// Not listed while locked (the window, `AchievementWindow::RefreshList`).
+    /// Not listed while locked (`AchievementWindow::RefreshList`).
     pub hidden: bool,
     pub locked_icon: String,
     pub unlocked_icon: String,
     /// `type`: `Unlock`, `Token`, `Kill`, `Stat` or `Faction`.
     pub kind: String,
-    /// `tokenName` (a `Token` achievement).
     pub tokens: Vec<String>,
-    /// `Kill`: the victim records (`killDbrs`), how many kills (`killCount`, default 1), the displayed difficulty
-    /// (`killDifficulty`, [`at_least_difficulty`]) and the hardcore-only flag (`killHardcore`).
+    /// `Kill`: `kill_difficulty` is a displayed difficulty ([`at_least_difficulty`]).
     pub kill_dbrs: Vec<String>,
     pub kill_count: u32,
     pub kill_difficulty: u32,
     pub kill_hardcore: bool,
-    /// `Stat`: the counter (`statName`), its threshold (`statCount`), and for `NUM_SKILL_TRACKING` /
-    /// `NUM_BUFFS_ACTIVE` the skill records (`skillNames`) and `requiresAll`.
+    /// `Stat`: `skill_names` / `requires_all` serve `NUM_SKILL_TRACKING` / `NUM_BUFFS_ACTIVE`.
     pub stat_name: String,
     pub stat_count: u32,
     pub skill_names: Vec<String>,
     pub requires_all: bool,
-    /// `Faction`: how many factions (`factionCount`) at which reputation (`factionValue`), of which
-    /// (`factionNames`; empty: every faction but the player's).
+    /// `Faction`: empty `faction_names` means every faction but the player's.
     pub faction_count: u32,
     pub faction_value: i32,
     pub faction_names: Vec<String>,
@@ -116,7 +110,7 @@ pub fn groups(db: &gd_formats::vfs::Database) -> Vec<Group> {
         .collect()
 }
 
-/// The ids unlocked in this process (module doc: a build without Steam has no other source).
+/// The ids unlocked in this process.
 #[derive(Resource, Default, Debug, Clone, PartialEq)]
 pub struct Achievements {
     pub unlocked: Vec<String>,
@@ -128,8 +122,8 @@ impl Achievements {
     }
 }
 
-/// The `Kill` achievements' kill counters by id (`AchievementKill::OnCreatureKilled`: the counter lives in the
-/// achievement object; the manager is the game engine's, so it keeps counting across sessions of the process).
+/// The `Kill` achievements' kill counters by id (`AchievementKill::OnCreatureKilled`); they live for the process,
+/// across sessions.
 #[derive(Resource, Default)]
 pub struct KillCounts(pub gd_formats::collections::HashMap<String, u32>);
 
@@ -137,8 +131,7 @@ pub struct KillCounts(pub gd_formats::collections::HashMap<String, u32>);
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct UnlockAchievement(pub String);
 
-/// Marks an achievement unlocked without the text or event 62 (`Achievement::Sync`; the module doc's
-/// PORT note: the loaded save stands in for Steam).
+/// Marks an achievement unlocked without the text or event 62 (`Achievement::Sync`).
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct SyncAchievement(pub String);
 
@@ -146,10 +139,7 @@ pub struct SyncAchievement(pub String);
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct AchievementUnlocked(pub String);
 
-/// The ids `GameEngine::ScriptEvent` unlocks for event `name`. `mode`: the session's
-/// difficulty (0 Normal, 1 Elite, 2 Ultimate) and challenge; `level`: the player's (`Player.level`). The displayed
-/// difficulties (`GameInfo::GetIsPlayingAtLeastThisDifficulty`, Engine.dll): 1 Veteran = Elite or above
-/// or the Veteran challenge, 2 Elite = difficulty above Normal, 3 Ultimate.
+/// The ids `GameEngine::ScriptEvent` unlocks for event `name`; `level`: the player's.
 pub fn script_event_unlocks(
     name: &str,
     mode: gd_rules::mode::Mode,
@@ -220,9 +210,8 @@ pub fn at_least_difficulty(mode: gd_rules::mode::Mode, displayed: u32) -> bool {
     }
 }
 
-/// The `Kill` achievements a kill of `record` counts for (`AchievementKill::OnCreatureKilled`): the record in
-/// `killDbrs`, `killHardcore` matching the session and the session at least `killDifficulty`. The caller keeps the
-/// counters ([`KillCounts`]) and unlocks at `kill_count`.
+/// The `Kill` achievements a kill of `record` counts for (`AchievementKill::OnCreatureKilled`); the caller keeps
+/// the counters ([`KillCounts`]) and unlocks at `kill_count`.
 pub fn kill_matches<'a>(
     groups: &'a [Group],
     record: &str,
@@ -241,25 +230,23 @@ pub fn kill_matches<'a>(
         .collect()
 }
 
-/// The player's counters the `Stat` achievements read (`AchievementStat::CheckUnlocks`): the loaded save's play stats
-/// plus this session's [`crate::play_stats::PlayCounts`], the level, the Crucible records and the live pets / buffs.
+/// The player's counters the `Stat` achievements read (`AchievementStat::CheckUnlocks`).
 pub struct StatContext<'a> {
-    /// The loaded character's stats; `None` for a new character (every counter 0).
+    /// `None` for a new character (every counter 0).
     pub stats: Option<&'a gd_formats::save::gdc::PlayStats>,
     pub counts: &'a crate::play_stats::PlayCounts,
     pub level: u32,
     pub hardcore: bool,
     pub difficulty: usize,
-    /// The story's Crucible records (`story.game.survival`), when a story runs.
+    /// The story's Crucible records, when a story runs.
     pub survival: Option<&'a gd_story::story::state::Survival>,
-    /// The player's live pets (`NUM_PETS_ACTIVE`).
     pub pets: u32,
-    /// The player's active buff records and their profile names, lower-case (`NUM_BUFFS_ACTIVE`).
+    /// Active buff records and their profile names, lower-case.
     pub active_buffs: Vec<String>,
 }
 
 impl StatContext<'_> {
-    /// The counter of `statName` (the `Stat` loader's name → enum map, `AchievementStat::Load`).
+    /// The counter of `statName` (`AchievementStat::Load`'s name map).
     fn value(&self, name: &str) -> u32 {
         let s = self.stats;
         let f = |k: fn(&gd_formats::save::gdc::PlayStats) -> u32| s.map_or(0, k);
@@ -367,8 +354,8 @@ pub fn stat_unlocks<'a>(groups: &'a [Group], ctx: &StatContext<'_>) -> Vec<&'a s
 }
 
 /// The `Faction` achievements reached (`AchievementFaction::CheckUnlocks`): `factionCount` of the listed factions
-/// (empty: every faction but the player's, the loader `AchievementFaction::Load`'s 1..46) at `factionValue`
-/// reputation — at most when negative. The reputation is truncated to an integer first (`GetValue`'s float cast).
+/// (empty: 1..46, every faction but the player's) at `factionValue` reputation, at most when negative; the
+/// reputation is truncated to an integer first.
 pub fn faction_unlocks<'a>(
     groups: &'a [Group],
     factions: &crate::factions::PlayerFactions,
@@ -431,11 +418,10 @@ impl Plugin for AchievementsPlugin {
     }
 }
 
-/// The scripts' events ([`script_event_unlocks`]).
 fn script_events(
     mut effects: MessageReader<gd_game_core::story::StoryEffect>,
     mode: Res<gd_game_core::session::GameMode>,
-    // Option: a new character has no loaded save; the progress exists once the player does.
+    // Option: a new character has no loaded save; progress exists once the player does.
     (loaded, choice, progress): (
         Option<Res<gd_game_core::session::LoadedCharacter>>,
         Res<gd_game_core::session::Choice>,
@@ -457,7 +443,7 @@ fn script_events(
     }
 }
 
-/// The achievement list ([`groups`]) built once per session (a session may mount another mod).
+/// The achievement list, rebuilt per session (a session may mount another mod).
 #[derive(bevy::ecs::system::SystemParam)]
 struct GroupList<'w, 's> {
     data: Res<'w, gd_game_core::data::GameData>,
@@ -475,8 +461,7 @@ impl GroupList<'_, '_> {
     }
 }
 
-/// Tokens the player newly holds ([`token_unlocks`]; the module doc's PORT note). The ones held when the session's
-/// story starts are synced.
+/// Tokens the player newly holds unlock ([`token_unlocks`]); those held at story start are synced.
 fn token_events(
     rt: Option<NonSend<gd_game_core::story::StoryRuntime>>,
     mut list: GroupList,
@@ -513,8 +498,7 @@ fn token_events(
     *seen = tokens.iter().cloned().collect();
 }
 
-/// The player's kills ([`kill_matches`]; the module doc's handler rules: the killer, the victim's
-/// `giveXP` and dungeon flags).
+/// The `Kill` achievements' counting ([`kill_matches`]).
 #[allow(clippy::too_many_arguments)]
 fn kill_events(
     mut killed: MessageReader<crate::combat::MonsterKilled>,
@@ -546,7 +530,7 @@ fn kill_events(
         if !give_xp {
             continue;
         }
-        // `InEndlessDungeon` (module doc's PORT note).
+        // `InEndlessDungeon`.
         let in_dungeon = rt.as_ref().is_some_and(|rt| {
             let story = rt.story.borrow();
             monsters.get(k.entity).is_ok_and(|m| {
@@ -575,9 +559,8 @@ fn kill_events(
     }
 }
 
-/// The periodic `Stat` / `Faction` checks ([`stat_unlocks`], [`faction_unlocks`]; the manager update
-/// `AchievementManager::Update`'s 3000 ms, the module doc's PORT note on the Steam gate). A session's first check is
-/// the sync.
+/// The periodic `Stat` / `Faction` checks (`AchievementManager::Update`, every 3 s); a session's first check is the
+/// sync.
 #[allow(clippy::too_many_arguments)]
 fn periodic_events(
     time: Res<Time>,
@@ -585,7 +568,7 @@ fn periodic_events(
     mut fresh: gd_game_core::session::NewSession,
     mut list: GroupList,
     mode: Res<gd_game_core::session::GameMode>,
-    // Option: a new character has no loaded save; the progress exists once the player does.
+    // Option: a new character has no loaded save; progress exists once the player does.
     (loaded, choice, progress): (
         Option<Res<gd_game_core::session::LoadedCharacter>>,
         Res<gd_game_core::session::Choice>,
@@ -618,7 +601,7 @@ fn periodic_events(
         return;
     }
     *timer -= 3.0;
-    // The engine's checks read the main player; nothing without one.
+    // The engine's checks read the main player.
     let Ok(player) = players.single() else {
         return;
     };

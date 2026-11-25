@@ -9,9 +9,8 @@
 //! call; `jitter` says whether the store passed the 20% base jitter
 //! (`0x41A00000`) to it.
 //!
-//! The table was extracted once with an IDA script that is not kept; to
-//! extend or re-check it, list the creator calls of each store `Load` reached
-//! from `InitializeItem` and the float argument each one gets
+//! To extend or re-check the table, list the creator calls of each store
+//! `Load` reached from `InitializeItem` and the float argument each one gets
 //! (`docs/reverse-engineering.md`).
 use super::resolve::{Creator, StoreKind};
 

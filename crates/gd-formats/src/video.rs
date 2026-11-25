@@ -2,7 +2,7 @@
 //! Vorbis audio stream; the stock ones (`video/intro.ogg`, `gdx1/video/gdx1_intro.ogg`) also carry an Ogg Skeleton
 //! stream and are 1920 x 1080 (frame 1920 x 1088), 24 fps, 4:2:0, with 48 kHz stereo Vorbis. Only that container
 //! and those two codecs are read ([`Video`]): Theora by `theora_nrp` (a port of libtheora's decoder), Vorbis by
-//! lewton (already in the tree through Bevy's audio). Fail-closed: a frame above [`MAX_PIXELS`], audio of more than
+//! lewton. Fail-closed: a frame above [`MAX_PIXELS`], audio of more than
 //! two channels, or a broken header ends the video.
 //!
 //! Subtitles (`TheoraVideoPlayer::Play`): `<video without extension>.txt`, one `<seconds>=<text>` line each (the
@@ -77,7 +77,7 @@ impl<R: Read> Video<R> {
         let (w, _) = self.picture_size().context("no picture yet")?;
         self.ogv
             .picture_rgba(out, w as usize * 4)
-            .map_err(|e| anyhow::anyhow!("theora: {e:?}"))
+            .map_err(|e| anyhow::anyhow!("theora: {e}"))
     }
 
     /// The next frame or block of samples, in file order; `None` at the end.
@@ -86,7 +86,7 @@ impl<R: Read> Video<R> {
             let event = self
                 .ogv
                 .next_event()
-                .map_err(|e| anyhow::anyhow!("theora: {e:?}"))?;
+                .map_err(|e| anyhow::anyhow!("theora: {e}"))?;
             match event {
                 Some(OgvEvent::Headers { .. }) => {}
                 Some(OgvEvent::VideoFrame {
@@ -136,7 +136,7 @@ fn vorbis(
         return Ok(None);
     };
     let Some(ident) = &v.ident else {
-        let id = read_header_ident(bytes).map_err(|e| anyhow::anyhow!("vorbis: {e:?}"))?;
+        let id = read_header_ident(bytes).map_err(|e| anyhow::anyhow!("vorbis: {e}"))?;
         ensure!(
             (1..=2).contains(&id.audio_channels),
             "vorbis: {} channels",
@@ -146,7 +146,7 @@ fn vorbis(
         return Ok(None);
     };
     if !v.comment {
-        read_header_comment(bytes).map_err(|e| anyhow::anyhow!("vorbis: {e:?}"))?;
+        read_header_comment(bytes).map_err(|e| anyhow::anyhow!("vorbis: {e}"))?;
         v.comment = true;
         return Ok(None);
     }
@@ -156,7 +156,7 @@ fn vorbis(
             ident.audio_channels,
             (ident.blocksize_0, ident.blocksize_1),
         )
-        .map_err(|e| anyhow::anyhow!("vorbis: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("vorbis: {e}"))?;
         v.setup = Some(s);
         return Ok(None);
     };

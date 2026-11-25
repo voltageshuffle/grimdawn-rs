@@ -5,7 +5,7 @@
 // (TEXCOORD1.xy), the scroll offset apart (.zw: textureDirection · textureScroll · time
 // on layers, (0, textureScroll · time) on paths) and the bump frame's tangent (layers:
 // the normalised textureDirection, paths: the vertex's flow tangent, uv_b); vertex
-// colour r = the depth opacity (water.rs depth_opacity), a = the painted alpha.
+// colour r = the depth opacity, a = the painted alpha.
 // The bump (bumpSampler) is the type's NoiseTexture target (water.rs render_noise), normalMap = 0
 // on the stock lava record (lavadefault.dbr): the raw composite height, its r channel.
 // No reflection, no sky, no specular, no glow style (the technique list has none):

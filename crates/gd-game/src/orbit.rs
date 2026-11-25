@@ -1,100 +1,44 @@
-//! Orbiting projectiles: `Skill_AttackProjectileOrbiting` (Elemental Force,
-//! the devotion hammers / Eye of Dreeg / Fiend torrent, Eon Bolt, the Avatar
-//! of Ulzuin and eye-of-the-gods item skills, ~40 monster and boss skills),
-//! `SkillSecondary_AttackProjectileOrbiting` (Eye of Reckoning's orbs) and the
-//! `ProjectileOrbiting` projectile they launch; a few `Skill_AttackProjectileRing`s
-//! (Gaze of Korvaak, the celestial inverse novas, a devotion ring) launch
-//! that projectile too. Stock data: 54 `Skill_AttackProjectileOrbiting`, 2
-//! secondary and 9 ring records launch 54 of the 71 `ProjectileOrbiting`
-//! records.
+//! Orbiting projectiles: `Skill_AttackProjectileOrbiting`, `SkillSecondary_AttackProjectileOrbiting` and
+//! the `ProjectileOrbiting` projectile they launch; some `Skill_AttackProjectileRing`s launch it too.
 //!
 //! Game.dll:
-//! - `Skill_AttackProjectileOrbiting::Load`: `projectilePeriod`
-//!   × 1000 → int ms; `projectileDirection` (`ResolveEnum_ProjectileDirection`): `Clockwise` 0,
-//!   `Counterclockwise` 1, `Alternate` 2, `Randomize` 3, anything else 0
-//!   (the Eye of Dreeg's `Random` is clockwise); `projectileStart`
-//!   (`ResolveEnum_ProjectileStart`): `Front` 0, `Randomize` 1,
-//!   anything else 0 (the template's `Front;Randomize` is Front). The
-//!   secondary's `Load` reads the same.
-//! - `ActivateNow` starts a burst only while none runs (the
-//!   count left is 0 and the launch timer has run out, `<= 0`; a cast during
-//!   one is still paid, the activation is ignored): the count is
-//!   `SkillProfile::GetNumberOfProjectiles(level)` (`skillProjectileNumber`
-//!   at the level, no modifiers; 1 without the list), the timer 100 ms, the
-//!   direction its enum (`Alternate` starting at 1), and with `Randomize`
-//!   start one angle `rand()` in [0, 2π] for the whole burst.
-//!   `SkillSecondary_AttackProjectileOrbiting::ActivateNow`
-//!   (Ashes of Malmouth content) does the same and keeps the caster's
-//!   coordinates with the activation point as their position for the burst.
-//! - `Update` (and the secondary's): the timer counts
-//!   down while `>= 0`; when it goes below 0 with projectiles left: the
-//!   launch coordinates are the caster's now (the secondary: the kept ones),
-//!   `Alternate` flips the direction (so launches go 0, 1, 0, …),
-//!   `Randomize` turns the coordinates to face (cos a, 0, sin a); then
-//!   `ProjectileLimit`: `skillProjectileMaximumNumber`
-//!   (`SkillProfile.maxProjectiles`, 0 = none) live projectiles of this skill end the
-//!   whole burst (count 0); else one projectile is created there with the
-//!   direction, the timer becomes the period, the count drops by one. A
-//!   period of 0 launches one per frame.
-//! - `Skill_AttackProjectileRing::ActivateNow` creates its ring
-//!   with direction 0, each projectile's coordinates turned to its ring
-//!   heading.
-//! - `ProjectileOrbiting::Load` (after
-//!   `ProjectileFireballLike::Load`): `projectileStartDistance`,
-//!   `projectileOrbitRate` (° → rad/s), `projectileFollow`,
-//!   `projectileDuration` (× 1000 ms), `disableCollision` (read, never
-//!   used), `inverse`; the re-hit time π / rate (int ms). Missing fields
-//!   are 0 (no follow, no duration: it ends on its first update).
-//! - `ProjectileOrbiting::ProjectileGo`: direction 3 is a random bit (the
-//!   projectile's Park–Miller seed). The centre is the launch position, for
-//!   a character owner the owner's position, 1 m up; the launch facing made
-//!   level (when not ~zero, `LookIn`) times the start distance is the
-//!   offset; it starts at centre + offset. The radial speed is
-//!   `GetTotalSpeed` (`projectileVelocity` × (1 + speed modifier %),
-//!   [`crate::casting::proj_speed`]; negative spirals in).
-//! - `ProjectileOrbiting::UpdateSelf`, each frame while in the world: the
-//!   duration counts down; at 0 `ProjectileStop` (a miss). Else the offset
-//!   grows by its unit vector × radial speed × dt and turns by rate × dt
-//!   about +Y (x' = x cos θ − z sin θ, z' = z cos θ + x sin θ; direction 1
-//!   negates θ: Clockwise seen from above, Counterclockwise); `projectileFollow`
-//!   moves the centre to the living owner + 1 m (owner gone or dead:
-//!   `ProjectileStop`); `inverse` stops it once it is within 1 m of the
-//!   centre (horizontally); then it is put at centre + offset. Then
-//!   `ProjectileFireballLike::UpdateSelf` as for any flight:
-//!   the 0.1–100 pierce roll against the pierce chance, the path targets
-//!   (`ProcessPathTargets`, overridden by `ProjectileOrbiting::ProcessPathTargets` to first forget hits
-//!   older than the re-hit time, so a foe is hit again each half orbit),
-//!   each one's `ProcessExplosion` around it (its own known-target list, never
-//!   forgotten: once per projectile), no pierce and a hit: `ProjectileHit`
-//!   (gone); else past `projectileDistance` from the launch position:
-//!   `ProjectileStop`. A stop deletes it (exploding first with
-//!   `explodeOnMiss`). World contact is `ProjectileFireballLike::
-//!   CollisionCallback`, as for other flights (`crate::collision`).
+//! - `Skill_AttackProjectileOrbiting::Load` (the secondary's alike): `projectilePeriod` × 1000 → int ms;
+//!   `projectileDirection`: `Clockwise` 0, `Counterclockwise` 1, `Alternate` 2, `Randomize` 3, else 0;
+//!   `projectileStart`: `Front` 0, `Randomize` 1, else 0.
+//! - `ActivateNow` starts a burst only while none runs (count left 0 and launch timer `<= 0`; a cast during
+//!   one is still paid): count `GetNumberOfProjectiles(level)` (`skillProjectileNumber`, no modifiers; 1
+//!   without it), timer 100 ms, the direction (`Alternate` starting at 1), and with `Randomize` one start
+//!   angle `rand()` in [0, 2π] for the whole burst. The secondary also keeps the caster's coordinates at
+//!   the activation point for the burst.
+//! - `Update`: the timer counts down while `>= 0`; below 0 with projectiles left: launch coordinates are
+//!   the caster's now (the secondary: the kept ones), `Alternate` flips the direction, `Randomize` turns
+//!   them to face (cos a, 0, sin a); then `ProjectileLimit`: `skillProjectileMaximumNumber` (0 = none) live
+//!   projectiles of this skill end the whole burst; else one projectile is created, the timer becomes the
+//!   period, the count drops by one. A period of 0 launches one per frame.
+//! - `Skill_AttackProjectileRing::ActivateNow` creates each orbiter at caster + 1 m up + heading ×
+//!   `GetRadius` with direction 0, facing its ring heading; that is the `projectileDistance` origin.
+//! - `ProjectileOrbiting::Load`: `projectileStartDistance`, `projectileOrbitRate` (° → rad/s),
+//!   `projectileFollow`, `projectileDuration` (× 1000 ms), `inverse` (`disableCollision` is never used);
+//!   the re-hit time π / rate (int ms). Missing fields are 0 (no duration: it ends on its first update).
+//! - `ProjectileGo`: direction 3 is a random bit. The centre is the launch position (a character owner's
+//!   position), 1 m up; the level launch facing × start distance is the offset. The radial speed is
+//!   `GetTotalSpeed` ([`crate::casting::proj_speed`]; negative spirals in).
+//! - `UpdateSelf`: the duration counts down; at 0 `ProjectileStop`. Else the offset grows by its unit
+//!   vector × radial speed × dt and turns by rate × dt about +Y (x' = x cos θ − z sin θ, z' = z cos θ + x
+//!   sin θ; direction 1 negates θ); `projectileFollow` moves the centre to the living owner + 1 m (owner
+//!   gone or dead: stop); `inverse` stops within 1 m of the centre (horizontally); then it is put at the
+//!   centre plus the offset. Then `ProjectileFireballLike::UpdateSelf` as for any flight, with
+//!   `ProcessPathTargets` overridden to first forget hits older than the re-hit time (a foe is hit again
+//!   each half orbit).
+//! - Explosions (`ProjectileBase::ProcessExplosion`, `FilterAndAddKnownTargets`): a sphere query at the hit
+//!   foe; a foe passes only if in neither the explosion's own list (never forgotten) nor the projectile's
+//!   hit map, so the hit foe itself is spared; every path target of a frame is in the map before the first
+//!   explosion runs. Foes found in the map are added to the list without being hit.
+//! - `GameEngine::FilterInvalidTargets` drops hiding characters from every target query.
 //!
-//! - Explosions (`ProjectileBase::ProcessExplosion`, `FilterAndAddKnownTargets`,
-//!   `GameEngine::GetTargetsInRadius`): a sphere
-//!   query (heights count) at the hit foe's coordinates; a foe passes only if
-//!   it is in neither the explosion's own list (never forgotten) nor the
-//!   projectile's hit map (the path hits, and earlier explosion victims until
-//!   the re-hit time forgets them), so the hit foe itself is spared; every
-//!   path target of a frame is in the map before the first explosion runs.
-//!   Foes found in the map are added to the list without being hit.
-//! - A ring's orbiter is created at the ring coordinates
-//!   (`Skill_AttackProjectileRing::ActivateNow`: caster + 1 m up + heading ×
-//!   `GetRadius`), which is the `projectileDistance` origin (`ProjectileGo`
-//!   places the entity at `Projectile.launchCoords`).
-//!
-//! - `GameEngine::FilterInvalidTargets` drops hiding characters
-//!   (`combat::VictimSideItem::hiding`) from every target query, so an
-//!   orbiter neither hits nor stops on one (`combat::Side::hits`).
-//!
-//! Hits: the path query is `ProjectileBase::GetTargetsAlongPath` (`GetTargetsAroundRay` from the last position,
-//! max(step, 1) m, the touch radius thick, against the foe's world box) and the explosion
-//! `GetTargetsInRadius` (`Combatant::in_radius`).
-//! PORT: the random start angle and the direction bit use the port's generator; secondaries are fired by the
-//! projectile's hits only. The flight / hit / explosion path is the shared `casting::fly_projectiles` (the
-//! engine's `ProjectileOrbiting::UpdateSelf` ends in `ProjectileFireballLike::UpdateSelf`); only the steering
-//! lives here ([`steer`]), with the re-hit map and the explosion's known-target list on [`Orbiting`].
+//! PORT: the random start angle and direction bit use the port's generator; secondaries are fired by the
+//! projectile's hits only. Only the steering lives here ([`steer`]); flight, hits and explosions are the
+//! shared `casting::fly_projectiles`.
 use crate::casting::Projectile;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -118,7 +62,6 @@ impl Plugin for OrbitPlugin {
     }
 }
 
-/// The projectile class that orbits.
 pub const PROJECTILE_CLASS: &str = "ProjectileOrbiting";
 
 /// `projectileDirection` (`Skill_AttackProjectileOrbiting::ResolveEnum_ProjectileDirection`).
@@ -141,8 +84,7 @@ impl Direction {
     }
 }
 
-/// What an orbiting skill's activation starts (its `Load` fields at the cast's
-/// level).
+/// What an orbiting skill's activation starts (its `Load` fields at the cast's level).
 #[derive(Clone, Debug)]
 pub struct BurstSpec {
     pub number: u32,
@@ -157,9 +99,7 @@ pub struct BurstSpec {
 }
 
 impl BurstSpec {
-    /// The burst of an orbiting skill record (`None`: another class);
-    /// `at`: the activation point and the caster's facing (kept by the
-    /// secondary).
+    /// `None`: another class. `at`: the activation point and the caster's facing (kept by the secondary).
     pub fn of(rec: &Record, li: usize, at: (Vec3, Vec3)) -> Option<Self> {
         let secondary = match rec.class.as_str() {
             "Skill_AttackProjectileOrbiting" => false,
@@ -190,7 +130,7 @@ pub enum How {
     Now { from: Vec3, forward: Vec3 },
 }
 
-/// An orbiting launch fired (`casting.rs`).
+/// An orbiting launch fired.
 #[derive(Message, Clone)]
 pub struct Launch {
     pub caster: Entity,
@@ -205,7 +145,7 @@ pub struct Launch {
     pub how: How,
 }
 
-/// A running burst of one caster's orbiting skill (the skill object's state).
+/// A running burst of one caster's orbiting skill.
 #[derive(Component)]
 pub struct Burst {
     pub caster: Entity,
@@ -220,16 +160,14 @@ pub struct Burst {
     angle: f32,
 }
 
-/// The orbit of a `ProjectileOrbiting` (on its [`Projectile`] entity):
-/// [`steer`] runs its `UpdateSelf`'s steering, the shared flight in
-/// `casting::fly_projectiles` does the rest (hits, explosion, world contact).
+/// The orbit of a `ProjectileOrbiting` [`Projectile`]; [`steer`] runs its steering.
 #[derive(Component, Clone, Debug)]
 pub struct Orbiting {
     pub center: Vec3,
     pub offset: Vec3,
     pub follow: bool,
     pub inverse: bool,
-    /// `projectileOrbitRate` (rad/s) and the direction (1: counterclockwise).
+    /// `projectileOrbitRate` (rad/s) and the direction.
     pub rate: f32,
     pub counter: bool,
     /// Radial speed (m/s).
@@ -356,8 +294,7 @@ fn bursts(
     }
 }
 
-/// `ProjectileGo`: the projectile at the owner + 1 m + the level launch facing
-/// × start distance.
+/// `ProjectileGo`.
 fn spawn_one(
     commands: &mut Commands,
     data: &GameData,
@@ -416,9 +353,8 @@ fn spawn_one(
     });
 }
 
-/// One orbit step: the offset grows by its unit vector × `radial` × `dt` and
-/// turns by `rate` × `dt` about +Y (clockwise from above; `counter` the other
-/// way), as `UpdateSelf` does.
+/// One orbit step: the offset grows by its unit vector × `radial` × `dt` and turns by `rate` × `dt`
+/// about +Y (clockwise from above; `counter` the other way).
 pub fn step_offset(offset: Vec3, radial: f32, rate: f32, counter: bool, dt: f32) -> Vec3 {
     let o = offset + offset.normalize_or_zero() * radial * dt;
     let t = if counter { -rate * dt } else { rate * dt };
@@ -426,16 +362,8 @@ pub fn step_offset(offset: Vec3, radial: f32, rate: f32, counter: bool, dt: f32)
     Vec3::new(c * o.x - s * o.z, o.y, c * o.z + s * o.x)
 }
 
-/// One frame of `ProjectileOrbiting::UpdateSelf`'s steering:
-/// the duration counts down; the offset grows by its unit vector
-/// × radial speed × dt and turns by rate × dt about +Y; `projectileFollow`
-/// moves the centre to the living owner + 1 m (owner gone or dead: stop);
-/// `inverse` stops within 1 m of the centre (level distance); the projectile
-/// is put at centre + offset; the re-hit map forgets its expired entries.
-/// The flight, hits and explosion that follow are the shared
-/// `casting::fly_projectiles` (`ProjectileFireballLike::UpdateSelf`), as the
-/// engine shares them. `owner`: the living owner's position. True when the
-/// orbit stops it (`ProjectileStop`, a miss).
+/// One frame of `ProjectileOrbiting::UpdateSelf`'s steering (module doc); the re-hit map forgets its expired
+/// entries. `owner`: the living owner's position. True when the orbit stops it (`ProjectileStop`).
 pub(crate) fn steer(o: &mut Orbiting, tf: &mut Transform, dt: f32, owner: Option<Vec3>) -> bool {
     o.left -= dt;
     if o.left <= 0.0 {

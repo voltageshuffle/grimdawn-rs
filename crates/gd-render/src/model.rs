@@ -4,9 +4,7 @@
 //!
 //! PORT: the engine draws a mesh face set by face set (`GraphicsMesh`); the port merges the face sets that
 //! share a material and fading section (`part_sections`) into one Bevy mesh with their index ranges
-//! concatenated in face-set order, holding only the vertices they use. Bevy meshes cannot share a vertex
-//! buffer, so one mesh per face set uploaded the whole vertex set again for each; merged, a model costs one
-//! draw and one skin per material instead of per face set. Bone indices are already global
+//! concatenated in face-set order, holding only the vertices they use. Bone indices are already global
 //! (`Msh::global_bone_indices`), so the face sets' palettes are not needed to draw.
 //!
 //! Conventions: object space is right-handed, Y-up, matching
@@ -26,32 +24,27 @@
 //! done). Only the channel's current animation fires: `AnimChannel::Update`
 //! passes the entity to the fading ones as null. Objects animate through the
 //! same channel as characters ([`Animator`] + its `ObjectAnim` channel:
-//! cross-fades, callbacks and entity events from the one advance). Stock: ~1,180 `.anm`, mostly
-//! creature attacks and casts (482 `EffectEntity` records, 20 `FxMesh`, 13
-//! `GibEffectEntity`), e.g. the Aetherial abomination's slam trails at both
-//! hands, and the personal riftgate's open animation creating its portal
-//! effect. A `RemoveEntity { frame, entity, attach }` passing removes the
+//! cross-fades, callbacks and entity events from the one advance).
+//! A `RemoveEntity { frame, entity, attach }` passing removes the
 //! first entity attached to the root with that record and attach point
-//! (`Entity::RemoveAttachedEntity`: `Detach` + `DestroyObjectEx`,
-//! no fade; the beronath / giant / hellhound / yeti ground-chunk `FxMesh`es).
+//! (`Entity::RemoveAttachedEntity`: `Detach` + `DestroyObjectEx`, no fade).
 //! The effect follows its attach point as posed this frame ([`AnimFx`]:
 //! `Actor::GetAttachedCoordsInRegion`, the parent bone's posed frame × the
 //! point, scaled by the actor) and goes with the root, unless the root has
 //! [`DetachEffects`] (it then stops emitting and fades out where it is).
 //! A `GibEffectEntity` also launches its gib meshes from the point
-//! ([`AnimGibs`], flown by grimdawn `gibs.rs` the frame the event fires;
-//! `GibEffectEntity::InitialUpdate`).
+//! ([`AnimGibs`]; `GibEffectEntity::InitialUpdate`).
 //! PORT:
 //! the engine's `RemoveAttachedEntity` compares the attach name with a
 //! function-static `Name` made from its first call's argument, the port
 //! compares each event's own; paper dolls fire nothing.
-//! PORT: the model cache holds its models weakly (`gd_game_core::weak_cache`) and each spawned part holds its model
+//! PORT: the model cache holds its models weakly and each spawned part holds its model
 //! ([`ModelRef`]), so a model and its meshes go with its last instance instead of 5 s after (the engine's
 //! `BaseResourceManager`).
 //! PORT: an animated object model out of every view (its bounds beyond `character::POSE_MARGIN` of every active
 //! camera's frustum, the characters' rule) still advances its channel, so its clock, callbacks and entity events run
 //! on and it resumes in phase, but is not posed and its joints are not written until it comes back
-//! ([`animate_skeletons`]): most looping weather decorations of the loaded levels are off screen.
+//! ([`animate_skeletons`]).
 use crate::render::material::{MaterialAssets, MeshFacts, PartMaterial};
 use crate::textures::Textures;
 use bevy::asset::RenderAssetUsages;
@@ -103,17 +96,14 @@ impl Plugin for ModelPlugin {
                         .before(crate::fx::FxSystems),
                 ),
             );
-        // One anim cache: the render cache shares gd-game's parsed-`.anm`
-        // store, so a file is parsed once (`drop_on_mod_change` re-links it
-        // when a session's mod mount replaced the resource).
+        // The render cache shares gd-game's parsed-`.anm` store (`drop_on_mod_change` re-links it).
         let shared = app
             .world_mut()
             .resource::<gd_game_core::character::AnimCache>()
             .shared();
         app.world_mut().resource_mut::<ModelCache>().anims = shared;
-        // The same drop runs synchronously inside `gd_game::session::set_mod_data` (the mod
-        // swap and the cache drop in one call, no frame of the old mod's assets); the `First`
-        // run above stays as the backstop for a mount that did not go through it.
+        // `gd_game::session::set_mod_data` runs the same drop synchronously with the mod swap; the `First` run above
+        // is the backstop for a mount that did not go through it.
         let drop = app.world_mut().register_system(drop_on_mod_change);
         app.world_mut()
             .insert_resource(gd_game_core::data::ModCacheDrop(drop));
@@ -131,13 +121,12 @@ pub struct ModelAsset {
     /// part; `None` when the part's material can never fade (no "…T.ssh"
     /// variant of its shader, [`transparent_variant_exists`]).
     pub part_sections: Vec<Option<u32>>,
-    /// Static culling AABB of every skinned part, the whole mesh's ([`conservative_bounds`]), instead of
-    /// `DynamicSkinnedMeshBounds`' per-frame recompute.
+    /// Static culling AABB of every skinned part, the whole mesh's ([`conservative_bounds`]).
     pub skinned_bounds: Aabb,
     /// What the materials were built for ([`MaterialAssets::reshade`]).
     pub mesh: MeshFacts,
     pub inverse_bindposes: Option<Handle<SkinnedMeshInverseBindposes>>,
-    /// The objects the mesh creates at its attach points (`fx::mesh_creations`).
+    /// The objects the mesh creates at its attach points.
     pub creations: Arc<[crate::fx::MeshCreation]>,
 }
 
@@ -169,16 +158,13 @@ pub struct ModelCache {
     fresh: gd_game_core::weak_cache::Fresh<Arc<ModelAsset>>,
 }
 
-/// The mounted mod changed and the render caches were dropped ([`drop_on_mod_change`]); the sound
-/// cache (`gd_audio::Sounds`) clears on it.
+/// The mounted mod changed and the render caches were dropped ([`drop_on_mod_change`]).
 #[derive(Message)]
 pub struct ModChanged;
 
 /// The render caches keyed by asset path (models, animations, textures, effects, terrain layers, shaders and grass
-/// materials) hold files of the mounted data; when `GameData`'s mounted mod changes
-/// (`gd_game::session::set_mod_data`, which drops `BodyCache` the same way) they are emptied, so a mod's overrides
-/// are loaded and models share the new `BodyCache` meshes. `set_mod_data` runs this in the same call
-/// ([`gd_game_core::data::ModCacheDrop`]); the sound cache clears on [`ModChanged`] (`audio.rs`).
+/// materials) hold files of the mounted data; when `GameData`'s mounted mod changes they are emptied, so a mod's
+/// overrides are loaded and models share the new `BodyCache` meshes.
 #[allow(clippy::too_many_arguments)]
 pub fn drop_on_mod_change(
     data: Option<Res<GameData>>,
@@ -199,8 +185,7 @@ pub fn drop_on_mod_change(
     cache.loading.clear();
     cache.in_flight.clear();
     cache.fresh.clear();
-    // Re-link the shared anim store (a session's mod mount replaces the
-    // `AnimCache` resource) and clear it: one cache, both crates.
+    // Re-link the shared anim store (a session's mod mount replaces `AnimCache`) and clear it.
     cache.anims = anims.shared();
     cache.anims.lock().clear();
     cache.mounted = active.map(str::to_owned);
@@ -222,12 +207,9 @@ pub struct Skeleton {
     pub joints: Vec<Entity>,
 }
 
-/// Plays one animation on a skeleton: the fields are the clip to play (a
-/// replaced or mutated `Animator` restarts it with a cross-fade, one whose
-/// time alone moved seeks it, `animate_skeletons`); the
-/// playback itself runs through the required `ObjectAnim` channel, the same
-/// path as characters (module doc). `time` is seconds into the clip, written
-/// back each frame as the channel advances.
+/// Plays one animation on a skeleton: the fields are the clip to play (a replaced or mutated `Animator` restarts it
+/// with a cross-fade, one whose time alone moved seeks it); the playback runs through the required `ObjectAnim`
+/// channel. `time` is seconds into the clip, written back each frame as the channel advances.
 #[derive(Component)]
 pub struct Animator {
     pub anim: Arc<Animation>,
@@ -236,12 +218,8 @@ pub struct Animator {
     pub looped: bool,
 }
 
-/// The [`AnimChannel`] behind an [`Animator`] (required component): objects
-/// animate through the same channel as characters — cross-fades, callback
-/// points and entity events from the one advance interval (module doc).
-/// `synced` is the `Animator` the channel was last started from: a replaced
-/// or mutated one (a chest opening, a decoration's next clip) restarts the
-/// channel at its `time`.
+/// The [`AnimChannel`] behind an [`Animator`] (required component): objects animate through the same channel as
+/// characters (module doc).
 #[derive(Component, Default)]
 pub(crate) struct ObjectAnim {
     channel: AnimChannel,
@@ -258,9 +236,8 @@ pub(crate) struct ObjectAnim {
     events: Vec<AnimEntityEvent>,
 }
 
-/// An animation event's `GibEffectEntity` record fired at the point `at` ([`AnimEntitySet`]):
-/// grimdawn `gibs.rs` launches its gib meshes the same frame (after the set, before this frame's
-/// bounds and visibility).
+/// An animation event's `GibEffectEntity` record fired at the point `at` ([`AnimEntitySet`]): its gib meshes launch
+/// the same frame (after the set, before this frame's bounds and visibility).
 #[derive(Message)]
 pub struct AnimGibs {
     pub record: String,
@@ -272,9 +249,8 @@ pub struct AnimGibs {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AnimEntitySet;
 
-/// The PostUpdate systems that spawn models (grimdawn `casting.rs`, `gibs.rs`); a part has its material from
-/// the spawn, so what reads its material or render layers orders after them. Every other spawner runs in
-/// `Update`.
+/// The PostUpdate systems that spawn models; a part has its material from the spawn, so what reads its material or
+/// render layers orders after them. Every other spawner runs in `Update`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelSpawnSet;
 
@@ -293,16 +269,9 @@ pub struct AnimFx {
 }
 
 /// An effect or light at a bone-parented attach point of `root`'s mesh
-/// (`fx::spawn_mesh_attachments`: record models, animated level scenery):
-/// follows the posed bone, `local` being the attach frame relative to the
-/// bone (`Actor::Attach` to a bone). Assets hide an attachment this way:
-/// stock data, `shrine_mogdrogen_ruined01a.msh` (the Mogdrogen
-/// `StaticShrine` and the ruined `Decoration`s in Ugdenbog and
-/// `RegionUG_BeastRL_C04`) has `FX_Rune` on
-/// `BN_Restored`, a bone no vertex is skinned to; the dormant idle
-/// `shrine_devotion_idle01a.anm` holds it 15 m below the mesh origin on every
-/// frame, and `shrine_devotion_restore01a.anm` raises it to the bind pose
-/// (0, 0, 0) by frame 50, so the rune glows only once restored.
+/// (record models, animated level scenery): follows the posed bone, `local` being the attach frame relative to the
+/// bone (`Actor::Attach` to a bone). Assets hide an attachment this way (the Mogdrogen shrine's `FX_Rune` sits on an
+/// unskinned bone 15 m below until the restore animation raises it).
 #[derive(Component)]
 pub struct BoneFx {
     pub root: Entity,
@@ -314,8 +283,7 @@ pub struct BoneFx {
 /// attach point, a weapon root, the root itself), × `local`, its frame relative to it; a `stationary` one (an
 /// `FxMesh` with `stationaryAttachment`, the root given) keeps its place on the root but not the root's turn
 /// (Engine.dll `Entity::UpdateAttachedEntities` / `Actor::FastUpdate`: each update its attach
-/// offset becomes the parent's rotation transposed, applied after the attach frame). The one rule every follower
-/// places by: [`follow_bone_fx`], [`follow_anim_fx`], `fx::items::follow`, `fx::enchant::follow_points`.
+/// offset becomes the parent's rotation transposed, applied after the attach frame). Every follower places by it.
 pub fn attach_frame(
     anchor: Affine3A,
     local: Affine3A,
@@ -345,9 +313,7 @@ pub(crate) fn follow_bone_fx(
         let local = root.affine().inverse() * world;
         let t = crate::fx::affine_transform(local);
         tf.set_if_neq(t);
-        // After Propagate: write the global frame too so the attachment follows
-        // this frame's posed bone, not the next (only when it moved, so a still
-        // attachment is not flagged changed every frame).
+        // After Propagate: write the global frame too so the attachment follows this frame's posed bone.
         g.set_if_neq(GlobalTransform::from(world));
     }
 }
@@ -397,10 +363,7 @@ fn anim_entities(
     }
 }
 
-/// Fires the entity events each character's advance crossed this frame
-/// (module doc): `gd_game::character::advance_animations` collected them from
-/// the channel's one interval ([`Character::entity_events`]), so a clip that
-/// restarts and advances within one frame fires exactly its crossed stretch.
+/// Fires the entity events each character's advance crossed this frame ([`Character::entity_events`], module doc).
 fn character_anim_entities(
     mut commands: Commands,
     data: Res<GameData>,
@@ -542,8 +505,8 @@ fn remove_attached(
 
 /// Animation effects follow their attach point as posed; when the root goes
 /// they go too, or stop emitting ([`DetachEffects`]). A `stationaryAttachment`
-/// mesh effect keeps its place on the root but not the root's turn (as
-/// `fx::enchant`'s `follow_points`, `Entity::UpdateAttachedEntities`). A root
+/// mesh effect keeps its place on the root but not the root's turn
+/// (`Entity::UpdateAttachedEntities`). A root
 /// can itself be such an effect (an animated `FxMesh` firing its own events):
 /// parents go first, and a child is carried by its parent's move this pass
 /// (the parent's joints were posed from its old frame).
@@ -603,9 +566,8 @@ fn follow_anim_fx(
                 let mut t = Transform::from_matrix(Mat4::from(m));
                 t.scale *= f.scale;
                 tf.set_if_neq(t);
-                // After Propagate and the same-frame pose: write the global frame
-                // directly (as `fx::items::follow`) so the effect follows this
-                // frame's attach point, not the next; only when it moved.
+                // After Propagate and the same-frame pose: write the global frame directly so the effect follows
+                // this frame's attach point.
                 if let Ok(mut g) = globals.get_mut(e) {
                     let (old, new) = (*g, GlobalTransform::from(t));
                     if g.set_if_neq(new) {
@@ -633,22 +595,19 @@ pub fn coords_to_affine(c: &Coords) -> Affine3A {
 }
 
 impl ModelCache {
-    /// Cached models still in use (the memory audit).
+    /// Cached models still in use.
     pub fn count(&self) -> usize {
         self.models.live()
     }
 
-    /// The parsed animation at `path`: the shared gd-game store
-    /// ([`SharedAnims`]), so a file the characters already loaded is not
-    /// parsed again.
+    /// The parsed animation at `path`, from the shared gd-game store ([`SharedAnims`]).
     pub fn anim(&mut self, data: &GameData, path: &str) -> Option<Arc<Animation>> {
         gd_game_core::character::shared_anim(&self.anims, data, path)
     }
 
     /// The render model of the mesh at `path`, built once while an instance holds it ([`ModelRef`]). The parsed
-    /// mesh is gd-game's (`gd_game_core::creature::BodyCache`, the one loader), so a character's `Character::body` and
-    /// its body part's `Skeleton::msh` are the same `Arc`. Loads on the spot: for what must exist this frame; a
-    /// spawn that can wait a few frames uses [`ModelCache::model_ready`].
+    /// mesh is gd-game's (`gd_game_core::creature::BodyCache`), so a character's `Character::body` and its body
+    /// part's `Skeleton::msh` are the same `Arc`. Loads on the spot; see [`ModelCache::model_ready`].
     #[allow(clippy::too_many_arguments)]
     pub fn model(
         &mut self,
@@ -677,9 +636,8 @@ impl ModelCache {
         })
     }
 
-    /// The render model of the mesh at `path` when it is built; otherwise its mesh is read and parsed, its textures
-    /// decoded and its parts' vertex data built in the background ([`collect_model_loads`] finishes it on a later
-    /// frame) and this returns [`Ready::Loading`]: the caller spawns it then, instead of stalling this frame.
+    /// The render model of the mesh at `path` when it is built; otherwise its load starts in the background
+    /// ([`collect_model_loads`] finishes it on a later frame) and this returns [`Ready::Loading`].
     pub fn model_ready(
         &mut self,
         data: &GameData,
@@ -732,7 +690,7 @@ pub enum Ready<T> {
 }
 
 /// Main-thread time a frame spends finishing background model loads (`finish_model`, GPU uploads) before leaving
-/// the rest for the next frame, so a burst of completions after a level load does not land in one frame.
+/// the rest for the next frame.
 pub const FINISH_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// Finishes the models read in the background ([`ModelCache::model_ready`]): files their meshes and textures and
@@ -795,16 +753,12 @@ pub fn collect_model_loads(
 /// Whether a material shader has the transparent variant a faded section
 /// draws with.
 ///
-/// Engine.dll `GraphicsMesh::LoadMaterials` (the mesh material loader, from
-/// `GraphicsMesh::LoadData`): each material loads its shader (`MeshMaterial.shader`) and the same name with
-/// 'T' inserted before the extension (`Engine::TransparentShaderName`) as its transparent shader
+/// Engine.dll `GraphicsMesh::LoadMaterials`: each material loads its shader (`MeshMaterial.shader`) and the same name
+/// with 'T' inserted before the extension (`Engine::TransparentShaderName`) as its transparent shader
 /// (`MeshMaterial.transparentShader`), or the shader itself when that file does not exist.
-/// `GraphicsMeshInstance::GetShader2` draws a section with
-/// opacity < 1 with the transparent one, and `GraphicsMeshInstance::RenderPass`
-/// always draws a material whose two shaders are the same. So "standardstatic_nofade.ssh"
-/// (byte-identical to standardstatic.ssh, but no "…_nofadeT.ssh" exists) marks
-/// the parts of a see-through object that stay: the stump and base of the
-/// Conclave's round pillars.
+/// `GraphicsMeshInstance::GetShader2` draws a section with opacity < 1 with the transparent one, and
+/// `GraphicsMeshInstance::RenderPass` always draws a material whose two shaders are the same. So
+/// "standardstatic_nofade.ssh" (no "…_nofadeT.ssh" exists) marks the parts of a see-through object that stay.
 pub fn transparent_variant_exists(vfs: &gd_formats::vfs::Vfs, shader: &str) -> bool {
     let s = shader.replace('\\', "/");
     match s.rfind('.') {
@@ -871,9 +825,9 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
 
     let tangents = msh_tangents(&msh);
     let joints = skinned.then(|| msh.global_bone_indices());
-    // Vertex colours drive the foliage wind (render/material.rs `Wind`) and
-    // tint the vertex-colour shaders (`FLAG_VERTEX_COLOR`, `FLAG_VERTEX_ALPHA`); only those parts
-    // get them. B8G8R8A8 (Direct3D11.dll `Direct3DVertexDeclaration::Direct3DVertexDeclaration`).
+    // Vertex colours drive the foliage wind and tint the vertex-colour shaders (`FLAG_VERTEX_COLOR`,
+    // `FLAG_VERTEX_ALPHA`); only those parts get them. B8G8R8A8 (Direct3D11.dll
+    // `Direct3DVertexDeclaration::Direct3DVertexDeclaration`).
     let has_colors = v.colors.len() == n;
     let colors: Vec<[f32; 4]> = if has_colors {
         v.colors
@@ -912,9 +866,8 @@ fn model_cpu(data: &GameData, msh: Arc<Msh>, decode_textures: bool) -> ModelCpu 
     let mut groups: Vec<(u32, Option<u32>, Vec<u16>)> = Vec::new();
     for fs in &msh.face_sets {
         // A skinned mesh's set with an empty bone palette has only zero blend weights (`Msh::validate`): the
-        // engine's skinning collapses it to the model origin, so it never shows. Stock female armour carries
-        // such a leftover 20-face box beside the right upper arm; the weight fallback below would pin it to
-        // bone 0 and draw it.
+        // engine's skinning collapses it to the model origin, so it never shows (the weight fallback below would
+        // pin it to bone 0).
         if skinned && fs.bones.is_empty() {
             continue;
         }
@@ -1134,11 +1087,8 @@ fn finish_model(
     }
 }
 
-/// A static culling AABB generous enough to enclose a skinned mesh's animation range. Skinned
-/// parts use this instead of `DynamicSkinnedMeshBounds`, whose per-frame recompute
-/// (`update_skinned_mesh_bounds`) is a measurable CPU cost in crowded scenes. A conservative
-/// static bound culls almost as well (actors are small relative to the view) and never pops a
-/// visible actor: twice the whole mesh's bind-pose half-extents plus half a metre covers limb/weapon motion.
+/// A static culling AABB generous enough to enclose a skinned mesh's animation range: twice the whole mesh's
+/// bind-pose half-extents plus half a metre.
 fn conservative_bounds(positions: &[[f32; 3]]) -> Aabb {
     let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
     for &v in positions {
@@ -1156,8 +1106,7 @@ fn conservative_bounds(positions: &[[f32; 3]]) -> Aabb {
     }
 }
 
-/// Skeleton roots whose joints are written by another system (character.rs)
-/// instead of `animate_skeletons`.
+/// Skeleton roots whose joints are written by another system instead of `animate_skeletons`.
 #[derive(Component)]
 pub struct ExternalPose;
 
@@ -1167,8 +1116,8 @@ pub fn spawn_model(commands: &mut Commands, root: Entity, model: &Arc<ModelAsset
 }
 
 /// [`spawn_model`] under a root spawned after this frame's transform propagation with its world
-/// frame `at` already written (an animation event's gibs, grimdawn `gibs.rs`): the parts and the
-/// joints take their world frames from it now, so the model draws this frame.
+/// frame `at` already written: the parts and the joints take their world frames from it now, so the model draws
+/// this frame.
 pub fn spawn_model_at(
     commands: &mut Commands,
     root: Entity,
@@ -1289,18 +1238,9 @@ pub struct Joints(Vec<Entity>);
 
 /// Poses each skeleton: an [`Animator`]'s clip through its `ObjectAnim`
 /// channel every frame (cross-fades, callbacks and entity events as for
-/// characters, module doc); a skeleton with none (static scenery: a skinned
-/// prop placed without an `animation`) stays at the bind pose, written only
-/// when the skeleton is new or its root moved, so a still skinned prop costs
-/// nothing per frame.
-///
-/// Our structure: the channel samples its clips through cached track → bone maps (no per-frame
-/// bone-name lookups); a settled one-shot (an opened chest or door) keeps its last pose and is
-/// rewritten only when its root moves. An `Animator` whose clip, speed and loop flag stay and
-/// only its time moved (a decoration chaining its one clip, the same clip re-inserted) seeks the
-/// channel instead of restarting it with a cross-fade.
-///
-/// Off view, the channel advances but nothing is posed (module doc).
+/// characters, module doc); a skeleton with none (a skinned prop placed without an `animation`) stays at the bind
+/// pose, written only when the skeleton is new or its root moved. A settled one-shot (an opened chest or door) keeps
+/// its last pose. Off view, the channel advances but nothing is posed (module doc).
 pub(crate) fn animate_skeletons(
     time: Res<Time>,
     mut roots: Query<
@@ -1343,8 +1283,7 @@ pub(crate) fn animate_skeletons(
                 // A replaced or mutated Animator restarts the channel (with a
                 // cross-fade) at its own time: an already-open chest starts at
                 // the clip's end, a decoration's next clip carries its overshoot.
-                // Only the time moved (the same clip again: a decoration's next
-                // pick of its one clip) is a seek, no restart: a short clip
+                // Only the time moved (the same clip again) is a seek, no restart: a short clip
                 // otherwise piles up a cross-fade every frame or two.
                 let (changed, seek) = match &st.synced {
                     Some((anim, t, s, l)) => {

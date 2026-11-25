@@ -105,10 +105,8 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
-        // A hitch integrates at most 100 ms of gameplay: Bevy's default 250 ms cap
-        // teleports a character up to ~2 m and resolves crowds against stale positions.
-        // PORT: the engine's own clamp was not located (its time helpers show none);
-        // the loop callbacks a long step spans are all emitted (`gd_sim::anim::advance`).
+        // PORT: a hitch integrates at most 100 ms of gameplay (Bevy's default cap is 250 ms); the loop callbacks a
+        // long step spans are all emitted (`gd_sim::anim::advance`).
         if let Some(mut time) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
             time.set_max_delta(Duration::from_secs_f32(0.1));
         }

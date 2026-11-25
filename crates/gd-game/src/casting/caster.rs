@@ -1,22 +1,13 @@
 use super::*;
 
-/// Death and the no-action states end what a character's skills have running. Game.dll:
-/// - `Character::ImDying` → `SkillManager::ImDead`: the current skill is cleared (`SkillManager.currentSkill`)
-///   and every active-list and item-list skill gets `Skill::StopSkill`. A channel stops
-///   (`Skill_AttackSpellCone` / `…Beam::StopSkill` → `StopEmitting`; `Skill_AttackSpellDrain` /
-///   `…RadiusSpin` / `…RadiusGrow::StopSkill`), a charge is cancelled
-///   (`Skill_AttackWeaponCharge::StopSkill`, the path charge's too → `Cancel`:
-///   push-through, trails and warm-up off, no hit). A dying skill is cast after that, by the Dying state
-///   ([`ProcCast`], `crate::monster_skills`).
-/// - `TakeStunAction::Execute` (the sleep, knockdown and immobilize actions alike) →
-///   `SkillManager::StopCurrentSkill`: the current skill, when `IsRunning` (the channelled classes),
-///   gets `StopSkill`; the action takes the place of the character's own, the cast's (`crate::afflictions` drops
-///   [`Casting`]) or the charge's move ([`warms_up`]: a charge cut short by a stun keeps what it paid).
+/// Death and the no-action states end what a character's skills have running:
+/// - `SkillManager::ImDead`: the current skill is cleared and every active-list and item-list
+///   skill gets `Skill::StopSkill` (a channel stops, a charge is cancelled: no hit).
+/// - `TakeStunAction::Execute` (sleep, knockdown, immobilize) → `SkillManager::StopCurrentSkill`:
+///   a running current skill gets `StopSkill`; a charge cut short keeps what it paid.
 ///
-/// PORT: a cast goes off on its animation's callback, which a dead character's cast no longer gets; the port's
-/// pending [`Casting`] / ally cast would go off on the death animation's `End`, so it ends here too. Done at the
-/// head of the casting chain, the frame after `combat::kill` / `crate::afflictions` marked the character (the
-/// animation callbacks that could fire it come later than that), not inside them.
+/// PORT: a dead character's pending [`Casting`] / ally cast would go off on the death
+/// animation's `End`, so it ends here, the frame after the character was marked.
 #[allow(clippy::type_complexity)]
 pub(super) fn stop_skills(
     mut commands: Commands,
@@ -68,7 +59,7 @@ pub(super) fn stop_skills(
 #[derive(Component)]
 pub struct Projectile {
     pub(crate) attacker: Entity,
-    /// Its record (the impact sounds, `crate::combat_sounds`).
+    /// Its record (the impact sounds).
     pub(crate) record: String,
     pub(crate) skill: String,
     pub(crate) level_index: usize,
@@ -80,48 +71,36 @@ pub struct Projectile {
     /// Drops explode on reaching the ground.
     pub(super) drop: bool,
     pub(crate) hostile: bool,
-    /// Its caster's side, kept for when the caster is gone
-    /// ([`crate::combat::Side::lookup_kept`]).
+    /// Its caster's side, kept for when the caster is gone.
     pub(crate) side: Option<crate::combat::Side>,
-    /// `projectileFragmentsName` with `...LaunchNumberMin/Max`: split on
-    /// impact into fragments flying off level with the ground, each
-    /// 360° / count further round plus ±30° jitter
-    /// (`ProjectileBase::ProcessFragmentation`).
+    /// `projectileFragmentsName` with `...LaunchNumberMin/Max`: fragments fly off level with
+    /// the ground, 360° / count apart plus ±30° jitter (`ProjectileBase::ProcessFragmentation`).
     pub(super) fragments: Vec<(String, u32, u32)>,
     /// Never hits this entity (a fragment's parent target).
     pub(super) exclude: Option<Entity>,
     /// Chance (%) to pierce a target and fly on (`projectilePiercing`).
     pub(crate) pierce: f32,
-    /// Targets already pierced.
     pub(super) passed: Vec<Entity>,
     pub(crate) parent: Option<(String, usize)>,
     /// Where it was launched (range falloff).
     pub(crate) origin: Vec3,
-    /// A `Skill_AttackProjectileDebuf`'s buff, landed on what it hits
-    /// instead of an attack.
+    /// A `Skill_AttackProjectileDebuf`'s buff, landed on what it hits instead of an attack.
     pub(super) debuf: Option<ProjectileDebuf>,
-    /// The ray radius it hits with: `actorRadius` (× 1 + growth / 2, growth
-    /// 0 at launch); a target's bounding box counts when the ray from the
-    /// last position to the new one passes within it
-    /// (`ProjectileBase::GetTargetsAlongPath`, Engine.dll
-    /// `Actor::Load`).
+    /// The ray radius it hits with: `actorRadius` × (1 + growth / 2); a target counts when the
+    /// ray from the last position passes within its bounding box
+    /// (`ProjectileBase::GetTargetsAlongPath`).
     pub(crate) touch: f32,
-    /// `explodeOnMiss`: stopped by the world (or at the end of its flight) it
-    /// still explodes (`ProjectileFireballLike::UpdateSelf` state 3).
+    /// `explodeOnMiss`: stopped by the world (or at the end of its flight) it still explodes.
     pub(crate) explode_on_miss: bool,
-    /// Its skill is a `Skill_AttackProjectileSpawnPet`: its end summons
-    /// (`TargetInformation`, [`crate::pets::placement::hit_spots`]).
+    /// Its skill is a `Skill_AttackProjectileSpawnPet`: its end summons.
     pub(crate) spawns_pet: bool,
-    /// A `Skill_AttackProjectileChain`'s spark list, collected at launch
-    /// (the primary target and its jumps, `sparkMaxNumber` / `sparkChance` /
-    /// `sparkGap`, LOS-tested): the impact attacks every entry
-    /// (`Skill_AttackProjectileChain::TargetResult`).
+    /// A `Skill_AttackProjectileChain`'s spark list, collected at launch: the impact attacks
+    /// every entry (`Skill_AttackProjectileChain::TargetResult`).
     pub(crate) chain: Vec<Entity>,
 }
 
 impl Projectile {
-    /// Who launched it, whether it seeks the player's side (a monster's), its
-    /// record: what `ProjectileBase::NotifyMonsters` reads (`crate::dodge`).
+    /// Attacker, hostile, record: what `ProjectileBase::NotifyMonsters` reads.
     pub fn owner(&self) -> (Entity, bool, &str) {
         (self.attacker, self.hostile, &self.record)
     }
@@ -140,8 +119,7 @@ pub(super) fn init_caster(
         let page = |bar: &gd_formats::save::gdc::HotSlotBar| {
             let mut p: [Option<String>; SLOTS] = Default::default();
             for (i, s) in bar.slots.iter().take(SLOTS).enumerate() {
-                // The potion / evade / scroll options as their records
-                // (`hotbar`).
+                // The potion / evade / scroll options as their records.
                 use gd_formats::save::gdc::HotSlot;
                 p[i] = match s {
                     HotSlot::Skill { skill, .. } if !skill.is_empty() => Some(skill.clone()),
@@ -154,8 +132,7 @@ pub(super) fn init_caster(
             }
             p
         };
-        // Each bar is the page of one skill set (`id`); the player starts in
-        // the default set 0 (a form's page comes back when it is entered).
+        // Each bar is the page of one skill set (`id`); the player starts in set 0.
         let mut sets = std::collections::BTreeMap::new();
         if let Some(c) = loaded.as_ref() {
             for bar in &c.0.ui.bars {
@@ -170,14 +147,12 @@ pub(super) fn init_caster(
         if let Some(p) = sets.remove(&0) {
             slots = p;
         } else if loaded.is_none() {
-            // A new character: the hotbar the game gives it (both sets' left
-            // mouse slots hold the default attack, `crate::save::new_character`).
+            // A new character: the hotbar the game gives it.
             slots = page(&gd_formats::save::gdc::HotSlotBar {
                 id: 0,
                 slots: crate::save::new_hotbar(),
             });
         }
-        // `GD_SLOT` (hooks.rs).
         #[cfg(feature = "dev")]
         for (n, rec) in &hooks.gameplay.slot {
             if *n < SLOTS {
@@ -193,8 +168,7 @@ pub(super) fn init_caster(
             set: 0,
             shown: 0,
         };
-        // Weapon set II active: its mouse slots are the shown ones
-        // (`crate::weapon_sets`).
+        // Weapon set II active: its mouse slots are the shown ones.
         if loaded
             .as_ref()
             .and_then(|c| c.0.inventory.data.as_ref())
@@ -222,8 +196,7 @@ pub(super) fn init_caster(
     }
 }
 
-/// Keeps [`SpellAttacker`] matching the left-button skill (it changes with
-/// the hotbar and the weapon set; [`regen_and_cooldowns`]' timers leave the change flag alone).
+/// Keeps [`SpellAttacker`] matching the left-button skill.
 pub(super) fn sync_spell_attacker(
     mut commands: Commands,
     data: Res<GameData>,
@@ -242,19 +215,14 @@ pub(super) fn sync_spell_attacker(
     }
 }
 
-/// Energy regen per second is `manaRegenEquation` of `playerresourcebehavior.dbr`
-/// (`CharacterBio::GetManaRegenValue`), in the sheet's
-/// `energy_regen_per_sec`; life regen likewise in `player_regen`.
+/// Energy regen: the sheet's `energy_regen_per_sec` (`CharacterBio::GetManaRegenValue`).
 pub(super) fn regen_and_cooldowns(time: Res<Time>, mut q: Query<(&mut Caster, &Combatant)>) {
     let dt = time.delta_secs();
     for (mut c, cb) in &mut q {
         // The timers are no change: `Changed<Caster>` is the hot slots'.
         let c = c.bypass_change_detection();
-        // Toggled skills hold their reserve: energy is capped at max −
-        // reserve × (1 − reduction %) (the cap `CharacterBio::TakeBonus`
-        // applies); only switched-on toggles reserve
-        // (`Skill_BuffSelfToggled::CollectPassiveCharAttributes`
-        // checks the active flag; the port's `SkillBook.inactive`).
+        // Energy is capped at max − switched-on toggles' reserve × (1 − reduction %)
+        // (`CharacterBio::TakeBonus`).
         let max = cb.profile.sheet.usable_energy();
         c.energy = (c.energy + cb.profile.sheet.energy_regen_per_sec.max(0.0) * dt).min(max);
         c.cooldowns.tick(dt);

@@ -1,5 +1,4 @@
-// Port of effects/portalenvmapped*.ssh (render/envmap.rs): a cube map seen
-// by reflection, tinted by the base texture.
+// Port of effects/portalenvmapped*.ssh: a cube map seen by reflection, tinted by the base texture.
 import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::view,

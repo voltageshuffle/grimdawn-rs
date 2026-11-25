@@ -8,8 +8,7 @@
 //!   bitmap by `bitmapAlignmentX/Y` and `bitmapPosition` against the screen
 //!   (or its window) with `GraphicsAlign` (Engine.dll):
 //!   Left x, Right W − x, Center W / 2 + x; Top y, Bottom H − y, Center
-//!   H / 2 + y; the bitmap's top-left corner goes there (e.g. Start at
-//!   (W / 2 − 141, H − 144) in the reference shot);
+//!   H / 2 + y; the bitmap's top-left corner goes there;
 //! - the character list (`characterPicker`, draw `CharacterList::Draw`): a
 //!   `backgroundColor` rect with the ragged border; rows `characterHeight`
 //!   apart from `scrollSize` down, each the name (`nameFont`, the selected
@@ -33,29 +32,23 @@
 //! - the main difficulty button's text is the option's `button_tag`
 //!   (`MainMenu::GetDifficultyButtonText`).
 //! - Create, Delete and the difficulty button are toggle buttons
-//!   (`toggleButton`): held down while their window is open (seen in the
-//!   reference shots, not decompiled).
+//!   (`toggleButton`): held down while their window is open (not decompiled).
 //!
 //! Behind the screens: the menu record's 3D scene with the selected character
 //! standing in it (`render/menu.rs`, `gd_ui::doll::menu_character`), the
 //! record's vignette frame (`mmVignetteBitmap`, e.g.
 //! `mainmenu_vignetteframe_gdx3.tex`, a black shade) and its logo record
 //! (`mmLogo`, e.g. `gdx3_menulogo.dbr`: `x`, `y`, `width`, `height` as screen
-//! fractions, additive). PORT: the logo is a flat quad (no particles);
-//! the tutorial tip is `ui/quicktip.rs`.
+//! fractions, additive). PORT: the logo is a flat quad (no particles).
 //! Sounds: each enabled `menubutton` / `menucheckbutton` registers its `soundNameOver` / `soundNameDown`
-//! (`ui/widgets.rs`, `MenuButton::HandleMouseEvent`).
+//! (`MenuButton::HandleMouseEvent`).
 //!
-//! Hover looks move in place: every hover-driven widget is drawn in its base
-//! state with its state bitmaps resolved once ([`HoverLook`]); [`live`] swaps
-//! the quad's texture or shows the row's highlight by the cursor — a hover
-//! never rebuilds the menu.
-//! The list's height (rows × `characterHeight` + 2 × `scrollSize`, bottom at
-//! `positionY`), label placement (text centred on the anchor unless
-//! `textAlignmentX` is Left, vertically centred unless Top), check-button
-//! text 2 px right of its bitmap, disabled-text alpha 0.5, a refused name's
-//! error line under the name box (the real one is a message box) are
-//! taken from the reference shots, not decompiled.
+//! Hover looks move in place: every hover-driven widget is drawn in its base state with its state bitmaps
+//! resolved once ([`HoverLook`]); [`live`] swaps them by the cursor.
+//! Not decompiled: the list's height (rows × `characterHeight` + 2 × `scrollSize`, bottom at
+//! `positionY`), label placement (text centred on the anchor unless `textAlignmentX` is Left, vertically
+//! centred unless Top), check-button text 2 px right of its bitmap, disabled-text alpha 0.5, a refused name's
+//! error line under the name box (the real one is a message box).
 use super::Ui;
 use super::text::FontCache;
 use crate::menu::{CONSTANTS, DifficultyOption as D, Hit, MainMenu, MenuLayout, MenuWindow};
@@ -84,7 +77,6 @@ impl Plugin for MainMenuUiPlugin {
     }
 }
 
-/// The menu's UI layer.
 const MENU_Z: i32 = 120;
 
 #[derive(Component)]
@@ -96,7 +88,6 @@ fn clear(mut commands: Commands, roots: Query<Entity, With<MenuRoot>>) {
     }
 }
 
-/// A button's look.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Up,
@@ -105,26 +96,23 @@ enum State {
     Down,
 }
 
-/// A hover-driven widget, drawn in its base state with its state bitmaps resolved once: [`live`]
-/// swaps the quad's texture and size, or shows the row's highlight, by the cursor — in place.
-/// Sizes are physical px (the node's are `size × inv`).
+/// A hover-driven widget's state bitmaps, swapped by [`live`]. Sizes are physical px (the node's are
+/// `size × inv`).
 #[derive(Component)]
 enum HoverLook {
-    /// A `menubutton` drawn up ([`button`]): its `bitmapNameInFocus` while hovered (`None`: the
-    /// record has none, the up look stays).
+    /// A `menubutton` drawn up: its `bitmapNameInFocus` while hovered (`None`: the up look stays).
     Button {
         hit: Hit,
         up: (Handle<Image>, Vec2),
         over: Option<(Handle<Image>, Vec2)>,
     },
-    /// A `menucheckbutton` ([`check`]): its bitmaps in (down, hover) order — up, over, down,
-    /// down-over — each fallen back to up.
+    /// A `menucheckbutton`'s bitmaps in (down, hover) order — up, over, down, down-over — each fallen back to up.
     Check {
         hit: Hit,
         down: bool,
         states: [(Handle<Image>, Vec2); 4],
     },
-    /// A list row's hover highlight ([`mod_list`], [`arena_drop`]), hidden until hovered.
+    /// A list row's hover highlight, hidden until hovered.
     Row { hit: Hit },
 }
 
@@ -198,8 +186,8 @@ fn text_tinted(
     URect::new(x, y, w, h)
 }
 
-/// A `menubutton` record: its bitmap for `state`, its text centred. An up button with a `hit`
-/// carries [`HoverLook::Button`] for [`live`] (its `bitmapNameInFocus` while hovered).
+/// A `menubutton` record: its bitmap for `state`, its text centred. An up button with a `hit` carries
+/// [`HoverLook::Button`].
 fn button(
     ui: &mut Ui,
     rec: &Record,
@@ -218,9 +206,8 @@ fn button(
         .map(str::to_owned)
         .or_else(|| rec.str("textTag").map(|t| localize(ui.fonts, t)));
     let style = rec.str("textFont").map(str::to_owned);
-    // PORT: the stock button is fixed at its bitmap's pixel width; here it
-    // grows to fit the label (`widgets::button_width`'s rule), keeping its
-    // alignment, so a long localised label never overflows.
+    // PORT: the stock button is fixed at its bitmap's pixel width; here it grows to fit the label, keeping its
+    // alignment.
     let tex_w = ui.sc(size.x as f32);
     let lw = match (&style, &text) {
         (Some(st), Some(t)) => t
@@ -240,16 +227,15 @@ fn button(
         })
     .round();
     let r = URect::new(p.x, p.y, w, ui.sc(size.y as f32));
-    // `MenuButton::Draw` (menubutton draw): a disabled button without a
-    // `bitmapNameDisabled` draws its up bitmap multiplied by (0.6, 0.6, 0.6, 1).
+    // `MenuButton::Draw`: a disabled button without a `bitmapNameDisabled` draws its up bitmap multiplied by
+    // (0.6, 0.6, 0.6, 1).
     let disabled_up = state == State::Disabled && key == "bitmapNameUp";
     let tint = if disabled_up {
         Color::srgb(0.6, 0.6, 0.6)
     } else {
         Color::WHITE
     };
-    // A grown button stretches; [`live`] swaps only the handle and size, so the
-    // stretch mode keeps the hover bitmap filling the grown rect.
+    // Stretched, so the hover bitmap [`live`] swaps in fills the grown rect.
     let e = if grow > 0.0 {
         ui.quad_stretch(img.clone(), r, tint)
     } else {
@@ -271,9 +257,8 @@ fn button(
     if let (Some(style), Some(t)) = (style, text) {
         let h = ui.line_height(&style);
         let dy = ui.sc(rec.f32("textOffsetY").unwrap_or(0.0));
-        // `MenuButton::Draw`: a disabled button's text colour and shadow
-        // are replaced by (0.5, 0.5, 0.5, 0.5), i.e. grey at half opacity
-        // (PORT: multiplied into the style's colour, which is white-ish).
+        // `MenuButton::Draw`: a disabled button's text colour and shadow are (0.5, 0.5, 0.5, 0.5) (PORT: multiplied
+        // into the style's colour).
         let tint = if state == State::Disabled {
             Color::srgba(0.5, 0.5, 0.5, 0.5)
         } else {
@@ -292,16 +277,14 @@ fn button(
     Some(r)
 }
 
-/// A `menucheckbutton` record (radio / check box) with its text right of it, drawn in its base
-/// (unhovered) state; returns the bitmap and text rect together. Its four state bitmaps go on
-/// [`HoverLook::Check`] for [`live`].
+/// A `menucheckbutton` record (radio / check box) with its text right of it, drawn unhovered; returns the bitmap
+/// and text rect together.
 fn check(ui: &mut Ui, rec: &Record, c: URect, down: bool, hit: Hit) -> Option<URect> {
     let (up_h, up_sz) = ui.image(rec.str("bitmapNameUp")?)?;
     let up = (
         up_h,
         Vec2::new(ui.sc(up_sz.x as f32), ui.sc(up_sz.y as f32)),
     );
-    // Each state falls back to the up bitmap (as the draw did).
     let state = |ui: &mut Ui, key: &str| {
         rec.str(key)
             .and_then(|p| ui.image(p))
@@ -363,8 +346,7 @@ fn label_dy(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, dy: f32) {
         None => text.split('\n').map(str::to_owned).collect(),
     };
     let lh = ui.line_height(&style);
-    // Lines `ySpacing` × the font size apart (the reference shot's 20 px
-    // for 18 × 1.1).
+    // Lines `ySpacing` × the font size apart.
     let size = ui
         .fonts
         .style(ui.data, &style)
@@ -405,10 +387,8 @@ fn label_dy(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, dy: f32) {
     }
 }
 
-/// A section header (the gold-glow `mapLabel` / `boardLabel`) lifted so its text bottom sits a gap
-/// above the box it heads. The record's bitmap anchor is centred only ~14 px above the box, so the
-/// header text and the box's outward border collide; deriving the height from the box keeps them
-/// apart at any scale. PORT: vertical placement from the box, not the tight record anchor.
+/// A section header (`mapLabel` / `boardLabel`) lifted so its text bottom sits a gap above the box it heads.
+/// PORT: vertical placement from the box, not the record anchor (which collides with the box's border).
 fn section_header(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, box_top: f32) {
     let Some(style) = rec.str("textFont").map(str::to_owned) else {
         return;
@@ -438,8 +418,7 @@ fn section_header(ui: &mut Ui, rec: &Record, c: URect, text: Option<&str>, box_t
     label_dy(ui, rec, c, text, dy);
 }
 
-/// The eight pieces of a `name_*.tex` border pattern around `r` (pieces
-/// outside it, like [`Ui::border`]).
+/// The eight pieces of a `name_*.tex` border pattern around `r` (outside it, like [`Ui::border`]).
 fn pattern_border(ui: &mut Ui, pattern: &str, r: URect) {
     let piece = |k: &str| pattern.replace('*', k);
     let Some((ul, uls)) = ui.image(&piece("lt")) else {
@@ -502,8 +481,8 @@ fn text_box(ui: &mut Ui, rec: &Record, c: URect, text: &str) -> URect {
     r
 }
 
-/// What the Game Type window lists from disk, read once when the window opens (not on each
-/// rebuild): the Crucible leaderboard and the arenas the install offers.
+/// What the Game Type window lists from disk, read when the window opens: the Crucible leaderboard and the
+/// arenas the install offers.
 #[derive(Default)]
 struct GameTypeLists {
     board: gd_formats::save::survival::Leaderboard,
@@ -667,8 +646,7 @@ fn build(
         if let Some(r) = button(&mut ui, rec, screen, state, text, hit) {
             buttons_top = buttons_top.min(r.y);
             if let Some(h) = hit.filter(|_| enabled) {
-                // Under a modal window the play menu takes no clicks, so it plays no sounds either
-                // (Options registers a full-screen blocker of its own).
+                // Under a modal window the play menu takes no clicks, so it plays no sounds either.
                 if !modal {
                     ui.record_button_sound(r, rec);
                 }
@@ -689,7 +667,6 @@ fn build(
     if let Some(list) = field("characterPicker") {
         character_list(&mut ui, list, &menu, &mut hits, &mut layout.rows);
     }
-    // Opening or closing the window rebuilds, so the lists live exactly as long as the window shows.
     if !matches!(menu.window, MenuWindow::GameType(_)) {
         *lists = None;
     }
@@ -737,10 +714,8 @@ fn build(
     };
 }
 
-/// Per frame, without a rebuild: the hover look of the widget under the cursor ([`HoverLook`]).
-/// The hover the build used to draw with: `MenuLayout::at`, suppressed while the options or the
-/// credits are up (a modal window's layout holds only its own hits, so the play menu's buttons
-/// cannot be hovered through it). Writes only on a change.
+/// Per frame, without a rebuild: the hover look of the widget under the cursor ([`HoverLook`]), suppressed while
+/// the options or the credits are up. Writes only on a change.
 fn live(
     window: Query<&Window, With<PrimaryWindow>>,
     layout: Res<MenuLayout>,
@@ -787,7 +762,6 @@ fn live(
     }
 }
 
-/// The selected character standing in the scene (`crate::doll`).
 fn preview(ui: &mut Ui, menu: &MainMenu) {
     let Some(e) = menu.current() else { return };
     let female = e.gdc.header.sex == 0;
@@ -798,7 +772,6 @@ fn preview(ui: &mut Ui, menu: &MainMenu) {
     gd_ui::doll::menu_character(ui, (female, looks));
 }
 
-/// The scene record's vignette and logo over the scene (module docs).
 fn background(ui: &mut Ui, view: &gd_render::render::backdrop::MenuView) {
     let (w, h) = (ui.screen.x, ui.screen.y);
     // The frame is black with its shade in alpha.
@@ -883,8 +856,7 @@ fn character_list(
         ui.sc(f("scrollBoxWidth", 275.0)),
         height,
     );
-    // Blended in gamma space as the engine's (the scene behind it at (1 − a)
-    // of its gamma value: × 0.4 in the reference shot).
+    // Blended in gamma space as the engine's.
     let bg = Color::srgba(
         f("backgroundColor.R", 0.0),
         f("backgroundColor.G", 0.0),
@@ -1028,9 +1000,8 @@ fn character_list(
     hits.extend(arrows);
 }
 
-/// A menu-layer window: `windowDefaultX/Y` place its top-left corner by
-/// `GraphicsAlign` (the menu records hold −extent / 2 for a centred one), as
-/// in `options.rs`.
+/// A menu-layer window: `windowDefaultX/Y` place its top-left corner by `GraphicsAlign` (the menu records hold
+/// −extent / 2 for a centred one).
 fn window_rect(ui: &Ui, rec: &Record) -> URect {
     let d = WindowDef::from_record(rec);
     let (sx, sy) = (
@@ -1069,7 +1040,6 @@ fn image_at(ui: &mut Ui, rec: &Record, c: URect, additive: bool) {
     }
 }
 
-/// Accept / Cancel of a window.
 fn accept_cancel(
     ui: &mut Ui,
     rec: &Record,
@@ -1244,8 +1214,7 @@ fn difficulty_window(
 /// toggles, with the Crucible the map drop-down ("Random" and the offered arenas) and the local
 /// leaderboard (character, difficulty icon, score); with Custom (`GameModeWindow::ShowCustomView`) the `mapLabel`
 /// heading, the selected map's file name (`modText`) and the custom maps' list (`modList`) instead, and no
-/// campaign image. PORT: the drop-down's and the lists' looks are taken from the records only (no
-/// scroll bar: the 15 entries fit in about 8 rows).
+/// campaign image. PORT: the drop-down's and the lists' looks are taken from the records only (no scroll bar).
 fn gametype_window(
     ui: &mut Ui,
     g: &crate::menu::GameType,
@@ -1281,8 +1250,7 @@ fn gametype_window(
         ("customButton", Hit::ModeCustom, g.custom),
         ("survivalButton", Hit::ModeCrucible, g.crucible),
     ] {
-        // `GameModeWindow::Load` creates `survivalButton` only with the Crucible owned (port: installed,
-        // `available_arenas` non-empty).
+        // `GameModeWindow::Load` creates `survivalButton` only with the Crucible owned.
         let Some(b) =
             child(ui, &rec, k).filter(|_| hit != Hit::ModeCrucible || !lists.arenas.is_empty())
         else {
@@ -1374,8 +1342,7 @@ fn mod_list(
         return;
     };
     let f = |k: &str, d: f32| rec.f32(k).unwrap_or(d);
-    // The list sits below the selected-map text box (`modText`); the record anchors overlap by a
-    // few px, so the list's top border strikes the text. Lift the list to clear it (PORT).
+    // PORT: lifted so the list's top border clears the selected-map text box (the record anchors overlap).
     let mut top = c.y + ui.sc(f("positionY", 0.0));
     if let Some(mt) = child(ui, window, "modText") {
         let mt_bottom = c.y + ui
@@ -1410,7 +1377,7 @@ fn mod_list(
         if i == g.pick {
             ui.solid(row, color("dividerColor", 0.5));
         } else {
-            // The hover shade, shown by `live` (a hover never rebuilds).
+            // The hover shade, shown by `live`.
             let e = ui.solid(row, color("dividerColor", 0.25));
             ui.commands.entity(e).insert((
                 HoverLook::Row {
@@ -1605,7 +1572,7 @@ fn arena_drop(
     let ll = ui.line_height(&list_style);
     for i in 0..=offered.len() {
         let row = URect::new(list.x, list.y + i as f32 * item_h, list.w, item_h);
-        // The hover shade, shown by `live` (a hover never rebuilds).
+        // The hover shade, shown by `live`.
         let e = ui.solid(
             row,
             Color::srgba(
@@ -1658,8 +1625,7 @@ fn create_window(ui: &mut Ui, new: &crate::menu::NewCharacter, hits: &mut Vec<(U
     }
     let mut name_box = None;
     if let Some(tb) = child(ui, &rec, "playerName") {
-        // The caret while typing: `UIEditBox::Draw` (1 px white after the text, blinking every 600 ms
-        // as the market / devotion search boxes: `trade::animate_search`).
+        // The caret while typing: `UIEditBox::Draw` (1 px white after the text, blinking every 600 ms).
         let r = text_box(ui, &tb, c, &new.name);
         if let Some(style) = tb.str("textFont") {
             let (w, h) = (ui.text_width(style, &new.name), ui.line_height(style));
@@ -1687,8 +1653,7 @@ fn create_window(ui: &mut Ui, new: &crate::menu::NewCharacter, hits: &mut Vec<(U
             1.0,
         );
     }
-    // PORT: `challengeButton` (Veteran at creation) is hidden, as in the
-    // reference shot; Veteran is picked in the difficulty window.
+    // PORT: `challengeButton` (Veteran at creation) is hidden; Veteran is picked in the difficulty window.
     for (k, hit, down) in [
         ("maleButton", Hit::Male, !new.female),
         ("femaleButton", Hit::Female, new.female),

@@ -2,48 +2,40 @@
 //! It only picks the character's [`IdleMode`]; `crate::character` plays it.
 //!
 //! - Every `Npc*`-class character gets the controller: `Npc::Load` reads `controller`, default
-//!   [`DEFAULT_CONTROLLER`] (stock: only gdx3 `areah_blacksmithb302` names one, `ai_npc_idleloop_01`).
-//!   `ControllerNpc2::Load` reads `npcIdleTimeMin` / `npcIdleTimeMax` (s, `(int)(v * 1000)` ms, default 0;
-//!   default02: 5 / 10) and `npcIdleLoop` (default 0) from that record.
+//!   [`DEFAULT_CONTROLLER`]. `ControllerNpc2::Load` reads `npcIdleTimeMin` / `npcIdleTimeMax` (s,
+//!   `(int)(v * 1000)` ms, default 0) and `npcIdleLoop` (default 0) from that record.
 //! - Idle (`ControllerNpcStateIdle::OnBegin`): a new `IdleAction` ([`IdleMode::Combat`]) and a timer of
-//!   min + rand() % (max − min + 1) ms (just min when the unsigned difference is above 0x7FFD). `OnUpdate`:
-//!   the timer counts down; at ≤ 0 an NPC whose current animation set has no `Walk` clip goes to LongIdle, one with
-//!   it to Wander, whose `OnBegin` goes straight back to Idle when there are no wander points (a new
-//!   timer; the combat idle goes on).
-//! - LongIdle (`ControllerNpcStateLongIdle::OnBegin` / `OnUpdate`): `LongIdleAction`
-//!   ([`IdleMode::Long`]: transition, loop, fidgets) and the same timer roll; at ≤ 0 back to Idle unless
-//!   `npcIdleLoop`.
-//! - Chat (both states' `OnUpdate` → "Chat" while the NPC has a partner; `crate::character::npc_chat`) suspends the
-//!   cycle; its end (`ControllerNpcStateChat::OnUpdate`) re-enters Idle with a new timer.
-//! - PORT: the timers use `gd_game_core::rng`, not the CRT `rand()` (only the draw order differs). The Walk NPC's re-entry
-//!   into Idle keeps the playing `AttackIdle` instead of starting a fresh `IdleAction` (the same clip either way).
-//!   Leaving the idle states any other way (a quest `ControllerState` animation) re-enters Idle when the character
+//!   min + rand() % (max − min + 1) ms (just min when the unsigned difference is above 0x7FFD). At ≤ 0 an
+//!   NPC whose animation set has no `Walk` clip goes to LongIdle, one with it to Wander, which goes
+//!   straight back to Idle without wander points.
+//! - LongIdle (`ControllerNpcStateLongIdle`): `LongIdleAction` ([`IdleMode::Long`]) and the same timer
+//!   roll; at ≤ 0 back to Idle unless `npcIdleLoop`.
+//! - Chat (`crate::character::npc_chat`) suspends the cycle; its end (`ControllerNpcStateChat::OnUpdate`)
+//!   re-enters Idle with a new timer.
+//! - PORT: the Walk NPC's re-entry into Idle keeps the playing `AttackIdle` (the same clip). Leaving the
+//!   idle states any other way (a quest `ControllerState` animation) re-enters Idle when the character
 //!   idles again (the quest states' ends are not traced).
-//! - Startup ([`attach_npc_controllers`]): the Spawn animation once when the spawn animation is enabled (a script's
-//!   `Character.Create`: the Shattered Realm keeper swapped in when a run starts or ends plays its activate /
-//!   deactivate animation), else Idle at once.
-//! - PORT: not run, because stock data never reaches them: Wander and WatchAttraction (`MoveToCurrentWanderPoint`,
-//!   `FindAttraction`: no `NpcWanderPoint` is placed in any map and no NPC is an `isNpcAttractor`), Alert
-//!   (`ControllerNpcStateAlert` exists but `ControllerNpc2::RegisterStates` does not register it). So an
-//!   NPC never walks or turns on its own.
+//! - Startup ([`attach_npc_controllers`]): the Spawn animation once when enabled, else Idle at once.
+//! - PORT: Wander, WatchAttraction (no `NpcWanderPoint` / `isNpcAttractor` in stock data) and Alert (not
+//!   registered by `ControllerNpc2::RegisterStates`) are not ported: an NPC never walks or turns on its own.
 use bevy::prelude::*;
 use gd_game_core::character::{CharState, Character, IdleMode};
 use gd_game_core::data::GameData;
 use gd_sim::anim::AnimType;
 
-/// The controller record of an `Npc` without `controller` (`Npc::Load`).
+/// `Npc::Load`'s default.
 pub const DEFAULT_CONTROLLER: &str = "records/controllers/npc/ai_npcdefault02.dbr";
 
-/// Which `ControllerNpc2` state the NPC is in (module doc).
+/// Which `ControllerNpc2` state the NPC is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NpcState {
     Idle,
     LongIdle,
-    /// Chat or any non-idle character state: the cycle waits; Idle starts again after it.
+    /// Chat or any non-idle character state: Idle starts again after it.
     Away,
 }
 
-/// `ControllerNpc2` (module doc): the controller record's idle fields and the current state's timer.
+/// `ControllerNpc2`: the controller record's idle fields and the current state's timer.
 #[derive(Component, Debug, Clone)]
 pub struct NpcController {
     /// `npcIdleTimeMin` / `npcIdleTimeMax` (ms).
@@ -51,12 +43,11 @@ pub struct NpcController {
     /// `npcIdleLoop`: LongIdle never leaves.
     pub idle_loop: bool,
     pub state: NpcState,
-    /// Ms left of the state's timer.
     pub left_ms: f32,
 }
 
 impl NpcController {
-    /// The controller of record `controller` (missing fields 0, as `ControllerNpc2::Load` reads them).
+    /// Missing fields 0, as `ControllerNpc2::Load` reads them.
     pub fn load(data: &GameData, controller: &str) -> Self {
         let rec = data.db.get(controller);
         let f = |k: &str| rec.as_ref().and_then(|r| r.f32(k)).unwrap_or(0.0);
@@ -71,7 +62,6 @@ impl NpcController {
         }
     }
 
-    /// The idle timer roll of Idle / LongIdle `OnBegin`.
     fn roll(&self) -> f32 {
         let (min, max) = self.idle_ms;
         let d = max.wrapping_sub(min) as u32;
@@ -94,10 +84,8 @@ impl NpcController {
     }
 }
 
-/// `Npc::Load`: an `Npc*`-class character gets its controller. Its Startup state
-/// (`ControllerNpcStateStartup::OnBegin`): with `GetSpawnAnimationEnabled` (an NPC a script created with
-/// `Character.Create`, `gd_story::story::state::Entities::spawn_animation`) it plays the Spawn animation (type 19) once,
-/// then Idle; else Idle at once.
+/// `Npc::Load`: an `Npc*`-class character gets its controller. `ControllerNpcStateStartup::OnBegin`: with
+/// `GetSpawnAnimationEnabled` it plays the Spawn animation (type 19) once, then Idle; else Idle at once.
 pub fn attach_npc_controllers(
     mut commands: Commands,
     data: Res<GameData>,
@@ -135,7 +123,6 @@ pub fn attach_npc_controllers(
     }
 }
 
-/// The Idle ↔ LongIdle cycle (module doc).
 pub fn npc_idle(time: Res<Time>, mut npcs: Query<(&mut NpcController, &mut Character)>) {
     let dt = time.delta_secs() * 1000.0;
     for (mut n, mut c) in &mut npcs {

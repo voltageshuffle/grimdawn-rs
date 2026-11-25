@@ -1,6 +1,4 @@
-//! Shared fade machinery: a full-screen container whose children fade together ([`FadeGroup`],
-//! [`fade_group`], [`seal_fade_group`], [`Fader`]). Used by the quick tips, conversation, speech bubbles,
-//! notifications, quest popups, cinematics and credits.
+//! Shared fade machinery: a full-screen container whose children fade together.
 use bevy::prelude::*;
 use gd_ui_kit::Ui;
 
@@ -88,7 +86,6 @@ pub struct Fader<'w, 's> {
 }
 
 impl Fader<'_, '_> {
-    /// Nothing is written while `alpha` is the group's.
     pub fn set(&mut self, group: Entity, alpha: f32) {
         let Ok((mut g, children)) = self.groups.get_mut(group) else {
             return;
@@ -102,7 +99,7 @@ impl Fader<'_, '_> {
                 continue;
             };
             let a = base.0 * alpha;
-            // The colour `seal_fade_group` based the alpha on, only (see there).
+            // The colour `seal_fade_group` based the alpha on, only.
             if let Some(mut n) = image {
                 n.color.set_alpha(a);
             } else if let Some(mut n) = text {

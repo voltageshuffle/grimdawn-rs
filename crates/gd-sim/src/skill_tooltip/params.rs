@@ -1,6 +1,5 @@
 //! The `SkillProfile_Modifiers` lines: energy cost, cooldown, duration, radius, targets
-//! (`SkillProfile_Modifiers::CreateUIText` / `SkillProfile_Modifiers::CreateUINextText`, the parent module's
-//! docs).
+//! (`SkillProfile_Modifiers::CreateUIText` / `SkillProfile_Modifiers::CreateUINextText`).
 use super::*;
 
 /// How a changed value is tested in `SkillProfile_Modifiers::CreateUINextText` (the "next level" text:
@@ -138,8 +137,8 @@ fn uses_mod_tags(rec: &Record, prof: &Record, level: u32) -> bool {
 
 /// The period of a channelled skill's cost (`Skill_AttackSpellCone` /
 /// `Skill_AttackSpellDrain::GetManaCostPeriod`: the skill's period
-/// over `Character::GetSpellCastSpeed`, `timeBetweenAttacks` ms, default 100,
-/// as `gd_game::casting::channels`); 0 otherwise, the cost then reads per use.
+/// over `Character::GetSpellCastSpeed`, `timeBetweenAttacks` ms, default 100); 0 otherwise, the
+/// cost then reads per use.
 fn cost_period(ctx: &SkillTipCtx, rec: &Record, prof: &Record) -> f32 {
     if !matches!(
         rec.class.as_str(),
@@ -206,9 +205,7 @@ pub(super) fn param_lines(
             }
     };
     // `SkillProfile_Modifiers::Load`: the chance a monster / auto-cast picks it, the life
-    // monitor (`lifeMonitorCooldown` in seconds, as shown: the Savior potion
-    // modifiers hold 20).
-    // `now`: `sum(f, level)`, which every caller already holds.
+    // monitor (`lifeMonitorCooldown` in seconds).
     let changed = |f: &str, now: f32| prev.is_none_or(|p| now != sum(f, p));
     let weight = sum("skillChanceWeight", level);
     if weight != 0.0 && changed("skillChanceWeight", weight) {
@@ -235,19 +232,13 @@ pub(super) fn param_lines(
         };
         out.push(line(class, text));
     }
-    // `Skill::CreateUIModifierText`: the cooldown ×
-    // (1 − `GetTotalSkillAttribute(1)` %) and the energy cost × (1 −
-    // `GetTotalSkillAttribute(2)` %), floored at 0, unless the skill is an
-    // item skill (`Skill.isItemSkill`) or a potion (`Skill.isPotion`). `Skill::GetTotalSkillAttribute`
-    // is the skill's own (record + modifiers) plus its
-    // `SkillManager`'s total (gear, passives: [`Profile::skill_attribute`]);
-    // a skill outside the player's manager (an unlearned devotion star) gets
-    // none of the manager's: the real Time Dilation tooltip reads 13 s with
-    // 15 % (`reduce` false). Real window: a 6 s skill reads 5.1 s, Wrath of
-    // Agrivix 30 reads 23.4. The energy cost is the cast's own
-    // [`crate::actor::skill_energy_cost`] (without the chance part, as the hot
-    // slot). PORT: the skill's own `skillCooldownReduction` is not added, and
-    // a modifier's cooldown reads unreduced (a 3.8 s modifier, real window).
+    // `Skill::CreateUIModifierText`: the cooldown × (1 − `GetTotalSkillAttribute(1)` %) and the
+    // energy cost × (1 − `GetTotalSkillAttribute(2)` %), floored at 0, unless the skill is an
+    // item skill or a potion. `Skill::GetTotalSkillAttribute` is the skill's own plus its
+    // `SkillManager`'s total ([`Profile::skill_attribute`]); a skill outside the player's manager
+    // (an unlearned devotion star, `reduce` false) gets none of the manager's. The energy cost is
+    // [`crate::actor::skill_energy_cost`] without the chance part. PORT: the skill's own
+    // `skillCooldownReduction` is not added, and a modifier's cooldown reads unreduced.
     let cdr = ctx.player.filter(|_| reduce).map_or(0.0, |(_, p)| {
         p.skill_attribute("skillCooldownReduction") * 0.01
     });

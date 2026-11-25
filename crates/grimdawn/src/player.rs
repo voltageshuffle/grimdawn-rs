@@ -137,11 +137,9 @@ fn spawn_player(
 /// `GD_WALK_TO` (hooks.rs), later half: the route's next point is walked to as soon as the player stands idle
 /// within 60 m of it; a point within 3 m is passed. The route's last point is walked to once (e.g. teleported into
 /// the Shattered Realm's treasure room, whose reward trigger is ~25 m from the portal's exit), the ones before it
-/// every second until reached (a monster in the way stops a walk). Not while a teleport runs: the player is frozen and
-/// teleporting for the whole activity (`Character::IsTeleporting`, `Character.teleporting`, set from the activity's
-/// start to
-/// its last phase), and `gd_game::doors::run_teleport` clears the path every frame until it ends — a walk issued
-/// during the fade-in would be dropped yet count as walked, stranding the player at the entrance.
+/// every second until reached (a monster in the way stops a walk). Not while a teleport runs: the player is frozen
+/// for the whole activity (`Character::IsTeleporting`) and `gd_game::doors::run_teleport` clears the path, so a walk
+/// issued then would count as walked without happening.
 #[cfg(feature = "dev")]
 #[allow(clippy::too_many_arguments)]
 fn walk_to_nearby(
@@ -229,13 +227,12 @@ pub fn pick_ground(ray: Ray3d, nav: &gd_sim::nav::NavWorld) -> Option<Vec3> {
 /// issues nothing more ([`gd_game::movement::MouseCommand`]); gd-game routes it by component and walks beside it.
 /// Every ground move follows [`gd_game::movement::request_move`]. What the click means is sent as
 /// [`PlayerOrder`]s, which `gd_game::player_orders` applies.
-/// The foe / breakable clicked is the hover pick ([`gd_ui::state::hover::Hovered`], `combat::pick_enemy` — one pick feeds
-/// the hover and the attack). A press attacks it once ([`gd_game::player_orders::PrimaryUse`]); while the button is
-/// held, every repeat takes that pick again and re-issues the attack (`InGameUI::HandleMouseEvent`: the pick
-/// runs on every
-/// mouse event while held; its wider held frustum is the stickiness), so the attacks chain, and a skill key pressed
-/// meanwhile goes between two of them: a different pick switches the attack, and a target's death re-acquires the
-/// cursor pick instead of falling through to a ground move.
+/// The foe / breakable clicked is the hover pick ([`gd_ui::state::hover::Hovered`], `combat::pick_enemy` — one pick
+/// feeds the hover and the attack). A press attacks it once ([`gd_game::player_orders::PrimaryUse`]); while the
+/// button is held, every repeat takes that pick again and re-issues the attack (`InGameUI::HandleMouseEvent`: the
+/// pick runs on every mouse event while held; its wider held frustum is the stickiness), so the attacks chain, and a
+/// skill key pressed meanwhile goes between two of them: a different pick switches the attack, and a target's death
+/// re-acquires the cursor pick instead of falling through to a ground move.
 #[allow(clippy::too_many_arguments)]
 fn click_to_move(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -290,10 +287,9 @@ fn click_to_move(
 ) {
     use gd_game::hotbar::{is_move_to, move_slot_keeps};
     // The frame's mouse event opens or closes the world command gate (`gd_game::movement::MouseCommand`,
-    // `InGameUI::HandleMouseEvent`), for this system and the world clicks after it (`casting::cast_input`): a
-    // press the UI took
-    // (`UiCapture`) leaves the held buttons without commands until they are released, also once the cursor leaves
-    // the window or the window closed.
+    // `InGameUI::HandleMouseEvent`), for this system and the world clicks after it (`casting::cast_input`): a press
+    // the UI took (`UiCapture`) leaves the held buttons without commands until they are released, also once the
+    // cursor leaves the window or the window closed.
     let pressed_now = buttons.any_just_pressed([MouseButton::Left, MouseButton::Right]);
     gate.event(
         buttons.any_pressed([MouseButton::Left, MouseButton::Right]),
@@ -439,9 +435,8 @@ fn click_to_move(
             return;
         }
     } else if !move_key {
-        // The held button re-picks under the cursor every repeat (`InGameUI::HandleMouseEvent`: the pick
-        // runs on every
-        // mouse event while held, `SetCombatEnemy` from it, the re-dispatch gated by the 10/50 ms timer — the
+        // The held button re-picks under the cursor every repeat (`InGameUI::HandleMouseEvent`: the pick runs on
+        // every mouse event while held, `SetCombatEnemy` from it, the re-dispatch gated by the 10/50 ms timer — the
         // `repath` wait above). The hover pick is that one pick (its wider held frustum is the stickiness): a
         // different pick switches the attack; a dead target re-acquires the cursor pick, not a ground move.
         let mut target = hovered_enemy();
@@ -476,8 +471,8 @@ fn click_to_move(
         return;
     }
     // The plain move (`gd_game::player_orders`): to the object's coordinates (`InGameUI::HandleMouseEvent`,
-    // `InGameUI.cursorObjectCoords`; a breakable
-    // on its own nav obstacle gets the straight move point there), else the ground point under the cursor.
+    // `InGameUI.cursorObjectCoords`; a breakable on its own nav obstacle gets the straight move point there), else
+    // the ground point under the cursor.
     orders.write(PlayerOrder::Move {
         to: walk_to,
         ground: pick_ground(ray, &nav.0),
@@ -489,9 +484,9 @@ fn click_to_move(
 /// the key actions 63 / 64 forward / back and 65 / 66 left / right (opposite keys cancel) give a direction relative
 /// to the camera (its horizontal forward and right), normalised; while one is held a destination 1.25 m ahead is
 /// issued every frame, so the player runs on. With a world mouse button held (and no running skill) Keyboard does
-/// nothing, and with a skill running (a cast; a running channel refuses the turn) the keys only turn the player (aiming). Every frame the
-/// direction and its length (1, or 1.414 for a diagonal; 0 and no direction with no key held) become the controller
-/// direction, and in Keyboard Only a held direction is also the aim direction
+/// nothing, and with a skill running (a cast; a running channel refuses the turn) the keys only turn the player
+/// (aiming). Every frame the direction and its length (1, or 1.414 for a diagonal; 0 and no direction with no key
+/// held) become the controller direction, and in Keyboard Only a held direction is also the aim direction
 /// ([`gd_game_core::player::ControllerDirection`]). Sent as [`PlayerOrder`]s (`gd_game::player_orders`).
 #[allow(clippy::too_many_arguments)]
 fn wasd_move(

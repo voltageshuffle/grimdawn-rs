@@ -1,68 +1,36 @@
-//! The monsters' Flee state (`ControllerMonsterStateFlee`:
-//! the constructor, `OnBegin`, `DoFlee`,
-//! `PickFleePoint`, `OnUpdate`, `OnEnd`,
-//! `EndOfPathReached`).
+//! The monsters' Flee state (`ControllerMonsterStateFlee`).
 //!
-//! The controller record (`ControllerMonster::Load`):
-//! `FleeBehavior` (NeverFlee default / FleeOnLowHealth / FleeOnDamage /
-//! FleeWhenEnemyClose), `FleeTarget` (AwayFromEnemy default / TowardsAllies /
-//! TowardsHome), `maxFleeCount` (3), `FleeTime` ms (3000), `FleeDelay` ms
-//! (2000), `FleeChance` % (100), `fleeDistance`, `ClearAngerWhenFleeing`,
-//! `ResetOriginAfterFleeing`, `enemyTooClose`. `ControllerMonster::CanFlee`:
-//! fewer flees than `maxFleeCount` so far, the delay since the
-//! last one over (`ResetFleeTimer`, counted down in `Update`) and
-//! `rand() % 100 < FleeChance`. Nothing in the controller code resets the
-//! flee count: it is per lifetime.
+//! Controller record (`ControllerMonster::Load`): `FleeBehavior` (NeverFlee default /
+//! FleeOnLowHealth / FleeOnDamage / FleeWhenEnemyClose), `FleeTarget` (AwayFromEnemy default /
+//! TowardsAllies / TowardsHome), `maxFleeCount` (3), `FleeTime` ms (3000), `FleeDelay` ms (2000),
+//! `FleeChance` % (100), `fleeDistance`, `ClearAngerWhenFleeing`, `ResetOriginAfterFleeing`,
+//! `enemyTooClose`. `CanFlee`: fewer flees than `maxFleeCount` (per lifetime), the delay since the
+//! last one over and `rand() % 100 < FleeChance`.
 //!
-//! Triggers (each asks `CanFlee` and enters Flee with the enemy as state
-//! data): `DefaultLowHealthResponse` (FleeOnLowHealth, instead
-//! of berserk), `DefaultAttackedResponse` and
-//! `ControllerMonsterStateAttack::Attacked` (FleeOnDamage),
-//! `DefaultClosestEnemyFoundResponse` (FleeWhenEnemyClose),
-//! raised by `FindEnemyUpdate`: every 200 ms a monster with
-//! `enemyTooClose` > 0 and that behavior asks `CanFlee`, then looks for the
-//! closest foe nearer than `enemyTooClose` (+0.1).
+//! Triggers (each asks `CanFlee` and enters Flee with the enemy): low health (FleeOnLowHealth,
+//! instead of berserk), attacked (FleeOnDamage), and every 200 ms with `enemyTooClose` > 0 the
+//! closest foe nearer than `enemyTooClose` + 0.1 (FleeWhenEnemyClose).
 //!
-//! The state: `OnBegin` counts the flee; `DoFlee` picks the point, goes
-//! idle at once when it is the monster's own spot or unreachable, else runs
-//! there at the run speed and arms the `FleeTime` timer (`OnUpdate` counts
-//! it down: expiry, or reaching the point, ends the state in "Idle", where
-//! the monster finds its enemy again through its anger). `OnEnd` re-arms the
-//! flee delay and, if it ran, `ClearAngerWhenFleeing` empties the anger list
-//! and `ResetOriginAfterFleeing` makes its current spot its origin.
-//! `PickFleePoint`: AwayFromEnemy runs `fleeDistance` directly away from the
-//! enemy with ±1 m of jitter on each horizontal axis; TowardsAllies runs to
-//! the first friend (within `RoamDistance` of the monster's home, other than
-//! itself) that lies on the far side of the monster from the enemy and more
-//! than 3 m off, and on past it by a random distance between the sum of the
-//! two radii and twice that, else flees as AwayFromEnemy; TowardsHome runs
-//! to its home.
+//! The state: `OnBegin` counts the flee; `DoFlee` picks the point, goes idle at once when it is the
+//! monster's own spot or unreachable, else runs there at the run speed and arms the `FleeTime`
+//! timer (expiry or arrival ends in "Idle"). `OnEnd` re-arms the flee delay and, if it ran,
+//! applies `ClearAngerWhenFleeing` / `ResetOriginAfterFleeing`.
+//! `PickFleePoint`: AwayFromEnemy runs `fleeDistance` away from the enemy with ±1 m of horizontal
+//! jitter per axis; TowardsAllies runs to the first friend (within `RoamDistance` of home) on the
+//! far side from the enemy and more than 3 m off, and past it by a random distance between the sum
+//! of the two radii and twice that, else as AwayFromEnemy; TowardsHome runs home.
 //!
-//! The roar (`OnBegin`): after the flee is counted, `rand() % 100 <
-//! fleeAnimChance` (Monster record, default 0) asks `Character::
-//! CanPlayAnimation`'s test (the animation set's slot 37, `Flee`, has
-//! entries); if so a `PlayAnimationAction` (type 37, played once, raising
-//! "End") is queued and the `fleeSound` pak plays, with no sound roll; if
-//! the slot is empty nothing plays and the flee goes on. Otherwise `rand() %
-//! 100 < fleeSoundChance` plays `fleeSound` alone. While the roar plays
-//! (`ControllerMonsterStateFlee.roarPlaying`) `DoFlee` is not called: the state's
-//! `HandleEvent` calls it on "End" (so the point is picked, the run speed
-//! and the `FleeTime` timer armed when the roar ends) and `OnUpdate` does not
-//! count the timer.
+//! The roar (`OnBegin`): `rand() % 100 < fleeAnimChance` (Monster record, default 0) with a `Flee`
+//! animation slot (37) plays it once and the `fleeSound` pak with no roll; an empty slot plays
+//! nothing. Otherwise `rand() % 100 < fleeSoundChance` plays `fleeSound` alone. While the roar plays
+//! `DoFlee` waits for its "End" and the timer does not count.
 //!
-//! A flee asked for during a swing or cast starts at once, as the game's
-//! `SetState("Flee")` does: the action is cut short (`combat::monster_ai`).
-//! The roar is the `CharState::Roar` state and is left when its animation
-//! ends or is interrupted. The "AlertBeforePursue" state ignores the
-//! triggers (its `Attacked` / `LowHealth` handlers are empty).
+//! A flee asked for during a swing or cast cuts the action short (`SetState("Flee")`). The roar is
+//! `CharState::Roar`, left when its animation ends or is interrupted. "AlertBeforePursue" ignores
+//! the triggers.
 //!
-//! The fear influence's Scared state (`ControllerMonster::ScareMe`
-//! → `ControllerMonsterStateScared`) reuses the flee point
-//! pick: [`Flee::scare_point`] is its `PickRunToPoint` — always
-//! away from the enemy (no `FleeTarget` variants), `max(fleeDistance, 5)` m
-//! in 3D with ±1 m of horizontal jitter, re-picked every 1–2 s and on the
-//! path's end / failure; no roar, no flee count. [`crate::combat::cc_states`] drives
-//! it while the fear crowd-control entry runs.
+//! The fear Scared state (`ControllerMonsterStateScared`) runs to [`Flee::scare_point`], re-picked
+//! every 1–2 s and at the path's end / failure; no roar, no flee count.
 use crate::combat::MonsterAi;
 use bevy::prelude::*;
 
@@ -81,7 +49,6 @@ pub enum Target {
     Home,
 }
 
-/// The controller's flee settings and the monster's flee bookkeeping.
 #[derive(Clone, Debug)]
 pub struct Flee {
     pub behavior: Behavior,
@@ -103,7 +70,6 @@ pub struct Flee {
     anim_chance: u32,
     sound_chance: u32,
     pub sound: Option<String>,
-    /// The running state.
     pub run: Option<Run>,
     /// A trigger fired: flee from this enemy once free to.
     pub request: Option<Entity>,
@@ -111,7 +77,7 @@ pub struct Flee {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Roar {
-    /// No roar (or it ended).
+    /// None, or it ended.
     None,
     /// Rolled, the animation not started yet.
     Pending,
@@ -121,7 +87,6 @@ pub enum Roar {
 
 #[derive(Clone, Debug)]
 pub struct Run {
-    /// The flee's enemy (state data).
     pub enemy: Entity,
     pub roar: Roar,
     /// Seconds of `FleeTime` left.
@@ -212,9 +177,8 @@ impl Flee {
         true
     }
 
-    /// `OnBegin`: counts the flee and rolls the roar. `can_play`: the
-    /// animation set has a `Flee` slot. Returns whether the `fleeSound`
-    /// plays; the roar is `run.roar`.
+    /// `OnBegin`: counts the flee and rolls the roar (`can_play`: a `Flee` animation slot). Returns
+    /// whether the `fleeSound` plays.
     pub fn enter(&mut self, enemy: Entity, can_play: bool) -> bool {
         self.count += 1;
         let (roar, sound) = if (gd_game_core::rng::u32(..32768) % 100) < self.anim_chance {
@@ -234,8 +198,7 @@ impl Flee {
         sound && self.sound.is_some()
     }
 
-    /// `DoFlee`'s run: arms the `FleeTime` timer (a point was reached by a
-    /// path).
+    /// `DoFlee`'s run: arms the `FleeTime` timer.
     pub fn arm(&mut self) {
         if let Some(r) = self.run.as_mut() {
             r.timer = self.time;
@@ -250,9 +213,7 @@ impl Flee {
         (moved && self.clear_anger, moved && self.reset_origin)
     }
 
-    /// `PickFleePoint`: where to run from `me` away from `enemy`. `home` is
-    /// the monster's home, `friends` the other monsters that are its
-    /// friends as (position, radius), `my_radius` its own.
+    /// `PickFleePoint`; `friends` as (position, radius).
     pub fn pick_point(
         &self,
         me: Vec3,
@@ -283,11 +244,8 @@ impl Flee {
         me + away * self.distance + Vec3::new(jitter(), 0.0, jitter())
     }
 
-    /// `ControllerMonsterStateScared::PickRunToPoint`:
-    /// the fear flee's point — `max(fleeDistance, 5)` m directly
-    /// away from the enemy in 3D, ±1 m of jitter on each horizontal axis
-    /// (the Flee state's pick is horizontal and honors `FleeTarget`; the
-    /// Scared state always runs away). The caller snaps it to the navmesh.
+    /// `ControllerMonsterStateScared::PickRunToPoint`: `max(fleeDistance, 5)` m away from the enemy
+    /// in 3D, ±1 m horizontal jitter per axis, always away. The caller snaps it to the navmesh.
     pub fn scare_point(&self, me: Vec3, enemy: Vec3) -> Vec3 {
         let away = (me - enemy).normalize_or_zero();
         let dist = self.distance.max(5.0);
@@ -296,8 +254,7 @@ impl Flee {
     }
 }
 
-/// A flee's enemy position or None when it is gone (`PickFleePoint` fails
-/// and the state ends at once).
+/// None when the enemy is gone (`PickFleePoint` fails and the state ends at once).
 pub fn enemy_pos(foes: &[(Entity, Vec3, f32)], e: Entity) -> Option<Vec3> {
     foes.iter().find(|f| f.0 == e).map(|f| f.1)
 }

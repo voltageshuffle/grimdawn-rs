@@ -9,8 +9,7 @@ pub(super) fn sync_ranged(
     let Ok((e, cur)) = players.single() else {
         return;
     };
-    // Only mutations wake this (UI reads `Inventory::info` through `&self`); the projectile comparison
-    // below is the dedup.
+    // Only mutations wake this; the projectile comparison below dedups.
     if !inv.is_changed() && !inv.is_added() {
         return;
     }
@@ -28,8 +27,7 @@ pub(super) fn sync_ranged(
     }
 }
 
-/// Weapon swings with a ranged weapon (plain attacks, no skill cast): the
-/// hit point fires the weapon's projectile at the target or the aim point.
+/// Plain ranged-weapon swings: the hit point fires the weapon's projectile at the target or aim point.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ranged_swings(
     mut commands: Commands,
@@ -67,8 +65,7 @@ pub(super) fn ranged_swings(
             _ => continue,
         };
         commands.entity(ev.entity).try_remove::<AimPoint>();
-        // A shot is a weapon-pool attack too: the pool skill picked as the
-        // swing started (`weapon_pool::start_swing`) fires instead.
+        // A weapon-pool skill picked as the swing started fires instead.
         if let Some(cast) = pick
             .filter(|p| p.is_for(DEFAULT_ATTACK))
             .and_then(|p| p.pick.clone())
@@ -102,7 +99,7 @@ pub(super) fn ranged_swings(
             hostile: monster,
             parent: None,
         };
-        // The default attack's own added projectile effect (`AddProjectileEffects`, no modifiers).
+        // `AddProjectileEffects` of the default attack, no modifiers.
         let mods = ProjMods {
             effects: data
                 .db
@@ -132,9 +129,8 @@ pub(super) fn ranged_swings(
     }
 }
 
-/// `ProjectileBase::GetTotalSpeed`: velocity × (1 + `skillProjectileSpeedModifier`
-/// %), the skill's own value plus the character's (gear, passives)
-/// (`SkillActivated::CreateProjectile` → `GetTotalSkillAttribute(3)`).
+/// `ProjectileBase::GetTotalSpeed`: velocity × (1 + `skillProjectileSpeedModifier` %), the skill's own
+/// value plus the character's (`GetTotalSkillAttribute(3)`).
 pub fn proj_speed(cb: &Combatant, own: f32) -> f32 {
     (1.0 + (own
         + cb.profile
@@ -146,8 +142,7 @@ pub fn proj_speed(cb: &Combatant, own: f32) -> f32 {
         .max(0.0)
 }
 
-/// A skill creating a projectile plays its `skillHitSound` at the launch
-/// point (`crate::combat_sounds::HitAt::Launch`).
+/// The skill's `skillHitSound` at the launch point.
 pub(crate) fn skill_launch_sound(commands: &mut Commands, data: &GameData, skill: &str, at: Vec3) {
     if let Some(pak) =
         crate::combat_sounds::spell_hit(data, skill, crate::combat_sounds::HitAt::Launch)
@@ -156,9 +151,7 @@ pub(crate) fn skill_launch_sound(commands: &mut Commands, data: &GameData, skill
     }
 }
 
-/// One weapon projectile from the hand towards `cast.point`, with the
-/// weapon's shot sound (`crate::combat_sounds::shot`) at the shooter and
-/// the cast's added effects (`mods`).
+/// One weapon projectile from the hand towards `cast.point`, with the weapon's shot sound.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fire_weapon_projectile(
     commands: &mut Commands,
@@ -182,10 +175,7 @@ pub(super) fn fire_weapon_projectile(
     let speed = prec.f32("projectileVelocity").unwrap_or(30.0).max(1.0) * speed_factor;
     let dist = prec.f32("projectileDistance").unwrap_or(MAX_RANGE).max(1.0);
     let start = launch_coords(data, tf, ch, prec, hand);
-    // The request point itself, no height lift
-    // (`SkillActivated::ExecuteRangedAttack`: direction = point − launch
-    // coords; the point is the clicked object's `Entity::GetCoords`): the shot descends
-    // onto low breakables instead of flying over them.
+    // No height lift (`SkillActivated::ExecuteRangedAttack`: direction = point − launch coords).
     let aim = (cast.point - start).normalize_or(gd_game_core::character::facing(tf));
     skill_launch_sound(commands, data, &cast.skill, tf.translation);
     spawn_projectile(

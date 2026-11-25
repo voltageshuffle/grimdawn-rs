@@ -2,8 +2,7 @@
 //! perspective shadow map (LiSPSM) over the visible scene, not Bevy's
 //! cascades. The map is rendered by Bevy's directional-light shadow pass
 //! (one "cascade" whose matrix [`sun_shadow_cascade`] replaces), the
-//! materials sample it themselves (`sun_shadow` in gd_standard.wesl /
-//! gd_terrain.wesl).
+//! materials sample it themselves.
 //!
 //! Engine.dll:
 //! - Map size by `shadowQuality` (`GraphicsEngine::GetShadowMapSizes`): low 1024,
@@ -21,7 +20,7 @@
 //!   (`Actor::GetVisibility` 1 or 3, `castsShadows` set: `Actor.castsShadows`, 1 from the
 //!   `Actor` ctor; Game.dll clears it only for `PhysicsDecoration` and `Rubble`
 //!   (their ctors) and a `Destructible`'s pieces (its record's
-//!   `brokenCastShadows`, default 0: breakables.rs); gibs (`Gib`, a plain
+//!   `brokenCastShadows`, default 0); gibs (`Gib`, a plain
 //!   `Actor`) cast), below ultra only those
 //!   whose bounding sphere comes within 80 m of the camera's ray toward the
 //!   sun; the nearest of them (`L·c − |h|·|L|`) caps the volume on the sun
@@ -44,16 +43,15 @@
 //!   result scales the direct sun term only (ambient stays); no shadow
 //!   intensity (`lightShadowIntensity` is point lights only,
 //!   `SetShaderParamsForScene`; `AmbianceManager`'s shadow intensity only
-//!   feeds its statistics text, render/env.rs). The shadow pass (`shadow` technique) is the
+//!   feeds its statistics text). The shadow pass (`shadow` technique) is the
 //!   plain depth of the casters with the base-alpha test at 0.5.
 //!
 //! - The scene bounds are the union of the scene's renderable boxes
 //!   (`GraphicsScene::AddRenderable`; `CalculateSceneBounds`
 //!   skips entries whose box is not finite, as here); the terrain's renderable
-//!   is one batch over its 9×9-cell blocks inside the view frustum
-//!   (render/terrain.rs `terrain_blocks`), not the level's whole terrain;
+//!   is one batch over its 9×9-cell blocks inside the view frustum, not the level's whole terrain;
 //!   water likewise (`WaterRenderInterface::AddToScene`: its
-//!   9-unit blocks in the frustum, one batch per water type, water.rs).
+//!   9-unit blocks in the frustum, one batch per water type).
 //! - `RenderDebug` (`SetShadowDebugging`) draws, at (10, 64)
 //!   and 256² each with UV 0..1 through shaders/debug/shadowmap.ssh (a plain
 //!   copy), `GraphicsMTRenderer.dummyShadowTarget` = a 16² target cleared to 1 that `BuildShadows`
@@ -68,9 +66,8 @@
 //! visible meshes (terrain / water: their blocks in the view frustum); a caster is
 //! the union of the boxes of a model's shadow-casting meshes (not
 //! `NotShadowCaster`, children of one root), standing in for the actor's box.
-//! A receiver outside the whole map (past the 80 m cut or the scene box) is lit:
-//! the clamped edge texels would stretch the casters on the map's border away
-//! from the camera, and which receivers are outside changes as the camera turns.
+//! A receiver outside the whole map (past the 80 m cut or the scene box) is lit: the clamped edge texels
+//! would stretch the casters on the map's border.
 //!
 //! Hook: `GD_SHADOWS=0` (as `shadows = false`).
 use bevy::camera::primitives::{Aabb, Frustum};
@@ -112,19 +109,14 @@ impl Plugin for SunShadowPlugin {
     }
 }
 
-/// On a camera: the sun's shadow map is not rendered for this view. Its
-/// materials never sample it (the water reflection's `reflectionStyle` has no
-/// shadows, render/reflection.rs), and Bevy renders a separate map per view.
+/// On a camera: the sun's shadow map is not rendered for this view (its materials never sample it; Bevy
+/// renders a separate map per view).
 #[derive(Component)]
 pub struct NoSunShadow;
 
-/// Drops the sun's cascades of cameras that do not see its render layers
-/// (paper dolls, the conversation portrait): Bevy builds and culls a
-/// cascade set for every active camera (all shadow casters × cascades, a
-/// few ms a frame), but its shadow pass only uses those of views sharing the
-/// light's layers. A [`NoSunShadow`] camera that does share them keeps an
-/// empty set (`prepare_lights` unwraps the view's entry): no shadow view,
-/// no caster culling.
+/// Drops the sun's cascades of cameras that do not see its render layers (paper dolls, the conversation
+/// portrait). A [`NoSunShadow`] camera that does share them keeps an empty set (`prepare_lights` unwraps the
+/// view's entry): no shadow view, no caster culling.
 fn drop_unlit_cascades(
     cams: Query<(
         Entity,
@@ -184,7 +176,6 @@ pub fn map_size(quality: u32) -> u32 {
     }
 }
 
-/// The current shadow settings (from the options).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct SunShadowSettings {
     pub enabled: bool,
@@ -215,7 +206,6 @@ fn apply_options(
         _ => 1,
     };
     let enabled = options.flag("shadows");
-    // Test hook: GD_SHADOWS=0 turns the sun shadow off like `shadows = false`.
     #[cfg(feature = "dev")]
     let enabled = enabled && !hooks.render.no_shadows;
 
@@ -448,7 +438,6 @@ pub fn lispsm(eye: Vec3, view: Vec3, light: Vec3, points: &[Vec3]) -> Option<Mat
     Some(crop * pv)
 }
 
-/// Inputs of one shadow build.
 pub struct ShadowScene<'a> {
     pub eye: Vec3,
     pub view: Vec3,
@@ -582,7 +571,6 @@ fn sun_shadow_cascade(
             sun.shadow_maps_enabled = false;
         }
     }
-    // Shadows off: the maps are disabled above; skip the whole fit.
     if !s.enabled {
         return;
     }
@@ -634,9 +622,6 @@ fn sun_shadow_cascade(
     }
     // One box per actor (`Actor.boundsCenter`, `Actor.boundsHalfExtents`): the union of
     // its meshes' boxes (the meshes of a model are children of its root).
-    // Rebuilt every frame in one pass over the casters: every animated
-    // character's skinned boxes change each frame, so tracking changes costs
-    // more than the pass.
     actors.clear();
     for (e, a, gt, v, parent) in &casters {
         if !v.get() {
@@ -689,7 +674,6 @@ fn sun_shadow_cascade(
             // UV: ½·shadowBluriness = ½ · softness / size, in the squeezed map.
             texel_size: 0.5 * SHADOW_SOFTNESS / bevy_size as f32,
         };
-        // Reuse the view's vector instead of allocating one per frame.
         let slot = cascades.cascades.entry(cam_e).or_default();
         slot.clear();
         slot.push(cascade);

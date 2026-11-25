@@ -1,109 +1,45 @@
-//! Shapeshifting (`Skill_Shapeshift`: the Berserker's Wereraven form, the
-//! Fangs relic's beast form).
+//! Shapeshifting (`Skill_Shapeshift`: the Berserker's Wereraven form, the Fangs relic's beast form).
 //!
-//! Game.dll: the class is a `Skill_BuffSelfToggled` (its stats
-//! count while it is on); `Skill_Shapeshift::SetShapeshifted`
-//! swaps the mesh (`replacementMeshMale/Female`), animations
-//! (`replacementAnims`), sounds, footsteps and unarmed trail, sets the
-//! character's active skill set to `activeSkillSet` (skills of another set
-//! are unavailable, `Skill::SetAvailability`) and copies `allowedSkillTypes`
-//! to the character.
-//! The port: casting the skill toggles the form ([`Shapeshifted`]); while on,
-//! the whole hotbar swaps to the form's skill set page
-//! (`PlayerHotSlotCtrl::Update` sees the character's active skill set change
-//! and calls `SetActiveSkillSet`: the page is created on first use, see
-//! [`new_page`], kept for later and saved as its own bar; leaving the form
-//! shows the default set's page again); `grantedSkills` come at
-//! the form skill's level. Their level follows the form skill
-//! (`Skill_Shapeshift::SkillLevelChange` → `SkillManager::UpdateSubSkillLevels`),
-//! other skills cast only when their class is in
-//! `allowedSkillTypes` (none listed = all, class names compared without
-//! case: `SkillManager::IsGlobalSkillTypeAndAllowed`),
+//! The class is a `Skill_BuffSelfToggled` (its stats count while it is on). Casting the skill toggles the form
+//! ([`Shapeshifted`]); while on, the character's active skill set is `activeSkillSet` (skills of another set
+//! are unavailable, `Skill::SetAvailability`) and the hotbar shows that set's page (`PlayerHotSlotCtrl::Update`:
+//! created on first use by [`new_page`], kept and saved as its own bar). `grantedSkills` come at the form
+//! skill's level (`SkillManager::UpdateSubSkillLevels`); other skills cast only when their class is in
+//! `allowedSkillTypes` (none listed = all, compared without case: `SkillManager::IsGlobalSkillTypeAndAllowed`);
 //! `skillActiveManaCost` drains per second and the form ends without energy
 //! (`SkillActivatedBuffSelf::ApplyActiveCosts`).
 //!
-//! The look ([`wear_form`], `SetShapeshifted`, called by
-//! `ReceiveActiveUpdate` as the toggle's state changes, i.e. when
-//! the cast fires):
-//! - going in: `Character::SetOverrideMesh` with [`replacement_mesh`] (scaled
-//!   like the character: `Actor::SetScale` with its scale; the old mesh's
-//!   attachments removed, the new one's made), `SetOverrideAnimations` with
-//!   `replacementAnims` (only the table's `unarmed*` keys are read,
-//!   `Character::LoadUnarmedAnimations`, whatever the weapons), `SetHideEquipment(true)`
-//!   (`Character::AddAttachedEntitiesToScene` skips every attached
-//!   `ItemEquipment`, so armour and weapons are not drawn; other attachments,
-//!   e.g. skill effects, stay), `ClearAnimationCallbacks`, then the form's
-//!   Transform animation (type 49) at the spell-cast speed. The cast itself
-//!   played the Transform of the set worn then (`StartAction`, see
-//!   `gd_sim::anim::skill_animation`).
-//! - coming out: the override mesh / animations cleared (the current run or
-//!   idle restarts, no Transform), equipment shown again.
-//! - no collision or radius change (nothing else is touched); hover, targeting,
-//!   pets and effect anchors keep the character (the attach points are the
-//!   form mesh's: `GetMeshInstance` returns the override).
-//! - the form ends only by the toggle (cast again) or running out of energy;
-//!   `Character::CharacterIsDying` stops no skill, so a form dies
-//!   with its own Die animation. `skillActiveDuration` forms (monsters' timed
-//!   `ActivateNow` branch) are not ported: no player form has one.
+//! The look ([`wear_form`], `SetShapeshifted`, when the cast fires):
+//! - going in: `Character::SetOverrideMesh` with [`replacement_mesh`] (scaled like the character),
+//!   `SetOverrideAnimations` with `replacementAnims` (only its `unarmed*` keys,
+//!   `Character::LoadUnarmedAnimations`), `SetHideEquipment(true)` (attached `ItemEquipment` is not drawn;
+//!   other attachments stay), `ClearAnimationCallbacks`, then the form's Transform animation (type 49) at the
+//!   spell-cast speed; `SetOverrideSounds(replacementSounds)`, `SetOverrideFootsteps(replacementFootsteps)` and
+//!   `SetUnarmedWeaponTrail(attackTrail)` ([`FormRecords`]).
+//! - coming out: all cleared (the current run or idle restarts, no Transform), equipment shown again.
+//! - no collision or radius change; attach points are the form mesh's (`GetMeshInstance` returns the override).
+//! - a player form ends only by the toggle or running out of energy; `Character::CharacterIsDying` stops no
+//!   skill, so a form dies with its own Die animation.
 //!
-//! - also going in: `SetOverrideSounds(replacementSounds)`,
-//!   `SetOverrideFootsteps(replacementFootsteps)` and
-//!   `SetUnarmedWeaponTrail(attackTrail)` (kept on the [`Character`] with the
-//!   mesh, `FormRecords`; read by `crate::char_sounds` and the renderer's
-//!   trails); coming out they are cleared (empty paths).
+//! Timed monster forms (`skillActiveDuration` > 0), `Skill_Shapeshift::ActivateNow`: a recast while it runs
+//! zeroes `timeLeft`, a first cast sets it to `skillActiveDuration` and sends the active update. `Update`
+//! counts it down; at 0 the form waits ([`expire_monster_forms`]): the first time it reads the controller's
+//! state skill (`stateSkill`): none or a `SkillChanneled` (force-ended) makes it ready (`readyToEnd`), another
+//! skill makes it wait; on later frames it is ready unless the action state (`Character::GetActionState`) is
+//! Attack (7) or 20, or Move (5) / Jump (19) / Evade (21) with the state still holding a skill. Ready and not
+//! frozen / petrified, the form ends (the inactive update, `PrimaryStopSecondarySkills`); else it retries next
+//! frame. PORT: [`crate::monster_skills::MonsterSkills::has_pick`] is the state's skill, `Attack` / `Cast` the
+//! attack action states, `Run` / `Charge` / `Evade` the moving ones; no monster channels. In the form,
+//! `ChooseBestSkill` skips set 0 skills whose class is not in `allowedSkillTypes`, the plain swing included
+//! ([`crate::monster_skills::MonsterSkills::set_active_set`]).
 //!
-//! Timed monster forms (`skillActiveDuration` > 0; Kurn berserker, Chthonic
-//! Kurn shaman, Scorv, Mogdrogen's nemesis form).
-//! `Skill_Shapeshift::ActivateNow`: the form is "toggled"
-//! (`Skill_Shapeshift.toggled`) only when the duration is 0; otherwise a recast while it runs
-//! zeroes the remaining time (`Skill_Shapeshift.timeLeft`), a first cast sets it to
-//! `skillActiveDuration` × 1000 ms (`timeLeft` and the total `Skill_Shapeshift.totalTime`) and sends the
-//! active update (`ReceiveActiveUpdate` → `SetShapeshifted`,
-//! the same for any character, then `StartCooldown` on ending and
-//! `ControllerMonster::SkillFailed` so the controller chooses
-//! again). `Update` counts it down; at 0 the form waits for the
-//! skill the monster is using ([`expire_monster_forms`]): the first
-//! time it reads the controller's current state skill (`ControllerStateData.skill`, kept in
-//! `Skill_Shapeshift.stateSkill`): none, or a `SkillChanneled` (flagged `SkillChanneled.forceEnded` =
-//! `SkillChanneled::ForceEnd`, its `GetValidTarget` then fails and the channel
-//! stops), and the form is ready to end (`Skill_Shapeshift.readyToEnd`); another skill makes it wait,
-//! and on later frames it is ready unless the character's action state
-//! (`Character::GetActionState`) is Attack (7) or 20, or Move (5) /
-//! Jump (19) / Evade (21) with the state still holding a skill. Ready and not
-//! frozen / petrified, the form ends (`Skill_Shapeshift.on` off, the inactive update,
-//! `PrimaryStopSecondarySkills`); else the time stays 0 and it tries again
-//! next frame. The port: [`crate::monster_skills::MonsterSkills::has_pick`]
-//! is the state's skill, `CharState::Attack` / `Cast` the attack action
-//! states, `Run` / `Charge` / `Evade` the moving ones; monsters channel
-//! nothing here (no monster beam), so the `ForceEnd` has no target.
-//! The form's granted skills are the monster's own: a skill with
-//! a `skillSet` other than 0 is usable only in that active set
-//! (`Skill::SetAvailability`) and `SetShapeshifted` copies the
-//! form's `allowedSkillTypes` to the character, which `ChooseBestSkill` reads:
-//! in the form the set 0 skills of a class not listed are not chosen, the
-//! plain swing (`Skill_WPAttack_BasicAttack`) neither when not listed (no
-//! stock form lists it) ([`crate::monster_skills::MonsterSkills::set_active_set`]).
+//! Not ported: `Skill_Shapeshift::AddTimeToLive` (only a player's `RefreshSkillDurationController` calls it,
+//! and no player form is timed).
 //!
-//! Refresh-duration modifiers: `ActivateNow` fills the timed form's budget
-//! (`Skill::GetRefreshDurationModifierData` into `Skill_Shapeshift.refreshBudget`) and
-//! `Skill_Shapeshift::AddTimeToLive` (a toggled form: no-op)
-//! adds the update's time, capped by the source's budget, to the time left
-//! (the total follows when exceeded). Its only caller is a
-//! `RefreshSkillDurationController`'s update (`RefreshSkillDurationController::Update`, virtual `AddTimeToLive`),
-//! which only a player registers (`crate::refresh`), and no player form is
-//! timed: never reached in stock, not ported.
-//!
-//! Deferred swap (`SetShapeshifted` / `Update`): while
-//! the character is in a physics simulation (`Entity::GetPhysicsSimulation`
-//! not 0: `Character::ExecuteKnockdown`'s ragdoll, 3) the swap
-//! is kept (`Skill_Shapeshift.deferredSwap`, the state `Skill_Shapeshift.deferredSwapState`) and done by
-//! `Update` once the simulation
-//! ends and the character is alive (or respawning). The port defers the
-//! ending of a timed form ([`DeferredSwap`]): the form's stats, sound and
-//! timer stop at once, the look and the skill set come back once its throw
-//! ([`crate::ragdoll::Ragdoll`]) is over. A form cannot start knocked down
-//! (the knockdown stops the cast, `afflictions`), nor does a player form end
-//! thrown (a form drained of energy swaps at once).
+//! Deferred swap (`Skill_Shapeshift.deferredSwap`): while the character is in a physics simulation
+//! (`Character::ExecuteKnockdown`'s ragdoll) the swap waits until it ends and the character is alive. PORT:
+//! only a timed form's ending is deferred ([`DeferredSwap`]): its stats, sound and timer stop at once, the look
+//! and the skill set come back after the throw ([`crate::ragdoll::Ragdoll`]).
 use crate::monster_skills::MonsterSkills;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -136,21 +72,18 @@ impl Plugin for ShapeshiftPlugin {
     }
 }
 
-/// The player's active form.
 #[derive(Component, Debug)]
 pub struct Shapeshifted {
     pub skill: String,
     pub granted: Vec<String>,
-    /// The form's mesh ([`replacement_mesh`], picked as it starts) and
-    /// animation table (`replacementAnims`).
+    /// [`replacement_mesh`], picked as the form starts.
     pub mesh: String,
     pub anims: String,
-    /// `replacementSounds`, `replacementFootsteps`, `attackTrail`.
     pub records: FormRecords,
     drain: f32,
 }
 
-/// A shapeshift cast fired (`casting::fire_casts`): toggles the form.
+/// A shapeshift cast fired: toggles the form.
 #[derive(Message, Clone, Debug)]
 pub struct Toggle {
     pub caster: Entity,
@@ -203,9 +136,7 @@ fn toggle(
             .strs_iter("allowedSkillTypes")
             .map(|s| s.to_string())
             .collect();
-        // The character's active skill set becomes the form's
-        // (`activeSkillSet`); the hotbar shows that set's page, created on
-        // its first use (`PlayerHotSlotCtrl::Update`).
+        // The hotbar shows the set's page, created on its first use (`PlayerHotSlotCtrl::Update`).
         let set = rec.i32("activeSkillSet").unwrap_or(0);
         if caster.set_active_set(set) {
             new_page(&data, &mut caster, set, &granted, &allowed_classes);
@@ -215,8 +146,7 @@ fn toggle(
             .granted
             .extend(granted.iter().map(|g| (g.clone(), level)));
         loadout.form = Some((m.skill.clone(), allowed_classes));
-        // The form runs as a timed-buff entry with no end: it leaves with
-        // the form (below), not by expiry.
+        // A timed-buff entry with no end: it leaves with the form.
         loadout.buffs.add(&m.skill, m.level_index, f32::INFINITY);
         let drain = gd_game_core::casting::level_f(rec, "skillActiveManaCost", m.level_index);
         let mods = modifiers(&loadout, links, &m.skill);
@@ -247,9 +177,8 @@ fn toggle(
     }
 }
 
-/// A timed form's time left on a monster (`Skill_Shapeshift.timeLeft`) and,
-/// once it ran out, the end wait (module doc): the state's skill was seen
-/// (`Skill_Shapeshift.stateSkill`) and the form is ready to end (`Skill_Shapeshift.readyToEnd`).
+/// A timed form's time left on a monster (`Skill_Shapeshift.timeLeft`) and, once it ran out, the end wait
+/// (`stateSkill` seen, `readyToEnd`).
 #[derive(Component, Debug)]
 pub struct TimedForm {
     pub left: f32,
@@ -258,8 +187,7 @@ pub struct TimedForm {
 }
 
 impl TimedForm {
-    /// The end wait once the time is out (module doc): `skill` = the
-    /// controller's state holds a skill, `state` the action state.
+    /// `skill`: the controller's state holds a skill; `state`: the action state.
     fn end_ready(&mut self, skill: bool, state: gd_game_core::character::CharState) -> bool {
         use gd_game_core::character::CharState as S;
         if !self.ready {
@@ -278,12 +206,10 @@ impl TimedForm {
     }
 }
 
-/// A form's end waiting for the knockdown to finish (`Skill_Shapeshift.deferredSwap`,
-/// module doc): the look and skill set still the form's.
+/// A form's end waiting for the knockdown to finish: the look and skill set still the form's.
 #[derive(Component, Debug)]
 pub struct DeferredSwap;
 
-/// A monster casts a shapeshift (module doc, timed forms).
 #[allow(clippy::type_complexity)]
 fn toggle_monster(
     mut commands: Commands,
@@ -299,7 +225,6 @@ fn toggle_monster(
             continue;
         };
         if let Some(mut t) = timed {
-            // ActivateNow with the form running: the time is zeroed.
             t.left = 0.0;
             continue;
         }
@@ -324,8 +249,7 @@ fn toggle_monster(
             .collect();
         ms.set_active_set(&data, rec.i32("activeSkillSet").unwrap_or(0), &allowed);
         ms.set_form_stats(Some((m.skill.clone(), m.level_index)));
-        // A pending swap out of the look is dropped (a recast before it was
-        // done: `SetShapeshifted(true)` finds the set still on).
+        // A recast before a pending swap out was done: `SetShapeshifted(true)` finds the set still on.
         commands.entity(m.caster).try_remove::<DeferredSwap>();
         info!(
             "monster shapeshift: {} for {secs} s",
@@ -349,10 +273,7 @@ fn toggle_monster(
     }
 }
 
-/// `Skill_Shapeshift::Update`'s countdown and end wait (module doc): the
-/// form ends once ready and not frozen or petrified; its stats and sound stop,
-/// the monster's own skill set and look come back (after its throw:
-/// [`DeferredSwap`]).
+/// `Skill_Shapeshift::Update`'s countdown and end wait.
 #[allow(clippy::type_complexity)]
 fn expire_monster_forms(
     mut commands: Commands,
@@ -398,8 +319,7 @@ fn expire_monster_forms(
     }
 }
 
-/// `Skill_Shapeshift::Update`'s deferred swap (`Skill_Shapeshift.deferredSwap`): done once the
-/// physics simulation is over and the monster lives.
+/// `Skill_Shapeshift::Update`'s deferred swap: done once the physics simulation is over and the monster lives.
 #[allow(clippy::type_complexity)]
 fn apply_deferred_swaps(
     mut commands: Commands,
@@ -421,15 +341,9 @@ fn apply_deferred_swaps(
     }
 }
 
-/// A new set's page (`PlayerHotSlotCtrl::Update`): the first
-/// two skills of the set (`SkillManager::GetDefaultSkillIds`:
-/// skills whose `skillSet` is the set, in order) fill the left button and its
-/// alternate-weapon twin (the first) and the right button and its twin (the
-/// second); every key slot of the first and second row copies the default
-/// page's skill when it may be used in the form (`CloneDefaultSlot`:
-/// `SkillManager::IsGlobalSkillTypeAndAllowed`,
-/// every skill class passes the global-type list, then `allowedSkillTypes`
-/// none listed = all, else the class by name).
+/// A new set's page (`PlayerHotSlotCtrl::Update`): the set's first two skills (`SkillManager::GetDefaultSkillIds`)
+/// fill the left and right buttons and their alternate-weapon twins; every key slot of the first and second row
+/// copies the default page's skill when it may be used in the form (`CloneDefaultSlot`).
 fn new_page(
     data: &GameData,
     caster: &mut Caster,
@@ -465,8 +379,7 @@ fn new_page(
     }
 }
 
-/// The form ends (`Skill_Shapeshift::ReceiveActiveUpdate` going inactive:
-/// `skillDeactivatedSound` at the character, `crate::combat_sounds::deactivate`).
+/// The form ends (`Skill_Shapeshift::ReceiveActiveUpdate` going inactive: `skillDeactivatedSound`).
 fn revert(
     commands: &mut Commands,
     data: &GameData,
@@ -479,8 +392,7 @@ fn revert(
     if let Some(pak) = crate::combat_sounds::deactivate(data, &s.skill) {
         commands.write_message(gd_game_core::visuals::PlaySound { pak, at: Some(at) });
     }
-    // The character's set goes back to the default one: its page is shown
-    // again as it was (the form's page stays for the next time).
+    // The default set's page is shown again; the form's page stays for the next time.
     caster.set_active_set(0);
     loadout
         .granted
@@ -527,8 +439,7 @@ fn drain(
     }
 }
 
-/// The modifiers of `skill`: the learned ones (`Skill.modifiers`), then the gear's
-/// (`Skill::GetItemSkillModifiers`), from [`SkillLinks`].
+/// The modifiers of `skill`: the learned ones, then the gear's (`Skill::GetItemSkillModifiers`).
 fn modifiers(loadout: &Loadout, links: Option<&SkillLinks>, skill: &str) -> Vec<String> {
     let Some(links) = links else {
         return Vec::new();
@@ -548,14 +459,9 @@ fn modifiers(loadout: &Loadout, links: Option<&SkillLinks>, skill: &str) -> Vec<
     mine.into_iter().chain(gear).collect()
 }
 
-/// The form's mesh (`Skill_Shapeshift::GetReplacementMesh`):
-/// `replacementMeshFemale` for a female character (gender 2), else
-/// `replacementMeshMale`, each falling back to `replacementMesh`
-/// (`Skill_Shapeshift::Load`); then every enabled modifier of the
-/// skill in `mods` order (learned, then gear) with a
-/// `shapeshiftMeshOverrideFemale` / `…Male` replaces it, so the last one wins
-/// (`Skill_Modifier::GetShapeshiftMeshOverride`; e.g. the
-/// Berserker's transmuters and the `b30x` gear modifiers' wolf / raven skins).
+/// The form's mesh (`Skill_Shapeshift::GetReplacementMesh`): `replacementMeshFemale` / `…Male`, falling back to
+/// `replacementMesh`; then every modifier in `mods` with a `shapeshiftMeshOverrideFemale` / `…Male` replaces it,
+/// the last one winning (`Skill_Modifier::GetShapeshiftMeshOverride`).
 pub fn replacement_mesh(data: &GameData, rec: &Record, female: bool, mods: &[String]) -> String {
     let g = if female { "Female" } else { "Male" };
     let own = |r: &Record, k: &str| r.str(k).filter(|s| !s.is_empty()).map(str::to_owned);
@@ -574,11 +480,9 @@ pub fn replacement_mesh(data: &GameData, rec: &Record, female: bool, mods: &[Str
     mesh
 }
 
-/// Puts a character's (player or monster) [`Shapeshifted`] look on its [`Character`] and takes it
-/// off again (module doc): the single place the override slot follows the
-/// form. A character rebuilt while shifted (new equipment: the game makes a
-/// new `Character`) gets the look back without the Transform animation.
-/// PORT: a form whose mesh does not load keeps the character's own look.
+/// Puts a character's [`Shapeshifted`] look on its [`Character`] and takes it off again. A character rebuilt
+/// while shifted gets the look back without the Transform animation. PORT: a form whose mesh does not load
+/// keeps the character's own look.
 pub fn wear_form(
     data: Res<GameData>,
     mut bodies: ResMut<BodyCache>,

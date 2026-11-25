@@ -3,26 +3,17 @@
 //! target, `hover.rs`; the ground label selection, `loot.rs`) and gd-game gets the controller's cursor record
 //! (`ControllerTarget`: the picked enemy or NPC and its coordinates, else an empty record).
 //!
-//! Candidates (`InGameUI::CollectEnemyCandidates`): foes (`gd_game::combat::Side::Player`'s foes: characters
-//! that are targetable
-//! (`Monster::IsTargetable`: the record's `targetable`, and not invincible unless the record is), not hiding
-//! (`Character::IsHiding`: an invisible or
-//! `hiddenFromCombat` character, a hidden monster's Startup) and, for the combat flag, `causesAnger`; a monster's
-//! `MonsterAi::as_target`, a pet a monster's convert joined its `Pet` fields: `Pet`'s vtable has
-//! `Monster`'s / `Character`'s three functions), targetable
-//! breakables, ground items whose label is shown, NPCs (record `Class` `Npc*`, available for conversations,
-//! visible) with `Character::GetUsableRange` (both radii + 3 m), and the interactable fixed actors with
-//! `FixedActor::GetUsableRange` (both radii + the record's `usableRange`): unopened chests (`FixedItemContainer`;
-//! `FixedItemBlastContainer` records with the shrines), doors and levers of interest, devotion shrines and monster
-//! totems, riftgates, the Ascendant Altar, the player's gravestone, open personal portals, the Shattered Realm's exit
-//! gates and unused buff shrines; each within the camera's view (`GameEngine::GetFrustumForPlayer`). "Interactable"
-//! is `Object::IsOfInterest` (Game.dll vtables: `false` for a plain `FixedActor` / `FixedItem`
-//! / `FixedItemWell` / `StaticRespawner`; the classes' own rules are on their port types). The cauldron
-//! (`NpcCauldron`) is an `Npc`: the NPC candidates.
+//! Candidates (`InGameUI::CollectEnemyCandidates`): foes of the player that are targetable
+//! (`Monster::IsTargetable`), not hiding (`Character::IsHiding`) and, for the combat flag, `causesAnger`;
+//! targetable breakables, ground items whose label is shown, NPCs (record `Class` `Npc*`, available for
+//! conversations, visible) with `Character::GetUsableRange` (both radii + 3 m), and the interactable fixed actors
+//! with `FixedActor::GetUsableRange` (both radii + the record's `usableRange`): unopened chests, doors and levers
+//! of interest, devotion shrines and monster totems, riftgates, the Ascendant Altar, the player's gravestone, open
+//! personal portals, the Shattered Realm's exit gates and unused buff shrines; each within the camera's view
+//! (`GameEngine::GetFrustumForPlayer`). "Interactable" is `Object::IsOfInterest`.
 //!
-//! The marker (`Grim Dawn.exe` `GamepadTargetMarker::Update` / `GamepadTargetMarker::Position` /
-//! `GamepadTargetMarker::Load`, drawn by `GamepadTargetMarker::Render` when
-//! `movementType` is 2): over the picked enemy `records/ui/gamepadhud/gamepad_enemytargetbitmap.dbr`, over a picked
+//! The marker (`GamepadTargetMarker::Update` / `Position` / `Load` / `Render`, when `movementType` is 2):
+//! over the picked enemy `records/ui/gamepadhud/gamepad_enemytargetbitmap.dbr`, over a picked
 //! NPC or fixed actor `gamepad_friendlytargetbitmap.dbr`, its size the texture's x the zoom scale
 //! (1.2 − 0.4 x (camera distance − min) / (max − min)), centred on the object's position raised by its mesh top
 //! (+ `worldDescOffset`), projected and floored, then moved up by (`interactIconPosition` + 50 for a character,
@@ -65,25 +56,21 @@ impl Plugin for ControllerTargetPlugin {
     }
 }
 
-/// This frame's pick (Keyboard Only; `Pick::None` otherwise) and what the marker needs of it. Set by [`targeting`]
-/// only.
+/// This frame's pick (Keyboard Only; `Pick::None` otherwise) and what the marker needs of it.
 #[derive(Resource, Default, Clone, PartialEq, Debug)]
 pub struct ControllerPick(pub Pick, pub Option<MarkerFacts>);
 
-/// The picked object's record and kind (the marker's anchor and bitmap).
 #[derive(Clone, PartialEq, Debug)]
 pub struct MarkerFacts {
     pub record: String,
     /// 50 for a character, 70 for a breakable or another object, 0 for a riftgate.
     pub lift: f32,
-    /// The enemy bitmap (else the friendly one).
     pub enemy: bool,
 }
 
 const ENEMY_BITMAP: &str = "records/ui/gamepadhud/gamepad_enemytargetbitmap.dbr";
 const FRIEND_BITMAP: &str = "records/ui/gamepadhud/gamepad_friendlytargetbitmap.dbr";
 
-/// The [`RecordFacts`] the candidates read (copied out of the shared cache per call).
 #[derive(Clone, Copy)]
 struct RecFacts {
     npc: bool,
@@ -93,7 +80,6 @@ struct RecFacts {
     invincible: bool,
 }
 
-/// A record's [`RecFacts`].
 fn rec_facts(data: &GameData, fonts: &FontCache, facts: &mut RecordFacts, rec: &str) -> RecFacts {
     let f = facts.of(data, fonts, rec);
     RecFacts {
@@ -205,7 +191,6 @@ type Fixed<'w, 's> = (
     >,
 );
 
-/// The controller targeting of the frame (module docs).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn targeting(
     mut fresh: gd_game_core::session::NewSession,
@@ -257,7 +242,7 @@ fn targeting(
         current.set_if_neq(ControllerPick::default());
         return;
     }
-    // A window or dialog stops the targeting; the record stays (`Ui::IsAnyWindowOpen`).
+    // `Ui::IsAnyWindowOpen`: the record stays.
     if rift_map.open || dialog.view.is_some() || altar.open {
         return;
     }
@@ -278,7 +263,7 @@ fn targeting(
         a.and_then(|a| story.as_ref()?.entities.get(a.0))
             .is_none_or(|o| o.in_world && o.available_for_conversation)
     };
-    // The candidates with their record and marker lift (the marker's facts are built for the pick only).
+    // The marker's facts are built for the pick only.
     let mut list: Vec<(Candidate, &str, f32)> = Vec::new();
     let mut add = |entity: Entity, pos: Vec3, kind: Kind, record, lift: f32| {
         if near(pos) {
@@ -351,10 +336,8 @@ fn targeting(
     current.set_if_neq(ControllerPick(p, marker));
 }
 
-/// A character's foe candidate (`InGameUI::CollectEnemyCandidates`, module docs): a foe of the player that is
-/// targetable and not
-/// hiding, with its `causesAnger`; `record_invincible` (the record's `invincible`) is asked only for one that is
-/// invincible now.
+/// A character's foe candidate (`InGameUI::CollectEnemyCandidates`); `record_invincible` is asked only for one
+/// that is invincible now.
 fn foe_kind(
     side: gd_game::combat::SideRef,
     ai: Option<&gd_game::combat::MonsterAi>,
@@ -366,22 +349,20 @@ fn foe_kind(
     if !gd_game::combat::Side::Player.foe(side) {
         return None;
     }
-    // The record's `targetable` and `causesAnger`: a monster's `MonsterAi::as_target`, a converted pet's `Pet`
-    // fields (`Pet`'s vtable has `Monster::IsTargetable` and `Character::CausesAnger`).
+    // `Pet`'s vtable has `Monster::IsTargetable` and `Character::CausesAnger`.
     let (targetable, causes_anger) = match (ai, pet) {
         (Some(ai), _) => (ai.as_target.targetable, ai.as_target.causes_anger),
         (None, Some(p)) => (p.targetable, p.causes_anger),
         (None, None) => return None,
     };
-    // `Monster::IsTargetable`: `targetable` (`Monster.targetable`) and, unless the record is `invincible`
-    // (`Monster.recordInvincible`), not invincible now (`Character.invincible`, `SetInvincible`).
+    // `Monster::IsTargetable`: unless the record is `invincible`, not invincible now.
     let targetable = targetable && (!invincible || record_invincible());
-    // `Character::IsHiding` (`VictimSide::hiding`), and a hidden monster's Startup.
+    // `Character::IsHiding`, and a hidden monster's Startup.
     let hidden = hiding || ai.is_some_and(|ai| ai.hidden.is_some());
     (targetable && !hidden).then_some(Kind::Foe { causes_anger })
 }
 
-/// The interactable fixed actors (`Object::IsOfInterest`, module docs) as candidates with their usable range
+/// The interactable fixed actors (`Object::IsOfInterest`) as candidates with their usable range
 /// (`r`: the player's radius), their record and marker lift.
 fn fixed_candidates<'a>(
     (chests, doors, shrines, gates, altars, graves, portals, exits, buffs): &'a Fixed,
@@ -442,7 +423,7 @@ fn fixed_candidates<'a>(
         }
     }
     // `AscendantAltar::IsOfInterest`: dormant (1, 2) or activated (4) and not `AscendantAltar.blocked` (PORT:
-    // always, that flag not traced; `crate::ascendant` decides what a use does).
+    // always, that flag not traced).
     for (e, gt, a) in altars.iter() {
         let f = fact(&a.record);
         add(
@@ -454,7 +435,7 @@ fn fixed_candidates<'a>(
             70.0,
         );
     }
-    // `FixedItemGravestone::IsOfInterest`: the main player's grave (the port's only kind).
+    // `FixedItemGravestone::IsOfInterest`: the main player's grave.
     let grave = gd_game::death::GRAVE;
     for (e, gt) in graves.iter() {
         let f = fact(grave);
@@ -467,8 +448,7 @@ fn fixed_candidates<'a>(
             70.0,
         );
     }
-    // `FixedItemTeleport::IsOfInterest` (personal portals and, as `FixedItemDungeonTeleport`, the
-    // Shattered Realm's exit gates): not closing.
+    // `FixedItemTeleport::IsOfInterest` (also `FixedItemDungeonTeleport`): not closing.
     let portal = gd_game::riftgates::PORTAL_RECORD;
     for (e, gt, p) in portals.iter() {
         if p.is_of_interest() {
@@ -497,9 +477,8 @@ fn fixed_candidates<'a>(
     out
 }
 
-/// The Interact key (key action 54, `gd_game::controller_target::interact_pick`): the interactable fixed actors and
-/// the NPCs within 10 m → [`UseObject`](gd_game::controller_target::UseObject). PORT: NPCs the port keeps hidden
-/// (out of the world) are left out.
+/// The Interact key (key action 54, `gd_game::controller_target::interact_pick`).
+/// PORT: NPCs the port keeps hidden are left out.
 #[allow(clippy::too_many_arguments)]
 fn interact_key(
     keys: Res<ButtonInput<KeyCode>>,
@@ -544,11 +523,9 @@ fn interact_key(
     }
 }
 
-/// The marker's root (moved every frame, rebuilt when its bitmap or size changes).
 #[derive(Component)]
 struct MarkerRoot;
 
-/// The marker over the pick (module docs).
 #[allow(clippy::too_many_arguments)]
 fn marker(
     mut fresh: gd_game_core::session::NewSession,
@@ -588,7 +565,6 @@ fn marker(
     if size.x == 0 || size.y == 0 {
         return;
     }
-    // The record's mesh top x scale, `worldDescOffset`, `interactIconPosition`.
     let (top, desc, icon) = *tops.entry(facts.record.clone()).or_insert_with(|| {
         let rec = data.db.get(&facts.record);
         let top = rec
@@ -619,9 +595,7 @@ fn marker(
         p.y - (icon + facts.lift) * zoom + (ms * 0.004).sin() * 5.0 * zoom,
     );
     let inv = 1.0 / win.scale_factor();
-    // The zoom eases every frame: the root's `UiTransform` scales the unit-size bitmap (the root
-    // has no size, so the scale is about the anchor), it is not part of the rebuild key. The window size and
-    // the UI scale (window size and UI-scale option) are.
+    // The zoom eases through the root's `UiTransform`, so it is not part of the rebuild key.
     let s = assets.scale(size);
     let key = (facts.enemy, size, s.to_bits());
     if *shown == Some(key)

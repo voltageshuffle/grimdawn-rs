@@ -22,13 +22,11 @@
 //! Synergy (`ControllerMonsterSynergy::Update`): one beam per member to the leader's `Target` point,
 //! `synergyNumBeams` tendrils, `WaveSpeed = 40 .. 89.5` (random per beam), `TotalAmplitude = 0.02`, drawn to the leader's
 //! charge (`SetTopBottomPercent`: the first part of the way from the member). Drain beams keep the record's values.
-//! Drain beams: [`draw_drain`]; the chaos skills' beams: [`draw_chaos`]. The end points are the posed bodies' attach
-//! points (`Actor::GetAttachPointCoords`).
+//! The end points are the posed bodies' attach points (`Actor::GetAttachPointCoords`).
 //! PORT: `T` is the app's clock (the engine's is the beam's own age from its creation); every beam has its own period
 //! list from the cosmetic generator.
 //! Each beam is a root entity (its state component, its tendrils as children); the synergy and chaos-skill roots are
-//! [`crate::beams::VisualOf`] their owner and go when it does. The record's shape is parsed once per beam, and every
-//! tendril mesh is rewritten in place.
+//! [`crate::beams::VisualOf`] their owner and go when it does.
 use crate::beams::{VisualOf, Visuals};
 use bevy::prelude::*;
 use gd_game_core::synergy::{Mode, Synergy};
@@ -100,7 +98,6 @@ fn spawn_root(commands: &mut Commands, name: &'static str) -> Entity {
         .id()
 }
 
-/// Reused per-frame buffers.
 #[derive(Default)]
 struct Scratch {
     pts: Vec<Vec3>,
@@ -400,7 +397,7 @@ fn update_beam(
 }
 
 /// Hides a tendril: every index degenerate, the mesh kept for when it shows again. Written only when not hidden
-/// yet: `get_mut` marks the mesh changed and re-uploads it.
+/// yet (`get_mut` re-uploads the mesh).
 fn hide(assets: &mut crate::character::CharAssets, tendril: &Tendril) {
     if let Some(h) = &tendril.mesh
         && assets
@@ -519,10 +516,9 @@ fn write_strip(
 /// goes when the tail arrives; when the head arrives the next beam to the same (living) target starts after
 /// `newBeamDelay` (default 50) + `rand() % 500` ms. When the drain stops no beam spawns another and the rest finish
 /// their way where they were. The beam record is `chaosBeamName` for the primary target, `secondaryBeamName` for the
-/// extra ones (`FindNewTargets`' `beamNumber`, 1 in every stock drain and modifier, so the port's one target is the
-/// primary); tendrils: the beam record's `BeamCount`. `TargetResult` / `Update`: an `fxChanges` list
-/// (`gd_game_core::skill_fx::fx_changes`) of four or more replaces them by entries 0 / 1 (and the caster / target
-/// effects by 2 / 3, which the port does not draw for any drain), e.g. Drain Essence's elemental tendrils.
+/// extra ones (`FindNewTargets`' `beamNumber`, 1 in every stock drain, so the port's one target is the primary);
+/// tendrils: the beam record's `BeamCount`. `TargetResult` / `Update`: an `fxChanges` list of four or more replaces
+/// them by entries 0 / 1 (and the caster / target effects by 2 / 3, which the port does not draw).
 #[allow(clippy::too_many_arguments)]
 fn draw_drain(
     mut commands: Commands,
@@ -724,7 +720,7 @@ enum DrainState {
     Dead,
 }
 
-/// One drain beam (the group's 80-byte entry): head / tail fractions of the way from the target, its delay (ms).
+/// One drain beam (an entry of the group's list): head / tail fractions of the way from the target, its delay (ms).
 struct DrainBeam {
     target: Entity,
     top: f32,
@@ -794,11 +790,8 @@ impl DrainBeam {
     }
 }
 
-/// `Skill_AttackSpellChaos` beams (Reap Spirit; `Update`): each
-/// [`gd_game_core::casting::ChaosBeam`] drawn from its caster's `R Hand` to its far end between its `bottom` and `top`
-/// fractions (`SetTopBottomPercent`), all of which gd-game moves (`casting::chaos`, which also lands the hit when the
-/// head arrives); its tendrils (the beam record's `BeamCount`) go with it (`ChaosBeam::Liberate`).
-/// A [`gd_game_core::casting::ChaosBeam`]'s drawing.
+/// A [`gd_game_core::casting::ChaosBeam`]'s drawing (`Skill_AttackSpellChaos::Update`, Reap Spirit): from its caster's
+/// `R Hand` to its far end between its `bottom` and `top` fractions (`SetTopBottomPercent`), all of which gd-game moves.
 #[derive(Component)]
 struct ChaosDrawn(Beam);
 

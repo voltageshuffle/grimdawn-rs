@@ -1,36 +1,22 @@
-//! `Skill_AttackLine` ("^Line Attack"; only the two `base_template skills/skill_attackline.dbr` records): a point
-//! that travels from the caster toward the target, hitting what is around it every `hitPeriod`.
+//! `Skill_AttackLine` ("^Line Attack"): a point that travels from the caster toward the target, hitting what
+//! is around it every `hitPeriod`. Game.dll, unexported:
+//! - `GetValidTarget` is the folded always-valid one: the cast goes as aimed.
+//! - `Load`: speed = `distance` / `time`, life `time` × 1000 (int ms), `attackRadius`, `hitPeriod` × 1000
+//!   (int ms), `loopSound`, `trailEffect`, `effectEntity`, `startSound`.
+//! - `ActivateNow`: the line starts at the caster, looking at the target point (3D; a zero direction keeps
+//!   the caster's facing), up +Y; runs `PrimaryActivateSecondarySkills` at the caster.
+//! - `TargetResult` with no targets pays the mana, starts the cooldown and adds the line with its trail,
+//!   effect and loop sound; `startSound` plays. With targets (the line's own attacks): per target the attack,
+//!   then the secondaries at the line's coordinates.
+//! - `Update`: the line moves speed × dt; every `hitPeriod` each foe in `attackRadius`
+//!   (`GameEngine::GetTargetsInRadius`) is attacked and `World::CreatePointDisturbance(coords, attackRadius, 5,
+//!   falloff, splash 1)` pushes the grass and water. At its life's end (or `StopSkill`) the loop sound fades
+//!   (250 ms), the effect stops emitting, the trail is let go.
 //!
-//! Game.dll, unexported, a `SkillActivatedSpell`:
-//! - ctor `Skill_AttackLine::Skill_AttackLine`: primary and secondary hot slot skill (`Skill.primaryHotSlot` /
-//!   `Skill.secondaryHotSlot`), activation mode 0; speed 1,
-//!   radius 0, period 100 ms until loaded. `GetValidTarget` is the folded always-valid one (not
-//!   `SkillActivatedSpell`'s): the cast goes as aimed (`gd_sim::skills::request_aim`).
-//! - `Load` (class-level): speed = `distance` / `time`, life `time` × 1000 (int ms),
-//!   `attackRadius`, `hitPeriod` × 1000 (int ms), `loopSound`, `trailEffect` (a `TrailEffect`), `effectEntity` (an
-//!   `EffectEntity`), `startSound`.
-//! - `ActivateNow`: the line's coordinates are the caster's, looking from them at the target point
-//!   (3D; a zero direction keeps the caster's facing), up +Y; it sends an attack with no targets there and runs
-//!   `PrimaryActivateSecondarySkills` at the caster (`secondary::primary_activates`).
-//! - `TargetResult` with no targets (that attack) pays the mana, starts the cooldown and adds a
-//!   line: the trail (low-efficiency, started) and the effect (emitting) at its coordinates, the loop sound there,
-//!   tracking the effect; `startSound` plays at the coordinates. With targets (the line's own attacks): per target
-//!   `CollectCombatParameters`, the rag doll, `CreateTargetFx` and `PlayHitSound`, the attack; then the
-//!   secondaries on that list at the line's coordinates.
-//! - `Update`, per line each frame: it moves speed × dt along its heading, its effect and trail with
-//!   it. Its hit timer counts down; at 0 it restarts from `hitPeriod`, every target in `attackRadius` of the line
-//!   (`GameEngine::GetTargetsInRadius`, the caster's foes) is attacked at the line's coordinates (each again every
-//!   period while it stays in reach), and `World::CreatePointDisturbance(coords, attackRadius, 5, falloff, splash
-//!   1)` pushes the grass and water there ([`gd_game_core::visuals::PointDisturbance`]). Its life counts down; at its end
-//!   the loop sound fades (250 ms), the effect stops emitting and removes itself, the trail is let go.
-//!   `StopSkill` ends every line the same way.
-//!
-//! PORT: the hit timer starts at 0 (the first attack on the first frame; the engine's list node copies that field
-//! from uninitialised stack in `TargetResult`); a caster that is gone is `StopSkill`. "In radius":
-//! `Combatant::in_radius` (the sphere meets the foe's world box).
+//! PORT: the hit timer starts at 0 (the engine copies it from uninitialised stack); a caster that is gone is
+//! `StopSkill`. "In radius": `Combatant::in_radius`.
 use super::*;
 
-/// One travelling line of a `Skill_AttackLine` cast.
 #[derive(Component, Clone, Debug)]
 pub struct AttackLine {
     pub caster: Entity,
@@ -38,21 +24,19 @@ pub struct AttackLine {
     pub level_index: usize,
     pub parent: Option<(String, usize)>,
     pub hostile: bool,
-    /// Heading (unit) and speed (m/s).
     pub dir: Vec3,
     pub speed: f32,
-    /// Life left, the hit timer and `hitPeriod` (s); `attackRadius`.
+    /// Life left, the hit timer and `hitPeriod` (s).
     pub life: f32,
     pub timer: f32,
     pub period: f32,
     pub radius: f32,
-    /// Its effect entities and trail (moved with it), the loop sound.
     effects: Vec<Entity>,
     trail: Option<Entity>,
     loop_sound: Option<Entity>,
 }
 
-/// `ActivateNow` → `TargetResult` (no targets): the line starts at the caster, heading at `point`.
+/// `ActivateNow` → `TargetResult` (no targets).
 pub(super) fn start_attack_line(
     commands: &mut Commands,
     data: &GameData,
@@ -228,7 +212,7 @@ pub(super) fn attack_lines(
     }
 }
 
-/// A line's end: the loop sound fades (its entity goes), the effects stop, the trail is let go.
+/// The loop sound fades, the effects stop, the trail is let go.
 fn end(commands: &mut Commands, e: Entity, line: &AttackLine) {
     if let Some(s) = line.loop_sound {
         commands.entity(s).try_despawn();

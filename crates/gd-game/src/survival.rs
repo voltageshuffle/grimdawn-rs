@@ -1,48 +1,33 @@
-//! Crucible (survival mode) host: runs [`gd_story::story::state::Survival`]'s timer and
-//! applies the story effects of the `Game.*Survival*` bindings.
+//! Crucible (survival mode) host: runs [`gd_story::story::state::Survival`]'s timer and applies the story
+//! effects of the `Game.*Survival*` bindings.
 //!
-//! `PlayStats::UpdateBonusTimer`
-//! is called every frame by `Player::UpdateSelf` ([`gd_story::story::state::Survival::tick`]);
-//! `Game.KillAllMonsters` kills every monster hostile to the main player (flag, then the
-//! combat controller's kill call; [`crate::monsters::is_foe`]).
-//! Score (`PlayStats::IncrementKills`, `GetScore`): each kill
-//! sets the monster score from `playerscore.dbr`'s `<classification>Bonus` list (indexed by the
-//! game difficulty) and adds `survivalScoreEquation` of it ([`gd_story::story::state::Survival::add_kill`]);
-//! `SaveSurvivalScore` locks it. `PlayStats::Load` (the table `PlayStats.classificationBonus`, six entries
-//! of the game difficulty's column, 0 past a list's end) and `GameEngine::ResolveMonsterClassificationEnum`
-//! (the `monsterClassification` string, exact match): Common 0 `commonBonus`, Champion 1
-//! `championBonus`, Hero 2 `heroBonus`, Boss 3 `bossBonus`, Quest 4 `questBonus`, SuperBoss 5 `bossBonus` again;
-//! any other text (or none) is Common.
-//! `Game.SaveSurvivalScore` writes the leaderboard ([`save_score`]); the greatest difficulty / wave /
-//! score are merged into `player.gdc` by `save::save_game`.
-//! `Game.ResetSurvivalEvent`: it autosaves first (`GameEngine::AutoSave`), so
-//! `SurvivalAutosave` writes a save ([`autosave`]; the Crucible uses the campaign's character files).
+//! `PlayStats::UpdateBonusTimer` runs every frame (`Player::UpdateSelf`); `Game.KillAllMonsters` kills every
+//! monster hostile to the main player.
+//! Score (`PlayStats::IncrementKills`, `GetScore`): each kill adds `survivalScoreEquation` of the monster
+//! score from `playerscore.dbr`'s `<classification>Bonus` list at the game difficulty (0 past a list's
+//! end); `SaveSurvivalScore` locks it. `GameEngine::ResolveMonsterClassificationEnum` (exact match):
+//! Common `commonBonus`, Champion `championBonus`, Hero `heroBonus`, Boss `bossBonus`, Quest `questBonus`,
+//! SuperBoss `bossBonus` again; anything else is Common.
+//! `Game.SaveSurvivalScore` writes the leaderboard ([`save_score`]); the greatest difficulty / wave / score
+//! are merged into `player.gdc` on save. `Game.ResetSurvivalEvent` autosaves first ([`autosave`]).
 //!
-//! A failed event and its restart (the scripts: `events/survivalevent.lua`, `survival/eventcontrol.lua`; test
-//! `tests/crucible/restart.rs`): during a wave respawn is disabled (`SurvivalEvent_SpawnNext`: `EnableRespawn` then
-//! `DisableRespawn`), so a dead player stays down ([`respawn_control`]) and the event's next update finds
-//! `Game.PlayersDead` (softcore only, `Game.IsHardcore`): `eventFailed`, the fail sound, `eventFinished` (the end NPC
-//! `npc_event_03`, the compensation chests, `SaveSurvivalScore`), `ResetSurvivalTimer`, `SurvivalEvent_End`
-//! (`EnableRespawn`: the player comes back) and `KillAllMonstersOnNextRespawn`. `npc_event_03` offers "Reset to the
-//! beginning" (`eventReset`) or, from wave 50 on (`checkRestartCounterGlobalMP`: -1 below 50, else the restarts),
-//! "Restart at Checkpoint" for 5 / 15 / 30 tributes (restarts 0 / 1 / 2; none after 3): `eventRestart` =
-//! `IncrementSurvivalRestarts`, `ResetSurvivalEvent` (autosave, then score / wave / ramp / mutators reset; restarts
-//! stay), `Player.Teleport` to the spawn point, the start NPC back, and the wave tier and ramp set to
-//! `floor(wave / 10) * 10 - 20` (wave 55 restarts at 30); the next start runs that wave's tier. The checkpoint
-//! starts of the start NPC (waves 51 / 101 / 151 / 181: `startTier05Event` ...) are a separate, bought choice.
+//! A failed event (`events/survivalevent.lua`, `survival/eventcontrol.lua`): during a wave respawn is
+//! disabled, so a dead player stays down ([`respawn_control`]) and the event's next update finds
+//! `Game.PlayersDead` (softcore only): `eventFailed`, `eventFinished` (end NPC `npc_event_03`, compensation
+//! chests, `SaveSurvivalScore`), `ResetSurvivalTimer`, `SurvivalEvent_End` (`EnableRespawn`) and
+//! `KillAllMonstersOnNextRespawn`. `npc_event_03` offers "Reset to the beginning" or, from wave 50 on,
+//! "Restart at Checkpoint" for 5 / 15 / 30 tributes (none after 3 restarts): `IncrementSurvivalRestarts`,
+//! `ResetSurvivalEvent` (score / wave / ramp / mutators reset; restarts stay), teleport to the spawn point,
+//! and the wave tier and ramp set to `floor(wave / 10) * 10 - 20`.
 //!
-//! Defenses (`survival/defenses.lua`, tests `tests/crucible/defenses.rs`): four sites per arena, each a Deathchill /
-//! Fire / Lightning turret or a Defense / Offense banner (`records/creatures/defenses/*`, `02` / `03` the two
-//! upgrades, `Character.Create` at `avg + avg / 50 + 1`), the site NPC swapped for its upgrade NPC (`b`, `c`) and
-//! gone after the second upgrade; only the first build grants `SURVIVALMODE_DEFENSEBUILT`. The engine has no
-//! defense code: they are plain `Monster`s of `faction_survivors`, the banners `ControllerStationaryMonster`s
-//! (`controller_banner.dbr`: `BuffAllyBehavior` WhenEnemyIsSeen, the upgrades' `buffOtherSkillName`).
+//! Defenses (`survival/defenses.lua`): four sites per arena, each a turret or banner
+//! (`records/creatures/defenses/*`, `02` / `03` the upgrades, `Character.Create` at `avg + avg / 50 + 1`);
+//! only the first build grants `SURVIVALMODE_DEFENSEBUILT`. The engine has no defense code: they are plain
+//! `Monster`s of `faction_survivors`, the banners `ControllerStationaryMonster`s.
 //!
-//! Difficulties (test `tests/crucible/difficulty.rs`): Aspirant / Challenger / Gladiator are the game difficulty 0 /
-//! 1 / 2 with no challenge (`session`); the engine's differences are the ramp pak by difficulty
-//! ([`gd_sim::actor::Rules::with_survival_ramp`]) and the score column (`playerscore.dbr`); the bonus timer
-//! (`SurvivalEvent_StartBonusTimer`: 75 / 75 / 80 s + 10 / 11 / 12 s per tier), the rewards and the defense prices are
-//! the scripts' and conversations'.
+//! Difficulties: Aspirant / Challenger / Gladiator are game difficulty 0 / 1 / 2 with no challenge; the
+//! engine's differences are the ramp pak ([`gd_sim::actor::Rules::with_survival_ramp`]) and the score
+//! column; bonus timer, rewards and defense prices are the scripts'.
 //! PORT: `FullscreenGlow` is forwarded as [`gd_game_core::story::StoryEffect`] and drawn by the UI.
 use crate::combat::MonsterKilled;
 use crate::monsters::{ProfileCache, ProxyStates};
@@ -53,7 +38,7 @@ use gd_game_core::monsters::Monster;
 use gd_game_core::story::{StoryEffect, StoryRuntime};
 use gd_story::story::Effect;
 
-/// Counts the survival bonus timer down (only in a survival session).
+/// Counts the survival bonus timer down.
 pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut carry: Local<f32>) {
     let Some(rt) = rt else { return };
     let mut story = rt.story.borrow_mut();
@@ -67,12 +52,10 @@ pub fn tick_survival(rt: Option<NonSend<StoryRuntime>>, time: Res<Time>, mut car
     }
 }
 
-/// The difficulty ramp (`Game.SetSurvivalDifficulty`) and the mutators (`Game.AddMutator`) change the
-/// monsters' (and the player's) attributes: the rules are rebuilt ([`gd_sim::actor::Rules::with_survival_ramp`],
-/// [`gd_sim::actor::Rules::with_mutators`]), the profile cache cleared, and live monsters and the
-/// player are marked for a profile rebuild (the engine reloads their base attributes:
-/// `Monster::OnDifficultyRampLevel`; mutators likewise). The session's [`gd_game_core::session::GameMode`] carries
-/// the ramp for the proxies' spawn counts: `Some` throughout a Crucible session.
+/// The difficulty ramp (`Game.SetSurvivalDifficulty`) and the mutators (`Game.AddMutator`): the rules are
+/// rebuilt, the profile cache cleared, and live monsters and the player marked for a profile rebuild
+/// (`Monster::OnDifficultyRampLevel`). [`gd_game_core::session::GameMode`] carries the ramp: `Some`
+/// throughout a Crucible session.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_rules(
     rt: Option<NonSend<StoryRuntime>>,
@@ -100,14 +83,13 @@ pub fn apply_rules(
     let (crucible, want) = {
         let s = rt.story.borrow();
         let crucible = s.game.survival_mode;
-        // The proxies' spawn counts read the ramp (`gd_sim::proxy::run_pool`): `Some` for the whole Crucible session,
-        // ramp 0 included (`GameEngine::GetChallengeAdjustment` in mode 1 is the survival pak from the start; `None`
-        // would give the arena's first spawns the campaign's challenge offsets).
+        // `Some` for the whole Crucible session, ramp 0 included (`GameEngine::GetChallengeAdjustment` in
+        // mode 1 is the survival pak from the start); `None` would give the first spawns the campaign's offsets.
         let ramp = crucible.then_some(s.game.survival.difficulty_ramp);
         if mode.0.ramp != ramp {
             mode.0.ramp = ramp;
         }
-        // The Crucible, or a running Shattered Realm dungeon (its mutators); else nothing.
+        // The Crucible, or a running Shattered Realm dungeon (its mutators).
         let (ramp, mutators): (u32, &[String]) = if crucible || s.endless.dungeon.is_some() {
             (s.game.survival.difficulty_ramp, &s.game.survival.mutators)
         } else {
@@ -118,17 +100,10 @@ pub fn apply_rules(
         }
         (crucible, (ramp, mutators.to_vec()))
     };
-    // `GameEngine::AddMutatorInbound`: a mutator added plays the
-    // `mutatorSound` pak of `survivalinfo.dbr` as a 2D sound (5 s cooldown), and, when a new mutator `affectsPlayers`,
-    // `PlayMutatorPlayerFx` (its own 5 s cooldown): `PFxManager::OneShotParticleEffect(main player,
-    // mutatorFx, "")`, a self-deleting `EffectEntity` attached to the player (`Actor::Attach` → `Entity::Attach`,
-    // Engine.dll: identity coords, the empty attach name: the player's own coords). The
-    // record's `boneList` (`playermutator_fx01.dbr`: the weapon bones) places nothing: `EffectEntity::Load`
-    // stores it (`EffectEntity.boneList`, with `emitterType` Standard / BoneList / AllBones in
-    // `EffectEntity.emitterType`), but its only
-    // reader `EffectEntity::PullParentBones` and the `Effect::SetBoneList` it would feed
-    // have no caller (Engine.dll; Game.dll imports neither), so `Effect::Update` passes the emitters no bones and the
-    // effect emits at the player's origin, as here.
+    // `GameEngine::AddMutatorInbound`: a mutator added plays `survivalinfo.dbr`'s `mutatorSound` as a 2D sound
+    // (5 s cooldown), and a new `affectsPlayers` mutator `PlayMutatorPlayerFx` (own 5 s cooldown): a one-shot
+    // `mutatorFx` attached to the player at its own coords. The record's `boneList` places nothing:
+    // `EffectEntity::PullParentBones` has no caller, so the effect emits at the player's origin.
     let added: Vec<&String> = want.1.iter().filter(|m| !applied.1.contains(m)).collect();
     let info = data.db.get("records/game/survivalinfo.dbr");
     if !added.is_empty()
@@ -163,8 +138,8 @@ pub fn apply_rules(
         "survival: difficulty ramp {}, mutators {:?}",
         want.0, want.1
     );
-    // The ramp is the Crucible's (it would drop an Ultimate Veteran's challenge pak otherwise); the Shattered Realm
-    // only has mutators.
+    // The ramp is the Crucible's (else it would drop an Ultimate Veteran's challenge pak); the Shattered
+    // Realm only has mutators.
     let base = if crucible {
         rules.0.with_survival_ramp(&data.db, want.0)
     } else {
@@ -183,22 +158,15 @@ pub fn apply_rules(
     }
 }
 
-/// Marks a player the Crucible keeps dead: respawn is disabled (`Game.DisableRespawn`).
+/// A player the Crucible keeps dead (`Game.DisableRespawn`).
 #[derive(Component)]
 pub struct RespawnHeld;
 
-/// `Game.EnableRespawn` / `DisableRespawn` (`GameEngine.respawnEnabled`,
-/// and `ControllerPlayer.autoRespawn` set by Enable): while respawn is disabled a dead player stays
-/// dead ([`RespawnHeld`], read by `combat::dead_bodies`), which is how a failed wave ends the event
-/// (`Game.PlayersDead`); `EnableRespawn` brings a dead player back at once.
-/// `ControllerPlayer::CharacterIsDying` (mode 1): respawn disabled (`respawnEnabled` false) clears
-/// `autoRespawn`; the "last death" texts (`tagSurvivalDeath` / `tagSurvivalLastDeath`) are for more than one player
-/// only, so a single player gets no dialog. `ControllerPlayer::DeathUpdate`: with `autoRespawn` set the dead player
-/// respawns on his own at `Player::GetClosestRespawnPoint` (`StartRespawnForLocalPlayer`); with it clear he lies
-/// there. The `KillAllMonstersOnNextRespawn` flag (`GameEngine.killAllMonstersOnNextRespawn`) is read by that
-/// respawn's activity (`RespawnLocalPlayerActivity::Update`, the activity `StartRespawnForLocalPlayer` installs): on
-/// arrival `GameEngine::KillAllMonsters`, which clears it.
-/// PORT: the kill is sent when the respawn is requested (the body moves at once here, no fade).
+/// `Game.EnableRespawn` / `DisableRespawn` (`GameEngine.respawnEnabled`): while disabled a dead player
+/// stays dead ([`RespawnHeld`]), which is how a failed wave ends the event; `EnableRespawn` brings a dead
+/// player back at once. A single player gets no "last death" dialog. `KillAllMonstersOnNextRespawn` is read
+/// by the respawn activity on arrival (`RespawnLocalPlayerActivity::Update`).
+/// PORT: the kill is sent when the respawn is requested (the body moves at once, no fade).
 pub fn respawn_control(
     mut commands: Commands,
     rt: Option<NonSend<StoryRuntime>>,
@@ -234,7 +202,7 @@ pub fn respawn_control(
     }
 }
 
-/// A kill's score into the survival run (see the module docs).
+/// A kill's score into the survival run.
 pub fn score_kills(
     mut killed: MessageReader<MonsterKilled>,
     rt: Option<NonSend<StoryRuntime>>,
@@ -243,11 +211,8 @@ pub fn score_kills(
     credit: crate::combat::KillCredit,
     by_script: Query<(), With<ScriptKilled>>,
 ) {
-    // `Player::OnCreatureDeath`: `IncrementKills` runs only for a
-    // kill by the player or its pets, their DoTs' included ([`crate::combat::KillCredit`]), never by a leaderless
-    // monster: a defense turret or guard killing a wave monster, a wave monster killing an `Allied` guard, nor for
-    // a death without a killer (`Game.KillAllMonsters`: [`ScriptKilled`]; the tier's end kills the leftovers and
-    // the spawn beacons).
+    // `Player::OnCreatureDeath`: `IncrementKills` runs only for a kill by the player or its pets (DoTs
+    // included), never by a leaderless monster nor for a death without a killer ([`ScriptKilled`]).
     let Some(rt) = rt else {
         killed.clear();
         return;
@@ -280,7 +245,7 @@ pub fn score_kills(
             .get(&k.record)
             .and_then(|r| r.str("monsterClassification"))
             .unwrap_or_default();
-        // The engine's six-entry table by classification (see the module docs): a SuperBoss reads `bossBonus`.
+        // A SuperBoss reads `bossBonus`.
         let key = match class {
             "Champion" => "championBonus",
             "Hero" => "heroBonus",
@@ -288,14 +253,13 @@ pub fn score_kills(
             "Quest" => "questBonus",
             _ => "commonBonus",
         };
-        // The bonus lists are numeric arrays (`1;2;4`), one entry per difficulty.
+        // Numeric arrays (`1;2;4`), one entry per difficulty.
         let score = table.f32s_iter(key).nth(difficulty).unwrap_or(0.0);
         story.game.survival.add_kill(&eq, score);
     }
 }
 
-/// `GD_KILL_ALL` (hooks.rs): the waves of the Crucible and the floors of the Shattered Realm complete without a
-/// bot that walks to every monster.
+/// `GD_KILL_ALL`: the waves of the Crucible and the floors of the Shattered Realm complete without a bot.
 #[cfg(feature = "dev")]
 pub fn test_kill_all(
     hooks: Res<gd_game_core::hooks::Hooks>,
@@ -360,7 +324,6 @@ pub fn kill_all_monsters(
         }
         cb.life = 0.0;
         commands.entity(e).try_insert(ScriptKilled);
-        // `GD_OVERKILL` (hooks.rs).
         #[cfg(feature = "dev")]
         if hooks.gameplay.overkill {
             commands.entity(e).try_insert(crate::combat::Overkill);
@@ -379,10 +342,8 @@ pub fn kill_all_monsters(
     }
 }
 
-/// The Crucible's tokens of `difficulty` in `player.gdc` (block 10: three vectors, one per game difficulty,
-/// the character's own, shared by every arena). `Player::GetSurvivalTokens` (`Player.survivalTokens[difficulty]`,
-/// picked instead of `GetTokens` when `GameInfo::GetMode() == 1`;
-/// `BestowToken` / `HasToken` / `ClearTokens` likewise), `SaveNewFormatData` block 10.
+/// The Crucible's tokens of `difficulty` (`player.gdc` block 10: one vector per game difficulty, shared by
+/// every arena). `Player::GetSurvivalTokens`, used instead of `GetTokens` when `GameInfo::GetMode() == 1`.
 pub fn load_tokens(
     g: &gd_formats::save::gdc::Gdc,
     difficulty: usize,
@@ -390,7 +351,7 @@ pub fn load_tokens(
     g.tokens.lists[difficulty.min(2)].iter().cloned().collect()
 }
 
-/// Writes the session's tokens back into the `player.gdc` vector of `difficulty` (see [`load_tokens`]).
+/// Writes the session's tokens back into the `player.gdc` vector of `difficulty`.
 /// PORT: the engine's vector keeps grant order and 40-byte `TriggerToken` entries; here the set is stored sorted.
 pub fn store_tokens(
     g: &mut gd_formats::save::gdc::Gdc,
@@ -400,11 +361,11 @@ pub fn store_tokens(
     g.tokens.lists[difficulty.min(2)] = tokens.iter().cloned().collect();
 }
 
-/// The leaderboard file of the save folder (see [`gd_formats::save::survival`]).
+/// The leaderboard file of the save folder ([`gd_formats::save::survival`]).
 pub const LEADERBOARD_FILE: &str = "leaderboard.brd";
 
-/// Adds a run to the leaderboard file under `dir` (read, [`Leaderboard::add`], written back). A file that
-/// exists but cannot be read or parsed is left alone: a failed read must not replace it with an empty board.
+/// Adds a run to the leaderboard file under `dir`. A file that exists but cannot be read or parsed is left
+/// alone.
 pub fn record_score(dir: &std::path::Path, name: &str, difficulty: u32, score: u32) {
     use gd_formats::save::survival::Leaderboard;
     let path = dir.join(LEADERBOARD_FILE);
@@ -431,11 +392,11 @@ pub fn record_score(dir: &std::path::Path, name: &str, difficulty: u32, score: u
     }
 }
 
-/// `Game.SaveSurvivalScore`: the run goes to the leaderboard (the score is locked by the binding).
+/// `Game.SaveSurvivalScore`: the run goes to the leaderboard.
 pub fn save_score(
     mut events: MessageReader<StoryEffect>,
     rt: Option<NonSend<StoryRuntime>>,
-    // Option: absent for a new character (its name is the choice's).
+    // Option: absent for a new character.
     loaded: Option<Res<gd_game_core::session::LoadedCharacter>>,
     choice: Res<gd_game_core::session::Choice>,
     mode: Res<gd_game_core::session::GameMode>,
@@ -453,7 +414,7 @@ pub fn save_score(
     record_score(&dir.0, name, mode.0.difficulty as u32, score);
 }
 
-/// A monster `Game.KillAllMonsters` killed: a death without a killer, which scores nothing ([`score_kills`]).
+/// A monster `Game.KillAllMonsters` killed: a death without a killer, which scores nothing.
 #[derive(Component)]
 pub struct ScriptKilled;
 
@@ -466,8 +427,8 @@ impl Plugin for SurvivalPlugin {
             (
                 tick_survival,
                 respawn_control,
-                // After the scripts ran (`SurvivalEvent_SpawnNext` raises the ramp, then creates the wave's proxies)
-                // and before their monsters spawn, so a wave spawns at its own ramp, rules and spawn counts alike.
+                // After the scripts raise the ramp and create the wave's proxies, before their monsters
+                // spawn, so a wave spawns at its own ramp.
                 apply_rules
                     .run_if(resource_exists::<gd_game_core::rules::CombatRules>)
                     .after(gd_game_core::story::StoryStage::Tick)

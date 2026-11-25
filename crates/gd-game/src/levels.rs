@@ -1,25 +1,18 @@
-//! The level-streaming despawn systems (the loaded-levels data is
-//! [`gd_game_core::levels`]).
-//!
-//! Streaming never despawns in `Update`: an unloaded level's root, the
-//! monsters / NPCs / props of unloaded levels ([`crate::monsters::cull_monsters`]),
-//! the chests, breakables, doors and physics props of unloaded levels ([`LevelMember`],
-//! [`cull_level_members`]) and story actors whose objects left the world get [`Unload`], and
-//! [`despawn_unloaded`] despawns them in `Last`, so inserts other systems
-//! queued for them that frame still apply.
+//! The level-streaming despawn systems. Streaming never despawns in `Update`: unloaded levels' entities get
+//! [`Unload`] and [`despawn_unloaded`] despawns them in `Last`, so inserts other systems queued for them that
+//! frame still apply.
 use bevy::prelude::*;
 use gd_game_core::levels::{LevelMember, Levels, Unload};
 
-/// `Last`: despawns the [`Unload`]ed entities, after every command of the
-/// frame's `Update` / `PostUpdate` systems has been applied.
+/// `Last`: despawns the [`Unload`]ed entities.
 pub fn despawn_unloaded(mut commands: Commands, q: Query<Entity, With<Unload>>) {
     for e in &q {
         commands.entity(e).try_despawn();
     }
 }
 
-/// Marks the [`LevelMember`]s of unloaded levels [`Unload`]: all of them when the loaded levels changed, else only
-/// the members added since the last run (spawned for a level already gone).
+/// Marks the [`LevelMember`]s of unloaded levels [`Unload`]: all of them when the loaded levels changed, else
+/// only those added since the last run.
 pub fn cull_level_members(
     mut commands: Commands,
     world: Res<Levels>,
@@ -38,16 +31,13 @@ pub fn cull_level_members(
     }
 }
 
-/// `Last`: the loose world entities that appeared this frame take the level they stand in (module doc): top-level
-/// ground items, effects, containers and exit gates that are no level's yet and no story actor (the story streams
-/// those, `crate::story_world`). `Last`, so the parenting queued with a spawn has been applied: an effect that follows
-/// its owner as a child is the owner's.
+/// `Last`: the loose world entities that appeared this frame take the level they stand in. `Last`, so the
+/// parenting queued with a spawn has been applied: an effect that follows its owner is the owner's.
 #[allow(clippy::type_complexity)]
 pub fn place_loose(
     mut commands: Commands,
     levels: Res<Levels>,
-    // Option: no map is open (headless tests, the menu): nothing is placed, and what appeared meanwhile stays
-    // unplaced (a run condition would place it late, once a map opens).
+    // Option: no map is open (headless tests, the menu): nothing is placed.
     layout: Option<Res<gd_game_core::save::MapLayout>>,
     new: Query<
         (Entity, &Transform),

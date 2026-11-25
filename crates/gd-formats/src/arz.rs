@@ -5,8 +5,7 @@
 //! [`Record::new`] (every decoded one) carries a sorted hash index of its keys, so a lookup is
 //! a binary search; a record whose `fields` were replaced or edited since scans them in order.
 //!
-//! Decoded string values and field keys are `Arc<str>` shared with the archive's string
-//! table, so caching decoded records does not duplicate the table.
+//! Decoded string values and field keys are `Arc<str>` shared with the archive's string table.
 //!
 //! [`Record::derived`] memoizes a consumer's value derived from a record's fields in one of
 //! [`DERIVED_SLOTS`] fixed slots, addressed by a const-generic index (lock-free reads, a stable
@@ -16,9 +15,7 @@
 //! - 2: gd-sim `stats::RecordExprs` (parsed field equations: bio / proxy / loot).
 //! - 3: gd-sim `[skills::SkillLevel; 64]` (parsed `skillLevelN` numbers / equations).
 //!
-//! A record that claims more than [`MAX_RECORD`] decoded bytes is refused (the largest stock or
-//! shipped-mod record is about 43 KB), so a hostile mod cannot have one record allocate 255× its
-//! compressed size.
+//! A record that claims more than [`MAX_RECORD`] decoded bytes is refused.
 use crate::util::{Reader, lz4_block};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
@@ -48,8 +45,7 @@ pub struct Arz {
 pub struct Record {
     pub name: String,
     pub class: String,
-    /// Shared: cloning a record (`Database::get_owned` clones the cached one) copies no values;
-    /// `Arc::make_mut` to modify.
+    /// Shared by the record's clones; `Arc::make_mut` to modify.
     pub fields: Arc<Vec<(Arc<str>, Vec<RawValue>)>>,
     index: FieldIndex,
 }
@@ -291,7 +287,7 @@ impl Record {
         }
     }
 
-    /// The non-empty string values of field `key`, borrowed: no allocation per call.
+    /// The non-empty string values of field `key`.
     pub fn strs_iter(&self, key: &str) -> impl Iterator<Item = &str> {
         self.get(key).unwrap_or(&[]).iter().filter_map(|v| match v {
             RawValue::Str(s) if !s.is_empty() => Some(s.as_ref()),
@@ -307,7 +303,7 @@ impl Record {
         self.get(key)?.first()?.as_f32()
     }
 
-    /// The numeric values of field `key`, borrowed: no allocation per call.
+    /// The numeric values of field `key`.
     pub fn f32s_iter(&self, key: &str) -> impl Iterator<Item = f32> {
         self.get(key)
             .unwrap_or(&[])

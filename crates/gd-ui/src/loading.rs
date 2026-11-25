@@ -19,14 +19,10 @@
 //!   100)` (`GraphicsAlign(right, bottom)` of (100, 100)), at half the textures' size (`PieOmatic.scale` = 0.5, no UI
 //!   scale).
 //!
-//! PORT: a background missing from the install's archives is left out of the pick (the expansion test: its archives
-//! are the expansion); the session's loading cover shows at once (no 1500 ms fade-in; the teleport cover fades with
-//! the teleport activity, `doors::travel_screen`); the hourglass never fades out (the engine's `FadeOut` is its last
-//! state, the port's cover is gone by then) and its fan is composited on the CPU into one image per frame (texels
-//! outside the colour texture, which the fan's corners reach, are left transparent). Not shown for the scene test
-//! hooks that never start a player (`GD_CHARS`). A second session after an
-//! Exit to Main Menu loads faster than the first: the model, texture, animation and effect caches survive the
-//! teardown on purpose (`exit.rs`, its `KEEP` list).
+//! PORT: a background missing from the install's archives is left out of the pick; the session's loading cover
+//! shows at once (no 1500 ms fade-in); the hourglass never fades out and its fan is composited on the CPU (texels
+//! outside the colour texture are left transparent). The model, texture, animation and effect caches survive an
+//! Exit to Main Menu (`exit.rs`, its `KEEP` list).
 use super::{Built, UiAssets, UiRoot};
 use crate::state::session::AppState;
 use bevy::prelude::*;
@@ -59,19 +55,16 @@ const BACKGROUNDS: [&str; 4] = [
 ];
 const ENGINE: &str = "records/game/gameengine.dbr";
 
-/// The cover node; [`dress`] adds its background and tip.
+/// The cover node.
 #[derive(Component)]
 pub struct LoadingCover;
 
-/// A cover that has its background and tip.
 #[derive(Component)]
 struct Dressed;
 
-/// Spawns the loading cover. The main menu calls it in the frame it starts the session: the state only becomes `Loading` a frame
-/// later and a new UI root is not drawn on its first frame, so waiting for [`show`] left a couple of frames of the world (the
-/// previous session's lighting, after an Exit to Main Menu) between the menu and the cover.
-/// The cover also registers a full-screen button blocker ([`super::widgets::ButtonSound`] with no sounds): during a
-/// teleport fade the HUD buttons under it neither sound nor press.
+/// Spawns the loading cover; the main menu calls it in the frame it starts the session (a new UI root is not drawn
+/// on its first frame, so waiting for `OnEnter(Loading)` shows the world for a few frames).
+/// Its full-screen button blocker keeps HUD buttons silent and unpressed during a teleport fade.
 pub fn spawn_cover(commands: &mut Commands) -> Entity {
     let cover = commands
         .spawn((
@@ -110,12 +103,11 @@ fn show(mut commands: Commands, existing: Query<(), With<LoadingCover>>) {
     }
 }
 
-/// `rand() % n` over `items` (the background and the tip picks).
 fn pick<T>(items: &[T], r: u32) -> Option<&T> {
     (!items.is_empty()).then(|| &items[r as usize % items.len()])
 }
 
-/// The tip tags: `gameengine.dbr`'s `tipsRecord`, its `loadingTips` (module doc).
+/// The tip tags: `gameengine.dbr`'s `tipsRecord`, its `loadingTips`.
 fn tips(db: &gd_formats::vfs::Database) -> (Vec<String>, Option<String>) {
     let Some(rec) = db
         .get(ENGINE)
@@ -133,7 +125,7 @@ fn tips(db: &gd_formats::vfs::Database) -> (Vec<String>, Option<String>) {
     )
 }
 
-/// A new cover gets the background and the tip (module doc), as direct children (their alpha follows the cover's).
+/// A new cover gets the background and the tip as direct children (their alpha follows the cover's).
 fn dress(
     mut commands: Commands,
     covers: Query<Entity, (With<LoadingCover>, Without<Dressed>)>,
@@ -206,8 +198,7 @@ fn dress(
 #[derive(Component)]
 struct PieNode;
 
-/// Steps the hourglass by the frame's time and draws its fan into its image, in the fade × the cover's alpha
-/// (`PieOmatic::Render`'s `a4`, the screen's alpha).
+/// Steps the hourglass and draws its fan into its image, in the fade × the cover's alpha.
 fn spin(
     time: Res<Time>,
     covers: Query<&BackgroundColor, With<LoadingCover>>,
@@ -229,7 +220,6 @@ fn spin(
     }
 }
 
-/// The cover's pieces fade with it (the teleport cover's alpha, `doors::travel_screen`).
 fn follow_alpha(
     covers: Query<(&BackgroundColor, &Children), (With<LoadingCover>, Changed<BackgroundColor>)>,
     mut images: Query<&mut ImageNode, Without<PieNode>>,
@@ -250,7 +240,6 @@ fn follow_alpha(
 
 const PIE_GREY: &str = "ui/loading/loadinggraphic01grey.tex";
 const PIE_COLOUR: &str = "ui/loading/loadinggraphic01.tex";
-/// `PieOmatic.scale`: the textures' draw scale.
 const PIE_SCALE: f32 = 0.5;
 /// Segments out of wedge mode (`SetWedgeMode(false)`, the loading screen's): 30 (10 in wedge mode).
 const PIE_SEGMENTS: usize = 30;
@@ -267,7 +256,6 @@ const PIE_SEGMENTS: usize = 30;
 #[derive(Component)]
 struct PieOmatic {
     size: UVec2,
-    /// The colour texture (RGBA8).
     colour: Vec<u8>,
     /// Per texel: its segment and the weight of the segment's first vertex alpha (the rest is the next one's).
     weights: Vec<(u8, f32)>,
@@ -306,7 +294,6 @@ impl PieOmatic {
         }
     }
 
-    /// The fan's image (filled by [`Self::draw`]).
     fn image(&self) -> Image {
         use bevy::asset::RenderAssetUsages;
         use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -327,7 +314,7 @@ impl PieOmatic {
         img
     }
 
-    /// `PieOmatic::Update(ms)` with the fade's target 1 (module doc).
+    /// `PieOmatic::Update(ms)` with the fade's target 1.
     fn update(&mut self, ms: u32) {
         let ms = ms.min(100);
         let step = ms as f32 * 0.001;
@@ -356,7 +343,6 @@ impl PieOmatic {
     }
 }
 
-/// `v` moved toward `to` by at most `step`.
 fn toward(v: f32, to: f32, step: f32) -> f32 {
     if (v - to).abs() < step {
         to
@@ -397,8 +383,7 @@ fn fan_weight(size: UVec2, p: Vec2) -> (u8, f32) {
     (seg as u8, k.clamp(0.0, 1.0))
 }
 
-/// Leaving the playing state: the HUD roots go and every layout cache the builders wrote is reset, so
-/// nothing reads a stale window and the next session builds from scratch.
+/// Leaving the playing state: the HUD roots go and every layout cache the builders wrote is reset.
 fn teardown_hud(
     mut commands: Commands,
     roots: Query<Entity, With<UiRoot>>,

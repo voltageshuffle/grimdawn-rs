@@ -3,16 +3,11 @@ use super::*;
 use gd_ui::state::trade::{Button, Panel, Trade, TradeLayout};
 use gd_ui_kit::contains;
 
-/// The item-slot windows (Runekeeper, crafter dismantle / reroll tabs): tab
-/// buttons, the slot, kind buttons, the action button and the dismantle prompt.
-/// The slot (`ItemBox_HandleMouseEvent` -> `AscensionItemBox_HandleClick`, the Inventor boxes'
-/// `InventorItemBox::HandleClick` / `InventorItemBox::HandleMouseEvent` / `InventorItemBox::AcceptItem` /
-/// `InventorItemBox::ReturnItem`): with an item on the cursor that the slot accepts, ANY press swaps (the old item
-/// onto the cursor, `InvRequest::Exchange`);
-/// empty cursor: left takes the item onto the cursor, Shift + left gives it back to the player
-/// (`ItemBox_ReturnItemToPlayer`, `InvRequest::Stow`: equip-empty, bags, else the ground), right
-/// does nothing. Closing the window or switching tab gives it back the same way (each tab's / the window's
-/// show(false)). The slot state stays here (UI); the give rules are gd-game's (`InvRequest::Stow`).
+/// The item-slot windows: tab buttons, the slot, kind buttons, the action button and the dismantle prompt.
+/// The slot (`AscensionItemBox_HandleClick`, `InventorItemBox::HandleClick`): with an item on the cursor that the
+/// slot accepts, ANY press swaps (`InvRequest::Exchange`); empty cursor: left takes the item onto the cursor,
+/// Shift + left gives it back to the player (`ItemBox_ReturnItemToPlayer`, `InvRequest::Stow`), right does
+/// nothing. Closing the window or switching tab gives it back the same way.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn panel_clicks(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -34,10 +29,9 @@ pub(super) fn panel_clicks(
     ),
 ) {
     let Some(inv) = inv else { return };
-    // Which tabs the story tokens unlock (a changed answer rebuilds the UI).
+    // Which tabs the story tokens unlock.
     if matches!(trade.open, Some(TradeOpen::Inventor { .. })) {
         let reroll = gd_game::crafting::reroll_unlocked(&data, rt.as_deref());
-        // `GD_REROLL` (hooks.rs) unlocks the reroll tab.
         #[cfg(feature = "dev")]
         let reroll = reroll || hooks.items.reroll.is_some();
         let unlocked = [
@@ -93,8 +87,7 @@ pub(super) fn panel_clicks(
         }
         return;
     }
-    // The stack window takes its own clicks (`ui/stack.rs`); a modal question (`inventory::question_up`) takes
-    // every click: none reaches the window under it (as `trade_clicks`).
+    // The stack window takes its own clicks; a modal question takes every click.
     if stack.covers(p) || gd_ui::apply::question_up(&inv, &trade, &confirm) {
         return;
     }
@@ -160,8 +153,7 @@ pub(super) fn panel_clicks(
         return;
     }
     // A result box (`ResultItemBox_HandleClick`): take only. A held item is refused;
-    // empty cursor, left: Shift gives it back to the player (`ItemBox_ReturnItemToPlayer`), else it goes onto
-    // the cursor; right does nothing.
+    // empty cursor, left: Shift gives it back to the player, else it goes onto the cursor; right does nothing.
     if let Some(i) = result
         && !trade.confirm
     {
@@ -178,8 +170,7 @@ pub(super) fn panel_clicks(
         return;
     }
     if layout.slot.is_some_and(|r| contains(&r, p)) && !trade.confirm {
-        // The cursor item and the slot's exchange (`InvRequest::Exchange`; the
-        // old cursor item comes back as a `SlotReturn`).
+        // The old cursor item comes back as a `SlotReturn`.
         if let Some(h) = &inv.held {
             if let Err(why) = trade.accepts(h, &data) {
                 info!("trade: {why}");

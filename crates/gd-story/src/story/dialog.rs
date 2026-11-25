@@ -1,15 +1,14 @@
 //! Conversation runtime. Step availability is `ConversationStep::IsAvailable`:
-//! a step whose flag bit 0 is set is
-//! unavailable once used; its conditions (all/any) must hold; a link step (7)
-//! also requires its target to be available. It decides whether an NPC has
-//! something to say (`HasAvailableSpeech`).
+//! a step whose flag bit 0 is set is unavailable once used; its conditions
+//! (all/any) must hold; a link step (7) also requires its target to be
+//! available. It decides whether an NPC has something to say (`HasAvailableSpeech`).
 //!
-//! The window's step update (`ConversationWindow::UpdateStep` with the speech
-//! collection `ConversationWindow::CollectSpeeches`; `Story::advance`), from the current step
+//! The window's step update (`ConversationWindow::UpdateStep` /
+//! `ConversationWindow::CollectSpeeches`; `Story::advance`), from the current step
 //! (the root, or the response last picked; a link is replaced by its target):
 //! * the candidates are the children (`GetSteps`, link-transparent) whose own
-//!   conditions hold, in file order (no used check, no link-target conditions, and no step-kind
-//!   filter: `CollectSpeeches` keeps every condition-holding child, verified in the decompile);
+//!   conditions hold, in file order (no used check, no link-target conditions,
+//!   no step-kind filter);
 //! * the first candidate is shown, and so is every later one with flag bit 1
 //!   ("merge"): for each, in order, its actions run (`GetActions`, on the NPC)
 //!   and its responses are appended. No stock conversation sets bit 0 or 1;
@@ -21,7 +20,7 @@
 //!   ([`DialogView::END`]); no candidate at all closes the window;
 //! * long texts are paged (`split_pages`); the responses show on the last page.
 //!
-//! A type 8 step ("random speech", 4 stock steps) takes the text index of a
+//! A type 8 step ("random speech") takes the text index of a
 //! random direct `IsAvailable` speech child, keeping its own when there is none
 //! (`ConversationStep::GetLocalizationIndex`): CRT `rand() / (32768 / n)`,
 //! redrawn while `>= n`. `GetText` and `AddSpeechToConversations` draw
@@ -39,26 +38,19 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct Dialogs {
     pub defs: HashMap<String, Arc<Conversation>>,
-    /// Conversation id → its definition, built from `defs` in [`Dialogs::new`]
-    /// only. PORT: on an id collision the smallest path wins (no stock
-    /// collision; the engine's store is not ported).
+    /// PORT: on an id collision the smallest path wins (the engine's store is not ported).
     by_id: HashMap<u32, Arc<Conversation>>,
-    /// Conversation id → used speech step indices (save order).
     pub used: HashMap<u32, Vec<u16>>,
     /// Non-speech steps (type 8, or a link in speech position) already shown:
-    /// the step's in-memory used byte (`ConversationStep::IsUsed`), which
-    /// `ConversationStep::Read` initialises from the
-    /// stored list for type 1 speeches only; for other types it starts clear
-    /// and is set when the window shows the step. Not saved.
+    /// `ConversationStep::IsUsed`, which `ConversationStep::Read` restores for
+    /// type 1 speeches only. Not saved.
     pub shown: HashSet<(u32, u32)>,
     pub session: Option<Session>,
-    /// Normalised path → the `LuaScript` conditions of the conversation's steps (unique keys; conversations
-    /// without any are absent). Built in [`Dialogs::new`].
+    /// Normalised path → the `LuaScript` conditions of the conversation's steps (absent when none).
     lua: HashMap<String, Vec<Arc<LuaCond>>>,
 }
 
 impl Dialogs {
-    /// The conversations by normalised path, indexed by id.
     pub fn new(defs: HashMap<String, Arc<Conversation>>) -> Self {
         let mut paths: Vec<&String> = defs.keys().collect();
         paths.sort_unstable();
@@ -84,7 +76,6 @@ impl Dialogs {
             ..Self::default()
         }
     }
-    /// The conversation with id `id` (see `by_id`).
     pub fn by_id(&self, id: u32) -> Option<&Arc<Conversation>> {
         self.by_id.get(&id)
     }
@@ -93,7 +84,7 @@ impl Dialogs {
             .get(&conv)
             .is_some_and(|u| u.contains(&(step as u16)))
     }
-    /// The `LuaScript` conditions of the conversation at `path` (any spelling), if it has any.
+    /// `path` in any spelling.
     pub fn lua_conds(&self, path: &str) -> Option<&[Arc<LuaCond>]> {
         if self.lua.is_empty() {
             return None;
@@ -108,42 +99,31 @@ impl Dialogs {
 pub struct Session {
     pub conv: Arc<Conversation>,
     pub npc: u32,
-    /// Speech step currently shown.
     pub speech: u32,
 }
 
-/// What the dialog UI shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DialogView {
     pub npc: u32,
     pub speaker: String,
-    /// The whole speech text.
     pub text: String,
-    /// `text` split into the window's pages (`split_pages`); never empty.
+    /// Never empty.
     pub pages: Vec<String>,
-    /// Page shown. While it is not the last, the window offers only a
-    /// "Continue" button (`tagContinue`, see `next_page`); the responses are
-    /// listed on the last page.
+    /// While not the last page, the window offers only "Continue" (`tagContinue`).
     pub page: usize,
-    /// (step index, text, type tag) of each available response. When the
-    /// speech has none, the window's own "End Conversation" button
-    /// ([`DialogView::END`]) is the only entry.
+    /// (step index, text, type tag) of each available response; with none,
+    /// [`DialogView::END`] is the only entry.
     pub responses: Vec<(u32, String, &'static str)>,
-    /// The voice-over file of the speech shown (empty: none).
-    /// `ConversationStep::PlayVO`: the shown step's
-    /// own VO, a link's (type 7) that of its first non-link target; a type 8
-    /// step plays its own, not the drawn child's. Stock: 167 files, all
-    /// `.wav` under `sound/dialog/quest/` (and three ghost vocalisations).
+    /// Empty: none. `ConversationStep::PlayVO`: a link's (type 7) is that of its
+    /// first non-link target; a type 8 step plays its own, not the drawn child's.
     pub voice: String,
 }
 
 impl DialogView {
-    /// Response index of the "End Conversation" button the window adds when
-    /// a speech has no available response. `ConversationWindow::AddEndButton`
-    /// (button labelled `tagEndConversation`, no step attached)
-    /// and `ConversationWindow::OnButtonClicked` (clicking a button without a step runs no actions and
-    /// leaves no next step, so the window closes). Its text is empty: the UI
-    /// shows the localised tag.
+    /// The "End Conversation" button added when a speech has no available response
+    /// (`ConversationWindow::AddEndButton`); clicking it runs no actions and closes
+    /// the window (`ConversationWindow::OnButtonClicked`). Its text is empty: the UI
+    /// shows `tagEndConversation`.
     pub const END: u32 = u32::MAX;
 
     pub fn page_text(&self) -> &str {
@@ -152,10 +132,8 @@ impl DialogView {
     pub fn on_last_page(&self) -> bool {
         self.page + 1 >= self.pages.len()
     }
-    /// The page "Continue" button: `ConversationWindow::AddContinueButton` (the
-    /// button carries the current step) and `ConversationWindow::OnButtonClicked` (clicking a button
-    /// whose step is the current one only requests the next page; no
-    /// actions run). Returns false on the last page.
+    /// `ConversationWindow::AddContinueButton` / `OnButtonClicked`: next page, no
+    /// actions run. Returns false on the last page.
     pub fn next_page(&mut self) -> bool {
         if self.on_last_page() {
             return false;
@@ -165,20 +143,14 @@ impl DialogView {
     }
 }
 
-/// Characters per page: the `autosplit` field of the conversation window
-/// record (`records/ingameui/conversationwindow/conversationwindow.dbr`,
-/// value 500; read by `ConversationWindow::Load`).
+/// The `autosplit` field of `conversationwindow.dbr` (`ConversationWindow::Load`).
 pub const PAGE_CHARS: usize = 500;
-/// `LocalizationManager::GetSentenceSeperators`: the `separators` entry of
-/// the language's `text_XX/language.def` ([`gd_formats::text::LanguageDef`]),
-/// default `.?!` (`LocalizationManager::InitializeLanguage`). The English text
-/// archive ships no `language.def`, so the default applies. The session's
-/// value is [`Story::separators`] (`gd_game::story::setup_story` reads the
-/// language's def); this is its initial value.
+/// `LocalizationManager::GetSentenceSeperators` default (`text_XX/language.def`
+/// `separators`, `LocalizationManager::InitializeLanguage`); the initial value of
+/// [`Story::separators`].
 pub const SENTENCE_SEPARATORS: &str = ".?!";
 
-/// The window's text paging. `ConversationWindow::NextPageEnd` (one call
-/// per page) and `ConversationWindow::UpdateStep` (the paging loop), counting UTF-16 units:
+/// `ConversationWindow::NextPageEnd` / `ConversationWindow::UpdateStep`, counting UTF-16 units:
 /// - from the current offset, take `size` units; if the offset plus `size`
 ///   reaches the end, the rest is the last page;
 /// - otherwise scan that window backwards for a sentence separator; one found
@@ -239,8 +211,7 @@ fn find(step: &Step, index: u32) -> Option<&Step> {
     step.children.iter().find_map(|c| find(c, index))
 }
 
-/// `ConversationStep::GetSteps`: a link
-/// without children stands for its target's (following link chains).
+/// `ConversationStep::GetSteps`: a link without children stands for its target's.
 fn steps_of<'a>(conv: &'a Conversation, step: &'a Step) -> &'a [Step] {
     let mut s = step;
     for _ in 0..64 {
@@ -256,8 +227,7 @@ fn steps_of<'a>(conv: &'a Conversation, step: &'a Step) -> &'a [Step] {
     &s.children
 }
 
-/// `ConversationStep::GetActions`: a link
-/// without actions runs its target's (following link chains).
+/// `ConversationStep::GetActions`: a link without actions runs its target's.
 fn actions_of<'a>(conv: &'a Conversation, step: &'a Step) -> &'a [gd_formats::qst::Action] {
     let mut s = step;
     for _ in 0..64 {
@@ -273,8 +243,8 @@ fn actions_of<'a>(conv: &'a Conversation, step: &'a Step) -> &'a [gd_formats::qs
     &s.actions
 }
 
-/// `ConversationStep::PlayVO` / `StopVO`: a link stands for its first
-/// non-link target (`ConversationStep.linkTarget`, the resolved link); an unresolved link has none.
+/// `ConversationStep::PlayVO` / `StopVO`: a link stands for its first non-link
+/// target; an unresolved link has none.
 fn voice_of<'a>(conv: &'a Conversation, step: &'a Step) -> &'a str {
     let mut s = step;
     for _ in 0..64 {
@@ -309,30 +279,23 @@ impl Story {
     }
 
     fn first_speech<'a>(&self, conv: &'a Conversation, parent: &'a Step) -> Option<&'a Step> {
-        // A childless link stands for its target's children (HasAvailableSpeech).
         steps_of(conv, parent)
             .iter()
             .find(|c| c.kind == StepType::Speech && self.step_available(conv, c))
     }
 
-    /// The faction lock of an NPC's conversation `ConversationWindow::Open`
-    /// (window open) over `Conversation::CollectQuestReferences`:
-    /// every step with a `BeginQuestTask` action
-    /// (link steps skipped, a childless link's children are its target's) is
-    /// checked together with its ancestors (`GetParent`): each condition that
-    /// does not hold, is a `HasFaction` of the NPC's own faction (`npc_faction`,
-    /// compared by name) and whose requirement exceeds the player's value
-    /// raises the result to (faction, requirement - value) when the
-    /// requirement is above the deficit kept so far (the engine's compare, 0
-    /// at first). Any other unmet condition ends that step's scan of the
-    /// condition list. `None`: nothing locked (the window's -1000).
+    /// The faction lock of an NPC's conversation (`ConversationWindow::Open` over
+    /// `Conversation::CollectQuestReferences`): every non-link step with a
+    /// `BeginQuestTask` action is checked with its ancestors; each unmet `HasFaction`
+    /// of the NPC's own faction raises the result to (faction, requirement - value)
+    /// when above the deficit kept so far (0 at first). Any other unmet condition
+    /// ends that step's scan. `None`: nothing locked (the window's -1000).
     pub fn locked_quest_faction(&self, npc: u32, npc_faction: &str) -> Option<(String, i32)> {
         use gd_formats::qst::{Action, Condition};
         let path = self.entities.get(npc)?.conversation.as_deref()?;
         let conv = self.dialogs.defs.get(&super::quest::normalize_path(path))?;
         let mut best: Option<(String, i32)> = None;
         let mut deficit = 0;
-        // Depth-first over the begin-quest steps, with each one's ancestor chain.
         fn walk<'a>(
             conv: &'a Conversation,
             step: &'a Step,
@@ -380,7 +343,7 @@ impl Story {
         best
     }
 
-    /// Whether talking to an NPC with this conversation would show something (`HasAvailableSpeech`).
+    /// `HasAvailableSpeech`.
     pub fn has_speech(&self, conversation: &str) -> bool {
         let Some(conv) = self
             .dialogs
@@ -392,11 +355,9 @@ impl Story {
         self.first_speech(conv, &conv.root).is_some()
     }
 
-    /// Start talking to an NPC. `ConversationWindow::BeginConversation` (the
-    /// conversation window opening): nothing happens unless the root step's
-    /// conditions hold; then the root's speech is shown (`advance`), and only
-    /// after that do the root step's actions run (also when no speech was
-    /// available and the window closes again).
+    /// `ConversationWindow::BeginConversation`: nothing happens unless the root's
+    /// conditions hold; the root's actions run after its speech is shown (also when
+    /// none was and the window closes).
     pub fn talk(&mut self, npc: u32) -> Option<DialogView> {
         let path = self.entities.get(npc)?.conversation.clone()?;
         let conv = self
@@ -417,9 +378,7 @@ impl Story {
         view
     }
 
-    /// The window's step update from step `current` (module doc): runs the
-    /// shown speeches' actions, records the first as used and returns its
-    /// view; `None` when no speech is available (the window closes).
+    /// The step update from `current` (module doc); `None` when no speech is available.
     fn advance(&mut self, conv: Arc<Conversation>, npc: u32, current: u32) -> Option<DialogView> {
         let mut step = find(&conv.root, current)?;
         if step.kind == StepType::Link {
@@ -455,8 +414,7 @@ impl Story {
                 }
             }
             if shown.is_none() {
-                // `Conversation::GetText`: the text at the localisation
-                // index; an empty one falls back to a link's target.
+                // `Conversation::GetText`: an empty text falls back to a link's target.
                 let text_index = self.localization_index(&conv, speech);
                 let mut text = conv.texts.get(text_index);
                 if text.is_empty() && speech.kind == StepType::Link {
@@ -503,7 +461,6 @@ impl Story {
         Some(view)
     }
 
-    /// `ConversationStep::GetLocalizationIndex` (module doc).
     fn localization_index(&mut self, conv: &Conversation, step: &Step) -> u32 {
         if step.raw_type != 8 {
             return step.index;
@@ -518,7 +475,6 @@ impl Story {
             return step.index;
         }
         let pick = loop {
-            // (bad data: a pool over 0x8000 would divide by zero.)
             let r = (self.rng.next() & 0x7fff) / (0x8000 / n).max(1);
             if r < n {
                 break r;
@@ -527,13 +483,10 @@ impl Story {
         self.localization_index(conv, pool[pick as usize])
     }
 
-    /// Pick a response (by step index). Returns the next view, or `None` when
-    /// the conversation ends. `ConversationWindow::OnButtonClicked` (response
-    /// click) and `ConversationWindow::UpdateStep`: the response's actions run
-    /// (`GetActions`: an actionless link runs its target's), it becomes the
-    /// current step, and an Accept, Decline or End response closes the window;
-    /// any other continues with its speeches (`advance`). [`DialogView::END`]
-    /// just closes the window.
+    /// Pick a response (by step index); `None` when the conversation ends.
+    /// `ConversationWindow::OnButtonClicked` / `UpdateStep`: the response's actions
+    /// run (`GetActions`), it becomes the current step, and Accept, Decline or End
+    /// closes the window; any other continues with its speeches.
     pub fn choose(&mut self, response: u32) -> Option<DialogView> {
         let Session { conv, npc, .. } = self.dialogs.session.take()?;
         if response == DialogView::END {
@@ -549,9 +502,7 @@ impl Story {
     }
 }
 
-/// The mark floating over an NPC (`Conversation::Punctuation`, the values
-/// `Conversation::GetPunctuation` returns; the FX record each one attaches is
-/// `gd_game::npc_marks::punctuation_record`).
+/// The mark over an NPC (`Conversation::GetPunctuation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Punctuation {
     None = 0,
@@ -568,8 +519,7 @@ pub enum Punctuation {
 }
 
 impl Story {
-    /// `Conversation::GetPunctuation` for the
-    /// NPC's conversation file:
+    /// `Conversation::GetPunctuation` for the NPC's conversation file:
     /// 1. `Conversation::GetQuestPunctuation` over the step tree, if the
     ///    conversation references quests: an available step's
     ///    `BeginQuestTask` whose task is Available gives 1; its
@@ -581,7 +531,7 @@ impl Story {
     /// 2. else 2 when a quest completed by one of the conversation's steps
     ///    (`Conversation::CollectQuestReferences`: non-link steps' actions,
     ///    depth first) has any task in progress (`Quest2Task::InProgress`:
-    ///    state 2; its `Quest2Task.multiplayerBlocked` flag is the multiplayer block, never set here);
+    ///    state 2);
     /// 3. else `HasAvailableSpeech` (the first available speech of the root,
     ///    link-transparent): 6 when its flag bit 2 is clear and it was not
     ///    used yet, else 5; none: 0.
@@ -621,7 +571,6 @@ impl Story {
         }
     }
 
-    /// `Conversation::GetQuestPunctuation`.
     fn quest_punctuation(&self, conv: &Conversation, step: &Step, out: &mut Punctuation) {
         use super::quest::{STATE_AVAILABLE, STATE_IN_PROGRESS};
         use gd_formats::qst::Action;

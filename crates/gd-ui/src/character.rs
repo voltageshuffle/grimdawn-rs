@@ -6,19 +6,8 @@
 //! `Y Center`); all children are window-relative. The stats tab pane sits at
 //! its record's `vecX/vecY` and its own children are pane-relative.
 //!
-//! The numbers move in place, not by a rebuild: the life / mana vitals, the money and the stats rows
-//! (the list's values, the greatest monster, the weapon damage) carry [`SheetVital`] and [`sheet_vitals`]
-//! redraws them when their text changes (`CharacterSig` holds no gold or stats). The page II / III lists
-//! scroll in place ([`scroll_sheet`]) with the shared scroll bar (`ui/window.rs`, the journal's widget);
-//! their hit rects ([`SheetList`]) stay at scroll 0 and shift when read.
-//!
-//! PORT: the stats list's label / value columns are measured from the text (the label column is the widest
-//! label that still leaves the widest value its room), labels and values truncate to their column and the row
-//! pitch follows the font line height, so long localised labels and swapped fonts flow instead of colliding
-//! (UX over parity; stock shares one fixed box).
-//!
-//! Sounds: the close, weapon-swap, bag-tab, page-tab, auto-sort and attribute buttons register their `soundNameDown`
-//! (`ui/widgets.rs`; the move-reagents button plays its own in `inventory.rs`).
+//! PORT: the stats list's label / value columns are measured from the text, labels and values truncate
+//! to their column and the row pitch follows the font line height (stock shares one fixed box).
 use super::{HudValues, Ui};
 use crate::state::inventory::{InvLayout, SheetList};
 use bevy::prelude::*;
@@ -245,7 +234,6 @@ pub fn build(
     };
 
     ui.bitmap_field(&field("characterDisplayBitmap"), o);
-    // The paper doll (`crate::doll`) in the scene view.
     if let Some(Widget::SceneView { rect, .. }) = ui.widget(&field("characterView")) {
         let r = URect::new(
             o.x + ui.sc(rect.x),
@@ -289,10 +277,8 @@ pub fn build(
     });
     layout.close_button = super::window::close_button(ui, &field("characterCloseButton"), o);
     crate::doll::rotate_buttons(ui, crate::doll::DollView::Character, rotate);
-    // The weapon-swap button (`gd_game::weapon_sets`: the loader reads only
-    // `equipSwap1LeftButton`): the down bitmap while set II is active
-    // (`CharacterWindow::Update` / `ButtonStatic::Render`; the hover bitmap and rollover:
-    // `rollover.rs`).
+    // The weapon-swap button (the loader reads only `equipSwap1LeftButton`): the down bitmap while
+    // set II is active (`CharacterWindow::Update` / `ButtonStatic::Render`).
     if let Some(Widget::Button {
         up: Some(up),
         down,
@@ -317,7 +303,6 @@ pub fn build(
     if let Some(t) = shown {
         ui.bitmap_field(&field(&format!("inventoryTab{t}Bitmap")), o);
     }
-    // One tab per extra bag the character has; the selected one is shown.
     for i in 1..bag_count.min(6) {
         if let Some(Widget::Button { x, y, .. }) =
             ui.widget(&field(&format!("inventoryTab{i}Button")))
@@ -333,7 +318,6 @@ pub fn build(
             }
         }
     }
-    // Bag grids: the main bag and the selected extra bag.
     for (b, k) in
         std::iter::once((0usize, "inventoryGrid0")).chain(shown.map(|t| (t, "inventoryGrid1")))
     {
@@ -362,7 +346,6 @@ pub fn build(
                 p.size.h as f32 * cell,
             );
             grid_item(ui, inv, &p.item, cr);
-            // A new pickup's glow ([`super::newitems`]).
             if inv.fresh.contains(&(p.item.base_name.clone(), p.item.seed)) {
                 let e = ui.solid(cr, Color::srgba(1.0, 1.0, 1.0, 0.0));
                 ui.commands
@@ -390,8 +373,7 @@ pub fn build(
     }
 
     // Under the grids: auto-sort of the main bag (left) and of the selected
-    // extra bag (right, only with one), and the move-reagents button between them
-    // (`gd_game_core::stash::DepositReagents`) (their records sit at y 420, level with the gold number).
+    // extra bag (right, only with one), and the move-reagents button between them.
     for (k, which) in [
         ("invSortButton1", Some(0usize)),
         ("reagentDepositButton", None),
@@ -407,7 +389,6 @@ pub fn build(
         {
             match which {
                 Some(b) => {
-                    // The reagent button's sound is played by its click (`inventory.rs`).
                     ui.record_path_button_sound(r, &field(k));
                     layout.sort_buttons.push((b, r));
                 }
@@ -416,11 +397,8 @@ pub fn build(
         }
     }
 
-    // Page buttons: the hidden `characterTabNButton`s (window-relative
-    // `bitmapPosition`, `buttonXSize/YSize`) take the clicks; the window draws
-    // only the open page (`CharacterWindow::Render`: `pages[selected]`), so only
-    // its `tabNBitmap`, the selected tab's look, is drawn. The background
-    // shows the other tabs unselected.
+    // Page buttons: the hidden `characterTabNButton`s take the clicks; the window draws only the
+    // open page's `tabNBitmap` (`CharacterWindow::Render`: `pages[selected]`).
     for n in 1..=3u8 {
         if let Some(Widget::Button { x, y, w, h, .. }) =
             ui.widget(&field(&format!("characterTab{n}Button")))
@@ -447,15 +425,13 @@ pub fn build(
         ui.bitmap(&bitmap, x, y, po);
     }
 
-    // Stats tab pane.
     let tab_rec = field(&format!("characterTab{tab}"));
     if let Some(t) = ui.record(&tab_rec) {
         let po = o + Vec2::new(
             ui.sc(t.f32("vecX").unwrap_or(0.0)),
             ui.sc(t.f32("vecY").unwrap_or(0.0)),
         );
-        // The rows live in the page's scroll window (`tabNScrollWindow`
-        // positionX/Y), below the button strip.
+        // The rows live in the page's scroll window (`tabNScrollWindow` positionX/Y).
         let sw = t
             .str(&format!("tab{tab}ScrollWindow"))
             .and_then(|p| ui.record(p));
@@ -778,9 +754,8 @@ fn tag_value(fonts: &super::text::FontCache, value: String) -> String {
 /// `CharacterSheetPage1::HandleMouseEvent`: each tests a row's number and its text / bitmap widget):
 /// Health, Energy, Physique, Cunning, Spirit, Offensive / Defensive Ability
 /// and the resistances (`tab1<Row>Rollover`; their values: `ui/rollover.rs`).
-/// The DPS row's rollover (`tab1DPSRollover`, a `rolloverline5.tpl` like the ability rows: the lines come from
-/// `SheetDps::roll_values`); the armour row's (`tab1CombinedArmorRollover`, over its number or text) is the breakdown
-/// window (`armor_window.rs`).
+/// The DPS row's rollover (`tab1DPSRollover`); the armour row's (`tab1CombinedArmorRollover`) is the
+/// breakdown window.
 fn sheet_rollover(t: &gd_formats::arz::Record, k: &str, r: URect, layout: &mut InvLayout) {
     const ROWS: [&str; 9] = [
         "Life",
@@ -842,8 +817,8 @@ fn stat_list(
         .to_string();
     let head_style = t.str(&field("HeaderFontStyle")).unwrap_or("").to_string();
     let num_style = t.str(&field("NumberFontStyle")).unwrap_or("").to_string();
-    // Row pitch: the record's line height, raised to the taller of the label / number font lines so a
-    // swapped font never overlaps the next row (PORT: stock fixes the pitch to its texture).
+    // Row pitch: the record's line height, raised to the taller of the label / number font lines
+    // (PORT: stock fixes the pitch to its texture).
     let line = (ui
         .sc(record_line)
         .max(ui.line_height(&label_style))
@@ -860,7 +835,6 @@ fn stat_list(
         ui.sc(view_h),
     );
 
-    // Lay the list out in UI units from the top of the content.
     enum Placed {
         Head(&'static str, f32, bool),
         Row(&'static str, f32),
@@ -908,7 +882,6 @@ fn stat_list(
     let max = (content_h - view_h).max(0.0);
     let scroll = panels.sheet_scroll[tab as usize].clamp(0.0, max);
 
-    // The clipped content.
     let clip = ui
         .commands
         .spawn(Node {
@@ -922,7 +895,6 @@ fn stat_list(
         })
         .id();
     ui.commands.entity(ui.root).add_child(clip);
-    // The rows sit in one container at scroll 0 that [`scroll_sheet`] moves (a scroll does not rebuild the window).
     let content = ui
         .commands
         .spawn((
@@ -970,9 +942,8 @@ fn stat_list(
                 .map(|tag| ui.fonts.tag(tag).to_string())
         })
         .collect();
-    // Measure the label / value columns (PORT: stock shares one fixed 205px box, so a long localised
-    // label runs into its number). The label column is the widest label that still leaves the widest
-    // value its room; labels and values truncate to their own column, values stay right-aligned.
+    // PORT: the label column is the widest label that still leaves the widest value its room;
+    // labels and values truncate to their own column, values stay right-aligned.
     let left = ui.sc(17.0);
     let right = ui.sc(222.0).min(view.w);
     let gap = ui.sc(8.0);
@@ -1057,10 +1028,8 @@ fn stat_list(
                 ));
             }
             Placed::Row(n, y) => {
-                // The row's rollover (`tab<N><Row>Rollover`, set on the list
-                // item by the page loader, shown by the list box's mouse
-                // handler: page mouse `CharacterSheetPage::HandleMouseEvent` → the list; PORT: the
-                // whole row, clipped to the view).
+                // The row's rollover (`tab<N><Row>Rollover`, `CharacterSheetPage::HandleMouseEvent`;
+                // PORT: the whole row, clipped to the view).
                 let ry = view.y + ui.sc(*y);
                 if let Some(roll) =
                     t.str(&field(&format!("{}Rollover", n.trim_end_matches("Text"))))
@@ -1139,7 +1108,7 @@ fn stat_list(
                 // Entries 0 / 2: the mouse skills' names; 4: the weapon damage
                 // line under its heading (1 / 3, the skills' damage ranges).
                 // A skill's name and damage show its `tab2LMBRollover` /
-                // `tab2RMBRollover` (`ui/rollover.rs`). PORT: the row rects.
+                // `tab2RMBRollover`. PORT: the row rects.
                 let ry = view.y + ui.sc(*y);
                 if *i < 4
                     && skills.get(i / 2).is_some()
@@ -1209,7 +1178,6 @@ fn stat_list(
         }
     }
 
-    // The scrollbar (`scrollboxwidedark_vscroll`): arrows, track, handle.
     let mut list = SheetList {
         tab,
         view,
@@ -1219,8 +1187,6 @@ fn stat_list(
         rows,
         ..Default::default()
     };
-    // The shared scroll bar (the journal's `UIScrollWindow` widget, `ui/window.rs`): the same
-    // `scrollboxwidedark_vscroll` record, its thumb pieces moved by [`scroll_sheet`].
     if let Some(path) = sw.str("verticalScrollbar") {
         let bx = view.x + ui.sc(240.0);
         let by = view.y - ui.sc(15.0);
@@ -1257,10 +1223,8 @@ pub struct SheetContent {
     inv: f32,
 }
 
-/// Scrolls the stats lists in place: moves the content up by `round_px(scroll × s)` and the shared scroll bar
-/// thumb pieces ([`super::window::ScrollThumb`]) along their track, instead of rebuilding the character window
-/// (`UiPanels::sheet_scroll` is not in its signature). The hit
-/// rectangles ([`crate::state::inventory::SheetList`]) are kept at scroll 0 and shifted the same way when read.
+/// Scrolls the stats lists in place: moves the content up by `round_px(scroll × s)` and the scroll bar
+/// thumb pieces along their track. The hit rectangles ([`SheetList`]) stay at scroll 0 and shift when read.
 pub fn scroll_sheet(
     panels: Res<super::UiPanels>,
     mut content: Query<(&SheetContent, &mut Node), Without<super::window::ScrollThumb>>,
@@ -1336,8 +1300,7 @@ fn stats_pane(
             _ => None,
         })
         .collect();
-    // Only fields the game reads (`tab_fields.rs`): the records keep an older
-    // layout's rows (block, regen, speeds, ...) that overlap the current ones.
+    // Only fields the game reads: the records keep an older layout's overlapping rows.
     let prefix: String = fields
         .first()
         .map(|(k, _)| k.chars().take(4).collect())
@@ -1349,10 +1312,8 @@ fn stats_pane(
     if listed > 1 {
         fields.retain(|(k, _)| super::tab_fields::USED_TAB_FIELDS.contains(&k.as_str()));
     }
-    // Bitmaps first (backgrounds/dividers), then text.
     fields.sort_by_key(|(k, _)| !k.ends_with("Bitmap"));
     for (k, rec) in fields {
-        // The page button images are drawn by `build`.
         if k.ends_with("Bitmap") && k.len() == 10 && k.starts_with("tab") {
             continue;
         }
@@ -1463,8 +1424,6 @@ fn stats_pane(
                 sheet_rollover(t, &k, bx, layout);
                 let shown = fit_sheet(ui, &tb, &text);
                 let e = ui.text(&tb, po, &shown);
-                // The life / mana numbers, the money and the stats rows change without a layout change
-                // (a kill, a pickup, a drain): they are redrawn in place (`sheet_vitals`), not by a rebuild.
                 let stat_key = k
                     .trim_start_matches("tab")
                     .trim_start_matches(|c: char| c.is_ascii_digit())
@@ -1497,8 +1456,7 @@ fn stats_pane(
     }
 }
 
-/// One line of a sheet number cut to its text box width (the box's own style), so a long localised
-/// label or a grown value never runs past its column. A no-op when the text already fits.
+/// One line of a sheet number cut to its text box width (the box's own style).
 fn fit_sheet(ui: &mut Ui, tb: &gd_formats::ui::TextBox, text: &str) -> String {
     match tb.style.as_deref() {
         Some(style) => ui.truncate_line(style, ui.sc(tb.rect.w), text),
@@ -1515,7 +1473,7 @@ fn vital_text(stat: super::hud::Stat, v: &super::HudVitals) -> String {
     format!("{} / {}", cur.trunc() as i32, max.trunc() as i32)
 }
 
-/// What redraws a sheet number in place ([`sheet_vitals`]): the life / mana vitals, the money, a
+/// What redraws a sheet number in place: the life / mana vitals, the money, a
 /// `HudValues::stats` row (as-is or through [`tag_value`]), or the greatest monster's name.
 #[derive(Clone)]
 enum VitalSource {
@@ -1528,21 +1486,18 @@ enum VitalSource {
     Monster,
 }
 
-/// A sheet number text node and what redraws it.
 #[derive(Component)]
 pub struct SheetVital {
     source: VitalSource,
     tb: gd_formats::ui::TextBox,
     po: Vec2,
     shown: String,
-    /// The build's UI scale and inverse DPI: the window is not rebuilt on a scale change (`CharacterSig`), so the
-    /// redrawn number keeps the window's scale, as [`SheetContent`] does.
+    /// The build's UI scale and inverse DPI: the window is not rebuilt on a scale change.
     s: f32,
     inv: f32,
 }
 
-/// Redraws the sheet's life / mana numbers, money and stats rows when their text changes (the window is
-/// not rebuilt for it: `CharacterSig` holds no gold or stats). A node is re-read only when its source changed.
+/// Redraws the sheet's life / mana numbers, money and stats rows when their text changes.
 pub fn sheet_vitals(
     mut commands: Commands,
     (vitals, values): (Res<super::HudVitals>, Res<super::HudValues>),

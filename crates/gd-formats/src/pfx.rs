@@ -1,5 +1,4 @@
-//! `.pfx` particle effects (`GAME::EffectData`, Engine.dll). The layout
-//! and runtime rules are below and in `gd_render::fx`.
+//! `.pfx` particle effects (`GAME::EffectData`, Engine.dll).
 //!
 //! File = `u32 101`, then emitters until EOF: `{str name, "PFX1", u32 0,
 //! u32 bodyBytes, u32 n × str (texture, shader, drop decal), u32 n × u32 bools,
@@ -7,7 +6,7 @@
 //! `{f32 domain, f32 range, u32 n × (f32 x, f32 y)}`
 //! (`EffectData::BufferLoad`, `EmitterData::InternalBinaryRead`,
 //! `CurveData::BinaryRead`).
-use crate::util::Reader;
+use crate::util::{Reader, byte_list};
 use anyhow::{Result, bail, ensure};
 
 pub const VERSION: u32 = 101;
@@ -257,37 +256,38 @@ fn read_emitter(r: &mut Reader) -> Result<Emitter> {
     // Pre-PFX1 data goes through EmitterData::OldBinaryRead; no stock file uses it.
     ensure!(
         magic == b"PFX1",
-        "emitter {name:?}: magic {magic:02x?}, old format not supported"
+        "emitter \"{name}\": magic {}, old format not supported",
+        byte_list(magic, true)
     );
     let _zero = r.u32()?;
     let body = r.u32()? as usize;
     let start = r.pos;
     let n = r.u32()? as usize;
-    ensure!(n <= 3, "emitter {name:?}: {n} strings");
+    ensure!(n <= 3, "emitter \"{name}\": {n} strings");
     let mut strs = [String::new(), String::new(), String::new()];
     for s in strs.iter_mut().take(n) {
         *s = r.string()?;
     }
     let n = r.u32()? as usize;
-    ensure!(n <= NUM_BOOLS, "emitter {name:?}: {n} bools");
+    ensure!(n <= NUM_BOOLS, "emitter \"{name}\": {n} bools");
     let mut bools = [false; NUM_BOOLS];
     for b in bools.iter_mut().take(n) {
         *b = r.u32()? != 0;
     }
     let n = r.u32()? as usize;
-    ensure!(n <= 2, "emitter {name:?}: {n} ints");
+    ensure!(n <= 2, "emitter \"{name}\": {n} ints");
     let mut ints = [0i32; 2];
     for i in ints.iter_mut().take(n) {
         *i = r.i32()?;
     }
     let n = r.u32()? as usize;
-    ensure!(n <= 4, "emitter {name:?}: {n} floats");
+    ensure!(n <= 4, "emitter \"{name}\": {n} floats");
     let mut floats = [10.0f32, 0.0, 0.0, 0.0];
     for f in floats.iter_mut().take(n) {
         *f = r.f32()?;
     }
     let n = r.u32()? as usize;
-    ensure!(n <= NUM_CURVES, "emitter {name:?}: {n} curves");
+    ensure!(n <= NUM_CURVES, "emitter \"{name}\": {n} curves");
     let mut curves = vec![Curve::default(); NUM_CURVES];
     for c in curves.iter_mut().take(n) {
         c.domain = r.f32()?;
@@ -295,7 +295,7 @@ fn read_emitter(r: &mut Reader) -> Result<Emitter> {
         let k = r.u32()? as usize;
         ensure!(
             k <= r.remaining() / 8,
-            "emitter {name:?}: curve with {k} points"
+            "emitter \"{name}\": curve with {k} points"
         );
         c.points = (0..k)
             .map(|_| Ok([r.f32()?, r.f32()?]))
@@ -303,7 +303,7 @@ fn read_emitter(r: &mut Reader) -> Result<Emitter> {
     }
     ensure!(
         r.pos - start == body,
-        "emitter {name:?}: body {body} bytes, read {}",
+        "emitter \"{name}\": body {body} bytes, read {}",
         r.pos - start
     );
     let [texture, shader, drop_decal] = strs;

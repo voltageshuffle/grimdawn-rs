@@ -1,7 +1,7 @@
 //! The Crucible's difficulties: Aspirant (Normal), Challenger (Elite), Gladiator (Ultimate). The engine's
-//! differences are the game difficulty itself (no challenge, mode 1 in the save's `lastDifficulty`), the ramp pak
-//! (`survivalAdjustmentNormal / Elite / Ultimate`, `gd_sim::actor::Rules::with_survival_ramp`) and the score
-//! column (`playerscore.dbr`); the rest is the scripts' (`SurvivalEvent_StartBonusTimer`, `rewards.lua`).
+//! differences are the game difficulty (no challenge, mode 1 in `lastDifficulty`), the ramp pak
+//! (`survivalAdjustmentNormal / Elite / Ultimate`) and the score column (`playerscore.dbr`); the rest is the
+//! scripts' (`SurvivalEvent_StartBonusTimer`, `rewards.lua`).
 use super::*;
 
 /// Each difficulty on arena A: the session's difficulty and no challenge, the first wave's bonus timer
@@ -53,7 +53,7 @@ fn challenger_and_gladiator() {
             (timer as f32 - want).abs() < 200.0,
             "difficulty {d}: timer {timer} ms, want ~{want}"
         );
-        // The ramp (1 now) takes the difficulty's survival pak (`survivalinfo.dbr`), at its first column.
+        // The ramp takes the difficulty's survival pak (`survivalinfo.dbr`), at its first column.
         let key = [
             "survivalAdjustmentNormal",
             "survivalAdjustmentElite",

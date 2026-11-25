@@ -1,42 +1,24 @@
 //! Dropping the item on the cursor onto the ground.
 //!
-//! GrimDawn.exe `CursorHandlerMgr::HandleMouseEvent`, Game.dll `CursorHandlerItemMove::ActivateWorld`: a
-//! left or right press on the world (no window took it) with an item on the cursor drops it, the whole
-//! stack ([`DropHeld`], sent by `gd_ui` `apply.rs` `world_click`). Quest items drop like any other.
-//! An item whose record is `soulbound` or `untradeable` (`Item::Load`, `Item.soulbound` / `Item.untradeable`) is
-//! not dropped: the Yes / No question `tagDestroySoulbound` (`tagDestroyUntradeable` when it is only
-//! untradeable; `DialogManager::AddDialog` type 21) comes up ([`Inventory::destroying`]) and the press
-//! does nothing else; while it is up further presses do nothing and Escape does not put the item back
-//! (`CursorHandlerItemMove::Escape`). `CursorHandlerItemMove::Update` reads the
-//! answer ([`DestroyAnswer`]): Yes destroys the item (`SendRemoveItemFromInventory`), No puts it back
-//! (the handler's `Cancel`, [`Inventory::cancel_held`]: back to its bag cell, else `GiveItemToPlayer`:
-//! equip-empty, bags, else thrown down).
+//! `CursorHandlerItemMove::ActivateWorld`: a left or right press on the world with an item on the
+//! cursor drops the whole stack ([`DropHeld`]); quest items too. A `soulbound` or `untradeable`
+//! item is not dropped: the Yes / No question `tagDestroySoulbound` (`tagDestroyUntradeable` when
+//! only untradeable) comes up ([`Inventory::destroying`]); while it is up presses do nothing and
+//! Escape does not put the item back. The answer ([`DestroyAnswer`]): Yes destroys the item, No
+//! puts it back ([`Inventory::cancel_held`]).
 //!
-//! Where it lands (`ControllerCharacter::SendDropItemRandom`): from the player's
-//! centre of mass (`Player::GetCenterOfMass`: half its height over its feet) with velocity
-//! `1.5 · (cos a, 0, sin a)`, `a = rand() · 2π / 32767` ([`drop_velocity`]), through
-//! `GameEngine::CreateItemCopy` (a random yaw, the item's rigid body until it touches the world or the path
-//! mesh: `gd_sim::loot_toss`, [`crate::loot::spawn_thrown`]). `Item::OnDropped` records the
-//! dropper (`Item.dropper`, carried by the replica info into the ground copy): every `CanAutoPickup`
-//! (potions, food, gold, components, quest items) refuses an item the main player dropped, so the player's
-//! own drop is only picked up by clicking it ([`DroppedByPlayer`], `crate::loot::pick_up`).
+//! Where it lands (`ControllerCharacter::SendDropItemRandom`): from the player's centre of mass
+//! (half its height over its feet) with velocity `1.5 · (cos a, 0, sin a)`,
+//! `a = rand() · 2π / 32767` ([`drop_velocity`]), as a thrown rigid body. `Item.dropper` makes
+//! every `CanAutoPickup` refuse an item the main player dropped ([`DroppedByPlayer`]).
 //!
-//! The drop key (GrimDawn.exe `CursorHandlerMgr_OnKeyAction`):
-//! key action 32 `DropItem` on key down ([`DropKey`], sent by `gd_ui` `apply.rs` `drop_key`) gives the
-//! active cursor handler its `ActivateWorld`, as a world press does but with no mouse-position test (any
-//! window may be open; only the chat window blocks it, PORT: the port has none). So an item on the cursor
-//! drops exactly as [`DropHeld`] (`CursorHandlerItemMove::ActivateWorld`); the relic combine / enchant /
-//! transmute mode (`CursorHandlerRelicCombine::ActivateWorld`, `CursorHandlerTransmute::ActivateWorld`:
-//! the right-click mode of an `ItemTransmuter`, `crate::illusion` docs) is cancelled
-//! ([`Inventory::cancel_apply`], the item stays in its cell; PORT: like the world press, not while its
-//! confirmation is up); with an empty cursor nothing happens. The hot-slot-option mode
-//! (`CursorHandlerHotSlotOption::ActivateWorld`: deletes the dragged option) never occurs:
-//! nothing creates that handler (its constructors are referenced only by Game.dll's export table, and
-//! GrimDawn.exe imports no `CursorHandler` of that class), so stock has no hot-slot drag to drop.
+//! The drop key (key action 32 `DropItem`, [`DropKey`]) gives the active cursor handler its
+//! `ActivateWorld` without the mouse-position test (any window may be open): an item on the
+//! cursor drops as [`DropHeld`]; the relic combine / enchant / transmute mode is cancelled
+//! ([`Inventory::cancel_apply`]; PORT: not while its confirmation is up); an empty cursor does
+//! nothing. PORT: only the chat window would block it; the port has none.
 //!
-//! PORT: a dropped item is a ground item like any drop: it stays while the session runs (the port keeps
-//! ground items across level streaming; `grimdawn` `exit/mod.rs` despawns them with the session) and is not
-//! saved (the save holds no world items; it has left the inventory).
+//! PORT: a dropped item stays while the session runs and is not saved.
 use crate::loot::GroundItem;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -63,11 +45,11 @@ impl Plugin for ItemDropPlugin {
     }
 }
 
-/// A press on the world with an item on the cursor (module doc).
+/// A press on the world with an item on the cursor.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct DropHeld;
 
-/// The drop key (action 32) went down: the cursor handler's `ActivateWorld` (module doc).
+/// The drop key (action 32) went down.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct DropKey;
 
@@ -75,7 +57,6 @@ pub struct DropKey;
 #[derive(Message, Clone, Copy, Debug)]
 pub struct DestroyAnswer(pub bool);
 
-/// A ground item the player dropped: never picked up automatically (module doc).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct DroppedByPlayer;
 
@@ -99,7 +80,7 @@ pub fn destroy_tag(rec: &Record) -> Option<&'static str> {
     }
 }
 
-/// Applies [`DropHeld`], [`DropKey`] and [`DestroyAnswer`] (module doc).
+/// Applies [`DropHeld`], [`DropKey`] and [`DestroyAnswer`].
 #[allow(clippy::too_many_arguments)]
 pub fn apply_drops(
     mut commands: Commands,

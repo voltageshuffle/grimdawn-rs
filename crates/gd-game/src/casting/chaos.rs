@@ -1,22 +1,16 @@
-//! The chaos skills' beams (`Skill_AttackSpellChaos` / `…ChaosSpawnPet`: Reap Spirit, the tendril item skills, the
-//! aether zaps): the beam's travel and its hit when the head arrives. gd-render `chaos_beam.rs` draws each
-//! [`ChaosBeam`] from its fields (one source for the head and tail; it never recomputes them).
+//! The chaos skills' beams (`Skill_AttackSpellChaos` / `…ChaosSpawnPet`): travel and the hit when the head arrives.
+//! gd-render draws each [`ChaosBeam`] from its fields and never recomputes them.
 //!
-//! Game.dll: `ActivateNow` adds an 80-byte entry for
-//! the target and sends its attack with an empty target list (no hit). `Update` runs the entries:
-//! - state 0: the beam record (the modifiers' first `fxChanges` entry, else `chaosBeamName`;
-//!   [`gd_game_core::skill_fx::chaos_beam`]) is created from the caster's `R Hand` (read once, here) to the target's
-//!   `Target` point; a target that is no longer a character ends the entry (state 3, no hit);
-//! - state 1: while the target resolves (`ResolveValidateTarget`, alive or not) the far end follows its `Target`
-//!   point and the head moves `dt * headVelocity` m (clamped to 0..length), `top = head / length`; at `top >= 1` the
-//!   far end is kept, the state is 2 and the skill manager sends the attack on the target (`TargetResult`: the
-//!   damage, `Skill_AttackSpellChaosSpawnPet`'s summons by the target) and `Skill::ActivateSecondarySkills`
-//!   runs with the target at its `Target` point. A target gone first moves the beam to state 2 without a hit;
-//! - state 2: a living target (`IsAliveOrIntact`) still moves the far end; the tail moves `dt * tailVelocity` m,
-//!   `bottom = tail / length`, and at `bottom >= top` the beam goes (state 3, `ChaosBeam::Liberate`).
+//! Game.dll: `ActivateNow` adds an entry for the target and sends its attack with no hit. `Update` runs the entries:
+//! - state 0: the beam record ([`gd_game_core::skill_fx::chaos_beam`]) runs from the caster's `R Hand` (read once) to
+//!   the target's `Target` point; a target that is no longer a character ends the entry (no hit);
+//! - state 1: while the target resolves (alive or not) the far end follows it and the head moves
+//!   `dt * headVelocity` m, `top = head / length`; at `top >= 1` the attack hits the target and
+//!   `Skill::ActivateSecondarySkills` runs at its `Target` point. A target gone first skips to state 2 without a hit;
+//! - state 2: a living target still moves the far end; the tail moves `dt * tailVelocity` m, and at
+//!   `tail / length >= top` the beam goes.
 //!
-//! `headVelocity` / `tailVelocity` are plain floats of the skill record (`Load`, default 0).
-//! A beam record that does not load leaves the entry without a beam: it never hits (the port drops it).
+//! `headVelocity` / `tailVelocity` default 0. A beam record that does not load never hits (the port drops it).
 use super::*;
 
 /// A character's attach point in the world (`GetAttachPointCoords`), `fallback` (local) without one.
@@ -24,7 +18,6 @@ fn point_of(tf: &Transform, ch: Option<&Character>, name: &str, fallback: Vec3) 
     tf.transform_point(ch.and_then(|c| c.posed_point(name)).unwrap_or(fallback))
 }
 
-/// Runs the chaos beams (module doc).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn chaos_beams(
     mut commands: Commands,
@@ -47,7 +40,6 @@ pub(super) fn chaos_beams(
             continue;
         };
         if b.start.is_none() {
-            // State 0: the beam from the caster's hand to a target that is still a character.
             let (Some((end, ..)), Ok((ctf, cch, _))) = (target, points.get(b.caster)) else {
                 commands.entity(e).try_despawn();
                 continue;
@@ -71,8 +63,7 @@ pub(super) fn chaos_beams(
                 scale: 1.0,
                 projectile: false,
             });
-            // `Skill_AttackSpellChaosSpawnPet::TargetResult` (Reap Spirit, `pets::placement`): its
-            // `petBurstSpawn` summons around the foe hit.
+            // `Skill_AttackSpellChaosSpawnPet::TargetResult`: `petBurstSpawn` summons around the foe hit.
             if skill.class == "Skill_AttackSpellChaosSpawnPet" {
                 pets.write(SpawnPet {
                     owner: b.caster,

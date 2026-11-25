@@ -1,5 +1,5 @@
-// Glow composite (render/post.rs): adds the half-size blur of the scene glow and the outline mask
-// (gd_glow_blur.wesl, ApplyGlow's separable 8-tap blurs) onto the main view, bilinearly upsampled.
+// Glow composite: adds the half-size blur of the scene glow and the outline mask
+// (ApplyGlow's separable 8-tap blurs) onto the main view, bilinearly upsampled.
 // Nothing is added over an outlined object's own pixels (glow.ssh's stencil test): the glow target's
 // unblurred mask (alpha, the texel's class 1 / 2 / 3) at the pixel.
 import bevy_pbr::render::mesh_view_bindings::view;

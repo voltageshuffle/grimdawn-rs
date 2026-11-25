@@ -39,7 +39,7 @@ pub struct InvLayout {
     pub sheet_tabs: Vec<(u8, URect)>,
     /// Auto-sort buttons (bag index).
     pub sort_buttons: Vec<(usize, URect)>,
-    /// The page II / III list (`ui/character.rs`).
+    /// The page II / III list.
     pub sheet_list: Option<SheetList>,
     /// The weapon-swap button (`gd_game::weapon_sets`).
     pub swap_button: Option<URect>,
@@ -48,7 +48,7 @@ pub struct InvLayout {
     /// The window's close button (`characterCloseButton`): closes the window, as the key.
     pub close_button: Option<URect>,
     /// Stats-pane widgets with a `RolloverLine2` rollover: (rect, rollover
-    /// record, `HudValues::stats` key of the row's value), `ui/rollover.rs`.
+    /// record, `HudValues::stats` key of the row's value).
     pub sheet_rollovers: Vec<(URect, String, String)>,
 }
 

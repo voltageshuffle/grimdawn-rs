@@ -1,6 +1,4 @@
-//! Evade input: Space (or, in dev builds, the `GD_EVADE` hook) becomes a
-//! `gd_game::evade::EvadeRequest` (aimed by gd-game at the controller's cursor
-//! record, `gd_game::hotbar::WorldCursor`).
+//! Evade input: Space becomes a `gd_game::evade::EvadeRequest`.
 use bevy::prelude::*;
 pub use gd_game::evade::*;
 use gd_game_core::player::Player;
@@ -25,7 +23,6 @@ impl Plugin for EvadeInputPlugin {
     }
 }
 
-/// The player who may start an evade.
 type Ready<'w, 's> = Query<
     'w,
     's,
@@ -49,7 +46,6 @@ fn evade_input(
     }
 }
 
-/// `GD_EVADE=<secs>`: one evade that many seconds of play after the player can first evade.
 #[cfg(feature = "dev")]
 fn evade_hook(
     hooks: Res<gd_game_core::hooks::Hooks>,

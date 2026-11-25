@@ -1,5 +1,5 @@
 //! A stock map (a Crucible arena, `survivalworld_i.map`, read through the mounted mod) parses with all of
-//! its levels, including water paths: `WaterPath::Load`'s layout (gd-formats `map/water.rs`).
+//! its levels, including water paths (`WaterPath::Load`).
 use gd_formats::map::MapFile;
 use gd_formats::testdata;
 use gd_formats::vfs::{SURVIVAL_MOD, Vfs};

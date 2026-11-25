@@ -1,6 +1,4 @@
-//! Headless checks of the conversation window's rules
-//! (`gd_game::conversation`): talking opens the NPC's conversation, answers
-//! advance it, and walking away or `Close` ends it.
+//! Conversation window: talking opens it, answers advance it, walking away or `Close` ends it.
 use bevy::prelude::*;
 use gd_game::conversation::{Conversation, ConversationRequest};
 use gd_game::testing::TestGame;
@@ -9,8 +7,7 @@ use gd_story::story::state::{Coords, ObjClass, WorldObject};
 
 const NPC: u32 = 900_100;
 
-/// A test game with a story NPC 2 m from the player whose conversation has
-/// something to say; returns the game and the NPC entity.
+/// A story NPC with something to say, 2 m from the player.
 fn setup() -> Option<(TestGame, Entity)> {
     let mut g = TestGame::new_character("Tester", false, false)?;
     g.flat_ground(Vec3::ZERO, 24.0);
@@ -102,7 +99,6 @@ fn talking_opens_and_walking_away_or_close_ends_it() {
     g.step();
     assert!(view(&g).is_none(), "walking away closes the window");
     assert_eq!(icon(&g), None, "no icon once closed");
-    // Back in reach, `Close` ends it.
     g.app
         .world_mut()
         .get_mut::<Transform>(npc)

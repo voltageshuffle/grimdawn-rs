@@ -31,15 +31,9 @@
 //! 4. `InGameUI.hoverDialog`, another NPC of interest (or an `interactIconOverride`
 //!    "Dialog"): 8 dialog;
 //! 5. `InGameUI.hoverNoPlacement`, a held item over a slot that refuses it: 11 no-placement. Set by
-//!    `ItemBox_HandleMouseEvent` from the slot widget's mouse handler: the item ascension
-//!    slot (`AscensionItemBox_HandleClick`: not `ItemEquipment`, or a replica field set) and
-//!    the crafter's blueprint slot (`BlueprintItemBox::CanAccept`: not an
-//!    `ItemArtifactFormula`). That slot never takes the mouse: it is the
-//!    crafting tab's `CraftList.blueprintBox` (`CraftList::CraftList`, slot ctor
-//!    `UIItemBox::UIItemBox`: rect 0 × 0), the tab's loader `CraftList::Load` does not
-//!    read the record's `artifactFormulaBox` (no such string in the exe) and
-//!    nothing else sets the rect, so its hit test (`ItemBox_HandleMouseEvent`, a half-open
-//!    rect) never passes: by design the port has no such slot;
+//!    `ItemBox_HandleMouseEvent` for the item ascension slot (`AscensionItemBox_HandleClick`: not
+//!    `ItemEquipment`, or a replica field set) and the crafter's blueprint slot
+//!    (`BlueprintItemBox::CanAccept`), whose rect is 0 × 0 (`CraftList::CraftList`) so it never hits;
 //! 6. a hot slot armed (`IsAnyActiveTargetingNeeded`: `ActivateHotSlot`
 //!    keeps a slot armed only when its option asks for a target): 3
 //!    reticle-attack over an attack target (`InGameUI.hoverAttack`), else 2 reticle;
@@ -54,12 +48,9 @@
 //! never show in game); the main menu sets 1 (`MainMenu::Show`).
 //!
 //! PORT: the OS hardware cursor is a [`CustomCursor`] from the kind's stock texture (hotspot (0,0)),
-//! set when the kind changes; a UI sprite stands in only for the `GD_HOVER` hook (the OS pointer
-//! hides then, the sprite's node moves with [`HoverPoint`]). The no-placement mark covers the item
-//! ascension slot (`Trade::accepts`; the blueprint slot never shows it, see
-//! above); no gamepad, so the cursor never hides for input mode 1. The attack
-//! mark's held-button (`targetLock`) and running-skill cases are `hover`'s
-//! ([`crate::state::hover::Interact`]).
+//! set when the kind changes; a UI sprite stands in only for the `GD_HOVER` hook. The no-placement mark
+//! covers only the item ascension slot (`Trade::accepts`); no gamepad, so the cursor never hides for
+//! input mode 1.
 use crate::state::hover::{HoverPoint, Hovered, Interact};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -77,7 +68,6 @@ impl Plugin for CursorPlugin {
                 .before(bevy::window::CursorSystems::Update)
                 .before(bevy::ui::UiSystems::Prepare),
         );
-        // The sprite stands in only for the `GD_HOVER` hook (module doc).
         #[cfg(feature = "dev")]
         app.add_systems(
             PostUpdate,
@@ -89,7 +79,7 @@ impl Plugin for CursorPlugin {
     }
 }
 
-/// The cursor kinds, by the engine's index (module docs).
+/// The cursor kinds, by the engine's index.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum CursorKind {
     #[default]
@@ -122,7 +112,7 @@ impl CursorKind {
     }
 }
 
-/// The marks the choice reads (the game window's flags, module docs).
+/// The marks the choice reads (the game window's flags).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct CursorMarks {
     /// Pets selected for an order (`InGameUI.petOrderPending`).
@@ -141,7 +131,7 @@ pub struct CursorMarks {
     pub targeting: bool,
 }
 
-/// `InGameUI::UpdateCursor` (module docs).
+/// `InGameUI::UpdateCursor`.
 pub fn select(m: &CursorMarks) -> CursorKind {
     use CursorKind::*;
     if m.pet_order {
@@ -168,7 +158,7 @@ pub fn select(m: &CursorMarks) -> CursorKind {
     }
 }
 
-/// The cursor shown and its texture set. Written by [`choose`] only.
+/// The cursor shown and its texture set.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GameCursor {
     pub kind: CursorKind,
@@ -179,8 +169,6 @@ pub struct GameCursor {
 #[derive(Component)]
 struct CursorSprite;
 
-/// The marks from the hover target, the armed slot, the pet selection and
-/// the trade window, then [`select`].
 #[allow(clippy::too_many_arguments)]
 fn choose(
     hovered: Res<Hovered>,
@@ -210,7 +198,7 @@ fn choose(
         .as_ref()
         .and_then(|h| h.1)
         .is_some_and(|price| price > gold);
-    // The ascension slot under a held item (`Trade::accepts`, cached per item).
+    // The ascension slot under a held item (`Trade::accepts`).
     let scale = window.single().map_or(1.0, |w| w.scale_factor());
     let over_slot = matches!(
         trade.open,
@@ -256,9 +244,8 @@ fn choose(
     }
 }
 
-/// The OS hardware cursor is the cursor (Direct3D11 `SetHardwareCursor` /
-/// `CreateIconIndirect`, hotspot (0,0)): a [`CustomCursor`] from the kind's stock texture, set only
-/// when the kind changes. Only the `GD_HOVER` stand-in hides it ([`draw`]'s sprite takes over).
+/// The OS hardware cursor (Direct3D11 `SetHardwareCursor` / `CreateIconIndirect`, hotspot (0,0)): a
+/// [`CustomCursor`] from the kind's stock texture. Only the `GD_HOVER` stand-in hides it.
 #[allow(clippy::too_many_arguments)]
 fn os_pointer(
     mut commands: Commands,
@@ -297,7 +284,6 @@ fn os_pointer(
         .or_insert_with(|| cursor_image(&data, &path).map(|i| images.add(i)))
         .clone();
     if let Some(h) = h {
-        // Bevy 0.20: the cursor icon is a component on the window entity (not a CursorOptions field).
         commands
             .entity(e)
             .insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
@@ -308,8 +294,7 @@ fn os_pointer(
     }
 }
 
-/// The cursor texture as winit takes it: RGBA8 kept on the CPU (the stock textures are BGRA / DXT, and the
-/// shared loader's images are render-world only).
+/// The cursor texture as winit takes it: RGBA8 kept on the CPU (the stock textures are BGRA / DXT).
 fn cursor_image(data: &gd_game_core::data::GameData, path: &str) -> Option<Image> {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let bytes = data.vfs.read(&gd_formats::vfs::normalize(path)).ok()?;
@@ -329,10 +314,8 @@ fn cursor_image(data: &gd_game_core::data::GameData, path: &str) -> Option<Image
     ))
 }
 
-/// The `GD_HOVER` stand-in (only with that hook): one sprite, its image follows [`GameCursor`], its node the
-/// pointer. `shown` is the cursor the sprite's image was set for, so it is forgotten whenever a new sprite is
-/// spawned (after an Exit to Main Menu that despawned a sprite spawned inside the session, i.e. after
-/// `exit::capture_baseline`).
+/// The `GD_HOVER` stand-in sprite: its image follows [`GameCursor`], its node the pointer.
+/// `shown` is forgotten whenever a new sprite is spawned.
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "dev")]
 fn draw(
@@ -369,7 +352,7 @@ fn draw(
         let Some(h) = tex.get(&data, &cursor.kind.texture(cursor.large), true, &mut images) else {
             return;
         };
-        // Its own pixel size, not UI-scaled (module docs).
+        // Its own pixel size, not UI-scaled.
         let px = images
             .get(&h)
             .map_or(Vec2::splat(if cursor.large { 64.0 } else { 32.0 }), |i| {
@@ -388,7 +371,6 @@ fn draw(
     };
     vis.set_if_neq(want);
     if let Some(p) = at {
-        // Hotspot (0, 0).
         let (l, t) = (Val::Px(p.x), Val::Px(p.y));
         if node.left != l || node.top != t {
             node.left = l;

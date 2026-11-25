@@ -3,9 +3,7 @@ use super::*;
 #[derive(Component)]
 pub(super) struct TrackerButtonRoot;
 
-/// The toggle button at the fade alpha (`bitmapNameInFocus` under the mouse). Built per (size, shown);
-/// a drag moves the root node and the button's sound rect in place, and the hover bitmap and the fade alpha
-/// change the image node in place, not by a rebuild.
+/// The toggle button at the fade alpha (`bitmapNameInFocus` under the mouse).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn tracker_button(
     mut fresh: gd_game_core::session::NewSession,
@@ -17,9 +15,7 @@ pub(super) fn tracker_button(
     mut root_nodes: Query<&mut Node, With<TrackerButtonRoot>>,
     mut sounds: Query<(&mut gd_ui_kit::widgets::ButtonSound, &ChildOf)>,
     mut built: Local<crate::window::Rebuild<(Option<Vec2>, bool)>>,
-    // Where the built button sits (physical px): a drag offsets the root from it.
     mut built_at: Local<Vec2>,
-    // The built image node and its up / in-focus bitmaps.
     mut node: Local<Option<(Entity, Handle<Image>, Option<Handle<Image>>)>>,
     mut images: Query<&mut ImageNode>,
     mut assets: gd_ui_kit::UiAssets,
@@ -67,7 +63,6 @@ pub(super) fn tracker_button(
         }
         return;
     }
-    // In place: a drag moves the root and the sound rect with the button.
     if let Some(r) = fade.button.filter(|_| fade.alpha > 0.0) {
         let off = (Vec2::new(r.x, r.y) - *built_at) / win.scale_factor();
         let (left, top) = (Val::Px(off.x), Val::Px(off.y));
@@ -83,7 +78,6 @@ pub(super) fn tracker_button(
             }
         }
     }
-    // In place: the hover bitmap and the fade alpha.
     let Some((e, up, over)) = node.as_ref() else {
         return;
     };
@@ -113,8 +107,6 @@ pub(super) fn build_tracker(
     mut root_nodes: Query<&mut Node, With<TrackerRoot>>,
     (options, mut fade): (Res<gd_game_core::options::GameOptions>, ResMut<TrackerFade>),
     mut built: Local<Option<(UVec3, Vec<u32>, bool, u64)>>,
-    // Where the built tracker sits and its title / button rects there (physical px): a drag (`fade.pos`)
-    // moves the root and the rects in place.
     mut placed: Local<Option<(Vec2, Option<URect>, Option<URect>)>>,
     mut assets: gd_ui_kit::UiAssets,
 ) {
@@ -125,16 +117,12 @@ pub(super) fn build_tracker(
     let Ok(win) = window.single() else { return };
     let size = UVec2::new(win.physical_width(), win.physical_height());
     if size.x == 0 {
-        // Minimised: the view's change detection below would miss a change meanwhile, so rebuild once it is back.
+        // Minimised: change detection would miss changes meanwhile, so rebuild once back.
         *built = None;
         return;
     }
-    // Hidden while the devotion window is open (as in the real game;
-    // PORT: the engine's rule is not decompiled).
-    // The Crucible hides the tracker for the whole session (`UIPlayerHud::Load`: mode 1 clears
-    // its visible byte; its objective window shows instead, `survival.rs`).
-    // The ids say which quests are shown; the view's change detection covers their content (`collect` writes it
-    // only when its hash changed).
+    // Hidden while the devotion window is open (PORT: the engine's rule is not decompiled).
+    // The Crucible hides the tracker (`UIPlayerHud::Load`: mode 1 clears its visible byte).
     let hidden = panels.devotion || survival.objective_window;
     let (quest_view, untracked) = (&*view, &journal.untracked);
     let shown = move || tracked(quest_view).filter(move |q| !hidden && !untracked.contains(&q.id));
@@ -150,7 +138,6 @@ pub(super) fn build_tracker(
             && *g == generation
     });
     if same {
-        // In place: the drag's offset from where the tracker was built.
         if let Some((at, title, button)) = *placed {
             let off = pos.map_or(Vec2::ZERO, |p| p - at);
             let shift =
@@ -237,7 +224,6 @@ pub(super) fn build_tracker(
         .next()
         .unwrap_or(0.0);
     let icon_w = icon.as_ref().map_or(0.0, |(_, s)| ui.sc(s.x as f32));
-    // The toggle button and the title line (`tracker_input`).
     fade.title = Some(URect::new(wr.x, wr.y, wr.w, title_lh));
     if let Some((_, bs)) = ui
         .record(&field("toggleButton"))
@@ -256,7 +242,6 @@ pub(super) fn build_tracker(
     if !open {
         return;
     }
-    // Lay out first (the height goes into the background).
     struct Line {
         text: String,
         x: f32,

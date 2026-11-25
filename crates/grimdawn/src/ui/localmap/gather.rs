@@ -1,9 +1,6 @@
 use super::*;
 
-/// One map icon: world point, nugget type (module doc), name, facing, the
-/// nugget's own bitmap (types 14 / 19), its scale (type 14: 0.75) and a
-/// Custom quad's offset (quest `areaOffsetX` / `Y`: px along / across its
-/// facing).
+/// One map icon. `offset`: a Custom quad's quest `areaOffsetX` / `Y` (px along / across its facing).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapIcon {
     pub at: Vec3,
@@ -28,16 +25,15 @@ impl MapIcon {
         }
     }
 
-    /// A Custom quad's screen offset: `offset` × `k` px along the screen
-    /// direction of its facing (`angle`, [`angle_of`]) and across it
-    /// (`DetailMapWidget::RenderMinimapIcons` / `DetailMapWidget::RenderLocalMapIcons`: x·d + y·(−d.y, d.x)).
+    /// A Custom quad's screen offset: `offset` × `k` px along the screen direction of its facing and across it
+    /// (`DetailMapWidget::RenderMinimapIcons`: x·d + y·(−d.y, d.x)).
     pub(super) fn screen_offset(&self, angle: f32, k: f32) -> Vec2 {
         let d = Vec2::new(angle.sin(), -angle.cos());
         (d * self.offset.x + Vec2::new(-d.y, d.x) * self.offset.y) * k
     }
 }
 
-/// `Actor::Load`'s `mapNuggetType` (Engine.dll; `None` / unknown: no icon).
+/// `Actor::Load`'s `mapNuggetType` (`None` / unknown: no icon).
 pub(super) fn nugget_type(name: &str) -> Option<u8> {
     Some(match name {
         "Hero" => 0,
@@ -63,9 +59,8 @@ pub(super) fn nugget_type(name: &str) -> Option<u8> {
     })
 }
 
-/// `Actor::AppendDetailMapData` (Engine.dll): the record's
-/// `mapNuggetType` with `mapNuggetCustom` as its bitmap; a Custom one needs
-/// the bitmap and draws at 0.75.
+/// `Actor::AppendDetailMapData`: the record's `mapNuggetType` with `mapNuggetCustom` as its bitmap; a Custom one
+/// needs the bitmap and draws at 0.75.
 pub(super) fn actor_icon(
     rec: &gd_formats::arz::Record,
     at: Vec3,
@@ -88,12 +83,10 @@ pub(super) fn actor_icon(
     })
 }
 
-/// A quest marker's area quad (`QuestMarkerArea::Load` load, `QuestMarkerArea::Test` push): the
-/// record's `areaBitmap` as a Custom nugget (scale 1) at the entity, facing
-/// `areaRotation` degrees (world (cos r, 0, sin r)) when `areaRotate` is set,
-/// else the entity's facing, offset by `areaOffsetX` / `areaOffsetY` (ints).
-/// Pushed before the star, so it draws under it. No stock record sets
-/// `areaBitmap`.
+/// A quest marker's area quad (`QuestMarkerArea::Load` / `QuestMarkerArea::Test`): the record's `areaBitmap` as a
+/// Custom nugget (scale 1) at the entity, facing `areaRotation` degrees (world (cos r, 0, sin r)) when
+/// `areaRotate` is set, else the entity's facing, offset by `areaOffsetX` / `areaOffsetY`. Pushed before the star,
+/// so it draws under it.
 pub(super) fn area_icon(rec: &gd_formats::arz::Record, at: Vec3, facing: Vec3) -> Option<MapIcon> {
     let bitmap = rec.str("areaBitmap").filter(|b| !b.is_empty())?.to_owned();
     let facing = if rec.bool("areaRotate") {
@@ -154,8 +147,7 @@ pub(super) fn npc_kind(rec: &gd_formats::arz::Record) -> Option<u8> {
     })
 }
 
-/// The quest names of the record's map marker while one of its tasks is in
-/// progress (Game.dll `QuestMarkerArea::Load` load, `QuestMarkerArea::Test` test).
+/// The quest names of the record's map marker while one of its tasks is in progress (`QuestMarkerArea::Test`).
 pub(super) fn quest_marker(
     rec: &gd_formats::arz::Record,
     story: &gd_story::story::Story,
@@ -189,12 +181,10 @@ pub(super) fn quest_marker(
     (!names.is_empty()).then(|| names.join("\n"))
 }
 
-/// A record's localised `description`.
 pub(super) fn described(rec: &gd_formats::arz::Record, fonts: &FontCache) -> String {
     fonts.tag(rec.str("description").unwrap_or("")).to_owned()
 }
 
-/// The rollover name of a character (`Npc::GetRolloverDescription`).
 pub(super) fn npc_name(rec: &gd_formats::arz::Record, fonts: &FontCache) -> String {
     let base = fonts.tag(rec.str("description").unwrap_or("")).to_owned();
     match rec.str("professionTag").filter(|p| !p.is_empty()) {
@@ -219,7 +209,6 @@ pub(super) type Friends<'w, 's> = Query<
     ),
 >;
 
-/// Everything that appends map nuggets (module doc).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct MapSources<'w, 's> {
     pub(super) friends: Friends<'w, 's>,
@@ -282,8 +271,8 @@ pub struct MapSources<'w, 's> {
     pub(super) values: Res<'w, gd_ui::HudValues>,
 }
 
-/// Appends the quest marker of an entity (`QuestMarkerArea::Test`: its area quad, then the
-/// star), else its own icon.
+/// Appends the quest marker of an entity (`QuestMarkerArea::Test`: its area quad, then the star), else its own
+/// icon.
 pub(super) fn marker_or(
     out: &mut Vec<MapIcon>,
     rec: &gd_formats::arz::Record,
@@ -301,7 +290,6 @@ pub(super) fn marker_or(
     }
 }
 
-/// Gathers the icons around `centre` within `radius` metres.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gather(
     data: &GameData,
@@ -348,11 +336,9 @@ pub(super) fn gather(
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         }
     }
-    // Monsters and the player's pets (`Monster::AppendDetailMapData`, the
-    // campaign branch: alive, not hiding). Game.dll `Monster::AppendDetailMapData` (the dungeon branch, a monster in
-    // the running Shattered Realm dungeon): its own icon (no quest marker) until the generator reveals the
-    // monsters (`gd_story::endless::Dungeon::reveal_monsters`); then a live foe is a star (type 8) or, with a
-    // classification of Boss and up, the boss icon (17), named by its description, and others get none.
+    // Monsters and the player's pets (`Monster::AppendDetailMapData`, campaign branch: alive, not hiding). Dungeon
+    // branch (running Shattered Realm dungeon): own icon until the generator reveals the monsters; then a live foe
+    // is a star (8) or, Boss and up, the boss icon (17) named by its description; others get none.
     // PORT: the dungeon's monsters are those of its activated proxies (the engine: in any of its regions).
     let dungeon = story.and_then(|s| s.endless.dungeon.as_ref().map(|d| (s, d)));
     let reveal = dungeon.is_some_and(|(_, d)| d.reveal_monsters());
@@ -407,18 +393,16 @@ pub(super) fn gather(
             actor_icon(rec, p, forward(t), described(rec, fonts))
         });
     }
-    // The Shattered Realm's buff shrines: the record's own Custom nugget (`mapsymbol_shrine<colour>_up`) through
-    // `Actor::AppendDetailMapData`. PORT: always drawn, used or not (whether `StaticShrine`'s type 16 or a
-    // used state changes it for `EndlessBuffShrine` is not read).
+    // The Shattered Realm's buff shrines: the record's own Custom nugget (`Actor::AppendDetailMapData`).
+    // PORT: always drawn, used or not (whether a used state changes it is not traced).
     for (t, s) in &src.endless_shrines {
         let p = t.translation();
         if let Some(rec) = data.db.get(&s.record).filter(|_| near(p)) {
             out.extend(actor_icon(rec, p, forward(t), described(rec, fonts)));
         }
     }
-    // The Shattered Realm's exit gates: the record's `mapsymbol_exit`
-    // (`FixedItemDungeonTeleport::AppendDetailMapData`),
-    // named by its `textTag` ("Next Floor").
+    // The Shattered Realm's exit gates: `mapsymbol_exit` (`FixedItemDungeonTeleport::AppendDetailMapData`), named by
+    // its `textTag`.
     if let Some(rec) = data.db.get(gd_game::endless::EXIT_GATE_RECORD) {
         let name = fonts.tag(rec.str("textTag").unwrap_or("")).to_owned();
         for t in &src.exit_gates {
@@ -444,7 +428,6 @@ pub(super) fn gather(
             continue;
         };
         let Some(info) = inv.info(item) else { continue };
-        // The own icon's name, bitmap and filter test only when no quest marker replaces it.
         marker_or(&mut out, rec, story, p, forward(t), ppos, || {
             let bitmap = gd_ui::character::rarity_key(info.resolved.display_color_index())
                 .and_then(|k| {
@@ -454,7 +437,7 @@ pub(super) fn gather(
                         .filter(|b| !b.is_empty())
                         .map(str::to_owned)
                 })?;
-            // The item styles' hide applies here too (`gd_game::item_style`, inside `LootFilter::passes`).
+            // The item styles' hide applies here too.
             let passes = src.filter.as_ref().is_none_or(|f| {
                 f.passes(
                     &src.styles,
