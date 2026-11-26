@@ -1457,8 +1457,10 @@ pub fn warmup_run_multiplier(run: f32, bonus_pct: f32, cap_pct: f32) -> f32 {
     (run + bonus_pct * 0.01).min(cap_pct * 0.01)
 }
 
-/// Learned skills: (record, level).
-#[derive(Debug, Clone, Default, PartialEq)]
+/// Learned skills: (record, level). [`Self::stamp`] is the content stamp the UI
+/// rebuild gates compare; `PartialEq` compares the content fields only (not
+/// the stamp), as the fallback on a stamp mismatch.
+#[derive(Debug, Clone, Default)]
 pub struct SkillBook {
     pub skills: Vec<(String, u32)>,
     /// Toggled skills that are off (lower-case; save: `skill_active` 0):
@@ -1482,6 +1484,32 @@ pub struct SkillBook {
     /// The worn items' and sets' skill grants ([`item_skill_grants`]), set by
     /// [`Self::with_item_bonuses`].
     pub item_grants: Vec<ItemSkillGrant>,
+    /// Content stamp: the port's fast hash ([`gd_formats::collections::hash_one`])
+    /// of every content field, computed once when a book is built
+    /// ([`Self::finish`], the mutating methods) and refreshed after an in-place
+    /// mutation batch ([`Self::touched`]). UI rebuild gates short-circuit
+    /// equality on it (`a.stamp == b.stamp || a == b`): equal stamps mean equal
+    /// content — the standard version-stamp tradeoff, accepting the negligible
+    /// 64-bit collision risk — while different stamps fall back to the deep
+    /// content compare (`PartialEq` ignores this field), so a stale stamp can
+    /// only cost time, never an update.
+    pub stamp: u64,
+}
+
+/// Content equality: every field but [`SkillBook::stamp`] — a stamp mismatch
+/// (different mutation histories, stale stamp) must not defeat the fallback
+/// the gates' [`SkillBook::same`] takes.
+impl PartialEq for SkillBook {
+    fn eq(&self, other: &Self) -> bool {
+        self.skills == other.skills
+            && self.inactive == other.inactive
+            && self.dispelled == other.dispelled
+            && self.bonus == other.bonus
+            && self.locked == other.locked
+            && self.unlock == other.unlock
+            && self.gear_pet_mods == other.gear_pet_mods
+            && self.item_grants == other.item_grants
+    }
 }
 
 /// An item's records that carry skill bonuses, grants and modifiers: base, affixes, modifier,
@@ -1608,7 +1636,7 @@ pub fn sheet_augments(
 
 /// A skill a worn item or set grants (`itemSkillName`; the engine's item
 /// skill list, `SkillManager::AddItemSkills`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, std::hash::Hash)]
 pub struct ItemSkillGrant {
     pub skill: String,
     /// `itemSkillAutoController` (none: a hot slot / toggle skill).
@@ -1684,6 +1712,47 @@ impl SkillBook {
         self.inactive.contains(low) || self.dispelled.contains(low)
     }
 
+    /// Seals a built book: computes [`Self::stamp`] from its content. Call on
+    /// every `SkillBook` literal; the default (empty) book's stamp is 0.
+    pub fn finish(mut self) -> Self {
+        self.touched();
+        self
+    }
+
+    /// Refreshes [`Self::stamp`] after an in-place mutation of the fields; call
+    /// once per mutation batch (system iteration), not per element.
+    pub fn touched(&mut self) {
+        // Sets and maps do not implement Hash (their iteration order is not content): fold each
+        // entry's hash with wrapping add, so the stamp is order-independent.
+        use std::hash::{Hash, Hasher};
+        fn fold<T: Hash>(acc: &mut u64, v: &T) {
+            let mut e = gd_formats::collections::hasher();
+            v.hash(&mut e);
+            *acc = acc.wrapping_add(e.finish());
+        }
+        let mut h = gd_formats::collections::hasher();
+        self.skills.hash(&mut h);
+        self.gear_pet_mods.hash(&mut h);
+        self.item_grants.hash(&mut h);
+        let mut stamp = h.finish();
+        for s in [&self.inactive, &self.dispelled, &self.locked] {
+            for k in s {
+                fold(&mut stamp, k);
+            }
+        }
+        for (k, v) in self.bonus.iter().chain(&self.unlock) {
+            fold(&mut stamp, &(k, v));
+        }
+        self.stamp = stamp;
+    }
+
+    /// Two books' content equal: equal [`Self::stamp`] stamps short-circuit, a
+    /// stamp mismatch falls back to the content compare (`PartialEq` ignores
+    /// the stamp). The UI rebuild gates' fast path.
+    pub fn same(&self, other: &Self) -> bool {
+        self.stamp == other.stamp || self == other
+    }
+
     /// Adds the skill bonuses of equipped items (`SkillManager::SetSkillLevelAugment`,
     /// `SetMasteryAugment`: every skill of the mastery and the mastery bar,
     /// `SetAllSkillAugment`).
@@ -1725,7 +1794,9 @@ impl SkillBook {
             unlock: self.unlock.clone(),
             gear_pet_mods: gear_pet_modifiers(db, items),
             item_grants: item_skill_grants(db, items),
+            ..Default::default()
         }
+        .finish()
     }
 
     /// `Skill::GetCurrentLevel`: learned level + item bonuses, capped at the
@@ -1783,6 +1854,7 @@ impl SkillBook {
             Some(x) => x.1 = level,
             None => self.skills.push((skill.to_owned(), level)),
         }
+        self.touched();
     }
 
     /// The skill window's f5 flag (`UISkillPane::GetRequirementFlags`): the dependency is unmet

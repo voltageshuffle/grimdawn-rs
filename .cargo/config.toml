@@ -40,14 +40,19 @@ strip = "symbols"
 lto = "thin"
 panic = "abort"
 
+# `perf record` build: release code and flags (what players run), symbols kept.
 [profile.profiling]
-inherits = "dev"
-opt-level = 3
+inherits = "release"
 strip = "none"
-debug-assertions = false
-overflow-checks = false
+debug = "line-tables-only"
 
-[profile.profiling.package.log]
+# Logs on in profiling builds: the game crates gate their log macros on `debug_assertions` (the dev
+# profile's trick), and tracing's `release_max_level_off` keys on it too. GD_FPS / GD_GPU_TIMES only
+# report through the log.
+[profile.profiling.package.gd-game-core]
+debug-assertions = true
+
+[profile.profiling.package.gd-game]
 debug-assertions = true
 
 [profile.profiling.package.tracing]

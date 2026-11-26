@@ -96,6 +96,7 @@ pub fn default_hot_slot_lines(ctx: &SkillTipCtx, skill: &str, state: HotState) -
     let mut book = ctx.book.clone();
     if book.level(skill) == 0 {
         book.skills.push((skill.to_string(), 1));
+        book.touched();
     }
     let ctx = SkillTipCtx {
         book: &book,
@@ -130,6 +131,7 @@ pub fn hot_slot_lines(
     if let Some(l) = granted {
         book.skills.retain(|(n, _)| !n.eq_ignore_ascii_case(skill));
         book.skills.push((skill.to_string(), l));
+        book.touched();
     }
     let ctx = &SkillTipCtx {
         book: &book,

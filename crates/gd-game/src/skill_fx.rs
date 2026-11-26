@@ -264,21 +264,25 @@ impl Hash for SourceNames<'_> {
 }
 
 /// Keeps every character's [`WeaponEnchantments`] and its toggles' [`ToggleFx`] effects in step with the
-/// buffs on it.
+/// buffs on it. PORT: the query is filtered to characters (loadout, pet or monster skills), like
+/// `auras.rs`' emitter query, instead of scanning every entity and skipping the non-characters.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_skill_fx(
     mut commands: Commands,
     data: Res<GameData>,
-    mut chars: Query<(
-        Entity,
-        Option<Ref<Loadout>>,
-        Option<Ref<SkillLinks>>,
-        Option<&Pet>,
-        Option<&MonsterSkills>,
-        Option<&ReceivedBuffs>,
-        Option<&mut WeaponEnchantments>,
-        Has<Dead>,
-    )>,
+    mut chars: Query<
+        (
+            Entity,
+            Option<Ref<Loadout>>,
+            Option<Ref<SkillLinks>>,
+            Option<&Pet>,
+            Option<&MonsterSkills>,
+            Option<&ReceivedBuffs>,
+            Option<&mut WeaponEnchantments>,
+            Has<Dead>,
+        ),
+        Or<(With<Loadout>, With<Pet>, With<MonsterSkills>)>,
+    >,
     fx: Query<(Entity, &BuffFx, &ToggleFx)>,
 ) {
     let db = &data.db;
@@ -286,9 +290,6 @@ pub fn sync_skill_fx(
     // so the query reads the same all through it).
     let mut by_owner: Option<HashMap<Entity, Vec<(Entity, &str, &Vec<String>)>>> = None;
     for (e, loadout, links, pet, ms, auras, ench, dead) in &mut chars {
-        if loadout.is_none() && pet.is_none() && ms.is_none() {
-            continue;
-        }
         // No buffs, toggles or auras: the signature is just `dead`. The names' hash has its top bit set, so
         // the two kinds never collide.
         let bare = loadout.is_none_or(|l| l.buffs.list.is_empty())

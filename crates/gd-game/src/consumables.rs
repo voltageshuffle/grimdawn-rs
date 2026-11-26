@@ -862,6 +862,7 @@ fn reset_devotion(
         .skills
         .skills
         .retain(|(s, _)| d.data.locate(s).is_none());
+    loadout.skills.touched();
     let removed = before - loadout.skills.skills.len();
     d.points = d.total;
     d.powers.clear();

@@ -1135,6 +1135,7 @@ fn auto_toggles(
             debug!("toggle {s} stopped (death / exclusive)");
         }
         if changed || !stopped.is_empty() {
+            l.skills.touched();
             commands.entity(e).try_insert(ProfileDirty);
         }
     }

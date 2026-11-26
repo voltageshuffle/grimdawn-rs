@@ -37,11 +37,16 @@ pub struct Story {
     pub game: GameInfo,
     pub entities: Entities,
     pub triggers: Vec<AreaTrigger>,
-    /// The area-trigger candidates (the player and the living story monsters), rebuilt every frame;
-    /// while unchanged, empty armed triggers skip collection ([`AreaTrigger::last_gen`]).
+    /// The area-trigger candidates (the player and the living story monsters) at their exact
+    /// positions, rebuilt every frame; while the quantized view is unchanged, empty armed
+    /// triggers skip collection ([`AreaTrigger::last_gen`]).
     trigger_candidates: Vec<trigger::Candidate>,
     trigger_next: Vec<trigger::Candidate>,
-    /// Bumped whenever `trigger_candidates` changes.
+    /// The candidates' quantized view ((id, 0.25m cell) pairs); only a set change or a cell
+    /// crossing bumps [`Self::trigger_gen`], so within-cell movement reuses the last collection.
+    trigger_cells: Vec<(u32, [i32; 3])>,
+    trigger_cells_next: Vec<(u32, [i32; 3])>,
+    /// Bumped whenever the quantized candidate view changes.
     trigger_gen: u64,
     trigger_spare: Vec<u32>,
     pub effects: Vec<Effect>,
@@ -83,6 +88,8 @@ impl Story {
             triggers: Vec::new(),
             trigger_candidates: Vec::new(),
             trigger_next: Vec::new(),
+            trigger_cells: Vec::new(),
+            trigger_cells_next: Vec::new(),
             trigger_gen: 0,
             trigger_spare: Vec::new(),
             effects: Vec::new(),
@@ -160,13 +167,17 @@ impl Story {
     /// Advances the area triggers by `dt_ms` against the player and the living story monsters. Hook
     /// calls are pushed to `calls`. A trigger whose `shouldTrigger` hook must accept its entities first
     /// is returned instead; the script host ends its step with [`Self::fire_trigger`].
+    ///
+    /// PORT (perf): the engine tests exact positions every frame; we quantize the re-collect gate to
+    /// a 0.25m grid — collection still uses exact positions, but an armed-empty trigger's detection
+    /// can be delayed by at most the time to cross a cell boundary.
     pub fn update_triggers(
         &mut self,
         dt_ms: i32,
         calls: &mut Vec<TriggerCall>,
     ) -> Vec<trigger::Hooked> {
         let mut hooked = Vec::new();
-        // A changed set advances the generation.
+        // Only a set change or a 0.25m cell crossing advances the generation.
         self.trigger_next.clear();
         self.trigger_next
             .push((self.player.id, self.player.position));
@@ -177,10 +188,18 @@ impl Story {
                 .filter(|o| o.class == ObjClass::Character && o.alive && o.in_world)
                 .map(|o| (o.id, o.coords.origin)),
         );
-        if self.trigger_next != self.trigger_candidates {
-            std::mem::swap(&mut self.trigger_next, &mut self.trigger_candidates);
+        self.trigger_cells_next.clear();
+        self.trigger_cells_next.extend(
+            self.trigger_next
+                .iter()
+                .map(|&(id, p)| (id, p.map(|v| (v * 4.0).floor() as i32))),
+        );
+        if self.trigger_cells_next != self.trigger_cells {
+            std::mem::swap(&mut self.trigger_cells_next, &mut self.trigger_cells);
             self.trigger_gen += 1;
         }
+        // Exact positions are refreshed every frame regardless of the generation.
+        std::mem::swap(&mut self.trigger_next, &mut self.trigger_candidates);
         let generation = self.trigger_gen;
         let candidates = &self.trigger_candidates;
         let player = &self.player;

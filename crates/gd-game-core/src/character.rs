@@ -335,8 +335,11 @@ pub struct Character {
     pub frozen: bool,
     /// The pose computed this frame (`advance_animations`).
     pub pose: Pose,
-    /// [`Self::body`]'s bone frames in [`Self::pose`] (mesh space), refreshed whenever either changes.
-    pub posed: Vec<Coords>,
+    /// [`Self::body`]'s bone frames in [`Self::pose`] (mesh space). PORT: refreshed lazily — the
+    /// animation advance invalidates it ([`Self::mark_pose_stale`]) and the first reader of the frame
+    /// rebuilds it ([`Self::posed`]); a character nothing reads (off-screen in a crowd) never pays the
+    /// absolute-pose walk. The lock keeps every reader immutable (parallel queries included).
+    pub posed: std::sync::OnceLock<Vec<Coords>>,
     /// A worn replacement look ([`Character::set_form`]); `body` and `anims` are the form's while on.
     pub form: Option<FormLook>,
     pub rng: fastrand::Rng,
@@ -447,7 +450,7 @@ impl Character {
                 .unwrap_or(1.0)
                 * (1.0 + rec.f32("characterSpellCastSpeedModifier").unwrap_or(0.0) / 100.0),
             scale,
-            posed: anim::pose_abs(&body, &Pose::default()),
+            posed: std::sync::OnceLock::from(anim::pose_abs(&body, &Pose::default())),
             body,
             root_velocity: Vec3::ZERO,
             hold,
@@ -551,20 +554,27 @@ impl Character {
         self.playing = AnimType::None;
     }
 
-    /// The body's bone frames in the current pose (mesh space).
+    /// The body's bone frames in the current pose (mesh space), rebuilt if stale.
     pub fn posed(&self) -> &[Coords] {
-        &self.posed
+        self.posed.get_or_init(|| anim::pose_abs(&self.body, &self.pose))
     }
 
     /// The attach point `name` in its pose, in model space (`Actor::GetAttachPointCoords`).
     pub fn posed_point(&self, name: &str) -> Option<Vec3> {
         let p = self.body.attach_point(name)?;
-        Some(Vec3::from(p.coords_in(&self.posed).origin))
+        Some(Vec3::from(p.coords_in(self.posed()).origin))
+    }
+
+    /// Marks `posed` behind the pose: the next [`Self::posed`] / [`Self::posed_point`] rebuilds it.
+    pub fn mark_pose_stale(&mut self) {
+        self.posed.take();
     }
 
     /// Call after the body or the pose changed.
     pub fn repose(&mut self) {
-        anim::pose_abs_into(&self.body, &self.pose, &mut self.posed);
+        let mut abs = self.posed.take().unwrap_or_default();
+        anim::pose_abs_into(&self.body, &self.pose, &mut abs);
+        self.posed = std::sync::OnceLock::from(abs);
     }
 
     pub fn form_mesh(&self) -> Option<&str> {

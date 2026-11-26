@@ -1140,7 +1140,7 @@ pub fn approach(
     let picked = ms.and_then(|m| skill_of(data, m, pick));
     let kind = picked.map(|p| p.2);
     let range = picked.map_or(gd_game_core::combat::MELEE_RANGE, |p| p.3);
-    let key = picked.map(|p| p.0.to_owned()).unwrap_or_default();
+    let key: std::sync::Arc<str> = picked.map_or_else(|| "".into(), |p| p.0.into());
     let rec = picked.and_then(|p| data.db.get(p.0));
     let melee_profile = !matches!(
         rec.and_then(|r| r.str("distanceProfile")),

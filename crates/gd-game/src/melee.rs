@@ -462,8 +462,9 @@ pub enum Act {
 /// The chosen skill as the approach needs it.
 #[derive(Clone, Debug, Default)]
 pub struct Approach {
-    /// The state data's skill id.
-    pub key: String,
+    /// The state data's skill id ("" without one). An `Arc` so the per-frame approach rebuild and the
+    /// state's copy share one allocation; compared by value (different `Arc`s can name the same skill).
+    pub key: std::sync::Arc<str>,
     /// `CloseEnoughToUseSkill`: centre distance.
     pub reach: f32,
     /// `Skill::GetRange`.
@@ -501,7 +502,7 @@ pub struct Frame<'a, 's> {
 pub struct MeleeAi {
     pub st: St,
     enemy: Option<Entity>,
-    key: String,
+    key: std::sync::Arc<str>,
     pursuit_ms: f32,
     pub random_reposition: i32,
     /// Pursue / Reposition / Wait timer (s) and the 200 ms re-choose timer.
@@ -622,7 +623,7 @@ impl MeleeAi {
         self.failed = false;
         self.walking = false;
         self.pace = Pace::Run;
-        self.key.clear();
+        self.key = "".into();
     }
 
     /// `Character::GetMoveToPoint`; None is a point without a region.

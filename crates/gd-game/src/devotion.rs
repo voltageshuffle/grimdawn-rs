@@ -303,6 +303,7 @@ pub fn devotion_requests(
             None => state.unbind(&b.power),
         }
     }
+    let mut book_changed = false;
     for t in take.read() {
         let Some(star) = state
             .data
@@ -326,6 +327,7 @@ pub fn devotion_requests(
             continue;
         }
         loadout.skills.skills.push((skill.clone(), 1));
+        book_changed = true;
         state.points -= 1;
         undo.0.push(DevotionStep::Taken(skill.clone()));
         state.powers.entry(skill.clone()).or_insert((1, 0));
@@ -373,6 +375,7 @@ pub fn devotion_requests(
             .skills
             .skills
             .retain(|(n, _)| !n.eq_ignore_ascii_case(&skill));
+        book_changed = true;
         state.points += 1;
         let bindings = state
             .bindings
@@ -389,6 +392,9 @@ pub fn devotion_requests(
         state.unbind(&skill);
         info!("devotion: removed {skill} ({} points left)", state.points);
         commands.entity(player).insert(ProfileDirty);
+    }
+    if book_changed {
+        loadout.skills.touched();
     }
 }
 
@@ -487,6 +493,7 @@ pub fn undo_devotion(
                 }
             }
         }
+        loadout.skills.touched();
         state.version += 1;
         commands.entity(player).insert(ProfileDirty);
     } else if committed {

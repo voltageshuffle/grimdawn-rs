@@ -476,12 +476,21 @@ fn draw_links(
     time: Res<Time>,
     data: Res<gd_game_core::data::GameData>,
     cams: Query<&GlobalTransform, With<crate::camera::GameCamera>>,
-    casters: Query<(
-        Entity,
-        Option<&gd_game_core::reflect_link::ReflectLinks>,
-        Option<&gd_game_core::secondary::Tethers>,
-        Option<&Visuals>,
-    )>,
+    // Only entities that can carry a link: an unfiltered all-optional query walks every entity in the
+    // world every frame (decoration, UI, FX included).
+    casters: Query<
+        (
+            Entity,
+            Option<&gd_game_core::reflect_link::ReflectLinks>,
+            Option<&gd_game_core::secondary::Tethers>,
+            Option<&Visuals>,
+        ),
+        Or<(
+            With<gd_game_core::reflect_link::ReflectLinks>,
+            With<gd_game_core::secondary::Tethers>,
+            With<Visuals>,
+        )>,
+    >,
     mut ribbons: Query<(Entity, &mut LinkRibbon, Option<&VisualOf>)>,
     // The link's end points read `GlobalTransform`, the effects at them write it: one after the other.
     mut pf: ParamSet<(

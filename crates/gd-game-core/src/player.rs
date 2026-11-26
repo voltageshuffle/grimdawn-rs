@@ -349,9 +349,10 @@ pub fn skill_book_from_save(db: &Database, gdc: Option<&Gdc>) -> SkillBook {
         dispelled: Default::default(),
         gear_pet_mods: Vec::new(),
         item_grants: Vec::new(),
+        ..Default::default()
     };
     gd_sim::potions::ensure_skills(db, &mut skills);
-    skills
+    skills.finish()
 }
 
 /// What the player's combat profile is built from: worn gear and the bio base values (save).
@@ -599,7 +600,8 @@ impl Loadout {
             inactive: self.skills.inactive.clone(),
             dispelled: self.skills.dispelled.clone(),
             ..Default::default()
-        };
+        }
+        .finish();
         let mut out = book.stat_sources(db, trees);
         for (s, level) in &toggles {
             let Some(mut r) = db

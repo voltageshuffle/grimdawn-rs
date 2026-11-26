@@ -24,3 +24,9 @@ pub type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
 pub fn hash_one<T: Hash>(value: T) -> u64 {
     foldhash::fast::FixedState::default().hash_one(value)
 }
+
+/// A fresh hasher of the port's fast fixed-seed state: stamp several fields in order
+/// (`field.hash(&mut h)` each, then `h.finish()`), where [`hash_one`]'s single value does not fit.
+pub fn hasher() -> impl std::hash::Hasher {
+    foldhash::fast::FixedState::default().build_hasher()
+}

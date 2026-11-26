@@ -97,6 +97,7 @@ pub fn ensure_skills(db: &Database, book: &mut SkillBook) {
         }
         book.skills.push((n, 0));
     }
+    book.touched();
 }
 
 /// `OneShot_SkillUnlock::AllowUse`.
@@ -129,6 +130,7 @@ pub fn apply_unlock(db: &Database, book: &mut SkillBook, item: &Record) {
         }
         book.locked.remove(&low);
     }
+    book.touched();
 }
 
 /// The player record holding the potion skill trees.
@@ -241,6 +243,7 @@ pub fn choose_container(
         set_level_of(&mut book.skills, c, 0);
     }
     set_level(book, skill, tier);
+    book.touched();
     Ok(())
 }
 
@@ -290,6 +293,7 @@ pub fn place_modifier(
             set_level_of(&mut book.skills, m, 0);
         }
     }
+    book.touched();
     Ok(())
 }
 

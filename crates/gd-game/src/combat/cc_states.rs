@@ -162,7 +162,10 @@ fn cc_states(
             }
             continue;
         }
-        cb.cooldown -= dt;
+        // Only while running: an unconditional write would mark `Combatant` changed every frame.
+        if cb.cooldown > 0.0 {
+            cb.cooldown -= dt;
+        }
         // A swing in progress finishes first; the attack timer waits.
         if matches!(ch.state, CharState::Attack | CharState::Cast) {
             continue;

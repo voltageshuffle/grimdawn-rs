@@ -29,7 +29,10 @@
 //! (see `draw`, `ButtonStatic::RenderCooldown` / `ButtonStatic::RenderMaskedCooldown`).
 //!
 //! PORT: the wipe is a rasterised bitmap in [`STEPS`] steps (the engine
-//! draws the fan); the seconds only with the `hotbarCooldownCounter`
+//! draws the fan), baked once per slot geometry into one tiled atlas image
+//! (columns of steps, both dims kept within 4096 texels) whose sub-rect the
+//! slot quad draws, so a running cooldown never mints a texture; the seconds
+//! only with the `hotbarCooldownCounter`
 //! option (off by default); the potion and evade slots use the skill rule
 //! (their own status functions are not decompiled). The overlay is its own
 //! node tree above the HUD (`GlobalZIndex(1)`).
@@ -279,32 +282,56 @@ impl WipeMap {
     }
 }
 
-/// The wipe bitmap of `step` (4×4 samples a pixel).
-fn wipe_image(map: &WipeMap, w: u32, h: u32, step: u16) -> Image {
-    let mut px = vec![0u8; (w * h * 4) as usize];
-    for (o, samples) in px
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .zip(map.0.as_chunks::<16>().0)
-    {
-        let n = samples
-            .iter()
-            .filter(|[first, last]| (*first..=*last).contains(&step))
-            .count();
-        o.copy_from_slice(&wipe_texel(WIPE[3] * n as f32 / 16.0));
+/// All [`STEPS`]+1 wipe bitmaps of a slot geometry in one image: `rows` steps per column,
+/// column `c` row `r` holding step `c * rows + r` at (`c * w`, `r * h`); both dims fit 4096
+/// texels for slot-sized rects. A sample's span `[first, last]` covers exactly those steps,
+/// so one pass over the [`WipeMap`]'s samples fills every step's texel (4×4 samples a pixel).
+/// Returns the image and `rows`.
+fn wipe_atlas(map: &WipeMap, w: u32, h: u32) -> (Image, u32) {
+    let steps = STEPS as u32 + 1;
+    // Rows per column: fill the height limit, but enough rows that the columns fit the width.
+    let min_rows = steps.div_ceil((4096 / w.max(1)).max(1));
+    let rows = (4096 / h.max(1)).max(min_rows).clamp(1, steps);
+    let cols = steps.div_ceil(rows);
+    let (aw, ah) = (w * cols, h * rows);
+    let texels: [[u8; 4]; 17] = std::array::from_fn(|n| wipe_texel(WIPE[3] * n as f32 / 16.0));
+    let mut px = vec![0u8; (aw * ah * 4) as usize];
+    // Per-pixel coverage count per step, as a difference array over the sample spans.
+    let mut diff = vec![0i16; steps as usize + 1];
+    for (i, samples) in map.0.as_chunks::<16>().0.iter().enumerate() {
+        diff.fill(0);
+        for &[first, last] in samples {
+            if first <= last {
+                diff[first as usize] += 1;
+                diff[last as usize + 1] -= 1;
+            }
+        }
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        let mut n = 0i16;
+        for s in 0..steps {
+            n += diff[s as usize];
+            let o = (((y + s % rows * h) * aw + x + s / rows * w) * 4) as usize;
+            px[o..o + 4].copy_from_slice(&texels[n as usize]);
+        }
     }
-    Image::new(
+    let image = Image::new(
         Extent3d {
-            width: w,
-            height: h,
+            width: aw,
+            height: ah,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
         px,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
-    )
+    );
+    (image, rows)
+}
+
+/// Step `s`'s sub-rect (texture px) in its geometry's [`wipe_atlas`].
+fn atlas_src(w: u32, h: u32, rows: u32, s: u16) -> URect {
+    let s = s as u32;
+    URect::new((s / rows * w) as f32, (s % rows * h) as f32, w as f32, h as f32)
 }
 
 fn wipe_texel(a: f32) -> [u8; 4] {
@@ -386,8 +413,7 @@ pub fn draw(
     frame: Res<bevy::diagnostic::FrameCount>,
     mut last: Local<Option<Layout>>,
     mut classic: Local<bool>,
-    mut wipes: Local<HashMap<(u32, u32, u16, bool), Handle<Image>>>,
-    mut maps: Local<HashMap<(u32, u32, bool), WipeMap>>,
+    mut wipes: Local<HashMap<(u32, u32, bool), (Handle<Image>, u32)>>,
     options: Res<gd_game_core::options::GameOptions>,
     mut assets: gd_ui_kit::UiAssets,
     (mut shades, mut texts, parents): (
@@ -404,12 +430,10 @@ pub fn draw(
     if fresh.begun() {
         *last = None;
         wipes.clear();
-        maps.clear();
     }
-    // Bound the wipe cache: a resolution / UI-scale change mints a fresh full set.
-    if wipes.len() > 4096 {
+    // Bound the atlas cache: one texture per geometry; a resolution / UI-scale change mints new geometries.
+    if wipes.len() > 32 {
         wipes.clear();
-        maps.clear();
     }
     // No layout without a window: the next one rebuilds (the skill book compare below then sees
     // only `values` changes since this system's last run, which this return skips).
@@ -439,7 +463,7 @@ pub fn draw(
                 .iter()
                 .zip(cooldowns)
                 .all(|(s, c)| s.0 == c.field && s.1 == c.skill && s.2 == c.label)
-            && (!values.is_changed() || l.skills == values.skills)
+            && (!values.is_changed() || l.skills.same(&values.skills))
     });
     let kept = super::retire_roots(
         &mut commands,
@@ -458,16 +482,15 @@ pub fn draw(
             let st = step(c);
             let shown = match shade.kind {
                 Shade::Wipe { w, h, circular } => {
-                    let handle = wipes.entry((w, h, st, circular)).or_insert_with(|| {
-                        let map = maps
-                            .entry((w, h, circular))
-                            .or_insert_with(|| WipeMap::new(w, h, circular));
-                        assets.images.add(wipe_image(map, w, h, st))
+                    let (handle, rows) = wipes.entry((w, h, circular)).or_insert_with(|| {
+                        let (image, rows) = wipe_atlas(&WipeMap::new(w, h, circular), w, h);
+                        (assets.images.add(image), rows)
                     });
-                    if let Some(mut img) = img
-                        && img.image != *handle
-                    {
-                        img.image = handle.clone();
+                    if let Some(mut img) = img {
+                        if img.image != *handle {
+                            img.image = handle.clone();
+                        }
+                        gd_ui_kit::set_image_src(&mut img, atlas_src(w, h, *rows, st));
                     }
                     st < STEPS
                 }
@@ -561,16 +584,16 @@ pub fn draw(
             let shown = c.completion > 0.0 && st < STEPS;
             (e, Shade::Mask { r, top, region }, shown)
         } else {
-            let handle = wipes
-                .entry((w, h, st, circular))
-                .or_insert_with(|| {
-                    let map = maps
-                        .entry((w, h, circular))
-                        .or_insert_with(|| WipeMap::new(w, h, circular));
-                    ui.images.add(wipe_image(map, w, h, st))
-                })
-                .clone();
-            let e = ui.quad_stretch(handle, r, Color::WHITE);
+            let (handle, rows) = wipes.entry((w, h, circular)).or_insert_with(|| {
+                let (image, rows) = wipe_atlas(&WipeMap::new(w, h, circular), w, h);
+                (ui.images.add(image), rows)
+            });
+            let e = ui.quad(
+                handle.clone(),
+                r,
+                Some(atlas_src(w, h, *rows, st)),
+                Color::WHITE,
+            );
             (e, Shade::Wipe { w, h, circular }, st < STEPS)
         };
         ui.commands.entity(e).insert((

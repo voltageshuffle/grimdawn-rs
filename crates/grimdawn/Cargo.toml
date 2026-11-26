@@ -12,8 +12,6 @@ license = "MIT"
 audit = ["bevy/debug", "dev"]
 # The `GD_*` hooks, dev tools and scripted test systems.
 dev = ["gd-audio/dev", "gd-game/dev", "gd-render/dev", "gd-ui/dev", "gd-world/dev"]
-# Chrome-trace system spans.
-profile = ["bevy/trace_chrome", "dev"]
 
 [dependencies]
 anyhow = "1.0.104"

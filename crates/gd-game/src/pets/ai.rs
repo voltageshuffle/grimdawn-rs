@@ -300,7 +300,11 @@ pub(super) fn pet_ai(
             }
             pet.startup = false;
         }
-        cb.cooldown -= dt;
+        // Only tick while positive: an unconditional write would dirty `Combatant` every frame for
+        // its `Changed<Combatant>` consumers; `<= 0.0` means ready either way.
+        if cb.cooldown > 0.0 {
+            cb.cooldown -= dt;
+        }
         pet.find_timer -= dt;
         // `CharacterBio::UpdateHealthAndMana`: up to max − reserve.
         pet.energy = (pet.energy + cb.profile.sheet.energy_regen_per_sec * dt)
@@ -683,7 +687,7 @@ pub(super) fn pet_ai(
                 Some(a) => {
                     let rec = data.db.get(&a.skill);
                     crate::melee::Approach {
-                        key: a.skill.clone(),
+                        key: std::sync::Arc::from(a.skill.as_str()),
                         reach: radii + a.range + SKILL_USE_TOLERANCE,
                         range: a.range,
                         melee: !matches!(
@@ -716,7 +720,7 @@ pub(super) fn pet_ai(
                     }
                 }
                 None => crate::melee::Approach {
-                    key: String::new(),
+                    key: "".into(),
                     reach: cb.radius
                         + mcb
                         + gd_game_core::combat::MELEE_RANGE

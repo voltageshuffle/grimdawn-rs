@@ -158,13 +158,37 @@ pub(super) fn quest_marker(
     if range > 0.0 && at.distance_squared(player) > range * range {
         return None;
     }
+    const QUEST_FILES: [&str; 10] = [
+        "questFile1",
+        "questFile2",
+        "questFile3",
+        "questFile4",
+        "questFile5",
+        "questFile6",
+        "questFile7",
+        "questFile8",
+        "questFile9",
+        "questFile10",
+    ];
+    const TASK_UIDS: [&str; 10] = [
+        "taskUid1",
+        "taskUid2",
+        "taskUid3",
+        "taskUid4",
+        "taskUid5",
+        "taskUid6",
+        "taskUid7",
+        "taskUid8",
+        "taskUid9",
+        "taskUid10",
+    ];
     let log = &story.quests;
     let mut names: Vec<String> = Vec::new();
-    for n in 1..=10 {
-        let Some(file) = rec.str(&format!("questFile{n}")).filter(|f| !f.is_empty()) else {
+    for (file_key, uid_key) in QUEST_FILES.iter().zip(&TASK_UIDS) {
+        let Some(file) = rec.str(file_key).filter(|f| !f.is_empty()) else {
             break;
         };
-        let uid = rec.i32(&format!("taskUid{n}")).unwrap_or(0) as u32;
+        let uid = rec.i32(uid_key).unwrap_or(0) as u32;
         let Some(qi) = log.defs.by_path(file) else {
             continue;
         };

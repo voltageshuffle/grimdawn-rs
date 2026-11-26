@@ -47,14 +47,18 @@ struct RasterKey {
     text: String,
 }
 
-/// An LRU of rasterised texts; an evicted entry drops its handle and Bevy frees the image.
+/// An LRU of rasterised texts; an evicted entry drops its handle and Bevy frees the image. Two lanes:
+/// persistent UI text (labels, orb numbers) and transient one-shot strings (floating damage numbers),
+/// so a combat burst of unique numbers cannot evict the HUD's entries.
 #[derive(Default)]
 struct RasterCache {
     entries: HashMap<RasterKey, (CachedText, u64)>,
+    transient: HashMap<RasterKey, (CachedText, u64)>,
     tick: u64,
 }
 
 const RASTER_CAP: usize = 1024;
+const TRANSIENT_CAP: usize = 256;
 
 /// Text class → (font style record, indent) from `gameengine.dbr` (`GameEngine::GetGameTextStyleName` /
 /// `GetGameTextStyleIndent`: the class's key of `gd_sim::items::tooltip::CLASS_KEYS` and its `{key}Indent`).
@@ -108,7 +112,7 @@ impl FontCache {
             .clone()
     }
 
-    /// [`rasterize`] through the LRU.
+    /// [`rasterize`] through the persistent LRU.
     pub fn rasterize_cached(
         &mut self,
         images: &mut Assets<Image>,
@@ -117,6 +121,34 @@ impl FontCache {
         style: &FontStyle,
         size: u32,
         text: &str,
+    ) -> Option<CachedText> {
+        self.rasterize_lane(images, font, atlas, style, size, text, false)
+    }
+
+    /// [`rasterize`] through the transient LRU: one-shot strings (floating damage numbers) whose reuse
+    /// is brief; kept apart from the persistent entries so they cannot evict them.
+    pub fn rasterize_transient(
+        &mut self,
+        images: &mut Assets<Image>,
+        font: &BitmapFont,
+        atlas: &[u8],
+        style: &FontStyle,
+        size: u32,
+        text: &str,
+    ) -> Option<CachedText> {
+        self.rasterize_lane(images, font, atlas, style, size, text, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn rasterize_lane(
+        &mut self,
+        images: &mut Assets<Image>,
+        font: &BitmapFont,
+        atlas: &[u8],
+        style: &FontStyle,
+        size: u32,
+        text: &str,
+        transient: bool,
     ) -> Option<CachedText> {
         let key = RasterKey {
             font: gd_formats::vfs::normalize(&style.font),
@@ -128,7 +160,12 @@ impl FontCache {
         };
         self.raster.tick += 1;
         let tick = self.raster.tick;
-        if let Some((cached, used)) = self.raster.entries.get_mut(&key) {
+        let (lane, cap) = if transient {
+            (&mut self.raster.transient, TRANSIENT_CAP)
+        } else {
+            (&mut self.raster.entries, RASTER_CAP)
+        };
+        if let Some((cached, used)) = lane.get_mut(&key) {
             *used = tick;
             return Some(cached.clone());
         }
@@ -139,17 +176,15 @@ impl FontCache {
             size: ti.size,
             layout: ti.layout,
         };
-        if self.raster.entries.len() >= RASTER_CAP
-            && let Some(old) = self
-                .raster
-                .entries
+        if lane.len() >= cap
+            && let Some(old) = lane
                 .iter()
                 .min_by_key(|(_, (_, used))| *used)
                 .map(|(k, _)| k.clone())
         {
-            self.raster.entries.remove(&old);
+            lane.remove(&old);
         }
-        self.raster.entries.insert(key, (cached.clone(), tick));
+        lane.insert(key, (cached.clone(), tick));
         Some(cached)
     }
 

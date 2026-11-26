@@ -212,7 +212,7 @@ fn add_texts(
         let LoadedFont::Bitmap { font, atlas } = &*font else {
             continue;
         };
-        let Some(ti) = fonts.rasterize_cached(&mut images, font, atlas, &style, style.size, &text)
+        let Some(ti) = fonts.rasterize_transient(&mut images, font, atlas, &style, style.size, &text)
         else {
             continue;
         };

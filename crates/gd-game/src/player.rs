@@ -83,7 +83,7 @@ pub fn derive_effective_skills(
         let book = loadout.effective_skills(&data.db, &data.skill_trees());
         match current {
             Some(mut c) => {
-                if c.0 != book {
+                if !c.0.same(&book) {
                     c.0 = book;
                 }
             }
@@ -191,6 +191,7 @@ pub fn unequipped_toggles(
         for (s, _) in gone.iter().filter(|g| kept_again(&g.0)) {
             loadout.skills.inactive.insert(s.to_ascii_lowercase());
         }
+        loadout.skills.touched();
         for s in current.2.iter().filter(|s| {
             !skills.iter().any(|n| n.eq_ignore_ascii_case(s))
                 || regranted.iter().any(|r| r.eq_ignore_ascii_case(s))

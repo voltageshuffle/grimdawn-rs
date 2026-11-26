@@ -4,7 +4,7 @@ members = ["crates/*"]
 
 # One version for every crate; the release tag is `v<version>`.
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 
 # The Grim Dawn version the port targets (release notes, README). Bump both on a game update (docs/updating.md).
 [workspace.metadata.grimdawn]

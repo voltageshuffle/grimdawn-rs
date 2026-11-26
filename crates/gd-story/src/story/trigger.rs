@@ -52,7 +52,8 @@ pub struct AreaTrigger {
     pub timer: i32,
     pub inside: Vec<u32>,
     pub destroyed: bool,
-    /// The candidate-snapshot generation of the last collection; `u64::MAX` until the first.
+    /// The quantized candidate-snapshot generation of the last collection (0.25m cells;
+    /// `Story::update_triggers`); `u64::MAX` until the first.
     pub last_gen: u64,
     /// The last collection found nobody: an armed trigger with an unchanged `last_gen` skips its step.
     pub last_empty: bool,

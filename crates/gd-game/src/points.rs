@@ -244,6 +244,7 @@ fn raise_skills(
         {
             loadout.skills.inactive.insert(skill.to_ascii_lowercase());
         }
+        loadout.skills.touched();
         progress.progress.skill_points -= 1;
         undo.record(tree, skill, 1);
         info!(

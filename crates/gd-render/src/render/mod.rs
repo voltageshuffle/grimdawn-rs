@@ -12,7 +12,10 @@
 //!   post chain (bloom, enhancement), the UI blends over the gamma values,
 //!   then the frame is converted gamma → linear, which the sRGB swapchain
 //!   turns back into the original gamma value.
-//! - Every view draws directly, the shadow views included ([`no_indirect_drawing`]).
+//! - Every view draws directly, the shadow views included ([`no_indirect_drawing`]): Bevy's
+//!   GPU-driven batching (indirect multi-draw + GPU culling) costs more than it saves on this
+//!   game's many small views — the per-view binning / unpacking and two-phase occlusion passes
+//!   outweigh the direct draws.
 pub mod backdrop;
 pub mod distort;
 pub mod env;
@@ -95,8 +98,6 @@ impl Plugin for GdRenderPlugin {
                     bevy::render::ExtractSchedule,
                     (
                         grass::extract_offsets,
-                        // Before the cameras read the mode: a first frame extracted in culling mode leaves
-                        // indirect work-item buffers the direct pipeline then mismatches (wgpu error at startup).
                         no_indirect_drawing.before(bevy::render::camera::extract_cameras),
                     ),
                 )
@@ -108,8 +109,8 @@ impl Plugin for GdRenderPlugin {
     }
 }
 
-/// Caps Bevy's GPU preprocessing below indirect drawing / GPU culling for every view. A per-camera
-/// `NoIndirectDrawing` does not reach the point lights' shadow views.
+/// Caps Bevy's GPU preprocessing below indirect drawing / GPU culling for every view (see the module
+/// doc). A per-camera `NoIndirectDrawing` does not reach the point lights' shadow views.
 fn no_indirect_drawing(
     support: Option<ResMut<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>>,
 ) {

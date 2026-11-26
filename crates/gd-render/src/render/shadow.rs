@@ -62,7 +62,12 @@
 //!
 //! PORT: Bevy needs a power-of-two map, so the matrix squeezes the engine's
 //! map into the middle `size` texels of the next power of two (same texel
-//! grid and tap offsets). The scene box is the AABB of the main camera's
+//! grid and tap offsets). Medium's 1536² map therefore costs a 2048² pass; kept deliberately —
+//! Bevy's shadow pass has no viewport/scissor hook (it draws the whole layer), and rounding medium
+//! down to 1024 would lose shadow resolution for a small GPU saving. The point-light maps share the
+//! directional array for the same reason: their layers are the sun's size, but only the W×W
+//! paraboloid corner is rendered into and sampled.
+//!
 //! visible meshes (terrain / water: their blocks in the view frustum); a caster is
 //! the union of the boxes of a model's shadow-casting meshes (not
 //! `NotShadowCaster`, children of one root), standing in for the actor's box.

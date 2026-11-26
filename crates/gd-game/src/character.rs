@@ -212,7 +212,9 @@ pub fn advance_animations(
         }
         let k = c.time_scale();
         let ev = c.channel.update(dt * k, &c.body, &mut c.pose);
-        c.repose();
+        // The absolute pose is rebuilt by the frame's first reader (gd-render's pose_bodies for a
+        // visible character, a gameplay attach-point / bounds read otherwise).
+        c.mark_pose_stale();
         // Characters are root entities: the local transform is the current one.
         let root = root_tf.compute_affine();
         let v = anim::root_velocity_object(&c.body, ev.root_velocity, 1.0);

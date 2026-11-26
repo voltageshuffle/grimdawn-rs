@@ -403,7 +403,9 @@ fn axes(cam: &Transform) -> Axes {
 }
 
 /// The axes of both maps: `lockMapRotation` fixes them to the default 45 degree camera's basis, else they follow
-/// the camera's yaw (`DetailMapWidget::DrawMapPass`).
+/// the camera's yaw (`DetailMapWidget::DrawMapPass`). PORT: the yaw is quantized to 1/256 of a turn — the map
+/// image is redrawn whole on any axis change, so an unquantized yaw rebuilt and re-uploaded it every frame the
+/// camera turned; at 1/256 turn the worst corner drift on a 512 px map is ~1 px, under the whole-pixel cut.
 fn map_axes(cam: &Transform, options: &gd_game_core::options::GameOptions) -> Axes {
     if options.flag("lockMapRotation") {
         let up = Vec2::new(-1.0, -1.0).normalize();
@@ -412,7 +414,14 @@ fn map_axes(cam: &Transform, options: &gd_game_core::options::GameOptions) -> Ax
             up,
         }
     } else {
-        axes(cam)
+        let a = axes(cam);
+        let ang = (a.up.y.atan2(a.up.x) * (256.0 / std::f32::consts::TAU)).round()
+            * (std::f32::consts::TAU / 256.0);
+        let up = Vec2::new(ang.cos(), ang.sin());
+        Axes {
+            right: Vec2::new(-up.y, up.x),
+            up,
+        }
     }
 }
 

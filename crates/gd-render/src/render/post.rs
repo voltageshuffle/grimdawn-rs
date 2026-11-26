@@ -121,6 +121,13 @@
 //! here are Rgba8Unorm; the 512² copy is skipped: the 4 extract taps sample
 //! the frame at the same points with the same bilinear filter). The scene
 //! target here is float and unclamped; the chain saturates (or tone maps) it first.
+//!
+//! PORT (perf): the chain's and the glow blur's bind groups are cached across frames ([`PostBindGroupCache`])
+//! instead of created per pass per view per frame; the same passes draw with the same bindings. A group is
+//! keyed by its bound textures (owned wgpu handles, equal by their generational wgpu-core id, so a recreated
+//! texture misses), its uniform buffers (Bevy's never-reused buffer ids) and its dynamic offsets; entries
+//! untouched for 8 frames (the age step of [`prepare_post_textures`]) are dropped, and over 4096 entries the
+//! cache clears wholesale (the `gd-ui-kit` caches' bound).
 use bevy::camera::{Hdr, NormalizedRenderTarget};
 use bevy::core_pipeline::core_3d::{Transparent3d, main_opaque_pass_3d, main_transparent_pass_3d};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping, tonemapping};
@@ -139,12 +146,12 @@ use bevy::render::render_resource::binding_types::{
     sampler, texture_2d, texture_depth_2d, uniform_buffer,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, DynamicUniformBuffer, FragmentState,
-    LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
-    ShaderStages, ShaderType, StoreOp, TextureDescriptor, TextureDimension, TextureSampleType,
-    TextureUsages, TextureView,
+    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+    BufferId, CachedRenderPipelineId, ColorTargetState, ColorWrites, DynamicUniformBuffer,
+    FragmentState, LoadOp, Operations, PipelineCache, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderStages, ShaderType, StoreOp, TextureDescriptor, TextureDimension,
+    TextureSampleType, TextureUsages, TextureView,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
@@ -188,6 +195,7 @@ impl Plugin for PostPlugin {
         render_app
             .init_resource::<CompositeEntities>()
             .init_resource::<HeldComposite>()
+            .init_resource::<PostBindGroupCache>()
             .add_systems(RenderStartup, init_post_pipelines)
             .add_systems(ExtractSchedule, extract_composite)
             .add_systems(
@@ -686,7 +694,10 @@ fn prepare_post_textures(
     mut cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
     views: Query<(Entity, &ExtractedCamera), With<GammaOut>>,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
+    // Once per frame (a PrepareResources system): the bind-group cache's age step.
+    bg_cache.age();
     for (e, cam) in &views {
         let Some(size) = cam.physical_viewport_size else {
             continue;
@@ -732,12 +743,96 @@ type Pass<'a> = (
     &'a TextureView,
 );
 
+/// The chain's and the glow blur's bind groups across frames (PORT perf note in the section doc). Keyed by
+/// the bound resources' identity — Bevy's atomic buffer ids (process-unique, never reused) and the wgpu
+/// texture handles themselves (hash / equality by the generational wgpu-core id, Index + epoch, so a
+/// dropped and recreated texture misses; the key owns the handle, so a cached group's textures stay
+/// alive) — plus the dynamic offsets a group is bound with: a hit binds exactly the entries a fresh group
+/// would. Entries untouched for 8 age steps ([`prepare_post_textures`]) are dropped; over 4096 the map
+/// clears wholesale (the `gd-ui-kit` caches' bound). Interior mutability: the node runs take `&self`.
+#[derive(Resource, Default)]
+pub(crate) struct PostBindGroupCache {
+    groups: parking_lot::Mutex<PostBindGroupCacheInner>,
+}
+
+#[derive(Default)]
+struct PostBindGroupCacheInner {
+    map: HashMap<PostBindGroupKey, (u64, BindGroup)>,
+    age: u64,
+}
+
+/// A group's bound textures ([`PostTextureKey`]), uniform buffers and dynamic offsets. The tag picks the
+/// layout: 0 post, 1 glow, 2 glow occluded, 3 gamma → linear.
+type PostBindGroupKey = (
+    u8,
+    PostTextureKey,
+    PostTextureKey,
+    PostTextureKey,
+    PostTextureKey,
+    BufferId,
+    BufferId,
+    u32,
+    u32,
+);
+
+/// An owned view as a map key, compared and hashed by its texture only. wgpu's `Texture` has `Eq` / `Hash`
+/// but no public id accessor in wgpu 30; both go through the generational wgpu-core id (Index + epoch), so
+/// equality is identity — a dropped and recreated texture never compares equal — and owning the view (it
+/// owns its texture) keeps a cached group's texture alive. Bevy's [`TextureView::id`] is minted per wrapper
+/// (the depth views get fresh ones each frame), so it is never the key; every binding here uses its
+/// texture's one canonical view for that slot.
+struct PostTextureKey(TextureView);
+
+impl PartialEq for PostTextureKey {
+    fn eq(&self, other: &Self) -> bool {
+        *self.0.texture() == *other.0.texture()
+    }
+}
+
+impl Eq for PostTextureKey {}
+
+impl std::hash::Hash for PostTextureKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.texture().hash(state);
+    }
+}
+
+impl PostBindGroupCache {
+    /// The cached group for `key`, created by `create` on a miss (same label and entries as before caching).
+    fn get(&self, key: PostBindGroupKey, create: impl FnOnce() -> BindGroup) -> BindGroup {
+        let mut inner = self.groups.lock();
+        if inner.map.len() > 4096 {
+            inner.map.clear();
+        }
+        let age = inner.age;
+        let entry = inner.map.entry(key).or_insert_with(|| (age, create()));
+        entry.0 = age;
+        entry.1.clone()
+    }
+
+    /// One frame step ([`prepare_post_textures`], once per frame): drop what no pass has touched lately.
+    fn age(&self) {
+        let mut inner = self.groups.lock();
+        inner.age += 1;
+        let now = inner.age;
+        inner.map.retain(|_, (used, _)| now - *used < 8);
+    }
+}
+
+/// The view's texture identity ([`PostTextureKey`]): a clone keeps the Bevy wrapper id but compares by the
+/// wgpu texture, so the depth views' fresh wrappers still hit.
+fn texture_key(view: &TextureView) -> PostTextureKey {
+    PostTextureKey(view.clone())
+}
+
 /// What every `gd_post.wesl` pass binds besides its two textures.
 struct PostBindings<'a> {
-    layout: bevy::render::render_resource::BindGroupLayout,
+    layout: BindGroupLayout,
     sampler: &'a Sampler,
     settings: bevy::render::render_resource::BindingResource<'a>,
     view: bevy::render::render_resource::BindingResource<'a>,
+    settings_buffer: BufferId,
+    view_buffer: BufferId,
     depth: &'a TextureView,
     index: u32,
     view_offset: u32,
@@ -762,6 +857,8 @@ impl<'a> PostBindings<'a> {
             sampler: &p.sampler,
             settings: uniforms.uniforms().binding()?,
             view: view_uniforms.uniforms.binding()?,
+            settings_buffer: uniforms.uniforms().buffer()?.id(),
+            view_buffer: view_uniforms.uniforms.buffer()?.id(),
             depth: depth.attachment.depth_stencil_views().depth_only_view()?,
             index: index.index(),
             view_offset: view_offset.offset,
@@ -770,23 +867,45 @@ impl<'a> PostBindings<'a> {
 
     /// Draws `passes` in order; `load`: draw over the target (the blended passes) instead of replacing it.
     /// `span` names their GPU time with `RenderDiagnosticsPlugin` (`GD_GPU_TIMES`; no-op without it).
-    fn run(&self, ctx: &mut RenderContext, span: &'static str, passes: &[Pass], load: bool) {
+    fn run(
+        &self,
+        ctx: &mut RenderContext,
+        groups: &PostBindGroupCache,
+        span: &'static str,
+        passes: &[Pass],
+        load: bool,
+    ) {
         let diagnostics = ctx.diagnostic_recorder();
         let diagnostics = diagnostics.as_deref();
         let time = diagnostics.time_span(ctx.command_encoder(), span);
         for &(pipeline, src, aux, blur, dst) in passes {
-            let bg = ctx.render_device().create_bind_group(
-                "gd_post_bind_group",
-                &self.layout,
-                &BindGroupEntries::sequential((
-                    src,
-                    self.sampler,
-                    self.settings.clone(),
-                    aux,
-                    self.depth,
-                    self.view.clone(),
-                    blur,
-                )),
+            let bg = groups.get(
+                (
+                    0,
+                    texture_key(src),
+                    texture_key(aux),
+                    texture_key(blur),
+                    texture_key(self.depth),
+                    self.settings_buffer,
+                    self.view_buffer,
+                    self.index,
+                    self.view_offset,
+                ),
+                || {
+                    ctx.render_device().create_bind_group(
+                        "gd_post_bind_group",
+                        &self.layout,
+                        &BindGroupEntries::sequential((
+                            src,
+                            self.sampler,
+                            self.settings.clone(),
+                            aux,
+                            self.depth,
+                            self.view.clone(),
+                            blur,
+                        )),
+                    )
+                },
             );
             let desc = RenderPassDescriptor {
                 label: Some("gd_post"),
@@ -833,6 +952,7 @@ fn apply_ssao(
     uniforms: Res<ComponentUniforms<GammaOut>>,
     view_uniforms: Res<ViewUniforms>,
     mut ctx: RenderContext,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
     let (target, textures, index, settings, view_offset, depth) = view.into_inner();
     if settings.ao.x <= 0.5 {
@@ -866,6 +986,7 @@ fn apply_ssao(
     let (a, av, any) = (&ao.default_view, &ao_v.default_view, &bh.default_view);
     b.run(
         &mut ctx,
+        &bg_cache,
         "gd_ssao",
         &[
             (create, av, av, any, a),
@@ -876,6 +997,7 @@ fn apply_ssao(
     );
     b.run(
         &mut ctx,
+        &bg_cache,
         "gd_ssao_apply",
         &[(apply, a, any, any, target.main_texture_view())],
         true,
@@ -897,6 +1019,7 @@ fn post_chain(
     uniforms: Res<ComponentUniforms<GammaOut>>,
     view_uniforms: Res<ViewUniforms>,
     mut ctx: RenderContext,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
     let (target, textures, index, settings, view_offset, depth, fxaa_on) = view.into_inner();
     let fxaa_on = fxaa_on.is_some_and(|f| f.0);
@@ -940,7 +1063,9 @@ fn post_chain(
         return;
     };
     let [hot, bv, bh, dof_blur, .., fxaa_frame] = &textures.0;
-    let run = |ctx: &mut RenderContext, passes: &[Pass]| b.run(ctx, "gd_post_chain", passes, false);
+    let run = |ctx: &mut RenderContext, passes: &[Pass]| {
+        b.run(ctx, &bg_cache, "gd_post_chain", passes, false)
+    };
     let post = target.post_process_write();
     let (source, destination) = (post.source, post.destination);
     // ApplyFXAA: the frame copied into a format-2 temporary, fxaa.ssh drawn from it into the frame. Here the last pass
@@ -1037,6 +1162,7 @@ fn prepare_glow_blur(
         Query<(&ExtractedCamera, &ViewDepthStencilTexture)>,
     ),
     mut offsets: Local<Vec<u32>>,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
     let CompositeEntities {
         blurs,
@@ -1055,15 +1181,31 @@ fn prepare_glow_blur(
     offsets.clear();
     offsets.extend(blurs.iter().map(|b| uniforms.push(&b.3)));
     uniforms.write_buffer(&device, &queue);
-    let Some(uniform) = uniforms.binding() else {
+    let (Some(uniform), Some(buffer)) = (uniforms.binding(), uniforms.buffer()) else {
         return;
     };
+    let uniform_buffer = buffer.id();
     let layout = pipeline_cache.get_bind_group_layout(&p.glow_layout);
-    let bind = |label, a: &TextureView, b: &TextureView| {
-        device.create_bind_group(
-            label,
-            &layout,
-            &BindGroupEntries::sequential((uniform.clone(), a, b, &p.sampler)),
+    let bind = |label: &'static str, a: &TextureView, b: &TextureView, offset: u32| {
+        bg_cache.get(
+            (
+                1,
+                texture_key(a),
+                texture_key(b),
+                texture_key(a),
+                texture_key(a),
+                uniform_buffer,
+                uniform_buffer,
+                offset,
+                0,
+            ),
+            || {
+                device.create_bind_group(
+                    label,
+                    &layout,
+                    &BindGroupEntries::sequential((uniform.clone(), a, b, &p.sampler)),
+                )
+            },
         )
     };
     let occluded_layout = pipeline_cache.get_bind_group_layout(&p.glow_occluded_layout);
@@ -1113,19 +1255,34 @@ fn prepare_glow_blur(
                 Some((*view, depth(own)?, depth(scene)?))
             });
         let vertical = match &occluded {
-            Some((_, own, scene)) => device.create_bind_group(
-                "gd_glow_blur_v_occluded",
-                &occluded_layout,
-                &BindGroupEntries::sequential((
-                    uniform.clone(),
-                    &src.texture_view,
-                    &src.texture_view,
-                    &p.sampler,
-                    own,
-                    scene,
-                )),
+            Some((_, own, scene)) => bg_cache.get(
+                (
+                    2,
+                    texture_key(&src.texture_view),
+                    texture_key(&src.texture_view),
+                    texture_key(own),
+                    texture_key(scene),
+                    uniform_buffer,
+                    uniform_buffer,
+                    offset,
+                    0,
+                ),
+                || {
+                    device.create_bind_group(
+                        "gd_glow_blur_v_occluded",
+                        &occluded_layout,
+                        &BindGroupEntries::sequential((
+                            uniform.clone(),
+                            &src.texture_view,
+                            &src.texture_view,
+                            &p.sampler,
+                            own,
+                            scene,
+                        )),
+                    )
+                },
             ),
-            None => bind("gd_glow_blur_v", &src.texture_view, &src.texture_view),
+            None => bind("gd_glow_blur_v", &src.texture_view, &src.texture_view, offset),
         };
         passes.push(GlowBlurPasses {
             glow,
@@ -1133,7 +1290,7 @@ fn prepare_glow_blur(
             offset,
             vertical: (vertical, v.clone()),
             horizontal: (
-                bind("gd_glow_blur_h", &v[0].default_view, &v[1].default_view),
+                bind("gd_glow_blur_h", &v[0].default_view, &v[1].default_view, offset),
                 out.texture_view.clone(),
             ),
         });
@@ -1313,6 +1470,7 @@ pub(crate) fn fog_and_glow(
     view_uniforms: Res<ViewUniforms>,
     held: Res<HeldComposite>,
     mut ctx: RenderContext,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
     let view_entity = view.entity();
     let (target, textures, index, settings, view_offset, depth, extracted) = view.into_inner();
@@ -1336,6 +1494,7 @@ pub(crate) fn fog_and_glow(
         let any = &textures.0[2].default_view;
         b.run(
             &mut ctx,
+            &bg_cache,
             "gd_fog",
             &[(fog, any, any, any, target.main_texture_view())],
             true,
@@ -1374,6 +1533,7 @@ fn ui_to_linear(
     uniforms: Res<ComponentUniforms<GammaOut>>,
     view_uniforms: Res<ViewUniforms>,
     mut ctx: RenderContext,
+    bg_cache: Res<PostBindGroupCache>,
 ) {
     let (target, index, view_offset, depth) = view.into_inner();
     let Some(p) = pipelines.filter(|p| p.ready(&cache)) else {
@@ -1387,19 +1547,37 @@ fn ui_to_linear(
     ) else {
         return;
     };
+    let settings_buffer = uniforms.uniforms().buffer().unwrap().id();
+    let view_buffer = view_uniforms.uniforms.buffer().unwrap().id();
     let post = target.post_process_write();
-    let bg = ctx.render_device().create_bind_group(
-        "gd_post_to_linear_bind_group",
-        &cache.get_bind_group_layout(&p.layout),
-        &BindGroupEntries::sequential((
-            post.source,
-            &p.sampler,
-            binding,
-            post.source,
-            depth_view,
-            view_binding,
-            post.source,
-        )),
+    let layout = cache.get_bind_group_layout(&p.layout);
+    let bg = bg_cache.get(
+        (
+            3,
+            texture_key(post.source),
+            texture_key(post.source),
+            texture_key(post.source),
+            texture_key(depth_view),
+            settings_buffer,
+            view_buffer,
+            index.index(),
+            view_offset.offset,
+        ),
+        || {
+            ctx.render_device().create_bind_group(
+                "gd_post_to_linear_bind_group",
+                &layout,
+                &BindGroupEntries::sequential((
+                    post.source,
+                    &p.sampler,
+                    binding,
+                    post.source,
+                    depth_view,
+                    view_binding,
+                    post.source,
+                )),
+            )
+        },
     );
     let mut pass = ctx
         .command_encoder()
@@ -1531,10 +1709,13 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // ±{0.5..3.5}·4 texels, vertical into a half-height then horizontal into a
 // half-size target, composited additively (postprocessing/glow.ssh `normal`).
 //
-// Here a second camera renders the same view into a full-size float image with
+// Here a second camera renders the same view into a half-size float image (PORT: ⌈w/2⌉ × ⌈h/2⌉,
+// a deliberate perf difference — the engine's glow target is full-size G-buffer; the result is
+// blurred and composited up, so the glow is softer by one downsample) with
 // the materials in "glow only" mode (marked by its exposure); the engine's two passes
-// run over it (gd_glow_blur.wesl: vertical into w × h/2, horizontal into w/2 × h/2), and a fullscreen triangle
-// on the main camera adds the half-size result, bilinearly upsampled, before GammaOut. The main camera runs
+// run over it (gd_glow_blur.wesl: vertical into glow w × h/2, horizontal into w/2 × h/2: quarter screen size),
+// and a fullscreen triangle
+// on the main camera adds the quarter-size result, bilinearly upsampled, before GammaOut. The main camera runs
 // the passes ([`blur_scene_glow`]) after its opaque passes, before its transparent pass; a composite no
 // [`GammaOut`] view draws (a conversation portrait's) is blurred right after its glow view ([`blur_glow`]).
 //
@@ -1554,7 +1735,9 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // stencil group `GraphicsDeferredRenderer.stencilGroup`, enabled by GraphicsMeshInstance::
 // GetNumRenderPasses only while outlined), so the blurred outline (and the
 // scene glow's blur too) is added only around the object's visible pixels,
-// never over them: a soft halo of about 4 px.
+// never over them: a soft halo of about 4 screen px (PORT: with the half-res glow view the outline
+// taps are half a glow texel apart — the engine's 1-texel spacing in screen pixels — and the halo
+// is a glow texel coarser at the mask edge).
 //
 // Nothing else limits the halo: it is added to whatever lies next to those
 // pixels, an occluder's edge included. Occluded parts of the object add
@@ -1564,10 +1747,10 @@ fn gamma_ui_source(src: &str) -> Option<String> {
 // leaves 0 and the outlined parts' copies (`GdMaterial::outline_mask`, in the
 // glow view only) draw their palette class (1 / 2 / 3)
 // after them, with the passes' states. The vertical pass decodes the texels'
-// class colours before it blends them (8 texel loads 1 texel apart, which is
-// where the engine's bilinear taps land), the horizontal pass blends the
+// class colours before it blends them (8 loads half a glow texel apart: two classes decoded then
+// mixed, where the engine's bilinear taps land at full resolution), the horizontal pass blends the
 // colours; gain 1.25². Both blurs are skipped where the unblurred mask is set at
-// the pixel (the composite reads it at full resolution). PORT: scene glow and
+// the pixel (the composite reads it at the glow view's half resolution). PORT: scene glow and
 // outline share the passes (two targets in the vertical one, summed by the
 // horizontal one); the targets are float, not format 2, so values are not
 // clamped between the passes.
@@ -1678,7 +1861,8 @@ pub struct GlowCamera {
 /// The glow composite's and the blur's uniform.
 #[derive(ShaderType, Clone, Copy, Debug, Default)]
 pub struct GlowParams {
-    /// x: scene glow gain (0.75²), y: its tap spacing in texels (4), z: outline gain (1.25²), w unused.
+    /// x: scene glow gain (0.75²), y: its tap spacing in source texels (2 at half resolution: the
+    /// engine's 4 screen px), z: outline gain (1.25²), w unused.
     pub gains: Vec4,
     /// Outline palette ([`OutlineGlow`]): class 1's colour (rgb; w 1 = something is outlined), classes 2 and 3.
     pub outline: Vec4,
@@ -1700,8 +1884,9 @@ pub struct GlowComposite {
 }
 
 impl GlowComposite {
-    /// The scene glow's composite of the glow target `glow` (gain 0.75², taps 4 texels apart, outline gain 1.25²,
-    /// no outline yet).
+    /// The scene glow's composite of the glow target `glow` (gain 0.75², taps 4 source texels apart —
+    /// the engine's spacing at full resolution, a conversation portrait's glow view; the half-resolution
+    /// scene glow view halves it to 2, [`setup_glow`] — outline gain 1.25², no outline yet).
     pub fn scene(glow: Handle<Image>) -> Self {
         Self {
             params: GlowParams {
@@ -1872,7 +2057,8 @@ fn gate_glow(
 }
 
 /// Gives each composite its half-size blur target ([`GlowComposite::blurred`]): ⌈w/2⌉ × ⌈h/2⌉ of its glow
-/// target, a new image when that size changes (the material rebinds it).
+/// target (quarter screen size for the half-res scene glow view), a new image when that size changes
+/// (the material rebinds it).
 fn sync_glow_blur(
     comp: Query<&MeshMaterial3d<GlowComposite>>,
     mut mats: ResMut<Assets<GlowComposite>>,
@@ -1901,6 +2087,9 @@ fn sync_glow_blur(
     }
 }
 
+/// Spawns the scene glow view at half the window's resolution (⌈w/2⌉ × ⌈h/2⌉): its content is only
+/// blurred and composited up, so the downsample costs little and quarters the view's shading cost
+/// (PORT: deliberate perf difference, see the section doc).
 fn setup_glow(
     mut commands: Commands,
     mains: Query<Entity, (With<Camera3d>, With<GammaOut>)>,
@@ -1915,12 +2104,18 @@ fn setup_glow(
         return;
     }
     let Ok(win) = window.single() else { return };
-    let (w, h) = (win.physical_width().max(1), win.physical_height().max(1));
+    let (w, h) = (
+        win.physical_width().div_ceil(2).max(1),
+        win.physical_height().div_ceil(2).max(1),
+    );
     let image = images.add(Image::new_target_texture(w, h, GLOW_FORMAT, None));
+    let mut mat = GlowComposite::scene(image.clone());
+    // Half-resolution view: 2 source texels = the engine's 4 screen px ([`sync_glow_camera`]).
+    mat.params.gains.y = 2.0;
     let composite = commands
         .spawn((
             Mesh3d(meshes.add(fullscreen_triangle())),
-            MeshMaterial3d(mats.add(GlowComposite::scene(image.clone()))),
+            MeshMaterial3d(mats.add(mat)),
             NoFrustumCulling,
             RenderLayers::layer(COMPOSITE_LAYER),
             Transform::default(),
@@ -1963,7 +2158,9 @@ fn setup_glow(
 }
 
 /// The glow view follows the main camera: same transform and projection,
-/// and a target of the same size (else glow and outlines land away from their objects after a resize).
+/// and a target of half its size (⌈size/2⌉, [`setup_glow`]; the composite samples by uv, so glow and
+/// outlines keep their place after a resize). The scene glow's tap spacing is half the engine's
+/// 4 screen texels: at half resolution that is the same on-screen blur radius.
 fn sync_glow_camera(
     mains: Query<
         (&Camera, &GlobalTransform, Ref<Projection>),
@@ -1991,18 +2188,27 @@ fn sync_glow_camera(
         if proj.is_changed() {
             *p = (*proj).clone();
         }
-        if let (Some(size), RenderTarget::Image(img)) = (cam.physical_target_size(), target)
-            && images.get(&img.handle).is_some_and(|i| i.size() != size)
-            && let Some(mut i) = images.get_mut(&img.handle)
-        {
-            i.resize(bevy::render::render_resource::Extent3d {
-                width: size.x.max(1),
-                height: size.y.max(1),
-                depth_or_array_layers: 1,
-            });
-            // Rebind the new texture in the composite.
-            for m in &comp {
-                mats.get_mut(&m.0);
+        if let (Some(size), RenderTarget::Image(img)) = (cam.physical_target_size(), target) {
+            let size = (size + UVec2::ONE) / 2;
+            let size = size.max(UVec2::ONE);
+            if images.get(&img.handle).is_some_and(|i| i.size() != size)
+                && let Some(mut i) = images.get_mut(&img.handle)
+            {
+                i.resize(bevy::render::render_resource::Extent3d {
+                    width: size.x,
+                    height: size.y,
+                    depth_or_array_layers: 1,
+                });
+                // Rebind the new texture in the composite of this target only (a portrait's
+                // full-size glow composite keeps the engine's 4-texel spacing).
+                for m in &comp {
+                    if let Some(mut mat) = mats.get_mut(&m.0)
+                        && mat.glow.id() == img.handle.id()
+                    {
+                        // 2 source texels = the engine's 4 screen px at half resolution.
+                        mat.params.gains.y = 2.0;
+                    }
+                }
             }
         }
     }

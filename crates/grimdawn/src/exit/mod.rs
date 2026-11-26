@@ -132,6 +132,7 @@ const KEEP: &[&str] = &[
     // Lives for the process.
     "gd_game::achievements::Achievements",
     "gd_ui_kit::additive::AdditiveCache",
+    "gd_ui_kit::masked::MaskedCache",
     "gd_game_core::character::AnimCache",
     // Dropped when the mounted mod changes.
     "gd_game_core::creature::BodyCache",

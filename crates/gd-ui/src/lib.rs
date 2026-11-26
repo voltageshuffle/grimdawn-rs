@@ -399,7 +399,7 @@ impl HudSig {
             && self.classic_hud == l.classic_hud
             && self.hotbar == v.hotbar
             && self.hotbar_labels == v.hotbar_labels
-            && self.skills == v.skills
+            && self.skills.same(&v.skills)
     }
 }
 
@@ -448,7 +448,7 @@ impl CharacterSig {
             && self.inventory == l.inventory
             && self.points == l.points()
             && self.panels.same_but_scroll(l.panels)
-            && self.skills == v.skills
+            && self.skills.same(&v.skills)
             && self
                 .skill_tags
                 .iter()
@@ -545,7 +545,7 @@ impl SkillsSig {
             && self.picks == l.panels.mastery_picks
             && self.hover == l.panels.mastery_hover
             && self.undo == v.skill_undo
-            && self.skills == v.skills
+            && self.skills.same(&v.skills)
             && self.reclaim.as_ref().map(|(r, g)| (r, *g)) == Self::reclaim(v)
     }
 }
@@ -589,7 +589,7 @@ impl DevotionSig {
             && self.open == Self::open(l)
             && self.version == l.devotion
             && self.undo == l.values.devotion_undo
-            && self.skills == l.values.skills
+            && self.skills.same(&l.values.skills)
             && self.reclaim.as_ref().map(|(r, g)| (r, *g)) == Self::reclaim(l.values)
     }
 }

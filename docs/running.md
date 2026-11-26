@@ -9,11 +9,14 @@ holding `database/database.arz`). Then either `source local.env`, or prefix comm
 ## Running
 - `cargo dev`: a debug build with the `dev` feature (hooks, screenshots, test scenes). gd-formats and gd-sim
   are built at opt-level 3.
-- Frame times: `cargo run -p grimdawn --profile profiling --features profile` (release code with line tables,
-  Chrome trace) plus `GD_FPS=1`. The trace inflates CPU time a lot under load: for real numbers use
-  `--features dev` and `GD_FPS=1`, with `GD_GPU_TIMES=1` for per-pass GPU times (timestamp queries) and
-  `perf record` for CPU hot spots. Stress scene: `GD_SPAWN_MONSTER` around the start, `GD_FX` +
-  `GD_FX_GRID`, `GD_GOD GD_AUTO_FIGHT`, and `GD_OPTIONS` pointing at an options file with every quality maxed.
+- Profiling: `cargo build -p grimdawn --profile profiling --features dev` (release code and flags, symbols
+  kept), then `perf record -F 999 --call-graph dwarf -o perf.data -- target/profiling/grimdawn` with
+  `GD_SHOT` to end the run; `perf report -i perf.data` for CPU hot spots. Frame times: `GD_FPS=1`,
+  per-pass GPU times: `GD_GPU_TIMES=1` (timestamp queries). Profile on the real display and in the real
+  world (`GD_SAVE=<player.gdc>` in Devil's Crossing), never `scripts/headless-run.sh` (its compositor
+  presents through the CPU, not the GPU) and never `GD_TESTWORLD` (the arena hides the real scene's
+  costs). Stress on top: `GD_SPAWN_MONSTER`, `GD_FX` + `GD_FX_GRID`, `GD_GOD GD_AUTO_FIGHT`, `GD_OPTIONS`
+  with every quality maxed. (Bevy's `trace_chrome` is not used: multi-GB traces and heavy latency.)
 - Shipped build: `cargo build -p grimdawn --release` (thin LTO, panic = abort, stripped). Linux (Wayland and
   X11) and Windows x86-64.
 - Releases: the whole workspace has one version (`[workspace.package] version` in the root `Cargo.toml`, inherited
@@ -53,6 +56,10 @@ Recipes:
   GD_KILL_ALL=8 GD_USE_EXIT_GATE=1 GD_USE_BUFF_SHRINE=1 GD_OPEN_CHESTS=1`. A specific floor:
   `GD_ENDLESS_FLOOR=<floor record>`.
 - Test arena: `GD_TESTWORLD=1` (flat grid; `GD_ARENA_MONSTERS=<record>[*n];…`).
+- Stress scene: `GD_STRESS=<n>` keeps `n` foes fighting around the player, kills a third every 4 s (gibs,
+  loot, death FX) and respawns them, bursts impact effects every 0.5 s and travels to the next riftgate every
+  20 s (levels stream in and out). In the real world: `GD_SAVE=<player.gdc> GD_GOD GD_AUTO_FIGHT=40
+  GD_STRESS=300 GD_FPS=1 GD_GPU_TIMES=1 GD_SHOT_SECS=90` — profile it with `perf` per the Profiling note.
 - Leak audit: `GD_EXIT_CYCLES=<n>` (+ `GD_SAVE`): repeated exit-to-menu cycles that log entity counts.
 - Memory audit: `GD_MEM_LOG=5` logs the resident set, glibc's heap (in use / kept free), asset counts and cache
   sizes (`mem:`); `GD_MEM_TOUR=12@6` travels to 12 riftgates, `GD_MEM_EXIT=160` exits to the menu and starts the

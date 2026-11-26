@@ -52,7 +52,26 @@ mod weather;
 
 use bevy::prelude::*;
 
+/// glibc's dynamic mmap threshold grows toward 32 MB as big blocks free, so a level unload's mesh /
+/// texture / nav buffers go back to the OS with `munmap`/`madvise` — and the *next* travel's first
+/// allocations fault every page back in on the frame thread (travel spikes). Pin the threshold and
+/// keep a top pad so those blocks recycle through the heap instead. Linux/gnu only; other allocators
+/// ignore this.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn tune_allocator() {
+    // SAFETY: mallopt only tunes this process's allocator parameters; no pointers, no threads yet.
+    unsafe { libc::mallopt(libc::M_MMAP_THRESHOLD, 64 * 1024) };
+    // SAFETY: as above.
+    unsafe { libc::mallopt(libc::M_TRIM_THRESHOLD, 64 * 1024 * 1024) };
+    // SAFETY: as above.
+    unsafe { libc::mallopt(libc::M_TOP_PAD, 16 * 1024 * 1024) };
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn tune_allocator() {}
+
 fn main() {
+    tune_allocator();
     let root = match game_root() {
         Ok(root) => root,
         Err(e) => {
@@ -82,7 +101,9 @@ fn main() {
         .and_then(|a| render_devices::backend_of(&a.backend).map(|b| (a.name.clone(), b)));
     let mut wgpu_settings = bevy::render::settings::WgpuSettings {
         memory_hints: bevy::render::settings::MemoryHints::Manual {
-            suballocated_device_memory_block_size: (512 << 20)..(512 << 20),
+            // Grow blocks from 64MB instead of committing 512MB up front, which spills VRAM
+            // to system RAM under WDDM on small (4-6GB) Windows GPUs. Cap blocks at 512MB.
+            suballocated_device_memory_block_size: (64 << 20)..(512 << 20),
         },
         ..default()
     };

@@ -89,6 +89,8 @@ fn spawn_player(
                 skills.skills.retain(|(n, _)| !n.eq_ignore_ascii_case(rec));
                 skills.skills.push((rec.clone(), *lv));
             }
+            #[cfg(feature = "dev")]
+            skills.touched();
         })
     else {
         error!("could not build the player's combat profile");

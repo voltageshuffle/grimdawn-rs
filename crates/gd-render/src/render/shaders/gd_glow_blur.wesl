@@ -1,12 +1,15 @@
 // The glow blur: `GraphicsCanvas_Blur8Tap` over the glow view's
 // target, vertical into w × h/2 (`blur_v`, `blur_v_occluded`), horizontal into w/2 × h/2 (`blur_h`), for the scene
 // glow (rgb, taps `gains.y` texels apart) and the outline mask (alpha: each texel's class 1 / 2 / 3 decoded
-// to its palette colour before blending, taps 1 texel apart) at once.
+// to its palette colour before blending, taps half a texel apart) at once. The scene glow view is half
+// screen size (post.rs `setup_glow`), so spacings are halved in glow texels to keep the engine's on-screen
+// radius: scene glow `gains.y` = 2 (= 4 screen px), outline ½ texel (= the engine's 1 screen px). A
+// portrait's glow view is full size but has no outline mask, so the outline spacing never applies to it.
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 
 // The composite's uniform (`GlowParams`).
 struct GlowParams {
-    // x: scene glow gain (0.75²), y: its tap spacing in texels (4), z: outline gain (1.25²), w: debug view.
+    // x: scene glow gain (0.75²), y: its tap spacing in texels (2 = 4 screen px), z: outline gain (1.25²), w: debug view.
     gains: vec4<f32>,
     // Class 1's colour (rgb; w 1 = something is outlined), classes 2 and 3.
     outline: vec4<f32>,
@@ -47,22 +50,30 @@ const HIDDEN: f32 = 1.001;
 fn shown_glow(p: vec2<i32>) -> vec3<f32> {
     let g = textureLoad(src_a, p, 0).rgb;
     let d = textureLoad(glow_depth, p, 0);
-    if d > 0.0 && textureLoad(scene_depth, p, 0) > d * HIDDEN {
+    // The scene depth is the main view's size: scale the glow texel into it (the scene glow view is
+    // half size; a portrait's is full size — the ratio covers both).
+    let s = vec2<i32>(vec2<f32>(p) * vec2<f32>(textureDimensions(scene_depth))
+        / vec2<f32>(textureDimensions(src_a)));
+    if d > 0.0 && textureLoad(scene_depth, s, 0) > d * HIDDEN {
         return vec3<f32>(0.0);
     }
     return g;
 }
 
-// The outline's vertical pass: one texel apart from a texel edge the taps hit texel centres: loads, so the classes
-// do not blend before they are decoded. Rows 2y − 3 … 2y + 4.
+// The outline's vertical pass: taps half a source texel apart (the engine's 1 screen px at the half-size
+// glow view), centred on the output texel's centre, source row 2y + ½. Each tap lands between two texel
+// centres: the two classes are decoded then mixed, so they do not blend before decoding.
 fn outline_v(position: vec4<f32>, size: vec2<i32>) -> vec3<f32> {
     var o = vec3<f32>(0.0);
     if glow.outline.w > 0.5 {
         let x = i32(position.x);
-        let y0 = i32(position.y) * 2 - 3;
+        let y = f32(i32(position.y)) * 2.0 + 0.5;
         for (var i = 0; i < 8; i++) {
-            let y = clamp(y0 + i, 0, size.y - 1);
-            o += W[i] * class_colour(textureLoad(src_a, vec2<i32>(x, y), 0).a);
+            let t = y + 0.5 * (f32(i) - 3.5);
+            let r = i32(floor(t));
+            let a = class_colour(textureLoad(src_a, vec2<i32>(x, clamp(r, 0, size.y - 1)), 0).a);
+            let b = class_colour(textureLoad(src_a, vec2<i32>(x, clamp(r + 1, 0, size.y - 1)), 0).a);
+            o += W[i] * mix(a, b, t - floor(t));
         }
     }
     return o;
@@ -73,8 +84,8 @@ struct Vertical {
     @location(1) outline: vec4<f32>,
 }
 
-// Taps at ±{0.5..3.5} source texels from the output texel's centre, which lies on the edge between
-// source rows 2y and 2y + 1.
+// Taps at ±{0.5..3.5}·`gains.y` source texels from the output texel's centre, which lies on the edge
+// between source rows 2y and 2y + 1.
 @fragment
 fn blur_v(in: FullscreenVertexOutput) -> Vertical {
     let size = vec2<i32>(textureDimensions(src_a));
@@ -122,7 +133,9 @@ fn blur_h(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if glow.outline.w > 0.5 {
         var o = vec3<f32>(0.0);
         for (var i = 0; i < 8; i++) {
-            let uv = in.uv + vec2<f32>(texel * (f32(i) - 3.5), 0.0);
+            // Half a texel: the engine's 1 screen px at the half-size glow view; the colours are
+            // already decoded, so the bilinear filter blends them.
+            let uv = in.uv + vec2<f32>(0.5 * texel * (f32(i) - 3.5), 0.0);
             o += W[i] * textureSampleLevel(src_b, smp, uv, 0.0).rgb;
         }
         c += o * glow.gains.z;

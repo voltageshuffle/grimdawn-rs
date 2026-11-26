@@ -14,6 +14,7 @@ pub mod fx;
 pub mod memory;
 pub mod mouse;
 pub mod testworld;
+pub mod stress;
 
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -43,6 +44,7 @@ impl Plugin for DevPlugin {
         exit_cycles::plugin(app);
         memory::plugin(app);
         mouse::plugin(app);
+        stress::plugin(app);
         // The effect checks (`GD_FX` / `GD_FPS`): only with effects on (`GD_NO_FX` leaves them out).
         if !app.world().resource::<Hooks>().render.no_fx {
             fx::plugin(app);

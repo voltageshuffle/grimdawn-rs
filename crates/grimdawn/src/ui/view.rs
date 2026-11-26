@@ -6,6 +6,11 @@
 //! (kept in a [`BuffBar`]), the pets' portrait buff icons, the mode label from
 //! `GameMode`, the area name from the map's name sector at the player. Gameplay systems never
 //! write UI state; the windows read only this view (or the gameplay components directly).
+//! The character sheet's row maps (`stats`, `rollovers`, `armor`) are built only while the
+//! character window is open (`UiPanels::character`; its rollover hovers live inside that window):
+//! a profile change with the window closed only leaves the sheet cache's held inputs behind, and
+//! the rows rebuild on the frame the window opens. The HUD's vitals, orbs and cooldowns update
+//! every change regardless.
 use crate::afflictions::Afflictions;
 use bevy::prelude::*;
 use gd_game::sheet_dps::{SheetDps, SheetDpsValues};
@@ -124,7 +129,11 @@ pub fn collect(
         ),
     ),
     dps: Res<SheetDpsValues>,
-    (row, bindings): (Res<gd_ui::hud::HotbarRow>, Res<super::keys::KeyBindings>),
+    (row, bindings, panels): (
+        Res<gd_ui::hud::HotbarRow>,
+        Res<super::keys::KeyBindings>,
+        Res<gd_ui::UiPanels>,
+    ),
     // Option: both are created with the player (`gd_game::reclamation`, `gd_game::devotion`).
     // Option: `PlayerFactions` is created with the player too (`gd_game::factions::init_factions`).
     (skill_undo, reclaim, devotion_state, stash, factions, devotion_undo): (
@@ -396,7 +405,12 @@ pub fn collect(
                     || !foes.is(f)
                     || *r != red
             });
-            if sheet_changed {
+            // The row maps and their clones feed only the character window and its rollover
+            // hovers (both live under `panels.character`): with it closed, a profile change
+            // (every buff add / expire in combat) only leaves `cache.0` holding the inputs the
+            // rows were last built from, so `sheet_changed` stays true and the rows rebuild on
+            // the frame the window opens.
+            if sheet_changed && panels.character {
                 let pet = pet.map(|p| (p.1.profile.clone(), p.0.buff_stats(&data.db, p.2)));
                 let foes = foes.owned();
                 (cache.1, cache.2) = sheet(
@@ -443,12 +457,13 @@ pub fn collect(
                     + 0.5)
                     .floor() as i64,
             );
-            if sheet_changed
-                || cache.5.is_empty()
-                || cache.6 != stat_key
-                || loadout_changed
-                || mode.is_changed()
-                || loaded.as_ref().is_some_and(|l| l.is_changed())
+            if panels.character
+                && (sheet_changed
+                    || cache.5.is_empty()
+                    || cache.6 != stat_key
+                    || loadout_changed
+                    || mode.is_changed()
+                    || loaded.as_ref().is_some_and(|l| l.is_changed()))
             {
                 let mut stats = cache.1.clone();
                 stats.extend(stat_rows(
@@ -481,7 +496,7 @@ pub fn collect(
         }
         let mut skills_changed = false;
         if let Some(s) = skills
-            && v.skills != s.0
+            && !v.skills.same(&s.0)
         {
             v.skills.clone_from(&s.0);
             skills_changed = true;
@@ -1020,7 +1035,9 @@ pub fn target_strip(
 }
 
 /// The sheet rows that only change with the profile, the first pet or the
-/// DPS values, and the hot slots / merged rows derived from them.
+/// DPS values, and the hot slots / merged rows derived from them. The row maps are rebuilt only
+/// while the character window is open; the held inputs are the ones they were last built from,
+/// so a change with the window closed rebuilds on the frame it opens.
 #[derive(Default)]
 pub struct SheetCache(
     /// The sheet's inputs: the player's and the pet's profile (held, compared with `Arc::ptr_eq`), the

@@ -252,6 +252,10 @@ pub struct GameplayHooks {
     pub path_test: Option<Vec2>,
     /// `GD_SPAWN_MONSTER=<record>@x,z;...`
     pub spawn_monster: Vec<(String, f32, f32)>,
+    /// `GD_STRESS=<n>`: the stress scene — keeps `n` foes fighting around the player, kills and respawns
+    /// them in batches (loot, gibs, death FX), plays impact effects in bursts and travels between
+    /// riftgates so levels stream in and out. Runs in the real world (`GD_SAVE`), not the test arena.
+    pub stress: Option<u32>,
     /// `GD_EVADE=<secs>`, `GD_DIE=<secs>`, `GD_MOVE_KEY=<secs>` (holds the Move key that long).
     pub evade: Option<f32>,
     pub die: Option<f32>,
@@ -679,6 +683,7 @@ impl Hooks {
                     ))
                 })
                 .collect(),
+            stress: vars.get("GD_STRESS").and_then(|v| v.parse().ok()),
             evade: f("GD_EVADE"),
             die: f("GD_DIE"),
             move_key: f("GD_MOVE_KEY"),

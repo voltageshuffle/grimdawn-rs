@@ -113,10 +113,40 @@ pub fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     [0, 1, 2, 3].map(|i| a[i] * wa + b[i] * wb)
 }
 
+/// One bone's keys. The columns are the same data as [`Self::keys`], split per component: sampling
+/// reads two adjacent frames of each component, so the columns keep those reads in one cache line
+/// instead of striding 56-byte keys.
 #[derive(Debug, Clone)]
 pub struct Track {
     pub bone: String,
     pub keys: Vec<Key>,
+    /// Per key: translation xyz, rotation xyzw, scale xyz, scale-rotation xyzw.
+    columns: KeyColumns,
+}
+
+#[derive(Debug, Clone, Default)]
+struct KeyColumns {
+    t: Vec<[f32; 3]>,
+    r: Vec<[f32; 4]>,
+    s: Vec<[f32; 3]>,
+    sr: Vec<[f32; 4]>,
+}
+
+impl Track {
+    /// A track from its keys; builds the sample columns.
+    pub fn new(bone: String, keys: Vec<Key>) -> Self {
+        let columns = KeyColumns {
+            t: keys.iter().map(|k| k.translation).collect(),
+            r: keys.iter().map(|k| k.rotation).collect(),
+            s: keys.iter().map(|k| k.scale).collect(),
+            sr: keys.iter().map(|k| k.scale_rotation).collect(),
+        };
+        Self {
+            bone,
+            keys,
+            columns,
+        }
+    }
 }
 
 impl Track {
@@ -131,51 +161,59 @@ impl Track {
         let f0 = frame.floor();
         let t = frame - f0;
         let i0 = f0 as usize;
+        let c = &self.columns;
         if !looped {
             if i0 >= n {
                 return self.keys[n - 1];
             }
             let i1 = (i0 + 1).min(n - 1);
-            return interp(
-                &self.keys[i0],
-                &self.keys[i1],
-                t,
-                self.keys[i0].translation,
-                self.keys[i1].translation,
-            );
+            return Key {
+                translation: lerp3(c.t[i0], c.t[i1], t),
+                rotation: slerp(c.r[i0], c.r[i1], t),
+                scale: lerp3(c.s[i0], c.s[i1], t),
+                scale_rotation: slerp(c.sr[i0], c.sr[i1], t),
+            };
         }
         let last = n.saturating_sub(1).max(1);
-        let pos = |i: usize| -> [f32; 3] {
-            if i < last || n == 1 {
-                self.keys[i.min(n - 1)].translation
+        // Engine: key[i] = key[i % last] with translation (key[last] - key[0]) * (i / last) added.
+        // The wrap is computed with subtracts, not a div/mod per key (the hot path of every animated
+        // bone every frame); `frame = +inf` saturates to the last cycle like the old `i0 = usize::MAX`.
+        let cyc_of = |i: usize| {
+            if i == usize::MAX {
+                (usize::MAX / last, usize::MAX % last)
             } else {
-                // Engine: (key[last] - key[0]) * (i / last) + key[i % last]
-                let cyc = (i / last) as f32;
-                let (a, b) = (self.keys[last].translation, self.keys[0].translation);
-                let k = self.keys[i % last].translation;
-                [0, 1, 2].map(|c| (a[c] - b[c]) * cyc + k[c])
+                let mut cyc = 0;
+                let mut k = i;
+                while k >= last {
+                    k -= last;
+                    cyc += 1;
+                }
+                (cyc, k)
             }
         };
-        let key = |i: usize| {
-            if i < last {
-                self.keys[i]
+        let pos = |i: usize| -> [f32; 3] {
+            if i < last || n == 1 {
+                c.t[i.min(n - 1)]
             } else {
-                self.keys[i % last]
+                let (cyc, k) = cyc_of(i);
+                let (a, b) = (c.t[last], c.t[0]);
+                let f = cyc as f32;
+                let p = c.t[k];
+                [0, 1, 2].map(|j| (a[j] - b[j]) * f + p[j])
             }
+        };
+        let idx = |i: usize| {
+            if i < last { i } else { cyc_of(i).1 }
         };
         // Saturating: `frame = +inf` gives `i0 = usize::MAX`.
         let i1 = i0.saturating_add(1);
-        let (k0, k1) = (key(i0), key(i1));
-        interp(&k0, &k1, t, pos(i0), pos(i1))
-    }
-}
-
-fn interp(a: &Key, b: &Key, t: f32, pa: [f32; 3], pb: [f32; 3]) -> Key {
-    Key {
-        translation: lerp3(pa, pb, t),
-        rotation: slerp(a.rotation, b.rotation, t),
-        scale: lerp3(a.scale, b.scale, t),
-        scale_rotation: slerp(a.scale_rotation, b.scale_rotation, t),
+        let (a, b) = (idx(i0), idx(i1));
+        Key {
+            translation: lerp3(pos(i0), pos(i1), t),
+            rotation: slerp(c.r[a], c.r[b], t),
+            scale: lerp3(c.s[a], c.s[b], t),
+            scale_rotation: slerp(c.sr[a], c.sr[b], t),
+        }
     }
 }
 
@@ -270,7 +308,7 @@ impl Animation {
                     scale_rotation: conj(sq),
                 });
             }
-            tracks.push(Track { bone, keys });
+            tracks.push(Track::new(bone, keys));
         }
         let text = latin1(r.bytes(r.remaining())?);
         let trailer = parse_mif(&text).context("anm text trailer")?;

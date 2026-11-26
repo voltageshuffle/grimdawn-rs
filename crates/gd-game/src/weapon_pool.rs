@@ -87,6 +87,7 @@ fn toggles_need_weapons(
             );
             loadout.skills.inactive.insert(s);
         }
+        loadout.skills.touched();
         commands
             .entity(e)
             .try_insert(gd_game_core::player::ProfileDirty);
