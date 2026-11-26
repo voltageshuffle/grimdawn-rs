@@ -402,8 +402,37 @@ pub fn cast_requests(
 ///
 /// Other busy states (an evade's dash, a stun, a flinch) and a pending attack-delay
 /// (`ControllerPlayerStateUseSkill::OnBegin`) queue it; a dead character's request is dropped. True when the
-/// caller must skip the request. The running skill is the cast's [`Casting`], after its fire point the
-/// [`LastCast`] of the playing clip; a swing's is the default attack.
+/// caller must skip the request. The running skill comes from [`running_skill`].
+///
+/// The skill whose clip is running: a cast's [`Casting`], after its fire point the [`LastCast`] of the
+/// playing clip; a swing's is the default attack. `None` outside an attack / cast.
+pub(crate) fn running_skill<'a>(
+    ch: &Character,
+    casting: Option<&'a Casting>,
+    last: Option<&'a LastCast>,
+) -> Option<&'a str> {
+    match ch.state {
+        CharState::Cast => casting.map(|c| c.skill.as_str()).or_else(|| {
+            last.filter(|l| l.anim == ch.playing)
+                .map(|l| l.skill.as_str())
+        }),
+        CharState::Attack => Some(DEFAULT_ATTACK),
+        _ => None,
+    }
+}
+
+/// Whether `skill` (by record path or wrapped profile name) is the running skill from [`running_skill`]:
+/// a request for it is dropped (`AttackAction::QueryActionPermission` returns 0 for the running skill
+/// itself, even past `AllowInterrupt`).
+pub(crate) fn repeats_running(data: &GameData, running: Option<&str>, skill: &str) -> bool {
+    running.is_some_and(|r| {
+        skill.eq_ignore_ascii_case(r)
+            || data.db.get(skill).is_some_and(|rec| {
+                gd_sim::skills::profile_name(rec).is_some_and(|p| p.eq_ignore_ascii_case(r))
+            })
+    })
+}
+
 fn queue_if_busy(
     data: &GameData,
     ch: &mut Character,
@@ -419,19 +448,8 @@ fn queue_if_busy(
     let chains = |r: &Record| gd_sim::skills::chains_at_end(&r.class);
     let queue = match ch.state {
         CharState::Attack | CharState::Cast => {
-            let running = match ch.state {
-                CharState::Cast => casting.map(|c| c.skill.as_str()).or_else(|| {
-                    last.filter(|l| l.anim == ch.playing)
-                        .map(|l| l.skill.as_str())
-                }),
-                _ => Some(DEFAULT_ATTACK),
-            };
-            let same = running.is_some_and(|r| {
-                skill.eq_ignore_ascii_case(r)
-                    || rec.as_ref().is_some_and(|rec| {
-                        gd_sim::skills::profile_name(rec).is_some_and(|p| p.eq_ignore_ascii_case(r))
-                    })
-            });
+            let running = running_skill(ch, casting, last);
+            let same = repeats_running(data, running, skill);
             let attack = rec.is_some_and(chains);
             if same
                 || (attack

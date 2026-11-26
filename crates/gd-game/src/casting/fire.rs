@@ -172,6 +172,8 @@ pub(super) fn spell_attack_target(
             Option<&gd_game_core::weapon_pool::SkillLinks>,
             Has<MoveToUseSkill>,
             &mut crate::player_orders::PrimaryUse,
+            Option<&Casting>,
+            Option<&LastCast>,
         ),
         (
             With<SpellAttacker>,
@@ -208,6 +210,8 @@ pub(super) fn spell_attack_target(
         links,
         pending,
         mut primary,
+        casting,
+        last_cast,
     )) = players.single_mut()
     else {
         return;
@@ -244,6 +248,16 @@ pub(super) fn spell_attack_target(
             .is_some_and(crate::hotbar::kicks_breakable)
     });
     let skill = if kick { DEFAULT_KICK.to_owned() } else { skill };
+    // The held button's repeat of the running skill is dropped (`AttackAction::QueryActionPermission`):
+    // it spends the armed use without a new cast, so a press casts once and only a repeat past the
+    // clip's `AllowInterrupt` chains the next.
+    if matches!(ch.state, CharState::Attack | CharState::Cast) {
+        let running = running_skill(&ch, casting, last_cast);
+        if repeats_running(&data, running, &skill) || !ch.allow_interrupt {
+            primary.0 = false;
+            return;
+        }
+    }
     let d = (ttf.translation - tf.translation).with_y(0.0).length();
     // Weapon skills need weapon reach (a ranged weapon's for shooters); the kick is always melee
     // (`Skill_Kick::GetValidTarget` → `Skill::GetValidMeleeTarget`).
@@ -2044,6 +2058,7 @@ impl<'w, 's> FireCtx<'w, 's> {
                     if !on {
                         loadout.skills.inactive.insert(low);
                     }
+                    loadout.skills.touched();
                     info!(
                         "toggle {} {}",
                         cast.skill.rsplit('/').next().unwrap_or(&cast.skill),

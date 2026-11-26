@@ -76,8 +76,10 @@ pub struct InteractTarget(pub Option<Entity>);
 /// One use of the primary attack: `SelectPrimaryAction`'s UseSkill controller state ends once its skill was
 /// used, so a click attacks once and only the held button's repeat attacks again. [`PlayerOrder::Attack`] arms
 /// it; the swing / cast that starts on [`Combatant::target`] spends it, and so does any skill request that runs,
-/// as a new controller state replaces the UseSkill one. The target stays the running swing's and is dropped when
-/// the action ends unarmed. A skill queued meanwhile goes before the next primary use.
+/// as a new controller state replaces the UseSkill one. A repeat while the same skill's clip runs spends it
+/// too without starting another (`AttackAction::QueryActionPermission` drops the running skill's own request);
+/// only a repeat past the clip's `AllowInterrupt` chains the next use. The target stays the running swing's and
+/// is dropped when the action ends unarmed. A skill queued meanwhile goes before the next primary use.
 #[derive(Component, Default)]
 pub struct PrimaryUse(pub bool);
 

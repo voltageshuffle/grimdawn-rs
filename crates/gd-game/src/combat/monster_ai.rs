@@ -202,7 +202,11 @@ pub(super) fn monster_ai(
     for (e, mut tf, mut ai, mut cb, mut ch, ranged) in &mut monsters {
         let side = lists.side(&ai.faction, allied.contains(e));
         let foes = lists.get(side);
-        cb.cooldown -= dt;
+        // Only tick while positive: an unconditional write would dirty `Combatant` every frame for
+        // its `Changed<Combatant>` consumers; `<= 0.0` means ready either way.
+        if cb.cooldown > 0.0 {
+            cb.cooldown -= dt;
+        }
         // `Character::CrowdAgentError`: the move stops and the state's `PathFailed` runs. The
         // idle-time states and DodgeAttack do what the path's end does; Flee's is "Return".
         let mut agent = crowd.get_mut(e).ok();
@@ -853,6 +857,8 @@ pub(super) fn player_attack(
             Option<&gd_game_core::weapon_pool::SkillLinks>,
             Has<crate::movement::Rooted>,
             &mut crate::player_orders::PrimaryUse,
+            Option<&gd_game_core::casting::Casting>,
+            Option<&gd_game_core::casting::LastCast>,
         ),
         (
             With<Player>,
@@ -892,11 +898,15 @@ pub(super) fn player_attack(
         links,
         rooted,
         mut primary,
+        casting,
+        last_cast,
     )) = players.single_mut()
     else {
         return;
     };
-    cb.cooldown -= time.delta_secs();
+    if cb.cooldown > 0.0 {
+        cb.cooldown -= time.delta_secs();
+    }
     let Some(t) = cb.target else { return };
     // The use is spent: the target goes once no attack / cast runs.
     if !primary.0 {
@@ -904,6 +914,19 @@ pub(super) fn player_attack(
             cb.target = None;
         }
         return;
+    }
+    // The held button's repeat of the running skill is dropped (`AttackAction::QueryActionPermission`):
+    // it spends the armed use without a new swing, so a press attacks once and only a repeat past the
+    // clip's `AllowInterrupt` chains the next.
+    if matches!(ch.state, CharState::Attack | CharState::Cast) {
+        let running = crate::casting::running_skill(&ch, casting, last_cast);
+        let same = caster.slots[gd_game_core::casting::SLOT_LEFT]
+            .as_deref()
+            .is_some_and(|s| crate::casting::repeats_running(&data, running, s));
+        if same || !ch.allow_interrupt {
+            primary.0 = false;
+            return;
+        }
     }
     // Down or getting up: no action until the get-up clip has ended.
     if matches!(ch.state, CharState::KnockedDown | CharState::GettingUp) {
