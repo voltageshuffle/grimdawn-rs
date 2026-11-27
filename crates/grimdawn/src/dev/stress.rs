@@ -67,7 +67,14 @@ fn keep_foes(
     hooks: Res<Hooks>,
     mut commands: Commands,
     player: Query<&Transform, With<gd_game_core::player::Player>>,
-    foes: Query<(), (With<Monster>, With<StressFoe>, Without<gd_game_core::combat::Dead>)>,
+    foes: Query<
+        (),
+        (
+            With<Monster>,
+            With<StressFoe>,
+            Without<gd_game_core::combat::Dead>,
+        ),
+    >,
     nav: Res<gd_game::nav::Nav>,
     mut assets: gd_render::character::CharAssets,
     rules: Option<Res<gd_game_core::rules::CombatRules>>,
@@ -208,8 +215,7 @@ fn fx_bursts(
         let x = base.x + a.cos() * r;
         let z = base.z + a.sin() * r;
         let y = nav.0.ground([x, base.y + 50.0, z]).unwrap_or(base.y);
-        let mut spec =
-            gd_game_core::visuals::EffectSpec::pfx(BURSTS[(i as usize) % BURSTS.len()]);
+        let mut spec = gd_game_core::visuals::EffectSpec::pfx(BURSTS[(i as usize) % BURSTS.len()]);
         spec.despawn_when_complete = true;
         spec.no_loop = true;
         commands.spawn((

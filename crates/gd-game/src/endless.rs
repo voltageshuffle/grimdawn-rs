@@ -608,12 +608,14 @@ pub fn dying_penalty(
     info!("endless: died, bonus timer -{} ms", rs.dying_penalty_ms);
     st.game.survival.timer_subtract(rs.dying_penalty_ms);
     // `Monster::OnKilledPlayer`: every monster that was after the player heals `healthGainOnKillPct` % of
-    // its max life (from `healthGainOnKillDifficulty`). PORT: the life bonus modifiers are not applied.
+    // its max life (from `healthGainOnKillDifficulty`), through `Character::TakeBonus` →
+    // `CharacterBio::GetBonusLifeAmount`, so its heal modifiers apply ([`gd_game_core::casting::bonus_life`]).
     if rs.health_gain_pct > 0.0 && mode.0.challenge >= rs.health_gain_challenge {
         for (mut cb, ai) in &mut monsters {
             if ai.aggro {
-                let max = cb.profile.sheet.life;
-                cb.life = (cb.life + rs.health_gain_pct / 100.0 * max).min(max);
+                let heal =
+                    gd_game_core::casting::bonus_life(&cb.profile.sheet, 0.0, rs.health_gain_pct);
+                cb.life = (cb.life + heal).min(cb.profile.sheet.life);
             }
         }
     }

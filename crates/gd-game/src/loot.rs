@@ -676,7 +676,8 @@ pub fn spawn_thrown(
 /// Each frame runs the body's fixed steps against terrain and static scenery (a contact in any lands
 /// it), then, as `Item::PhysicsUpdate`, moves the item by the offset `d` from its centre of mass to
 /// the closest path-mesh point: horizontally only while that point is below the centre, landed when it
-/// is at or above it. Landed: drop sound. Still flying after [`MAX_PHYSICS_UPDATES`] or falling faster
+/// is at or above it. Landed: drop sound — the water sound (`dropSoundWater`) when the resting point
+/// sits on a water surface (`Item::PlayDropSoundWorld`). Still flying after [`MAX_PHYSICS_UPDATES`] or falling faster
 /// than [`FALL_LIMIT`]: leaves the simulation without sound or beam ([`NoBeam`]; `Item::CreateBeamLoop`
 /// only runs on landing).
 #[allow(clippy::too_many_arguments)]
@@ -769,10 +770,13 @@ pub fn toss_flight(
             continue;
         }
         commands.entity(e).try_remove::<Tossed>();
-        // `Item::CollisionCallback` / `Item::PhysicsUpdate` on landing.
+        // `Item::CollisionCallback` / `Item::PhysicsUpdate` on landing: the sound follows the
+        // contact's `PhysicsSurface` (`Item::PlayDropSoundWorld`), water when the resting point
+        // sits on a water surface (`Ground::water_below`, as `WorldCollision::surface_below`).
         if let Some(item) = ground.item.as_ref() {
             let idb = &data.item_db();
-            if let Some(pak) = drop_sound(idb, item) {
+            let in_water = coll.surface_below(origin) == gd_sim::surface::Surface::Water as u32;
+            if let Some(pak) = drop_sound(idb, item, in_water) {
                 sounds.write(gd_game_core::visuals::PlaySoundOn {
                     pak,
                     on: e,

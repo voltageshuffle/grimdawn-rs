@@ -556,7 +556,8 @@ impl Character {
 
     /// The body's bone frames in the current pose (mesh space), rebuilt if stale.
     pub fn posed(&self) -> &[Coords] {
-        self.posed.get_or_init(|| anim::pose_abs(&self.body, &self.pose))
+        self.posed
+            .get_or_init(|| anim::pose_abs(&self.body, &self.pose))
     }
 
     /// The attach point `name` in its pose, in model space (`Actor::GetAttachPointCoords`).

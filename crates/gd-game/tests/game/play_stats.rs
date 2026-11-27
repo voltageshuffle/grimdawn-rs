@@ -143,6 +143,7 @@ fn boss_chest_and_potion_count_and_survive_save_and_load() {
         cell,
         cursor: Vec2::ZERO,
         right: true,
+        stash_page: None,
     });
     g.steps(2);
     assert_eq!(counts(&g).health_potions_used, 1);

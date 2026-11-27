@@ -1352,8 +1352,9 @@ pub struct WarmUp {
 ///
 /// The dash gives up once it has run farther from its start than the target is plus `maxDistanceBuffer`
 /// (`Skill_AttackWeaponCharge::MaxSkillDistance`; no check when 0); no time limit. It ends without its hit when
-/// the target dies (`WarmUpEnd` cancels, [`warms_up`]) or the caster dies or is stunned. PORT: the skill's
-/// `skillTargetNumber` / `skillTargetAngle` sweep along the way is not done.
+/// the target dies (`WarmUpEnd` cancels, [`warms_up`]) or the caster dies or is stunned. The arrival hit takes
+/// the same `skillTargetAngle` / `skillTargetNumber` cone as any weapon attack
+/// (`SkillActivated::ExecuteMeleeAttack`); there is no sweep along the way.
 #[derive(Component)]
 pub struct Charge {
     pub target: Entity,
@@ -1365,11 +1366,29 @@ pub struct Charge {
     pub buffer: f32,
     pub path: Vec<Vec3>,
     pub repath: f32,
+    /// The arrival cone (`skillTargetAngle` full width, `skillTargetNumber` cap, 0 = no cap), with the
+    /// skill's modifier records folded in at the cast.
+    pub angle: f32,
+    pub number: usize,
+    /// The caster's side seeks foes (`Casting::hostile`); a pet's / convert's dash does not.
+    pub hostile: bool,
 }
 
 impl Charge {
-    /// `bonus`: its `characterRunSpeedModifier` %.
-    pub fn new(rec: &Record, skill: &str, li: usize, bonus: f32, at: Vec3, target: Entity) -> Self {
+    /// `bonus`: its `characterRunSpeedModifier` %; `angle` / `number`: the arrival cone; `hostile`: the
+    /// caster's side seeks foes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        rec: &Record,
+        skill: &str,
+        li: usize,
+        bonus: f32,
+        at: Vec3,
+        target: Entity,
+        angle: f32,
+        number: usize,
+        hostile: bool,
+    ) -> Self {
         Charge {
             target,
             bonus,
@@ -1379,6 +1398,9 @@ impl Charge {
             buffer: rec.f32("maxDistanceBuffer").unwrap_or(0.0),
             path: Vec::new(),
             repath: 0.0,
+            angle,
+            number,
+            hostile,
         }
     }
 }

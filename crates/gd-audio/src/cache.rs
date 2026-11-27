@@ -509,6 +509,8 @@ pub(super) fn preload_sounds(
                 );
             }
         }
+        // `Holdings::of` includes the shown weapon enchantment's swipe / hit paks
+        // (`WeaponEnchantmentPak::Load`).
         paks.extend(gd_game::combat_sounds::weapon_sound_paks(
             &data,
             &holdings.of(e),

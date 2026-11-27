@@ -22,7 +22,8 @@
 //! `InputDevice::GetDefaultButtonName`). PORT: keyboard names are Wine's for the scan code. Clicking a Primary /
 //! Secondary cell waits for a key (Esc cancels) and binds it; Apply stores the bindings. The list's scroll bar
 //! (`MenuScrollBar::HandleMouseEvent`): a press on the thumb grabs it, a move places it at the cursor less the
-//! grab offset, the release lets go. PORT: the list scrolls by whole rows; a press on the track does not page.
+//! grab offset, the release lets go; a press on the track above / below the thumb pages by a fifth of the
+//! track (in thumb px). PORT: the list scrolls by whole rows.
 //!
 //! Sounds: the tabs and Default / Apply / Close are `menubutton`s (their `soundNameOver` / `soundNameDown`, Apply
 //! only while enabled); the check boxes play the constants' `gemButtonRolloverSound` / `gemButtonClickSound`
@@ -170,6 +171,8 @@ enum Hit {
     Key(u32, usize),
     /// Its rect stored at scroll 0.
     KeyThumb,
+    /// The key list's track; a press pages. The thumb's rect is tested first.
+    KeyTrack,
 }
 
 #[derive(Resource, Default, Clone, PartialEq)]
@@ -199,6 +202,20 @@ fn key_thumb_top(layout: &OptionsLayout, scroll: usize) -> f32 {
     let (top, travel) = layout.key_bar;
     let span = layout.max_scroll.max(1) as f32;
     (top + travel * (scroll.min(layout.max_scroll) as f32 / span)).round()
+}
+
+/// The rows a press on the key list's track pages (`MenuScrollBar::HandleMouseEvent`): a fifth of the track
+/// (in thumb px, at least 1) over the thumb's travel times the scroll range, at least one row
+/// ([`gd_ui::window::Bar::press`]'s rule, rounded to whole rows).
+fn key_track_page(layout: &OptionsLayout) -> usize {
+    let travel = layout.key_bar.1;
+    let thumb_h = layout
+        .hits
+        .iter()
+        .find(|(_, h)| *h == Hit::KeyThumb)
+        .map_or(0.0, |(r, _)| r.h);
+    let page = ((travel + thumb_h) / 5.0).trunc().max(1.0);
+    ((page * layout.max_scroll as f32 / travel.max(1.0)).round() as usize).max(1)
 }
 
 /// The hit under `p` (physical px): the key-list cells and the dropdown rows are shifted by the list's scroll and

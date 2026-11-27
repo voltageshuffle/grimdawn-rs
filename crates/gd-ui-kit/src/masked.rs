@@ -47,9 +47,7 @@ impl UiMaterial for MaskedMaterial {
 /// material instead of minting one per build.
 #[derive(Resource, Default)]
 #[allow(clippy::type_complexity)]
-pub struct MaskedCache(
-    HashMap<(AssetId<Image>, AssetId<Image>, [u32; 4]), Handle<MaskedMaterial>>,
-);
+pub struct MaskedCache(HashMap<(AssetId<Image>, AssetId<Image>, [u32; 4]), Handle<MaskedMaterial>>);
 
 /// A node showing `image` over `dst` (screen px), masked by `mask`'s alpha
 /// stretched over `mask_rect` (screen px).

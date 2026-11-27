@@ -561,7 +561,7 @@ fn build_objectives(
 /// included), the bonus timer "mm:ss" (below 10 s it pulses red: alpha = triangle of
 /// `(t % 1750) / 1750 * 1.25 + 0.35` folded at 0.975). Hover `UIEndlessHud::HitTestRollover`: each text's own box
 /// (the bar first, its result dropped), Shard -> `endlessDungeonNameRollover`, Chunk -> `endlessFloorNameRollover`,
-/// timer -> `endlessTimerRollover` (PORT: `^n^n` paragraph breaks show as one).
+/// timer -> `endlessTimerRollover` (`^n^n` paragraph breaks show as blank spacer lines).
 /// PORT: the timer's style record (`style_survivalpane_s`) exists only in the Crucible's mod, so
 /// `style_endlessdungeon_s` stands in outside it.
 #[derive(Resource, Default, Clone, PartialEq, Debug)]

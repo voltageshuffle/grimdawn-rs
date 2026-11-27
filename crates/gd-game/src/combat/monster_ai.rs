@@ -639,6 +639,7 @@ pub(super) fn monster_ai(
                             key,
                             li.unwrap_or(0),
                             &tf,
+                            ai.faction.is_some() && !allied.contains(e),
                         );
                     }
                 }

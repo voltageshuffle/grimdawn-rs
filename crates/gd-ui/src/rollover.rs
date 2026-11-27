@@ -714,20 +714,30 @@ fn push_wrapped(
     chars: usize,
 ) {
     let text = text.replace("{^n}", "\n").replace("^n", "\n");
-    match wrap_sample(&text, chars) {
-        Some(sample) => {
-            let widest = lines
-                .iter()
-                .map(|(s, t)| ui.text_width(s, t))
-                .fold(0.0, f32::max);
-            let wrap_w = ui.text_width(st, &sample).max(widest);
+    // Each `^n` segment wraps on its own so a blank segment stays a paragraph spacer
+    // (`GameTextLines::AddBlankLine`); the width sample comes from the whole text.
+    let sample = wrap_sample(&text, chars);
+    let widest = lines
+        .iter()
+        .map(|(s, t)| ui.text_width(s, t))
+        .fold(0.0, f32::max);
+    let wrap_w = sample
+        .as_deref()
+        .map(|s| ui.text_width(st, s))
+        .unwrap_or(0.0)
+        .max(widest);
+    for seg in text.split('\n') {
+        if seg.is_empty() {
+            lines.push((st.to_owned(), String::new()));
+        } else if sample.is_some() {
             lines.extend(
-                ui.wrap_lines(st, wrap_w, &text)
+                ui.wrap_lines(st, wrap_w, seg)
                     .into_iter()
                     .map(|l| (st.to_owned(), l)),
             );
+        } else {
+            lines.push((st.to_owned(), seg.to_string()));
         }
-        None => lines.extend(text.split('\n').map(|l| (st.to_owned(), l.to_string()))),
     }
 }
 
@@ -1353,7 +1363,8 @@ fn hud_rollover(
     state.3 = Some((anchor, outer));
 }
 
-/// A `RolloverStyleUIHelp` window holding `lines` (style, text; empty ones dropped). Returns its outer box.
+/// A `RolloverStyleUIHelp` window holding `lines` (style, text; leading / trailing empty ones dropped,
+/// interior ones kept as paragraph spacers). Returns its outer box.
 pub(super) fn draw_window(
     ui: &mut Ui,
     style: Option<&gd_formats::arz::Record>,
@@ -1361,7 +1372,11 @@ pub(super) fn draw_window(
     anchor: Vec2,
     placement: Placement,
 ) -> URect {
-    let lines: Vec<&(String, String)> = lines.iter().filter(|(_, t)| !t.is_empty()).collect();
+    // Interior empty lines are paragraph spacers (`GameTextLines::AddBlankLine`, `^n^n`); only the
+    // leading / trailing ones (an unset `Line3Tag`) add nothing.
+    let first = lines.iter().position(|(_, t)| !t.is_empty()).unwrap_or(lines.len());
+    let last = lines.iter().rposition(|(_, t)| !t.is_empty()).map_or(first, |i| i + 1);
+    let lines: Vec<&(String, String)> = lines[first..last].iter().collect();
     let mut text_w: f32 = 0.0;
     let mut text_h = 0.0;
     for (st, t) in lines.iter().copied() {

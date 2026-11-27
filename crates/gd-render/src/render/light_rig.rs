@@ -53,7 +53,8 @@
 //!   rig and highlight 0); the window's `UISceneView` record lights them. NPCs and monsters share
 //!   `Character::AddToScene` (their own `lightRig`, e.g. `npclightrig.dbr`).
 //!
-//! PORT: the stencil group is the mesh's `MeshTag` (bits 0-15 the group, 16-31 the ambient highlight × 1000) and
+//! PORT: the stencil group is the mesh's `MeshTag` (bits 0-15 the group, 16-30 the ambient highlight × 1000,
+//! bit 31 the actor-highlight flag) and
 //! each rig light is a Bevy `PointLight` (never shadowed) whose `radius` carries the group (+ 0.5 when
 //! specular) and `intensity` 4π (Bevy divides by 4π: the clustered colour is the light's colour);
 //! gd_standard.wesl walks the pixel's light cluster for the lights of its tag's group. `render/env.rs` leaves

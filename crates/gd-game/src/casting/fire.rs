@@ -1147,6 +1147,9 @@ impl<'w, 's> FireCtx<'w, 's> {
                                 lf("characterRunSpeedModifier"),
                                 tf.translation,
                                 t,
+                                lf("skillTargetAngle"),
+                                lf("skillTargetNumber") as usize,
+                                cast.hostile,
                             ));
                         }
                     }

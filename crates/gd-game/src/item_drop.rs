@@ -18,7 +18,9 @@
 //! ([`Inventory::cancel_apply`]; PORT: not while its confirmation is up); an empty cursor does
 //! nothing. PORT: only the chat window would block it; the port has none.
 //!
-//! PORT: a dropped item stays while the session runs and is not saved.
+//! A dropped item lasts the session only, like the engine: level state is kept in memory across streaming
+//! (`Region::Unload` → `Level::SaveState`, restored by `Region::Load`), and `World::Save` — the only writer
+//! of a world-state file — is never called, so nothing on the ground is written to the save.
 use crate::loot::GroundItem;
 use bevy::prelude::*;
 use gd_formats::arz::Record;
@@ -108,7 +110,8 @@ pub fn apply_drops(
             if let Some(h) = inv.held.take() {
                 info!("destroyed {}", h.base_name);
             }
-        } else if let Err(h) = inv.cancel_held(stash.as_deref_mut()) {
+        } else if let Err(h) = inv.cancel_held(stash.as_deref_mut(), None) {
+            // No caravan page comes with the destroy answer: the origin cell takes it back.
             let Ok((t, ch, req)) = players.single() else {
                 inv.held = Some(h);
                 continue;

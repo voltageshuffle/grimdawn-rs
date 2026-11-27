@@ -392,12 +392,19 @@ fn clicks(
                 return;
             }
         }
+        // The caravan's selected personal stash page (`Player::GetSelectedStashSackNumber`): a Cancel
+        // (`CursorHandlerItemMove::Cancel`) puts the held item there. The transfer view selects no
+        // personal page.
+        let stash_page = matches!(trade.open, Some(crate::trade::TradeOpen::Stash { .. }))
+            .then_some(trade.tab)
+            .filter(|_| !trade.transfer);
         if right {
             requests.write(InvRequest::Bag {
                 bag: *b,
                 cell: (cx, cy),
                 cursor: Vec2::new((p.x - r.x) / cell, (p.y - r.y) / cell),
                 right: true,
+                stash_page,
             });
             return;
         }
@@ -406,6 +413,7 @@ fn clicks(
             cell: (cx, cy),
             cursor: Vec2::new((p.x - r.x) / cell, (p.y - r.y) / cell),
             right: false,
+            stash_page,
         });
         return;
     }

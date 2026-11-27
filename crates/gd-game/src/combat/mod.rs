@@ -113,6 +113,12 @@ pub struct HitLanded {
     /// Taunt the attack exerted: the anger `ControllerMonster::TauntMe` adds for the attacker
     /// (`gd_sim::combat::Influence::taunt`).
     pub taunt: f32,
+    /// The attack's instant-damage types (`CombatAttributeAccumulator::GetDamageTypes` of
+    /// `ParametersCombat`, hit filter): the weapon's physical / pierce parts and typed hits,
+    /// DoTs and crowd control excluded. Collected only for a target with on-hit procs
+    /// ([`crate::autocast::Autocasts`]); empty for anyone else. PORT: the resolved hit's applied
+    /// types, so a hit an absorb filter took whole carries none.
+    pub types: Vec<gd_sim::attributes::CombatType>,
 }
 
 /// An attack made on a target, hit or miss (`SkillServices_Character::AttackingEnemy`): the `AttackEnemy(Crit)`

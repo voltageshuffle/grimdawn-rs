@@ -34,9 +34,11 @@
 //! `Item::CreateItem`, no `SetWeaponEnchantment`), so it shows no
 //! enchantment; it gets no trails either.
 //!
-//! PORT: `weaponActiveEffect` and the swipe / hit sounds are not loaded; the trail stops when the animation the
-//! swipe started in stops playing (the attack action's end); swipes count in the Attack slot and in a weapon skill's
-//! cast.
+//! PORT: `weaponActiveEffect` is not loaded; the swipe / hit sounds are loaded and played by
+//! `gd_game::combat_sounds` (`enchant_sounds`, the same per-kind fields; the pak's sound in
+//! addition to the weapon's own, `Weapon::PlaySwipeSound` / `PlayHitSound`); the trail stops when
+//! the animation the swipe started in stops playing (the attack action's end); swipes count in
+//! the Attack slot and in a weapon skill's cast.
 use super::items::{Anchor, ItemFx};
 use super::{Effect, StopEmitting, spawn_effect_record};
 use crate::character::Body;

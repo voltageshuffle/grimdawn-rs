@@ -47,8 +47,8 @@
 //! `BindPower`), and the star shows the bound skill's icon at 0.75 x its size centred on it. A star acts on the release
 //! (event 9) over it after a press (event 1) on it (`DevotionWindow::OnStarClick`: the press sets
 //! `DevotionStar.pressed`, the release over it with it set takes,
-//! reclaims or opens the list, `DevotionWindow::HandleStarClick`). PORT: a press elsewhere forgets the pressed star
-//! (the engine's `DevotionStar.pressed` stays set until a release over the star), and an untaken power with no devotion
+//! reclaims or opens the list, `DevotionWindow::HandleStarClick`). A press elsewhere keeps the pressed star
+//! (the engine's `DevotionStar.pressed` stays set until a release over the star). PORT: an untaken power with no devotion
 //! point left (or a star flagged with `DevotionStar.blocked` / `DevotionStar.unavailable` set) does not open the list
 //! (the engine's falls through to the open). The bound hotbar keys over the
 //! star still bind too.
@@ -2189,7 +2189,9 @@ pub fn clicks(
     if buttons.just_pressed(MouseButton::Left) {
         *pressed = match top {
             Some(DevHit::Star(c, s)) => Some((c, s)),
-            _ => None,
+            // A press elsewhere keeps the pressed star (`DevotionStar.pressed` stays set until a
+            // release over the star): press, drag off, drag back, release still acts.
+            _ => *pressed,
         };
     }
     let Some(hit) = top else { return };
@@ -2377,8 +2379,8 @@ const HELP_INDEX: u32 = 59;
 
 /// The keyboard goes to the search box while it is active (`EditBox::HandleKey`): Enter leaves the box; the window
 /// closing clears the text and deactivates the box. Runs in `PreUpdate` ahead of every hotkey reader and resets the
-/// `ButtonInput` (Escape stays for the dispatcher). PORT: the clipboard is the process's own; the engine clears the
-/// text on open (`DevotionWindow::SetVisible`).
+/// `ButtonInput` (Escape stays for the dispatcher). PORT: the clipboard is the process's own (the engine uses
+/// the system clipboard); the text clearing on open matches (`DevotionWindow::SetVisible`).
 #[allow(clippy::too_many_arguments)]
 fn search_typing(
     mut view: ResMut<DevotionView>,

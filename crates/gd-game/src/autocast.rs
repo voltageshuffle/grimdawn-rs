@@ -24,6 +24,12 @@
 //! first friendly within `autoTargetRadius` (`SkillAutoCastController::FindAllyTarget`); with
 //! no radius, nothing.
 //!
+//! On-hit passives: `Skill_PassiveOnHitBuffSelf::OnHitActivation` skips while its granted buff
+//! runs; `Skill_PassiveOnHitBuffShield::OnHitActivation` also skips while its absorb pool has
+//! anything left, and counts only a hit carrying one of its `…DamageQualifier` types
+//! (`CombatAttributeAccumulator::GetDamageTypes` of the attack → `SkillProfile::IsQualifyingDamage`;
+//! no qualifiers: any hit with damage). Both roll integer 0..=100 ≤ `onHitActivationChance`.
+//!
 //! Skill-level autocasts ([`SkillAutocasts`], monsters and pets): `Skill::LoadResources` creates
 //! a child skill from `autoCastSkill` when `autoCastController` is set too; `Skill::Install`
 //! sets it to the parent's level and registers a `SkillAutoCastController` with the parent's
@@ -152,6 +158,11 @@ struct Auto {
     /// `thresholdDuration` (life monitor): the buff's time only runs once
     /// life is back above the threshold.
     threshold: bool,
+    /// `Skill_PassiveOnHitBuffShield`: the hit must carry a qualifying damage type
+    /// (`SkillProfile::IsQualifyingDamage`); empty: any hit with damage.
+    qualifiers: Vec<gd_sim::attributes::CombatType>,
+    /// `Skill_PassiveOnHitBuffShield`: stays blocked while its absorb pool has anything left.
+    shield: bool,
     /// Held by a running received buff (`buff_autocasts`), not by an item or skill.
     from_buff: bool,
 }
@@ -246,6 +257,8 @@ fn parse(
         block: 0.0,
         threshold: false,
         from_buff: false,
+        qualifiers: Vec::new(),
+        shield: false,
     })
 }
 
@@ -342,8 +355,7 @@ fn collect_autocasts(
         let trigger = match r.class.as_str() {
             "Skill_PassiveOnLifeBuffSelf" => Trigger::LifeMonitor,
             "Skill_PassiveOnCritBuffSelf" => Trigger::AttackEnemyCrit,
-            // `Skill_PassiveOnHitBuffSelf::OnHitActivation`. PORT: the skip while the buff
-            // runs and the shield's qualifying damage types are not done.
+            // `Skill_PassiveOnHitBuffSelf::OnHitActivation` / `Skill_PassiveOnHitBuffShield::OnHitActivation`.
             "Skill_PassiveOnHitBuffSelf" | "Skill_PassiveOnHitBuffShield" => Trigger::HitByEnemy,
             // Switched on: `Skill_OnHitAttackRadius::OnHitActivation`, uniform 0.1..100 ≤
             // `onHitActivationChance`, its own cooldown blocks it.
@@ -384,6 +396,12 @@ fn collect_autocasts(
                 && r.get("thresholdDuration")
                     .is_none_or(|_| r.bool("thresholdDuration")),
             from_buff: false,
+            qualifiers: if r.class == "Skill_PassiveOnHitBuffShield" {
+                gd_game_core::casting::qualifying_types(r)
+            } else {
+                Vec::new()
+            },
+            shield: r.class == "Skill_PassiveOnHitBuffShield",
         });
     }
     info!(
@@ -519,6 +537,7 @@ pub(crate) fn trigger_autocasts(
             Without<gd_game_core::combat::Dead>,
         ),
     >,
+    shields: Query<&gd_game_core::casting::Shields, With<Player>>,
     mut procs: MessageWriter<ProcCast>,
     mut triggered: MessageWriter<Triggered>,
 ) {
@@ -540,17 +559,23 @@ pub(crate) fn trigger_autocasts(
         }
     }
     auto.active.retain(|a| a.1 > 0.0);
-    // (trigger, skill used, enemy involved, weapon attack)
-    let mut events: Vec<(Trigger, Option<Arc<str>>, Option<Entity>, bool)> = Vec::new();
+    // (trigger, skill used, enemy involved, weapon attack, hit damage types)
+    let mut events: Vec<(
+        Trigger,
+        Option<Arc<str>>,
+        Option<Entity>,
+        bool,
+        Option<&[gd_sim::attributes::CombatType]>,
+    )> = Vec::new();
     for m in made.read() {
         if m.attacker == me {
             let used = m
                 .skill
                 .clone()
                 .or_else(|| Some(Arc::from(gd_game_core::casting::DEFAULT_ATTACK)));
-            events.push((Trigger::AttackEnemy, used.clone(), Some(m.target), m.weapon));
+            events.push((Trigger::AttackEnemy, used.clone(), Some(m.target), m.weapon, None));
             if m.critical {
-                events.push((Trigger::AttackEnemyCrit, used, Some(m.target), m.weapon));
+                events.push((Trigger::AttackEnemyCrit, used, Some(m.target), m.weapon, None));
             }
         }
     }
@@ -560,15 +585,16 @@ pub(crate) fn trigger_autocasts(
                 .skill
                 .clone()
                 .or_else(|| Some(Arc::from(gd_game_core::casting::DEFAULT_ATTACK)));
-            events.push((Trigger::AttackEnemy, used.clone(), Some(m.target), m.weapon));
+            events.push((Trigger::AttackEnemy, used.clone(), Some(m.target), m.weapon, None));
             if m.critical {
-                events.push((Trigger::AttackEnemyCrit, used, Some(m.target), m.weapon));
+                events.push((Trigger::AttackEnemyCrit, used, Some(m.target), m.weapon, None));
             }
         }
     }
     for h in landed.read() {
         if h.target == me {
-            events.push((Trigger::HitByEnemy, None, Some(h.attacker), false));
+            let types = Some(h.types.as_slice());
+            events.push((Trigger::HitByEnemy, None, Some(h.attacker), false, types));
             events.push((
                 if h.melee {
                     Trigger::HitByMelee
@@ -578,12 +604,13 @@ pub(crate) fn trigger_autocasts(
                 None,
                 Some(h.attacker),
                 false,
+                types,
             ));
             if h.critical {
-                events.push((Trigger::HitByCrit, None, Some(h.attacker), false));
+                events.push((Trigger::HitByCrit, None, Some(h.attacker), false, types));
             }
             if h.blocked {
-                events.push((Trigger::Block, None, Some(h.attacker), false));
+                events.push((Trigger::Block, None, Some(h.attacker), false, types));
             }
         }
     }
@@ -602,6 +629,7 @@ pub(crate) fn trigger_autocasts(
                 ),
                 None,
                 false,
+                None,
             ));
         }
     }
@@ -613,7 +641,7 @@ pub(crate) fn trigger_autocasts(
         let Some(t) = data.db.get(name).and_then(|r| buff_trigger(&data.db, r)) else {
             continue;
         };
-        events.push((t, Some(Arc::from(name.as_str())), None, false));
+        events.push((t, Some(Arc::from(name.as_str())), None, false, None));
     }
     if cb.life > 0.0
         && auto
@@ -621,7 +649,7 @@ pub(crate) fn trigger_autocasts(
             .iter()
             .any(|a| a.trigger == Trigger::LifeMonitor && life_pct <= a.param)
     {
-        events.push((Trigger::LifeMonitor, None, None, false));
+        events.push((Trigger::LifeMonitor, None, None, false, None));
     }
     let energy_pct = caster.map_or(100.0, |c| {
         100.0 * c.energy / cb.profile.sheet.energy.max(1.0)
@@ -635,7 +663,7 @@ pub(crate) fn trigger_autocasts(
     {
         let below = auto.list.iter().any(|a| a.trigger == t && pct < a.param);
         if below && !auto.low[k] {
-            events.push((t, None, None, false));
+            events.push((t, None, None, false, None));
         }
         auto.low[k] = below;
     }
@@ -649,7 +677,7 @@ pub(crate) fn trigger_autocasts(
         return;
     }
     for a in auto.list.clone() {
-        for (t, used, enemy, weapon) in &events {
+        for (t, used, enemy, weapon, hit_types) in &events {
             if a.trigger != *t {
                 continue;
             }
@@ -669,6 +697,26 @@ pub(crate) fn trigger_autocasts(
                 && !used.as_ref().is_some_and(|u| u.eq_ignore_ascii_case(b))
             {
                 continue;
+            }
+            if a.shield {
+                // The shield's own absorb pool blocks it while anything is left
+                // (`Skill_PassiveOnHitBuffShield::OnHitActivation`).
+                if shields.get(me).is_ok_and(|s| {
+                    s.0.iter().any(|x| {
+                        x.skill.eq_ignore_ascii_case(&a.skill) && !x.absorb.spent()
+                    })
+                }) {
+                    continue;
+                }
+                // Only a hit carrying a qualifying damage type counts
+                // (`SkillProfile::IsQualifyingDamage`; no qualifiers: any damage).
+                let Some(types) = hit_types else { continue };
+                if types.is_empty()
+                    || (!a.qualifiers.is_empty()
+                        && !types.iter().any(|ty| a.qualifiers.contains(ty)))
+                {
+                    continue;
+                }
             }
             if !auto.cooldowns.usable(&a.skill) || auto.active.iter().any(|c| c.0 == a.skill) {
                 continue;

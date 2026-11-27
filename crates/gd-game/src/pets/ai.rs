@@ -774,7 +774,16 @@ pub(super) fn pet_ai(
                         .chain(pet.specials.iter())
                         .find(|a| a.skill == key)
                         .map_or(0, |a| a.level_index);
-                    crate::casting::begin_pursuit_charge(&mut commands, &data, e, t, key, li, &tf);
+                    crate::casting::begin_pursuit_charge(
+                        &mut commands,
+                        &data,
+                        e,
+                        t,
+                        key,
+                        li,
+                        &tf,
+                        side.hostile(),
+                    );
                 }
             }
             match act {

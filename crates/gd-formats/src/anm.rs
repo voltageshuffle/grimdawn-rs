@@ -176,20 +176,11 @@ impl Track {
         }
         let last = n.saturating_sub(1).max(1);
         // Engine: key[i] = key[i % last] with translation (key[last] - key[0]) * (i / last) added.
-        // The wrap is computed with subtracts, not a div/mod per key (the hot path of every animated
-        // bone every frame); `frame = +inf` saturates to the last cycle like the old `i0 = usize::MAX`.
+        // One div for the cycle, the remainder by multiply-subtract (no second div); O(1) however long
+        // the clip has looped (`frame` grows with `time_ms`). `frame = +inf` saturates to the last cycle.
         let cyc_of = |i: usize| {
-            if i == usize::MAX {
-                (usize::MAX / last, usize::MAX % last)
-            } else {
-                let mut cyc = 0;
-                let mut k = i;
-                while k >= last {
-                    k -= last;
-                    cyc += 1;
-                }
-                (cyc, k)
-            }
+            let cyc = i / last;
+            (cyc, i - cyc * last)
         };
         let pos = |i: usize| -> [f32; 3] {
             if i < last || n == 1 {

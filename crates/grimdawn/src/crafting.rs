@@ -20,8 +20,8 @@ use gd_ui::state::crafting::CraftList;
 use gd_ui::trade::CraftScrolled;
 use gd_ui::window::{BarHold, ScrollOwner, ScrollThumb, bar_held};
 
-/// Clicks in the crafting window: category tabs, recipe rows, the craft
-/// button; the wheel scrolls the list.
+/// Clicks in the crafting window: category tabs, group headers (collapse / expand), recipe rows,
+/// the craft button; the wheel scrolls the list.
 #[allow(clippy::too_many_arguments)]
 pub fn craft_clicks(
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
@@ -138,7 +138,7 @@ pub fn craft_clicks(
     let n = match *rows {
         Some((v, ready, n)) if (v, ready) == key => n,
         _ => {
-            let n = list.row_count(trade.tab, &trade.search.query());
+            let n = list.row_count(trade.tab, &trade.search.query(), &trade.collapsed);
             *rows = Some((key.0, key.1, n));
             n
         }
@@ -182,6 +182,15 @@ pub fn craft_clicks(
                 // Rows keep content coordinates (the pane shifts them): hit-test the scroll-shifted point.
                 let line = layout.rows.first().map_or(0.0, |(_, r)| r.h);
                 let q = Vec2::new(p.x, p.y + trade.scroll as f32 * line);
+                // A group header collapses / expands its recipes (its collapse icon).
+                if let Some((g, _)) = layout.headers.iter().find(|(_, r)| contains(r, q)) {
+                    if let Some(i) = trade.collapsed.iter().position(|c| c == g) {
+                        trade.collapsed.remove(i);
+                    } else {
+                        trade.collapsed.push(*g);
+                    }
+                    trade.version += 1;
+                }
                 if let Some((i, _)) = layout.rows.iter().find(|(_, r)| contains(r, q)) {
                     trade.recipe = Some(*i);
                     trade.version += 1;
@@ -268,7 +277,7 @@ pub fn craft_scroll(
     let n = match *rows {
         Some((v, ready, n)) if (v, ready) == key => n,
         _ => {
-            let n = list.row_count(trade.tab, &trade.search.query());
+            let n = list.row_count(trade.tab, &trade.search.query(), &trade.collapsed);
             *rows = Some((key.0, key.1, n));
             n
         }

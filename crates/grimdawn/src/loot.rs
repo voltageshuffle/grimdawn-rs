@@ -939,9 +939,7 @@ fn place_labels(
     shown.sort_by_key(|(owner, _, _)| owner.index());
     // Write only on change: an unconditional rewrite marks `ListedLabels` changed every frame and
     // re-triggers its readers (the hover outline).
-    if listed.0.len() != shown.len()
-        || listed.0.iter().zip(shown.iter()).any(|(a, s)| *a != s.0)
-    {
+    if listed.0.len() != shown.len() || listed.0.iter().zip(shown.iter()).any(|(a, s)| *a != s.0) {
         listed.0.clear();
         listed.0.extend(shown.iter().map(|s| s.0));
     }

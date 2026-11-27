@@ -16,6 +16,7 @@ pub struct ChargePursuit {
 /// the charge start) and `Skill_AttackWeapon::WarmUpStart` (warm-up sound and effects, cooldown start), and
 /// `ForceSpeedUpdate`s the run. The hit is the Attack state's use of the skill at the path's end; the warm-up ends
 /// with the move (`MoveToAction::Finish`). PORT: the cooldown starts at the AI's use as for every monster skill.
+#[allow(clippy::too_many_arguments)]
 pub fn begin_pursuit_charge(
     commands: &mut Commands,
     data: &GameData,
@@ -24,6 +25,7 @@ pub fn begin_pursuit_charge(
     skill: &str,
     li: usize,
     tf: &Transform,
+    hostile: bool,
 ) -> bool {
     let Some(rec) = data.db.get(skill) else {
         return false;
@@ -33,7 +35,17 @@ pub fn begin_pursuit_charge(
     }
     start_warm_up(commands, data, caster, rec, skill, li, *tf);
     let bonus = level_f(rec, "characterRunSpeedModifier", li);
-    let charge = Charge::new(rec, skill, li, bonus, tf.translation, target);
+    let charge = Charge::new(
+        rec,
+        skill,
+        li,
+        bonus,
+        tf.translation,
+        target,
+        level_f(rec, "skillTargetAngle", li),
+        level_f(rec, "skillTargetNumber", li) as usize,
+        hostile,
+    );
     let pursuit = ChargePursuit {
         skill: skill.to_owned(),
         bonus: charge.bonus,
@@ -84,6 +96,7 @@ pub(super) fn charges(
     mut scratch: Local<gd_sim::nav::PathScratch>,
     nav: Res<Nav>,
     data: Res<GameData>,
+    sides: Query<'_, '_, crate::combat::SideData>,
     mut q: Query<
         (
             Entity,
@@ -96,6 +109,10 @@ pub(super) fn charges(
         Without<ChargePursuit>,
     >,
     targets: Query<(&GlobalTransform, &Combatant), (Without<Charge>, Without<Dead>)>,
+    victims: Query<
+        (Entity, &GlobalTransform, &Combatant, crate::combat::VictimSide),
+        Without<Dead>,
+    >,
     mut hits: MessageWriter<SkillHit>,
     mut activations: MessageWriter<crate::secondary::Activate>,
 ) {
@@ -109,27 +126,59 @@ pub(super) fn charges(
         let goal = tgt.translation();
         let to = (goal - tf.translation).with_y(0.0);
         if to.length() <= cb.reach(tcb) + 0.5 {
-            hits.write(SkillHit {
-                attacker: e,
-                target: c.target,
-                skill: c.skill.clone(),
-                level_index: c.level_index,
-                parent: None,
-                scale: 1.0,
-                projectile: false,
-            });
+            // The arrival hit takes the same cone as any weapon attack
+            // (`SkillActivated::ExecuteMeleeAttack`): the target first, then the most centred foes
+            // within `skillTargetAngle` at reach, cut to `skillTargetNumber` (0 = no cap).
+            let side = crate::combat::Side::lookup(&sides, e, c.hostile);
+            let mut struck = vec![c.target];
+            if c.angle > 0.0 && c.number != 1 {
+                let half = c.angle.clamp(0.0, 360.0).to_radians() * 0.5;
+                let fwd = gd_game_core::character::facing_flat(&tf);
+                let mut extra: Vec<(Entity, f32)> = victims
+                    .iter()
+                    .filter(|(ve, _, _, v)| *ve != e && *ve != c.target && side.hits(v))
+                    .filter_map(|(ve, vt, vcb, _)| {
+                        let at = vt.translation();
+                        let d = (at - tf.translation).with_y(0.0);
+                        let full = at - tf.translation;
+                        let key = full.with_y(0.0).dot(fwd) / full.length().max(1e-6);
+                        (d.length() <= cb.reach(vcb) + 1.0
+                            && d.normalize_or_zero().dot(fwd).clamp(-1.0, 1.0).acos() <= half)
+                            .then_some((ve, key))
+                    })
+                    .collect();
+                extra.sort_by(|a, b| b.1.total_cmp(&a.1));
+                struck.extend(
+                    extra
+                        .into_iter()
+                        .take(if c.number == 0 { usize::MAX } else { c.number - 1 })
+                        .map(|(ve, _)| ve),
+                );
+            }
+            for t in &struck {
+                hits.write(SkillHit {
+                    attacker: e,
+                    target: *t,
+                    skill: c.skill.clone(),
+                    level_index: c.level_index,
+                    parent: None,
+                    scale: 1.0,
+                    projectile: false,
+                });
+            }
             // The arrival's hit resolves the attack (`Skill_AttackWeapon::TargetResult`).
             activations.write_batch(crate::secondary::Activate::on_hits(
                 e,
                 &c.skill,
                 c.level_index,
                 &None,
-                vec![c.target],
+                struck,
                 tf.translation,
             ));
             commands.entity(e).try_remove::<Charge>();
             continue;
         }
+
         if c.buffer > 0.0
             && (tf.translation - c.start).with_y(0.0).length()
                 > (goal - c.start).with_y(0.0).length() + c.buffer

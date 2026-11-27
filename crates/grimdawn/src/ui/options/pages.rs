@@ -420,7 +420,7 @@ fn stored_resolution(o: &GameOptions) -> Option<(u32, u32)> {
 /// at least 1024 x 720, labelled and deduped, ascending by (w, h); when the stored resolution is valid but no
 /// mode row carries it, the window's physical size is appended as the last row.
 /// PORT: a row writes `resolution` only (the engine also writes `refreshRate`).
-/// PORT: the list is exactly what the monitor reports, with no synthetic entries.
+/// PORT: no synthetic common resolutions; the list is the monitor's modes (and that fallback row).
 fn resolution_rows(o: &GameOptions, ctx: &ChoiceCtx) -> Vec<(String, Vec<(&'static str, Value)>)> {
     let mut rows: Vec<(String, Vec<(&'static str, Value)>)> = Vec::new();
     if let Some(m) = ctx.monitor {

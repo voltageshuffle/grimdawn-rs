@@ -790,7 +790,7 @@ fn sheet_rollover(t: &gd_formats::arz::Record, k: &str, r: URect, layout: &mut I
 /// padding, collapse icons at `IconXPosition`; the header, spacer and row
 /// heights are the builder's 18 / 13 / 10 / 19 px; the scrollbar is the
 /// scroll window's `scrollboxwidedark_vscroll`). PORT: the pixel offsets
-/// are: header text 31, label 17, value right edge 222, divider y 27
+/// are: header text 30, label 17, value right edge 222, divider y 27
 /// from the list's top left.
 fn stat_list(
     ui: &mut Ui,

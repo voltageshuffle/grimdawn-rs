@@ -46,8 +46,10 @@
 //!   render `UISceneView::Render`, open `ConversationWindow::BeginConversation` / `UISceneView::SetTarget`): its rect
 //!   keeps its distance from the window's bottom (y = window h − (record h −
 //!   `y`)), drawn after the replies. The target = the NPC's `targetPointName`
-//!   point (`HeadEffect`), re-evaluated from its current pose every frame (the portrait
-//!   follows the NPC sitting/standing/animating); eye = target + R·`targetOffset`,
+//!   point (`HeadEffect`), frozen at open: `ConversationWindow::BeginConversation` sets the view's
+//!   lock flag before `UISceneView::SetTarget` snapshots the point, and `UISceneView::Render`
+//!   prefers the snapshot over the live pose while the flag holds — a nodding NPC moves inside the
+//!   frame, the camera does not follow. eye = target + R·`targetOffset`,
 //!   R = rotation about Y by `portraitAngle` (degrees) + π/2 −
 //!   atan2(forward.z, forward.x), recomputed every frame from the NPC's
 //!   current facing (update `ConversationWindow::Update`, `UISceneView.targetFacing`), so the
@@ -67,7 +69,7 @@
 //! Port: the portrait is a camera on its own render layer ([`PORTRAIT_LAYER`], on the NPC's meshes and its
 //! attached effects' emitter meshes while the window is open) rendering into an image drawn by the doll's
 //! material; its nodes stay hidden until the camera has run two frames ([`Portrait::warm`]).
-//! PORT: the target point is tracked live, not frozen at open.
+//! PORT: none here — the target freezes at open like the engine's.
 //! The background is a quad behind the NPC with the gradient as an unlit texture ([`background_assets`]).
 //! The scene glow runs in the portrait too (`GraphicsDeferredRenderer::RenderFinalScene` calls
 //! `RenderSceneGlow` unconditionally): its own glow camera and composite ([`portrait_glow`]).
@@ -674,6 +676,8 @@ pub struct Portrait {
     /// Kept while the window fades out.
     faction_icon: Option<String>,
     glow: Option<PortraitGlow>,
+    /// The target point frozen at open (the engine's lock flag + `UISceneView::SetTarget` snapshot).
+    locked_target: Option<Vec3>,
 }
 
 /// World space, in the NPC's current pose.
@@ -759,6 +763,7 @@ fn portrait(
             commands.entity(bg).try_despawn();
         }
         p.shot = None;
+        p.locked_target = None;
         p.warm = 0;
         return;
     };
@@ -813,7 +818,17 @@ fn portrait(
         }
     }
     let angle = win.f32("portraitAngle").unwrap_or(0.0).to_radians();
-    let tf = portrait_frame(&sv, portrait_target(&sv, rec, gt, ch), angle, gt);
+    // The engine locks the target at open (`BeginConversation`'s flag + `SetTarget`); only the facing
+    // stays live, so talk / nod animations move the NPC inside a fixed frame.
+    let point = match p.locked_target.filter(|_| !fresh) {
+        Some(t) => t,
+        None => {
+            let t = portrait_target(&sv, rec, gt, ch);
+            p.locked_target = Some(t);
+            t
+        }
+    };
+    let tf = portrait_frame(&sv, point, angle, gt);
     let proj = Projection::Perspective(PerspectiveProjection {
         fov: sv.fov,
         near: sv.near,

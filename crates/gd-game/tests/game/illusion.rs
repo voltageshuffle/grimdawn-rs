@@ -75,6 +75,7 @@ fn transmute_set_unlocks_saves_and_reloads() {
         cell,
         cursor: Vec2::ZERO,
         right: true,
+        stash_page: None,
     });
     // Messages live two frames: read them after each step.
     let mut texts: Vec<CinematicText> = Vec::new();

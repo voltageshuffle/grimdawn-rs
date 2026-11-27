@@ -58,6 +58,15 @@ impl Plugin for SavePlugin {
             .init_resource::<BoxedItems>()
             .init_resource::<gd_game_core::stash::SharedFiles>()
             .add_systems(Update, save_game.in_set(SaveStage::Save))
+            // The deposit's materials reach `reagents.gst` this frame, not at the next save. The
+            // deposit handlers run before `PlayerSet`, so this sees the frame's changed store.
+            .add_systems(
+                Update,
+                persist_reagents
+                    .run_if(resource_exists::<gd_game_core::stash::Stash>)
+                    .after(gd_game_core::player::PlayerSet)
+                    .before(SaveStage::Save),
+            )
             // After the frame's gameplay, so it sees the frame's changes together.
             .add_systems(
                 PostUpdate,
@@ -542,6 +551,56 @@ pub(crate) fn write_shared(
     }
 }
 
+/// The `reagents.gst` write target and encoded bytes (`GameEngine::AddItemToReagents` /
+/// `WriteReagents`), None (logged) for a store the save leaves as it is. The header's entry count is
+/// brought up to date, as every save does.
+fn reagents_save(
+    shared: &gd_game_core::stash::SharedFiles,
+    choice: &gd_game_core::session::Choice,
+    save_dir: &SaveDir,
+    materials: &gd_formats::save::gst::Reagents,
+) -> Option<(std::path::PathBuf, anyhow::Result<Vec<u8>>)> {
+    let path = shared_target(shared, choice, save_dir, Shared::Reagents)?;
+    let mut m = materials.clone();
+    m.count = m.entries.len() as u32;
+    Some((path, m.encode()))
+}
+
+/// Writes `reagents.gst` at once: `GameEngine::AddItemToReagents` (reached by
+/// `PlayerInventoryCtrl::DepositReagents`) writes the shared file when the materials change, not only
+/// at the next save. [`gd_game_core::stash::SharedFiles::accepts`] guards the write like every save.
+pub(crate) fn write_reagents(
+    shared: &gd_game_core::stash::SharedFiles,
+    choice: &gd_game_core::session::Choice,
+    save_dir: &SaveDir,
+    materials: &gd_formats::save::gst::Reagents,
+) {
+    let Some((path, bytes)) = reagents_save(shared, choice, save_dir, materials) else {
+        return;
+    };
+    if let Err(e) = bytes.and_then(|b| write(&path, &b)) {
+        error!("save: reagents: {e:#}");
+    }
+}
+
+/// Writes the material storage after the frame's [`gd_game_core::stash::DepositReagents`]
+/// (`PlayerInventoryCtrl::DepositReagents` → `GameEngine::AddItemToReagents`), before any save of the
+/// frame so a full save never stages an older store.
+fn persist_reagents(
+    mut msgs: MessageReader<gd_game_core::stash::DepositReagents>,
+    stash: Res<gd_game_core::stash::Stash>,
+    (shared, choice, save_dir): (
+        Res<gd_game_core::stash::SharedFiles>,
+        Res<gd_game_core::session::Choice>,
+        Res<SaveDir>,
+    ),
+) {
+    if msgs.read().count() == 0 {
+        return;
+    }
+    write_reagents(&shared, &choice, &save_dir, &stash.materials);
+}
+
 /// Where [`write_shared`] writes `file`; None (logged) for a file it leaves as it is.
 fn shared_target(
     shared: &gd_game_core::stash::SharedFiles,
@@ -952,11 +1011,12 @@ pub fn save_game(
             _ => choice.mod_name().to_owned(),
         };
         t.expansion_status = gd_game_core::stash::LOADED_EXPANSIONS;
-        let mut m = s.materials.clone();
-        m.count = m.entries.len() as u32;
+        // `reagents.gst` is also written at once after a deposit ([`write_reagents`]).
+        if let Some((path, bytes)) = reagents_save(&shared, &choice, &save_dir, &s.materials) {
+            items.push(("reagents", path, bytes));
+        }
         for (what, file, bytes) in [
             ("transfer stash", Shared::Transfer, t.encode()),
-            ("reagents", Shared::Reagents, m.encode()),
             ("formulas", Shared::Formulas, s.formulas.encode()),
         ] {
             if let Some(path) = shared_target(&shared, &choice, &save_dir, file) {

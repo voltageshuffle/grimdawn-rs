@@ -4,7 +4,7 @@
 //!
 //! The localisation language ([`GameData::set_language`]) selects the tags' `text_<code>/` archive
 //! ([`GameData::tags`]); the UI follows it live, the story snapshots its text once per session.
-//! PORT: CJK font word-wrap (`language.def` `wordmode`) is out of scope.
+//! PORT: the `wordmode` flag is not honoured; CJK break-at-character wrapping is always on.
 use bevy::prelude::*;
 use gd_formats::collections::{HashMap, HashSet};
 use gd_formats::text::{LANGUAGES, Language, TagTable};

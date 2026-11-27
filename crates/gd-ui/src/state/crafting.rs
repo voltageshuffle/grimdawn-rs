@@ -154,31 +154,38 @@ impl CraftList {
         }
     }
 
-    /// The list rows of `tab`: each non-empty group's header, then its recipes.
+    /// The list rows of `tab`: each non-empty group's header, then its recipes
+    /// unless the group is collapsed (`collapsed` holds [`GROUPS`] indices; the
+    /// header's `listboxcollapsedicon` / `listboxuncollapsedicon`).
     /// With a search query, only the recipes whose search lines match
     /// ([`gd_sim::items::market::search_matches`]) show, and a group left empty
     /// hides its header (`CraftList::FilterRows`).
-    pub fn rows(&self, tab: usize, query: &str) -> Vec<Row> {
+    pub fn rows(&self, tab: usize, query: &str, collapsed: &[usize]) -> Vec<Row> {
         let mut out = Vec::new();
         for (g, (t, _)) in GROUPS.iter().enumerate() {
             if *t != tab {
                 continue;
             }
-            let header = out.len();
-            out.extend(
-                (0..self.recipes.len())
-                    .filter(|i| self.shows(*i, g, query))
-                    .map(Row::Recipe),
-            );
-            if out.len() > header {
-                out.insert(header, Row::Header(g));
+            let hide = collapsed.contains(&g);
+            let mut any = false;
+            for i in 0..self.recipes.len() {
+                if !self.shows(i, g, query) {
+                    continue;
+                }
+                if !any {
+                    out.push(Row::Header(g));
+                    any = true;
+                }
+                if !hide {
+                    out.push(Row::Recipe(i));
+                }
             }
         }
         out
     }
 
-    /// `rows(tab, query).len()` without building the rows.
-    pub fn row_count(&self, tab: usize, query: &str) -> usize {
+    /// `rows(tab, query, collapsed).len()` without building the rows.
+    pub fn row_count(&self, tab: usize, query: &str, collapsed: &[usize]) -> usize {
         GROUPS
             .iter()
             .enumerate()
@@ -187,7 +194,13 @@ impl CraftList {
                 let n = (0..self.recipes.len())
                     .filter(|i| self.shows(*i, g, query))
                     .count();
-                if n == 0 { 0 } else { n + 1 }
+                if n == 0 {
+                    0
+                } else if collapsed.contains(&g) {
+                    1
+                } else {
+                    n + 1
+                }
             })
             .sum()
     }

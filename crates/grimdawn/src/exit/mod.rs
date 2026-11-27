@@ -226,6 +226,10 @@ const KEEP: &[&str] = &[
     "grimdawn::record_facts::RecordFacts",
     // Rewritten every frame from the camera.
     "gd_game::ragdoll::RagdollView",
+    // Rewritten every PreUpdate from the app state (`session::sync_state`).
+    "gd_render::model::LoadFast",
+    // Render world: entries age out after 8 untouched frames; keys own their textures (identity-compared).
+    "gd_render::render::post::PostBindGroupCache",
 ];
 
 #[cfg(test)]

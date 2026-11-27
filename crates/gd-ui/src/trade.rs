@@ -1321,7 +1321,7 @@ fn crafter_window(
         layout,
         ("searchBox", "clearSearchButton"),
     );
-    let rows = list.rows(trade.tab, &trade.search.query());
+    let rows = list.rows(trade.tab, &trade.search.query(), &trade.collapsed);
     let item_rec = tab.str("craftingListBoxItem").and_then(|r| ui.record(r));
     if let Some(lw) = tab.str("craftingListBox").and_then(|r| ui.record(r)) {
         let f = |k: &str| lw.f32(k).unwrap_or(0.0);
@@ -1384,9 +1384,15 @@ fn crafter_window(
             };
             match *row {
                 crate::state::crafting::Row::Header(g) => {
-                    // PORT: the groups never collapse; `listboxuncollapsedicon` before the name.
+                    // The header toggles its group: `listboxcollapsedicon` when collapsed,
+                    // `listboxuncollapsedicon` when open.
+                    let icon = if trade.collapsed.contains(&g) {
+                        "ui/generic/listboxcollapsedicon.tex"
+                    } else {
+                        "ui/generic/listboxuncollapsedicon.tex"
+                    };
                     let mut indent = 2.0;
-                    if let Some((h, size)) = ui.image("ui/generic/listboxuncollapsedicon.tex") {
+                    if let Some((h, size)) = ui.image(icon) {
                         let (w, hh) = (size.x as f32, size.y as f32);
                         ui.quad(
                             h,
@@ -1406,6 +1412,7 @@ fn crafter_window(
                         .tag(crate::state::crafting::GROUPS[g].1)
                         .to_string();
                     ui.text_with_style(&tb(indent), &header_style, o, &text);
+                    layout.headers.push((g, rr));
                 }
                 crate::state::crafting::Row::Recipe(i) => {
                     let rec = &list.recipes[i];

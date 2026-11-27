@@ -14,11 +14,13 @@
 //!
 //! - Swipes ([`swipe`]; `SkillActivatedWeapon::SwipeAction`): `SwipeRight` / `SwipeLeft` play
 //!   that hand's weapon's `swipeSound` (the illusion's when its transmute is a `Weapon`); with
-//!   none, or while shifted, the arm's `swipeSound` entry. Then `skillSwipeSound` on every swipe
-//!   callback, `SwipeBoth` too.
+//!   none, or while shifted, the arm's `swipeSound` entry. A shown weapon enchantment's per-kind
+//!   swipe sound plays first, in addition ([`EnchSounds`], `Weapon::PlaySwipeSound`). Then
+//!   `skillSwipeSound` on every swipe callback, `SwipeBoth` too.
 //! - A melee strike ([`strike`]; `SkillActivated::ApplyMeleeDamage`): `skillHitSound` at the
 //!   attacker; then, for the first target hit that is not evading (checked after the damage, so
-//!   a killing blow plays too), both hands' weapon `hitSound` at the attacker, or `attackSound`
+//!   a killing blow plays too), the enchantment's hit sound once and both hands' weapon
+//!   `hitSound` at the attacker (`Weapon::PlayHitSound`), or `attackSound`
 //!   when it holds neither. Once per strike.
 //! - The struck character ([`struck`]; `CombatManager::TakeAttack`, at the defender): a shield
 //!   block plays the shield's `blockSound`; a melee attack on a character not evading plays
@@ -26,7 +28,8 @@
 //!   `armorImpactSound`; a critical (multiplier > 1) of at least 1 damage plays
 //!   `criticalHitSound`. No miss or dodge sound.
 //! - A ranged weapon shot ([`shot`]; `SkillActivated::CreateProjectile`): the right-hand weapon
-//!   (else the left) plays its `hitSound` at the shooter, and the new projectile its
+//!   (else the left) plays its `hitSound` at the shooter, the shown enchantment's hit sound too
+//!   (`Weapon::PlayHitSound`), and the new projectile its
 //!   `projectileSwipeSound`, tracked.
 //! - Projectile impacts ([`projectile_hit`]): each target hit plays `projectileExplodingHitSound`
 //!   when the projectile explodes there, else `projectileHitSound`; an `explodeOnMiss` end the
@@ -72,7 +75,7 @@
 //! monster's channels make no loop; `skillDeactivatedSound` plays for the player's toggles,
 //! timed self buffs and forms, for monsters' and pets' timed buffs running out and for dispels;
 //! `skillCastSound` / `skillUnCastSound` for every buff another character puts on one, when
-//! created, not on a refresh; bounce and weapon enchantment sounds are not played.
+//! created, not on a refresh; bounce sounds are not played.
 use crate::char_sounds::sound;
 use crate::combat::AttackMade;
 use bevy::ecs::system::SystemParam;
@@ -81,7 +84,9 @@ use gd_formats::arz::Record;
 use gd_game_core::character::{AnimCallback, Character};
 use gd_game_core::combat::Combatant;
 use gd_game_core::data::GameData;
+use gd_game_core::options::GameOptions;
 use gd_game_core::player::Player;
+use gd_game_core::skill_fx::{WeaponEnchantments, enchantment_visible};
 use gd_game_core::visuals::{PlaySound, SoundLoop};
 
 /// `FadeLastPlayedSound`'s time for most skill loops (s).
@@ -135,11 +140,54 @@ pub struct Gear {
     pub chest: Option<String>,
 }
 
-/// A worn item: its record and its illusion's (the transmute), if any.
+/// The sound paks a shown weapon enchantment adds to the weapon's swipe / hit
+/// (`WeaponEnchantmentPak::Load`: `meleeSwipeSound` / `meleeHitSound` for kind 1 melee,
+/// `ranged1h…` for 2, `ranged2h…` for 3, `staff…` for 4; the weapon's `Weapon.kind`).
+/// `Weapon::PlaySwipeSound` / `PlayHitSound` play the pak's sound in addition to the
+/// weapon's own; an empty field adds nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnchSounds {
+    pub swipe: Option<String>,
+    pub hit: Option<String>,
+}
+
+/// The shown enchantment's swipe / hit sounds for the weapon `class`
+/// ([`EnchSounds`]); none while hidden (`enchantment_visible`).
+pub fn enchant_sounds(
+    data: &GameData,
+    ench: Option<&WeaponEnchantments>,
+    player: bool,
+    options: &GameOptions,
+    class: &str,
+) -> EnchSounds {
+    use gd_sim::equip::WeaponType as W;
+    let prefix = match W::from_class(class) {
+        Some(W::Ranged1h) => "ranged1h",
+        Some(W::Ranged2h) => "ranged2h",
+        Some(W::Staff) => "staff",
+        Some(W::Shield | W::Offhand) | None => return EnchSounds::default(),
+        _ => "melee",
+    };
+    let Some(rec) = ench
+        .filter(|_| enchantment_visible(options, player))
+        .and_then(|w| w.shown())
+        .and_then(|p| data.db.get(p))
+    else {
+        return EnchSounds::default();
+    };
+    EnchSounds {
+        swipe: field(rec, &format!("{prefix}SwipeSound")),
+        hit: field(rec, &format!("{prefix}HitSound")),
+    }
+}
+
+/// A worn item: its record, its illusion's (the transmute), if any, and the shown
+/// enchantment's sounds ([`Holdings::of`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HeldItem {
     pub record: String,
     pub transmute: Option<String>,
+    pub ench: EnchSounds,
 }
 
 impl HeldItem {
@@ -147,6 +195,7 @@ impl HeldItem {
         HeldItem {
             record: record.to_owned(),
             transmute: None,
+            ench: EnchSounds::default(),
         }
     }
 
@@ -177,17 +226,44 @@ fn field(r: &Record, k: &str) -> Option<String> {
     r.str(k).filter(|s| !s.is_empty()).map(str::to_owned)
 }
 
-/// The worn items of characters: the player's inventory, creatures' [`Gear`].
+/// The worn items of characters: the player's inventory, creatures' [`Gear`]; [`Self::of`]
+/// fills each weapon's shown enchantment sounds ([`EnchSounds`]).
 #[derive(SystemParam)]
 pub struct Holdings<'w, 's> {
     /// Option: the player's worn items are empty without it.
     inv: Option<Res<'w, gd_game_core::inventory::Inventory>>,
     players: Query<'w, 's, (), With<Player>>,
     gear: Query<'w, 's, &'static Gear>,
+    data: Res<'w, GameData>,
+    options: Res<'w, GameOptions>,
+    ench: Query<'w, 's, (Option<&'static WeaponEnchantments>, Has<Player>)>,
 }
 
 impl Holdings<'_, '_> {
     pub fn of(&self, e: Entity) -> Held {
+        let mut held = self.of_worn(e);
+        let Ok((ench, player)) = self.ench.get(e) else {
+            return held;
+        };
+        for hand in [&mut held.right, &mut held.left] {
+            let Some(h) = hand else {
+                continue;
+            };
+            let Some(class) = self
+                .data
+                .db
+                .get(&h.record)
+                .map(|r| r.class.to_owned())
+            else {
+                continue;
+            };
+            h.ench = enchant_sounds(&self.data, ench, player, &self.options, &class);
+        }
+        held
+    }
+
+    /// The worn items without the enchantment sounds (the renderer's preload).
+    pub fn of_worn(&self, e: Entity) -> Held {
         if self.players.contains(e) {
             return self.inv.as_deref().map(player_held).unwrap_or_default();
         }
@@ -215,6 +291,7 @@ pub fn player_held(inv: &gd_game_core::inventory::Inventory) -> Held {
             .map(|it| HeldItem {
                 record: it.base_name.clone(),
                 transmute: Some(it.transmute_name.clone()).filter(|t| !t.is_empty()),
+                ench: EnchSounds::default(),
             })
     };
     Held {
@@ -235,6 +312,8 @@ pub fn weapon_sound_paks(data: &GameData, held: &Held) -> Vec<String> {
         else {
             continue;
         };
+        out.extend(h.as_ref().and_then(|h| h.ench.swipe.clone()));
+        out.extend(h.as_ref().and_then(|h| h.ench.hit.clone()));
         out.extend(field(&w, "swipeSound"));
         out.extend(field(&w, "hitSound"));
     }
@@ -281,7 +360,10 @@ pub fn swipe(
             .and_then(|h| h.weapon_record(data))
             .filter(|r| is_weapon(&r.class));
         match weapon.filter(|_| c.form_mesh().is_none()) {
-            Some(w) => out.extend(field(&w, "swipeSound")),
+            Some(w) => {
+                out.extend(hand.as_ref().and_then(|h| h.ench.swipe.clone()));
+                out.extend(field(&w, "swipeSound"));
+            }
             None => out.extend(sound(data, c, "swipeSound")),
         }
     }
@@ -310,6 +392,7 @@ pub fn strike(
         return out;
     }
     let mut armed = false;
+    let mut weapon_hits = Vec::new();
     for hand in [&held.right, &held.left] {
         if let Some(w) = hand
             .as_ref()
@@ -317,10 +400,20 @@ pub fn strike(
             .filter(|r| is_weapon(&r.class))
         {
             armed = true;
-            out.extend(field(&w, "hitSound"));
+            weapon_hits.extend(field(&w, "hitSound"));
         }
     }
-    if !armed {
+    if armed {
+        // The enchantment's hit sound plays once per strike, before the weapons'
+        // (`SkillActivated::ApplyMeleeDamage` → `Weapon::PlayHitSound`).
+        out.extend(
+            [&held.right, &held.left]
+                .into_iter()
+                .flatten()
+                .find_map(|h| h.ench.hit.clone()),
+        );
+        out.extend(weapon_hits);
+    } else {
         out.extend(sound(data, c, "attackSound"));
     }
     out
@@ -381,15 +474,21 @@ pub fn struck(
     out
 }
 
-/// A ranged weapon shot's sound at the shooter: the right-hand weapon's (else the left's)
-/// `hitSound`.
-pub fn shot(data: &GameData, held: &Held) -> Option<String> {
-    let w = [&held.right, &held.left].into_iter().find_map(|h| {
-        h.as_ref()
-            .and_then(|h| h.weapon_record(data))
-            .filter(|r| is_weapon(&r.class))
-    })?;
-    field(&w, "hitSound")
+/// A ranged weapon shot's sounds at the shooter: the shown enchantment's hit sound, then the
+/// right-hand weapon's (else the left's) `hitSound` (`Weapon::PlayHitSound`).
+pub fn shot(data: &GameData, held: &Held) -> Vec<String> {
+    let Some((w, ench)) = [&held.right, &held.left]
+        .into_iter()
+        .flatten()
+        .find_map(|h| h.weapon_record(data).map(|w| (w, &h.ench)))
+    else {
+        return Vec::new();
+    };
+    ench.hit
+        .iter()
+        .chain(field(&w, "hitSound").iter())
+        .cloned()
+        .collect()
 }
 
 /// A skill's activation sounds at the caster (module doc).

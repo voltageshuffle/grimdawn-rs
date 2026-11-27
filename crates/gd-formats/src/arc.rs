@@ -2,7 +2,8 @@
 //! of up to 256 KiB ([`MAX_PART`]); a part whose compressed size equals its decompressed size
 //! is stored raw. A part that claims more than [`MAX_PART`] is refused.
 //!
-//! [`Arc::read`] decodes a whole entry; [`Arc::open_entry`] gives a seekable reader ([`EntryReader`]) that
+//! [`Arc::read`] decodes a whole entry; [`Arc::read_prefix`] decodes only the parts the first bytes lie in;
+//! [`Arc::open_entry`] gives a seekable reader ([`EntryReader`]) that
 //! decodes only the parts a read touches (the engine reads maps region by region as the world streams in).
 use crate::util::{Reader, latin1, lz4_max_size};
 use anyhow::{Context, Result, bail};
@@ -197,6 +198,34 @@ impl Arc {
                 let end = at + p.size as usize;
                 decode_part(file, p, &mut buf, &mut out[at..end])
                     .with_context(|| format!("part of {}", e.name))?;
+                at = end;
+            }
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// The first `n` bytes of an entry (all of it when shorter), decoding only the parts they lie in:
+    /// a header check reads kilobytes, not a 650 MB map.
+    pub fn read_prefix(&self, e: &Entry, n: usize) -> Result<Vec<u8>> {
+        let parts = self.parts_of(e)?;
+        let n = n.min(e.size as usize);
+        let mut out = vec![0; n];
+        self.with_file(|file| {
+            let Some(parts) = parts else {
+                return Ok(read_exact_at(file, &mut out, e.offset as u64)?);
+            };
+            let (mut buf, mut at) = (Vec::new(), 0);
+            for p in parts {
+                if at >= n {
+                    break;
+                }
+                let end = (at + p.size as usize).min(n);
+                // A part decodes whole; only the wanted slice is kept.
+                let mut whole = vec![0; p.size as usize];
+                decode_part(file, p, &mut buf, &mut whole)
+                    .with_context(|| format!("part of {}", e.name))?;
+                out[at..end].copy_from_slice(&whole[..end - at]);
                 at = end;
             }
             Ok(())

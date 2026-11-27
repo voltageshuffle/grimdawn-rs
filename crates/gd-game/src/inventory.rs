@@ -184,8 +184,12 @@ fn apply_inv_requests(
                 item.clone(),
             ),
             // `SecondaryInventoryActivate` with an item held: `Cancel`.
-            InvRequest::Bag { right: true, .. } if inv.held.is_some() => {
-                if let Err(it) = inv.cancel_held(stash.as_deref_mut()) {
+            InvRequest::Bag {
+                right: true,
+                stash_page,
+                ..
+            } if inv.held.is_some() => {
+                if let Err(it) = inv.cancel_held(stash.as_deref_mut(), *stash_page) {
                     stow(&mut commands, &mut inv, &players, &data, nav.as_deref(), it);
                 }
             }

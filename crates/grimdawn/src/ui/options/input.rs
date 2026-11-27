@@ -158,7 +158,7 @@ pub fn input(
         && w.tab == Tab::KeyBindings
         && matches!(
             cursor.and_then(|p| hit_at(&layout, draft, w.scroll, w.drop_top, p)),
-            Some(Hit::List | Hit::Key(..))
+            Some(Hit::List | Hit::Key(..) | Hit::KeyThumb | Hit::KeyTrack)
         )
     {
         w.scroll = scrolled(w.scroll, lines, layout.max_scroll);
@@ -206,6 +206,15 @@ pub fn input(
             Some(Hit::Knob(k, _)) => w.drag = Some(k),
             // `MenuScrollBar::HandleMouseEvent`: offset from the thumb's top.
             Some(Hit::KeyThumb) => w.key_grab = Some(p.y - key_thumb_top(&layout, w.scroll)),
+            // `MenuScrollBar::HandleMouseEvent`: a track press pages by a fifth of the track, in whole rows.
+            Some(Hit::KeyTrack) => {
+                let d = key_track_page(&layout);
+                w.scroll = if p.y < key_thumb_top(&layout, w.scroll) {
+                    w.scroll.saturating_sub(d)
+                } else {
+                    (w.scroll + d).min(layout.max_scroll)
+                };
+            }
             Some(Hit::Default) => {
                 if w.tab == Tab::KeyBindings {
                     w.keys = Some(KeyBindings::default());

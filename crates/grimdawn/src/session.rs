@@ -18,6 +18,7 @@ fn sync_state(
     levels: Option<Res<gd_game_core::levels::Levels>>,
     start: Option<Res<PlayerStart>>,
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    mut fast: ResMut<gd_render::model::LoadFast>,
 ) {
     let want = if playing.0 {
         // Lift the cover only once the spawn area is fully streamed in, like a teleport; once playing,
@@ -41,6 +42,9 @@ fn sync_state(
     if *state.get() != want {
         next.set(want);
     }
+    // Not playing (the loading cover, the menu and its backdrop build): the streaming spawn and
+    // background-load finishers may spend most of a frame — no gameplay needs the frame time.
+    fast.0 = want != AppState::InGame;
 }
 
 pub struct SessionPlugin;
@@ -48,6 +52,7 @@ pub struct SessionPlugin;
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
+            .init_resource::<gd_render::model::LoadFast>()
             .add_systems(PreUpdate, in_game.pipe(sync_state))
             .add_systems(
                 Update,

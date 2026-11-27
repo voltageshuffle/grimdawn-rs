@@ -1016,7 +1016,7 @@ pub(super) fn key_list(
     // The cells before the list's own hit.
     cells.append(&mut layout.hits);
     layout.hits = cells;
-    // Scroll bar; its thumb takes a press before the cells and the list.
+    // Scroll bar; its thumb takes a press before the track, the cells and the list.
     if let Some((img, sz)) = ui.image(
         consts
             .str("scrollbarSliderBitmap")
@@ -1031,6 +1031,9 @@ pub(super) fn key_list(
         layout
             .hits
             .insert(0, (URect::new(x, track.0, bw, bh), Hit::KeyThumb));
+        layout
+            .hits
+            .insert(1, (URect::new(x, track.0, bw, track.1), Hit::KeyTrack));
         layout.key_bar = (track.0, track.1 - bh);
         ui.commands.entity(e).insert(Scroll::KeyThumb {
             track0: track.0,

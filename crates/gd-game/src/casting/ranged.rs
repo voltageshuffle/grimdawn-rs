@@ -166,7 +166,8 @@ pub(super) fn fire_weapon_projectile(
     ch: Option<&Character>,
     hand: &str,
 ) {
-    if let Some(pak) = crate::combat_sounds::shot(data, held) {
+    // The enchantment's hit sound and the weapon's (`Weapon::PlayHitSound`).
+    for pak in crate::combat_sounds::shot(data, held) {
         commands.write_message(gd_game_core::visuals::PlaySound {
             pak,
             at: Some(tf.translation),

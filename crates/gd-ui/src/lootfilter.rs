@@ -41,8 +41,8 @@
 //! their windows, so those close the loot filter window; the quest and party buttons use
 //! `UIPlayerHud::HideWindowsForQuest` /
 //! `UIPlayerHud::HideWindowsForParty`, which leave it open. The close button (window listener
-//! `LootFilterWindow::OnButtonEvent`) and Esc hide it. PORT: the riftgate map
-//! (`hudTeleportWindow`, no HUD member) is left open; the HUD child `UIPlayerHud.unidentifiedChild` that the engine
+//! `LootFilterWindow::OnButtonEvent`) and Esc hide it. PORT: the HUD child
+//! `UIPlayerHud.unidentifiedChild` that the engine
 //! also resets (`UIWidget::Reset`) is not identified; opening the devotion window
 //! (its opener not traced) does not close the loot filter window.
 //!

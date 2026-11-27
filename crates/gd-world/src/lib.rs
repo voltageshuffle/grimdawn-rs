@@ -6,7 +6,8 @@
 //!
 //! PORT: a level's object meshes all start loading in the background when its build lands;
 //! [`spawn_levels`] spawns its objects in order as their models are built, then clips its decals,
-//! within [`SPAWN_BUDGET`] a frame, at least one object or decal and at most one new level root a frame.
+//! within [`SPAWN_BUDGET`] a frame, at least one object or decal and one new level root a frame (more roots
+//! while the slice has time, and a wider slice outside gameplay, [`gd_render::model::LoadFast`]).
 //! While it spawns, the level holds every model already built ([`SpawnJob`]`::held`): the model cache
 //! only keeps its last `gd_game_core::weak_cache::RECENT` models warm. Retextured objects and decals
 //! wait for their textures and override shader in the background.
@@ -532,9 +533,11 @@ fn build_decal(
     t: &gd_formats::map::terrain::Terrain,
     origin: Vec3,
 ) -> Option<DecalCpu> {
-    let mut dec = gd_render::decal::DecalRecord::from_record(rec)?;
-    // PORT: a level decal's `life` is ignored.
-    dec.timing.life_ms = 0;
+    let dec = gd_render::decal::DecalRecord::from_record(rec)?;
+    // A timed decal (any timing field set, `life` included) keeps the record's timing:
+    // `spawn_level_decals` gives its layers a `DecalFade`, which fades it
+    // (`Decal::GetOpacity`) and removes it at its `life` (`Decal::UpdateSelf`),
+    // level decals too; a timeless one keeps the shared material and static batching.
     // PORT: the entity's scale stretches the decal.
     let s = Vec3::from(e.scale());
     let (w, h) = (
@@ -1610,11 +1613,13 @@ fn spawn_level_collision(
 }
 
 /// The streaming spawn's time a frame: [`spawn_levels`] stops spawning objects and clipping decals once
-/// it has run this long (after at least one of each).
+/// it has run this long (after at least one of each). Outside gameplay
+/// ([`gd_render::model::LoadFast`]) the slice widens: no gameplay needs the frame time.
 const SPAWN_BUDGET: Duration = Duration::from_millis(3);
 
-/// Drains the streaming spawn queue a bounded slice per frame: at most one new level root plus the
-/// scenery objects whose models are built, in order, then the level's decals, within [`SPAWN_BUDGET`].
+/// Drains the streaming spawn queue a bounded slice per frame: the new level roots (one at least, more
+/// while the slice has time) plus the scenery objects whose models are built, in order, then the level's
+/// decals, within [`SPAWN_BUDGET`] (widened while [`gd_render::model::LoadFast`] holds).
 #[allow(clippy::too_many_arguments)]
 fn spawn_levels(
     mut world: ResMut<StreamedMap>,
@@ -1631,6 +1636,7 @@ fn spawn_levels(
     mut coll: ResMut<gd_game::collision::WorldCollision>,
     mut receivers: ResMut<gd_render::decal::DecalReceivers>,
     #[cfg(feature = "dev")] hooks: Res<gd_game_core::hooks::Hooks>,
+    fast: Option<Res<gd_render::model::LoadFast>>,
 ) {
     #[cfg(feature = "dev")]
     let opts = LevelOpts::from_hooks(&hooks.render);
@@ -1641,9 +1647,14 @@ fn spawn_levels(
     }
     let mut keys: Vec<usize> = world.spawning.keys().copied().collect();
     keys.sort_unstable();
-    let deadline = Instant::now() + SPAWN_BUDGET;
+    let budget = if fast.is_some_and(|f| f.0) {
+        Duration::from_millis(12)
+    } else {
+        SPAWN_BUDGET
+    };
+    let deadline = Instant::now() + budget;
     let mut spawned = 0;
-    let mut base_done = false;
+    let mut rooted = false;
     let mut finished = Vec::new();
     for i in keys {
         let Some(job) = world.spawning.get_mut(&i) else {
@@ -1659,7 +1670,8 @@ fn spawn_levels(
                 model::Ready::Failed => false,
             });
         if job.root.is_none() {
-            if base_done {
+            // At least one new level root a frame; more only while the slice has time left.
+            if rooted && Instant::now() >= deadline {
                 continue;
             }
             // Its grass layers' textures decode in the background first.
@@ -1684,7 +1696,7 @@ fn spawn_levels(
                 &mut textures,
                 opts,
             ));
-            base_done = true;
+            rooted = true;
         }
         let root = job.root.unwrap();
         if job.cursor < job.cpu.objects.len() {

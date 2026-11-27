@@ -55,6 +55,7 @@ fn right_click(g: &mut TestGame) {
         cell,
         cursor: Vec2::ZERO,
         right: true,
+        stash_page: None,
     });
     g.steps(2);
 }

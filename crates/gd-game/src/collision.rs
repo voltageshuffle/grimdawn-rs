@@ -42,20 +42,14 @@ struct Instance {
 
 impl Instance {
     /// First contact of the segment `a → b`: the segment parameter, the `PhysicsSurface` and
-    /// what was hit.
+    /// what was hit. No normal: the callers that only need the hit (`surface_below`, `segment_hit`)
+    /// skip the per-face inverse-transpose.
     fn first_hit(&self, a: Vec3, b: Vec3) -> Option<(f32, u32, &'static str)> {
-        self.first_hit_normal(a, b).map(|(t, s, k, _)| (t, s, k))
-    }
-
-    /// [`Self::first_hit`] with the face's world normal, turned towards `a` (a hit box gives
-    /// −(b − a)).
-    fn first_hit_normal(&self, a: Vec3, b: Vec3) -> Option<(f32, u32, &'static str, Vec3)> {
         let d = b - a;
         if !seg_aabb(a, d, self.min, self.max) {
             return None;
         }
-        let mut best: Option<(f32, u32, &'static str, Vec3)> = None;
-        let back = -d.normalize_or(Vec3::NEG_Y);
+        let mut best: Option<(f32, u32, &'static str)> = None;
         match &self.shape {
             Shape::Mesh { mesh, inv } => {
                 let (la, ld) = (inv.transform_point3(a), inv.transform_vector3(d));
@@ -67,14 +61,7 @@ impl Instance {
                     if let Some(s) = seg_tri(la, ld, v)
                         && best.is_none_or(|x| s < x.0)
                     {
-                        // Local → world normal: the inverse transpose.
-                        let local = (v[1] - v[0]).cross(v[2] - v[0]);
-                        let n = Mat3::from(inv.matrix3)
-                            .transpose()
-                            .mul_vec3(local)
-                            .normalize_or(back);
-                        let n = if n.dot(back) < 0.0 { -n } else { n };
-                        best = Some((s, *surface, "object", n));
+                        best = Some((s, *surface, "object"));
                     }
                 }
             }
@@ -83,12 +70,61 @@ impl Instance {
                     if let Some(s) = segment_obstacle(a, b, o)
                         && best.is_none_or(|x| s < x.0)
                     {
-                        best = Some((s, NO_SURFACE, "object hit box", back));
+                        best = Some((s, NO_SURFACE, "object hit box"));
                     }
                 }
             }
         }
         best
+    }
+
+    /// [`Self::first_hit`] with the face's world normal, turned towards `a` (a hit box gives
+    /// −(b − a)). The normal is computed once, for the nearest face only.
+    fn first_hit_normal(&self, a: Vec3, b: Vec3) -> Option<(f32, u32, &'static str, Vec3)> {
+        let d = b - a;
+        if !seg_aabb(a, d, self.min, self.max) {
+            return None;
+        }
+        let back = -d.normalize_or(Vec3::NEG_Y);
+        match &self.shape {
+            Shape::Mesh { mesh, inv } => {
+                let (la, ld) = (inv.transform_point3(a), inv.transform_vector3(d));
+                if !seg_aabb(la, ld, mesh.min.into(), mesh.max.into()) {
+                    return None;
+                }
+                // Track the nearest face; its normal is the only one needed.
+                let mut best: Option<(f32, u32, [Vec3; 3])> = None;
+                for (t, surface) in mesh.tris.iter().zip(&mesh.surfaces) {
+                    let v = t.map(|i| Vec3::from(mesh.verts[i as usize]));
+                    if let Some(s) = seg_tri(la, ld, v)
+                        && best.is_none_or(|x| s < x.0)
+                    {
+                        best = Some((s, *surface, v));
+                    }
+                }
+                best.map(|(s, surface, v)| {
+                    // Local → world normal: the inverse transpose.
+                    let local = (v[1] - v[0]).cross(v[2] - v[0]);
+                    let n = Mat3::from(inv.matrix3)
+                        .transpose()
+                        .mul_vec3(local)
+                        .normalize_or(back);
+                    let n = if n.dot(back) < 0.0 { -n } else { n };
+                    (s, surface, "object", n)
+                })
+            }
+            Shape::Boxes(boxes) => {
+                let mut best: Option<f32> = None;
+                for o in boxes {
+                    if let Some(s) = segment_obstacle(a, b, o)
+                        && best.is_none_or(|x| s < x)
+                    {
+                        best = Some(s);
+                    }
+                }
+                best.map(|s| (s, NO_SURFACE, "object hit box", back))
+            }
+        }
     }
 }
 

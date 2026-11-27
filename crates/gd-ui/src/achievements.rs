@@ -12,7 +12,8 @@
 //!   (vtable `ButtonStaticText2::vftable`, draw `ButtonStaticText2::Render`) writes its `textTag` in `style` centred
 //!   at (w / 2, 0.37 h) and its second text in `style2` at (w / 2, 0.67 h): here `tagAchievementsComplete` with the
 //!   group's unlocked and shown counts;
-//! - every group has its own list (`achievementList` scroll window): per achievement, locked and hidden ones
+//! - every group has its own list (`achievementList` scroll window), its scroll kept when another group is
+//!   selected and restored on return; per achievement, locked and hidden ones
 //!   skipped, the `lockedBackground` / `unlockedBackground` bitmap at its position + (0, y), the achievement's
 //!   `lockedIcon` / `unlockedIcon` texture at the `lockedIcon` / `unlockedIcon` record's position + (0, y), its
 //!   `title` in the locked / unlocked title box and its `description` wrapped in the locked / unlocked description
@@ -27,7 +28,7 @@
 //!   visible (`UIPlayerHud::OnWindowEvent`, `UIPlayerHud.achievementsButton`). Another window's opener hides it
 //!   (`UIPlayerHud::ClosePanels`).
 //!
-//! PORT: each group's list scroll is not kept (a new group starts at the top); the description is wrapped at its box
+//! PORT: the description is wrapped at its box
 //! width with the style's line height (`UIMultiLineTextBox::Layout` not read) and its row grows to fit it; the group
 //! buttons share one auto-sized width (the widest label, clamped to the pane) instead of the bitmaps' fixed width.
 use super::Ui;
@@ -74,12 +75,13 @@ impl Plugin for AchievementsUiPlugin {
 }
 
 /// UI-only state: open, the selected group (`UIAchievementWindow.selectedGroup`), the groups' (0) and the list's (1)
-/// scroll.
+/// scroll, and the list scroll each group was left at (`group_scroll`, restored on select).
 #[derive(Resource, Default, Clone, PartialEq)]
 pub struct AchievementsView {
     pub open: bool,
     pub group: usize,
     pub scroll: [f32; 2],
+    pub group_scroll: Vec<(usize, f32)>,
 }
 
 /// The built window (physical px). Empty while closed.
@@ -277,12 +279,18 @@ fn build(
             ui.root = super::spawn_root(ui.commands, AchievementsRoot, super::window::Z_PANEL);
             let groups = gd_game::achievements::groups(&data.db);
             view.group = view.group.min(groups.len().saturating_sub(1));
+            // The selected group's list returns to the scroll it was left at.
+            view.scroll[1] = view
+                .group_scroll
+                .iter()
+                .find(|(g, _)| *g == view.group)
+                .map_or(0.0, |(_, s)| *s);
             draw(&mut ui, &groups, &state, view.group, &mut layout);
         }
     }
     for (i, p) in layout.panes.iter().enumerate() {
         if let Some(p) = p {
-            view.scroll[i] = view.scroll[i].clamp(0.0, p.max);
+            view.scroll[i] = view.scroll[i].clamp(0.0, p.max.max(1.0));
         }
     }
     let bar_sig = layout.version;
@@ -645,7 +653,7 @@ fn clicks(
     let Some(p) = super::cursor_px(win) else {
         return;
     };
-    let max = |i: usize| layout.panes[i].map_or(0.0, |p| p.max);
+    let max = |i: usize| layout.panes[i].map_or(0.0, |p| p.max).max(1.0);
     if !buttons.pressed(MouseButton::Left) {
         *held = None;
     }
@@ -711,7 +719,19 @@ fn clicks(
     } else if let Some(g) = layout.group_at(p, view.scroll[0])
         && g != view.group
     {
+        // Keep the leaving group's list scroll; the new group restores its own.
+        let old = view.group;
+        let s = view.scroll[1];
+        if let Some(e) = view.group_scroll.iter_mut().find(|(g, _)| *g == old) {
+            e.1 = s;
+        } else {
+            view.group_scroll.push((old, s));
+        }
         view.group = g;
-        view.scroll[1] = 0.0;
+        view.scroll[1] = view
+            .group_scroll
+            .iter()
+            .find(|(gg, _)| *gg == g)
+            .map_or(0.0, |(_, s)| *s);
     }
 }

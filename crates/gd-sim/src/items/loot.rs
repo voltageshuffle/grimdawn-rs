@@ -1204,13 +1204,27 @@ pub fn rarity(r: &ResolvedItem) -> Classification {
     .unwrap_or(Classification::Common)
 }
 
-/// The sound a thrown item makes where it lands (`Item::PlayDropSoundWorld`): for equipment
-/// the classification's `*ItemDropSound` from `gameiteminfo.dbr` (`GameEngine::GetItemDropSoundName`:
+/// The sound a thrown item makes where it lands (`Item::PlayDropSoundWorld`): landing on the
+/// water surface (`in_water`, `PhysicsSurface` 7) plays the record's `dropSoundWater`
+/// (`Item::Load`'s default `records/sounds/ui/spak_itemdropwaterplunksm.dbr`), for any item
+/// class. On land, equipment plays the classification's `*ItemDropSound` from `gameiteminfo.dbr`
+/// (`GameEngine::GetItemDropSoundName`, loaded by `ItemEquipment::InitializeItem`:
 /// the larger of base / prefix / suffix, or 16 = rare prefix + rare suffix, 17 when the base is
-/// rare too), else the record's `dropSound3D`. PORT: never the water sound (`dropSoundWater`).
-pub fn drop_sound(idb: &ItemDb, item: &Item) -> Option<String> {
-    let r = super::resolve(idb, item)?;
-    if super::resolve::is_equipment_class(&r.class) {
+/// rare too), else the record's `dropSound3D`.
+pub fn drop_sound(idb: &ItemDb, item: &Item, in_water: bool) -> Option<String> {
+    let base = idb.get(&item.base_name);
+    if in_water {
+        return Some(
+            base.as_ref()
+                .and_then(|b| b.str("dropSoundWater"))
+                .filter(|p| !p.is_empty())
+                .unwrap_or("records/sounds/ui/spak_itemdropwaterplunksm.dbr")
+                .to_owned(),
+        );
+    }
+    if let Some(r) = super::resolve(idb, item)
+        && super::resolve::is_equipment_class(&r.class)
+    {
         let key = if r.prefix_classification == Some(Classification::Rare)
             && r.suffix_classification == Some(Classification::Rare)
         {
@@ -1237,8 +1251,7 @@ pub fn drop_sound(idb: &ItemDb, item: &Item) -> Option<String> {
             return Some(pak.to_owned());
         }
     }
-    let base = idb.get(&item.base_name)?;
-    base.str("dropSound3D")
+    base?.str("dropSound3D")
         .filter(|p| !p.is_empty())
         .map(str::to_owned)
 }

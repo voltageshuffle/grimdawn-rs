@@ -217,6 +217,7 @@ fn pick_up_drop_and_equip_requests() {
         cell: (0, 0),
         cursor: Vec2::new(1.0, 2.0),
         right: false,
+        stash_page: None,
     });
     g.step();
     let inv = g.app.world().resource::<Inventory>();
@@ -228,6 +229,7 @@ fn pick_up_drop_and_equip_requests() {
         cell: (3, 3),
         cursor: Vec2::new(4.0, 5.0),
         right: false,
+        stash_page: None,
     });
     g.step();
     let inv = g.app.world().resource::<Inventory>();
@@ -240,6 +242,7 @@ fn pick_up_drop_and_equip_requests() {
         cell: want,
         cursor: Vec2::new(4.0, 5.0),
         right: false,
+        stash_page: None,
     });
     g.step();
     g.app.world_mut().write_message(InvRequest::Slot {
@@ -269,6 +272,7 @@ fn pick_up_drop_and_equip_requests() {
             cell: (cursor.x as u32, cursor.y as u32),
             cursor,
             right,
+            stash_page: None,
         });
         g.step();
     };
@@ -357,6 +361,7 @@ fn pick_up_drop_and_equip_requests() {
         cell,
         cursor: Vec2::ZERO,
         right: true,
+        stash_page: None,
     });
     g.step();
     let inv = g.app.world().resource::<Inventory>();

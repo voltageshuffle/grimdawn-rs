@@ -381,13 +381,14 @@ fn click_to_move(
         orders.write(PlayerOrder::Clear);
     }
     let moving = moving || move_key;
-    // The enemy the hover pick chose (`hover::pick` → `combat::pick_enemy`, one pick feeds the hover and the
-    // attack): a character / targetable breakable the player's side may attack (`gd_game::combat::player_target`).
-    // Force Move skips it (the press acts on the ground point).
+    // The enemy the hover pick chose (`hover::pick` → `combat::pick_enemy`): a character / targetable
+    // breakable the player's side may attack (`gd_game::combat::player_target`). Force Move skips it (the
+    // press acts on the ground point). Else the attack's own cursor pick (`InGameUIActorCapture::
+    // PickObjectUnderCursor`, validated by `GameEngine::IsAttackableClass`): a breakable under the ray even
+    // without `targetable` — plain furniture is smashed though it is never hovered, named or outlined.
     let hovered_enemy = || {
-        hovered
-            .entity
-            .filter(|_| !force)
+        let hover = hovered.entity.filter(|_| !force);
+        hover
             .filter(|_| {
                 matches!(
                     hovered.kind,
@@ -399,6 +400,19 @@ fn click_to_move(
                     .get(*e)
                     .ok()
                     .is_some_and(|m| gd_game::combat::player_target(m.3, &m.4))
+            })
+            .or_else(|| {
+                // Nothing hovered and no Force Move: the breakable pick. A hovered ally / decoration stays a
+                // walk, and Force Move walks wherever it is held.
+                (!force && hover.is_none()).then(|| {
+                    gd_game::combat::pick_monster(
+                        ray,
+                        monsters
+                            .iter()
+                            .filter(|m| m.3.is_some())
+                            .map(|m| (m.0, m.1, m.2)),
+                    )
+                })?
             })
     };
     // With Move, a foe / breakable under the cursor that is not kept is walked to (its coordinates).

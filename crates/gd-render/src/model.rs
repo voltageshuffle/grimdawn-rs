@@ -690,11 +690,28 @@ pub enum Ready<T> {
 }
 
 /// Main-thread time a frame spends finishing background model loads (`finish_model`, GPU uploads) before leaving
-/// the rest for the next frame.
+/// the rest for the next frame. Outside gameplay ([`LoadFast`]) the cap widens: no gameplay needs the frame
+/// time, and draining the queue fast is the whole job.
 pub const FINISH_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
 
-/// Finishes the models read in the background ([`ModelCache::model_ready`]): files their meshes and textures and
-/// adds their GPU assets, kept warm until the waiting spawns take them. Stops after [`FINISH_BUDGET`].
+/// Not in gameplay (`AppState` other than `InGame` — the loading cover, the menu and its backdrop build,
+/// set by the binary): background-load finishers and level spawning may spend most of a frame instead of
+/// their in-game slice.
+#[derive(Resource, Default)]
+pub struct LoadFast(pub bool);
+
+/// [`FINISH_BUDGET`] widened while [`LoadFast`] holds.
+pub fn finish_budget(fast: Option<Res<LoadFast>>) -> std::time::Duration {
+    if fast.is_some_and(|f| f.0) {
+        std::time::Duration::from_millis(12)
+    } else {
+        FINISH_BUDGET
+    }
+}
+
+/// Finishes the models read in the background ([`ModelCache::model_ready`], within [`finish_budget`]):
+/// files their meshes and textures and
+/// adds their GPU assets, kept warm until the waiting spawns take them. Stops after [`finish_budget`] is spent.
 #[allow(clippy::too_many_arguments)]
 pub fn collect_model_loads(
     mut cache: ResMut<ModelCache>,
@@ -705,6 +722,7 @@ pub fn collect_model_loads(
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut textures: ResMut<Textures>,
     mut images: ResMut<Assets<Image>>,
+    fast: Option<Res<LoadFast>>,
 ) {
     use bevy::tasks::{block_on, futures_lite::future};
     cache.fresh.tick();
@@ -712,7 +730,7 @@ pub fn collect_model_loads(
         return;
     }
     let cache = &mut *cache;
-    let deadline = std::time::Instant::now() + FINISH_BUDGET;
+    let deadline = std::time::Instant::now() + finish_budget(fast);
     let mut done = 0;
     let mut i = 0;
     while i < cache.loading.len() {

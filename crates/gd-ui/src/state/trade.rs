@@ -71,6 +71,9 @@ pub struct Trade {
     /// Crafting: the selected recipe (`CraftList` index) and the list scroll.
     pub recipe: Option<usize>,
     pub scroll: usize,
+    /// Crafting: the collapsed recipe groups ([`crate::state::crafting::GROUPS`] indices); their headers
+    /// show `listboxcollapsedicon` and list no recipes until clicked again.
+    pub collapsed: Vec<usize>,
     /// The open window's NPC record (name / profession headings).
     pub npc_record: String,
     /// A faction merchant's faction standing.
@@ -231,6 +234,9 @@ pub struct TradeLayout {
     /// Crafting: recipe rows (`CraftList` index), the craft button, the
     /// product / reagent boxes (for tooltips) and the list area (scrolling).
     pub rows: Vec<(usize, URect)>,
+    /// Crafting: the group headers' rows ([`crate::state::crafting::GROUPS`] index); a click collapses /
+    /// expands the group (`crafting::craft_clicks`).
+    pub headers: Vec<(usize, URect)>,
     pub craft: Option<URect>,
     pub boxes: Vec<(Item, URect)>,
     pub list: Option<URect>,

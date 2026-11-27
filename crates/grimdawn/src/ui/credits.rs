@@ -191,10 +191,12 @@ fn roll(
             ));
         }
     }
-    // PORT: the roll's music ends at once (the engine fades it over 2.5 s).
+    // The roll's music fades out over 2.5 s (`SoundManager::FadeSound`), then despawns at silence.
     if !credits.open && credits.was_open {
-        if let Some(e) = credits.music.take() {
-            commands.entity(e).try_despawn();
+        if let Some(e) = credits.music.take()
+            && let Ok(v) = volumes.get_mut(e)
+        {
+            commands.entity(e).try_insert(gd_audio::Fade::out(v.0, 2500.0));
         }
         credits.menu_gain = credits.menu_gain.max(0.001);
     }

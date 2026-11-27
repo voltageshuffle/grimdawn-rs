@@ -146,12 +146,12 @@ use bevy::render::render_resource::binding_types::{
     sampler, texture_2d, texture_depth_2d, uniform_buffer,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    BufferId, CachedRenderPipelineId, ColorTargetState, ColorWrites, DynamicUniformBuffer,
-    FragmentState, LoadOp, Operations, PipelineCache, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderStages, ShaderType, StoreOp, TextureDescriptor, TextureDimension,
-    TextureSampleType, TextureUsages, TextureView,
+    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntries, BufferId, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+    DynamicUniformBuffer, FragmentState, LoadOp, Operations, PipelineCache,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, StoreOp,
+    TextureDescriptor, TextureDimension, TextureSampleType, TextureUsages, TextureView,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
@@ -1282,7 +1282,12 @@ fn prepare_glow_blur(
                     )
                 },
             ),
-            None => bind("gd_glow_blur_v", &src.texture_view, &src.texture_view, offset),
+            None => bind(
+                "gd_glow_blur_v",
+                &src.texture_view,
+                &src.texture_view,
+                offset,
+            ),
         };
         passes.push(GlowBlurPasses {
             glow,
@@ -1290,7 +1295,12 @@ fn prepare_glow_blur(
             offset,
             vertical: (vertical, v.clone()),
             horizontal: (
-                bind("gd_glow_blur_h", &v[0].default_view, &v[1].default_view, offset),
+                bind(
+                    "gd_glow_blur_h",
+                    &v[0].default_view,
+                    &v[1].default_view,
+                    offset,
+                ),
                 out.texture_view.clone(),
             ),
         });

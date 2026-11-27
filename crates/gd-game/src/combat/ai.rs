@@ -270,13 +270,15 @@ impl Side {
     }
 }
 
-/// What the player may aim a click or the controller at: a targetable breakable, else a character
-/// [`Side::Player`] calls a foe.
+/// What the player may aim a click or a skill at (`GameEngine::IsAttackableClass`): any breakable,
+/// else a character [`Side::Player`] calls a foe. `targetable` is not part of it: a click smashes
+/// furniture that never joins the hover list (a couch, a grandfather clock — no outline, no name, no
+/// health bar); that gate is the hover pick's own, in `grimdawn::hover`.
 pub fn player_target(
     breakable: Option<&gd_game_core::world::Breakable>,
     side: &SideDataItem,
 ) -> bool {
-    breakable.map_or_else(|| Side::Player.foe(side.side_ref()), |b| b.targetable)
+    breakable.is_some() || Side::Player.foe(side.side_ref())
 }
 
 /// The characters each monster may take as its enemy this frame (`ControllerMonster::IsEnemyValid`: alive,

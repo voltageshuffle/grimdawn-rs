@@ -261,14 +261,18 @@ impl Plugin for TexturePlugin {
 }
 
 /// Files the textures [`Textures::ready`] decoded in the background, kept warm until their users take them.
-fn collect_texture_loads(mut textures: ResMut<Textures>, mut images: ResMut<Assets<Image>>) {
+fn collect_texture_loads(
+    mut textures: ResMut<Textures>,
+    mut images: ResMut<Assets<Image>>,
+    fast: Option<Res<crate::model::LoadFast>>,
+) {
     use bevy::tasks::{block_on, futures_lite::future};
     textures.fresh.tick();
     if textures.loading.is_empty() {
         return;
     }
     let textures = &mut *textures;
-    let deadline = std::time::Instant::now() + crate::model::FINISH_BUDGET;
+    let deadline = std::time::Instant::now() + crate::model::finish_budget(fast);
     let mut done = 0;
     let mut i = 0;
     while i < textures.loading.len() {

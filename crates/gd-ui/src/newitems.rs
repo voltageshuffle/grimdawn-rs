@@ -11,7 +11,8 @@
 //! (Game.dll) reads the class map `GameEngine::LoadFromDatabase` fills with each class's
 //! `<class>ItemHighlightColor` (`artifact` / `artifactFormula`: `<class>HighlightColor`) next to its `ItemColor`, so
 //! the class is the plate's ([`super::character::rarity_key`]); a class without an entry gives (1, 1, 1, 0).
-//! PORT: a bag window that is closed keeps the items glowing.
+//! The glow ends when the character window closes: the rebuild tests `fresh` and a closed bag shows nothing,
+//! so reopening does not re-glow loot picked before the close (the engine's rebuild clears the flag).
 use super::additive::{AdditiveCache, AdditiveMaterial};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -93,7 +94,20 @@ fn animate_new_items(
         Res<super::apply::InvConfirm>,
         Res<super::stack::StackWindow>,
     ),
+    panels: Res<super::UiPanels>,
+    mut was_open: Local<bool>,
+    mut fresh: gd_game_core::session::NewSession,
 ) {
+    if fresh.begun() {
+        *was_open = false;
+    }
+    // Closing the character window ends every glow (`BagWidget::Rebuild` tests and clears the fresh flag).
+    if *was_open && !panels.character {
+        for (_, g, _, _) in &glows {
+            seen.write(gd_game_core::inventory::NewItemSeen(g.key.clone()));
+        }
+    }
+    *was_open = panels.character;
     if glows.is_empty() {
         return;
     }

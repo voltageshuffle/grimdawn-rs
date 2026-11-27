@@ -117,7 +117,7 @@ pub(super) fn devotion_page(
 ///   `description`) and below it its `itemText` (`noteText`, wrapped);
 ///   selecting a note scrolls the page to the top.
 ///
-/// PORT: no note is selected at first; groups start expanded; the note
+/// PORT: groups start expanded; the note
 /// row's indent is the tree's `indentWidth` (the row layout is the quest
 /// tree's, not decompiled for the codex); `GenderizeText` is skipped (no
 /// gender markup in the stock note texts).

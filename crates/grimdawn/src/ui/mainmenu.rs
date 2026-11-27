@@ -684,7 +684,7 @@ fn build(
                     .unwrap_or_default(),
                 arenas: gd_game_core::session::available_arenas(data.root()),
             });
-            gametype_window(&mut ui, g, lists, &mut hits)
+            gametype_window(&mut ui, g, lists, &mut hits, &mut layout.mod_rows)
         }
         MenuWindow::Create(new) => create_window(&mut ui, new, &mut hits),
         MenuWindow::Delete(typed) => delete_window(&mut ui, &menu, typed, &mut hits),
@@ -1214,12 +1214,14 @@ fn difficulty_window(
 /// toggles, with the Crucible the map drop-down ("Random" and the offered arenas) and the local
 /// leaderboard (character, difficulty icon, score); with Custom (`GameModeWindow::ShowCustomView`) the `mapLabel`
 /// heading, the selected map's file name (`modText`) and the custom maps' list (`modList`) instead, and no
-/// campaign image. PORT: the drop-down's and the lists' looks are taken from the records only (no scroll bar).
+/// campaign image. PORT: the drop-down's and the lists' looks are taken from the records only (no scroll
+/// bar; the mod list scrolls by the wheel, `menu.rs`).
 fn gametype_window(
     ui: &mut Ui,
     g: &crate::menu::GameType,
     lists: &GameTypeLists,
     hits: &mut Vec<(URect, Hit)>,
+    mod_rows: &mut usize,
 ) {
     let Some(rec) = ui
         .record(CONSTANTS)
@@ -1284,7 +1286,7 @@ fn gametype_window(
             c,
             g.maps.get(g.pick).map_or("", |m| m.file_name()),
         );
-        mod_list(ui, &rec, c, g, hits);
+        mod_list(ui, &rec, c, g, hits, mod_rows);
     }
     accept_cancel(ui, &rec, c, true, None, hits);
 }
@@ -1329,14 +1331,16 @@ fn mod_text(ui: &mut Ui, window: &Record, c: URect, text: &str) {
 }
 
 /// The custom maps' list (`gamemode_modlist.dbr`, the leaderboard's list kind without a header): one
-/// "<mod> ~ <map file>" row per [`crate::menu::CustomMap`]. PORT: the selected row's look (a
-/// `dividerColor` bar) and the hovered one's are not decompiled.
+/// "<mod> ~ <map file>" row per [`crate::menu::CustomMap`], from the first visible one
+/// (`GameModeWindow::ShowCustomView`'s listbox scroll; the wheel is read in `menu.rs`). PORT: no scroll
+/// bar is drawn; the selected row's look (a `dividerColor` bar) and the hovered one's are not decompiled.
 fn mod_list(
     ui: &mut Ui,
     window: &Record,
     c: URect,
     g: &crate::menu::GameType,
     hits: &mut Vec<(URect, Hit)>,
+    rows_out: &mut usize,
 ) {
     let Some(rec) = child(ui, window, "modList") else {
         return;
@@ -1371,9 +1375,12 @@ fn mod_list(
     let (pad, top) = (ui.sc(f("offsetX", 5.0)), ui.sc(f("offsetY", 3.0)));
     let item_h = ui.sc(f("itemHeight", 25.0));
     let rows = ((r.h - top) / item_h).floor().max(0.0) as usize;
+    *rows_out = rows;
     let tl = ui.line_height(&ts);
-    for (i, m) in g.maps.iter().take(rows).enumerate() {
-        let row = URect::new(r.x, r.y + top + i as f32 * item_h, r.w, item_h);
+    let first = g.first.min(g.maps.len().saturating_sub(rows));
+    for (k, i) in (first..(first + rows).min(g.maps.len())).enumerate() {
+        let m = &g.maps[i];
+        let row = URect::new(r.x, r.y + top + k as f32 * item_h, r.w, item_h);
         if i == g.pick {
             ui.solid(row, color("dividerColor", 0.5));
         } else {

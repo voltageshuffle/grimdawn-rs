@@ -49,6 +49,8 @@
 //! archives do not hold (`InitializeMod` mounts only `resources/*.arc`), refuses
 //! Start. Start also refuses an existing save whose `map.dat` names a different
 //! mod ([`start`]).
+//! PORT: the custom maps' list scrolls by the mouse wheel (the engine's listbox has a scroll control,
+//! not drawn); the picked map is kept in view.
 //!
 //! Characters (`Game::ListCharacters`): `main/` and `user/`. Start in the
 //! campaign with a character not in the main quest is refused
@@ -64,6 +66,7 @@
 //! A hook that sets the menu neither reads nor writes the file.
 use crate::session::begin;
 use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gd_formats::save::gdc::Gdc;
@@ -122,6 +125,8 @@ pub struct GameType {
     pub custom: bool,
     pub maps: Vec<CustomMap>,
     pub pick: usize,
+    /// The first visible map row (the listbox's scroll).
+    pub first: usize,
 }
 
 impl GameType {
@@ -145,6 +150,17 @@ impl GameType {
         self.pick = current
             .and_then(|c| self.maps.iter().position(|e| e == c))
             .unwrap_or(0);
+    }
+
+    /// The listbox scrolls the picked map into view (`GameModeWindow::ShowCustomView`).
+    fn follow_pick(&mut self, rows: usize) {
+        let rows = rows.max(1);
+        if self.pick < self.first {
+            self.first = self.pick;
+        } else if self.pick >= self.first + rows {
+            self.first = self.pick + 1 - rows;
+        }
+        self.first = self.first.min(self.maps.len().saturating_sub(rows));
     }
 }
 
@@ -216,7 +232,8 @@ fn mod_maps(base: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>
                 .iter()
                 .filter(|e| e.name.to_ascii_lowercase().ends_with(".map"))
             {
-                let head = arc.read(e).ok();
+                // Only the 4-byte header matters: reading the entry whole would decode a 650 MB map.
+                let head = arc.read_prefix(e, 4).ok();
                 if is_map(head.as_deref()) {
                     out.push(format!(
                         "{stem}/{}",
@@ -309,6 +326,8 @@ pub enum Hit {
 pub struct MenuLayout {
     pub hits: Vec<(URect, Hit)>,
     pub rows: usize,
+    /// The custom maps' list's visible rows, set when the list is built.
+    pub mod_rows: usize,
 }
 
 impl MenuLayout {
@@ -532,6 +551,7 @@ fn run_menu(
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut typed: MessageReader<KeyboardInput>,
+    mut wheel: MessageReader<MouseWheel>,
     mut menu: ResMut<MainMenu>,
     layout: Res<MenuLayout>,
     data: Res<gd_game_core::data::GameData>,
@@ -553,8 +573,20 @@ fn run_menu(
     let pressed = gd_ui_kit::widgets::button_pressed(&buttons);
     if options.open || credits.open {
         typed.clear();
+        wheel.clear();
         return;
     }
+    // `GameModeWindow::ShowCustomView`'s listbox wheel: a row per notch (pixel steps / 20).
+    let lines: f32 = wheel
+        .read()
+        .map(|w| {
+            if w.unit == MouseScrollUnit::Line {
+                w.y
+            } else {
+                w.y / 20.0
+            }
+        })
+        .sum();
     let before = (
         menu.selected,
         menu.first,
@@ -673,11 +705,20 @@ fn run_menu(
         }
         MenuWindow::GameType(g) => {
             typed.clear();
+            // The listbox's wheel scroll: a row per notch, up to the last page.
+            if g.custom && lines != 0.0 {
+                let max = g.maps.len().saturating_sub(layout.mod_rows.max(1));
+                let d = lines.signum() * lines.abs().ceil();
+                g.first = ((g.first as f32 - d).max(0.0) as usize).min(max);
+            }
             // `GameModeWindow::HandleToggle`: one of the three is down; Custom shows its view.
             match hit {
                 Some(Hit::ModeCampaign) => (g.crucible, g.open, g.custom) = (false, false, false),
                 Some(Hit::ModeCrucible) => (g.crucible, g.custom) = (true, false),
-                Some(Hit::ModeCustom) => g.show_custom(data.root(), m.custom.as_ref()),
+                Some(Hit::ModeCustom) => {
+                    g.show_custom(data.root(), m.custom.as_ref());
+                    g.follow_pick(layout.mod_rows);
+                }
                 Some(Hit::ModItem(i)) if g.custom && i < g.maps.len() => g.pick = i,
                 Some(Hit::MapDrop) => g.open = !g.open,
                 Some(Hit::MapItem(i)) => (g.arena, g.open) = (i, false),
@@ -766,7 +807,9 @@ fn run_menu(
                 Some(Hit::Delete) if n > 0 => m.window = MenuWindow::Delete(String::new()),
                 Some(Hit::Difficulty) => m.window = MenuWindow::Difficulty(m.option),
                 Some(Hit::GameType) => {
-                    m.window = MenuWindow::GameType(GameType::open(m, data.root()))
+                    let mut g = GameType::open(m, data.root());
+                    g.follow_pick(layout.mod_rows);
+                    m.window = MenuWindow::GameType(g);
                 }
                 Some(Hit::Options) => options.open = true,
                 Some(Hit::Credits) => credits.open = true,

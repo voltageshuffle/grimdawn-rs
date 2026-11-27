@@ -13,8 +13,9 @@
 //!   0.0025)` per cursor pixel, `InGameUI::RotateCameraFromMouse`), 27 / 28 rotate left / right (',' / '.');
 //!   bound to the wheel, 26-28 step instead. The wheel is key codes 145 (up) / 146 (down)
 //!   (`DirectInputDevice::Update`), so it does what the actions bound to them do.
-//!   PORT: the zoom keys are not refused while `GameEngine.zoomBlockingWindow` (unidentified) is open, nor the
-//!   keys while a text field takes them.
+//!   PORT: the zoom keys are not refused while `GameEngine.zoomBlockingWindow` (unidentified) is open;
+//!   a focused text field refuses them only where it resets the key state (the vendor / stash search's
+//!   `search_input`).
 //!
 //! The followed target is read from its `Transform` (the player is a root entity), not the pre-propagation
 //! `GlobalTransform` of the frame before (`GameCamera::GetTarget` reads the same tick after movement).

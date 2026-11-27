@@ -331,7 +331,12 @@ fn wipe_atlas(map: &WipeMap, w: u32, h: u32) -> (Image, u32) {
 /// Step `s`'s sub-rect (texture px) in its geometry's [`wipe_atlas`].
 fn atlas_src(w: u32, h: u32, rows: u32, s: u16) -> URect {
     let s = s as u32;
-    URect::new((s / rows * w) as f32, (s % rows * h) as f32, w as f32, h as f32)
+    URect::new(
+        (s / rows * w) as f32,
+        (s % rows * h) as f32,
+        w as f32,
+        h as f32,
+    )
 }
 
 fn wipe_texel(a: f32) -> [u8; 4] {

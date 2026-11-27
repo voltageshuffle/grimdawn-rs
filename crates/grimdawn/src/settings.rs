@@ -5,7 +5,8 @@
 //!
 //! The `language` option ([`apply_language`]) selects the localisation tags and fonts live; the story
 //! snapshots its tags, text overrides and paging separators per session, so they follow on the next
-//! session. PORT: CJK font word-wrap (`language.def` `wordmode`) is not implemented.
+//! session. PORT: the `wordmode` flag is not honoured; CJK break-at-character wrapping is always on
+//! (`gd_ui_kit::text`).
 use bevy::prelude::*;
 use gd_game_core::options::GameOptions;
 use gd_ui_kit::state::settings::{UiScaleOption, path};

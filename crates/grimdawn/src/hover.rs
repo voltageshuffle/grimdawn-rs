@@ -6,8 +6,9 @@
 //! 2. an enemy under the cursor: of the enemies the cursor touches, the one nearest to the player
 //!    (`InGameUI::PickNearestEnemy`); it also becomes the combat enemy. The list
 //!    (`InGameUI::CollectEnemyCandidates`) takes `IsTargetable` `Destructible`s (record `targetable`, not broken)
-//!    too. One pick feeds the hover and the attack; the candidate margin widens while a held click is pathing /
-//!    repeated (`InGameUI::HandleMouseEvent`);
+//!    too. This pick feeds the hover and the attack of anything on it; the click additionally attacks an
+//!    unhovered `targetable`-less breakable under the ray (`player.rs`, `GameEngine::IsAttackableClass`);
+//!    the candidate margin widens while a held click is pathing / repeated (`InGameUI::HandleMouseEvent`);
 //! 3. a non-enemy character under the cursor: an `Npc` (record `Class` `Npc*`) only while it is available for
 //!    conversations (`Npc::IsAvailableForConversations`; PORT: level NPCs without story hooks count as available)
 //!    and visible; friendly monsters always; the player's own pets only while the Target Pet key is held; with

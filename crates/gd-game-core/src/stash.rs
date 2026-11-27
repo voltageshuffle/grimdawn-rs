@@ -5,7 +5,7 @@
 //! Move reagents ([`DepositReagents`]): `PlayerInventoryCtrl::DepositReagents` (Game.dll) runs
 //! `InventorySack::DepositSackIntoReagents` on every bag (not worn items): each `craftingMaterial`
 //! item goes into the material storage (`GameEngine::AddItemToReagents`: keyed by record, no
-//! capacity) and leaves the sack. PORT: `reagents.gst` is written with the next save, not at once.
+//! capacity) and leaves the sack, and `reagents.gst` is written at once (`gd_game::save`).
 //!
 //! PORT: a shared store the save will not write ([`SharedFiles::accepts`]) refuses deposits like a
 //! refused transfer ([`QuickActionError`]), so nothing goes where it would be lost; taking out stays

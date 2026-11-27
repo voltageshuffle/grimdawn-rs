@@ -42,7 +42,10 @@ impl Plugin for ChestsPlugin {
 fn dress_chests(
     mut commands: Commands,
     new: Query<(Entity, &Chest), Without<gd_render::character::RecordDressed>>,
-    opened: Query<(Entity, &Chest, Option<&ShrineIdleFx>), (Changed<Chest>, Without<ShownOpen>)>,
+    opened: Query<
+        (Entity, &Chest, Option<&ShrineIdleFx>, Has<ShownOpen>),
+        Changed<Chest>,
+    >,
     mut a: CharAssets,
     mut anims: ResMut<gd_game_core::character::AnimCache>,
 ) {
@@ -102,24 +105,28 @@ fn dress_chests(
             }
         }
         // A food crate's idle effect (`FixedItemShrine::StartIdleEffect`): it runs until the crate is used, then
-        // stops emitting where it is.
-        if chest.shrine
-            && !chest.opened
-            && let Some(record) = rec.str("IdleLoopingEffect")
-        {
-            let fx = gd_render::fx::spawn_effect_record(&mut commands, record, Transform::IDENTITY);
-            commands
-                .entity(fx)
-                .insert(gd_game_core::visuals::EffectSpec {
-                    despawn_when_complete: true,
-                    ..gd_game_core::visuals::EffectSpec::record(record)
-                });
-            gd_render::model::try_add_child(&mut commands, e, fx);
-            commands.entity(e).try_insert(ShrineIdleFx(fx));
+        // stops emitting where it is; a reusable crate restarts it back at idle.
+        if chest.shrine && !chest.opened {
+            start_shrine_idle(&mut commands, rec, e);
         }
     }
-    for (e, chest, idle) in &opened {
-        if !chest.opened || new.contains(e) {
+    for (e, chest, idle, shown) in &opened {
+        if new.contains(e) {
+            continue;
+        }
+        if !chest.opened {
+            // A reusable crate back at idle (`FixedItemShrineController::Update` →
+            // `FixedItemShrine::StartIdleEffect`): the stopped idle effect goes, a new one runs.
+            if chest.shrine && shown && idle.is_some() {
+                commands.entity(e).try_remove::<ShownOpen>();
+                if let Some(idle) = idle {
+                    commands.entity(idle.0).despawn();
+                }
+                commands.entity(e).try_remove::<ShrineIdleFx>();
+                if let Some(rec) = a.data.db.get(&chest.record) {
+                    start_shrine_idle(&mut commands, rec, e);
+                }
+            }
             continue;
         }
         commands.entity(e).try_insert(ShownOpen);
@@ -140,6 +147,21 @@ fn dress_chests(
                 looped: false,
             });
         }
+    }
+}
+
+/// A food crate's idle effect (`FixedItemShrine::StartIdleEffect`), attached at its origin.
+fn start_shrine_idle(commands: &mut Commands, rec: &gd_formats::arz::Record, chest: Entity) {
+    if let Some(record) = rec.str("IdleLoopingEffect") {
+        let fx = gd_render::fx::spawn_effect_record(commands, record, Transform::IDENTITY);
+        commands
+            .entity(fx)
+            .insert(gd_game_core::visuals::EffectSpec {
+                despawn_when_complete: true,
+                ..gd_game_core::visuals::EffectSpec::record(record)
+            });
+        gd_render::model::try_add_child(commands, chest, fx);
+        commands.entity(chest).try_insert(ShrineIdleFx(fx));
     }
 }
 

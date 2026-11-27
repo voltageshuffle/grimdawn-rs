@@ -96,11 +96,14 @@ pub enum InvRequest {
     BagTab(usize),
     /// `cursor` is in cells from the grid's top-left (the drop footprint is centred on it). Left: pick up /
     /// place / swap. Right: select a component, learn a blueprint, use a consumable or equip the item.
+    /// `stash_page`: the caravan window's selected personal stash page while it shows one
+    /// (`Player::GetSelectedStashSackNumber`), for [`Inventory::cancel_held`]; None otherwise.
     Bag {
         bag: usize,
         cell: (u32, u32),
         cursor: Vec2,
         right: bool,
+        stash_page: Option<usize>,
     },
     /// Not in the apply mode: left swaps with the held item; right acts as left with one held.
     Slot { slot: EquipSlot, right: bool },
@@ -433,9 +436,14 @@ impl Inventory {
     /// when that cell has no conflict (`InventorySack::GetConflicts`); an item not `CanBePlacedInTransferStash`
     /// from the transfer stash goes to the bags (else stays held); a reagent goes back to the reagent storage.
     /// Otherwise `Err` for `ControllerPlayer::GiveItemToPlayer(id, false)`. `stash`: None before it is loaded.
-    /// PORT: the stash sack is the one it came from; the engine's is the selected one.
+    /// `page`: the caravan window's selected personal stash page (`Player::GetSelectedStashSackNumber`), tried
+    /// before the origin cell when it has room; None (no page shown) falls back to the origin.
     #[allow(clippy::result_large_err)]
-    pub fn cancel_held(&mut self, stash: Option<&mut crate::stash::Stash>) -> Result<(), Item> {
+    pub fn cancel_held(
+        &mut self,
+        stash: Option<&mut crate::stash::Stash>,
+        page: Option<usize>,
+    ) -> Result<(), Item> {
         let Some(item) = self.held.take() else {
             return Ok(());
         };
@@ -451,6 +459,33 @@ impl Inventory {
             .info(&item)
             .map(|i| i.size)
             .unwrap_or(Footprint { w: 1, h: 1 });
+        let mut stash = stash;
+        // The selected stash sack first when it has room (a not-full stack of its record or a free
+        // cell); else the origin cell. A reagent still goes back to the reagent storage.
+        if from != HeldFrom::Reagents
+            && let Some(st) = stash.as_deref_mut()
+            && let Some(page) = page
+            && let Some(sel) = st.pages.get_mut(page)
+        {
+            let engine = crate::stack::engine_max_in(self.db.get(crate::stack::GAME_ITEM_INFO));
+            let max = crate::stack::max_of(self, &item, engine);
+            let room: u32 = sel
+                .items
+                .iter()
+                .filter(|q| q.item.base_name.eq_ignore_ascii_case(&item.base_name))
+                .map(|q| max.saturating_sub(crate::stack::count(&q.item)))
+                .sum();
+            if room >= crate::stack::count(&item) || sel.find_position(size).is_some() {
+                match crate::stack::merge_into(std::slice::from_mut(sel), item.clone(), max) {
+                    None => return Ok(()),
+                    Some(rest) => {
+                        // A free cell was found above and the merge takes no cell: the rest fits.
+                        sel.add(rest, size);
+                        return Ok(());
+                    }
+                }
+            }
+        }
         let sack = match (from, stash) {
             (HeldFrom::At(ItemLoc::Bag { bag, x, y }), _) => {
                 self.bags.get_mut(bag).map(|s| (s, x, y))

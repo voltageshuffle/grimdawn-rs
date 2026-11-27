@@ -13,8 +13,8 @@ pub mod exit_cycles;
 pub mod fx;
 pub mod memory;
 pub mod mouse;
-pub mod testworld;
 pub mod stress;
+pub mod testworld;
 
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;

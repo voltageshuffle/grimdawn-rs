@@ -17,6 +17,8 @@ pub(super) fn apply_hits(
                 Option<&mut crate::afflictions::Afflictions>,
                 &mut Attackers,
                 crate::combat::SideData,
+                // Only a defender with on-hit procs needs the hit's damage types ([`HitLanded::types`]).
+                Has<crate::autocast::Autocasts>,
             ),
             Without<Dead>,
         >,
@@ -105,7 +107,7 @@ pub(super) fn apply_hits(
             {
                 continue;
             }
-            let Ok((atf, acb, _, amon, _, _, _, aside)) = q.get(ev.entity) else {
+            let Ok((atf, acb, _, amon, _, _, _, aside, _)) = q.get(ev.entity) else {
                 continue;
             };
             // A skill cast's hit point is the callback's own identity, not the live state: the same step's "End" may
@@ -245,7 +247,7 @@ pub(super) fn apply_hits(
         let adeb = aaff.map(|a| a.debuffs()).unwrap_or_default();
         // A debuff's attack rolls against its holder's defensive ability.
         let holder_da = debuff.as_ref().and_then(|(h, _)| q.get(*h).ok()).map(
-            |(_, hcb, _, _, _, haff, _, _)| {
+            |(_, hcb, _, _, _, haff, ..)| {
                 gd_sim::actor::debuffed_defensive_ability(
                     &hcb.profile,
                     &haff.map(|a| a.debuffs()).unwrap_or_default(),
@@ -255,7 +257,7 @@ pub(super) fn apply_hits(
         if debuff.is_some() && holder_da.is_none() {
             continue;
         }
-        let Ok((ttf, mut tcb, mut tch, monster, is_player, mut taff, mut tatk, _)) =
+        let Ok((ttf, mut tcb, mut tch, monster, is_player, mut taff, mut tatk, _, has_procs)) =
             q.get_mut(target)
         else {
             continue;
@@ -489,6 +491,22 @@ pub(super) fn apply_hits(
             }) && !marks.get(attacker).is_ok_and(|m| m.1);
             // Gear, passive and skill taunt alike.
             let taunt = hit.influence.taunt;
+            // The hit's damage types for the defender's on-hit procs
+            // (`CombatAttributeAccumulator::GetDamageTypes` of `ParametersCombat`, hit filter):
+            // the types the hit resolved with instant damage (overkill included), the weapon's
+            // parts as physical / pierce. PORT: a hit an absorb filter took whole carries none.
+            // Only a proc holder's hits carry them.
+            let types = if has_procs {
+                let mut types: Vec<gd_sim::attributes::CombatType> = Vec::new();
+                for &(ty, _) in &hit.applied {
+                    if !types.contains(&ty) {
+                        types.push(ty);
+                    }
+                }
+                types
+            } else {
+                Vec::new()
+            };
             landed.write(HitLanded {
                 attacker,
                 target,
@@ -497,6 +515,7 @@ pub(super) fn apply_hits(
                 melee,
                 blocked: hit.blocked,
                 taunt,
+                types,
             });
             if hit.influence.convert > 0.0 || hit.influence.disruption > 0.0 {
                 influenced.write(Influenced {
@@ -573,7 +592,7 @@ pub(super) fn apply_hits(
         // Life leech: the leech percent of the life removed heals the attacker (`Character::TakeBonus`: heal
         // increase applies, capped at its maximum).
         if hit.leeched > 0.0
-            && let Ok((_, mut acb, _, _, _, _, _, _)) = q.get_mut(attacker)
+            && let Ok((_, mut acb, ..)) = q.get_mut(attacker)
             && acb.life > 0.0
         {
             crate::casting::Bonus {
@@ -587,7 +606,7 @@ pub(super) fn apply_hits(
             && let Some(l) = tlinks
         {
             for link in &l.0 {
-                let Ok((ltf, mut lcb, mut lch, lmonster, l_is_player, mut laff, mut latk, _)) =
+                let Ok((ltf, mut lcb, mut lch, lmonster, l_is_player, mut laff, mut latk, ..)) =
                     q.get_mut(link.target)
                 else {
                     continue;
@@ -667,7 +686,7 @@ pub(super) fn apply_hits(
                 }
                 // The link attack's leech heals its attacker (this target).
                 if link_leech > 0.0
-                    && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
+                    && let Ok((_, mut tcb, ..)) = q.get_mut(target)
                     && tcb.life > 0.0
                 {
                     crate::casting::Bonus {
@@ -681,7 +700,7 @@ pub(super) fn apply_hits(
         // Reflected damage back at the attacker (any attack style).
         let mut reflect_leech = 0.0;
         if !hit.reflected.is_empty()
-            && let Ok((atf, mut acb, mut ach, amonster, a_is_player, mut aaff, mut aatk, _)) =
+            && let Ok((atf, mut acb, mut ach, amonster, a_is_player, mut aaff, mut aatk, ..)) =
                 q.get_mut(attacker)
             && acb.life > 0.0
         {
@@ -740,7 +759,7 @@ pub(super) fn apply_hits(
             }
             // The reflection's leech heals the reflector (even a dead attacker's).
             if reflect_leech > 0.0
-                && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
+                && let Ok((_, mut tcb, ..)) = q.get_mut(target)
                 && tcb.life > 0.0
             {
                 crate::casting::Bonus {
@@ -760,7 +779,7 @@ pub(super) fn apply_hits(
         if hit.missed || !melee {
             continue;
         }
-        let Ok((atf, mut acb, mut ach, amonster, a_is_player, mut aaff, mut aatk, _)) =
+        let Ok((atf, mut acb, mut ach, amonster, a_is_player, mut aaff, mut aatk, ..)) =
             q.get_mut(attacker)
         else {
             continue;
@@ -828,7 +847,7 @@ pub(super) fn apply_hits(
         }
         // The retaliation's leech heals its holder (the target).
         if ret_leech > 0.0
-            && let Ok((_, mut tcb, _, _, _, _, _, _)) = q.get_mut(target)
+            && let Ok((_, mut tcb, ..)) = q.get_mut(target)
             && tcb.life > 0.0
         {
             crate::casting::Bonus {
